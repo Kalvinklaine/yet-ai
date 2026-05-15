@@ -1,0 +1,21 @@
+# Local IDE/editor state
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+
+# Future build outputs/dependencies
+node_modules/
+dist/
+target/
+.gradle/
+build/
+
+# Future Yet AI private project state (shareable subfiles must be explicitly allowlisted later)
+.yet-ai/
+
+# Local-only agent/reference context
+AGENTS.local.md
+.local/
+.agent-local/
