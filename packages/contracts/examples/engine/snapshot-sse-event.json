@@ -1,0 +1,16 @@
+{
+  "seq": 0,
+  "type": "snapshot",
+  "chatId": "chat-001",
+  "payload": {
+    "thread": {
+      "id": "chat-001",
+      "title": "New chat",
+      "messages": []
+    },
+    "runtime": {
+      "streaming": false,
+      "waitingForResponse": false
+    }
+  }
+}

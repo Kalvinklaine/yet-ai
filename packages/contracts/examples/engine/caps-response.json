@@ -1,0 +1,23 @@
+{
+  "productId": "yet-ai",
+  "protocolVersion": "2026-05-15",
+  "capabilities": ["chat", "sse", "bridge"],
+  "features": {
+    "tools": false,
+    "tasks": false,
+    "knowledge": false
+  },
+  "providers": [
+    {
+      "id": "placeholder",
+      "displayName": "Placeholder Provider",
+      "enabled": false,
+      "models": []
+    }
+  ],
+  "ide": {
+    "bridge": true,
+    "lsp": false,
+    "host": "browser-dev"
+  }
+}

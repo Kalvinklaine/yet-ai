@@ -1,0 +1,8 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ready",
+  "payload": {
+    "host": "browser-dev",
+    "workspaceName": "example-workspace"
+  }
+}
