@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/sse-event.schema.json",
+  "title": "Engine SSE Event",
+  "description": "Events are ordered by seq within a chat stream. A snapshot event resets client state and sequence tracking.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["seq", "type", "chatId"],
+  "properties": {
+    "seq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "snapshot",
+        "stream_started",
+        "stream_delta",
+        "stream_finished",
+        "message_added",
+        "message_updated",
+        "message_removed",
+        "thread_updated",
+        "runtime_updated",
+        "queue_updated",
+        "pause_required",
+        "ide_tool_required",
+        "error"
+      ]
+    },
+    "chatId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

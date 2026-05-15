@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/bridge/gui-message.schema.json",
+  "title": "GUI to IDE Host Message",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "type"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "gui.ready",
+        "gui.openFile",
+        "gui.revealRange",
+        "gui.applyWorkspaceEditRequest",
+        "gui.copyText",
+        "gui.showNotification",
+        "gui.executeIdeTool",
+        "gui.getHostContext"
+      ]
+    },
+    "requestId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

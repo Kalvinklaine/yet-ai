@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/chat-command.schema.json",
+  "title": "Engine Chat Command Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestId", "type"],
+  "properties": {
+    "requestId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "user_message",
+        "abort",
+        "regenerate",
+        "update_message",
+        "remove_message",
+        "tool_decision",
+        "ide_tool_result",
+        "set_params"
+      ]
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "user_message"
+          }
+        },
+        "required": ["type"]
+      },
+      "then": {
+        "required": ["payload"],
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["content"],
+            "properties": {
+              "content": {
+                "type": "string",
+                "minLength": 1
+              },
+              "attachments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

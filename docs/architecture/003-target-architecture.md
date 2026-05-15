@@ -384,6 +384,7 @@ Each subsystem should be independently buildable and testable.
 
 ### Cross-subsystem contracts
 
+- `packages/contracts` owns the shared JSON Schemas and golden examples for engine HTTP payloads, chat SSE events, and IDE bridge messages.
 - JSON schema or generated TypeScript/Rust/Kotlin types for shared protocol messages where practical.
 - golden contract fixtures for chat commands, SSE events, bridge messages, and capability responses.
 - smoke tests that start engine, load GUI in development mode, and exercise `/v1/ping`, `/v1/caps`, one command, and one SSE event.

@@ -1,0 +1,7 @@
+{
+  "requestId": "req-001",
+  "type": "user_message",
+  "payload": {
+    "content": "Explain the current workspace scaffold."
+  }
+}
