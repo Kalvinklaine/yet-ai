@@ -1,0 +1,47 @@
+{
+  "$schema": "./identity.schema.json",
+  "product": {
+    "displayName": "Yet AI",
+    "id": "yet-ai",
+    "shortName": "Yet",
+    "strategy": "architecture-inspired-rebuild",
+    "description": "Temporary product identity contract for a new Yet AI architecture-inspired independent implementation, not a fork or rename of any external project."
+  },
+  "storage": {
+    "projectDir": ".yet-ai",
+    "configDir": "yet-ai",
+    "cacheDir": "yet-ai"
+  },
+  "engine": {
+    "rustCrate": "yet-lsp",
+    "binaryName": "yet-lsp"
+  },
+  "gui": {
+    "npmPackage": "yet-ai-chat-js"
+  },
+  "vscode": {
+    "publisher": "yet-ai-placeholder",
+    "name": "yet-ai",
+    "displayName": "Yet AI",
+    "configurationPrefix": "yetai",
+    "commandPrefix": "yetaicmd",
+    "activityBarId": "yet-ai-toolbox-pane"
+  },
+  "jetbrains": {
+    "pluginId": "ai.yet.plugin",
+    "pluginGroup": "ai.yet",
+    "pluginName": "Yet AI",
+    "packageNamespace": "ai.yet.plugin"
+  },
+  "urls": {
+    "repository": "https://example.com/yet-ai/repository-placeholder",
+    "documentation": "https://example.com/yet-ai/docs-placeholder",
+    "support": "https://example.com/yet-ai/support-placeholder",
+    "homepage": "https://example.com/yet-ai-placeholder"
+  },
+  "metadata": {
+    "status": "temporary-placeholders",
+    "owner": "product-architecture",
+    "lastReviewed": "2026-05-15"
+  }
+}

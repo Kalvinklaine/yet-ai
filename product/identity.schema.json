@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/yet-ai/product/identity.schema.json",
+  "title": "Yet AI Product Identity",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "product",
+    "storage",
+    "engine",
+    "gui",
+    "vscode",
+    "jetbrains",
+    "urls",
+    "metadata"
+  ],
+  "properties": {
+    "product": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["displayName", "id", "shortName", "strategy", "description"],
+      "properties": {
+        "displayName": { "type": "string", "minLength": 1 },
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+        "shortName": { "type": "string", "minLength": 1 },
+        "strategy": { "type": "string", "enum": ["architecture-inspired-rebuild"] },
+        "description": { "type": "string", "minLength": 1 }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projectDir", "configDir", "cacheDir"],
+      "properties": {
+        "projectDir": { "type": "string", "pattern": "^\\.[a-z][a-z0-9-]*$" },
+        "configDir": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+        "cacheDir": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" }
+      }
+    },
+    "engine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rustCrate", "binaryName"],
+      "properties": {
+        "rustCrate": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+        "binaryName": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" }
+      }
+    },
+    "gui": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["npmPackage"],
+      "properties": {
+        "npmPackage": { "type": "string", "pattern": "^(@[a-z0-9-]+/[a-z0-9-]+|[a-z][a-z0-9-]*)$" }
+      }
+    },
+    "vscode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["publisher", "name", "displayName", "configurationPrefix", "commandPrefix", "activityBarId"],
+      "properties": {
+        "publisher": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "displayName": { "type": "string", "minLength": 1 },
+        "configurationPrefix": { "type": "string", "pattern": "^[a-z][a-z0-9]*$" },
+        "commandPrefix": { "type": "string", "pattern": "^[a-z][a-z0-9]*$" },
+        "activityBarId": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" }
+      }
+    },
+    "jetbrains": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pluginId", "pluginGroup", "pluginName", "packageNamespace"],
+      "properties": {
+        "pluginId": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$" },
+        "pluginGroup": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*$" },
+        "pluginName": { "type": "string", "minLength": 1 },
+        "packageNamespace": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$" }
+      }
+    },
+    "urls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "documentation", "support", "homepage"],
+      "properties": {
+        "repository": { "type": "string", "format": "uri" },
+        "documentation": { "type": "string", "format": "uri" },
+        "support": { "type": "string", "format": "uri" },
+        "homepage": { "type": "string", "format": "uri" }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "owner", "lastReviewed"],
+      "properties": {
+        "status": { "type": "string", "enum": ["temporary-placeholders", "final"] },
+        "owner": { "type": "string", "minLength": 1 },
+        "lastReviewed": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }
+      }
+    }
+  }
+}
