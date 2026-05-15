@@ -9,6 +9,23 @@ Yet AI is a future AI coding assistant for IDEs. The project is an architecture-
 - Temporary identity placeholders are acceptable until final product IDs, publishers, domains, and marketplace metadata are approved.
 - Product-sensitive values should be centralized in `product/identity.json` where practical.
 
+## Scaffold map
+
+The repository now contains the minimal monorepo scaffold for future subsystem work. These directories contain ownership documentation only and do not contain runtime feature code yet.
+
+```text
+apps/
+  engine/              # Future local service: HTTP, SSE, LSP, tools, providers, storage
+  gui/                 # Future React webview and Yet AI design system
+  plugins/
+    vscode/            # Future VS Code extension host and webview bridge
+    jetbrains/         # Future JetBrains plugin host and JCEF bridge
+packages/
+  contracts/           # Future shared schemas, examples, and boundary contracts
+```
+
+Each subsystem README describes current ownership, future commands, dependencies on `product/identity.json` and contracts, and safety rules for later implementation.
+
 ## Verification
 
 Run repository validation from the root before publishing or handing off changes:
