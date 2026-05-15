@@ -25,6 +25,16 @@ docs/
 - `architecture/004-implementation-strategy.md` — implementation strategy comparison and recommendation: architecture-inspired scaffold first, selective reuse later.
 - `architecture/005-publication-hygiene.md` — rules for keeping public tracked files clean before publication.
 
+## Verification
+
+Run the root validation command after documentation or identity changes:
+
+```sh
+npm run check
+```
+
+The command checks product identity, public hygiene, and whether every `docs/architecture/*.md` file is listed in this index.
+
 ## Documentation rules
 
 - Write in Russian or bilingual style when useful; keep technical identifiers in English.

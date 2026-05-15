@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "validate:identity": "node scripts/validate-product-identity.mjs",
+    "validate:hygiene": "node scripts/validate-public-hygiene.mjs",
+    "validate:docs": "node scripts/validate-docs-index.mjs"
+  }
+}

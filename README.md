@@ -9,6 +9,16 @@ Yet AI is a future AI coding assistant for IDEs. The project is an architecture-
 - Temporary identity placeholders are acceptable until final product IDs, publishers, domains, and marketplace metadata are approved.
 - Product-sensitive values should be centralized in `product/identity.json` where practical.
 
+## Verification
+
+Run repository validation from the root before publishing or handing off changes:
+
+```sh
+npm run check
+```
+
+This command validates product identity, public hygiene, and the documentation index.
+
 ## Architecture docs
 
 Start here:
