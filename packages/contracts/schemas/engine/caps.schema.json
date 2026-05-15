@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/caps.schema.json",
+  "title": "Engine Capabilities Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["productId", "protocolVersion", "capabilities", "features", "providers", "ide"],
+  "properties": {
+    "productId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "protocolVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "boolean"
+      }
+    },
+    "providers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "displayName", "enabled", "models"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "displayName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "displayName"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "displayName": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "supportsTools": {
+                  "type": "boolean"
+                },
+                "supportsReasoning": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "ide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bridge", "lsp"],
+      "properties": {
+        "bridge": {
+          "type": "boolean"
+        },
+        "lsp": {
+          "type": "boolean"
+        },
+        "host": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
