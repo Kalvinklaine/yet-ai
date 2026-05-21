@@ -8,6 +8,8 @@ Yet AI is a future AI coding assistant for IDEs. The project is an architecture-
 - Main focus: architecture documentation, product identity, subsystem boundaries, public repository hygiene, and a safe scaffold plan.
 - Temporary identity placeholders are acceptable until final product IDs, publishers, domains, and marketplace metadata are approved.
 - Product-sensitive values should be centralized in `product/identity.json` where practical.
+- Runtime strategy: local-first BYOK. The IDE plugin starts or connects to the local Yet AI runtime on the user's machine; there is no required Yet AI account, hosted backend, managed model gateway, product credit balance, or cloud workspace for core workflows.
+- Model requests go directly from the local runtime to configured hosted providers or local runtimes. Provider settings and credentials remain local, and GUI-facing responses must not include raw secrets.
 
 ## Scaffold map
 
@@ -32,6 +34,12 @@ Run repository validation from the root before publishing or handing off changes
 
 ```sh
 npm run check
+```
+
+Contract examples can be validated separately with:
+
+```sh
+npm run validate:contracts
 ```
 
 This command validates product identity, public hygiene, and the documentation index.

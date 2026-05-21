@@ -23,6 +23,21 @@ Current schemas:
 
 Example payloads live under `examples/` and should stay small, stable, and free of secrets or local paths.
 
+`GET /v1/caps` includes a minimal local runtime signal: `runtime.mode = "local"`, `runtime.cloudRequired = false`, and `runtime.providerAccess = "direct"`. This records the product contract that Yet AI core runs through the local runtime and does not require a hosted Yet AI backend or managed model gateway.
+
+## Future provider endpoints
+
+Provider configuration is an engine-owned, local-first BYOK boundary. Future schemas should cover these endpoints before runtime implementation begins:
+
+- `GET /v1/providers` returns sanitized provider summaries, status, configured/authenticated flags, model counts, capability summaries, and secret placeholders only.
+- `POST /v1/providers` creates a provider configuration with credentials or endpoint settings stored by the local runtime.
+- `PATCH /v1/providers/{id}` updates provider metadata, enabled state, model selections, and replacement credentials without returning raw secrets.
+- `DELETE /v1/providers/{id}` removes a provider configuration and associated local credential material where possible.
+- `POST /v1/providers/{id}/test` checks provider reachability and authentication from the local runtime and returns sanitized status/errors.
+- `GET /v1/models` returns normalized model summaries from configured providers and local capability metadata.
+
+Provider response examples must not include API keys, OAuth refresh tokens, environment secrets, or private local paths. GUI clients may submit secrets for save/test actions but must not persist them after the request.
+
 ## Versioning
 
 Schemas use JSON Schema draft 2020-12. The initial protocol version is represented as a string in protocol payloads, for example `2026-05-15`.
@@ -33,10 +48,15 @@ Schemas are intentionally minimal and will evolve as implementation starts. Chan
 
 ## Future commands
 
-These commands are not available until contract tooling exists:
+These commands are available from the repository root:
 
 ```sh
 npm run validate:contracts
+```
+
+These commands are not available until generation and package-specific tests exist:
+
+```sh
 npm run generate:contracts
 npm run test:contracts
 ```
@@ -45,7 +65,6 @@ Repository-level validation is currently available from the root:
 
 ```sh
 npm run check
-find packages/contracts -name '*.json' -print0 | xargs -0 -n1 python3 -m json.tool >/dev/null
 ```
 
 ## Dependencies

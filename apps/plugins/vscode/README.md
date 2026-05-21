@@ -6,6 +6,8 @@
 
 The plugin should stay thin. Chat runtime, provider configuration, tool policy, storage, and indexing belong to the engine. UI state and design belong to the GUI.
 
+The plugin starts or connects to the local Yet AI runtime and hosts the GUI for local-first BYOK workflows. It must not require a Yet AI cloud workspace for normal operation and must not duplicate provider adapters, provider credentials, or model gateway logic.
+
 ## Current status
 
 Scaffold only. There is no extension manifest, TypeScript source, activation code, packaged webview, engine launcher, or runtime implementation in this directory yet.

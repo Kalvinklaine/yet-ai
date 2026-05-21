@@ -4,7 +4,7 @@
   "title": "Engine Capabilities Response",
   "type": "object",
   "additionalProperties": false,
-  "required": ["productId", "protocolVersion", "capabilities", "features", "providers", "ide"],
+  "required": ["productId", "protocolVersion", "runtime", "capabilities", "features", "providers", "ide"],
   "properties": {
     "productId": {
       "type": "string",
@@ -13,6 +13,25 @@
     "protocolVersion": {
       "type": "string",
       "minLength": 1
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "cloudRequired", "providerAccess"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["local"]
+        },
+        "cloudRequired": {
+          "type": "boolean",
+          "const": false
+        },
+        "providerAccess": {
+          "type": "string",
+          "enum": ["direct"]
+        }
+      }
     },
     "capabilities": {
       "type": "array",

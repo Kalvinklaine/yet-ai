@@ -3,7 +3,8 @@ import { spawnSync } from "node:child_process";
 const validators = [
   "scripts/validate-product-identity.mjs",
   "scripts/validate-public-hygiene.mjs",
-  "scripts/validate-docs-index.mjs"
+  "scripts/validate-docs-index.mjs",
+  "scripts/validate-contracts.mjs"
 ];
 
 for (const validator of validators) {

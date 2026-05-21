@@ -6,7 +6,7 @@ Yet AI should use external architecture references as guidance, not as a fork. T
 
 The earlier architecture package established these constraints:
 
-- External reference implementations demonstrate useful subsystem boundaries: local engine, webview GUI, VS Code plugin, JetBrains plugin, HTTP/SSE chat contracts, optional LSP integration, provider/tool registries, and local storage.
+- External reference implementations demonstrate useful subsystem boundaries: local engine, webview GUI, VS Code plugin, JetBrains plugin, HTTP/SSE chat contracts, optional LSP integration, provider/tool registries, local storage, and local-first BYOK operation.
 - Yet AI has its own identity in `product/identity.json`: `Yet AI`, `yet-ai`, `yet-lsp`, `yet-ai-chat-js`, `.yet-ai`, `yetai`, and `ai.yet.plugin` placeholders.
 - The target architecture prioritizes a new UI and design system, isolated storage, independent plugin IDs, and explicit runtime contracts.
 - A broad copy-and-rename would preserve hidden coupling across storage, package metadata, UI wording, marketplace identity, update paths, and legal attribution surfaces.
@@ -99,6 +99,10 @@ The hybrid path starts with the clean scaffold and permits selective copying or 
 
 Use an architecture-inspired clean scaffold as the default path, with a controlled hybrid option for selective module reuse later. Yet AI should not start as a full fork or full copy of any external project.
 
+The implementation path is local-first BYOK. Core workflows must run through the local runtime started or reached by the IDE plugin, without requiring a Yet AI account, hosted Yet AI backend, managed model gateway, product credit balance, or cloud workspace. The local runtime owns provider adapters, stores credentials locally, and sends requests directly to configured hosted providers or local model runtimes.
+
+Future Yet AI cloud services are allowed only as optional extensions, such as an optional provider, integration, update channel, synchronization feature, or control-plane service. They must be separable from core chat, completion, agent, provider setup, local project storage, and IDE GUI workflows.
+
 This path balances product differentiation and practical delivery:
 
 - It honors the goal that Yet AI is independent.
@@ -129,6 +133,7 @@ Good early candidates for possible later reuse are low-level, non-visual logic w
 - Keep external reference material out of production packages unless a specific implementation card approves a copy.
 - Prefer writing thin contracts and tests before adding complex behavior.
 - Use `product/identity.json` to validate names, package IDs, storage roots, and plugin metadata.
+- Preserve local-first BYOK boundaries: provider adapters and credentials belong to the local runtime, GUI renders sanitized setup/status, and plugins launch or connect to the runtime without duplicating provider logic.
 - Keep vendor/reference material out of build outputs and product archives by default.
 - Keep public tracked files free of external project identifiers; private comparison notes belong only in ignored local files.
 - When in doubt, preserve the architecture pattern and rewrite the implementation in Yet AI style.

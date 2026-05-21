@@ -7,6 +7,8 @@ Yet AI is an architecture-inspired independent implementation of an AI coding as
 - Do not perform broad product renames unless a task explicitly asks for one.
 - Do not copy large code blocks from external reference implementations without explicit approval in the task.
 - Keep product-sensitive values centralized in `product/identity.json` where practical: names, IDs, package names, binary names, storage dirs, marketplace metadata, URLs, and publishers.
+- Preserve the local-first BYOK contract: core Yet AI workflows must not require a hosted Yet AI backend, account, managed model gateway, product credit balance, or cloud workspace.
+- Keep provider settings and credentials local-only. Raw provider secrets must not be persisted by GUI code or returned through GUI-facing responses after save.
 - Temporary identity placeholders are acceptable until final product IDs, publishers, domains, support links, and marketplace accounts are finalized.
 - If external code or assets are copied later, check license and attribution requirements first, then preserve required notices and provenance intentionally.
 - Keep public tracked files free of external project identifiers. Use ignored local-only files for private reference notes, such as `AGENTS.local.md`, `.local/`, or `.agent-local/`.
@@ -19,10 +21,10 @@ Yet AI is an architecture-inspired independent implementation of an AI coding as
 
 Long-term project boundaries are described in `docs/architecture/003-target-architecture.md`. Do not create implementation before it is needed, but preserve these ownership boundaries:
 
-- `engine`: local service / LSP / HTTP / SSE / tools / providers / storage.
-- `GUI`: React webview, new Yet AI UI/design system, typed engine and IDE bridge clients.
-- `VS Code plugin`: extension manifest, engine launcher, webview host, postMessage bridge, optional LSP client.
-- `JetBrains plugin`: plugin metadata, engine launcher, JCEF webview host, bridge, optional LSP client.
+- `engine`: local runtime authority for provider adapters, direct configured provider/local-runtime calls, credentials, LSP / HTTP / SSE / tools / storage.
+- `GUI`: React webview, new Yet AI UI/design system, typed engine and IDE bridge clients; renders provider setup/status but does not persist raw provider secrets.
+- `VS Code plugin`: extension manifest, local runtime launcher/connector, webview host, postMessage bridge, optional LSP client; does not duplicate provider adapters.
+- `JetBrains plugin`: plugin metadata, local runtime launcher/connector, JCEF webview host, bridge, optional LSP client; does not duplicate provider adapters.
 - `product identity`: `product/identity.json` and its schema/docs.
 - `scripts`: validation, generation, build/package helpers; no hidden app logic.
 

@@ -6,6 +6,8 @@
 
 The GUI should present chat, settings, onboarding, provider setup, tool confirmations, and later task or knowledge surfaces. It must remain a client of engine and bridge contracts rather than owning provider secrets, direct filesystem mutation, shell execution, or indexing.
 
+Provider setup UI should render sanitized provider status, model summaries, validation results, and configured/authenticated indicators returned by the local runtime. It may collect a secret for a save/test action, but it must not persist raw provider secrets in GUI state or storage and must not call hosted providers or local runtimes directly.
+
 ## Current status
 
 Scaffold only. There is no React application, package manifest, bundled UI, design system, or runtime implementation in this directory yet.
