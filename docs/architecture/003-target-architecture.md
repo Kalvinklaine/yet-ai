@@ -322,54 +322,55 @@ flowchart TD
 
 ## Phased roadmap
 
-### 1. Architecture docs and identity
+The approved near-term implementation sequence is local-first and incremental. Runtime, provider, GUI, and plugin work should proceed in this order so credentials, direct provider calls, and host responsibilities are defined before privileged flows are added.
 
-- Finish baseline, identity, target architecture, and import strategy documents.
-- Keep `product/identity.json` as temporary but explicit.
-- Decide initial subsystem names and minimum contracts.
-- No code import is required in this phase.
+### 1. Local runtime skeleton
 
-### 2. Minimal scaffold
+- Create the minimal local engine process only when buildable code is needed.
+- Implement health and capability contracts such as `/v1/ping` and `/v1/caps`.
+- Establish local storage roots, loopback binding, session authentication shape, and no-cloud-required capability signals.
+- Keep provider execution as placeholders until provider storage and redaction boundaries exist.
 
-- Add minimal `apps/engine`, `apps/gui`, and plugin placeholder directories only as needed.
-- Add root scripts for validation and subsystem command discovery.
-- Add README files that explain ownership and build commands.
-- Keep scaffolds buildable but intentionally small.
+### 2. Provider registry, configuration, and secret redaction
 
-### 3. Build baseline
+- Define local provider configuration storage owned by the engine.
+- Add sanitized provider status responses, secret placeholders, and save/test request contracts.
+- Ensure raw provider credentials stay local and are not returned to GUI-facing clients after save.
+- Keep GUI and plugins out of provider adapter implementation and credential persistence.
 
-- Engine: health endpoint, capability endpoint, command endpoint stub, SSE stream stub, config path resolver.
-- GUI: new UI shell, engine health display, bridge adapter, typed API client, basic chat view.
-- Plugins: development launch path that can host GUI and point to a local engine.
-- CI: run independent checks for each existing subsystem.
+### 3. OpenAI-compatible direct provider adapter and streaming
 
-### 4. Config and storage isolation
+- Implement the first direct BYOK provider path for OpenAI-compatible hosted providers and local gateways.
+- Stream model output through the local runtime chat/SSE contract.
+- Preserve the no-required-cloud contract for core chat and provider execution.
+- Add focused contract and runtime tests for streaming and sanitized provider errors.
 
-- Implement `.yet-ai`, user config, and user cache resolution.
-- Add validation that no external reference storage paths are used by Yet AI packages.
-- Define provider secret storage and project-state file layout.
-- Document migration and cleanup rules before any user data is persisted.
+### 4. GUI local provider setup and runtime client
 
-### 5. Minimal IDE plugin shell
+- Build the GUI runtime client against the local engine contracts.
+- Add provider setup/status flows that submit secrets only for save/test and discard raw values after requests.
+- Render sanitized provider availability, validation errors, and model summaries from engine responses.
+- Keep the UI visually independent and avoid storing provider secrets in GUI state or browser storage.
 
-- VS Code: package metadata, command namespace, webview shell, engine launch/debug connection, bridge messages.
-- JetBrains: plugin ID, package namespace, tool window shell, engine launch/debug connection, bridge messages.
-- Add optional LSP connection only when completion/code-lens work starts.
-- Verify plugins can run against the same engine contract.
+### 5. VS Code local runtime host
 
-### 6. New GUI design system
+- Add the VS Code host that launches or connects to the local runtime.
+- Host the packaged GUI webview and pass the local session token through the approved bridge flow.
+- Implement bridge messages needed for safe context and basic host actions before privileged IDE/tool flows.
+- Avoid duplicating provider adapters, chat runtime, or credential persistence in the extension.
 
-- Define Yet AI visual direction, component primitives, typography, spacing, colors, and motion.
-- Build chat, settings, provider setup, and confirmation flows with new UI patterns.
-- Avoid direct external reference layout and copy unless intentionally rewritten.
-- Add visual and component tests once the design system stabilizes.
+### 6. JetBrains local runtime host
 
-### 7. Engine feature increments
+- Add the JetBrains host that launches or connects to the local runtime.
+- Host the packaged GUI through JCEF and implement the same logical bridge contract.
+- Reuse the local runtime and provider contracts rather than adding JetBrains-specific provider behavior.
+- Add optional LSP only when completion/code-lens work starts.
 
-- Add real provider adapters and model capability resolution.
-- Add chat runtime, streaming LLM integration, tool calls, and confirmations.
-- Add file context, search, edit, shell, and IDE tool execution in small policy-reviewed increments.
-- Add indexing, knowledge, tasks, checkpoints, and integrations only after core chat and plugin shells are stable.
+### Follow-up contract hardening before privileged flows
+
+- Bridge payload schemas must be made strict for each privileged GUI/plugin message before file edits, IDE tool execution, workspace mutation, shell-like behavior, or host-authorized tool result flows are implemented.
+- Non-`user_message` chat command payload schemas such as tool decisions, IDE tool results, parameter changes, message updates, removals, aborts, and regeneration must be made strict before those commands can trigger privileged engine behavior.
+- Receiver-side schema validation, request correlation, origin/source checks where available, and engine policy checks must be implemented before privileged GUI, plugin, or tool flows are enabled.
 
 ## Independent build and test strategy
 
