@@ -140,15 +140,16 @@ Good early candidates for possible later reuse are low-level, non-visual logic w
 
 ## Next implementation cards
 
-After this architecture package, create implementation cards in this order:
+Approved local-first implementation work should proceed in this order:
 
-1. **Minimal monorepo scaffold**: add the initial `apps/engine`, `apps/gui`, `apps/plugins/vscode`, `apps/plugins/jetbrains`, and `scripts` structure with README ownership notes and no unnecessary feature code.
-2. **CI/build commands**: define root-level validation commands that discover existing subsystem checks and keep empty scaffolds passing.
-3. **Product identity validation script**: validate `product/identity.json` and check new manifests/config files for required Yet AI identity values and forbidden external identifiers.
-4. **Config/storage isolation implementation**: implement `.yet-ai`, user config `yet-ai`, and user cache `yet-ai` path resolution with tests and no automatic external data import.
-5. **VS Code shell**: create a private-build VS Code extension shell with Yet AI manifest fields, command/config prefixes, webview placeholder, and debug engine connection settings.
-6. **JetBrains shell**: create a private-build JetBrains plugin shell with Yet AI plugin ID/package namespace, tool window placeholder, settings placeholder, and debug engine connection settings.
-7. **GUI design system start**: create the first Yet AI GUI package with a new visual direction, component primitives, app shell, browser dev mode, and typed host bridge placeholder.
+1. **Local runtime skeleton**: create the minimal local engine process with health/capability contracts, local storage roots, and no provider execution beyond placeholders.
+2. **Provider registry, configuration, and secret redaction**: define local provider configuration storage, sanitized provider status responses, and secret-handling boundaries so raw credentials stay local and are never returned to GUI-facing clients after save.
+3. **OpenAI-compatible direct provider adapter and streaming**: implement the first direct BYOK provider path for OpenAI-compatible hosted providers and local gateways, including streaming through the local runtime contract.
+4. **GUI local provider setup and runtime client**: add GUI flows for connecting to the local runtime, rendering sanitized provider setup/status, submitting credentials for save/test, and discarding raw secrets after requests.
+5. **VS Code local runtime host**: add the VS Code host that launches or connects to the local runtime, serves the webview bridge, and avoids duplicating provider adapters or credential persistence.
+6. **JetBrains local runtime host**: add the JetBrains host that launches or connects to the local runtime, serves the JCEF bridge, and avoids duplicating provider adapters or credential persistence.
+
+Each card should keep the no-required-cloud contract intact: core chat, completion, agent, provider setup, local project storage, and IDE GUI workflows must work through the local runtime without a required hosted Yet AI backend, account, managed model gateway, product credit balance, or cloud workspace.
 
 ## Current decision
 

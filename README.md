@@ -30,19 +30,33 @@ Each subsystem README describes current ownership, future commands, dependencies
 
 ## Verification
 
+Install root development dependencies in a fresh checkout before running validation:
+
+```sh
+npm ci
+```
+
+If a lockfile-compatible install is not available in your local workflow, use:
+
+```sh
+npm install
+```
+
 Run repository validation from the root before publishing or handing off changes:
 
 ```sh
 npm run check
 ```
 
-Contract examples can be validated separately with:
+`npm run check` validates product identity, public repository hygiene, the documentation index, and contract schemas/examples.
+
+Contract schemas and examples can be validated separately with:
 
 ```sh
 npm run validate:contracts
 ```
 
-This command validates product identity, public hygiene, and the documentation index.
+`npm run validate:contracts` validates contract schemas/examples only, including mapped examples and product identity fields embedded in contract examples.
 
 ## Architecture docs
 

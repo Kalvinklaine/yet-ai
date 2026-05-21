@@ -54,6 +54,8 @@ These commands are available from the repository root:
 npm run validate:contracts
 ```
 
+Contract validation recursively discovers every schema under `schemas/**/*.json` and every example under `examples/**/*.json`. Every example must have an explicit example-to-schema mapping unless it is intentionally allowlisted in the validator with a clear reason. Examples that include product identity fields must match `product/identity.json`.
+
 These commands are not available until generation and package-specific tests exist:
 
 ```sh
