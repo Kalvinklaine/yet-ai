@@ -54,7 +54,7 @@ These commands are available from the repository root:
 npm run validate:contracts
 ```
 
-Contract validation recursively discovers every schema under `schemas/**/*.json` and every example under `examples/**/*.json`. Every example must have an explicit example-to-schema mapping unless it is intentionally allowlisted in the validator with a clear reason. Examples that include product identity fields must match `product/identity.json`.
+Contract validation recursively discovers every schema under `schemas/**/*.json` and every example under `examples/**/*.json`. Discovered paths and configured mappings are normalized to POSIX-style `/` separators so mappings stay portable across platforms. Every discovered schema is compiled with AJV in strict mode, even if no example currently maps to it. Every example must have an explicit example-to-schema mapping unless it is intentionally allowlisted in the validator with a clear reason. Examples that include product identity fields must match `product/identity.json`.
 
 These commands are not available until generation and package-specific tests exist:
 
@@ -78,6 +78,8 @@ npm run check
 ## Security expectations
 
 - Every privileged bridge message must be schema-validated and policy-checked by future implementations before it can trigger file edits, IDE tool execution, shell-like behavior, workspace mutation, or privileged host actions.
+- Bridge payload schemas for privileged GUI/plugin messages must be strict before those privileged flows are implemented.
+- Non-`user_message` chat command payload schemas must be strict before tool decisions, IDE tool results, parameter changes, message mutation, abort, or regeneration flows can trigger privileged engine behavior.
 - Receivers should validate every engine HTTP request, engine HTTP response, SSE event, and bridge message at subsystem boundaries.
 - Bridge receivers must verify host/source/origin where the platform supports it and correlate request-response messages with outstanding requests.
 - Safe UI messages such as theme and active file updates must remain conceptually separate from privileged requests such as workspace edits and IDE tool execution.

@@ -3,6 +3,10 @@ import { join } from "node:path";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 
+function normalizeContractPath(path) {
+  return path.replace(/\\/g, "/");
+}
+
 const mappings = [
   ["packages/contracts/examples/engine/ping-response.json", "packages/contracts/schemas/engine/ping.schema.json"],
   ["packages/contracts/examples/engine/caps-response.json", "packages/contracts/schemas/engine/caps.schema.json"],
@@ -10,9 +14,9 @@ const mappings = [
   ["packages/contracts/examples/engine/snapshot-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
   ["packages/contracts/examples/bridge/host-ready-message.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-ready-message.json", "packages/contracts/schemas/bridge/gui-message.schema.json"]
-];
+].map(([examplePath, schemaPath]) => [normalizeContractPath(examplePath), normalizeContractPath(schemaPath)]);
 
-const allowlistedUnmappedExamples = [];
+const allowlistedUnmappedExamples = [].map(normalizeContractPath);
 
 const identityChecks = [
   {
@@ -30,7 +34,7 @@ const identityChecks = [
     field: "productId",
     identityPath: "product.id"
   }
-];
+].map((check) => ({ ...check, examplePath: normalizeContractPath(check.examplePath) }));
 
 async function discoverJsonFiles(root) {
   const entries = await readdir(root, { withFileTypes: true });
@@ -40,7 +44,7 @@ async function discoverJsonFiles(root) {
       if (entry.isDirectory()) {
         return discoverJsonFiles(path);
       }
-      return entry.isFile() && entry.name.endsWith(".json") ? [path] : [];
+      return entry.isFile() && entry.name.endsWith(".json") ? [normalizeContractPath(path)] : [];
     })
   );
 
@@ -69,12 +73,14 @@ function getIdentityValue(identity, identityPath) {
 }
 
 function collectMappingCoverageFailures(exampleFiles, schemaFiles) {
+  const discoveredExamples = new Set(exampleFiles.map(normalizeContractPath));
+  const discoveredSchemas = new Set(schemaFiles.map(normalizeContractPath));
   const mappedExamples = new Set(mappings.map(([examplePath]) => examplePath));
   const mappedSchemas = new Set(mappings.map(([, schemaPath]) => schemaPath));
   const allowlistedExamples = new Set(allowlistedUnmappedExamples);
   const failures = [];
 
-  for (const examplePath of exampleFiles) {
+  for (const examplePath of discoveredExamples) {
     if (!mappedExamples.has(examplePath) && !allowlistedExamples.has(examplePath)) {
       failures.push(
         `${examplePath}: unmapped contract example; add an explicit example→schema mapping or an allowlist entry with a clear reason`
@@ -82,24 +88,21 @@ function collectMappingCoverageFailures(exampleFiles, schemaFiles) {
     }
   }
 
-  for (const [examplePath, schemaPath] of mappings) {
-    if (!exampleFiles.includes(examplePath)) {
+  for (const examplePath of mappedExamples) {
+    if (!discoveredExamples.has(examplePath)) {
       failures.push(`${examplePath}: mapped example file was not discovered`);
     }
-    if (!schemaFiles.includes(schemaPath)) {
+  }
+
+  for (const schemaPath of mappedSchemas) {
+    if (!discoveredSchemas.has(schemaPath)) {
       failures.push(`${schemaPath}: mapped schema file was not discovered`);
     }
   }
 
   for (const examplePath of allowlistedExamples) {
-    if (!exampleFiles.includes(examplePath)) {
+    if (!discoveredExamples.has(examplePath)) {
       failures.push(`${examplePath}: allowlisted unmapped example file was not discovered`);
-    }
-  }
-
-  for (const schemaPath of mappedSchemas) {
-    if (!schemaFiles.includes(schemaPath)) {
-      failures.push(`${schemaPath}: mapped schema file was not discovered`);
     }
   }
 
@@ -110,6 +113,7 @@ const ajv = new Ajv({ allErrors: true, strict: true });
 addFormats(ajv);
 
 const failures = [];
+const compiledSchemas = new Map();
 const parsedExamples = new Map();
 
 let schemaFiles = [];
@@ -140,9 +144,10 @@ if (schemaFiles.length > 0 && exampleFiles.length > 0) {
 
 for (const schemaPath of schemaFiles) {
   try {
-    await readJson(schemaPath);
+    const schema = await readJson(schemaPath);
+    compiledSchemas.set(schemaPath, ajv.compile(schema));
   } catch (error) {
-    failures.push(error.message);
+    failures.push(`${schemaPath}: schema compilation failure (${error.message})`);
   }
 }
 
@@ -156,9 +161,12 @@ for (const examplePath of exampleFiles) {
 
 for (const [examplePath, schemaPath] of mappings) {
   try {
-    const schema = await readJson(schemaPath);
-    const example = parsedExamples.get(examplePath) ?? (await readJson(examplePath));
-    const validate = ajv.compile(schema);
+    const validate = compiledSchemas.get(schemaPath);
+    const example = parsedExamples.get(examplePath);
+
+    if (validate === undefined || example === undefined) {
+      continue;
+    }
 
     if (!validate(example)) {
       const details = ajv.errorsText(validate.errors, { separator: "\n  " });
