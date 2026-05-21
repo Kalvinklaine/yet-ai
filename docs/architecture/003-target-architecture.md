@@ -7,6 +7,8 @@ This document defines the target architecture and implementation roadmap. It sho
 ## Architecture principles
 
 - Keep a local engine process as the stable runtime boundary for chat, tools, providers, indexing, storage, and IDE-facing services.
+- Treat Yet AI as local-first BYOK: the IDE plugin starts or connects to a local runtime on the user's machine, and core chat, completion, agent, settings, and project workflows must not require a hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, or cloud workspace.
+- Send model and embedding requests directly from the local runtime to configured hosted providers or local runtimes. Yet AI does not proxy normal provider traffic through a required product cloud.
 - Keep IDE plugins thin: they should start or connect to the engine, host the webview, bridge IDE events, and expose native editor integrations.
 - Build a new UI and design system for Yet AI instead of recreating the external reference project's screens, navigation, typography, copy, or visual hierarchy.
 - Use `product/identity.json` as the product identity source for names, IDs, directories, binary names, package names, and marketplace metadata.
@@ -43,17 +45,20 @@ Alternative names such as `packages/gui`, `crates/engine`, or top-level `plugins
 
 ### `apps/engine`
 
-The engine is the local Yet AI service. It should eventually own:
+The engine is the local Yet AI runtime. It is not a required cloud backend and should eventually own:
 
 - HTTP API under a versioned prefix such as `/v1`.
 - chat command handling and SSE streaming state.
 - LSP server capabilities for editor completion, code lens, diagnostics-like notifications, and active document context if selected.
 - provider configuration, model capability discovery, OAuth/token storage where needed, and provider adapters.
+- direct calls to configured hosted providers and local runtimes, with no required Yet AI managed model gateway.
 - tool registry and tool execution policy, including confirmation boundaries.
 - project, cache, and user config resolution based on `product/identity.json`.
 - local indexes, trajectories, tasks, knowledge, logs, and integration state.
 
 Initial implementation can be much smaller: `/v1/ping`, `/v1/caps`, one chat command endpoint, one SSE stream, and static provider placeholders are enough for a minimal baseline.
+
+Provider settings and credentials are local runtime state. The engine may store secrets in OS credential storage or protected user config, but raw secrets must not be returned to GUI-facing responses after save.
 
 ### `apps/gui`
 
@@ -66,6 +71,8 @@ The GUI is the webview app packaged into IDE hosts and optionally served standal
 - an IDE bridge adapter for VS Code, JetBrains, and browser development mode.
 
 The GUI should not own provider secrets, filesystem mutation, shell execution, or long-running indexes. Those remain engine responsibilities.
+
+Provider setup screens should render provider availability, status, model summaries, validation errors, and secret placeholders returned by the engine. They must not persist raw provider secrets in GUI storage and must not call model providers directly.
 
 ### `apps/plugins/vscode`
 
@@ -80,6 +87,8 @@ The VS Code plugin should own:
 
 It should avoid duplicating chat state or provider configuration beyond native IDE settings needed to locate and launch the engine.
 
+It must not implement provider adapters or require a Yet AI cloud workspace for normal operation.
+
 ### `apps/plugins/jetbrains`
 
 The JetBrains plugin should own:
@@ -92,6 +101,8 @@ The JetBrains plugin should own:
 - action IDs, settings IDs, notification groups, package namespace, and plugin ID based on Yet AI identity values.
 
 It should keep platform-specific services separate from engine-owned AI behavior.
+
+It must not implement provider adapters or require a Yet AI cloud workspace for normal operation.
 
 ### `product/`
 
@@ -120,14 +131,21 @@ Scripts should start small and should not become hidden application logic.
 The engine should expose a versioned local HTTP API. Initial target endpoints:
 
 - `GET /v1/ping` returns health, version, product ID, and engine readiness.
-- `GET /v1/caps` returns supported engine capabilities, enabled features, provider/model summaries, and IDE integration flags.
+- `GET /v1/caps` returns supported engine capabilities, local runtime mode, no-cloud-required signal, direct provider access signal, enabled features, provider/model summaries, and IDE integration flags.
 - `GET /v1/config` and `POST /v1/config` expose safe user-editable settings after the storage model exists.
-- `GET /v1/providers` and provider-specific update endpoints manage provider availability without exposing secrets to the GUI.
+- `GET /v1/providers` returns provider summaries, status, configured/authenticated flags, model counts, capability summaries, and secret placeholders without exposing raw secrets to the GUI.
+- `POST /v1/providers` creates a provider configuration with local-only credentials or endpoint settings.
+- `PATCH /v1/providers/{id}` updates provider metadata, enabled state, model selections, and replacement credentials without returning raw secrets.
+- `DELETE /v1/providers/{id}` removes a provider configuration and associated local credential material where possible.
+- `POST /v1/providers/{id}/test` checks provider reachability and authentication from the local runtime and returns sanitized status/errors.
+- `GET /v1/models` returns normalized model summaries from configured providers and local capability metadata.
 - `GET /v1/tools` exposes tool metadata, confirmation requirements, and availability.
 - `POST /v1/chats/{chat_id}/commands` accepts chat commands.
 - `GET /v1/chats/subscribe?chat_id={chat_id}` streams chat state over SSE.
 
 Later increments can add integration, indexing, task, knowledge, checkpoint, and trajectory endpoints. Endpoint names should be designed for Yet AI, not copied blindly.
+
+Future Yet AI backend or cloud services are optional extensions only. If added, they must be modeled as optional providers, integrations, update/control-plane features, or account-assisted services. They must not become a required dependency for core local chat, completion, agent, provider configuration, project storage, or IDE-hosted GUI workflows.
 
 ### Local API security model
 
@@ -269,8 +287,10 @@ Providers and integrations are engine-owned capabilities exposed through HTTP me
 Provider boundary:
 
 - GUI renders setup and status but does not call model providers directly.
-- Engine stores credentials, resolves model capabilities, applies defaults, and normalizes provider APIs.
-- Plugins do not know provider-specific details except for native authentication flows if explicitly required.
+- GUI does not persist raw provider secrets. It may submit a secret once for save/test flows, then only render sanitized configured/authenticated state and replacement controls.
+- Engine stores credentials locally, resolves model capabilities, applies defaults, normalizes provider APIs, and calls configured hosted providers or local runtimes directly.
+- Plugins do not know provider-specific details except for native authentication flows if explicitly required, and they do not duplicate provider adapters.
+- A future Yet AI backend can appear only as an optional provider, integration, or control-plane extension; it is not part of the core provider path.
 
 Integration boundary:
 
@@ -294,7 +314,8 @@ flowchart TD
     GUI <-->|postMessage bridge| VSC
     GUI <-->|logical postMessage bridge| JB
     Engine --> Storage[.yet-ai, config/yet-ai, cache/yet-ai]
-    Engine --> Providers[LLM providers]
+    Engine --> Providers[Configured hosted providers]
+    Engine --> LocalModels[Local model runtimes]
     Engine --> Tools[Tool registry and confirmations]
     Engine --> Integrations[IDE, Git, shell, MCP, browser, services]
 ```

@@ -6,6 +6,8 @@
 
 The engine is the only subsystem that should eventually resolve project, config, and cache paths from `product/identity.json`. It should enforce tool authorization and confirmation policy even when requests come from GUI or IDE hosts.
 
+The engine is the local-first BYOK runtime, not a required cloud backend. It should own provider adapters, local credential storage, model capability resolution, and direct requests to configured hosted providers or local model runtimes. Core workflows must not require a Yet AI account, managed model gateway, product credit balance, or cloud workspace.
+
 ## Current status
 
 Scaffold only. There is no Rust crate, no service process, no HTTP server, no LSP server, and no runtime implementation in this directory yet.

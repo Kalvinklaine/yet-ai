@@ -6,6 +6,8 @@
 
 The plugin should stay thin. Engine-owned AI behavior, provider configuration, storage, tool policy, and indexing must not be duplicated in platform services. GUI-owned design and UI state should remain in the packaged webview.
 
+The plugin starts or connects to the local Yet AI runtime and hosts the GUI for local-first BYOK workflows. It must not require a Yet AI cloud workspace for normal operation and must not duplicate provider adapters, provider credentials, or model gateway logic.
+
 ## Current status
 
 Scaffold only. There is no Gradle project, plugin descriptor, Kotlin source, JCEF host, engine launcher, or runtime implementation in this directory yet.

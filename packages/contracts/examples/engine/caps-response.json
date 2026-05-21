@@ -1,6 +1,11 @@
 {
   "productId": "yet-ai",
   "protocolVersion": "2026-05-15",
+  "runtime": {
+    "mode": "local",
+    "cloudRequired": false,
+    "providerAccess": "direct"
+  },
   "capabilities": ["chat", "sse", "bridge"],
   "features": {
     "tools": false,
