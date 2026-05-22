@@ -1,0 +1,9 @@
+{
+  "models": [
+    {
+      "id": "gpt-local",
+      "displayName": "GPT Local",
+      "providerId": "openai-local"
+    }
+  ]
+}

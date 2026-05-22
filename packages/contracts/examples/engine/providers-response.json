@@ -1,0 +1,24 @@
+{
+  "providers": [
+    {
+      "id": "openai-local",
+      "kind": "openai-compatible",
+      "displayName": "Local OpenAI-Compatible Provider",
+      "enabled": true,
+      "baseUrl": "http://127.0.0.1:8080/v1",
+      "auth": {
+        "type": "api_key",
+        "configured": true,
+        "redacted": "sk-...abcd"
+      },
+      "models": [],
+      "capabilities": {
+        "chat": true,
+        "completion": false,
+        "embeddings": false
+      }
+    }
+  ],
+  "cloudRequired": false,
+  "providerAccess": "direct"
+}

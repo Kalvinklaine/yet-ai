@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/provider.schema.json",
+  "title": "Engine Provider Summary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "kind", "displayName", "enabled", "baseUrl", "auth", "models", "capabilities"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["openai-compatible", "ollama", "custom"]
+    },
+    "displayName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "baseUrl": {
+      "type": "string",
+      "minLength": 1
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "configured"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["none", "api_key"]
+        },
+        "configured": {
+          "type": "boolean"
+        },
+        "redacted": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "models": {
+      "type": "array",
+      "items": {
+        "$ref": "./models.schema.json#/$defs/model"
+      }
+    },
+    "capabilities": {
+      "$ref": "#/$defs/providerCapabilities"
+    }
+  },
+  "$defs": {
+    "providerCapabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chat", "completion", "embeddings"],
+      "properties": {
+        "chat": {
+          "type": "boolean"
+        },
+        "completion": {
+          "type": "boolean"
+        },
+        "embeddings": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

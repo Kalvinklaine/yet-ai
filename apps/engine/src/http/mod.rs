@@ -23,7 +23,12 @@ pub fn router(state: AppState) -> Router {
             Router::new()
                 .route("/ping", get(ping))
                 .route("/caps", get(caps))
-                .route("/providers", get(providers_list))
+                .route("/providers", get(providers_list).post(providers_create))
+                .route(
+                    "/providers/:provider_id",
+                    get(providers_get).patch(providers_update).delete(providers_delete),
+                )
+                .route("/providers/:provider_id/test", post(providers_test))
                 .route("/models", get(models_list))
                 .route("/chats/:chat_id/commands", post(chat_command))
                 .route("/chats/subscribe", get(chats_subscribe)),
@@ -103,7 +108,11 @@ pub struct IdeCaps {
     pub host: String,
 }
 
-async fn caps(_auth: Authenticated, State(state): State<AppState>) -> Json<CapsResponse> {
+async fn caps(_auth: Authenticated, State(state): State<AppState>) -> Response {
+    let provider_list = match providers::list_provider_configs(&state.storage_paths.config_dir).await {
+        Ok(providers) => providers,
+        Err(error) => return provider_error(error),
+    };
     Json(CapsResponse {
         product_id: state.identity.product.id,
         protocol_version: "2026-05-15".to_string(),
@@ -123,21 +132,110 @@ async fn caps(_auth: Authenticated, State(state): State<AppState>) -> Json<CapsR
             tasks: false,
             knowledge: false,
         },
-        providers: Vec::new(),
+        providers: provider_list
+            .into_iter()
+            .map(|provider| ProviderCaps {
+                id: provider.id,
+                display_name: provider.display_name,
+                enabled: provider.enabled,
+                models: provider
+                    .models
+                    .into_iter()
+                    .map(|model| ProviderModelCaps {
+                        id: model.id,
+                        display_name: model.display_name,
+                    })
+                    .collect(),
+            })
+            .collect(),
         ide: IdeCaps {
             bridge: true,
             lsp: false,
             host: "local".to_string(),
         },
     })
+    .into_response()
 }
 
-async fn providers_list(_auth: Authenticated) -> Json<providers::ProviderRegistrySummary> {
-    Json(providers::empty_registry())
+async fn providers_list(_auth: Authenticated, State(state): State<AppState>) -> Response {
+    match providers::registry(&state.storage_paths.config_dir).await {
+        Ok(registry) => Json(registry).into_response(),
+        Err(error) => provider_error(error),
+    }
 }
 
-async fn models_list(_auth: Authenticated) -> Json<providers::ModelListResponse> {
-    Json(providers::empty_models())
+async fn providers_create(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Json(request): Json<providers::ProviderWriteRequest>,
+) -> Response {
+    match providers::create_provider_config(&state.storage_paths.config_dir, request).await {
+        Ok(provider) => (StatusCode::CREATED, Json(provider.summary())).into_response(),
+        Err(error) => provider_error(error),
+    }
+}
+
+async fn providers_get(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(provider_id): Path<String>,
+) -> Response {
+    match providers::get_provider_config(&state.storage_paths.config_dir, &provider_id).await {
+        Ok(provider) => Json(provider.summary()).into_response(),
+        Err(error) => provider_error(error),
+    }
+}
+
+async fn providers_update(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(provider_id): Path<String>,
+    Json(request): Json<providers::ProviderWriteRequest>,
+) -> Response {
+    match providers::update_provider_config(&state.storage_paths.config_dir, &provider_id, request).await {
+        Ok(provider) => Json(provider.summary()).into_response(),
+        Err(error) => provider_error(error),
+    }
+}
+
+async fn providers_delete(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(provider_id): Path<String>,
+) -> Response {
+    match providers::delete_provider_config(&state.storage_paths.config_dir, &provider_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => provider_error(error),
+    }
+}
+
+async fn providers_test(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(provider_id): Path<String>,
+) -> Response {
+    match providers::get_provider_config(&state.storage_paths.config_dir, &provider_id).await {
+        Ok(provider) => Json(providers::ProviderTestResponse {
+            ok: true,
+            provider_id: provider.id,
+            cloud_required: false,
+            message: "configuration is valid".to_string(),
+        })
+        .into_response(),
+        Err(error) => provider_error(error),
+    }
+}
+
+async fn models_list(_auth: Authenticated, State(state): State<AppState>) -> Response {
+    match providers::models(&state.storage_paths.config_dir).await {
+        Ok(models) => Json(models).into_response(),
+        Err(error) => provider_error(error),
+    }
+}
+
+fn provider_error(error: providers::ProviderError) -> Response {
+    let status = error.status();
+    (status, Json(json!({ "error": error.to_string() }))).into_response()
 }
 
 #[derive(Debug, Deserialize)]

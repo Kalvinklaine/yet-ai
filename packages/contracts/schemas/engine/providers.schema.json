@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/providers.schema.json",
+  "title": "Engine Provider Registry Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["providers", "cloudRequired", "providerAccess"],
+  "properties": {
+    "providers": {
+      "type": "array",
+      "items": {
+        "$ref": "./provider.schema.json"
+      }
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "providerAccess": {
+      "type": "string",
+      "enum": ["direct"]
+    }
+  }
+}
