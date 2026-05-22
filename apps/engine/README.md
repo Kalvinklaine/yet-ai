@@ -2,41 +2,63 @@
 
 ## Ownership and boundary
 
-`apps/engine` will own the future local Yet AI service. Its planned responsibilities are HTTP API endpoints, SSE chat streaming, optional LSP integration, provider and tool policy, storage resolution, security boundaries, and local runtime state.
+`apps/engine` owns the local Yet AI runtime. Its current responsibilities are a loopback HTTP API skeleton, SSE chat snapshot streaming, provider/model registry stubs, storage resolution, and authentication boundaries.
 
-The engine is the only subsystem that should eventually resolve project, config, and cache paths from `product/identity.json`. It should enforce tool authorization and confirmation policy even when requests come from GUI or IDE hosts.
-
-The engine is the local-first BYOK runtime, not a required cloud backend. It should own provider adapters, local credential storage, model capability resolution, and direct requests to configured hosted providers or local model runtimes. Core workflows must not require a Yet AI account, managed model gateway, product credit balance, or cloud workspace.
+The engine resolves product, binary, and storage names from `product/identity.json`. It is the local-first BYOK runtime, not a required cloud backend. Core workflows must not require a Yet AI account, managed model gateway, product credit balance, or cloud workspace.
 
 ## Current status
 
-Scaffold only. There is no Rust crate, no service process, no HTTP server, no LSP server, and no runtime implementation in this directory yet.
+The Rust crate and binary are named `yet-lsp`. The runtime currently exposes:
 
-## Future commands
+- `GET /v1/ping`
+- `GET /v1/caps`
+- `GET /v1/providers`
+- `GET /v1/models`
+- `POST /v1/chats/{chat_id}/commands`
+- `GET /v1/chats/subscribe?chat_id=...`
 
-These commands are not available until an engine crate exists:
+Provider and model endpoints return empty local summaries for now. Chat commands only accept the minimal `user_message` shape. Privileged or unimplemented commands are rejected until strict schemas and behavior exist.
+
+## Commands
+
+From the repository root:
 
 ```sh
 cargo check
 cargo test
-```
-
-Repository-level validation is currently available from the root:
-
-```sh
 npm run check
 ```
 
-## Dependencies
+To run the engine locally:
 
-- Product identity values must come from `product/identity.json`, including future crate name, binary name, and storage directory names.
-- Runtime API shapes should depend on shared schemas or examples in `packages/contracts` once contracts are introduced.
-- IDE-specific behavior should remain behind contracts instead of becoming engine-specific plugin code.
+```sh
+YET_AI_AUTH_TOKEN=local-dev-token cargo run -p yet-lsp
+```
+
+The process binds to `127.0.0.1:8001` by default. Override only the port with `YET_AI_HTTP_PORT`; the host remains loopback.
+
+## Authentication
+
+All endpoints require:
+
+```text
+Authorization: Bearer <token>
+```
+
+The token is read from `YET_AI_AUTH_TOKEN` or falls back to a development token for local experiments. It is not persisted and is not accepted through the query string. Browser native `EventSource` cannot send bearer headers, so GUI streaming should use fetch streaming later.
+
+## Storage names
+
+Storage names come from `product/identity.json`:
+
+- project dir: `.yet-ai`
+- user config dir: `yet-ai`
+- user cache dir: `yet-ai`
 
 ## Safety rules
 
-- Do not add runtime code in this scaffold phase.
-- Bind future local APIs to trusted local transports only and require a local capability secret.
+- Bind local APIs to loopback only and require a local bearer token.
 - Do not expose provider secrets, environment secrets, or private integration credentials through GUI-facing endpoints.
-- Keep filesystem mutation, shell execution, and risky tool execution behind explicit engine policy and confirmation checks.
-- Do not hardcode product-sensitive names, paths, binary names, or IDs outside the identity contract.
+- Do not add telemetry or cloud calls by default.
+- Keep filesystem mutation, shell execution, and risky tool execution behind future explicit engine policy and confirmation checks.
+- Do not hardcode product-sensitive names, paths, binary names, or IDs outside the identity contract where practical.
