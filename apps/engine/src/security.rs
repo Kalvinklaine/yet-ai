@@ -38,6 +38,7 @@ pub enum AuthTokenError {
 
 pub struct Authenticated;
 
+#[axum::async_trait]
 impl FromRequestParts<AppState> for Authenticated {
     type Rejection = Response<Body>;
 

@@ -146,15 +146,7 @@ struct ChatCommandRequest {
     request_id: String,
     #[serde(rename = "type")]
     command_type: String,
-    payload: Option<ChatCommandPayload>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ChatCommandPayload {
-    content: String,
-    #[serde(default, rename = "attachments")]
-    _attachments: Vec<serde_json::Value>,
+    payload: Option<serde_json::Value>,
 }
 
 async fn chat_command(
@@ -174,7 +166,10 @@ async fn chat_command(
     let Some(payload) = command.payload else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    if payload.content.is_empty() {
+    let Some(content) = payload.get("content").and_then(|value| value.as_str()) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    if content.is_empty() {
         return StatusCode::BAD_REQUEST.into_response();
     }
 
@@ -188,8 +183,8 @@ async fn chat_command(
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct SubscribeQuery {
+    #[serde(rename = "chat_id")]
     chat_id: String,
 }
 

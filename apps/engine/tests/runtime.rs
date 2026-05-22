@@ -16,12 +16,17 @@ fn test_app() -> axum::Router {
 }
 
 fn authed_request(method: Method, uri: &str, body: Body) -> Request<Body> {
-    Request::builder()
+    let is_post = method == Method::POST;
+    let mut builder = Request::builder()
         .method(method)
         .uri(uri)
-        .header(header::AUTHORIZATION, format!("Bearer {TEST_TOKEN}"))
-        .body(body)
-        .unwrap()
+        .header(header::AUTHORIZATION, format!("Bearer {TEST_TOKEN}"));
+
+    if is_post {
+        builder = builder.header(header::CONTENT_TYPE, "application/json");
+    }
+
+    builder.body(body).unwrap()
 }
 
 async fn json_response(request: Request<Body>) -> (StatusCode, Value) {
