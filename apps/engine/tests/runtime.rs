@@ -3,26 +3,44 @@ use axum::http::{header, Method, Request, StatusCode};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 use yet_lsp::identity::ProductIdentity;
-use yet_lsp::storage::resolve_storage_paths;
+use yet_lsp::storage::{resolve_storage_paths, StoragePaths};
 use yet_lsp::{app, default_bind_addr, AppState, AuthToken};
 
 const TEST_TOKEN: &str = "test-token";
+static TEST_STORAGE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn test_storage_paths() -> StoragePaths {
+    let root = std::env::temp_dir().join(format!(
+        "yet-ai-provider-test-{}-{}",
+        std::process::id(),
+        TEST_STORAGE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let identity = ProductIdentity::load().unwrap();
+    resolve_storage_paths(
+        &identity,
+        &root.join("project"),
+        &root.join("config"),
+        &root.join("cache"),
+    )
+}
 
 fn test_app() -> axum::Router {
-    app(AppState::new(
+    app(AppState::with_storage_paths(
         ProductIdentity::load().unwrap(),
         AuthToken::new(TEST_TOKEN).unwrap(),
+        test_storage_paths(),
     ))
 }
 
 fn authed_request(method: Method, uri: &str, body: Body) -> Request<Body> {
-    let is_post = method == Method::POST;
+    let has_json_body = matches!(method, Method::POST | Method::PATCH);
     let mut builder = Request::builder()
         .method(method)
         .uri(uri)
         .header(header::AUTHORIZATION, format!("Bearer {TEST_TOKEN}"));
 
-    if is_post {
+    if has_json_body {
         builder = builder.header(header::CONTENT_TYPE, "application/json");
     }
 
@@ -30,10 +48,18 @@ fn authed_request(method: Method, uri: &str, body: Body) -> Request<Body> {
 }
 
 async fn json_response(request: Request<Body>) -> (StatusCode, Value) {
-    let response = test_app().oneshot(request).await.unwrap();
+    json_response_from(test_app(), request).await
+}
+
+async fn json_response_from(app: axum::Router, request: Request<Body>) -> (StatusCode, Value) {
+    let response = app.oneshot(request).await.unwrap();
     let status = response.status();
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+async fn empty_response_from(app: axum::Router, request: Request<Body>) -> StatusCode {
+    app.oneshot(request).await.unwrap().status()
 }
 
 #[test]
@@ -131,6 +157,220 @@ async fn models_returns_empty_list() {
     let (status, body) = json_response(authed_request(Method::GET, "/v1/models", Body::empty())).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["models"], json!([]));
+}
+
+#[tokio::test]
+async fn create_provider_with_api_key_returns_redacted_response() {
+    let api_key = "sk-test-provider-secret-abcd";
+    let provider = json!({
+        "id": "openai-local",
+        "kind": "openai-compatible",
+        "displayName": "Local OpenAI",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:8080/v1",
+        "auth": { "type": "api_key", "apiKey": api_key },
+        "models": [{ "id": "gpt-local", "displayName": "GPT Local" }],
+        "capabilities": { "chat": true, "completion": false, "embeddings": false }
+    });
+    let (status, body) = json_response(authed_request(
+        Method::POST,
+        "/v1/providers",
+        Body::from(provider.to_string()),
+    ))
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(body["id"], "openai-local");
+    assert_eq!(body["auth"]["type"], "api_key");
+    assert_eq!(body["auth"]["configured"], true);
+    let text = body.to_string();
+    assert!(!text.contains(api_key));
+    assert!(text.contains("...abcd"));
+}
+
+#[tokio::test]
+async fn get_and_list_provider_never_return_raw_api_key() {
+    let app = test_app();
+    let api_key = "sk-list-secret-abcd";
+    let provider = json!({
+        "id": "list-provider",
+        "kind": "custom",
+        "displayName": "List Provider",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:9000",
+        "auth": { "type": "api_key", "apiKey": api_key }
+    });
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(Method::POST, "/v1/providers", Body::from(provider.to_string())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, get_body) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/providers/list-provider", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, list_body) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/providers", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!get_body.to_string().contains(api_key));
+    assert!(!list_body.to_string().contains(api_key));
+    assert_eq!(list_body["cloudRequired"], false);
+    assert_eq!(list_body["providerAccess"], "direct");
+}
+
+#[tokio::test]
+async fn update_secret_redacts_old_and_new_secrets() {
+    let app = test_app();
+    let old_key = "sk-old-provider-secret-abcd";
+    let new_key = "sk-new-provider-secret-wxyz";
+    let provider = json!({
+        "id": "update-provider",
+        "kind": "custom",
+        "displayName": "Update Provider",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:9001",
+        "auth": { "type": "api_key", "apiKey": old_key }
+    });
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(Method::POST, "/v1/providers", Body::from(provider.to_string())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let update = json!({ "auth": { "type": "api_key", "apiKey": new_key } });
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::PATCH,
+            "/v1/providers/update-provider",
+            Body::from(update.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let text = body.to_string();
+    assert!(!text.contains(old_key));
+    assert!(!text.contains(new_key));
+    assert!(text.contains("...wxyz"));
+}
+
+#[tokio::test]
+async fn delete_provider_removes_local_config() {
+    let app = test_app();
+    let provider = json!({
+        "id": "delete-provider",
+        "kind": "ollama",
+        "displayName": "Local Ollama",
+        "enabled": true,
+        "auth": { "type": "none" }
+    });
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(Method::POST, "/v1/providers", Body::from(provider.to_string())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(body["baseUrl"], "http://127.0.0.1:11434");
+
+    let status = empty_response_from(
+        app.clone(),
+        authed_request(Method::DELETE, "/v1/providers/delete-provider", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/providers/delete-provider", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn invalid_provider_id_is_rejected() {
+    let provider = json!({
+        "id": "../bad",
+        "kind": "custom",
+        "displayName": "Bad Provider",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:9002",
+        "auth": { "type": "none" }
+    });
+    let (status, body) = json_response(authed_request(
+        Method::POST,
+        "/v1/providers",
+        Body::from(provider.to_string()),
+    ))
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(!body.to_string().contains("../bad"));
+}
+
+#[tokio::test]
+async fn provider_storage_path_uses_yet_ai_config_dir_not_project_state() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-storage-secret-abcd";
+    let provider = json!({
+        "id": "storage-provider",
+        "kind": "custom",
+        "displayName": "Storage Provider",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:9003",
+        "auth": { "type": "api_key", "apiKey": api_key }
+    });
+    let (status, _) = json_response_from(
+        app,
+        authed_request(Method::POST, "/v1/providers", Body::from(provider.to_string())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let config_file = paths.config_dir.join("providers.d/storage-provider.json");
+    assert!(config_file.exists());
+    assert!(config_file.starts_with(paths.config_dir.join("providers.d")));
+    assert!(!paths.project_dir.join("providers.d/storage-provider.json").exists());
+    let stored = std::fs::read_to_string(config_file).unwrap();
+    assert!(stored.contains(api_key));
+}
+
+#[tokio::test]
+async fn provider_operations_do_not_require_cloud_url_or_account() {
+    let app = test_app();
+    let provider = json!({
+        "id": "local-only-provider",
+        "kind": "ollama",
+        "displayName": "Local Only Provider",
+        "enabled": true,
+        "auth": { "type": "none" }
+    });
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(Method::POST, "/v1/providers", Body::from(provider.to_string())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(body["baseUrl"], "http://127.0.0.1:11434");
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(Method::POST, "/v1/providers/local-only-provider/test", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["cloudRequired"], false);
+    assert!(!body.to_string().to_lowercase().contains("account"));
 }
 
 #[tokio::test]

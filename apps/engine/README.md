@@ -13,11 +13,16 @@ The Rust crate and binary are named `yet-lsp`. The runtime currently exposes:
 - `GET /v1/ping`
 - `GET /v1/caps`
 - `GET /v1/providers`
+- `POST /v1/providers`
+- `GET /v1/providers/{id}`
+- `PATCH /v1/providers/{id}`
+- `DELETE /v1/providers/{id}`
+- `POST /v1/providers/{id}/test`
 - `GET /v1/models`
 - `POST /v1/chats/{chat_id}/commands`
 - `GET /v1/chats/subscribe?chat_id=...`
 
-Provider and model endpoints return empty local summaries for now. Chat commands only accept the minimal `user_message` shape. Privileged or unimplemented commands are rejected until strict schemas and behavior exist.
+Provider endpoints manage local BYOK provider configuration files under the user config directory. Model listing returns configured placeholder model entries until real adapters are added. Chat commands only accept the minimal `user_message` shape. Privileged or unimplemented commands are rejected until strict schemas and behavior exist.
 
 ## Commands
 
@@ -54,6 +59,10 @@ Storage names come from `product/identity.json`:
 - project dir: `.yet-ai`
 - user config dir: `yet-ai`
 - user cache dir: `yet-ai`
+
+Provider configs are stored in the user config dir under `providers.d/{id}.json`. The MVP stores API keys in these local files as an explicit development/file fallback until OS keychain support exists. On Unix, provider config files are written with private `0600` permissions where feasible. Provider secrets are never written into project `.yet-ai` state and are never returned by HTTP responses; responses only expose `auth.configured` and a redacted hint such as `sk-...abcd`.
+
+Provider ids are path-safe stable identifiers containing only ASCII letters, digits, `-`, and `_`. `custom` and `openai-compatible` providers require an explicit `baseUrl`. `ollama` defaults to `http://127.0.0.1:11434` when `baseUrl` is omitted.
 
 ## Safety rules
 

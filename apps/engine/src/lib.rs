@@ -5,21 +5,42 @@ pub mod security;
 pub mod storage;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
 
 use axum::Router;
 
 pub use identity::ProductIdentity;
 pub use security::AuthToken;
+pub use storage::{resolve_default_storage_paths, StoragePaths};
 
 #[derive(Clone)]
 pub struct AppState {
     pub identity: ProductIdentity,
     pub auth_token: AuthToken,
+    pub storage_paths: StoragePaths,
 }
 
 impl AppState {
     pub fn new(identity: ProductIdentity, auth_token: AuthToken) -> Self {
-        Self { identity, auth_token }
+        let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let storage_paths = resolve_default_storage_paths(&identity, &project_root);
+        Self {
+            identity,
+            auth_token,
+            storage_paths,
+        }
+    }
+
+    pub fn with_storage_paths(
+        identity: ProductIdentity,
+        auth_token: AuthToken,
+        storage_paths: StoragePaths,
+    ) -> Self {
+        Self {
+            identity,
+            auth_token,
+            storage_paths,
+        }
     }
 }
 
