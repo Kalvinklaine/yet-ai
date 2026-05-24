@@ -122,6 +122,28 @@ The clean scaffold path has produced buildable local MVP foundations for the fir
 
 This is not a production assistant. The IDE shells now have packaged GUI asset flows and MVP local runtime connect/launch/auto modes, but marketplace packaging, signed or notarized engine bundles, a production installer, full agent autonomy, indexing, tool execution, integration workflows, LSP/completion features, file edits, broader provider support, and privileged IDE actions remain follow-up work. Current chat is a local provider/chat MVP only. The local-first BYOK/no-required-cloud contract remains the controlling constraint.
 
+## OpenAI/ChatGPT auth implementation strategy
+
+Current implementation is API-key/OpenAI-compatible direct access only. It does not implement ChatGPT account login, OpenAI OAuth, token refresh, callback handling, or disconnect endpoints.
+
+External reference inspection for OpenAI/Codex auth found this architecture shape:
+
+- The OpenAI API-key provider remains a normal direct provider path.
+- The OpenAI Codex account path uses an OAuth authorization-code flow with PKCE against OpenAI auth endpoints, opens a browser URL, uses a loopback callback when available, supports manual/device-style GUI states, and exchanges tokens in the engine.
+- Tokens are engine/provider configuration state. Provider settings expose sanitized flags such as auth status, source, connected state, whether an API key is ready, and short diagnostics; raw access tokens, refresh tokens, and API keys are not GUI-facing settings.
+- Refresh is engine-owned. Permanent refresh failures clear stored OAuth access/refresh token material and require login again. Disconnect is exposed as a provider OAuth logout action from the GUI to the engine.
+- The implementation also contains risky surfaces that should not be copied as a default: fallback reads of another CLI's credentials, ChatGPT backend endpoints for usage/model access, provider-specific account headers, and provider-client identifiers that may not be appropriate for Yet AI without explicit compliance review.
+
+Yet AI should implement a safer staged strategy:
+
+1. Preserve the current API-key/OpenAI-compatible path as the baseline and fallback.
+2. Add documentation and UI copy that says: sign in first where supported; API key fallback otherwise.
+3. Before coding login, verify that the intended OpenAI/ChatGPT flow is official or otherwise compliant for third-party local apps. If the only available account-login route depends on private ChatGPT web-session cookies, browser profile import, or another product's CLI credentials, do not implement it as the default.
+4. If a compliant OAuth/device/browser flow is available, implement it with Yet AI-owned identity, redirect URLs, storage names, and endpoint contracts. The engine starts the flow, stores pending PKCE session state, handles callback/exchange, stores tokens in OS keychain or protected user config, refreshes/revokes credentials, and calls providers directly.
+5. If official account login cannot produce API-use credentials, guide users to the OpenAI platform to create an API key and paste it once. The GUI clears the secret after submit and renders only engine-returned sanitized status.
+
+Future endpoint candidates are `POST /v1/provider-auth/{provider}/start`, `GET /v1/provider-auth/{provider}/status`, `POST /v1/provider-auth/{provider}/exchange`, `POST /v1/provider-auth/{provider}/disconnect`, and an optional loopback callback endpoint. These endpoints should be introduced only with schema fixtures and no-secret regression tests.
+
 ## Criteria for acceptable external module copying
 
 Copying or substantially adapting external code is acceptable only when all of these criteria are met:

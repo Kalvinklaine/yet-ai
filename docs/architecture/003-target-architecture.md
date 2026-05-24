@@ -25,6 +25,21 @@ Known limitations:
 - Privileged IDE actions remain disabled until strict schemas, request correlation, origin/source checks, engine policy checks, and user confirmation flows are in place.
 - The provider baseline is intentionally narrow: local BYOK configuration plus OpenAI-compatible chat streaming. Broader provider quirks, OAuth, keychain storage, and advanced model capability handling are follow-ups.
 
+## Provider authentication strategy
+
+The implemented provider flow is API-key/OpenAI-compatible direct provider access. Users configure a local provider endpoint and, when needed, paste an API key once into the engine-owned provider configuration flow. The engine stores the credential locally, sends model requests directly to the configured provider, and returns only sanitized `auth.configured` and optional `auth.redacted` status to GUI clients.
+
+Future OpenAI/ChatGPT account authentication should use a login-first UX where it is officially supported and compliant:
+
+- The preferred flow is browser or device OAuth with PKCE, a loopback callback or polling status, and a provider-issued access/refresh token pair held only by the engine.
+- If the provider supports exchanging an account login token for an API credential intended for API calls, the engine may do that exchange locally and store the resulting credential as engine-owned secret material.
+- If official account login is unavailable for API use, the GUI should guide the user to sign in to the OpenAI platform, create an API key, paste it once into Yet AI, and then clear the input after save.
+- API-key configuration remains the implemented baseline, the fallback path, and the compatibility route for OpenAI-compatible gateways and local runtimes.
+
+Reference inspection found a useful pattern in the external implementation: provider OAuth is engine-owned; GUI starts a login flow, opens an authorization URL, handles callback/manual/device progress, polls sanitized provider status, and can disconnect; refresh and provider calls remain in the engine. The same inspection also found risk areas that Yet AI should not adopt blindly: ChatGPT backend endpoints and account-specific headers may be private or product-surface-specific, importing credentials from another CLI or browser profile can blur ownership and consent, and a login flow can become coupled to a provider-specific client ID or non-public backend contract. Yet AI should not plan cookie/session scraping, browser cookie import, or reuse of another tool's local credentials as the default. Those would require a separate explicit approval, provenance review, and security design.
+
+Future GUI-facing auth status should stay sanitized. Candidate state fields are non-secret values such as `type`, `configured`, `status`, `authSource`, `expiresAt`, `accountLabel`, `scopes`, `supportsRefresh`, `lastError`, and `redacted`. Raw access tokens, refresh tokens, API keys, cookies, session IDs, browser profile paths, and provider authorization codes must never be returned by provider status, capability, or model endpoints and must never appear in logs.
+
 ## Architecture principles
 
 - Keep a local engine process as the stable runtime boundary for chat, tools, providers, indexing, storage, and IDE-facing services.
@@ -159,6 +174,11 @@ The engine should expose a versioned local HTTP API. Initial target endpoints:
 - `PATCH /v1/providers/{id}` updates provider metadata, enabled state, model selections, and replacement credentials without returning raw secrets.
 - `DELETE /v1/providers/{id}` removes a provider configuration and associated local credential material where possible.
 - `POST /v1/providers/{id}/test` checks provider reachability and authentication from the local runtime and returns sanitized status/errors.
+- Future `POST /v1/provider-auth/{provider}/start` starts an engine-owned login flow and returns a session ID plus an authorization or verification URL, never tokens.
+- Future `GET /v1/provider-auth/{provider}/status?session_id=...` returns sanitized login progress and provider auth state for polling or callback completion.
+- Future `POST /v1/provider-auth/{provider}/exchange` accepts an authorization code or device-flow polling request when required and stores resulting credentials in engine-owned storage.
+- Future `POST /v1/provider-auth/{provider}/disconnect` revokes where supported and removes local provider credential material.
+- Future `GET /v1/provider-auth/{provider}/callback` may receive loopback browser callbacks for providers that support local redirects.
 - `GET /v1/models` returns normalized model summaries from configured providers and local capability metadata.
 - `GET /v1/tools` exposes tool metadata, confirmation requirements, and availability.
 - `POST /v1/chats/{chat_id}/commands` accepts chat commands.
@@ -308,6 +328,7 @@ Providers and integrations are engine-owned capabilities exposed through HTTP me
 Provider boundary:
 
 - GUI renders setup and status but does not call model providers directly.
+- GUI may start provider login and display sanitized login progress, but it must not receive or persist raw OAuth tokens, API keys, cookies, browser sessions, or refresh tokens.
 - GUI does not persist raw provider secrets. It may submit a secret once for save/test flows, then only render sanitized configured/authenticated state and replacement controls.
 - Engine stores credentials locally, resolves model capabilities, applies defaults, normalizes provider APIs, and calls configured hosted providers or local runtimes directly.
 - Plugins do not know provider-specific details except for native authentication flows if explicitly required, and they do not duplicate provider adapters.
