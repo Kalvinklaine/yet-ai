@@ -1,4 +1,6 @@
 import { readFile } from "node:fs/promises";
+import Ajv2020 from "ajv/dist/2020.js";
+import addFormats from "ajv-formats";
 
 const identityPath = "product/identity.json";
 const schemaPath = "product/identity.schema.json";
@@ -9,8 +11,16 @@ function addError(path, message) {
 }
 
 async function readJson(path) {
+  let content;
   try {
-    return JSON.parse(await readFile(path, "utf8"));
+    content = await readFile(path, "utf8");
+  } catch (error) {
+    addError(path, `cannot read file (${error.message})`);
+    return null;
+  }
+
+  try {
+    return JSON.parse(content);
   } catch (error) {
     addError(path, `cannot parse JSON (${error.message})`);
     return null;
@@ -21,85 +31,57 @@ function valueAt(object, path) {
   return path.split(".").reduce((value, key) => value?.[key], object);
 }
 
-function requireObject(object, path) {
-  const value = valueAt(object, path);
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    addError(path, "must be an object");
-    return null;
-  }
-  return value;
-}
-
-function requireString(object, path, options = {}) {
+function requireString(object, path) {
   const value = valueAt(object, path);
   if (typeof value !== "string" || value.length === 0) {
     addError(path, "must be a non-empty string");
     return null;
   }
-  if (options.pattern && !options.pattern.test(value)) {
-    addError(path, `must match ${options.pattern}`);
-  }
-  if (options.enum && !options.enum.includes(value)) {
-    addError(path, `must be one of ${options.enum.join(", ")}`);
-  }
   return value;
 }
 
-const identity = await readJson(identityPath);
-const schema = await readJson(schemaPath);
+function schemaPathFor(error) {
+  if (error.instancePath) {
+    return error.instancePath
+      .slice(1)
+      .split("/")
+      .map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"))
+      .join(".");
+  }
+  return identityPath;
+}
 
-if (identity && schema) {
-  const topLevelRequired = schema.required ?? [];
-  for (const section of topLevelRequired) {
-    requireObject(identity, section);
+function validateWithSchema(identity, schema) {
+  const ajv = new Ajv2020({ allErrors: true });
+  addFormats(ajv);
+  const validate = ajv.compile(schema);
+
+  if (validate(identity)) {
+    return;
   }
 
-  const requiredFields = [
-    ["product", ["displayName", "id", "shortName", "strategy", "description"]],
-    ["storage", ["projectDir", "configDir", "cacheDir"]],
-    ["engine", ["rustCrate", "binaryName"]],
-    ["gui", ["npmPackage"]],
-    ["vscode", ["publisher", "name", "displayName", "configurationPrefix", "commandPrefix", "activityBarId"]],
-    ["jetbrains", ["pluginId", "pluginGroup", "pluginName", "packageNamespace"]],
-    ["urls", ["repository", "documentation", "support", "homepage"]],
-    ["metadata", ["status", "owner", "lastReviewed"]]
-  ];
+  for (const error of validate.errors ?? []) {
+    const path = schemaPathFor(error);
+    addError(path, error.message ?? "schema validation failed");
+  }
+}
 
-  for (const [section, fields] of requiredFields) {
-    if (!requireObject(identity, section)) {
-      continue;
-    }
-    for (const field of fields) {
-      requireString(identity, `${section}.${field}`);
-    }
+function isRealDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    return false;
   }
 
-  const patterns = [
-    ["product.id", /^[a-z][a-z0-9-]*$/],
-    ["storage.projectDir", /^\.[a-z][a-z0-9-]*$/],
-    ["storage.configDir", /^[a-z][a-z0-9-]*$/],
-    ["storage.cacheDir", /^[a-z][a-z0-9-]*$/],
-    ["engine.rustCrate", /^[a-z][a-z0-9-]*$/],
-    ["engine.binaryName", /^[a-z][a-z0-9-]*$/],
-    ["gui.npmPackage", /^(@[a-z0-9-]+\/[a-z0-9-]+|[a-z][a-z0-9-]*)$/],
-    ["vscode.publisher", /^[a-z0-9][a-z0-9-]*$/],
-    ["vscode.name", /^[a-z0-9][a-z0-9-]*$/],
-    ["vscode.configurationPrefix", /^[a-z][a-z0-9]*$/],
-    ["vscode.commandPrefix", /^[a-z][a-z0-9]*$/],
-    ["vscode.activityBarId", /^[a-z][a-z0-9-]*$/],
-    ["jetbrains.pluginId", /^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+$/],
-    ["jetbrains.pluginGroup", /^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)*$/],
-    ["jetbrains.packageNamespace", /^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+$/],
-    ["metadata.lastReviewed", /^\d{4}-\d{2}-\d{2}$/]
-  ];
+  const [, year, month, day] = match;
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  return (
+    date.getUTCFullYear() === Number(year) &&
+    date.getUTCMonth() === Number(month) - 1 &&
+    date.getUTCDate() === Number(day)
+  );
+}
 
-  for (const [path, pattern] of patterns) {
-    requireString(identity, path, { pattern });
-  }
-
-  requireString(identity, "product.strategy", { enum: ["architecture-inspired-rebuild"] });
-  requireString(identity, "metadata.status", { enum: ["temporary-placeholders", "final"] });
-
+function runCustomChecks(identity) {
   for (const path of ["urls.repository", "urls.documentation", "urls.support", "urls.homepage"]) {
     const value = requireString(identity, path);
     if (value) {
@@ -110,6 +92,19 @@ if (identity && schema) {
       }
     }
   }
+
+  const lastReviewed = requireString(identity, "metadata.lastReviewed");
+  if (lastReviewed && !isRealDate(lastReviewed)) {
+    addError("metadata.lastReviewed", "must be a real calendar date in YYYY-MM-DD format");
+  }
+}
+
+const identity = await readJson(identityPath);
+const schema = await readJson(schemaPath);
+
+if (identity && schema) {
+  validateWithSchema(identity, schema);
+  runCustomChecks(identity);
 }
 
 if (errors.length > 0) {

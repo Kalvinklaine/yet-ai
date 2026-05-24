@@ -1,6 +1,6 @@
 # 001 Product Identity
 
-Yet AI needs one product identity contract before implementation starts. The project is an architecture-inspired rebuild, not a direct an external project rename, so the contract records the new product names, package IDs, storage names, plugin IDs, and public URLs independently from any source project.
+Yet AI needs one product identity contract before implementation starts. The project is an architecture-inspired rebuild, not a direct external project rename, so the contract records the new product names, package IDs, storage names, plugin IDs, and public URLs independently from any source project.
 
 The source of truth is `product/identity.json`. The companion `product/identity.schema.json` keeps the contract valid with required sections and simple string patterns.
 
@@ -19,7 +19,7 @@ Owned by product architecture.
 - `displayName`: user-facing product name, currently `Yet AI`. Use in app chrome, marketplace titles, documentation headings, and onboarding.
 - `id`: stable product identifier, currently `yet-ai`. Use for generated slugs, release metadata, and cross-component references.
 - `shortName`: compact name, currently `Yet`. Use where UI space is constrained.
-- `strategy`: records that this is an `architecture-inspired-rebuild`, not a an external project fork rename.
+- `strategy`: records that this is an `architecture-inspired-rebuild`, not an external project fork rename.
 - `description`: human-readable explanation for maintainers and future audits.
 
 ### `storage`
