@@ -143,6 +143,12 @@ The default `auto` mode launches a configured or discoverable `yet-lsp` binary w
 
 Basic engine stdout/stderr lines are captured in the `Yet AI Runtime` output channel. The generated session token and bearer headers are redacted before logging. Provider configuration and provider secrets remain engine-owned and are not stored or logged by the extension.
 
+Manual local preview:
+
+1. Build and copy GUI assets with the commands above.
+2. Set `yetai.launchMode` to `launch` or `auto` and set `yetai.engineBinaryPath` to an absolute `yet-lsp` binary path, or set `yetai.launchMode` to `connect` for an already running loopback engine.
+3. Run `Yet AI: Open Chat`.
+
 ## Webview and bridge
 
 The command opens a minimal Yet AI webview shell. If `yetai.guiDevUrl` is set, the shell embeds the loopback GUI dev server in an iframe. Otherwise it first looks for packaged GUI assets at `media/gui/index.html`; when those generated assets are absent, it displays a local placeholder with the configured runtime URL.
@@ -155,10 +161,12 @@ No privileged workspace edits, IDE tools, or provider actions are implemented in
 
 ## Current limitations
 
-- The extension shell is buildable but not production-ready.
+- The extension shell is a dev-preview MVP, not production-ready.
+- No marketplace packaging, signed/notarized engine bundle, or production installer is complete.
 - Runtime health recovery after a crashed launched process is limited to retrying the command.
-- Packaged production GUI assets are supported through the documented `apps/gui` build plus `npm run copy:gui` flow, but generated assets are not committed.
-- No marketplace package, LSP client, completions, privileged workspace edits, IDE tools, file mutation, shell actions, or provider actions are implemented.
+- Packaged GUI assets are supported through the documented `apps/gui` build plus `npm run copy:gui` flow, but generated assets are not committed and this is not a final release packaging flow.
+- No LSP client, completions, tools, privileged workspace edits, IDE tools, file mutation, shell actions, or provider actions are implemented.
+- Current chat support is limited to the local provider/chat MVP exposed by the engine and GUI.
 - `yetai.sessionToken` remains a debug/local runtime setting until VS Code SecretStorage integration is added.
 
 ## Safety rules

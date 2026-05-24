@@ -12,15 +12,16 @@ Implemented surfaces:
 
 - `apps/engine`: Rust `yet-lsp` runtime with authenticated loopback HTTP/SSE endpoints, identity-aware storage names, local provider registry/config files, redacted provider responses, model summaries, chat command submission, and the first OpenAI-compatible direct streaming path through configured provider data.
 - `apps/gui`: React/Vite browser shell with loopback-only runtime client, provider setup/status UI, chat command submission, fetch-streaming SSE parser, runtime error reporting, and browser/VS Code/JetBrains logical bridge detection.
-- `apps/plugins/vscode`: VS Code extension shell with identity-checked manifest, loopback runtime/dev URL validation, webview host, bootstrap/`host.ready` bridge, and guarded message handling.
-- `apps/plugins/jetbrains`: JetBrains plugin shell with identity checks, Gradle build/tests, loopback runtime/dev URL validation, PasswordSafe-backed local session token, JCEF host boundary, and structural JSON bridge validation.
+- `apps/plugins/vscode`: VS Code extension shell with identity-checked manifest, loopback runtime/dev URL validation, packaged GUI asset loading with placeholder fallback, MVP `connect`/`launch`/`auto` runtime modes, webview host, bootstrap/`host.ready` bridge, and guarded message handling.
+- `apps/plugins/jetbrains`: JetBrains plugin shell with identity checks, Gradle build/tests, loopback runtime/dev URL validation, packaged GUI resource loading with placeholder fallback, MVP `connect`/`launch`/`auto` runtime modes, PasswordSafe-backed local session token, JCEF host boundary, and structural JSON bridge validation.
 - `packages/contracts`: shared JSON Schemas and examples for current engine and bridge boundaries.
 
 Known limitations:
 
-- No production packaging or release flow is complete.
-- IDE plugins connect to an already running local runtime and development GUI shell paths; engine binary launch and packaged GUI asset wiring remain follow-up work unless implemented by a later task.
-- LSP completion/code-lens, full agent autonomy, indexing, tasks/knowledge, tool registry execution, shell/file mutation, and integration workflows are not implemented as production features.
+- No marketplace packaging, signed/notarized engine bundle, production installer, or release flow is complete.
+- IDE plugins support dev-preview packaged GUI assets and MVP local runtime connect/launch/auto modes, but they do not yet provide production-grade lifecycle management, bundled signed engine distribution, or installer integration.
+- LSP completion/code-lens, full agent autonomy, indexing, tasks/knowledge, tool registry execution, shell/file mutation, file edits, and integration workflows are not implemented as production features.
+- The provider/chat baseline is a local MVP only: configured local BYOK provider data plus OpenAI-compatible chat streaming.
 - Privileged IDE actions remain disabled until strict schemas, request correlation, origin/source checks, engine policy checks, and user confirmation flows are in place.
 - The provider baseline is intentionally narrow: local BYOK configuration plus OpenAI-compatible chat streaming. Broader provider quirks, OAuth, keychain storage, and advanced model capability handling are follow-ups.
 
@@ -366,13 +367,13 @@ The approved near-term implementation sequence is local-first and incremental. F
 
 ### 5. VS Code local runtime host — MVP baseline complete
 
-- Implemented identity-checked extension metadata, loopback runtime/dev URL validation, webview shell, safe bootstrap serialization, exact-origin dev iframe forwarding, and narrow `gui.ready`/`host.ready` bridge handling.
-- Remaining work: engine binary launch, SecretStorage for local runtime tokens, packaged GUI assets, extension-host tests, LSP wiring, and privileged IDE action policies.
+- Implemented identity-checked extension metadata, loopback runtime/dev URL validation, packaged GUI asset loading, webview shell, safe bootstrap serialization, exact-origin dev iframe forwarding, MVP local runtime `connect`/`launch`/`auto` modes, `/v1/ping` health check, redacted runtime logs, cleanup on deactivate, and narrow `gui.ready`/`host.ready` bridge handling.
+- Remaining work: marketplace packaging, signed/notarized engine bundles, production installer, SecretStorage for local runtime tokens, deeper extension-host lifecycle tests, LSP wiring, and privileged IDE action policies.
 
 ### 6. JetBrains local runtime host — MVP baseline complete
 
-- Implemented identity-checked Gradle/plugin metadata, loopback runtime/dev URL validation, PasswordSafe local session token storage, JCEF shell, structured bridge parsing, and bridge/runtime URL tests.
-- Remaining work: engine binary launch, packaged GUI assets, plugin verifier flow, optional LSP wiring, and privileged IDE action policies.
+- Implemented identity-checked Gradle/plugin metadata, loopback runtime/dev URL validation, packaged GUI resource loading, PasswordSafe local session token storage, JCEF shell, structured bridge parsing, MVP local runtime `connect`/`launch`/`auto` modes, `/v1/ping` health check, launched process cleanup, and bridge/runtime URL tests.
+- Remaining work: marketplace packaging, signed/notarized engine bundles, production installer, plugin verifier flow, optional LSP wiring, deeper lifecycle tests, and privileged IDE action policies.
 
 ### Follow-up contract hardening before privileged flows
 

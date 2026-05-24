@@ -45,6 +45,8 @@ YET_AI_AUTH_TOKEN=local-dev-token cargo run -p yet-lsp
 
 The process binds to `127.0.0.1:8001` by default. Override only the port with `YET_AI_HTTP_PORT`; the host remains loopback.
 
+VS Code and JetBrains dev-preview launchers can also start `yet-lsp` in `launch` or `auto` mode. They pass a generated per-session token through `YET_AI_AUTH_TOKEN`, pass the configured HTTP port through `YET_AI_HTTP_PORT`, and verify readiness with `GET /v1/ping`. `connect` mode is for an already running loopback engine.
+
 ## IDE dev preview binary helper
 
 Build and prepare the local engine binary for IDE plugin dev previews from the repository root:
@@ -87,8 +89,9 @@ For `openai-compatible`, `baseUrl` may point either at an API root or directly a
 ## Current limitations
 
 - This is a development MVP, not a production-ready runtime.
-- No full agent autonomy, indexing, tool registry execution, file mutation, shell execution, integrations, LSP completion/code-lens, or packaged IDE launch flow is complete.
-- OpenAI-compatible streaming covers the first narrow chat path only; broader provider quirks, retries, cancellation semantics, OAuth, and keychain-backed secret storage remain follow-up work.
+- IDE launchers can start or connect to the runtime for local preview, but no signed/notarized engine bundle, marketplace packaging, or production installer is complete.
+- No full agent autonomy, indexing, tool registry execution, file mutation, shell execution, integrations, LSP completion/code-lens, completions, tools, or file edits are complete.
+- OpenAI-compatible streaming covers the first narrow local provider/chat path only; broader provider quirks, retries, cancellation semantics, OAuth, and keychain-backed secret storage remain follow-up work.
 - The local provider file store is a documented development fallback, not the final secret storage policy.
 
 ## Safety rules
