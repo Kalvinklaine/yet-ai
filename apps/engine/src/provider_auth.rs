@@ -1,9 +1,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use base64::Engine;
 use chrono::{Duration, Utc};
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use tokio::io::AsyncWriteExt;
 
 use crate::providers::{self, AuthType, ProviderKind, StoredProviderConfig};
 
@@ -12,8 +15,15 @@ const API_KEY_CONFIGURED_MESSAGE: &str = "API-key authentication is configured l
 const DISCONNECT_MESSAGE: &str = "Provider login credentials were disconnected and removed from local engine storage. API-key provider configuration was left unchanged.";
 const MOCK_PENDING_MESSAGE: &str = "Mock OAuth login is pending in local test state.";
 const MOCK_CONNECTED_MESSAGE: &str = "Mock OAuth login is connected in local test state.";
-const MOCK_DISCONNECTED_MESSAGE: &str = "Mock OAuth login state was disconnected and removed from local test state.";
+const MOCK_DISCONNECTED_MESSAGE: &str =
+    "Mock OAuth login state was disconnected and removed from local test state.";
+const CODEX_PENDING_MESSAGE: &str = "Experimental Codex-like OpenAI login is pending. This uses a private-endpoint-style OAuth contract and is not official public third-party OpenAI OAuth support.";
 const MOCK_TTL_SECONDS: i64 = 600;
+const CODEX_TTL_SECONDS: i64 = 600;
+const CODEX_AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
+const CODEX_CLIENT_ID: &str = "yet-ai-local-experimental";
+const CODEX_REDIRECT_URI: &str = "http://127.0.0.1:1455/auth/openai/callback";
+const CODEX_SCOPE: &str = "openid profile email offline_access";
 static MOCK_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Deserialize, Default)]
@@ -21,6 +31,8 @@ static MOCK_COUNTER: AtomicU64 = AtomicU64::new(1);
 pub struct ProviderAuthStartRequest {
     #[serde(default)]
     pub mock: bool,
+    #[serde(default)]
+    pub experimental_codex_like: bool,
     pub ttl_seconds: Option<i64>,
 }
 
@@ -124,6 +136,24 @@ struct MockOAuthConnection {
     refresh_token: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct CodexOAuthState {
+    pending: Option<CodexOAuthSession>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CodexOAuthSession {
+    provider: String,
+    session_id: String,
+    state: String,
+    verifier: String,
+    challenge: String,
+    expires_at: String,
+    scopes: Vec<String>,
+}
+
 pub async fn status(
     config_dir: &Path,
     provider: &str,
@@ -132,12 +162,24 @@ pub async fn status(
     let mock = read_mock_state(config_dir, provider).await?;
     if let Some(connection) = mock.connected {
         if parse_time(&connection.expires_at)? > Utc::now() {
-            return Ok(mock_connected_response(provider, connection.scopes, Some(true)));
+            return Ok(mock_connected_response(
+                provider,
+                connection.scopes,
+                Some(true),
+            ));
         }
     }
     if let Some(session) = mock.pending {
         if parse_time(&session.expires_at)? > Utc::now() {
             return Ok(mock_pending_response(provider, &session, None));
+        }
+    }
+    if provider == "openai" {
+        let codex = read_codex_state(config_dir, provider).await?;
+        if let Some(session) = codex.pending {
+            if parse_time(&session.expires_at)? > Utc::now() {
+                return Ok(codex_pending_response(provider, &session, None));
+            }
         }
     }
     Ok(status_response(
@@ -159,6 +201,18 @@ pub async fn start(
         state.pending = Some(session.clone());
         write_mock_state(config_dir, provider, &state).await?;
         return Ok(mock_pending_response(provider, &session, Some(true)));
+    }
+    if request.experimental_codex_like && provider == "openai" {
+        let session = new_codex_session(request.ttl_seconds.unwrap_or(CODEX_TTL_SECONDS))?;
+        write_codex_state(
+            config_dir,
+            provider,
+            &CodexOAuthState {
+                pending: Some(session.clone()),
+            },
+        )
+        .await?;
+        return Ok(codex_pending_response(provider, &session, Some(true)));
     }
     Ok(status_response(
         provider,
@@ -191,7 +245,10 @@ pub async fn exchange(
     let Some(session) = mock.pending.take() else {
         return Err(ProviderAuthError::SessionNotFound);
     };
-    if session.provider != provider || session.session_id != session_id || session.state != state_value {
+    if session.provider != provider
+        || session.session_id != session_id
+        || session.state != state_value
+    {
         mock.pending = Some(session);
         write_mock_state(config_dir, provider, &mock).await?;
         return Err(ProviderAuthError::SessionMismatch);
@@ -370,6 +427,31 @@ fn mock_connected_response(
     }
 }
 
+fn codex_pending_response(
+    provider: &str,
+    session: &CodexOAuthSession,
+    success: Option<bool>,
+) -> ProviderAuthResponse {
+    ProviderAuthResponse {
+        provider: provider.to_string(),
+        configured: false,
+        status: "pending",
+        auth_source: "oauth",
+        supports_login: true,
+        supports_api_key: true,
+        cloud_required: false,
+        success,
+        redacted: None,
+        authorization_url: Some(codex_authorization_url(session)),
+        verification_url: None,
+        session_id: Some(session.session_id.clone()),
+        expires_at: Some(session.expires_at.clone()),
+        scopes: Some(session.scopes.clone()),
+        poll_interval_seconds: Some(3),
+        message: CODEX_PENDING_MESSAGE.to_string(),
+    }
+}
+
 fn new_mock_session(provider: &str, ttl_seconds: i64) -> MockOAuthSession {
     let id = MOCK_COUNTER.fetch_add(1, Ordering::Relaxed);
     let now = Utc::now();
@@ -385,6 +467,63 @@ fn new_mock_session(provider: &str, ttl_seconds: i64) -> MockOAuthSession {
         challenge,
         expires_at: (now + Duration::seconds(ttl_seconds)).to_rfc3339(),
     }
+}
+
+fn new_codex_session(ttl_seconds: i64) -> Result<CodexOAuthSession, ProviderAuthError> {
+    let verifier = random_url_safe(64)?;
+    let challenge = pkce_challenge(&verifier);
+    Ok(CodexOAuthSession {
+        provider: "openai".to_string(),
+        session_id: format!("codex-{}", random_url_safe(32)?),
+        state: random_url_safe(32)?,
+        verifier,
+        challenge,
+        expires_at: (Utc::now() + Duration::seconds(ttl_seconds)).to_rfc3339(),
+        scopes: codex_scopes(),
+    })
+}
+
+fn codex_scopes() -> Vec<String> {
+    CODEX_SCOPE.split(' ').map(str::to_string).collect()
+}
+
+fn pkce_challenge(verifier: &str) -> String {
+    let digest = Sha256::digest(verifier.as_bytes());
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
+}
+
+fn random_url_safe(length: usize) -> Result<String, ProviderAuthError> {
+    let mut bytes = vec![0u8; length];
+    getrandom::getrandom(&mut bytes).map_err(|_| ProviderAuthError::Storage)?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+}
+
+fn codex_authorization_url(session: &CodexOAuthSession) -> String {
+    let scope = session.scopes.join(" ");
+    format!(
+        "{CODEX_AUTHORIZE_URL}?response_type=code&client_id={CODEX_CLIENT_ID}&redirect_uri={}&scope={}&code_challenge={}&code_challenge_method=S256&id_token_add_organizations=true&codex_cli_simplified_flow=true&state={}&originator=yet_ai_local",
+        encode_component(CODEX_REDIRECT_URI),
+        encode_component(&scope),
+        encode_component(&session.challenge),
+        encode_component(&session.state),
+    )
+}
+
+fn encode_component(value: &str) -> String {
+    url_encode(value.as_bytes())
+}
+
+fn url_encode(bytes: &[u8]) -> String {
+    let mut output = String::new();
+    for byte in bytes {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                output.push(*byte as char)
+            }
+            _ => output.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    output
 }
 
 fn required_value(value: Option<String>) -> Result<String, ProviderAuthError> {
@@ -431,4 +570,68 @@ async fn write_mock_state(
     tokio::fs::write(path, bytes)
         .await
         .map_err(|_| ProviderAuthError::Storage)
+}
+
+fn codex_state_path(config_dir: &Path, provider: &str) -> PathBuf {
+    config_dir
+        .join("provider-auth-openai")
+        .join(format!("{provider}.json"))
+}
+
+async fn read_codex_state(
+    config_dir: &Path,
+    provider: &str,
+) -> Result<CodexOAuthState, ProviderAuthError> {
+    let path = codex_state_path(config_dir, provider);
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| ProviderAuthError::Storage),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(CodexOAuthState::default())
+        }
+        Err(_) => Err(ProviderAuthError::Storage),
+    }
+}
+
+async fn write_codex_state(
+    config_dir: &Path,
+    provider: &str,
+    state: &CodexOAuthState,
+) -> Result<(), ProviderAuthError> {
+    let path = codex_state_path(config_dir, provider);
+    let parent = path.parent().ok_or(ProviderAuthError::Storage)?;
+    tokio::fs::create_dir_all(parent)
+        .await
+        .map_err(|_| ProviderAuthError::Storage)?;
+    let bytes = serde_json::to_vec_pretty(state).map_err(|_| ProviderAuthError::Storage)?;
+    let mut options = tokio::fs::OpenOptions::new();
+    options.create(true).write(true).truncate(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&path)
+        .await
+        .map_err(|_| ProviderAuthError::Storage)?;
+    file.write_all(&bytes)
+        .await
+        .map_err(|_| ProviderAuthError::Storage)?;
+    file.sync_all()
+        .await
+        .map_err(|_| ProviderAuthError::Storage)?;
+    drop(file);
+    set_private_permissions(&path).await
+}
+
+#[cfg(unix)]
+async fn set_private_permissions(path: &Path) -> Result<(), ProviderAuthError> {
+    use std::os::unix::fs::PermissionsExt;
+    tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .await
+        .map_err(|_| ProviderAuthError::Storage)
+}
+
+#[cfg(not(unix))]
+async fn set_private_permissions(_path: &Path) -> Result<(), ProviderAuthError> {
+    Ok(())
 }
