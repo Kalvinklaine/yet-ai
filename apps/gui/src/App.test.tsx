@@ -26,9 +26,65 @@ afterEach(() => {
   sessionStorage.clear();
   delete window.acquireVsCodeApi;
   delete window.postIntellijMessage;
+  vi.restoreAllMocks();
 });
 
 describe("provider secret boundary", () => {
+  it("renders OpenAI login unavailable with API key fallback", async () => {
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("OpenAI account login");
+    expect(container?.textContent).toContain("OpenAI account login is planned/not available yet; use API key fallback.");
+    expect(container?.textContent).toContain("Create an API key in the provider console");
+
+    await act(async () => {
+      findButton("Use OpenAI API key fallback").click();
+    });
+
+    expect(findInputValue("openai-api")).toBeDefined();
+    expect(findInputValue("https://api.openai.com/v1")).toBeDefined();
+    expect(apiKeyInput().value).toBe("");
+  });
+
+  it("does not write provider auth state or secrets to browser storage", async () => {
+    const secret = "auth-secret-token-value";
+    mockRuntimeResponses({ authMessage: secret });
+    renderApp();
+
+    await flushAsync();
+
+    expect(JSON.stringify(localStorage)).not.toContain(secret);
+    expect(JSON.stringify(sessionStorage)).not.toContain(secret);
+  });
+
+  it("does not open invalid provider auth URLs", async () => {
+    const openMock = vi.spyOn(window, "open").mockImplementation(() => null);
+    mockRuntimeResponses({ authSupportsLogin: true, startAuthUrl: "file:///tmp/provider-token" });
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Login with OpenAI").click();
+    });
+
+    expect(openMock).not.toHaveBeenCalled();
+    expect(container?.textContent).toContain("Provider auth URL was not opened because it is not HTTPS or loopback.");
+  });
+
+  it("surfaces unauthorized provider auth errors safely", async () => {
+    mockRuntimeResponses({ authStatusCode: 401 });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Unauthorized local runtime request. Check the session token.");
+    expect(container?.textContent).not.toContain("Bearer");
+  });
+
   it("browser storage does not contain raw provider API keys", () => {
     localStorage.clear();
     sessionStorage.clear();
@@ -154,9 +210,46 @@ function renderApp() {
   });
 }
 
-function mockRuntimeResponses() {
+type MockRuntimeOptions = {
+  authStatusCode?: number;
+  authMessage?: string;
+  authSupportsLogin?: boolean;
+  startAuthUrl?: string;
+};
+
+function mockRuntimeResponses(options: MockRuntimeOptions = {}) {
   fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url.endsWith("/v1/provider-auth/openai/status")) {
+      if (options.authStatusCode) {
+        return Promise.resolve(jsonResponse({ error: "raw-secret should not appear" }, options.authStatusCode));
+      }
+      return Promise.resolve(jsonResponse({
+        provider: "openai",
+        configured: false,
+        status: options.authSupportsLogin ? "login_available" : "login_unavailable",
+        authSource: "none",
+        supportsLogin: options.authSupportsLogin ?? false,
+        supportsApiKey: true,
+        cloudRequired: false,
+        message: options.authMessage ?? "OpenAI account login is not available for this local provider path. Create an API key in the provider console and paste it once into Yet AI.",
+      }));
+    }
+    if (init?.method === "POST" && url.endsWith("/v1/provider-auth/openai/start")) {
+      return Promise.resolve(jsonResponse({
+        provider: "openai",
+        configured: false,
+        status: "pending",
+        authSource: "oauth",
+        supportsLogin: true,
+        supportsApiKey: true,
+        authorizationUrl: options.startAuthUrl ?? "https://auth.openai.com/oauth/authorize?state=test",
+        sessionId: "provider-login-session-001",
+        cloudRequired: false,
+        success: true,
+        message: "Open the authorization URL to continue signing in.",
+      }));
+    }
     if (init?.method === "POST" && url.endsWith("/v1/providers")) {
       return Promise.resolve(jsonResponse({
         id: "openai-compatible-custom",
@@ -200,8 +293,14 @@ function mockRuntimeResponses() {
   vi.stubGlobal("fetch", fetchMock);
 }
 
-function jsonResponse(body: unknown) {
-  return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+async function flushAsync() {
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
 function findButton(name: string) {
