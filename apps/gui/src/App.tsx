@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBridgeAdapter, type BridgeHost, type HostReadyPayload } from "./bridge/bridgeAdapter";
+import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, resetChatViewState, type ChatViewMessage } from "./services/chatViewState";
 import { disconnectProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { listProviders, saveProvider, type ProviderSummary, type ProviderWriteRequest } from "./services/providersClient";
 import { getCaps, getModels, getPing, isLoopbackRuntimeUrl, productIdentity, productIdentityWarning, type CapsResponse, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
@@ -170,6 +171,7 @@ export function App() {
   const [selectedProviderId, setSelectedProviderId] = useState<string | undefined>();
   const [chatId, setChatId] = useState("chat-001");
   const [chatInput, setChatInput] = useState("");
+  const [chatView, setChatView] = useState(() => createInitialChatViewState("chat-001"));
   const [timeline, setTimeline] = useState<string[]>([]);
   const [bridgeLog, setBridgeLog] = useState<string[]>([]);
   const [bridgeHost, setBridgeHost] = useState<BridgeHost>("browser");
@@ -200,6 +202,15 @@ export function App() {
 
   const addTimeline = useCallback((entry: string) => {
     setTimeline((current) => [entry, ...current].slice(0, 80));
+  }, []);
+
+  const appendChatError = useCallback((message: string) => {
+    setChatView((current) => applyChatViewEvent(current, {
+      seq: 0,
+      type: "error",
+      chatId: current.chatId,
+      payload: { message },
+    }));
   }, []);
 
   const refreshRuntime = useCallback(async () => {
@@ -368,24 +379,42 @@ export function App() {
     }
   };
 
-  const startSse = () => {
+  useEffect(() => {
     abortRef.current?.abort();
+    abortRef.current = null;
+    setChatError(null);
+    setChatView(resetChatViewState(chatId));
+    setTimeline([]);
+  }, [chatId]);
+
+  const startSse = useCallback((targetChatId = chatId) => {
+    if (abortRef.current) {
+      return;
+    }
     const controller = new AbortController();
     abortRef.current = controller;
-    addTimeline(`Opening SSE for ${chatId}`);
+    addTimeline(`Opening SSE for ${targetChatId}`);
     void subscribeToChat(
       settings,
-      chatId,
+      targetChatId,
       {
-        onEvent: (event: SseEvent) => addTimeline(`${event.seq} ${event.type}\n${JSON.stringify(event.payload ?? {}, null, 2)}`),
+        onEvent: (event: SseEvent) => {
+          setChatView((current) => applyChatViewEvent(current, event));
+          addTimeline(`${event.seq} ${event.type}\n${JSON.stringify(event.payload ?? {}, null, 2)}`);
+        },
         onError: (error) => {
           setChatError(error);
-          addTimeline(`SSE error: ${error.message}`);
+          appendChatError(error.message);
+          addTimeline(`SSE error: ${sanitizeDisplayText(error.message)}`);
         },
       },
       controller.signal,
-    );
-  };
+    ).finally(() => {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
+    });
+  }, [addTimeline, appendChatError, chatId, settings]);
 
   const stopSse = () => {
     abortRef.current?.abort();
@@ -400,13 +429,16 @@ export function App() {
       return;
     }
     setChatError(null);
+    startSse(chatId);
     const result = await sendUserMessage(settings, chatId, content);
     if (result.ok) {
       addTimeline(`Command accepted ${result.data.requestId}`);
+      setChatView((current) => addAcceptedUserMessage(current, content));
       setChatInput("");
     } else {
       setChatError(result.error);
-      addTimeline(`Command error: ${result.error.message}`);
+      appendChatError(result.error.message);
+      addTimeline(`Command error: ${sanitizeDisplayText(result.error.message)}`);
     }
   };
 
@@ -564,7 +596,7 @@ export function App() {
       </section>
 
       <section className="card stack">
-        <h2>Chat command and SSE debug</h2>
+        <h2>Chat</h2>
         {chatError && <ErrorBox error={chatError} />}
         <div className="form-grid">
           <label>
@@ -572,17 +604,23 @@ export function App() {
             <input value={chatId} onChange={(event) => setChatId(event.target.value)} />
           </label>
         </div>
+        <div className="chat-panel" aria-label="Chat messages">
+          {chatView.messages.length === 0 ? <p className="subtle">Ask a question to start this local chat.</p> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} />)}
+          {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
+        </div>
         <form className="stack" onSubmit={(event) => void submitChat(event)}>
-          <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder="Send a user_message command to the local runtime" />
+          <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder="Ask Yet AI..." />
           <div className="row">
-            <button type="submit">Send user_message</button>
-            <button type="button" onClick={startSse}>Subscribe with fetch SSE</button>
+            <button type="submit">Send</button>
             <button type="button" onClick={stopSse}>Stop SSE</button>
           </div>
         </form>
-        <div className="timeline">
-          {timeline.length === 0 ? <span>No SSE events yet.</span> : timeline.map((entry, index) => <div className="timeline-entry" key={`${index}:${entry}`}>{entry}</div>)}
-        </div>
+        <details>
+          <summary>SSE debug details</summary>
+          <div className="timeline">
+            {timeline.length === 0 ? <span>No SSE events yet.</span> : timeline.map((entry, index) => <div className="timeline-entry" key={`${index}:${entry}`}>{entry}</div>)}
+          </div>
+        </details>
       </section>
 
       <section className="card stack">
@@ -593,6 +631,15 @@ export function App() {
         </div>
       </section>
     </main>
+  );
+}
+
+function ChatBubble({ message }: { message: ChatViewMessage }) {
+  return (
+    <div className={`chat-bubble ${message.role}`}>
+      <strong>{message.role === "user" ? "You" : message.role === "assistant" ? "Yet AI" : "Error"}</strong>
+      <span>{message.content || (message.status === "streaming" ? "…" : "")}</span>
+    </div>
   );
 }
 
@@ -638,7 +685,7 @@ function isSafeAuthUrl(value: string): boolean {
 }
 
 function ErrorBox({ error }: { error: RuntimeError }) {
-  return <div className="error">{error.status}: {error.message}</div>;
+  return <div className="error">{error.status}: {sanitizeDisplayText(error.message)}</div>;
 }
 
 function StatusBlock({ title, value }: { title: string; value: unknown }) {

@@ -259,6 +259,118 @@ describe("host.ready runtime bootstrap", () => {
   });
 });
 
+describe("chat panel", () => {
+  it("sending message renders user bubble and clears input after accepted command", async () => {
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "Hello Yet AI");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("You");
+    expect(container?.textContent).toContain("Hello Yet AI");
+    expect(chatInput().value).toBe("");
+  });
+
+  it("renders assistant streaming text from SSE events", async () => {
+    mockRuntimeResponses({
+      sseEvents: [
+        { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
+        { seq: 1, type: "stream_started", chatId: "chat-001", payload: {} },
+        { seq: 2, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: "Hello" } } },
+        { seq: 3, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: " from Yet AI" } } },
+        { seq: 4, type: "stream_finished", chatId: "chat-001", payload: {} },
+      ],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "Stream please");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("Yet AI");
+    expect(container?.textContent).toContain("Hello from Yet AI");
+  });
+
+  it("renders visible safe error bubbles for request and SSE errors", async () => {
+    const rawToken = "Bearer abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    mockRuntimeResponses({ commandStatus: 500, commandError: `failed ${rawToken}` });
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "Fail please");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("Error");
+    expect(container?.textContent).toContain("failed Bearer [redacted]");
+    expect(container?.textContent).not.toContain("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
+  });
+
+  it("changing chat id clears messages for the new chat", async () => {
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "First chat message");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    expect(container?.textContent).toContain("First chat message");
+
+    await act(async () => {
+      setInputValue(findInputValue("chat-001")!, "chat-002");
+    });
+
+    expect(container?.textContent).not.toContain("First chat message");
+    expect(container?.textContent).toContain("Ask a question to start this local chat.");
+  });
+
+  it("does not write chat messages or secrets to browser storage", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const secret = "sk-chat-secret-value";
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), `message ${secret}`);
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(JSON.stringify(localStorage)).not.toContain(secret);
+    expect(JSON.stringify(sessionStorage)).not.toContain(secret);
+  });
+});
+
 function renderApp() {
   container = document.createElement("div");
   document.body.append(container);
@@ -274,6 +386,9 @@ type MockRuntimeOptions = {
   authSupportsLogin?: boolean;
   authResponse?: ProviderAuthResponse;
   startAuthUrl?: string;
+  sseEvents?: unknown[];
+  commandStatus?: number;
+  commandError?: string;
 };
 
 function providerAuthResponse(status: ProviderAuthStatus): ProviderAuthResponse {
@@ -339,6 +454,20 @@ function mockRuntimeResponses(options: MockRuntimeOptions = {}) {
         capabilities: { chat: true, completion: false, embeddings: false },
       }));
     }
+    if (url.includes("/v1/chats/subscribe?chat_id=")) {
+      return Promise.resolve(sseResponse(options.sseEvents ?? []));
+    }
+    if (init?.method === "POST" && url.includes("/v1/chats/") && url.endsWith("/commands")) {
+      if (options.commandStatus) {
+        return Promise.resolve(jsonResponse({ error: options.commandError ?? "command failed" }, options.commandStatus));
+      }
+      return Promise.resolve(jsonResponse({
+        accepted: true,
+        chatId: "chat-001",
+        requestId: "request-001",
+        type: "user_message",
+      }));
+    }
     if (url.endsWith("/v1/ping")) {
       return Promise.resolve(jsonResponse({
         productId: "yet-ai",
@@ -380,6 +509,19 @@ function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
+function sseResponse(events: unknown[]) {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream({
+    start(controller) {
+      for (const event of events) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      }
+      controller.close();
+    },
+  });
+  return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+}
+
 function findButton(name: string) {
   const button = Array.from(container?.querySelectorAll<HTMLButtonElement>("button") ?? []).find((item) => item.textContent === name);
   if (!button) {
@@ -404,8 +546,22 @@ function apiKeyInput() {
   return input;
 }
 
+function chatInput() {
+  const textarea = container?.querySelector<HTMLTextAreaElement>("textarea");
+  if (!textarea) {
+    throw new Error("Chat textarea not found");
+  }
+  return textarea;
+}
+
 function setInputValue(input: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function setTextareaValue(input: HTMLTextAreaElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
   setter?.call(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
