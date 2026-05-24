@@ -2,13 +2,12 @@
 
 ## Ownership and boundary
 
-`apps/engine` owns the local Yet AI runtime. Its current responsibilities are a loopback HTTP API skeleton, SSE chat snapshot streaming, provider/model registry stubs, storage resolution, and authentication boundaries.
+`apps/engine` owns the local Yet AI runtime. Its current responsibilities are authenticated loopback HTTP APIs, SSE chat streaming, local provider/model registry, OpenAI-compatible direct streaming, storage resolution, and authentication boundaries.
 
 The engine resolves product, binary, and storage names from `product/identity.json`. It is the local-first BYOK runtime, not a required cloud backend. Core workflows must not require a Yet AI account, managed model gateway, product credit balance, or cloud workspace.
 
 ## Current status
 
-The Rust crate and binary are named `yet-lsp`. The runtime currently exposes:
 The Rust crate and binary are named `yet-lsp`. The runtime currently exposes:
 
 - `GET /v1/ping`
@@ -51,7 +50,7 @@ All endpoints require:
 Authorization: Bearer <token>
 ```
 
-The token is read from `YET_AI_AUTH_TOKEN` or falls back to a development token for local experiments. It is not persisted and is not accepted through the query string. Browser native `EventSource` cannot send bearer headers, so GUI streaming should use fetch streaming later.
+The token is read from `YET_AI_AUTH_TOKEN` or falls back to a development token for local experiments. It is not persisted and is not accepted through the query string. Browser native `EventSource` cannot send bearer headers, so GUI streaming uses fetch streaming.
 
 ## Storage names
 
@@ -66,6 +65,13 @@ Provider configs are stored in the user config dir under `providers.d/{id}.json`
 Provider ids are path-safe stable identifiers containing only ASCII letters, digits, `-`, and `_`. `custom` and `openai-compatible` providers require an explicit `baseUrl`. `ollama` defaults to `http://127.0.0.1:11434` when `baseUrl` is omitted.
 
 For `openai-compatible`, `baseUrl` may point either at an API root or directly at `/chat/completions`; the runtime appends `/chat/completions` when needed and sends `Authorization: Bearer <apiKey>` only when API key auth is configured.
+
+## Current limitations
+
+- This is a development MVP, not a production-ready runtime.
+- No full agent autonomy, indexing, tool registry execution, file mutation, shell execution, integrations, LSP completion/code-lens, or packaged IDE launch flow is complete.
+- OpenAI-compatible streaming covers the first narrow chat path only; broader provider quirks, retries, cancellation semantics, OAuth, and keychain-backed secret storage remain follow-up work.
+- The local provider file store is a documented development fallback, not the final secret storage policy.
 
 ## Safety rules
 
