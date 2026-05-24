@@ -30,7 +30,9 @@ Provider endpoints manage local BYOK provider configuration files under the user
 
 ## Provider auth roadmap
 
-Current provider authentication is API-key/OpenAI-compatible direct access only. ChatGPT/OpenAI account login is not implemented. The provider-auth endpoints are available as a sanitized local skeleton for `openai` and `openai-compatible`: `status` reports login unavailable plus API-key fallback, detects matching configured API-key providers with only a redacted hint, `start` and `exchange` do not contact OpenAI and return login-unavailable responses, and `disconnect` only clears future OAuth state when it exists. It does not delete current API-key provider configs.
+Current provider authentication is API-key/OpenAI-compatible direct access only. ChatGPT/OpenAI account login is not implemented. The provider-auth endpoints are available as a sanitized local skeleton for `openai` and `openai-compatible`: `status` reports login unavailable plus API-key fallback, detects matching configured API-key providers with only a redacted hint, default `start` and `exchange` do not contact OpenAI and return login-unavailable responses, and `disconnect` clears only mock/future OAuth state. It does not delete current API-key provider configs.
+
+A local mock OAuth/PKCE harness exists for tests only. `POST /v1/provider-auth/{provider}/start` with `{ "mock": true }` creates a temporary local mock session with a session id, state, simplified PKCE verifier/challenge, local mock authorization URL, and expiry. `POST /v1/provider-auth/{provider}/exchange` validates the provider, session id, state, mock code, and expiry, then stores fake token material only under local mock auth test state. `status` can report sanitized `pending` or `connected` mock OAuth state, and `disconnect` clears it. The harness never calls OpenAI, ChatGPT, or any external provider, and responses must never include fake access or refresh tokens. It is not production OpenAI login and is only a contract/security test harness.
 
 The planned first-phase UX is: sign in first where supported; API key fallback otherwise. The engine should own any future provider-auth flow:
 

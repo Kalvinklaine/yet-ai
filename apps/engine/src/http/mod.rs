@@ -250,17 +250,19 @@ async fn provider_auth_start(
     _auth: Authenticated,
     State(state): State<AppState>,
     Path(provider): Path<String>,
+    Json(request): Json<provider_auth::ProviderAuthStartRequest>,
 ) -> Response {
-    provider_auth_response(provider_auth::start(&state.storage_paths.config_dir, &provider).await)
+    provider_auth_response(provider_auth::start(&state.storage_paths.config_dir, &provider, request).await)
 }
 
 async fn provider_auth_exchange(
     _auth: Authenticated,
     State(state): State<AppState>,
     Path(provider): Path<String>,
+    Json(request): Json<provider_auth::ProviderAuthExchangeRequest>,
 ) -> Response {
     provider_auth_response(
-        provider_auth::exchange(&state.storage_paths.config_dir, &provider).await,
+        provider_auth::exchange(&state.storage_paths.config_dir, &provider, request).await,
     )
 }
 

@@ -405,6 +405,225 @@ async fn provider_auth_rejects_unsupported_and_invalid_providers_safely() {
 }
 
 #[tokio::test]
+async fn provider_auth_mock_oauth_happy_path_start_exchange_status_disconnect() {
+    let app = test_app();
+    let (status, start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(json!({ "mock": true }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(start["status"], "pending");
+    assert_eq!(start["supportsLogin"], true);
+    assert_eq!(start["authSource"], "oauth");
+    assert!(start["authorizationUrl"].as_str().unwrap().starts_with("http://127.0.0.1/mock-oauth/authorize"));
+    let session_id = start["sessionId"].as_str().unwrap();
+    let state = start["authorizationUrl"]
+        .as_str()
+        .unwrap()
+        .split("state=")
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .next()
+        .unwrap();
+
+    let exchange = json!({
+        "sessionId": session_id,
+        "state": state,
+        "code": "mock-code-success"
+    });
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from(exchange.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["configured"], true);
+    assert_eq!(body["status"], "connected");
+    assert_eq!(body["authSource"], "oauth");
+    assert_eq!(body["redacted"], "mock-oauth-...connected");
+    let text = body.to_string();
+    assert!(!text.contains("fake-access-token"));
+    assert!(!text.contains("fake-refresh-token"));
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/provider-auth/openai/status", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "connected");
+    assert!(!body.to_string().contains("fake-access-token"));
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/disconnect",
+            Body::from("{}"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "revoked");
+    assert_eq!(body["success"], true);
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/provider-auth/openai/status", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "login_unavailable");
+}
+
+#[tokio::test]
+async fn provider_auth_mock_oauth_state_or_session_mismatch_is_rejected() {
+    let app = test_app();
+    let (status, start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(json!({ "mock": true }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let session_id = start["sessionId"].as_str().unwrap();
+    let exchange = json!({
+        "sessionId": session_id,
+        "state": "wrong-state",
+        "code": "mock-code-success"
+    });
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from(exchange.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "provider auth session mismatch");
+    assert!(!body.to_string().contains("fake-access-token"));
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/provider-auth/openai/status", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "pending");
+}
+
+#[tokio::test]
+async fn provider_auth_mock_oauth_expired_session_is_rejected() {
+    let app = test_app();
+    let (status, start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(json!({ "mock": true, "ttlSeconds": -1 }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let session_id = start["sessionId"].as_str().unwrap();
+    let state = start["authorizationUrl"]
+        .as_str()
+        .unwrap()
+        .split("state=")
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .next()
+        .unwrap();
+    let exchange = json!({
+        "sessionId": session_id,
+        "state": state,
+        "code": "mock-code-success"
+    });
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from(exchange.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::GONE);
+    assert_eq!(body["error"], "provider auth session expired");
+    assert!(!body.to_string().contains("fake-access-token"));
+}
+
+#[tokio::test]
+async fn provider_auth_mock_oauth_duplicate_exchange_is_safe() {
+    let app = test_app();
+    let (status, start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(json!({ "mock": true }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let session_id = start["sessionId"].as_str().unwrap();
+    let state = start["authorizationUrl"]
+        .as_str()
+        .unwrap()
+        .split("state=")
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .next()
+        .unwrap();
+    let exchange = json!({
+        "sessionId": session_id,
+        "state": state,
+        "code": "mock-code-success"
+    });
+    let (status, first) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from(exchange.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first["status"], "connected");
+
+    let (status, second) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from(exchange.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(second["error"], "provider auth session was not found");
+    assert!(!second.to_string().contains("fake-access-token"));
+}
+
+#[tokio::test]
 async fn provider_auth_disconnect_does_not_delete_api_key_provider_config() {
     let app = test_app();
     let api_key = "sk-disconnect-secret-abcd";
