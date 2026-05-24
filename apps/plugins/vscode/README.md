@@ -36,7 +36,75 @@ Required verification for this package:
 cd apps/gui && npm run build && cd ../plugins/vscode && npm run compile && cd ../../.. && npm run check
 ```
 
-## Extension surfaces
+## VS Code dev-preview run guide
+
+This is the first manual path for trying the local-first VS Code dev preview with the packaged GUI and a local engine launcher. It does not require a Yet AI cloud account, hosted workspace, managed model gateway, or product credit balance.
+
+1. From the repository root, build the local runtime binary:
+
+   ```sh
+   export PATH="$HOME/.cargo/bin:$PATH"; cargo build -p yet-lsp
+   ```
+
+2. Build the GUI assets:
+
+   ```sh
+   cd apps/gui && npm install && npm run build
+   ```
+
+3. Copy the GUI into the VS Code extension and compile the extension:
+
+   ```sh
+   cd apps/plugins/vscode && npm install && npm run copy:gui && npm run compile
+   ```
+
+   If you ran step 2 from `apps/gui`, `cd ../plugins/vscode` is equivalent.
+
+4. In VS Code, open this repository and start an Extension Development Host for `apps/plugins/vscode`. For example, use the VS Code extension development launch flow, or run the extension from that folder in your normal VS Code development setup.
+
+5. Configure runtime settings when auto-discovery is not enough:
+
+   - `yetai.launchMode`: use `auto` for normal dev-preview, `launch` to require starting a local binary, or `connect` to use an already running loopback runtime.
+   - `yetai.engineBinaryPath`: set an absolute path to the built `yet-lsp` when discovery does not find it. From the repository root after step 1 this is usually `<repo>/target/debug/yet-lsp`.
+   - `yetai.runtimeUrl`: keep a loopback URL such as `http://127.0.0.1:8001`. The port is passed to the launched engine as `YET_AI_HTTP_PORT`.
+   - `yetai.sessionToken`: only for `connect` mode when the already running engine requires a known local bearer token. In `auto` or `launch`, the extension generates a per-session token.
+
+6. In the Extension Development Host, run `Yet AI: Open Chat` from the Command Palette.
+
+7. Verify that the packaged GUI opens instead of the placeholder. The GUI runtime status should show the local runtime as reachable after `/v1/ping` and `/v1/caps` succeed. Runtime logs are available in the `Yet AI Runtime` output channel with bearer tokens redacted.
+
+8. Configure a provider in the GUI. For the current MVP, choose an OpenAI-compatible provider or local gateway. Examples:
+
+   - Local OpenAI-compatible gateway: `http://127.0.0.1:1234/v1`
+   - Local/LAN OpenAI-compatible gateway: `http://localhost:11434/v1` when your gateway exposes an OpenAI-compatible API
+   - Hosted OpenAI-compatible endpoint: use the provider's HTTPS API root and your own BYOK key
+
+   Provider settings and credentials are stored by the local engine, not by the VS Code extension. The GUI clears raw API-key inputs after save and renders only configured/redacted status returned by the engine.
+
+9. Send a simple chat message, such as `Say hello in one sentence.` Confirm that the response streams in the GUI.
+
+## Manual smoke checklist
+
+Use this checklist after the steps above:
+
+- Engine binary exists at `target/debug/yet-lsp` or at the configured absolute `yetai.engineBinaryPath`.
+- `apps/gui/dist/index.html` exists before running `npm run copy:gui`.
+- `apps/plugins/vscode/media/gui/index.html` exists after running `npm run copy:gui`.
+- `Yet AI: Open Chat` opens the packaged GUI, not only the placeholder text.
+- The `Yet AI Runtime` output channel reports `Yet AI local runtime health check passed.`
+- The GUI shows runtime status as connected/reachable.
+- Provider save/test uses an OpenAI-compatible or local gateway URL and does not require a Yet AI-hosted backend.
+- Provider status after save is configured/redacted; the raw key is not rendered back into the form.
+- A simple chat message produces `snapshot`, stream start/delta, and finish behavior in the GUI.
+
+## Troubleshooting
+
+- Token or `401` errors: in `auto` or `launch` mode, do not manually set `yetai.sessionToken`; the extension generates a token and passes it to the engine. In `connect` mode, make sure `yetai.sessionToken` matches the running engine's `YET_AI_AUTH_TOKEN`. Restart the Extension Development Host after changing token-related settings.
+- Runtime port conflict: `yetai.runtimeUrl` defaults to `http://127.0.0.1:8001`. If another process owns that port, set `yetai.runtimeUrl` to another loopback port such as `http://127.0.0.1:8011` before opening chat. In launch mode the extension passes that port through `YET_AI_HTTP_PORT`.
+- Missing `yet-lsp` binary: run `export PATH="$HOME/.cargo/bin:$PATH"; cargo build -p yet-lsp` from the repository root. If discovery still fails, set `yetai.engineBinaryPath` to the absolute `target/debug/yet-lsp` path and use `yetai.launchMode` `launch`.
+- Packaged GUI not copied: run `cd apps/gui && npm install && npm run build`, then `cd ../plugins/vscode && npm install && npm run copy:gui && npm run compile`. If the webview still shows the placeholder, check that `apps/plugins/vscode/media/gui/index.html` exists and reopen the command.
+- Provider base URL normalization: for OpenAI-compatible providers, `http://host/v1`, `http://host/v1/`, and an explicit `http://host/v1/chat/completions` are accepted. The engine appends `/chat/completions` when needed. Use absolute `http` or `https` URLs with a host and no `user:pass@host` userinfo.
+
 ## Extension surfaces
 
 - Manifest identity is checked against `product/identity.json`.
@@ -77,7 +145,7 @@ No privileged workspace edits, IDE tools, or provider actions are implemented in
 - The extension shell is buildable but not production-ready.
 - Runtime health recovery after a crashed launched process is limited to retrying the command.
 - Packaged production GUI assets are supported through the documented `apps/gui` build plus `npm run copy:gui` flow, but generated assets are not committed.
-- No LSP client, privileged workspace edits, IDE tools, file mutation, shell actions, or provider actions are implemented.
+- No marketplace package, LSP client, completions, privileged workspace edits, IDE tools, file mutation, shell actions, or provider actions are implemented.
 - `yetai.sessionToken` remains a debug/local runtime setting until VS Code SecretStorage integration is added.
 
 ## Safety rules
