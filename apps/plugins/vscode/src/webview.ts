@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import * as fs from "node:fs";
 import { EngineConnection, getLoopbackOrigin } from "./engineConnection";
 import { ProductIdentity, bridgeVersion, configurationPrefix } from "./identity";
 
@@ -31,7 +32,7 @@ export function openYetAiWebview(
     },
   );
 
-  panel.webview.html = renderWebviewHtml(panel.webview, identity, connection);
+  panel.webview.html = renderWebviewHtml(panel.webview, context.extensionUri, identity, connection);
   panel.webview.onDidReceiveMessage((message: unknown) => {
     if (!isGuiMessage(message)) {
       console.log("Yet AI rejected invalid GUI bridge message");
@@ -68,6 +69,7 @@ function createHostReady(
 
 function renderWebviewHtml(
   webview: vscode.Webview,
+  extensionUri: vscode.Uri,
   identity: ProductIdentity,
   connection: EngineConnection,
 ): string {
@@ -75,6 +77,7 @@ function renderWebviewHtml(
   const guiDevOrigin = connection.guiDevUrl
     ? getLoopbackOrigin(connection.guiDevUrl, `${configurationPrefix}.guiDevUrl`)
     : undefined;
+  const packagedGui = connection.guiDevUrl ? undefined : findPackagedGui(extensionUri);
   const bootstrap = serializeScriptJson({
     bridgeVersion,
     requestId: createRequestId(),
@@ -88,14 +91,13 @@ function renderWebviewHtml(
   const frameSource = connection.guiDevUrl
     ? `<iframe title="${escapeHtml(identity.vscode.displayName)} GUI" src="${escapeHtml(connection.guiDevUrl)}"></iframe>`
     : "";
-  const placeholder = connection.guiDevUrl
-    ? ""
-    : `<main><h1>${escapeHtml(identity.vscode.displayName)}</h1><p>Local runtime shell is ready.</p><p>Runtime: <code>${escapeHtml(connection.runtimeUrl)}</code></p><p>Set <code>yetai.guiDevUrl</code> to a loopback Vite dev server to host the GUI during development.</p></main>`;
+  const placeholder = connection.guiDevUrl || packagedGui ? "" : `<main><h1>${escapeHtml(identity.vscode.displayName)}</h1><p>Local runtime shell is ready.</p><p>Runtime: <code>${escapeHtml(connection.runtimeUrl)}</code></p><p>Run <code>cd apps/gui && npm run build</code> and <code>cd apps/plugins/vscode && npm run copy:gui</code> to package the GUI, or set <code>yetai.guiDevUrl</code> to a loopback Vite dev server during development.</p></main>`;
+  const packagedGuiHtml = packagedGui ? rewritePackagedGuiHtml(packagedGui.html, packagedGui.root, webview) : "";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; frame-src http://127.0.0.1:* http://localhost:* http://[::1]:*;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource} 'nonce-${nonce}'; script-src ${webview.cspSource} 'nonce-${nonce}'; connect-src http://127.0.0.1:* http://localhost:* http://[::1]:* https://127.0.0.1:* https://localhost:* https://[::1]:*; frame-src http://127.0.0.1:* http://localhost:* http://[::1]:*;">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${escapeHtml(identity.vscode.displayName)}</title>
 <style nonce="${nonce}">
@@ -106,7 +108,7 @@ iframe { width: 100vw; height: 100vh; border: 0; }
 </style>
 </head>
 <body>
-${placeholder}${frameSource}
+${placeholder}${frameSource}${packagedGuiHtml}
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
 const bootstrap = ${bootstrap};
@@ -145,6 +147,43 @@ if (frame) {
 </script>
 </body>
 </html>`;
+}
+
+type PackagedGui = {
+  root: vscode.Uri;
+  html: string;
+};
+
+function findPackagedGui(extensionUri: vscode.Uri): PackagedGui | undefined {
+  const root = vscode.Uri.joinPath(extensionUri, "media", "gui");
+  const index = vscode.Uri.joinPath(root, "index.html");
+  try {
+    return {
+      root,
+      html: fs.readFileSync(index.fsPath, "utf8"),
+    };
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+function rewritePackagedGuiHtml(html: string, root: vscode.Uri, webview: vscode.Webview): string {
+  const body = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? "";
+  return body.replace(/\b(src|href)=("|')(.+?)\2/g, (_match: string, attribute: string, quote: string, value: string) => {
+    if (!value.startsWith("./") && !value.startsWith("/")) {
+      return `${attribute}=${quote}${value}${quote}`;
+    }
+    const relativePath = value.replace(/^\.\//, "").replace(/^\//, "");
+    const uri = webview.asWebviewUri(vscode.Uri.joinPath(root, ...relativePath.split("/")));
+    return `${attribute}=${quote}${uri.toString()}${quote}`;
+  });
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ENOENT";
 }
 
 export function serializeScriptJson(value: unknown): string {

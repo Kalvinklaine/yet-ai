@@ -15,6 +15,15 @@ npm install
 npm run compile
 ```
 
+Build the GUI and copy its generated `dist` into the extension when testing packaged webview assets:
+
+```sh
+cd apps/gui && npm install && npm run build
+cd ../plugins/vscode && npm install && npm run copy:gui && npm run compile
+```
+
+`npm run copy:gui` copies `apps/gui/dist` to `apps/plugins/vscode/media/gui`. That directory is ignored because it contains generated assets; release packaging should run this copy step after each GUI build instead of committing the generated files.
+
 Repository-level validation is available from the root:
 
 ```sh
@@ -24,7 +33,7 @@ npm run check
 Required verification for this package:
 
 ```sh
-cd apps/plugins/vscode && npm run compile && cd ../../.. && npm run check
+cd apps/gui && npm run build && cd ../plugins/vscode && npm run compile && cd ../../.. && npm run check
 ```
 
 ## Extension surfaces
@@ -41,7 +50,7 @@ cd apps/plugins/vscode && npm run compile && cd ../../.. && npm run check
 
 ## Webview and bridge
 
-The command opens a minimal Yet AI webview shell. If `yetai.guiDevUrl` is set, the shell embeds the loopback GUI dev server in an iframe. Otherwise it displays a local placeholder with the configured runtime URL.
+The command opens a minimal Yet AI webview shell. If `yetai.guiDevUrl` is set, the shell embeds the loopback GUI dev server in an iframe. Otherwise it first looks for packaged GUI assets at `media/gui/index.html`; when those generated assets are absent, it displays a local placeholder with the configured runtime URL.
 
 The wrapper sends `gui.ready` with a request id. The extension accepts only exact-version `gui.ready` messages, rejects unknown or invalid messages without logging payloads, and replies with `host.ready` echoing the request id when present. It also sends `host.openedFromCommand`. Bootstrap data is serialized for script context with `<`, U+2028, and U+2029 escaped to avoid script breakout.
 
@@ -53,7 +62,7 @@ No privileged workspace edits, IDE tools, or provider actions are implemented in
 
 - The extension shell is buildable but not production-ready.
 - It connects to an already running local runtime; engine binary launch, lifecycle management, logs, and health recovery are follow-up work.
-- No packaged production GUI asset is wired yet; use `yetai.guiDevUrl` for development or the local placeholder shell.
+- Packaged production GUI assets are supported through the documented `apps/gui` build plus `npm run copy:gui` flow, but generated assets are not committed.
 - No LSP client, privileged workspace edits, IDE tools, file mutation, shell actions, or provider actions are implemented.
 - `yetai.sessionToken` remains a debug/local runtime setting until VS Code SecretStorage integration is added.
 
