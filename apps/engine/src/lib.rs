@@ -1,6 +1,7 @@
 pub mod chat;
 pub mod http;
 pub mod identity;
+pub mod provider_auth;
 pub mod providers;
 pub mod security;
 pub mod storage;

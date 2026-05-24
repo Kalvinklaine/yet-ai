@@ -18,6 +18,10 @@ The Rust crate and binary are named `yet-lsp`. The runtime currently exposes:
 - `PATCH /v1/providers/{id}`
 - `DELETE /v1/providers/{id}`
 - `POST /v1/providers/{id}/test`
+- `POST /v1/provider-auth/{provider}/start`
+- `GET /v1/provider-auth/{provider}/status`
+- `POST /v1/provider-auth/{provider}/exchange`
+- `POST /v1/provider-auth/{provider}/disconnect`
 - `GET /v1/models`
 - `POST /v1/chats/{chat_id}/commands`
 - `GET /v1/chats/subscribe?chat_id=...`
@@ -26,7 +30,7 @@ Provider endpoints manage local BYOK provider configuration files under the user
 
 ## Provider auth roadmap
 
-Current provider authentication is API-key/OpenAI-compatible direct access only. ChatGPT/OpenAI account login is not implemented.
+Current provider authentication is API-key/OpenAI-compatible direct access only. ChatGPT/OpenAI account login is not implemented. The provider-auth endpoints are available as a sanitized local skeleton for `openai` and `openai-compatible`: `status` reports login unavailable plus API-key fallback, detects matching configured API-key providers with only a redacted hint, `start` and `exchange` do not contact OpenAI and return login-unavailable responses, and `disconnect` only clears future OAuth state when it exists. It does not delete current API-key provider configs.
 
 The planned first-phase UX is: sign in first where supported; API key fallback otherwise. The engine should own any future provider-auth flow:
 
@@ -36,7 +40,7 @@ The planned first-phase UX is: sign in first where supported; API key fallback o
 - refresh or revoke/disconnect credentials without exposing raw secrets;
 - return only sanitized status such as connected/configured, auth source, expiry, account label, scopes, redacted hints, and safe error text.
 
-Candidate future endpoints are `POST /v1/provider-auth/{provider}/start`, `GET /v1/provider-auth/{provider}/status`, `POST /v1/provider-auth/{provider}/exchange`, `POST /v1/provider-auth/{provider}/disconnect`, and an optional loopback callback endpoint. Do not implement cookie import, ChatGPT web-session scraping, or reuse of another tool's local credentials without a separate explicit approval and compliance/security review.
+Future provider-auth implementations may add real pending OAuth sessions, polling, and an optional loopback callback endpoint. Do not implement cookie import, ChatGPT web-session scraping, external network calls during skeleton status/start/exchange/disconnect, or reuse of another tool's local credentials without a separate explicit approval and compliance/security review.
 
 ## Commands
 
