@@ -13,6 +13,7 @@ import com.intellij.ui.jcef.JBCefApp
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefJSQuery
 import java.awt.BorderLayout
+import java.net.URL
 import javax.swing.JLabel
 import javax.swing.JPanel
 
@@ -49,7 +50,9 @@ class YetBrowserPanel : JPanel(BorderLayout()) {
             sendToGui(BridgeMessages.openedFromCommand())
             null
         }
-        browser.loadHTML(renderHtml(RuntimeSettings.current(), query))
+        val settings = RuntimeSettings.current()
+        val packagedGui = if (settings.guiDevUrl == null) PackagedGui.find() else null
+        browser.loadHTML(renderHtml(settings, query, packagedGui))
     }
 
     private fun sendToGui(message: String) {
@@ -57,15 +60,18 @@ class YetBrowserPanel : JPanel(BorderLayout()) {
     }
 }
 
-private fun renderHtml(settings: RuntimeSettings, query: JBCefJSQuery): String {
+private fun renderHtml(settings: RuntimeSettings, query: JBCefJSQuery, packagedGui: PackagedGui?): String {
     val requestId = "jb-${System.currentTimeMillis()}"
     val guiDevOrigin = settings.guiDevUrl?.let { loopbackOrigin(it) }
     val bootstrap = BridgeMessages.escapeScriptJson(
         BridgeMessages.hostReady(settings, requestId)
     )
     val frame = settings.guiDevUrl?.let { "<iframe title=\"Yet AI GUI\" src=\"${html(it)}\"></iframe>" } ?: ""
-    val placeholder = if (settings.guiDevUrl == null) {
-        "<main><h1>Yet AI</h1><p>Local runtime shell is ready.</p><p>Runtime: <code>${html(settings.runtimeUrl)}</code></p><p>Set the GUI dev URL to a loopback Vite server to host the GUI during development.</p></main>"
+    val packagedGuiHead = packagedGui?.head ?: ""
+    val packagedGuiHtml = packagedGui?.body ?: ""
+    val packagedGuiBase = packagedGui?.baseUrl?.let { "<base href=\"${html(it.toExternalForm())}\">" } ?: ""
+    val placeholder = if (settings.guiDevUrl == null && packagedGui == null) {
+        "<main><h1>Yet AI</h1><p>Local runtime shell is ready.</p><p>Runtime: <code>${html(settings.runtimeUrl)}</code></p><p>Run <code>cd apps/gui && npm run build</code> before <code>cd apps/plugins/jetbrains && gradle build --console=plain</code> to package the GUI, or set the GUI dev URL to a loopback Vite server during development.</p></main>"
     } else {
         ""
     }
@@ -78,6 +84,8 @@ private fun renderHtml(settings: RuntimeSettings, query: JBCefJSQuery): String {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Yet AI</title>
+        $packagedGuiBase
+        $packagedGuiHead
         <style>
         body { margin: 0; font-family: sans-serif; }
         main { padding: 24px; }
@@ -85,7 +93,7 @@ private fun renderHtml(settings: RuntimeSettings, query: JBCefJSQuery): String {
         </style>
         </head>
         <body>
-        $placeholder$frame
+        $placeholder$frame$packagedGuiHtml
         <script>
         const bootstrapHostReady = $bootstrap;
         const bridgeVersion = "${ProductIdentity.bridgeVersion}";
@@ -126,6 +134,20 @@ private fun renderHtml(settings: RuntimeSettings, query: JBCefJSQuery): String {
         </body>
         </html>
     """.trimIndent()
+}
+
+private data class PackagedGui(val baseUrl: URL, val head: String, val body: String) {
+    companion object {
+        private const val ResourceRoot = "/yet-ai-gui/"
+
+        fun find(): PackagedGui? {
+            val indexUrl = PackagedGui::class.java.getResource("${ResourceRoot}index.html") ?: return null
+            val html = indexUrl.readText()
+            val head = Regex("<head[^>]*>([\\s\\S]*?)</head>", RegexOption.IGNORE_CASE).find(html)?.groupValues?.get(1) ?: ""
+            val body = Regex("<body[^>]*>([\\s\\S]*?)</body>", RegexOption.IGNORE_CASE).find(html)?.groupValues?.get(1) ?: html
+            return PackagedGui(indexUrl, head, body)
+        }
+    }
 }
 
 private fun html(value: String): String = value
