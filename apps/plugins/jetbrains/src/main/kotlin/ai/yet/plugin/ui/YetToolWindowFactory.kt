@@ -2,6 +2,8 @@ package ai.yet.plugin.ui
 
 import ai.yet.plugin.bridge.BridgeMessages
 import ai.yet.plugin.identity.ProductIdentity
+import ai.yet.plugin.runtime.RuntimeConnectionManager
+import ai.yet.plugin.runtime.RuntimeConnectionResult
 import ai.yet.plugin.runtime.RuntimeSettings
 import ai.yet.plugin.runtime.loopbackOrigin
 import com.intellij.openapi.diagnostic.Logger
@@ -50,9 +52,9 @@ class YetBrowserPanel : JPanel(BorderLayout()) {
             sendToGui(BridgeMessages.openedFromCommand())
             null
         }
-        val settings = RuntimeSettings.current()
-        val packagedGui = if (settings.guiDevUrl == null) PackagedGui.find() else null
-        browser.loadHTML(renderHtml(settings, query, packagedGui))
+        val connection = RuntimeConnectionManager.getInstance().prepare()
+        val packagedGui = if (connection.settings.guiDevUrl == null) PackagedGui.find() else null
+        browser.loadHTML(renderHtml(connection, query, packagedGui))
     }
 
     private fun sendToGui(message: String) {
@@ -60,7 +62,8 @@ class YetBrowserPanel : JPanel(BorderLayout()) {
     }
 }
 
-private fun renderHtml(settings: RuntimeSettings, query: JBCefJSQuery, packagedGui: PackagedGui?): String {
+private fun renderHtml(connection: RuntimeConnectionResult, query: JBCefJSQuery, packagedGui: PackagedGui?): String {
+    val settings = connection.settings
     val requestId = "jb-${System.currentTimeMillis()}"
     val guiDevOrigin = settings.guiDevUrl?.let { loopbackOrigin(it) }
     val bootstrap = BridgeMessages.escapeScriptJson(
@@ -70,8 +73,10 @@ private fun renderHtml(settings: RuntimeSettings, query: JBCefJSQuery, packagedG
     val packagedGuiHead = packagedGui?.head ?: ""
     val packagedGuiHtml = packagedGui?.body ?: ""
     val packagedGuiBase = packagedGui?.baseUrl?.let { "<base href=\"${html(it.toExternalForm())}\">" } ?: ""
+    val status = connection.status?.let { "<p>${html(it)}</p>" } ?: ""
+    val error = connection.error?.let { "<p><strong>Runtime error:</strong> ${html(it)}</p>" } ?: ""
     val placeholder = if (settings.guiDevUrl == null && packagedGui == null) {
-        "<main><h1>Yet AI</h1><p>Local runtime shell is ready.</p><p>Runtime: <code>${html(settings.runtimeUrl)}</code></p><p>Run <code>cd apps/gui && npm run build</code> before <code>cd apps/plugins/jetbrains && gradle build --console=plain</code> to package the GUI, or set the GUI dev URL to a loopback Vite server during development.</p></main>"
+        "<main><h1>Yet AI</h1>$status$error<p>Runtime: <code>${html(settings.runtimeUrl)}</code></p><p>Run <code>cd apps/gui && npm run build</code> before <code>cd apps/plugins/jetbrains && gradle build --console=plain</code> to package the GUI, or set the GUI dev URL to a loopback Vite server during development.</p></main>"
     } else {
         ""
     }

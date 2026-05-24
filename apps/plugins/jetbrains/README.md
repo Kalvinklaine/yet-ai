@@ -40,7 +40,7 @@ npm run check
 Required verification for this package:
 
 ```sh
-cd apps/plugins/jetbrains && node scripts/check-identity.mjs && gradle test --console=plain && gradle build --console=plain && cd ../../.. && npm run check
+cd apps/plugins/jetbrains && node scripts/check-identity.mjs && gradle build --console=plain && cd ../../.. && export PATH="$HOME/.cargo/bin:$PATH"; cargo check && cargo test && npm run check
 ```
 
 If Gradle is not installed locally, run the identity check and root validation, then install Gradle or add a reviewed Gradle wrapper before packaging work. This shell intentionally avoids vendoring a wrapper jar in the first scaffold.
@@ -55,10 +55,12 @@ If Gradle is not installed locally, run the identity check and root validation, 
 - Action: `ai.yet.plugin.OpenChat` (`Yet AI: Open Chat`).
 - Settings:
   - `runtimeUrl`, default `http://127.0.0.1:8001`.
+  - `launchMode`, one of `auto`, `connect`, or `launch`.
+  - `engineBinaryPath`, optional absolute path to the `yet-lsp` binary.
   - `sessionToken`, optional local runtime bearer/session token for debug connections.
   - `guiDevUrl`, optional loopback GUI dev server URL.
 
-`runtimeUrl` and `guiDevUrl` are trimmed, parsed as absolute URIs, and restricted to loopback `http` or `https` URLs before use. Userinfo, missing hosts, malformed values, non-loopback hosts, and non-HTTP schemes are rejected. Only `127.0.0.1`, `localhost`, and IPv6 loopback `[::1]` are allowed, and IPv6 origins are emitted with brackets.
+`runtimeUrl` and `guiDevUrl` are trimmed, parsed as absolute URIs, and restricted to loopback `http` or `https` URLs before use. Userinfo, missing hosts, malformed values, non-loopback hosts, and non-HTTP schemes are rejected. Only `127.0.0.1`, `localhost`, and IPv6 loopback `[::1]` are allowed, and IPv6 origins are emitted with brackets. `launchMode` is restricted to `auto`, `connect`, or `launch`; `engineBinaryPath` is non-secret local machine configuration stored in settings XML.
 
 `sessionToken` is a sensitive local runtime credential, not a provider secret. It is stored with JetBrains PasswordSafe instead of the persistent settings XML, passed only through the trusted bootstrap/`host.ready` path needed by the GUI runtime client, never logged, and never rendered in the placeholder UI. Raw provider secrets must never be stored in JetBrains plugin settings.
 
@@ -70,11 +72,13 @@ The wrapper exposes `window.postIntellijMessage` and sends `gui.ready` with a re
 
 In GUI dev mode the wrapper embeds only loopback GUI URLs, computes the exact dev origin, forwards iframe messages only after checking `event.origin`, and sends iframe `postMessage` calls with that exact `targetOrigin` rather than `*`.
 
-No privileged workspace edits, IDE tools, engine launch process, provider adapters, or provider credential persistence are implemented in this shell.
+The runtime connector supports debug connect mode and local launch mode. In `connect` mode it validates the loopback `runtimeUrl`, reads the optional debug token from PasswordSafe, and checks `GET /v1/ping` with the bearer token when present. In `launch` mode, or `auto` mode when a `yet-lsp` binary is discoverable, it starts the binary with a generated per-session token in `YET_AI_AUTH_TOKEN` and the configured runtime port in `YET_AI_HTTP_PORT`, then checks `/v1/ping`. Launched processes are stopped when the application service is disposed. The connector may discover `yet-lsp` on `PATH`; an explicit `engineBinaryPath` must be absolute and point to a file.
+
+No privileged workspace edits, IDE tools, provider adapters, or provider credential persistence are implemented in this shell.
 
 ## Current limitations
 
-- The plugin connects to an already running local runtime; it does not launch the engine binary yet.
+- The local launcher is an MVP: it sets token and HTTP port environment variables only, reads `/v1/ping`, and does not add LSP/completion wiring.
 - The bridge currently accepts only `gui.ready` from the GUI and emits `host.ready` plus `host.openedFromCommand`.
 - Settings use JetBrains application state for non-secret local runtime/debug URLs only. The local session token uses JetBrains PasswordSafe.
 - Packaged production GUI assets are generated build output from `apps/gui/dist`; they are copied into Gradle build resources but are not committed.

@@ -21,6 +21,8 @@
                                  id="ai.yet.plugin.settings"
                                  displayName="Yet AI"/>
         <applicationService serviceImplementation="ai.yet.plugin.settings.YetSettingsState"/>
+        <applicationService serviceImplementation="ai.yet.plugin.settings.SessionTokenStore"/>
+        <applicationService serviceImplementation="ai.yet.plugin.runtime.RuntimeConnectionManager"/>
     </extensions>
 
     <actions>
