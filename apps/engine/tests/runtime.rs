@@ -110,6 +110,30 @@ async fn configure_openai_provider(app: axum::Router, base_url: String, api_key:
     assert!(!body.to_string().contains(api_key));
 }
 
+async fn configure_openai_api_provider(app: axum::Router, api_key: &str) {
+    let provider = json!({
+        "id": "openai-api",
+        "kind": "openai-compatible",
+        "displayName": "OpenAI API",
+        "enabled": true,
+        "baseUrl": "https://api.openai.com/v1",
+        "auth": { "type": "api_key", "apiKey": api_key },
+        "models": [{ "id": "gpt-test", "displayName": "GPT Test" }],
+        "capabilities": { "chat": true, "completion": false, "embeddings": false }
+    });
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert!(!body.to_string().contains(api_key));
+}
+
 async fn start_mock_provider(
     status: StatusCode,
     stream_body: &'static str,
@@ -256,6 +280,159 @@ async fn caps_returns_local_direct_runtime() {
         .as_array()
         .unwrap()
         .contains(&json!("bridge")));
+}
+
+#[tokio::test]
+async fn provider_auth_endpoints_require_bearer_token() {
+    for (method, uri) in [
+        (Method::GET, "/v1/provider-auth/openai/status"),
+        (Method::POST, "/v1/provider-auth/openai/start"),
+        (Method::POST, "/v1/provider-auth/openai/exchange"),
+        (Method::POST, "/v1/provider-auth/openai/disconnect"),
+    ] {
+        let response = test_app()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+}
+
+#[tokio::test]
+async fn provider_auth_query_string_token_is_not_accepted() {
+    let response = test_app()
+        .oneshot(
+            Request::get(format!(
+                "/v1/provider-auth/openai/status?token={TEST_TOKEN}"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn provider_auth_openai_status_returns_login_unavailable_fallback() {
+    let (status, body) = json_response(authed_request(
+        Method::GET,
+        "/v1/provider-auth/openai/status",
+        Body::empty(),
+    ))
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["provider"], "openai");
+    assert_eq!(body["configured"], false);
+    assert_eq!(body["status"], "login_unavailable");
+    assert_eq!(body["authSource"], "none");
+    assert_eq!(body["supportsLogin"], false);
+    assert_eq!(body["supportsApiKey"], true);
+    assert_eq!(body["cloudRequired"], false);
+    assert!(body["message"].as_str().unwrap().contains("API key"));
+}
+
+#[tokio::test]
+async fn provider_auth_openai_status_redacts_configured_api_key() {
+    let app = test_app();
+    let api_key = "sk-provider-auth-secret-abcd";
+    configure_openai_api_provider(app.clone(), api_key).await;
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/provider-auth/openai/status",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["configured"], true);
+    assert_eq!(body["status"], "api_key_configured");
+    assert_eq!(body["authSource"], "api_key");
+    assert_eq!(body["supportsLogin"], false);
+    assert_eq!(body["supportsApiKey"], true);
+    assert_eq!(body["cloudRequired"], false);
+    assert_eq!(body["redacted"], "sk--...abcd");
+    let text = body.to_string();
+    assert!(!text.contains(api_key));
+    assert!(!text.contains("provider-auth-secret"));
+}
+
+#[tokio::test]
+async fn provider_auth_start_exchange_disconnect_are_sanitized_schema_shaped() {
+    for (method, uri, expected_success) in [
+        (Method::POST, "/v1/provider-auth/openai/start", false),
+        (Method::POST, "/v1/provider-auth/openai/exchange", false),
+        (Method::POST, "/v1/provider-auth/openai/disconnect", true),
+    ] {
+        let (status, body) = json_response(authed_request(method, uri, Body::from("{}"))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["provider"], "openai");
+        assert_eq!(body["configured"], false);
+        assert_eq!(body["authSource"], "none");
+        assert_eq!(body["supportsLogin"], false);
+        assert_eq!(body["supportsApiKey"], true);
+        assert_eq!(body["cloudRequired"], false);
+        assert_eq!(body["success"], expected_success);
+        let text = body.to_string().to_lowercase();
+        assert!(!text.contains("access_token"));
+        assert!(!text.contains("refresh_token"));
+        assert!(!text.contains("cookie"));
+        assert!(!text.contains("session"));
+    }
+}
+
+#[tokio::test]
+async fn provider_auth_rejects_unsupported_and_invalid_providers_safely() {
+    for (uri, expected_status) in [
+        ("/v1/provider-auth/ollama/status", StatusCode::NOT_FOUND),
+        ("/v1/provider-auth/.bad/status", StatusCode::BAD_REQUEST),
+    ] {
+        let (status, body) = json_response(authed_request(Method::GET, uri, Body::empty())).await;
+        assert_eq!(status, expected_status);
+        let text = body.to_string();
+        assert!(!text.contains("sk-"));
+        assert!(!text.contains("token"));
+    }
+}
+
+#[tokio::test]
+async fn provider_auth_disconnect_does_not_delete_api_key_provider_config() {
+    let app = test_app();
+    let api_key = "sk-disconnect-secret-abcd";
+    configure_openai_api_provider(app.clone(), api_key).await;
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/disconnect",
+            Body::from("{}"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["success"], true);
+    assert_eq!(body["configured"], true);
+    assert!(!body.to_string().contains(api_key));
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/providers/openai-api", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["auth"]["configured"], true);
+    assert_eq!(body["auth"]["redacted"], "sk--...abcd");
+    assert!(!body.to_string().contains(api_key));
 }
 
 #[tokio::test]

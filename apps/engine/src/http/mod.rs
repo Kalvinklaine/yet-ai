@@ -1,4 +1,3 @@
-
 use axum::extract::{Path, Query, State};
 use axum::response::sse::{KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -9,6 +8,7 @@ use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::provider_auth;
 use crate::providers;
 use crate::security::Authenticated;
 use crate::AppState;
@@ -23,9 +23,21 @@ pub fn router(state: AppState) -> Router {
                 .route("/providers", get(providers_list).post(providers_create))
                 .route(
                     "/providers/:provider_id",
-                    get(providers_get).patch(providers_update).delete(providers_delete),
+                    get(providers_get)
+                        .patch(providers_update)
+                        .delete(providers_delete),
                 )
                 .route("/providers/:provider_id/test", post(providers_test))
+                .route("/provider-auth/:provider/start", post(provider_auth_start))
+                .route("/provider-auth/:provider/status", get(provider_auth_status))
+                .route(
+                    "/provider-auth/:provider/exchange",
+                    post(provider_auth_exchange),
+                )
+                .route(
+                    "/provider-auth/:provider/disconnect",
+                    post(provider_auth_disconnect),
+                )
                 .route("/models", get(models_list))
                 .route("/chats/:chat_id/commands", post(chat_command))
                 .route("/chats/subscribe", get(chats_subscribe)),
@@ -106,10 +118,11 @@ pub struct IdeCaps {
 }
 
 async fn caps(_auth: Authenticated, State(state): State<AppState>) -> Response {
-    let provider_list = match providers::list_provider_configs(&state.storage_paths.config_dir).await {
-        Ok(providers) => providers,
-        Err(error) => return provider_error(error),
-    };
+    let provider_list =
+        match providers::list_provider_configs(&state.storage_paths.config_dir).await {
+            Ok(providers) => providers,
+            Err(error) => return provider_error(error),
+        };
     Json(CapsResponse {
         product_id: state.identity.product.id,
         protocol_version: "2026-05-15".to_string(),
@@ -189,7 +202,9 @@ async fn providers_update(
     Path(provider_id): Path<String>,
     Json(request): Json<providers::ProviderWriteRequest>,
 ) -> Response {
-    match providers::update_provider_config(&state.storage_paths.config_dir, &provider_id, request).await {
+    match providers::update_provider_config(&state.storage_paths.config_dir, &provider_id, request)
+        .await
+    {
         Ok(provider) => Json(provider.summary()).into_response(),
         Err(error) => provider_error(error),
     }
@@ -220,6 +235,51 @@ async fn providers_test(
         })
         .into_response(),
         Err(error) => provider_error(error),
+    }
+}
+
+async fn provider_auth_status(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(provider): Path<String>,
+) -> Response {
+    provider_auth_response(provider_auth::status(&state.storage_paths.config_dir, &provider).await)
+}
+
+async fn provider_auth_start(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(provider): Path<String>,
+) -> Response {
+    provider_auth_response(provider_auth::start(&state.storage_paths.config_dir, &provider).await)
+}
+
+async fn provider_auth_exchange(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(provider): Path<String>,
+) -> Response {
+    provider_auth_response(
+        provider_auth::exchange(&state.storage_paths.config_dir, &provider).await,
+    )
+}
+
+async fn provider_auth_disconnect(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(provider): Path<String>,
+) -> Response {
+    provider_auth_response(
+        provider_auth::disconnect(&state.storage_paths.config_dir, &provider).await,
+    )
+}
+
+fn provider_auth_response(
+    result: Result<provider_auth::ProviderAuthResponse, provider_auth::ProviderAuthError>,
+) -> Response {
+    match result {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => (error.status(), Json(json!({ "error": error.to_string() }))).into_response(),
     }
 }
 
@@ -266,7 +326,10 @@ async fn chat_command(
     }
 
     if command.command_type != "user_message" {
-        return (StatusCode::NOT_IMPLEMENTED, Json(json!({ "error": "unsupported command type" })))
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            Json(json!({ "error": "unsupported command type" })),
+        )
             .into_response();
     }
 
@@ -282,7 +345,11 @@ async fn chat_command(
 
     state
         .chat_runtime
-        .accept_user_message(state.storage_paths.config_dir.clone(), chat_id.clone(), content.to_string())
+        .accept_user_message(
+            state.storage_paths.config_dir.clone(),
+            chat_id.clone(),
+            content.to_string(),
+        )
         .await;
 
     Json(json!({
@@ -304,7 +371,9 @@ async fn chats_subscribe(
     _auth: Authenticated,
     State(state): State<AppState>,
     Query(query): Query<SubscribeQuery>,
-) -> Sse<impl futures_util::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>> {
+) -> Sse<
+    impl futures_util::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
+> {
     let stream = state.chat_runtime.subscribe(query.chat_id).await;
     Sse::new(stream).keep_alive(
         KeepAlive::new()
