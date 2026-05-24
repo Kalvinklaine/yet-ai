@@ -19,7 +19,7 @@ class YetSettingsConfigurable : Configurable {
         val state = YetSettingsState.getInstance().state
         runtimeUrlField.text = state.runtimeUrl
         guiDevUrlField.text = state.guiDevUrl
-        sessionTokenField.text = state.sessionToken
+        sessionTokenField.text = SessionTokenStore.getInstance().get()
         panel = FormBuilder.createFormBuilder()
             .addLabeledComponent("Local runtime URL", runtimeUrlField)
             .addLabeledComponent("GUI dev URL", guiDevUrlField)
@@ -33,21 +33,21 @@ class YetSettingsConfigurable : Configurable {
         val state = YetSettingsState.getInstance().state
         return runtimeUrlField.text != state.runtimeUrl ||
             guiDevUrlField.text != state.guiDevUrl ||
-            String(sessionTokenField.password) != state.sessionToken
+            String(sessionTokenField.password) != SessionTokenStore.getInstance().get()
     }
 
     override fun apply() {
         val state = YetSettingsState.getInstance().state
         state.runtimeUrl = runtimeUrlField.text.trim()
         state.guiDevUrl = guiDevUrlField.text.trim()
-        state.sessionToken = String(sessionTokenField.password)
+        SessionTokenStore.getInstance().set(String(sessionTokenField.password))
     }
 
     override fun reset() {
         val state = YetSettingsState.getInstance().state
         runtimeUrlField.text = state.runtimeUrl
         guiDevUrlField.text = state.guiDevUrl
-        sessionTokenField.text = state.sessionToken
+        sessionTokenField.text = SessionTokenStore.getInstance().get()
     }
 
     override fun disposeUIResources() {

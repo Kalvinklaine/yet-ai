@@ -12,7 +12,8 @@ The plugin connects the GUI to the local Yet AI runtime for local-first BYOK wor
 
 ```sh
 node scripts/check-identity.mjs
-gradle build
+gradle test --console=plain
+gradle build --console=plain
 ```
 
 Repository-level validation is available from the root:
@@ -24,7 +25,7 @@ npm run check
 Required verification for this package:
 
 ```sh
-cd apps/plugins/jetbrains && node scripts/check-identity.mjs && gradle build && cd ../../.. && npm run check
+cd apps/plugins/jetbrains && node scripts/check-identity.mjs && gradle test --console=plain && gradle build --console=plain && cd ../../.. && npm run check
 ```
 
 If Gradle is not installed locally, run the identity check and root validation, then install Gradle or add a reviewed Gradle wrapper before packaging work. This shell intentionally avoids vendoring a wrapper jar in the first scaffold.
@@ -42,13 +43,15 @@ If Gradle is not installed locally, run the identity check and root validation, 
   - `sessionToken`, optional local runtime bearer/session token for debug connections.
   - `guiDevUrl`, optional loopback GUI dev server URL.
 
-`runtimeUrl` and `guiDevUrl` are restricted to loopback `http` or `https` URLs before use. `sessionToken` is a sensitive local runtime credential, not a provider secret. It is passed only through the bootstrap/`host.ready` path needed by the trusted GUI runtime client, is not logged, and is not rendered in the placeholder UI. Raw provider secrets must never be stored in JetBrains plugin settings.
+`runtimeUrl` and `guiDevUrl` are trimmed, parsed as absolute URIs, and restricted to loopback `http` or `https` URLs before use. Userinfo, missing hosts, malformed values, non-loopback hosts, and non-HTTP schemes are rejected. Only `127.0.0.1`, `localhost`, and IPv6 loopback `[::1]` are allowed, and IPv6 origins are emitted with brackets.
+
+`sessionToken` is a sensitive local runtime credential, not a provider secret. It is stored with JetBrains PasswordSafe instead of the persistent settings XML, passed only through the trusted bootstrap/`host.ready` path needed by the GUI runtime client, never logged, and never rendered in the placeholder UI. Raw provider secrets must never be stored in JetBrains plugin settings.
 
 ## Webview and bridge
 
 The tool window uses JCEF when available. If `guiDevUrl` is set, the shell embeds the loopback GUI dev server in an iframe. Otherwise it displays a local placeholder with the configured runtime URL.
 
-The wrapper exposes `window.postIntellijMessage` and sends `gui.ready` with a request id. The Kotlin host accepts only exact-version `gui.ready` messages, rejects unknown or invalid messages without logging payloads, and replies with `host.ready` echoing the request id when present. It also sends `host.openedFromCommand`. Bootstrap JSON is escaped for script context with `<`, U+2028, and U+2029 escaped to avoid script breakout.
+The wrapper exposes `window.postIntellijMessage` and sends `gui.ready` with a request id. The Kotlin host parses bridge input as JSON, accepts only JSON objects with the exact bridge version and `type: "gui.ready"`, validates optional request ids as short non-empty strings without control characters, requires optional payloads to be JSON objects, rejects arrays/scalars/null/malformed JSON/unknown types without logging payloads, and replies with `host.ready` echoing the request id when present. It also sends `host.openedFromCommand`. Host messages are built as structured JSON objects. Bootstrap JSON is escaped for script context with `<`, U+2028, and U+2029 escaped to avoid script breakout.
 
 In GUI dev mode the wrapper embeds only loopback GUI URLs, computes the exact dev origin, forwards iframe messages only after checking `event.origin`, and sends iframe `postMessage` calls with that exact `targetOrigin` rather than `*`.
 
@@ -58,7 +61,7 @@ No privileged workspace edits, IDE tools, engine launch process, provider adapte
 
 - The plugin connects to an already running local runtime; it does not launch the engine binary yet.
 - The bridge currently accepts only `gui.ready` from the GUI and emits `host.ready` plus `host.openedFromCommand`.
-- Settings use JetBrains application state for local runtime/debug values only. Moving the session token to secure platform storage is a follow-up.
+- Settings use JetBrains application state for non-secret local runtime/debug URLs only. The local session token uses JetBrains PasswordSafe.
 - No packaged production GUI asset is wired yet; use `guiDevUrl` for development or the placeholder shell.
 
 ## Safety rules
