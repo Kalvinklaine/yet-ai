@@ -82,6 +82,20 @@ Manual IDE dev-preview flows are documented in the subsystem READMEs:
 - `apps/gui/README.md` — GUI build/dev commands and runtime token behavior.
 - `apps/engine/README.md` — local `yet-lsp` run command and runtime API status.
 
+### Manual OpenAI API-key milestone smoke
+
+The current real-provider milestone is a manual VS Code dev-preview smoke path for the OpenAI API-key fallback only. It is not an automated test, does not require a Yet AI hosted backend, and must never commit, log, screenshot, or paste a real key into issue text or repository files.
+
+Use `apps/plugins/vscode/README.md#openai-api-key-fallback-milestone-smoke` for the detailed checklist:
+
+1. Prepare the local VS Code dev preview with the packaged GUI and local `yet-lsp` launcher.
+2. Open `Yet AI: Open Chat` in the Extension Development Host.
+3. Choose the GUI `OpenAI API` preset, paste an API key once, save, and confirm the key field clears.
+4. Confirm the GUI and runtime show only configured/redacted provider status, never the raw key.
+5. Send `Say hello in one sentence.` and verify snapshot plus streaming response behavior.
+
+ChatGPT/OpenAI account login is not implemented in this baseline and remains compliance-gated. The provider-auth UI may show a login-first card, but current real-provider testing should use the API-key fallback through the local runtime.
+
 Run these when changing the corresponding subsystem. The required verification for documentation-only status updates remains `npm run check`.
 
 ## Architecture docs
