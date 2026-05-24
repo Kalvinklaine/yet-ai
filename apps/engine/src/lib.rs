@@ -3,6 +3,7 @@ pub mod http;
 pub mod identity;
 pub mod provider_auth;
 pub mod providers;
+pub mod secret_store;
 pub mod security;
 pub mod storage;
 

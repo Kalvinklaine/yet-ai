@@ -5,6 +5,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
+use crate::secret_store::{
+    redact_secret, FileSecretStore, ProviderSecretStore, SecretKind, SecretStoreError,
+};
+
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -163,6 +167,8 @@ pub enum ProviderError {
     InvalidConfig,
     #[error("provider storage error")]
     Storage,
+    #[error("provider secret storage error")]
+    SecretStorage,
 }
 
 impl ProviderError {
@@ -170,7 +176,7 @@ impl ProviderError {
         match self {
             Self::NotFound => http::StatusCode::NOT_FOUND,
             Self::AlreadyExists => http::StatusCode::CONFLICT,
-            Self::Storage => http::StatusCode::INTERNAL_SERVER_ERROR,
+            Self::Storage | Self::SecretStorage => http::StatusCode::INTERNAL_SERVER_ERROR,
             Self::InvalidId
             | Self::MissingId
             | Self::MissingKind
@@ -178,6 +184,15 @@ impl ProviderError {
             | Self::MissingBaseUrl
             | Self::InvalidBaseUrl
             | Self::InvalidConfig => http::StatusCode::BAD_REQUEST,
+        }
+    }
+}
+
+impl From<SecretStoreError> for ProviderError {
+    fn from(error: SecretStoreError) -> Self {
+        match error {
+            SecretStoreError::InvalidProviderId => Self::InvalidId,
+            SecretStoreError::Storage | SecretStoreError::InvalidRecord => Self::SecretStorage,
         }
     }
 }
@@ -206,23 +221,33 @@ impl StoredProviderConfig {
             capabilities: self.capabilities.clone(),
         }
     }
+
+    fn summary_with_secret(&self, api_key: Option<&str>) -> ProviderSummary {
+        ProviderSummary {
+            id: self.id.clone(),
+            kind: self.kind.clone(),
+            display_name: self.display_name.clone(),
+            enabled: self.enabled,
+            base_url: self.base_url.clone(),
+            auth: self.auth.summary_with_secret(api_key),
+            models: self.models.clone(),
+            capabilities: self.capabilities.clone(),
+        }
+    }
 }
 
 impl StoredAuthConfig {
     fn summary(&self) -> ProviderAuthSummary {
+        self.summary_with_secret(self.api_key.as_deref())
+    }
+
+    fn summary_with_secret(&self, api_key: Option<&str>) -> ProviderAuthSummary {
         let configured = self.auth_type == AuthType::ApiKey
-            && self
-                .api_key
-                .as_deref()
-                .is_some_and(|value| !value.is_empty());
+            && api_key.is_some_and(|value| !value.is_empty());
         ProviderAuthSummary {
             auth_type: self.auth_type.clone(),
             configured,
-            redacted: self
-                .api_key
-                .as_deref()
-                .filter(|_| configured)
-                .map(redact_secret),
+            redacted: api_key.filter(|_| configured).map(redact_secret),
         }
     }
 }
@@ -302,6 +327,23 @@ pub async fn get_provider_config(
     Ok(config)
 }
 
+pub async fn get_provider_config_with_secrets(
+    config_dir: &Path,
+    id: &str,
+) -> Result<StoredProviderConfig, ProviderError> {
+    let mut config = get_provider_config(config_dir, id).await?;
+    hydrate_provider_secret(config_dir, &mut config).await?;
+    Ok(config)
+}
+
+pub async fn provider_summary(
+    config_dir: &Path,
+    id: &str,
+) -> Result<ProviderSummary, ProviderError> {
+    let config = get_provider_config(config_dir, id).await?;
+    summary_for_config(config_dir, &config).await
+}
+
 pub async fn create_provider_config(
     config_dir: &Path,
     request: ProviderWriteRequest,
@@ -321,8 +363,9 @@ pub async fn create_provider_config(
         capabilities: request.capabilities.unwrap_or_default(),
     };
     validate_config(&config)?;
+    let config = persist_config_secrets(config_dir, config).await?;
     create_provider_config_file(&path, &config).await?;
-    Ok(config)
+    get_provider_config_with_secrets(config_dir, &config.id).await
 }
 
 pub async fn update_provider_config(
@@ -336,7 +379,7 @@ pub async fn update_provider_config(
             return Err(ProviderError::InvalidId);
         }
     }
-    let mut config = get_provider_config(config_dir, id).await?;
+    let mut config = get_provider_config_with_secrets(config_dir, id).await?;
     if let Some(kind) = request.kind {
         config.kind = kind;
     }
@@ -362,15 +405,21 @@ pub async fn update_provider_config(
         config.capabilities = capabilities;
     }
     validate_config(&config)?;
+    let config = persist_config_secrets(config_dir, config).await?;
     let path = provider_config_path(config_dir, id)?;
     write_provider_config(&path, &config).await?;
-    Ok(config)
+    get_provider_config_with_secrets(config_dir, id).await
 }
 
 pub async fn delete_provider_config(config_dir: &Path, id: &str) -> Result<(), ProviderError> {
     let path = provider_config_path(config_dir, id)?;
     match tokio::fs::remove_file(path).await {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            FileSecretStore::new(config_dir)
+                .delete_secret(id, SecretKind::ApiKey)
+                .await?;
+            Ok(())
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(ProviderError::NotFound),
         Err(_) => Err(ProviderError::Storage),
     }
@@ -378,14 +427,18 @@ pub async fn delete_provider_config(config_dir: &Path, id: &str) -> Result<(), P
 
 pub async fn registry(config_dir: &Path) -> Result<ProviderRegistrySummary, ProviderError> {
     Ok(ProviderRegistrySummary {
-        providers: list_provider_configs(config_dir)
-            .await?
-            .into_iter()
-            .map(|provider| provider.summary())
-            .collect(),
+        providers: provider_summaries(config_dir).await?,
         cloud_required: false,
         provider_access: "direct".to_string(),
     })
+}
+
+pub async fn provider_summaries(config_dir: &Path) -> Result<Vec<ProviderSummary>, ProviderError> {
+    let mut summaries = Vec::new();
+    for provider in list_provider_configs(config_dir).await? {
+        summaries.push(summary_for_config(config_dir, &provider).await?);
+    }
+    Ok(summaries)
 }
 
 pub async fn models(config_dir: &Path) -> Result<ModelListResponse, ProviderError> {
@@ -401,6 +454,65 @@ pub async fn models(config_dir: &Path) -> Result<ModelListResponse, ProviderErro
         })
         .collect();
     Ok(ModelListResponse { models })
+}
+
+async fn summary_for_config(
+    config_dir: &Path,
+    config: &StoredProviderConfig,
+) -> Result<ProviderSummary, ProviderError> {
+    let secret = configured_api_key(config_dir, config).await?;
+    Ok(config.summary_with_secret(secret.as_deref()))
+}
+
+async fn hydrate_provider_secret(
+    config_dir: &Path,
+    config: &mut StoredProviderConfig,
+) -> Result<(), ProviderError> {
+    if config.auth.auth_type == AuthType::ApiKey {
+        if let Some(secret) = configured_api_key(config_dir, config).await? {
+            config.auth.api_key = Some(secret);
+        }
+    }
+    Ok(())
+}
+
+async fn configured_api_key(
+    config_dir: &Path,
+    config: &StoredProviderConfig,
+) -> Result<Option<String>, ProviderError> {
+    if config.auth.auth_type != AuthType::ApiKey {
+        return Ok(None);
+    }
+    let store = FileSecretStore::new(config_dir);
+    match store.get_secret(&config.id, SecretKind::ApiKey).await {
+        Ok(Some(secret)) => Ok(Some(secret)),
+        Ok(None) => Ok(config.auth.api_key.clone()),
+        Err(SecretStoreError::InvalidRecord) => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+async fn persist_config_secrets(
+    config_dir: &Path,
+    mut config: StoredProviderConfig,
+) -> Result<StoredProviderConfig, ProviderError> {
+    let store = FileSecretStore::new(config_dir);
+    match config.auth.auth_type {
+        AuthType::None => {
+            store.delete_secret(&config.id, SecretKind::ApiKey).await?;
+            config.auth.api_key = None;
+        }
+        AuthType::ApiKey => {
+            if let Some(api_key) = config.auth.api_key.as_deref().filter(|value| !value.is_empty())
+            {
+                store
+                    .put_secret(&config.id, SecretKind::ApiKey, api_key)
+                    .await?;
+            }
+            config.auth.api_key = None;
+        }
+    }
+    Ok(config)
 }
 
 fn validate_config(config: &StoredProviderConfig) -> Result<(), ProviderError> {
@@ -573,23 +685,6 @@ fn clean(value: String) -> Option<String> {
     }
 }
 
-fn redact_secret(value: &str) -> String {
-    let chars: Vec<char> = value.chars().collect();
-    if chars.len() <= 8 {
-        return "...".to_string();
-    }
-    let prefix: String = chars.iter().take(3).collect();
-    let suffix: String = chars
-        .iter()
-        .rev()
-        .take(4)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    format!("{prefix}-...{suffix}")
-}
-
 pub fn empty_registry() -> ProviderRegistrySummary {
     ProviderRegistrySummary {
         providers: Vec::new(),
@@ -605,8 +700,8 @@ pub fn empty_models() -> ModelListResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_base_url, redact_secret, validate_provider_base_url, validate_provider_id,
-        ProviderError, ProviderKind,
+        normalize_base_url, validate_provider_base_url, validate_provider_id, ProviderError,
+        ProviderKind,
     };
 
     #[test]
@@ -654,6 +749,6 @@ mod tests {
 
     #[test]
     fn redaction_keeps_only_small_signal() {
-        assert_eq!(redact_secret("sk-test-secret-abcd"), "sk--...abcd");
+        assert_eq!(crate::secret_store::redact_secret("sk-test-secret-abcd"), "sk--...abcd");
     }
 }

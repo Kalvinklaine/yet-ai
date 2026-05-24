@@ -5,7 +5,7 @@ use chrono::{Duration, Utc};
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
 
-use crate::providers::{self, AuthType, ProviderKind, ProviderSummary};
+use crate::providers::{self, AuthType, ProviderKind, StoredProviderConfig};
 
 const LOGIN_UNAVAILABLE_MESSAGE: &str = "OpenAI account login is not available for this local provider path. Create an API key in the provider console and paste it once into Yet AI.";
 const API_KEY_CONFIGURED_MESSAGE: &str = "API-key authentication is configured locally.";
@@ -252,21 +252,22 @@ async fn configured_api_key(
     provider: &str,
 ) -> Result<Option<String>, ProviderAuthError> {
     let providers = providers::list_provider_configs(config_dir).await?;
-    Ok(providers
+    for stored in providers
         .into_iter()
-        .map(|provider| provider.summary())
-        .filter(|summary| supports_provider(summary, provider))
-        .find_map(|summary| {
-            (summary.auth.auth_type == AuthType::ApiKey && summary.auth.configured)
-                .then_some(summary.auth.redacted)
-                .flatten()
-        }))
+        .filter(|stored| supports_provider_config(stored, provider))
+    {
+        let summary = providers::provider_summary(config_dir, &stored.id).await?;
+        if summary.auth.auth_type == AuthType::ApiKey && summary.auth.configured {
+            return Ok(summary.auth.redacted);
+        }
+    }
+    Ok(None)
 }
 
-fn supports_provider(summary: &ProviderSummary, provider: &str) -> bool {
+fn supports_provider_config(config: &StoredProviderConfig, provider: &str) -> bool {
     match provider {
-        "openai" => summary.id == "openai" || summary.id == "openai-api",
-        "openai-compatible" => summary.kind == ProviderKind::OpenAiCompatible,
+        "openai" => config.id == "openai" || config.id == "openai-api",
+        "openai-compatible" => config.kind == ProviderKind::OpenAiCompatible,
         _ => false,
     }
 }

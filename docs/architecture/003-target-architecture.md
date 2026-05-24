@@ -27,7 +27,7 @@ Known limitations:
 
 ## Provider authentication strategy
 
-The implemented provider flow is API-key/OpenAI-compatible direct provider access. Users configure a local provider endpoint and, when needed, paste an API key once into the engine-owned provider configuration flow. The engine stores the credential locally, sends model requests directly to the configured provider, and returns only sanitized `auth.configured` and optional `auth.redacted` status to GUI clients.
+The implemented provider flow is API-key/OpenAI-compatible direct provider access. Users configure a local provider endpoint and, when needed, paste an API key once into the engine-owned provider configuration flow. The engine stores the credential locally through a central secret store abstraction, sends model requests directly to the configured provider, and returns only sanitized `auth.configured` and optional `auth.redacted` status to GUI clients. The current implementation uses a protected file fallback under the user config directory and keeps a read-only compatibility path for legacy provider config files that still contain `auth.apiKey`; new saves clear raw API keys from provider config JSON.
 
 Future OpenAI/ChatGPT account authentication should use a login-first UX where it is officially supported and compliant:
 
@@ -39,6 +39,8 @@ Future OpenAI/ChatGPT account authentication should use a login-first UX where i
 Reference inspection found a useful pattern in the external implementation: provider OAuth is engine-owned; GUI starts a login flow, opens an authorization URL, handles callback/manual/device progress, polls sanitized provider status, and can disconnect; refresh and provider calls remain in the engine. The same inspection also found risk areas that Yet AI should not adopt blindly: ChatGPT backend endpoints and account-specific headers may be private or product-surface-specific, importing credentials from another CLI or browser profile can blur ownership and consent, and a login flow can become coupled to a provider-specific client ID or non-public backend contract. Yet AI should not plan cookie/session scraping, browser cookie import, or reuse of another tool's local credentials as the default. Those would require a separate explicit approval, provenance review, and security design.
 
 Future GUI-facing auth status should stay sanitized. Candidate state fields are non-secret values such as `type`, `configured`, `status`, `authSource`, `expiresAt`, `accountLabel`, `scopes`, `supportsRefresh`, `lastError`, and `redacted`. Raw access tokens, refresh tokens, API keys, cookies, session IDs, browser profile paths, and provider authorization codes must never be returned by provider status, capability, or model endpoints and must never appear in logs.
+
+Secret storage is an engine boundary. The initial `FileSecretStore` fallback centralizes put/get/delete by provider id and secret kind for API keys, OAuth access tokens, OAuth refresh tokens, and auth metadata. It is intentionally narrower than the external reference implementation's provider config patching and OAuth refresh machinery: Yet AI keeps the abstraction separate before real provider login, avoids credential import from other tools, and treats OS keychain support as the next backend behind the same trait. A future migration should move any legacy `providers.d/{id}.json` raw API keys into the active secret backend, then rewrite provider configs without raw secret fields.
 
 ## Architecture principles
 
@@ -94,7 +96,7 @@ The engine is the local Yet AI runtime. It is not a required cloud backend and s
 
 The current MVP implementation includes `/v1/ping`, `/v1/caps`, provider registry endpoints, model summaries, one chat command endpoint, one SSE stream, and a narrow OpenAI-compatible streaming path. It remains a foundation, not a full agent runtime.
 
-Provider settings and credentials are local runtime state. The engine may store secrets in OS credential storage or protected user config, but raw secrets must not be returned to GUI-facing responses after save.
+Provider settings and credentials are local runtime state. The engine stores secrets through a central provider secret store abstraction. The current backend is protected user config file storage; OS credential storage/keychain support should replace or wrap it next. Raw secrets must not be returned to GUI-facing responses after save.
 
 ### `apps/gui`
 
@@ -314,7 +316,7 @@ Resolution rules:
 
 - Engine owns all final path resolution and exposes safe summaries to GUI/plugins.
 - Plugins may pass workspace root, extension version, debug flags, and optional overrides to the engine.
-- Provider secrets should live in OS credential storage or protected user config, not in GUI state and not in committed project files.
+- Provider secrets should live behind the engine secret store abstraction in OS credential storage or protected user config, not in GUI state and not in committed project files.
 - Project-specific trajectories, tasks, knowledge, and integration config should live under `.yet-ai` and be private by default.
 - `.yet-ai/` must be ignored by default unless a specific shareable subfile is intentionally designed and explicitly allowlisted later.
 - Secrets must never be written to `.yet-ai`; shareable project config and private local state must be split before any committed project config format is introduced.
@@ -373,8 +375,8 @@ The approved near-term implementation sequence is local-first and incremental. F
 
 ### 2. Provider registry, configuration, and secret redaction — MVP baseline complete
 
-- Implemented local provider configuration storage, sanitized provider status responses, redacted secret hints, provider CRUD/test endpoints, and model summaries.
-- Remaining work: OS keychain storage, broader validation, provider-specific capability discovery, OAuth flows, and migration policy.
+- Implemented local provider configuration storage, central secret store abstraction with protected file fallback, sanitized provider status responses, redacted secret hints, provider CRUD/test endpoints, and model summaries.
+- Remaining work: OS keychain backend, legacy secret migration, broader validation, provider-specific capability discovery, OAuth flows, and migration policy.
 
 ### 3. OpenAI-compatible direct provider adapter and streaming — MVP baseline complete
 
