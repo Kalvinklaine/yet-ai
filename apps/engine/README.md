@@ -42,12 +42,12 @@ The planned first-phase UX is: sign in first where supported; API key fallback o
 - refresh or revoke/disconnect credentials without exposing raw secrets;
 - return only sanitized status such as connected/configured, auth source, expiry, account label, scopes, redacted hints, and safe error text.
 
-The user approved an experimental, high-risk T-49 Codex-like OpenAI/ChatGPT login task chain despite the lack of a public third-party OpenAI OAuth program. That approval allows a local engine-owned flow modeled after Codex-like behavior:
+The user approved an experimental, high-risk T-49 Codex-like OpenAI/ChatGPT login task chain despite the lack of a public third-party OpenAI OAuth program. That approval allows a local engine-owned flow modeled after Codex-like behavior. The current experimental slice is available only for `openai`: `start` with `{ "experimentalCodexLike": true }` creates local PKCE/session state, and `exchange` validates session id, state, authorization code, and expiry before posting to the configured token endpoint. The production default token endpoint is the approved Codex-like OpenAI auth URL, while automated tests inject a local loopback mock endpoint so CI never calls OpenAI. On success, the engine stores the access token, refresh token, and auth metadata through the engine secret store under protected local config storage and returns only sanitized connected status, account label, expiry, scopes, redacted hint, and message. `disconnect` removes experimental OAuth secrets and pending state while preserving API-key provider configuration.
 
-- pending PKCE/session state stored locally by the engine;
-- browser authorization URL and loopback callback or manual/device-style exchange where the selected Codex-like flow requires it;
-- token exchange, refresh, revoke/disconnect, expiry handling, and migration behind the engine secret store;
-- local storage of access tokens, refresh tokens, API keys, and auth metadata through OS keychain or protected user config storage;
+Future work in this approved high-risk area remains:
+
+- refresh, revoke/disconnect against the provider, expiry handling, and migration behind the engine secret store;
+- OS keychain support behind the same secret-store boundary;
 - GUI-facing responses limited to sanitized status, account labels, expiry, scopes, redacted hints, and safe error text.
 
 The approval does not allow cookie import, ChatGPT web-session scraping, browser profile import, browser cookie reuse, direct import or reading of `~/.codex/auth.json` or other tools' credential files, or any required Yet AI cloud/backend/account, managed gateway, product credit balance, or cloud workspace for core chat/provider setup. It also does not claim production readiness, official OpenAI partnership, or general public OAuth support. Private endpoint, client identity, account-header, model-access, token-refresh, revoke, and compatibility risks must remain explicit wherever this flow is implemented.

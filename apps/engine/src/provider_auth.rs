@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
 use crate::providers::{self, AuthType, ProviderKind, StoredProviderConfig};
+use crate::secret_store::{FileSecretStore, ProviderSecretStore, SecretKind, SecretStoreError};
 
 const LOGIN_UNAVAILABLE_MESSAGE: &str = "OpenAI account login is not available for this local provider path. Create an API key in the provider console and paste it once into Yet AI.";
 const API_KEY_CONFIGURED_MESSAGE: &str = "API-key authentication is configured locally.";
@@ -21,9 +22,11 @@ const CODEX_PENDING_MESSAGE: &str = "Experimental Codex-like OpenAI login is pen
 const MOCK_TTL_SECONDS: i64 = 600;
 const CODEX_TTL_SECONDS: i64 = 600;
 const CODEX_AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
+const CODEX_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 const CODEX_CLIENT_ID: &str = "yet-ai-local-experimental";
 const CODEX_REDIRECT_URI: &str = "http://127.0.0.1:1455/auth/openai/callback";
 const CODEX_SCOPE: &str = "openid profile email offline_access";
+const CODEX_CONNECTED_MESSAGE: &str = "Experimental Codex-like OpenAI login is connected in local engine storage. This remains experimental/high-risk and is not official public third-party OpenAI OAuth support.";
 static MOCK_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Deserialize, Default)]
@@ -34,6 +37,7 @@ pub struct ProviderAuthStartRequest {
     #[serde(default)]
     pub experimental_codex_like: bool,
     pub ttl_seconds: Option<i64>,
+    pub token_endpoint_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -56,6 +60,8 @@ pub struct ProviderAuthResponse {
     pub cloud_required: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub success: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub redacted: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -91,6 +97,8 @@ pub enum ProviderAuthError {
     Provider(#[from] providers::ProviderError),
     #[error("provider auth storage error")]
     Storage,
+    #[error("provider auth token exchange failed")]
+    TokenExchange,
 }
 
 impl ProviderAuthError {
@@ -103,7 +111,14 @@ impl ProviderAuthError {
             Self::SessionExpired => StatusCode::GONE,
             Self::Provider(error) => error.status(),
             Self::Storage => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::TokenExchange => StatusCode::BAD_GATEWAY,
         }
+    }
+}
+
+impl From<SecretStoreError> for ProviderAuthError {
+    fn from(_: SecretStoreError) -> Self {
+        Self::Storage
     }
 }
 
@@ -152,6 +167,31 @@ struct CodexOAuthSession {
     challenge: String,
     expires_at: String,
     scopes: Vec<String>,
+    token_endpoint_url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexAuthMetadata {
+    provider: String,
+    account_label: String,
+    scopes: Vec<String>,
+    expires_at: String,
+    redacted: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct CodexTokenResponse {
+    access_token: String,
+    #[serde(default)]
+    refresh_token: String,
+    #[serde(default)]
+    expires_in: Option<i64>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    account_label: Option<String>,
 }
 
 pub async fn status(
@@ -175,6 +215,9 @@ pub async fn status(
         }
     }
     if provider == "openai" {
+        if let Some(response) = codex_connected_status(config_dir, provider).await? {
+            return Ok(response);
+        }
         let codex = read_codex_state(config_dir, provider).await?;
         if let Some(session) = codex.pending {
             if parse_time(&session.expires_at)? > Utc::now() {
@@ -203,7 +246,10 @@ pub async fn start(
         return Ok(mock_pending_response(provider, &session, Some(true)));
     }
     if request.experimental_codex_like && provider == "openai" {
-        let session = new_codex_session(request.ttl_seconds.unwrap_or(CODEX_TTL_SECONDS))?;
+        let session = new_codex_session(
+            request.ttl_seconds.unwrap_or(CODEX_TTL_SECONDS),
+            request.token_endpoint_url.as_deref(),
+        )?;
         write_codex_state(
             config_dir,
             provider,
@@ -237,6 +283,9 @@ pub async fn exchange(
     let session_id = required_value(request.session_id)?;
     let state_value = required_value(request.state)?;
     let code = required_value(request.code)?;
+    if provider == "openai" && !code.starts_with("mock-code-") {
+        return codex_exchange(config_dir, provider, session_id, state_value, code).await;
+    }
     if !code.starts_with("mock-code-") {
         return Err(ProviderAuthError::InvalidRequest);
     }
@@ -284,6 +333,20 @@ pub async fn disconnect(
         response.status = "revoked";
         response.message = MOCK_DISCONNECTED_MESSAGE.to_string();
         return Ok(response);
+    }
+    if provider == "openai" {
+        let codex = read_codex_state(config_dir, provider).await?;
+        let had_codex = codex.pending.is_some() || codex_has_secrets(config_dir, provider).await?;
+        if had_codex {
+            write_codex_state(config_dir, provider, &CodexOAuthState::default()).await?;
+            delete_codex_secrets(config_dir, provider).await?;
+            let configured = configured_api_key(config_dir, provider).await?;
+            let mut response = status_response(provider, configured, Some(true));
+            response.status = "revoked";
+            response.auth_source = "none";
+            response.message = DISCONNECT_MESSAGE.to_string();
+            return Ok(response);
+        }
     }
     let configured = configured_api_key(config_dir, provider).await?;
     let mut response = status_response(provider, configured, Some(true));
@@ -344,6 +407,7 @@ fn status_response(
             supports_api_key: true,
             cloud_required: false,
             success,
+            account_label: None,
             redacted: Some(redacted),
             authorization_url: None,
             verification_url: None,
@@ -362,6 +426,7 @@ fn status_response(
             supports_api_key: true,
             cloud_required: false,
             success,
+            account_label: None,
             redacted: None,
             authorization_url: None,
             verification_url: None,
@@ -388,6 +453,7 @@ fn mock_pending_response(
         supports_api_key: true,
         cloud_required: false,
         success,
+        account_label: None,
         redacted: None,
         authorization_url: Some(format!(
             "http://127.0.0.1/mock-oauth/authorize?provider={provider}&state={}&code_challenge={}",
@@ -416,6 +482,7 @@ fn mock_connected_response(
         supports_api_key: true,
         cloud_required: false,
         success,
+        account_label: Some("Mock OAuth Account".to_string()),
         redacted: Some("mock-oauth-...connected".to_string()),
         authorization_url: None,
         verification_url: None,
@@ -441,6 +508,7 @@ fn codex_pending_response(
         supports_api_key: true,
         cloud_required: false,
         success,
+        account_label: None,
         redacted: None,
         authorization_url: Some(codex_authorization_url(session)),
         verification_url: None,
@@ -469,7 +537,38 @@ fn new_mock_session(provider: &str, ttl_seconds: i64) -> MockOAuthSession {
     }
 }
 
-fn new_codex_session(ttl_seconds: i64) -> Result<CodexOAuthSession, ProviderAuthError> {
+fn codex_connected_response(
+    provider: &str,
+    metadata: CodexAuthMetadata,
+    success: Option<bool>,
+) -> ProviderAuthResponse {
+    ProviderAuthResponse {
+        provider: provider.to_string(),
+        configured: true,
+        status: "connected",
+        auth_source: "oauth",
+        supports_login: true,
+        supports_api_key: true,
+        cloud_required: false,
+        success,
+        account_label: Some(metadata.account_label),
+        redacted: Some(metadata.redacted),
+        authorization_url: None,
+        verification_url: None,
+        session_id: None,
+        expires_at: Some(metadata.expires_at),
+        scopes: Some(metadata.scopes),
+        poll_interval_seconds: None,
+        message: CODEX_CONNECTED_MESSAGE.to_string(),
+    }
+}
+
+fn new_codex_session(
+    ttl_seconds: i64,
+    token_endpoint_url: Option<&str>,
+) -> Result<CodexOAuthSession, ProviderAuthError> {
+    let token_endpoint_url = token_endpoint_url.unwrap_or(CODEX_TOKEN_URL).trim();
+    validate_token_endpoint_url(token_endpoint_url)?;
     let verifier = random_url_safe(64)?;
     let challenge = pkce_challenge(&verifier);
     Ok(CodexOAuthSession {
@@ -480,7 +579,166 @@ fn new_codex_session(ttl_seconds: i64) -> Result<CodexOAuthSession, ProviderAuth
         challenge,
         expires_at: (Utc::now() + Duration::seconds(ttl_seconds)).to_rfc3339(),
         scopes: codex_scopes(),
+        token_endpoint_url: token_endpoint_url.to_string(),
     })
+}
+
+fn validate_token_endpoint_url(value: &str) -> Result<(), ProviderAuthError> {
+    let parsed = reqwest::Url::parse(value).map_err(|_| ProviderAuthError::InvalidRequest)?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return Err(ProviderAuthError::InvalidRequest);
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(ProviderAuthError::InvalidRequest);
+    }
+    Ok(())
+}
+
+async fn codex_exchange(
+    config_dir: &Path,
+    provider: &str,
+    session_id: String,
+    state_value: String,
+    code: String,
+) -> Result<ProviderAuthResponse, ProviderAuthError> {
+    let mut codex = read_codex_state(config_dir, provider).await?;
+    let Some(session) = codex.pending.take() else {
+        return Err(ProviderAuthError::SessionNotFound);
+    };
+    if session.provider != provider
+        || session.session_id != session_id
+        || session.state != state_value
+    {
+        codex.pending = Some(session);
+        write_codex_state(config_dir, provider, &codex).await?;
+        return Err(ProviderAuthError::SessionMismatch);
+    }
+    if parse_time(&session.expires_at)? <= Utc::now() {
+        write_codex_state(config_dir, provider, &codex).await?;
+        return Err(ProviderAuthError::SessionExpired);
+    }
+
+    let token = exchange_codex_token(&session, &code).await?;
+    if token.access_token.trim().is_empty() {
+        codex.pending = Some(session);
+        write_codex_state(config_dir, provider, &codex).await?;
+        return Err(ProviderAuthError::TokenExchange);
+    }
+    let scopes = token
+        .scope
+        .as_deref()
+        .map(|value| value.split_whitespace().map(str::to_string).collect())
+        .unwrap_or_else(|| session.scopes.clone());
+    let expires_at = (Utc::now() + Duration::seconds(token.expires_in.unwrap_or(3600).max(1)))
+        .to_rfc3339();
+    let metadata = CodexAuthMetadata {
+        provider: provider.to_string(),
+        account_label: sanitized_account_label(token.account_label.as_deref()),
+        scopes,
+        expires_at,
+        redacted: crate::secret_store::redact_secret(&token.access_token),
+    };
+    store_codex_connection(config_dir, provider, &token, &metadata).await?;
+    write_codex_state(config_dir, provider, &CodexOAuthState::default()).await?;
+    Ok(codex_connected_response(provider, metadata, Some(true)))
+}
+
+async fn exchange_codex_token(
+    session: &CodexOAuthSession,
+    code: &str,
+) -> Result<CodexTokenResponse, ProviderAuthError> {
+    let body = serde_json::json!({
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": CODEX_REDIRECT_URI,
+        "client_id": CODEX_CLIENT_ID,
+        "code_verifier": session.verifier,
+    });
+    let response = reqwest::Client::new()
+        .post(&session.token_endpoint_url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|_| ProviderAuthError::TokenExchange)?;
+    if !response.status().is_success() {
+        return Err(ProviderAuthError::TokenExchange);
+    }
+    response
+        .json::<CodexTokenResponse>()
+        .await
+        .map_err(|_| ProviderAuthError::TokenExchange)
+}
+
+fn sanitized_account_label(value: Option<&str>) -> String {
+    let label = value.unwrap_or("OpenAI account").trim();
+    if label.is_empty() {
+        return "OpenAI account".to_string();
+    }
+    label.chars().take(120).collect()
+}
+
+async fn store_codex_connection(
+    config_dir: &Path,
+    provider: &str,
+    token: &CodexTokenResponse,
+    metadata: &CodexAuthMetadata,
+) -> Result<(), ProviderAuthError> {
+    let store = FileSecretStore::new(config_dir);
+    store
+        .put_secret(provider, SecretKind::OAuthAccessToken, &token.access_token)
+        .await?;
+    store
+        .put_secret(provider, SecretKind::OAuthRefreshToken, &token.refresh_token)
+        .await?;
+    let metadata = serde_json::to_string(metadata).map_err(|_| ProviderAuthError::Storage)?;
+    store
+        .put_secret(provider, SecretKind::AuthMetadata, &metadata)
+        .await?;
+    Ok(())
+}
+
+async fn codex_connected_status(
+    config_dir: &Path,
+    provider: &str,
+) -> Result<Option<ProviderAuthResponse>, ProviderAuthError> {
+    let store = FileSecretStore::new(config_dir);
+    let Some(metadata) = store.get_secret(provider, SecretKind::AuthMetadata).await? else {
+        return Ok(None);
+    };
+    let metadata: CodexAuthMetadata =
+        serde_json::from_str(&metadata).map_err(|_| ProviderAuthError::Storage)?;
+    if metadata.provider != provider {
+        return Err(ProviderAuthError::Storage);
+    }
+    Ok(Some(codex_connected_response(provider, metadata, None)))
+}
+
+async fn codex_has_secrets(config_dir: &Path, provider: &str) -> Result<bool, ProviderAuthError> {
+    let store = FileSecretStore::new(config_dir);
+    Ok(store
+        .get_secret(provider, SecretKind::OAuthAccessToken)
+        .await?
+        .is_some()
+        || store
+            .get_secret(provider, SecretKind::OAuthRefreshToken)
+            .await?
+            .is_some()
+        || store
+            .get_secret(provider, SecretKind::AuthMetadata)
+            .await?
+            .is_some())
+}
+
+async fn delete_codex_secrets(config_dir: &Path, provider: &str) -> Result<(), ProviderAuthError> {
+    let store = FileSecretStore::new(config_dir);
+    for kind in [
+        SecretKind::OAuthAccessToken,
+        SecretKind::OAuthRefreshToken,
+        SecretKind::AuthMetadata,
+    ] {
+        store.delete_secret(provider, kind).await?;
+    }
+    Ok(())
 }
 
 fn codex_scopes() -> Vec<String> {
