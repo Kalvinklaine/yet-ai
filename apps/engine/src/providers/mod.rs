@@ -1,7 +1,11 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
+
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -289,9 +293,6 @@ pub async fn create_provider_config(
     let id = clean_required(request.id, ProviderError::MissingId)?;
     validate_provider_id(&id)?;
     let path = provider_config_path(config_dir, &id)?;
-    if tokio::fs::try_exists(&path).await.map_err(|_| ProviderError::Storage)? {
-        return Err(ProviderError::AlreadyExists);
-    }
     let kind = request.kind.ok_or(ProviderError::MissingKind)?;
     let config = StoredProviderConfig {
         id,
@@ -304,7 +305,7 @@ pub async fn create_provider_config(
         capabilities: request.capabilities.unwrap_or_default(),
     };
     validate_config(&config)?;
-    write_provider_config(&path, &config).await?;
+    create_provider_config_file(&path, &config).await?;
     Ok(config)
 }
 
@@ -398,29 +399,80 @@ async fn write_provider_config(
     path: &Path,
     config: &StoredProviderConfig,
 ) -> Result<(), ProviderError> {
+    write_temp_then(path, config, false).await?;
+    set_private_permissions(path).await
+}
+
+async fn create_provider_config_file(
+    path: &Path,
+    config: &StoredProviderConfig,
+) -> Result<(), ProviderError> {
+    write_temp_then(path, config, true).await?;
+    set_private_permissions(path).await
+}
+
+async fn write_temp_then(
+    path: &Path,
+    config: &StoredProviderConfig,
+    create_new: bool,
+) -> Result<(), ProviderError>
+{
     let dir = path.parent().ok_or(ProviderError::Storage)?;
     tokio::fs::create_dir_all(dir)
         .await
         .map_err(|_| ProviderError::Storage)?;
     let content = serde_json::to_vec_pretty(config).map_err(|_| ProviderError::Storage)?;
-    let temp_path = path.with_extension(format!("json.tmp.{}", std::process::id()));
+    let temp_path = temp_provider_config_path(path);
     let mut options = tokio::fs::OpenOptions::new();
     options.create_new(true).write(true).truncate(true);
     #[cfg(unix)]
     {
         options.mode(0o600);
     }
-    tokio::io::AsyncWriteExt::write_all(
-        &mut options.open(&temp_path).await.map_err(|_| ProviderError::Storage)?,
-        &content,
-    )
-    .await
-    .map_err(|_| ProviderError::Storage)?;
-    set_private_permissions(&temp_path).await?;
-    tokio::fs::rename(&temp_path, path)
-        .await
-        .map_err(|_| ProviderError::Storage)?;
-    set_private_permissions(path).await
+    let result = async {
+        let mut file = options.open(&temp_path).await.map_err(|_| ProviderError::Storage)?;
+        file.write_all(&content).await.map_err(|_| ProviderError::Storage)?;
+        file.sync_all().await.map_err(|_| ProviderError::Storage)?;
+        drop(file);
+        set_private_permissions(&temp_path).await?;
+        if create_new {
+            match tokio::fs::hard_link(&temp_path, path).await {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    Err(ProviderError::AlreadyExists)
+                }
+                Err(_) => Err(ProviderError::Storage),
+            }
+        } else {
+            tokio::fs::rename(&temp_path, path)
+                .await
+                .map_err(|_| ProviderError::Storage)
+        }
+    }
+    .await;
+    let cleanup = tokio::fs::remove_file(&temp_path).await;
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            if cleanup.is_err() {
+                return Err(ProviderError::Storage);
+            }
+            Err(error)
+        }
+    }
+}
+
+fn temp_provider_config_path(path: &Path) -> PathBuf {
+    let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("provider.json");
+    path.with_file_name(format!(
+        ".{file_name}.tmp.{}.{}",
+        std::process::id(),
+        counter
+    ))
 }
 
 #[cfg(unix)]

@@ -188,6 +188,140 @@ async fn create_provider_with_api_key_returns_redacted_response() {
 }
 
 #[tokio::test]
+async fn create_existing_provider_returns_conflict_without_overwrite_or_temp_leftover() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let provider = json!({
+        "id": "collision-provider",
+        "kind": "custom",
+        "displayName": "Original Provider",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:9100",
+        "auth": { "type": "none" }
+    });
+    let replacement = json!({
+        "id": "collision-provider",
+        "kind": "custom",
+        "displayName": "Replacement Provider",
+        "enabled": false,
+        "baseUrl": "http://127.0.0.1:9101",
+        "auth": { "type": "api_key", "apiKey": "sk-collision-secret-abcd" }
+    });
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(Method::POST, "/v1/providers", Body::from(provider.to_string())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(Method::POST, "/v1/providers", Body::from(replacement.to_string())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(!body.to_string().contains("sk-collision-secret-abcd"));
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/providers/collision-provider", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["displayName"], "Original Provider");
+    assert_eq!(body["enabled"], true);
+    assert_eq!(body["auth"]["type"], "none");
+    let providers_dir = paths.config_dir.join("providers.d");
+    let temp_files: Vec<_> = std::fs::read_dir(providers_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp."))
+        .collect();
+    assert!(temp_files.is_empty());
+}
+
+#[tokio::test]
+async fn update_with_mismatched_id_is_rejected_without_mutation() {
+    let app = test_app();
+    let api_key = "sk-mismatch-secret-abcd";
+    let provider = json!({
+        "id": "mismatch-provider",
+        "kind": "custom",
+        "displayName": "Mismatch Provider",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:9102",
+        "auth": { "type": "api_key", "apiKey": api_key }
+    });
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(Method::POST, "/v1/providers", Body::from(provider.to_string())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let update = json!({
+        "id": "other-provider",
+        "displayName": "Mutated Provider",
+        "auth": { "type": "none" }
+    });
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::PATCH,
+            "/v1/providers/mismatch-provider",
+            Body::from(update.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(!body.to_string().contains("other-provider"));
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/providers/mismatch-provider", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["displayName"], "Mismatch Provider");
+    assert_eq!(body["auth"]["type"], "api_key");
+    assert_eq!(body["auth"]["configured"], true);
+    assert!(!body.to_string().contains(api_key));
+}
+
+#[tokio::test]
+async fn malformed_provider_config_returns_sanitized_error() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let providers_dir = paths.config_dir.join("providers.d");
+    std::fs::create_dir_all(&providers_dir).unwrap();
+    std::fs::write(
+        providers_dir.join("bad-provider.json"),
+        r#"{ "apiKey": "sk-malformed-secret-abcd", "broken": "#,
+    )
+    .unwrap();
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/providers", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let text = body.to_string();
+    assert!(text.contains("invalid provider config"));
+    assert!(!text.contains("sk-malformed-secret-abcd"));
+    assert!(!text.contains("broken"));
+    assert!(!text.contains("bad-provider"));
+}
+
+#[tokio::test]
 async fn get_and_list_provider_never_return_raw_api_key() {
     let app = test_app();
     let api_key = "sk-list-secret-abcd";
