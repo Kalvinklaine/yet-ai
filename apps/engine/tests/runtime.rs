@@ -1,11 +1,13 @@
 use axum::body::{to_bytes, Body};
 use axum::http::{header, Method, Request, StatusCode};
+use axum::response::IntoResponse;
 use serde_json::{json, Value};
+use tokio::net::TcpListener;
+use tokio::sync::oneshot;
 use tower::ServiceExt;
 use yet_lsp::identity::ProductIdentity;
 use yet_lsp::storage::{resolve_storage_paths, StoragePaths};
 use yet_lsp::{app, default_bind_addr, AppState, AuthToken};
-
 const TEST_TOKEN: &str = "test-token";
 static TEST_STORAGE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -56,6 +58,101 @@ async fn json_response_from(app: axum::Router, request: Request<Body>) -> (Statu
     let status = response.status();
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+async fn sse_text_from(app: axum::Router, uri: &str) -> String {
+    let response = app
+        .oneshot(authed_request(Method::GET, uri, Body::empty()))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "text/event-stream"
+    );
+    let bytes = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        http_body_util::BodyExt::collect(response.into_body()),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .to_bytes();
+    String::from_utf8(bytes.to_vec()).unwrap()
+}
+
+async fn configure_openai_provider(app: axum::Router, base_url: String, api_key: &str) {
+    let provider = json!({
+        "id": "openai-stream",
+        "kind": "openai-compatible",
+        "displayName": "OpenAI Stream",
+        "enabled": true,
+        "baseUrl": base_url,
+        "auth": { "type": "api_key", "apiKey": api_key },
+        "models": [{ "id": "gpt-test", "displayName": "GPT Test" }],
+        "capabilities": { "chat": true, "completion": false, "embeddings": false }
+    });
+    let (status, body) = json_response_from(
+        app,
+        authed_request(Method::POST, "/v1/providers", Body::from(provider.to_string())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert!(!body.to_string().contains(api_key));
+}
+
+async fn start_mock_provider(
+    status: StatusCode,
+    stream_body: &'static str,
+    expected_auth: Option<&'static str>,
+) -> (String, oneshot::Receiver<Option<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (auth_sender, auth_receiver) = oneshot::channel();
+    let expected = expected_auth.map(str::to_string);
+    let auth_sender = std::sync::Arc::new(std::sync::Mutex::new(Some(auth_sender)));
+    tokio::spawn(async move {
+        let app = axum::Router::new().route(
+            "/chat/completions",
+            axum::routing::post(move |request: axum::http::Request<Body>| {
+                let expected = expected.clone();
+                let auth_sender = auth_sender.clone();
+                async move {
+                    let auth = request
+                        .headers()
+                        .get(header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_string);
+                    if let Some(sender) = auth_sender.lock().unwrap().take() {
+                        let _ = sender.send(auth.clone());
+                    }
+                    if let Some(expected) = expected {
+                        assert_eq!(auth.as_deref(), Some(expected.as_str()));
+                    }
+                    (
+                        status,
+                        [(header::CONTENT_TYPE, "text/event-stream")],
+                        stream_body,
+                    )
+                        .into_response()
+                }
+            }),
+        );
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{address}"), auth_receiver)
+}
+
+fn sse_json_events(text: &str) -> Vec<Value> {
+    text.lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .map(|data| serde_json::from_str(data).unwrap())
+        .collect()
 }
 
 async fn empty_response_from(app: axum::Router, request: Request<Body>) -> StatusCode {
@@ -537,6 +634,146 @@ async fn unsupported_command_is_rejected() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+}
+
+#[tokio::test]
+async fn openai_compatible_streaming_maps_chunks_to_sse_events() {
+    let api_key = "sk-stream-secret-abcd";
+    let (base_url, auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\ndata: [DONE]\n\n",
+        Some("Bearer sk-stream-secret-abcd"),
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    let command = json!({
+        "requestId": "req-stream",
+        "type": "user_message",
+        "payload": { "content": "hello" }
+    });
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-stream/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accepted"], true);
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-stream").await;
+    let events = sse_json_events(&text);
+    assert_eq!(events[0]["type"], "snapshot");
+    assert!(events.iter().any(|event| event["type"] == "stream_started"));
+    assert!(events.iter().any(|event| event["type"] == "stream_delta" && event["payload"]["delta"]["content"] == "Hel"));
+    assert!(events.iter().any(|event| event["type"] == "stream_delta" && event["payload"]["delta"]["content"] == "lo"));
+    assert!(events.iter().any(|event| event["type"] == "stream_finished"));
+    let auth = auth_receiver.await.unwrap();
+    assert_eq!(auth.as_deref(), Some("Bearer sk-stream-secret-abcd"));
+    assert!(!text.contains(api_key));
+}
+
+#[tokio::test]
+async fn provider_unauthorized_produces_sanitized_error_event() {
+    let api_key = "sk-unauthorized-secret-abcd";
+    let (base_url, _) = start_mock_provider(StatusCode::UNAUTHORIZED, "unauthorized", Some("Bearer sk-unauthorized-secret-abcd")).await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+    let command = json!({
+        "requestId": "req-unauthorized",
+        "type": "user_message",
+        "payload": { "content": "hello" }
+    });
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-unauthorized/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-unauthorized").await;
+    let events = sse_json_events(&text);
+    let error = events.iter().find(|event| event["type"] == "error").unwrap();
+    assert_eq!(error["payload"]["code"], "provider_unauthorized");
+    assert!(!text.contains(api_key));
+    assert!(!text.contains("unauthorized-secret"));
+}
+
+#[tokio::test]
+async fn malformed_provider_chunk_produces_safe_error_event() {
+    let api_key = "sk-malformed-stream-secret-abcd";
+    let (base_url, _) = start_mock_provider(
+        StatusCode::OK,
+        "data: { not-json }\n\n",
+        Some("Bearer sk-malformed-stream-secret-abcd"),
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+    let command = json!({
+        "requestId": "req-malformed",
+        "type": "user_message",
+        "payload": { "content": "hello" }
+    });
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-malformed/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-malformed").await;
+    let events = sse_json_events(&text);
+    let error = events.iter().find(|event| event["type"] == "error").unwrap();
+    assert_eq!(error["payload"]["code"], "provider_malformed_stream");
+    assert!(!text.contains(api_key));
+}
+
+#[tokio::test]
+async fn streaming_chat_does_not_require_yet_ai_backend_account_or_cloud_url() {
+    let api_key = "sk-local-only-stream-secret-abcd";
+    let (base_url, _) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"local\"}}]}\n\ndata: [DONE]\n\n",
+        Some("Bearer sk-local-only-stream-secret-abcd"),
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+    let command = json!({
+        "requestId": "req-local-only",
+        "type": "user_message",
+        "payload": { "content": "hello" }
+    });
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-local-only/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-local-only").await;
+    assert!(text.contains("local"));
+    let lower = text.to_lowercase();
+    assert!(!lower.contains("account"));
+    assert!(!lower.contains("cloud"));
+    assert!(!lower.contains("backend"));
 }
 
 #[tokio::test]

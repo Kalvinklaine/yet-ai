@@ -14,12 +14,14 @@ chrono.workspace = true
 dirs.workspace = true
 futures-util.workspace = true
 http.workspace = true
+http-body-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tower-http.workspace = true
+reqwest.workspace = true
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }
