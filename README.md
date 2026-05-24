@@ -24,7 +24,7 @@ packages/
   contracts/           # Shared schemas, examples, and boundary contracts
 ```
 
-Each subsystem README describes current ownership, implemented surfaces, commands, dependencies on `product/identity.json` and contracts, current limitations, and safety rules.
+Each subsystem README describes current ownership, implemented surfaces, commands, dependencies on `product/identity.json` and contracts, current limitations, and safety rules. For the first manual VS Code dev-preview path with the packaged GUI and local engine launcher, see `apps/plugins/vscode/README.md`.
 
 ## Verification
 
