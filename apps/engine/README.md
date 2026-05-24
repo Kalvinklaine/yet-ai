@@ -30,7 +30,7 @@ Provider endpoints manage local BYOK provider configuration files under the user
 
 ## Provider auth roadmap
 
-Current provider authentication is API-key/OpenAI-compatible direct access only. ChatGPT/OpenAI account login is not implemented. The provider-auth endpoints are available as a sanitized local skeleton for `openai` and `openai-compatible`: `status` reports login unavailable plus API-key fallback, detects matching configured API-key providers with only a redacted hint, default `start` and `exchange` do not contact OpenAI and return login-unavailable responses, and `disconnect` clears only mock/future OAuth state. It does not delete current API-key provider configs.
+Current provider authentication is API-key/OpenAI-compatible direct access only. ChatGPT/OpenAI account login is not implemented in this baseline. The provider-auth endpoints are available as a sanitized local skeleton for `openai` and `openai-compatible`: `status` reports login unavailable plus API-key fallback, detects matching configured API-key providers with only a redacted hint, default `start` and `exchange` do not contact OpenAI and return login-unavailable responses, and `disconnect` clears only mock/future OAuth state. It does not delete current API-key provider configs. The official OpenAI API-key or project-key path remains the safe/default real-provider route.
 
 A local mock OAuth/PKCE harness exists for tests only. `POST /v1/provider-auth/{provider}/start` with `{ "mock": true }` creates a temporary local mock session with a session id, state, simplified PKCE verifier/challenge, local mock authorization URL, and expiry. `POST /v1/provider-auth/{provider}/exchange` validates the provider, session id, state, mock code, and expiry, then stores fake token material only under local mock auth test state. `status` can report sanitized `pending` or `connected` mock OAuth state, and `disconnect` clears it. The harness never calls OpenAI, ChatGPT, or any external provider, and responses must never include fake access or refresh tokens. It is not production OpenAI login and is only a contract/security test harness.
 
@@ -42,14 +42,15 @@ The planned first-phase UX is: sign in first where supported; API key fallback o
 - refresh or revoke/disconnect credentials without exposing raw secrets;
 - return only sanitized status such as connected/configured, auth source, expiry, account label, scopes, redacted hints, and safe error text.
 
-Future provider-auth implementations may add real pending OAuth sessions, polling, and an optional loopback callback endpoint only after the T-49 compliance gate is complete:
+The user approved an experimental, high-risk T-49 Codex-like OpenAI/ChatGPT login task chain despite the lack of a public third-party OpenAI OAuth program. That approval allows a local engine-owned flow modeled after Codex-like behavior:
 
-- official or otherwise approved OpenAI/ChatGPT auth flow identified for third-party local apps;
-- allowed authorization, token, model, revoke, refresh, callback, and device/polling endpoints documented;
-- redirect/device behavior, PKCE parameters, client identity, scopes, and local callback security reviewed;
-- token storage, refresh, revoke, expiry, disconnect, migration, and no-secret logging policy defined behind the engine secret store;
-- no cookie import, ChatGPT web-session scraping, browser profile import, other-product credential reuse, private ChatGPT web endpoints, or provider-private headers unless separately approved;
-- no required Yet AI cloud/backend/account, managed gateway, product credit balance, or cloud workspace for core chat/provider setup.
+- pending PKCE/session state stored locally by the engine;
+- browser authorization URL and loopback callback or manual/device-style exchange where the selected Codex-like flow requires it;
+- token exchange, refresh, revoke/disconnect, expiry handling, and migration behind the engine secret store;
+- local storage of access tokens, refresh tokens, API keys, and auth metadata through OS keychain or protected user config storage;
+- GUI-facing responses limited to sanitized status, account labels, expiry, scopes, redacted hints, and safe error text.
+
+The approval does not allow cookie import, ChatGPT web-session scraping, browser profile import, browser cookie reuse, direct import or reading of `~/.codex/auth.json` or other tools' credential files, or any required Yet AI cloud/backend/account, managed gateway, product credit balance, or cloud workspace for core chat/provider setup. It also does not claim production readiness, official OpenAI partnership, or general public OAuth support. Private endpoint, client identity, account-header, model-access, token-refresh, revoke, and compatibility risks must remain explicit wherever this flow is implemented.
 
 ## Commands
 

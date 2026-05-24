@@ -23,7 +23,7 @@ Known limitations:
 - LSP completion/code-lens, full agent autonomy, indexing, tasks/knowledge, tool registry execution, shell/file mutation, file edits, and integration workflows are not implemented as production features.
 - The provider/chat baseline is a local MVP only: configured local BYOK provider data plus OpenAI-compatible chat streaming.
 - Privileged IDE actions remain disabled until strict schemas, request correlation, origin/source checks, engine policy checks, and user confirmation flows are in place.
-- The provider baseline is intentionally narrow: local BYOK configuration plus OpenAI-compatible chat streaming. The engine and GUI now include sanitized provider-auth skeleton endpoints, a login-first status card, an API-key fallback, a local mock OAuth/PKCE contract harness, and a protected-file secret-store fallback. Real OpenAI/ChatGPT account login, production OAuth, OS keychain storage, broader provider quirks, and advanced model capability handling are follow-ups.
+- The provider baseline is intentionally narrow: local BYOK configuration plus OpenAI-compatible chat streaming. The engine and GUI now include sanitized provider-auth skeleton endpoints, a login-first status card, an API-key fallback, a local mock OAuth/PKCE contract harness, and a protected-file secret-store fallback. Real OpenAI/ChatGPT account login is not implemented in this baseline. The user approved a future experimental, high-risk Codex-like login task chain despite the lack of a public third-party OpenAI OAuth program; production OAuth, OS keychain storage, broader provider quirks, and advanced model capability handling remain follow-ups.
 
 ## Provider authentication strategy
 
@@ -31,20 +31,21 @@ The implemented real-provider flow is API-key/OpenAI-compatible direct provider 
 
 The provider-auth baseline is implemented as a sanitized local skeleton for `openai` and `openai-compatible`. It exposes `start`, `status`, `exchange`, and `disconnect` contracts, but default start/exchange do not contact external providers and do not perform account login. A local mock OAuth/PKCE-like harness can be enabled only by test requests and stores fake token material in isolated mock state so smoke tests can verify session, status, disconnect, and no-secret response behavior. This harness is not production OAuth and must not be described as real login support.
 
-T-49, or any card that starts real OpenAI/ChatGPT login implementation, is blocked until this compliance gate is satisfied:
+The user approved T-49 as an experimental Codex-like OpenAI/ChatGPT login implementation path despite the lack of a public third-party OpenAI OAuth program. This approval permits a local engine-owned implementation modeled after Codex-like behavior:
 
-- identify an official or otherwise approved auth flow for third-party local apps;
-- document the exact allowed authorization, token, model, revoke, refresh, and callback/device endpoints;
-- review redirect or device flow behavior, PKCE requirements, client identity, scopes, and local callback security;
-- define token storage, refresh, revoke, expiry, disconnect, migration, and no-secret logging policy using engine-owned storage;
-- explicitly exclude cookie scraping, browser profile import, other-product credential reuse, private ChatGPT web endpoints, and provider-private headers unless a separate approval and security/provenance review allows a specific exception;
-- preserve the no-required-cloud rule: no Yet AI hosted backend, account, managed gateway, product credit balance, or cloud workspace may be required for core local provider setup or chat.
+- PKCE/session state held by the engine;
+- authorization URL handling and loopback callback or manual/device-style exchange where required by the chosen Codex-like flow;
+- token exchange, refresh, revoke/disconnect, expiry handling, and migration behind the engine secret store;
+- access token, refresh token, API-key, and auth metadata storage through OS keychain or protected local fallback;
+- sanitized GUI status only, including non-secret account label, scopes, expiry, redacted hints, and safe error text.
+
+This approval does not permit cookie scraping, browser profile import, browser cookie reuse, direct import or reading of `~/.codex/auth.json` or other tools' credential files, or any required Yet AI hosted backend, account, managed gateway, product credit balance, or cloud workspace for core local provider setup or chat. It also does not claim production readiness, official OpenAI partnership, or general public OAuth support. If private endpoints, provider-specific client identity, account headers, model-access surfaces, refresh endpoints, or revoke endpoints are used, the risk must remain explicit in user-facing and architecture documentation.
 
 Future OpenAI/ChatGPT account authentication should use a login-first UX where it is officially supported and compliant:
 
 - The preferred flow is browser or device OAuth with PKCE, a loopback callback or polling status, and a provider-issued access/refresh token pair held only by the engine.
 - If the provider supports exchanging an account login token for an API credential intended for API calls, the engine may do that exchange locally and store the resulting credential as engine-owned secret material.
-- If official account login is unavailable for API use, the GUI should guide the user to sign in to the OpenAI platform, create an API key, paste it once into Yet AI, and then clear the input after save.
+- If account login is unavailable, unsupported, or too risky for API use, the GUI should guide the user to sign in to the OpenAI platform, create an API key or project key, paste it once into Yet AI, and then clear the input after save.
 - API-key configuration remains the implemented baseline, the fallback path, and the compatibility route for OpenAI-compatible gateways and local runtimes.
 
 Reference inspection found a useful pattern in the external implementation: provider OAuth is engine-owned; GUI starts a login flow, opens an authorization URL, handles callback/manual/device progress, polls sanitized provider status, and can disconnect; refresh and provider calls remain in the engine. The same inspection also found risk areas that Yet AI should not adopt blindly: ChatGPT backend endpoints and account-specific headers may be private or product-surface-specific, importing credentials from another CLI or browser profile can blur ownership and consent, and a login flow can become coupled to a provider-specific client ID or non-public backend contract. Yet AI should not plan cookie/session scraping, browser cookie import, or reuse of another tool's local credentials as the default. Those would require a separate explicit approval, provenance review, and security design.
