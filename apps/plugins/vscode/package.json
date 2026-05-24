@@ -1,0 +1,65 @@
+{
+  "name": "yet-ai",
+  "displayName": "Yet AI",
+  "publisher": "yet-ai-placeholder",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Yet AI local runtime host for VS Code.",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:yetaicmd.openChat"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "yetaicmd.openChat",
+        "title": "Yet AI: Open Chat"
+      }
+    ],
+    "configuration": {
+      "title": "Yet AI",
+      "properties": {
+        "yetai.runtimeUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8001",
+          "description": "Local Yet AI runtime URL used by the webview shell. Only loopback URLs should be used."
+        },
+        "yetai.sessionToken": {
+          "type": "string",
+          "default": "",
+          "description": "Optional local runtime bearer/session token passed to the webview shell for debug connections. Do not store provider API keys here."
+        },
+        "yetai.guiDevUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional loopback GUI dev server URL for extension development. Leave empty to use the built-in shell placeholder."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "yet-ai-toolbox-pane",
+          "title": "Yet AI",
+          "icon": "$(sparkle)"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "check:identity": "node scripts/check-identity.mjs",
+    "compile": "npm run check:identity && tsc -p ."
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.25",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.8.3"
+  }
+}
