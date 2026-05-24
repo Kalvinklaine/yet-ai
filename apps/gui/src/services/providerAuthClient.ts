@@ -33,6 +33,10 @@ export type ProviderAuthResponse = {
   pollIntervalSeconds?: number;
 };
 
+export type ProviderAuthStartRequest = {
+  experimentalCodexLike?: boolean;
+};
+
 export type ProviderAuthStartResponse = ProviderAuthResponse & {
   success: boolean;
 };
@@ -57,10 +61,11 @@ export function getProviderAuthStatus(
 export function startProviderAuth(
   settings: RuntimeSettings,
   provider: string,
+  request: ProviderAuthStartRequest = {},
 ): Promise<RuntimeResult<ProviderAuthStartResponse>> {
   return runtimeFetch<ProviderAuthStartResponse>(settings, `/v1/provider-auth/${encodeURIComponent(provider)}/start`, {
     method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify(request),
   });
 }
 
