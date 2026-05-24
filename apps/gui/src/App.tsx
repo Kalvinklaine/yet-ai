@@ -1,11 +1,11 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBridgeAdapter, type BridgeHost } from "./bridge/bridgeAdapter";
 import { listProviders, saveProvider, type ProviderSummary, type ProviderWriteRequest } from "./services/providersClient";
-import { getCaps, getModels, getPing, sendUserMessage, type CapsResponse, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings } from "./services/runtimeClient";
+import { getCaps, getModels, getPing, productIdentity, productIdentityWarning, type CapsResponse, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
-const productName = "Yet AI";
+const productName = productIdentity.displayName;
 
 type ProviderForm = {
   providerId: string;
@@ -39,6 +39,7 @@ export function App() {
   const [models, setModels] = useState<ModelSummary[]>([]);
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
   const [connectionError, setConnectionError] = useState<RuntimeError | null>(null);
+  const [identityWarnings, setIdentityWarnings] = useState<string[]>([]);
   const [providerError, setProviderError] = useState<RuntimeError | null>(null);
   const [chatError, setChatError] = useState<RuntimeError | null>(null);
   const [providerForm, setProviderForm] = useState<ProviderForm>(emptyProviderForm);
@@ -65,19 +66,29 @@ export function App() {
 
   const refreshRuntime = useCallback(async () => {
     setConnectionError(null);
+    setIdentityWarnings([]);
     const [nextPing, nextCaps, nextModels] = await Promise.all([
       getPing(settings),
       getCaps(settings),
       getModels(settings),
     ]);
+    const warnings: string[] = [];
     if (nextPing.ok) {
       setPing(nextPing.data);
+      const warning = productIdentityWarning(nextPing.data);
+      if (warning) {
+        warnings.push(warning);
+      }
     } else {
       setPing(null);
       setConnectionError(nextPing.error);
     }
     if (nextCaps.ok) {
       setCaps(nextCaps.data);
+      const warning = productIdentityWarning(nextCaps.data);
+      if (warning) {
+        warnings.push(warning);
+      }
     } else {
       setCaps(null);
       setConnectionError(nextCaps.error);
@@ -85,6 +96,7 @@ export function App() {
     if (nextModels.ok) {
       setModels(nextModels.data.models);
     }
+    setIdentityWarnings(warnings);
   }, [settings]);
 
   const refreshProviders = useCallback(async () => {
@@ -233,9 +245,10 @@ export function App() {
         </div>
         <div className="row">
           <button onClick={() => void connect()}>Refresh runtime</button>
-          <span className="subtle">Authorization header is sent only to the configured local runtime.</span>
+          <span className="subtle">Authorization header is sent only to validated loopback runtime URLs.</span>
         </div>
         {connectionError && <ErrorBox error={connectionError} />}
+        {identityWarnings.map((warning) => <div className="error" key={warning}>{warning}</div>)}
         <div className="grid">
           <StatusBlock title="/v1/ping" value={ping} />
           <StatusBlock title="/v1/caps" value={caps ? { protocolVersion: caps.protocolVersion, capabilities: caps.capabilities, runtime: caps.runtime, providers: caps.providers.length } : null} />

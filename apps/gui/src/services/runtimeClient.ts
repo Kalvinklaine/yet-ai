@@ -4,7 +4,7 @@ export type RuntimeSettings = {
 };
 
 export type RuntimeError = {
-  status: number | "network" | "parse";
+  status: number | "network" | "parse" | "protocol" | "sequence" | "configuration";
   message: string;
 };
 
@@ -68,12 +68,19 @@ export type ChatCommandResponse = {
   type: string;
 };
 
+export const productIdentity = {
+  productId: "yet-ai",
+  displayName: "Yet AI",
+  guiPackage: "yet-ai-chat-js",
+} as const;
+
 export function authHeaders(settings: RuntimeSettings): HeadersInit {
   const headers: Record<string, string> = {
     Accept: "application/json",
   };
-  if (settings.token.trim()) {
-    headers.Authorization = `Bearer ${settings.token.trim()}`;
+  const token = settings.token.trim();
+  if (token && isLoopbackRuntimeUrl(settings.baseUrl)) {
+    headers.Authorization = `Bearer ${token}`;
   }
   return headers;
 }
@@ -83,6 +90,11 @@ export async function runtimeFetch<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<RuntimeResult<T>> {
+  const validation = validateRuntimeBaseUrl(settings.baseUrl);
+  if (!validation.ok) {
+    return { ok: false, error: validation.error };
+  }
+
   const headers = new Headers(authHeaders(settings));
   if (init.body !== undefined) {
     headers.set("Content-Type", "application/json");
@@ -159,6 +171,51 @@ export function sendUserMessage(
 
 export function joinUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+}
+
+export function validateRuntimeBaseUrl(baseUrl: string): RuntimeResult<URL> {
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    return {
+      ok: false,
+      error: {
+        status: "configuration",
+        message: "Runtime base URL must be a valid local loopback URL.",
+      },
+    };
+  }
+
+  if (!isLoopbackUrl(parsed) || (parsed.protocol !== "http:" && parsed.protocol !== "https:")) {
+    return {
+      ok: false,
+      error: {
+        status: "configuration",
+        message: "Runtime base URL must use http(s) on local loopback: 127.0.0.1, localhost, or ::1.",
+      },
+    };
+  }
+
+  return { ok: true, data: parsed };
+}
+
+export function isLoopbackRuntimeUrl(baseUrl: string): boolean {
+  const validation = validateRuntimeBaseUrl(baseUrl);
+  return validation.ok;
+}
+
+export function productIdentityWarning(response: Pick<PingResponse, "productId" | "displayName"> | Pick<CapsResponse, "productId">): string | null {
+  const displayName = "displayName" in response ? response.displayName : productIdentity.displayName;
+  if (response.productId !== productIdentity.productId || displayName !== productIdentity.displayName) {
+    return `Runtime identity mismatch: expected ${productIdentity.displayName} (${productIdentity.productId}), received ${displayName} (${response.productId}).`;
+  }
+  return null;
+}
+
+function isLoopbackUrl(url: URL): boolean {
+  const hostname = url.hostname.toLowerCase();
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
 }
 
 async function errorMessage(response: Response): Promise<string> {

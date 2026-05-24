@@ -12,6 +12,7 @@ The GUI talks only to the local Yet AI runtime and logical IDE host bridge. It d
 npm install
 npm run typecheck
 npm run build
+npm test
 npm run dev
 ```
 
@@ -29,13 +30,13 @@ The browser shell defaults to:
 http://127.0.0.1:8001
 ```
 
-A session token can be entered for local runtime API calls. The runtime clients attach it as:
+A session token can be entered for local runtime API calls. The runtime clients attach it only after validating that the runtime URL is loopback (`127.0.0.1`, `localhost`, or `[::1]` / `::1`) over `http` or `https`:
 
 ```txt
 Authorization: Bearer <token>
 ```
 
-The token is kept only in React state for the current page lifetime.
+Non-loopback runtime URLs are rejected with a visible configuration error before fetch, and the bearer token is not sent. The token is kept only in React state for the current page lifetime.
 
 ## Implemented surfaces
 
@@ -52,6 +53,12 @@ The token is kept only in React state for the current page lifetime.
 
 The provider form allows entering an API key for create/update. After submit, the key field is cleared. The UI renders only `auth.configured` and `auth.redacted` returned by the runtime. Do not add localStorage or sessionStorage persistence for provider keys.
 
-## Bridge behavior
+## SSE and bridge behavior
 
-Browser mock mode is non-privileged and logs messages locally. The adapter sends `gui.ready`, accepts/logs `host.ready`, and validates the basic `version`/`type` shape for bridge messages.
+SSE uses fetch streaming, not native EventSource. The parser handles CRLF, comments, split frame boundaries, multiple events per chunk, and multi-line `data:` frames. Network, HTTP, parse/protocol, sequence, and configuration failures are surfaced as typed runtime errors.
+
+Browser mock mode is non-privileged and logs messages locally. The adapter sends `gui.ready`, validates non-empty `version`, known host `type`, optional string `requestId`, and optional object `payload`, and accepts only the current host message allowlist: `host.ready`, `host.themeChanged`, `host.activeFileChanged`, `host.selectionChanged`, `host.workspaceChanged`, `host.toolResult`, and `host.openedFromCommand`.
+
+## Product identity
+
+GUI constants mirror `product/identity.json` for the Yet AI product id, display name, and package name. `/v1/ping` and `/v1/caps` identity mismatches are shown as warnings without crashing the shell.
