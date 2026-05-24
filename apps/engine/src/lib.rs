@@ -1,3 +1,4 @@
+pub mod chat;
 pub mod http;
 pub mod identity;
 pub mod providers;
@@ -9,6 +10,8 @@ use std::path::PathBuf;
 
 use axum::Router;
 
+use crate::chat::ChatRuntime;
+
 pub use identity::ProductIdentity;
 pub use security::AuthToken;
 pub use storage::{resolve_default_storage_paths, StoragePaths};
@@ -18,6 +21,7 @@ pub struct AppState {
     pub identity: ProductIdentity,
     pub auth_token: AuthToken,
     pub storage_paths: StoragePaths,
+    pub chat_runtime: ChatRuntime,
 }
 
 impl AppState {
@@ -28,6 +32,7 @@ impl AppState {
             identity,
             auth_token,
             storage_paths,
+            chat_runtime: ChatRuntime::new(),
         }
     }
 
@@ -40,6 +45,7 @@ impl AppState {
             identity,
             auth_token,
             storage_paths,
+            chat_runtime: ChatRuntime::new(),
         }
     }
 }

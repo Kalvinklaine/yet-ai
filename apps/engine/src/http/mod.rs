@@ -1,13 +1,10 @@
-use std::convert::Infallible;
-use std::time::Duration;
 
 use axum::extract::{Path, Query, State};
-use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::sse::{KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
-use futures_util::stream;
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -249,11 +246,23 @@ struct ChatCommandRequest {
 
 async fn chat_command(
     _auth: Authenticated,
+    State(state): State<AppState>,
     Path(chat_id): Path<String>,
     Json(command): Json<ChatCommandRequest>,
 ) -> Response {
     if chat_id.is_empty() || command.request_id.is_empty() {
         return StatusCode::BAD_REQUEST.into_response();
+    }
+
+    if command.command_type == "abort" {
+        state.chat_runtime.accept_abort(&chat_id).await;
+        return Json(json!({
+            "accepted": true,
+            "chatId": chat_id,
+            "requestId": command.request_id,
+            "type": command.command_type
+        }))
+        .into_response();
     }
 
     if command.command_type != "user_message" {
@@ -270,6 +279,11 @@ async fn chat_command(
     if content.is_empty() {
         return StatusCode::BAD_REQUEST.into_response();
     }
+
+    state
+        .chat_runtime
+        .accept_user_message(state.storage_paths.config_dir.clone(), chat_id.clone(), content.to_string())
+        .await;
 
     Json(json!({
         "accepted": true,
@@ -288,28 +302,13 @@ struct SubscribeQuery {
 
 async fn chats_subscribe(
     _auth: Authenticated,
+    State(state): State<AppState>,
     Query(query): Query<SubscribeQuery>,
-) -> Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>> {
-    let data = json!({
-        "seq": 0,
-        "type": "snapshot",
-        "chatId": query.chat_id,
-        "payload": {
-            "thread": {
-                "id": query.chat_id,
-                "title": "New chat",
-                "messages": []
-            },
-            "runtime": {
-                "streaming": false,
-                "waitingForResponse": false
-            }
-        }
-    });
-    let event = Event::default().event("snapshot").data(data.to_string());
-    Sse::new(stream::once(async move { Ok::<Event, Infallible>(event) })).keep_alive(
+) -> Sse<impl futures_util::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>> {
+    let stream = state.chat_runtime.subscribe(query.chat_id).await;
+    Sse::new(stream).keep_alive(
         KeepAlive::new()
-            .interval(Duration::from_secs(30))
+            .interval(std::time::Duration::from_secs(30))
             .text("keep-alive"),
     )
 }

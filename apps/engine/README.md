@@ -9,6 +9,7 @@ The engine resolves product, binary, and storage names from `product/identity.js
 ## Current status
 
 The Rust crate and binary are named `yet-lsp`. The runtime currently exposes:
+The Rust crate and binary are named `yet-lsp`. The runtime currently exposes:
 
 - `GET /v1/ping`
 - `GET /v1/caps`
@@ -22,7 +23,7 @@ The Rust crate and binary are named `yet-lsp`. The runtime currently exposes:
 - `POST /v1/chats/{chat_id}/commands`
 - `GET /v1/chats/subscribe?chat_id=...`
 
-Provider endpoints manage local BYOK provider configuration files under the user config directory. Model listing returns configured placeholder model entries until real adapters are added. Chat commands only accept the minimal `user_message` shape. Privileged or unimplemented commands are rejected until strict schemas and behavior exist.
+Provider endpoints manage local BYOK provider configuration files under the user config directory. Chat accepts `user_message` and a no-op-safe `abort`; `user_message` selects the first enabled `openai-compatible` provider, posts directly to `{baseUrl}/chat/completions` with `stream: true`, and normalizes provider chunks into `snapshot`, `stream_started`, `stream_delta`, `stream_finished`, or `error` SSE events. No Yet AI hosted backend, gateway, account, or cloud workspace is required.
 
 ## Commands
 
@@ -63,6 +64,8 @@ Storage names come from `product/identity.json`:
 Provider configs are stored in the user config dir under `providers.d/{id}.json`. The MVP stores API keys in these local files as an explicit development/file fallback until OS keychain support exists. On Unix, provider config files are written with private `0600` permissions where feasible. Provider secrets are never written into project `.yet-ai` state and are never returned by HTTP responses; responses only expose `auth.configured` and a redacted hint such as `sk-...abcd`.
 
 Provider ids are path-safe stable identifiers containing only ASCII letters, digits, `-`, and `_`. `custom` and `openai-compatible` providers require an explicit `baseUrl`. `ollama` defaults to `http://127.0.0.1:11434` when `baseUrl` is omitted.
+
+For `openai-compatible`, `baseUrl` may point either at an API root or directly at `/chat/completions`; the runtime appends `/chat/completions` when needed and sends `Authorization: Bearer <apiKey>` only when API key auth is configured.
 
 ## Safety rules
 
