@@ -1,0 +1,8 @@
+{
+  "seq": 3,
+  "type": "stream_finished",
+  "chatId": "chat-001",
+  "payload": {
+    "finishReason": "stop"
+  }
+}

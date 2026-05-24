@@ -1,0 +1,9 @@
+{
+  "seq": 4,
+  "type": "error",
+  "chatId": "chat-001",
+  "payload": {
+    "code": "provider_request_failed",
+    "message": "Provider request failed. Check the local provider configuration and try again."
+  }
+}
