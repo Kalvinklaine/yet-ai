@@ -24,6 +24,20 @@ The Rust crate and binary are named `yet-lsp`. The runtime currently exposes:
 
 Provider endpoints manage local BYOK provider configuration files under the user config directory. Chat accepts `user_message` and a no-op-safe `abort`; `user_message` selects the first enabled `openai-compatible` provider, posts directly to `{baseUrl}/chat/completions` with `stream: true`, and normalizes provider chunks into `snapshot`, `stream_started`, `stream_delta`, `stream_finished`, or `error` SSE events. No Yet AI hosted backend, gateway, account, or cloud workspace is required.
 
+## Provider auth roadmap
+
+Current provider authentication is API-key/OpenAI-compatible direct access only. ChatGPT/OpenAI account login is not implemented.
+
+The planned first-phase UX is: sign in first where supported; API key fallback otherwise. The engine should own any future provider-auth flow:
+
+- start browser/device login and hold pending PKCE/session state locally;
+- receive loopback callback or exchange/polling requests;
+- store access tokens, refresh tokens, API keys, and revocation state in engine-owned OS keychain or protected user config storage;
+- refresh or revoke/disconnect credentials without exposing raw secrets;
+- return only sanitized status such as connected/configured, auth source, expiry, account label, scopes, redacted hints, and safe error text.
+
+Candidate future endpoints are `POST /v1/provider-auth/{provider}/start`, `GET /v1/provider-auth/{provider}/status`, `POST /v1/provider-auth/{provider}/exchange`, `POST /v1/provider-auth/{provider}/disconnect`, and an optional loopback callback endpoint. Do not implement cookie import, ChatGPT web-session scraping, or reuse of another tool's local credentials without a separate explicit approval and compliance/security review.
+
 ## Commands
 
 From the repository root:

@@ -81,6 +81,8 @@ Current chat generation selects an enabled `openai-compatible` provider in the r
 
 Native provider-specific chat adapters, including native Ollama chat, are future work for this GUI/runtime MVP. Until then, configure Ollama through its OpenAI-compatible `/v1` API if that endpoint is enabled in your local Ollama version.
 
+Future OpenAI/ChatGPT account login should keep the same boundary. The GUI may show a sign-in-first provider card, call engine-owned auth endpoints to start login, open the returned authorization or verification URL, poll sanitized status, and offer disconnect. It must not store or display raw access tokens, refresh tokens, API keys, cookies, sessions, authorization codes after exchange, or provider credential files. If account login is not officially available for API use, the GUI should guide the user to the OpenAI platform to create an API key and paste it once, then clear the field after save.
+
 ## SSE and bridge behavior
 
 SSE uses fetch streaming, not native EventSource. The parser handles CRLF, comments, split frame boundaries, multiple events per chunk, and multi-line `data:` frames. Network, HTTP, parse/protocol, sequence, and configuration failures are surfaced as typed runtime errors.
