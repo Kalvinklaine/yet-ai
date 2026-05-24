@@ -1,44 +1,57 @@
 # Yet AI GUI
 
-## Ownership and boundary
+Minimal React/Vite browser shell for local-first Yet AI workflows.
 
-`apps/gui` will own the future Yet AI React webview, browser development shell, design system, typed engine client, SSE client, and logical IDE bridge client.
+## Boundary
 
-The GUI should present chat, settings, onboarding, provider setup, tool confirmations, and later task or knowledge surfaces. It must remain a client of engine and bridge contracts rather than owning provider secrets, direct filesystem mutation, shell execution, or indexing.
+The GUI talks only to the local Yet AI runtime and logical IDE host bridge. It does not call hosted model providers directly, does not own provider adapters, and does not store raw provider secrets in browser storage.
 
-Provider setup UI should render sanitized provider status, model summaries, validation results, and configured/authenticated indicators returned by the local runtime. It may collect a secret for a save/test action, but it must not persist raw provider secrets in GUI state or storage and must not call hosted providers or local runtimes directly.
-
-## Current status
-
-Scaffold only. There is no React application, package manifest, bundled UI, design system, or runtime implementation in this directory yet.
-
-## Future commands
-
-These commands are not available until a GUI package exists:
+## Commands
 
 ```sh
-npm run types
-npm run lint
-npm run test
+npm install
+npm run typecheck
 npm run build
+npm run dev
 ```
 
-Repository-level validation is currently available from the root:
+Repository validation remains available from the root:
 
 ```sh
 npm run check
 ```
 
-## Dependencies
+## Runtime settings
 
-- Product-sensitive UI package names and public product labels must come from `product/identity.json` where practical.
-- Engine REST, SSE, and IDE bridge message shapes should come from `packages/contracts` once contracts are introduced.
-- IDE host behavior should be accessed through a logical bridge so VS Code, JetBrains, and browser development mode remain separable.
+The browser shell defaults to:
 
-## Safety rules
+```txt
+http://127.0.0.1:8001
+```
 
-- Do not add runtime UI code in this scaffold phase.
-- Build a new Yet AI interface and design system; do not copy external product screens, visual hierarchy, icons, or copy.
-- Validate bridge and engine payloads at the boundary once runtime code exists.
-- Keep privileged actions separate from safe UI state and require host or engine policy checks for edits and tool execution.
-- Do not store provider secrets or private integration credentials in GUI state.
+A session token can be entered for local runtime API calls. The runtime clients attach it as:
+
+```txt
+Authorization: Bearer <token>
+```
+
+The token is kept only in React state for the current page lifetime.
+
+## Implemented surfaces
+
+- `/v1/ping`
+- `/v1/caps`
+- `/v1/models`
+- `/v1/providers`
+- `POST /v1/providers` and `PATCH /v1/providers/:id`
+- `POST /v1/chats/:chat_id/commands` with `user_message`
+- `GET /v1/chats/subscribe?chat_id=...` through fetch streaming SSE
+- Browser, VS Code, and JetBrains-style logical bridge detection
+
+## Provider secret handling
+
+The provider form allows entering an API key for create/update. After submit, the key field is cleared. The UI renders only `auth.configured` and `auth.redacted` returned by the runtime. Do not add localStorage or sessionStorage persistence for provider keys.
+
+## Bridge behavior
+
+Browser mock mode is non-privileged and logs messages locally. The adapter sends `gui.ready`, accepts/logs `host.ready`, and validates the basic `version`/`type` shape for bridge messages.
