@@ -372,6 +372,21 @@ export function App() {
     }
   };
 
+  const startExperimentalOpenAiLogin = async () => {
+    setProviderAuthError(null);
+    setProviderAuthUrlWarning(null);
+    const result = await startProviderAuth(settings, "openai", { experimentalCodexLike: true });
+    if (!result.ok) {
+      setProviderAuthError(result.error);
+      return;
+    }
+    setProviderAuthStatus(result.data);
+    const authUrl = result.data.authorizationUrl ?? result.data.verificationUrl;
+    if (authUrl) {
+      openSafeAuthUrl(authUrl, setProviderAuthUrlWarning);
+    }
+  };
+
   const disconnectOpenAiLogin = async () => {
     setProviderAuthError(null);
     setProviderAuthUrlWarning(null);
@@ -500,6 +515,10 @@ export function App() {
             <span className={providerAuthStatus?.configured ? "badge ok" : "badge warn"}>{providerAuthStatus?.status ?? "not checked"}</span>
           </div>
           <p className="subtle">Login-first setup is handled only by the local runtime. The GUI shows sanitized status and never stores provider auth state in browser storage.</p>
+          <div className="risk-card stack">
+            <strong>Experimental OpenAI account login</strong>
+            <span>This Codex-like path is experimental and high-risk. It may rely on private OpenAI/Codex behavior, is not official public third-party OAuth support, and is not production-ready. Use it only if you explicitly accept that risk.</span>
+          </div>
           {providerAuthError && <ErrorBox error={providerAuthError} />}
           {providerAuthUrlWarning && <div className="error">{providerAuthUrlWarning}</div>}
           {providerAuthStatus && <ProviderAuthSummary status={providerAuthStatus.status} />}
@@ -509,6 +528,7 @@ export function App() {
           <div className="row">
             <button type="button" onClick={() => void refreshProviderAuthStatus()}>Refresh login status</button>
             <button type="button" onClick={() => void startOpenAiLogin()} disabled={providerAuthStatus?.supportsLogin === false}>Login with OpenAI</button>
+            <button type="button" className="danger-button" onClick={() => void startExperimentalOpenAiLogin()}>Experimental Login with OpenAI account</button>
             <button type="button" onClick={() => void disconnectOpenAiLogin()} disabled={!providerAuthStatus?.configured || providerAuthStatus.authSource === "api_key"}>Disconnect login</button>
             <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>
           </div>
@@ -665,9 +685,11 @@ function ProviderAuthDetails({ status }: { status: ProviderAuthResponse }) {
       <span>Auth source: {status.authSource}</span>
       <span>Login supported: {String(status.supportsLogin)}</span>
       <span>API key fallback supported: {String(status.supportsApiKey)}</span>
-      {status.accountLabel && <span>Account: {status.accountLabel}</span>}
-      {status.expiresAt && <span>Expires: {status.expiresAt}</span>}
-      {status.redacted && <span>Secret configured: {status.redacted}</span>}
+      {status.accountLabel && <span>Account: {sanitizeDisplayText(status.accountLabel)}</span>}
+      {status.sessionId && <span>Session: {sanitizeDisplayText(status.sessionId)}</span>}
+      {status.expiresAt && <span>Expires: {sanitizeDisplayText(status.expiresAt)}</span>}
+      {status.scopes && status.scopes.length > 0 && <span>Scopes: {sanitizeDisplayText(status.scopes.join(", "))}</span>}
+      {status.redacted && <span>Secret configured: {sanitizeDisplayText(status.redacted)}</span>}
       {status.lastError && <span>Last error: {sanitizeDisplayText(status.lastError)}</span>}
       {status.pollIntervalSeconds && <span>Poll interval: {status.pollIntervalSeconds} seconds</span>}
     </div>

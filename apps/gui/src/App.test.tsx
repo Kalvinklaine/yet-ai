@@ -76,6 +76,46 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).toContain("Provider auth URL was not opened because it is not HTTPS or loopback.");
   });
 
+  it("starts experimental OpenAI login with explicit flag and opens a safe URL", async () => {
+    const openMock = vi.spyOn(window, "open").mockImplementation(() => null);
+    mockRuntimeResponses({
+      authSupportsLogin: true,
+      startAuthUrl: "https://auth.openai.com/oauth/authorize?state=codex-test",
+      startAuthMessage: "Experimental high-risk Codex-like OpenAI login is pending.",
+    });
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Experimental Login with OpenAI account").click();
+    });
+
+    const startCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/provider-auth/openai/start") && init?.method === "POST");
+    expect(startCall?.[1]?.body).toBe(JSON.stringify({ experimentalCodexLike: true }));
+    expect(openMock).toHaveBeenCalledWith("https://auth.openai.com/oauth/authorize?state=codex-test", "_blank", "noopener,noreferrer");
+    expect(container?.textContent).toContain("experimental and high-risk");
+    expect(container?.textContent).toContain("Session: provider-login-session-001");
+    expect(container?.textContent).toContain("Expires: 2026-05-24T01:00:00Z");
+    expect(container?.textContent).toContain("Scopes: openid, profile, email, offline_access");
+    expect(container?.textContent).toContain("Use OpenAI API key fallback");
+  });
+
+  it("default OpenAI login does not start the experimental path", async () => {
+    vi.spyOn(window, "open").mockImplementation(() => null);
+    mockRuntimeResponses({ authSupportsLogin: true });
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Login with OpenAI").click();
+    });
+
+    const startCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/provider-auth/openai/start") && init?.method === "POST");
+    expect(startCall?.[1]?.body).toBe(JSON.stringify({}));
+  });
+
   it("surfaces unauthorized provider auth errors safely", async () => {
     mockRuntimeResponses({ authStatusCode: 401 });
     renderApp();
@@ -141,6 +181,29 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).not.toContain("refresh_token");
     expect(container?.textContent).not.toContain("api_key");
     expect(container?.textContent).not.toContain(longValue);
+  });
+
+  it("sanitizes experimental provider auth messages and details before display", async () => {
+    const rawCode = "authorization=code-secret-value";
+    const rawToken = "refresh_token=" + "z".repeat(64);
+    mockRuntimeResponses({
+      authResponse: {
+        ...providerAuthResponse("pending"),
+        message: `experimental pending ${rawCode}`,
+        accountLabel: rawToken,
+        scopes: ["openid", "access_token=" + "y".repeat(64)],
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("experimental pending [redacted]");
+    expect(container?.textContent).not.toContain("code-secret-value");
+    expect(container?.textContent).not.toContain("refresh_token");
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("z".repeat(64));
+    expect(container?.textContent).not.toContain("y".repeat(64));
   });
 
   it("browser storage does not contain raw provider API keys", () => {
@@ -415,6 +478,7 @@ type MockRuntimeOptions = {
   authSupportsLogin?: boolean;
   authResponse?: ProviderAuthResponse;
   startAuthUrl?: string;
+  startAuthMessage?: string;
   sseEvents?: unknown[];
   commandStatus?: number;
   commandError?: string;
@@ -488,9 +552,11 @@ function mockRuntimeResponses(options: MockRuntimeOptions = {}) {
         supportsApiKey: true,
         authorizationUrl: options.startAuthUrl ?? "https://auth.openai.com/oauth/authorize?state=test",
         sessionId: "provider-login-session-001",
+        expiresAt: "2026-05-24T01:00:00Z",
+        scopes: ["openid", "profile", "email", "offline_access"],
         cloudRequired: false,
         success: true,
-        message: "Open the authorization URL to continue signing in.",
+        message: options.startAuthMessage ?? "Open the authorization URL to continue signing in.",
       }));
     }
     if (init?.method === "POST" && url.endsWith("/v1/providers")) {
