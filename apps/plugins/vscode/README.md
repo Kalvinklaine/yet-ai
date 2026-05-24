@@ -37,6 +37,7 @@ cd apps/gui && npm run build && cd ../plugins/vscode && npm run compile && cd ..
 ```
 
 ## Extension surfaces
+## Extension surfaces
 
 - Manifest identity is checked against `product/identity.json`.
 - Command: `yetaicmd.openChat` (`Yet AI: Open Chat`).
@@ -45,8 +46,21 @@ cd apps/gui && npm run build && cd ../plugins/vscode && npm run compile && cd ..
   - `yetai.runtimeUrl`, default `http://127.0.0.1:8001`.
   - `yetai.sessionToken`, optional local runtime bearer/session token for debug connections.
   - `yetai.guiDevUrl`, optional loopback GUI dev server URL.
+  - `yetai.launchMode`, one of `auto`, `connect`, or `launch`.
+  - `yetai.engineBinaryPath`, optional absolute path to `yet-lsp`.
 
 `runtimeUrl` and `guiDevUrl` are restricted to loopback `http` or `https` URLs before the webview opens. `sessionToken` is a sensitive local runtime credential, not a provider secret. It is passed only in the bootstrap/`host.ready` path needed by the trusted GUI runtime client, is not logged, and is not rendered in the placeholder UI. Production token storage with VS Code SecretStorage is a follow-up; raw provider secrets must never be stored in extension settings.
+
+## Runtime connection and launch
+
+The extension supports two runtime workflows:
+
+- Debug connect mode: set `yetai.launchMode` to `connect`, set `yetai.runtimeUrl` to an already running loopback engine, and set `yetai.sessionToken` to that engine's local bearer token when required. The extension validates the URL and checks `GET /v1/ping` before opening the webview.
+- Local launch mode: set `yetai.launchMode` to `launch` and configure `yetai.engineBinaryPath` with an absolute path to `yet-lsp`. The extension starts the process, generates a per-session token, passes it in `YET_AI_AUTH_TOKEN`, passes the port from `yetai.runtimeUrl` in `YET_AI_HTTP_PORT`, checks `GET /v1/ping`, and stops the launched process on extension deactivate.
+
+The default `auto` mode launches a configured or discoverable `yet-lsp` binary when available; otherwise it behaves like debug connect mode. Discovery checks packaged `bin/` locations, repository `target/debug` and `target/release`, then `PATH`.
+
+Basic engine stdout/stderr lines are captured in the `Yet AI Runtime` output channel. The generated session token and bearer headers are redacted before logging. Provider configuration and provider secrets remain engine-owned and are not stored or logged by the extension.
 
 ## Webview and bridge
 
@@ -61,7 +75,7 @@ No privileged workspace edits, IDE tools, or provider actions are implemented in
 ## Current limitations
 
 - The extension shell is buildable but not production-ready.
-- It connects to an already running local runtime; engine binary launch, lifecycle management, logs, and health recovery are follow-up work.
+- Runtime health recovery after a crashed launched process is limited to retrying the command.
 - Packaged production GUI assets are supported through the documented `apps/gui` build plus `npm run copy:gui` flow, but generated assets are not committed.
 - No LSP client, privileged workspace edits, IDE tools, file mutation, shell actions, or provider actions are implemented.
 - `yetai.sessionToken` remains a debug/local runtime setting until VS Code SecretStorage integration is added.
