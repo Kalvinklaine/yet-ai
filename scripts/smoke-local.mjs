@@ -14,9 +14,14 @@ const timeoutMs = 120_000;
 
 let engine;
 let mockProvider;
+let mockCodexTokenEndpoint;
+let mockCodexChatEndpoint;
 let tempHome;
 let providerAuth;
 let providerRequestBody = "";
+let codexTokenRequestBody = "";
+let codexChatAuth;
+let codexChatRequestBody = "";
 
 try {
   tempHome = await makeTempHome();
@@ -88,6 +93,82 @@ try {
   assert(providerAuthCleared.configured === false, "provider-auth cleared status was unexpectedly configured");
   assert(providerAuthCleared.status === "login_unavailable", "provider-auth cleared status was not login_unavailable");
 
+  mockCodexTokenEndpoint = await startMockCodexTokenEndpoint();
+  mockCodexChatEndpoint = await startMockCodexChatEndpoint();
+  const codexStart = await requestJson(baseUrl, "/v1/provider-auth/openai/start", {
+    method: "POST",
+    body: JSON.stringify({
+      experimentalCodexLike: true,
+      tokenEndpointUrl: mockCodexTokenEndpoint.url,
+      chatEndpointUrl: mockCodexChatEndpoint.baseUrl
+    })
+  });
+  assert(codexStart.status === "pending", "experimental Codex-like start did not return pending status");
+  assert(codexStart.authSource === "oauth", "experimental Codex-like start did not use oauth auth source");
+  assert(codexStart.supportsLogin === true, "experimental Codex-like start did not support login");
+  assert(codexStart.cloudRequired === false, "experimental Codex-like start unexpectedly requires cloud");
+  assert(codexStart.authorizationUrl?.startsWith("https://auth.openai.com/oauth/authorize?"), "experimental Codex-like start returned unexpected authorization URL");
+  assert(typeof codexStart.sessionId === "string" && codexStart.sessionId.startsWith("codex-"), "experimental Codex-like start did not return a Codex-like session id");
+  assert(String(codexStart.message ?? "").includes("Experimental Codex-like"), "experimental Codex-like start did not return risk message");
+  const codexState = new URL(codexStart.authorizationUrl).searchParams.get("state");
+  assert(typeof codexState === "string" && codexState.length > 20, "experimental Codex-like start did not return state");
+
+  const codexExchange = await requestJson(baseUrl, "/v1/provider-auth/openai/exchange", {
+    method: "POST",
+    body: JSON.stringify({
+      sessionId: codexStart.sessionId,
+      state: codexState,
+      code: "codex-code-smoke-secret"
+    })
+  });
+  assert(codexExchange.configured === true, "experimental Codex-like exchange did not configure auth");
+  assert(codexExchange.status === "connected", "experimental Codex-like exchange did not return connected status");
+  assert(codexExchange.authSource === "oauth", "experimental Codex-like exchange did not use oauth auth source");
+  assert(codexExchange.accountLabel === "smoke-user@example.test", "experimental Codex-like exchange returned unexpected account label");
+  assert(codexExchange.cloudRequired === false, "experimental Codex-like exchange unexpectedly requires cloud");
+
+  const parsedCodexTokenBody = JSON.parse(codexTokenRequestBody);
+  assert(parsedCodexTokenBody.grant_type === "authorization_code", "experimental Codex-like exchange used unexpected grant type");
+  assert(parsedCodexTokenBody.code === "codex-code-smoke-secret", "experimental Codex-like exchange did not send auth code to mock token endpoint");
+  assert(typeof parsedCodexTokenBody.code_verifier === "string" && parsedCodexTokenBody.code_verifier.length > 20, "experimental Codex-like exchange did not send PKCE verifier to mock token endpoint");
+
+  const codexStatus = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
+  assert(codexStatus.configured === true, "experimental Codex-like status was not configured");
+  assert(codexStatus.status === "connected", "experimental Codex-like status was not connected");
+  assert(codexStatus.authSource === "oauth", "experimental Codex-like status did not use oauth auth source");
+
+  const codexChatId = `smoke-codex-chat-${crypto.randomUUID()}`;
+  const codexSubscription = subscribe(baseUrl, codexChatId);
+  const codexCommandResponse = await requestJson(baseUrl, `/v1/chats/${encodeURIComponent(codexChatId)}/commands`, {
+    method: "POST",
+    body: JSON.stringify({
+      requestId: `smoke-codex-command-${crypto.randomUUID()}`,
+      type: "user_message",
+      payload: { content: "Say hello through experimental mock OAuth." }
+    })
+  });
+  assert(codexCommandResponse.accepted === true, "experimental Codex-like chat command was not accepted");
+
+  const { events: codexEvents, raw: codexRaw } = await codexSubscription;
+  assert(codexEvents[0]?.type === "snapshot" && codexEvents[0]?.seq === 0, "experimental Codex-like SSE did not start with snapshot");
+  assert(codexEvents.some((event) => event.type === "stream_started"), "experimental Codex-like SSE stream_started event was not received");
+  assert(codexEvents.some((event) => event.type === "stream_delta" && event.payload?.delta?.content === "OAuth"), "experimental Codex-like SSE OAuth delta was not received");
+  assert(codexEvents.some((event) => event.type === "stream_delta" && event.payload?.delta?.content === " smoke"), "experimental Codex-like SSE smoke delta was not received");
+  assert(codexEvents.some((event) => event.type === "stream_finished"), "experimental Codex-like SSE stream_finished event was not received");
+  assertMonotonicSequence(codexEvents);
+
+  assert(codexChatAuth === "Bearer codex-smoke-access-token-secret", "experimental Codex-like mock chat did not receive bearer OAuth token");
+  const parsedCodexChatBody = JSON.parse(codexChatRequestBody);
+  assert(parsedCodexChatBody.stream === true, "experimental Codex-like chat request was not streaming");
+  assert(parsedCodexChatBody.model === "gpt-5-codex", "experimental Codex-like chat request used unexpected model");
+
+  const codexDisconnect = await requestJson(baseUrl, "/v1/provider-auth/openai/disconnect", {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+  assert(codexDisconnect.success === true, "experimental Codex-like disconnect did not report success");
+  assert(codexDisconnect.status === "revoked", "experimental Codex-like disconnect did not return revoked status");
+
   const providerResponse = await requestJson(baseUrl, "/v1/providers", {
     method: "POST",
     body: JSON.stringify({
@@ -137,16 +218,36 @@ try {
     providerAuthConnected,
     providerAuthDisconnect,
     providerAuthCleared,
+    codexStart,
+    codexExchange,
+    codexStatus,
+    codexCommandResponse,
+    codexEvents,
+    codexRaw,
+    codexDisconnect,
     providerResponse,
     commandResponse,
     events,
     raw
   });
-  assert(!clientVisible.includes(fakeApiKey), "raw fake provider API key leaked to client-visible output");
-  assert(!clientVisible.includes("fake-access-token"), "raw fake provider-auth access token leaked to client-visible output");
-  assert(!clientVisible.includes("fake-refresh-token"), "raw fake provider-auth refresh token leaked to client-visible output");
-  assert(!clientVisible.includes("mock-verifier"), "provider-auth PKCE verifier leaked to client-visible output");
-  assert(!clientVisible.includes("mock-code-smoke"), "provider-auth exchange code leaked to client-visible output");
+  assertNoSecretLeak(clientVisible, [
+    fakeApiKey,
+    "fake-access-token",
+    "fake-refresh-token",
+    "mock-verifier",
+    "mock-code-smoke",
+    "codex-smoke-access-token-secret",
+    "codex-smoke-refresh-token-secret",
+    "codex-code-smoke-secret",
+    parsedCodexTokenBody.code_verifier,
+    "authorization: bearer",
+    "bearer codex-smoke-access-token-secret",
+    "cookie",
+    "auth.json",
+    ".codex/auth.json",
+    "client_secret",
+    "authorization_code"
+  ]);
 
   console.log("Local smoke test passed.");
 } finally {
@@ -155,6 +256,12 @@ try {
   }
   if (mockProvider) {
     await closeServer(mockProvider.server);
+  }
+  if (mockCodexTokenEndpoint) {
+    await closeServer(mockCodexTokenEndpoint.server);
+  }
+  if (mockCodexChatEndpoint) {
+    await closeServer(mockCodexChatEndpoint.server);
   }
   if (tempHome) {
     await rm(tempHome, { recursive: true, force: true });
@@ -238,6 +345,58 @@ async function startMockProvider() {
         "cache-control": "no-cache"
       });
       response.write('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n');
+      response.write('data: {"choices":[{"delta":{"content":" smoke"}}]}\n\n');
+      response.end("data: [DONE]\n\n");
+    });
+  });
+  await listen(server, "127.0.0.1", 0);
+  const address = server.address();
+  return { server, baseUrl: `http://127.0.0.1:${address.port}` };
+}
+
+async function startMockCodexTokenEndpoint() {
+  const server = http.createServer((request, response) => {
+    if (request.method !== "POST" || request.url !== "/oauth/token") {
+      response.writeHead(404).end();
+      return;
+    }
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => {
+      codexTokenRequestBody += chunk;
+    });
+    request.on("end", () => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        access_token: "codex-smoke-access-token-secret",
+        refresh_token: "codex-smoke-refresh-token-secret",
+        expires_in: 1800,
+        scope: "openid profile email offline_access",
+        account_label: "smoke-user@example.test"
+      }));
+    });
+  });
+  await listen(server, "127.0.0.1", 0);
+  const address = server.address();
+  return { server, url: `http://127.0.0.1:${address.port}/oauth/token` };
+}
+
+async function startMockCodexChatEndpoint() {
+  const server = http.createServer((request, response) => {
+    if (request.method !== "POST" || !["/chat/completions", "/v1/chat/completions"].includes(request.url)) {
+      response.writeHead(404).end();
+      return;
+    }
+    codexChatAuth = request.headers.authorization;
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => {
+      codexChatRequestBody += chunk;
+    });
+    request.on("end", () => {
+      response.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache"
+      });
+      response.write('data: {"choices":[{"delta":{"content":"OAuth"}}]}\n\n');
       response.write('data: {"choices":[{"delta":{"content":" smoke"}}]}\n\n');
       response.end("data: [DONE]\n\n");
     });
@@ -346,6 +505,16 @@ function assertMonotonicSequence(events) {
 
 function authHeaders() {
   return { Authorization: `Bearer ${token}` };
+}
+
+function assertNoSecretLeak(text, values) {
+  const lower = text.toLowerCase();
+  for (const value of values) {
+    if (!value) {
+      continue;
+    }
+    assert(!lower.includes(String(value).toLowerCase()), `secret marker leaked to client-visible output: ${value}`);
+  }
 }
 
 async function freePort() {

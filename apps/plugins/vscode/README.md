@@ -105,7 +105,7 @@ This package is for local dev-preview testing only. It is not a marketplace rele
 
 Use this manual smoke only when you intentionally want to test a real OpenAI API-key fallback through the local VS Code dev preview. This is not a production release flow and is not an automated test. Never commit real keys, add them to fixtures, paste them into logs or issue text, or capture screenshots that show secrets.
 
-This path does not use a Yet AI account, hosted workspace, managed model gateway, or product credit balance. It sends model requests from the local `yet-lsp` runtime directly to the configured OpenAI-compatible endpoint. Real ChatGPT/OpenAI account login is not implemented in this baseline and remains compliance-gated; the provider-auth card may explain login is unavailable and offer the API-key fallback.
+This path does not use a Yet AI account, hosted workspace, managed model gateway, or product credit balance. It sends model requests from the local `yet-lsp` runtime directly to the configured OpenAI-compatible endpoint. The experimental Codex-like OpenAI account path is high-risk and private-endpoint-style: automated coverage is limited to `npm run smoke:local` with loopback token/chat mocks, while real account testing is manual, risky, account-specific, and outside CI. The provider-auth card may show the separate experimental action, but this milestone smoke should use the API-key fallback.
 
 1. Prepare the VS Code dev preview:
 
@@ -122,7 +122,7 @@ This path does not use a Yet AI account, hosted workspace, managed model gateway
 
 4. Run `Yet AI: Open Chat` in the Extension Development Host. Confirm the packaged GUI opens, the runtime status becomes reachable, and the `Yet AI Runtime` output channel reports a successful local runtime health check with tokens redacted.
 
-5. In the provider-auth card, confirm OpenAI account login is shown as unavailable or API-key fallback-oriented. Do not expect real ChatGPT/OpenAI account login, browser account reuse, cookie import, or credential import from another tool.
+5. In the provider-auth card, keep to the API-key fallback for this milestone. Do not use the experimental Codex-like account action unless you are deliberately performing separate manual high-risk testing outside CI. Do not expect browser account reuse, cookie import, or credential import from another tool.
 
 6. Choose `Use OpenAI API key` or the `OpenAI API` provider preset. Confirm the form uses:
 

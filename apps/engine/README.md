@@ -63,7 +63,7 @@ npm run check
 npm run smoke:local
 ```
 
-`npm run smoke:local` is a local-only cross-subsystem smoke test. It starts the engine on a free loopback port through Cargo, starts a mock OpenAI-compatible provider, configures a fake provider key, sends a chat command, reads the SSE stream, checks provider Authorization, exercises provider-auth default status plus the local mock OAuth start/exchange/status/disconnect flow, and asserts fake API keys, provider-auth fake tokens, PKCE verifier values, and mock exchange codes do not appear in client-visible responses or events. It requires Cargo on `PATH` and does not require real provider credentials, external network access, or hosted Yet AI services.
+`npm run smoke:local` is a local-only cross-subsystem smoke test. It starts the engine on a free loopback port through Cargo, starts mock OpenAI-compatible, experimental token, and experimental chat endpoints, configures a fake provider key, sends chat commands, reads SSE streams, checks provider Authorization internally, exercises provider-auth default status plus the local mock OAuth start/exchange/status/disconnect flow, and covers the approved experimental Codex-like start/exchange/chat fallback through loopback mocks only. It asserts fake API keys, OAuth access tokens, refresh tokens, Authorization headers, cookies, PKCE verifier values, mock auth codes, and Codex credential-file paths do not appear in client-visible responses or events. It requires Cargo on `PATH` and does not require real provider credentials, external network access, or hosted Yet AI services. Real experimental OpenAI/ChatGPT account testing remains manual, high-risk, and outside CI; the API-key fallback remains the safe/default real-provider path.
 
 To run the engine locally:
 
