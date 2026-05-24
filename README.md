@@ -10,6 +10,7 @@ Yet AI is an architecture-inspired independent AI coding assistant for IDEs. The
 - Product-sensitive values should be centralized in `product/identity.json` where practical. Temporary identity placeholders remain until final product IDs, publishers, domains, and marketplace metadata are approved.
 - Runtime strategy: local-first BYOK. The IDE plugin starts or connects to the local Yet AI runtime on the user's machine; there is no required Yet AI account, hosted backend, managed model gateway, product credit balance, or cloud workspace for core workflows.
 - Model requests go directly from the local runtime to configured hosted providers or local runtimes. Provider settings and credentials remain local, and GUI-facing responses must not include raw secrets.
+- Provider-auth status: the GUI has a login-first provider-auth card and an OpenAI API-key fallback; the engine has sanitized provider-auth skeleton endpoints, a local mock OAuth/PKCE test harness, and a protected-file secret-store fallback for engine-owned provider secrets. Real OpenAI/ChatGPT account login is not implemented.
 - Limitations: the baseline is not production-ready; no marketplace packaging, signed or notarized engine bundles, production installer, LSP/completions/tools/file edits, full agent autonomy, indexing, or integration workflows are complete. Current chat is a local provider/chat MVP only.
 
 ## Repository map
@@ -95,6 +96,8 @@ Use `apps/plugins/vscode/README.md#openai-api-key-fallback-milestone-smoke` for 
 5. Send `Say hello in one sentence.` and verify snapshot plus streaming response behavior.
 
 ChatGPT/OpenAI account login is not implemented in this baseline and remains compliance-gated. The provider-auth UI may show a login-first card, but current real-provider testing should use the API-key fallback through the local runtime.
+
+Before any T-49 real-login implementation starts, Yet AI must identify an official or otherwise approved OpenAI/ChatGPT auth flow, document allowed auth/token/model/revoke/refresh/callback or device endpoints, review redirect/device behavior, PKCE, client identity and scopes, define engine-owned token storage/refresh/revoke/disconnect policy, reject cookie scraping/browser profile import/other-product credential reuse/private ChatGPT web endpoints unless separately approved, and preserve the no-required-cloud boundary.
 
 Run these when changing the corresponding subsystem. The required verification for documentation-only status updates remains `npm run check`.
 

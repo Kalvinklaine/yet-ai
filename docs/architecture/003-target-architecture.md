@@ -23,11 +23,22 @@ Known limitations:
 - LSP completion/code-lens, full agent autonomy, indexing, tasks/knowledge, tool registry execution, shell/file mutation, file edits, and integration workflows are not implemented as production features.
 - The provider/chat baseline is a local MVP only: configured local BYOK provider data plus OpenAI-compatible chat streaming.
 - Privileged IDE actions remain disabled until strict schemas, request correlation, origin/source checks, engine policy checks, and user confirmation flows are in place.
-- The provider baseline is intentionally narrow: local BYOK configuration plus OpenAI-compatible chat streaming. Broader provider quirks, OAuth, keychain storage, and advanced model capability handling are follow-ups.
+- The provider baseline is intentionally narrow: local BYOK configuration plus OpenAI-compatible chat streaming. The engine and GUI now include sanitized provider-auth skeleton endpoints, a login-first status card, an API-key fallback, a local mock OAuth/PKCE contract harness, and a protected-file secret-store fallback. Real OpenAI/ChatGPT account login, production OAuth, OS keychain storage, broader provider quirks, and advanced model capability handling are follow-ups.
 
 ## Provider authentication strategy
 
-The implemented provider flow is API-key/OpenAI-compatible direct provider access. Users configure a local provider endpoint and, when needed, paste an API key once into the engine-owned provider configuration flow. The engine stores the credential locally through a central secret store abstraction, sends model requests directly to the configured provider, and returns only sanitized `auth.configured` and optional `auth.redacted` status to GUI clients. The current implementation uses a protected file fallback under the user config directory and keeps a read-only compatibility path for legacy provider config files that still contain `auth.apiKey`; new saves clear raw API keys from provider config JSON.
+The implemented real-provider flow is API-key/OpenAI-compatible direct provider access. Users configure a local provider endpoint and, when needed, paste an API key once into the engine-owned provider configuration flow. The GUI has a login-first provider-auth card, but real OpenAI/ChatGPT account login is not implemented. Current runtime responses either report login unavailable with API-key fallback copy, report API-key configured with a redacted hint, or expose mock-only pending/connected states used by local tests. The engine stores credentials locally through a central secret store abstraction, sends model requests directly to the configured provider, and returns only sanitized `auth.configured` and optional `auth.redacted` status to GUI clients. The current implementation uses a protected file fallback under the user config directory and keeps a read-only compatibility path for legacy provider config files that still contain `auth.apiKey`; new saves clear raw API keys from provider config JSON.
+
+The provider-auth baseline is implemented as a sanitized local skeleton for `openai` and `openai-compatible`. It exposes `start`, `status`, `exchange`, and `disconnect` contracts, but default start/exchange do not contact external providers and do not perform account login. A local mock OAuth/PKCE-like harness can be enabled only by test requests and stores fake token material in isolated mock state so smoke tests can verify session, status, disconnect, and no-secret response behavior. This harness is not production OAuth and must not be described as real login support.
+
+T-49, or any card that starts real OpenAI/ChatGPT login implementation, is blocked until this compliance gate is satisfied:
+
+- identify an official or otherwise approved auth flow for third-party local apps;
+- document the exact allowed authorization, token, model, revoke, refresh, and callback/device endpoints;
+- review redirect or device flow behavior, PKCE requirements, client identity, scopes, and local callback security;
+- define token storage, refresh, revoke, expiry, disconnect, migration, and no-secret logging policy using engine-owned storage;
+- explicitly exclude cookie scraping, browser profile import, other-product credential reuse, private ChatGPT web endpoints, and provider-private headers unless a separate approval and security/provenance review allows a specific exception;
+- preserve the no-required-cloud rule: no Yet AI hosted backend, account, managed gateway, product credit balance, or cloud workspace may be required for core local provider setup or chat.
 
 Future OpenAI/ChatGPT account authentication should use a login-first UX where it is officially supported and compliant:
 
@@ -176,10 +187,10 @@ The engine should expose a versioned local HTTP API. Initial target endpoints:
 - `PATCH /v1/providers/{id}` updates provider metadata, enabled state, model selections, and replacement credentials without returning raw secrets.
 - `DELETE /v1/providers/{id}` removes a provider configuration and associated local credential material where possible.
 - `POST /v1/providers/{id}/test` checks provider reachability and authentication from the local runtime and returns sanitized status/errors.
-- Future `POST /v1/provider-auth/{provider}/start` starts an engine-owned login flow and returns a session ID plus an authorization or verification URL, never tokens.
-- Future `GET /v1/provider-auth/{provider}/status?session_id=...` returns sanitized login progress and provider auth state for polling or callback completion.
-- Future `POST /v1/provider-auth/{provider}/exchange` accepts an authorization code or device-flow polling request when required and stores resulting credentials in engine-owned storage.
-- Future `POST /v1/provider-auth/{provider}/disconnect` revokes where supported and removes local provider credential material.
+- `POST /v1/provider-auth/{provider}/start` is currently a sanitized skeleton. Default real-provider calls report login unavailable; mock-only test calls can return a local session and authorization URL without real tokens.
+- `GET /v1/provider-auth/{provider}/status?session_id=...` returns sanitized provider-auth state such as login unavailable, API-key configured, mock pending, mock connected, or revoked.
+- `POST /v1/provider-auth/{provider}/exchange` is currently a sanitized skeleton. Default real-provider calls do not exchange external codes; mock-only test calls validate local fake sessions and store fake mock token state.
+- `POST /v1/provider-auth/{provider}/disconnect` clears mock/future OAuth state where present and does not delete API-key provider configs.
 - Future `GET /v1/provider-auth/{provider}/callback` may receive loopback browser callbacks for providers that support local redirects.
 - `GET /v1/models` returns normalized model summaries from configured providers and local capability metadata.
 - `GET /v1/tools` exposes tool metadata, confirmation requirements, and availability.

@@ -42,7 +42,14 @@ The planned first-phase UX is: sign in first where supported; API key fallback o
 - refresh or revoke/disconnect credentials without exposing raw secrets;
 - return only sanitized status such as connected/configured, auth source, expiry, account label, scopes, redacted hints, and safe error text.
 
-Future provider-auth implementations may add real pending OAuth sessions, polling, and an optional loopback callback endpoint. Do not implement cookie import, ChatGPT web-session scraping, external network calls during skeleton status/start/exchange/disconnect, or reuse of another tool's local credentials without a separate explicit approval and compliance/security review.
+Future provider-auth implementations may add real pending OAuth sessions, polling, and an optional loopback callback endpoint only after the T-49 compliance gate is complete:
+
+- official or otherwise approved OpenAI/ChatGPT auth flow identified for third-party local apps;
+- allowed authorization, token, model, revoke, refresh, callback, and device/polling endpoints documented;
+- redirect/device behavior, PKCE parameters, client identity, scopes, and local callback security reviewed;
+- token storage, refresh, revoke, expiry, disconnect, migration, and no-secret logging policy defined behind the engine secret store;
+- no cookie import, ChatGPT web-session scraping, browser profile import, other-product credential reuse, private ChatGPT web endpoints, or provider-private headers unless separately approved;
+- no required Yet AI cloud/backend/account, managed gateway, product credit balance, or cloud workspace for core chat/provider setup.
 
 ## Commands
 
