@@ -10,6 +10,11 @@ The plugin connects the GUI to the local Yet AI runtime for local-first BYOK wor
 
 ## Commands
 
+VS Code command palette commands:
+
+- `Yet AI: Open Chat` opens the dev-preview chat webview and prepares or checks the local runtime.
+- `Yet AI: Show Runtime Status` writes safe local runtime diagnostics to the `Yet AI Runtime` output channel, including the loopback runtime URL without query data, launch mode, engine binary discovery status, and `/v1/ping` result. It does not show session tokens, bearer headers, provider credentials, bridge payloads, provider-auth state, or model-provider responses.
+
 From the repository root, run the single dev-preview preparation command:
 
 ```sh
@@ -151,6 +156,7 @@ Use this checklist after the steps above:
 - `apps/gui/dist/index.html` exists after `npm run prepare:vscode-preview`.
 - `apps/plugins/vscode/media/gui/index.html` exists after `npm run prepare:vscode-preview`.
 - `Yet AI: Open Chat` opens the packaged GUI, not only the placeholder text.
+- `Yet AI: Show Runtime Status` reports the loopback runtime URL, launch mode, engine binary status, and ping result without tokens or provider secrets.
 - The `Yet AI Runtime` output channel reports `Yet AI local runtime health check passed.`
 - The GUI shows runtime status as connected/reachable.
 - Provider save/test uses an OpenAI API key, OpenAI-compatible endpoint, or local gateway URL and does not require a Yet AI-hosted backend.
@@ -175,6 +181,7 @@ Use this checklist after the steps above:
 
 - Manifest identity is checked against `product/identity.json`.
 - Command: `yetaicmd.openChat` (`Yet AI: Open Chat`).
+- Command: `yetaicmd.showRuntimeStatus` (`Yet AI: Show Runtime Status`).
 - Activity bar container id: `yet-ai-toolbox-pane`.
 - Settings:
   - `yetai.runtimeUrl`, default `http://127.0.0.1:8001`.
@@ -194,7 +201,7 @@ The extension supports two runtime workflows:
 
 The default `auto` mode launches a configured or discoverable `yet-lsp` binary when available; otherwise it behaves like debug connect mode. Discovery checks packaged `bin/` locations, repository `target/debug` and `target/release`, then `PATH`.
 
-Basic engine stdout/stderr lines are captured in the `Yet AI Runtime` output channel. The generated session token and bearer headers are redacted before logging. Provider configuration and provider secrets remain engine-owned and are not stored or logged by the extension.
+Basic engine stdout/stderr lines are captured in the `Yet AI Runtime` output channel. The generated session token and bearer headers are redacted before logging. `Yet AI: Show Runtime Status` uses only local settings, binary discovery, and `/v1/ping`; it does not call model providers or provider-auth endpoints. Provider configuration and provider secrets remain engine-owned and are not stored or logged by the extension.
 
 Manual local preview:
 
