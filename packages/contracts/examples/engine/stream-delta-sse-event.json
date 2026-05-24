@@ -1,0 +1,10 @@
+{
+  "seq": 2,
+  "type": "stream_delta",
+  "chatId": "chat-001",
+  "payload": {
+    "delta": {
+      "content": "Hello from the local runtime."
+    }
+  }
+}
