@@ -67,6 +67,20 @@ Non-loopback runtime URLs are rejected with a visible configuration error before
 
 The provider form allows entering an API key for create/update. After submit, the key field is cleared. The UI renders only `auth.configured` and `auth.redacted` returned by the runtime. Do not add localStorage or sessionStorage persistence for provider keys.
 
+## Provider presets
+
+Provider setup includes quick presets that only prefill local form fields. They do not include real API keys, do not persist secrets in browser storage, and do not call model providers from the GUI. Saving still sends the configuration only to the local runtime.
+
+Current chat generation selects an enabled `openai-compatible` provider in the runtime. The quick presets therefore target OpenAI-compatible `/v1` endpoints:
+
+- OpenAI-compatible custom `/v1`, with `https://api.openai.com/v1` as an editable example endpoint and a blank API key field.
+- LM Studio local, using the common OpenAI-compatible server default `http://127.0.0.1:1234/v1`.
+- LocalAI local, using the common OpenAI-compatible server default `http://127.0.0.1:8080/v1`.
+- Ollama OpenAI-compatible, using `http://127.0.0.1:11434/v1` with provider kind `openai-compatible`.
+- Custom, for manually editing every field.
+
+Native provider-specific chat adapters, including native Ollama chat, are future work for this GUI/runtime MVP. Until then, configure Ollama through its OpenAI-compatible `/v1` API if that endpoint is enabled in your local Ollama version.
+
 ## SSE and bridge behavior
 
 SSE uses fetch streaming, not native EventSource. The parser handles CRLF, comments, split frame boundaries, multiple events per chunk, and multi-line `data:` frames. Network, HTTP, parse/protocol, sequence, and configuration failures are surfaced as typed runtime errors.
