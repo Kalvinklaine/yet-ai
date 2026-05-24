@@ -20,22 +20,24 @@ export function readEngineConnection(): EngineConnection {
 }
 
 export function validateLoopbackUrl(value: string, settingName: string): vscode.Uri {
-  let parsed: vscode.Uri;
+  let parsed: URL;
   try {
-    parsed = vscode.Uri.parse(value, true);
+    parsed = new URL(value);
   } catch {
     throw new Error(`${settingName} must be a valid URL.`);
   }
-  if (parsed.scheme !== "http" && parsed.scheme !== "https") {
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error(`${settingName} must use http or https.`);
   }
-  const authority = parsed.authority.toLowerCase();
-  const host = authority.includes("@") ? authority.split("@").pop() ?? authority : authority;
-  const hostname = host.startsWith("[") ? host.slice(1, host.indexOf("]")) : host.split(":")[0];
-  if (hostname !== "127.0.0.1" && hostname !== "localhost" && hostname !== "::1") {
+  if (parsed.hostname !== "127.0.0.1" && parsed.hostname !== "localhost" && parsed.hostname !== "[::1]") {
     throw new Error(`${settingName} must point to a loopback host.`);
   }
-  return parsed;
+  return vscode.Uri.parse(parsed.href, true);
+}
+
+export function getLoopbackOrigin(value: string, settingName: string): string {
+  validateLoopbackUrl(value, settingName);
+  return new URL(value).origin;
 }
 
 export function validateEngineConnection(connection: EngineConnection): void {
