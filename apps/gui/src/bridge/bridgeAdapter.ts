@@ -21,10 +21,21 @@ export type HostMessage = {
   payload?: Record<string, unknown>;
 };
 
+export type HostReadyPayload = {
+  runtimeUrl?: string;
+  sessionToken?: string;
+  productId?: string;
+  displayName?: string;
+  cloudRequired?: boolean;
+};
+
+export type HostMessageHandler = (message: HostMessage) => void;
+
 export type BridgeAdapter = {
   host: BridgeHost;
   log: string[];
   post: (message: GuiMessage) => void;
+  subscribe: (handler: HostMessageHandler) => () => void;
   dispose: () => void;
 };
 
@@ -52,6 +63,7 @@ const hostMessageTypes = new Set<HostMessage["type"]>([
 
 export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapter {
   const log: string[] = [];
+  const handlers = new Set<HostMessageHandler>();
   const append = (entry: string) => {
     log.push(entry);
     onLog(entry);
@@ -75,13 +87,19 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
     }
   };
 
+  const subscribe = (handler: HostMessageHandler) => {
+    handlers.add(handler);
+    return () => handlers.delete(handler);
+  };
+
   const onMessage = (event: MessageEvent<unknown>) => {
     const message = event.data;
     if (!isHostMessage(message)) {
       append("Rejected invalid host bridge message");
       return;
     }
-    append(`Host message ${message.type}`);
+    append(message.type === "host.ready" ? "Host runtime settings received" : `Host message ${message.type}`);
+    handlers.forEach((handler) => handler(message));
   };
 
   window.addEventListener("message", onMessage);
@@ -96,7 +114,11 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
     host,
     log,
     post,
-    dispose: () => window.removeEventListener("message", onMessage),
+    subscribe,
+    dispose: () => {
+      handlers.clear();
+      window.removeEventListener("message", onMessage);
+    },
   };
 }
 
@@ -119,12 +141,39 @@ export function isHostMessage(value: unknown): value is HostMessage {
     return false;
   }
   const record = value as Record<string, unknown>;
+  if (
+    record.version !== bridgeVersion ||
+    typeof record.type !== "string" ||
+    !hostMessageTypes.has(record.type as HostMessage["type"]) ||
+    (record.requestId !== undefined && (typeof record.requestId !== "string" || record.requestId.length === 0)) ||
+    !isObjectPayload(record.payload)
+  ) {
+    return false;
+  }
+  return record.type !== "host.ready" || isHostReadyPayload(record.payload);
+}
+
+export function isHostReadyPayload(value: unknown): value is HostReadyPayload {
+  if (!isObjectPayload(value)) {
+    return false;
+  }
+  if (value === undefined) {
+    return true;
+  }
+  const record = value;
   return (
-    typeof record.version === "string" &&
-    record.version.length > 0 &&
-    typeof record.type === "string" &&
-    hostMessageTypes.has(record.type as HostMessage["type"]) &&
-    (record.requestId === undefined || (typeof record.requestId === "string" && record.requestId.length > 0)) &&
-    (record.payload === undefined || (typeof record.payload === "object" && record.payload !== null && !Array.isArray(record.payload)))
+    optionalString(record.runtimeUrl) &&
+    optionalString(record.sessionToken) &&
+    optionalString(record.productId) &&
+    optionalString(record.displayName) &&
+    (record.cloudRequired === undefined || typeof record.cloudRequired === "boolean")
   );
+}
+
+function isObjectPayload(value: unknown): value is Record<string, unknown> | undefined {
+  return value === undefined || (typeof value === "object" && value !== null && !Array.isArray(value));
+}
+
+function optionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
 }
