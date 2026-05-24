@@ -39,7 +39,22 @@
         "yetai.guiDevUrl": {
           "type": "string",
           "default": "",
-          "description": "Optional loopback GUI dev server URL for extension development. Leave empty to use the built-in shell placeholder."
+          "description": "Optional loopback GUI dev server URL for extension development. Leave empty to use packaged GUI assets or the built-in shell placeholder."
+        },
+        "yetai.launchMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "connect",
+            "launch"
+          ],
+          "default": "auto",
+          "description": "Runtime startup mode. auto launches a discovered/configured local engine binary when available, connect only checks the configured loopback runtime, and launch requires a binary."
+        },
+        "yetai.engineBinaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional absolute path to the local yet-lsp engine binary. When set with auto or launch mode, the extension starts it with a per-session token."
         }
       }
     },

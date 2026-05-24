@@ -30,7 +30,7 @@ if (!contributedCommand) {
 }
 
 const properties = manifest.contributes.configuration.properties;
-for (const key of ["runtimeUrl", "sessionToken", "guiDevUrl"]) {
+for (const key of ["runtimeUrl", "sessionToken", "guiDevUrl", "launchMode", "engineBinaryPath"]) {
   const propertyName = `${expected.configurationPrefix}.${key}`;
   if (!Object.hasOwn(properties, propertyName)) {
     throw new Error(`VS Code configuration must include ${propertyName}`);

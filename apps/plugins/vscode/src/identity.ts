@@ -15,6 +15,9 @@ export type ProductIdentity = {
     id: string;
     displayName: string;
   };
+  engine: {
+    binaryName: string;
+  };
   gui: {
     npmPackage: string;
   };
