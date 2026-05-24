@@ -206,6 +206,10 @@ async fn start_mock_provider(
 }
 
 async fn start_mock_codex_token_endpoint() -> (String, oneshot::Receiver<Value>) {
+    start_mock_codex_token_endpoint_with(1800).await
+}
+
+async fn start_mock_codex_token_endpoint_with(expires_in: i64) -> (String, oneshot::Receiver<Value>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (body_sender, body_receiver) = oneshot::channel();
@@ -225,7 +229,7 @@ async fn start_mock_codex_token_endpoint() -> (String, oneshot::Receiver<Value>)
                     json!({
                         "access_token": "codex-access-token-secret-abcd",
                         "refresh_token": "codex-refresh-token-secret-wxyz",
-                        "expires_in": 1800,
+                        "expires_in": expires_in,
                         "scope": "openid profile email offline_access",
                         "account_label": "mock-user@example.test"
                     })
@@ -238,6 +242,48 @@ async fn start_mock_codex_token_endpoint() -> (String, oneshot::Receiver<Value>)
         axum::serve(listener, app).await.unwrap();
     });
     (format!("http://{address}/oauth/token"), body_receiver)
+}
+
+async fn connect_experimental_openai_oauth(
+    app: axum::Router,
+    token_endpoint_url: String,
+    chat_endpoint_url: String,
+) {
+    let (status, start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(
+                json!({
+                    "experimentalCodexLike": true,
+                    "tokenEndpointUrl": token_endpoint_url,
+                    "chatEndpointUrl": chat_endpoint_url
+                })
+                .to_string(),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap());
+    let exchange = json!({
+        "sessionId": start["sessionId"],
+        "state": state,
+        "code": "codex-code-success"
+    });
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from(exchange.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "connected");
+    assert_provider_auth_response_has_no_codex_secrets(&body);
 }
 
 fn state_from_authorization_url(value: &str) -> &str {
@@ -292,6 +338,8 @@ fn assert_sanitized_sse_error(text: &str) {
     assert!(!lower.contains("api_key"));
     assert!(!text.contains("user:pass@"));
     assert!(!text.contains("raw-provider-body"));
+    assert!(!text.contains("codex-access-token-secret"));
+    assert!(!text.contains("codex-refresh-token-secret"));
 }
 
 fn assert_provider_auth_response_has_no_codex_secrets(body: &Value) {
@@ -1802,6 +1850,120 @@ async fn openai_compatible_streaming_maps_chunks_to_sse_events() {
     let auth = auth_receiver.await.unwrap();
     assert_eq!(auth.as_deref(), Some("Bearer sk-stream-secret-abcd"));
     assert!(!text.contains(api_key));
+}
+
+#[tokio::test]
+async fn experimental_openai_oauth_token_streams_chat_via_mock_endpoint() {
+    let (chat_base_url, auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"OAuth\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" chat\"}}]}\n\ndata: [DONE]\n\n",
+        Some("Bearer codex-access-token-secret-abcd"),
+    )
+    .await;
+    let (token_endpoint_url, _) = start_mock_codex_token_endpoint().await;
+    let app = test_app();
+    connect_experimental_openai_oauth(app.clone(), token_endpoint_url, chat_base_url).await;
+    send_user_message(app.clone(), "chat-codex-oauth").await;
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-codex-oauth").await;
+    let events = sse_json_events(&text);
+    assert_eq!(events[0]["type"], "snapshot");
+    assert!(events.iter().any(|event| event["type"] == "stream_started"));
+    assert!(events.iter().any(|event| event["type"] == "stream_delta"
+        && event["payload"]["delta"]["content"] == "OAuth"));
+    assert!(events.iter().any(|event| event["type"] == "stream_delta"
+        && event["payload"]["delta"]["content"] == " chat"));
+    assert!(events
+        .iter()
+        .any(|event| event["type"] == "stream_finished"));
+    let auth = auth_receiver.await.unwrap();
+    assert_eq!(auth.as_deref(), Some("Bearer codex-access-token-secret-abcd"));
+    assert!(!text.contains("codex-access-token-secret"));
+    assert!(!text.contains("codex-refresh-token-secret"));
+}
+
+#[tokio::test]
+async fn api_key_provider_is_preferred_over_experimental_openai_oauth() {
+    let api_key = "sk-preferred-secret-abcd";
+    let (oauth_chat_base_url, mut oauth_auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"oauth\"}}]}\n\ndata: [DONE]\n\n",
+        None,
+    )
+    .await;
+    let (api_base_url, api_auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"api-key\"}}]}\n\ndata: [DONE]\n\n",
+        Some("Bearer sk-preferred-secret-abcd"),
+    )
+    .await;
+    let (token_endpoint_url, _) = start_mock_codex_token_endpoint().await;
+    let app = test_app();
+    connect_experimental_openai_oauth(app.clone(), token_endpoint_url, oauth_chat_base_url).await;
+    configure_openai_provider(app.clone(), api_base_url, api_key).await;
+    send_user_message(app.clone(), "chat-api-preferred").await;
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-api-preferred").await;
+    assert!(text.contains("api-key"));
+    assert!(!text.contains("oauth"));
+    assert!(!text.contains(api_key));
+    assert!(!text.contains("codex-access-token-secret"));
+    let auth = api_auth_receiver.await.unwrap();
+    assert_eq!(auth.as_deref(), Some("Bearer sk-preferred-secret-abcd"));
+    assert!(oauth_auth_receiver.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn expired_experimental_openai_oauth_falls_back_to_provider_not_configured() {
+    let (chat_base_url, _) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"unused\"}}]}\n\ndata: [DONE]\n\n",
+        None,
+    )
+    .await;
+    let (token_endpoint_url, _) = start_mock_codex_token_endpoint_with(0).await;
+    let app = test_app();
+    connect_experimental_openai_oauth(app.clone(), token_endpoint_url, chat_base_url).await;
+
+    let (status, auth_status) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::GET,
+            "/v1/provider-auth/openai/status",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(auth_status["status"], "expired");
+    assert_provider_auth_response_has_no_codex_secrets(&auth_status);
+
+    send_user_message(app.clone(), "chat-expired-oauth").await;
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-expired-oauth").await;
+    let events = sse_json_events(&text);
+    let error = find_error_event(&events);
+    assert_eq!(error["payload"]["code"], "provider_not_configured");
+    assert_sanitized_sse_error(&text);
+}
+
+#[tokio::test]
+async fn experimental_openai_oauth_unauthorized_error_is_sanitized() {
+    let (chat_base_url, _) = start_mock_provider(
+        StatusCode::UNAUTHORIZED,
+        "raw-provider-body access_token=secret-token Bearer should-not-leak",
+        Some("Bearer codex-access-token-secret-abcd"),
+    )
+    .await;
+    let (token_endpoint_url, _) = start_mock_codex_token_endpoint().await;
+    let app = test_app();
+    connect_experimental_openai_oauth(app.clone(), token_endpoint_url, chat_base_url).await;
+    send_user_message(app.clone(), "chat-codex-unauthorized").await;
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-codex-unauthorized").await;
+    let events = sse_json_events(&text);
+    let error = find_error_event(&events);
+    assert_eq!(error["payload"]["code"], "provider_unauthorized");
+    assert_sanitized_sse_error(&text);
 }
 
 #[tokio::test]

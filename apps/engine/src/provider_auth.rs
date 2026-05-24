@@ -23,10 +23,13 @@ const MOCK_TTL_SECONDS: i64 = 600;
 const CODEX_TTL_SECONDS: i64 = 600;
 const CODEX_AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
 const CODEX_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
+const CODEX_CHAT_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
+const CODEX_CHAT_MODEL: &str = "gpt-5-codex";
 const CODEX_CLIENT_ID: &str = "yet-ai-local-experimental";
 const CODEX_REDIRECT_URI: &str = "http://127.0.0.1:1455/auth/openai/callback";
 const CODEX_SCOPE: &str = "openid profile email offline_access";
 const CODEX_CONNECTED_MESSAGE: &str = "Experimental Codex-like OpenAI login is connected in local engine storage. This remains experimental/high-risk and is not official public third-party OpenAI OAuth support.";
+const CODEX_EXPIRED_MESSAGE: &str = "Experimental Codex-like OpenAI login expired. Reconnect the account or use the OpenAI API-key fallback.";
 static MOCK_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Deserialize, Default)]
@@ -38,6 +41,7 @@ pub struct ProviderAuthStartRequest {
     pub experimental_codex_like: bool,
     pub ttl_seconds: Option<i64>,
     pub token_endpoint_url: Option<String>,
+    pub chat_endpoint_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -168,6 +172,8 @@ struct CodexOAuthSession {
     expires_at: String,
     scopes: Vec<String>,
     token_endpoint_url: String,
+    chat_base_url: String,
+    chat_model: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -178,6 +184,17 @@ struct CodexAuthMetadata {
     scopes: Vec<String>,
     expires_at: String,
     redacted: String,
+    #[serde(default = "default_codex_chat_base_url")]
+    chat_base_url: String,
+    #[serde(default = "default_codex_chat_model")]
+    chat_model: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExperimentalCodexChatAuth {
+    pub access_token: String,
+    pub base_url: String,
+    pub model: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -249,6 +266,7 @@ pub async fn start(
         let session = new_codex_session(
             request.ttl_seconds.unwrap_or(CODEX_TTL_SECONDS),
             request.token_endpoint_url.as_deref(),
+            request.chat_endpoint_url.as_deref(),
         )?;
         write_codex_state(
             config_dir,
@@ -563,12 +581,37 @@ fn codex_connected_response(
     }
 }
 
+fn codex_expired_response(provider: &str, metadata: CodexAuthMetadata) -> ProviderAuthResponse {
+    ProviderAuthResponse {
+        provider: provider.to_string(),
+        configured: false,
+        status: "expired",
+        auth_source: "oauth",
+        supports_login: true,
+        supports_api_key: true,
+        cloud_required: false,
+        success: None,
+        account_label: Some(metadata.account_label),
+        redacted: Some(metadata.redacted),
+        authorization_url: None,
+        verification_url: None,
+        session_id: None,
+        expires_at: Some(metadata.expires_at),
+        scopes: Some(metadata.scopes),
+        poll_interval_seconds: None,
+        message: CODEX_EXPIRED_MESSAGE.to_string(),
+    }
+}
+
 fn new_codex_session(
     ttl_seconds: i64,
     token_endpoint_url: Option<&str>,
+    chat_endpoint_url: Option<&str>,
 ) -> Result<CodexOAuthSession, ProviderAuthError> {
     let token_endpoint_url = token_endpoint_url.unwrap_or(CODEX_TOKEN_URL).trim();
     validate_token_endpoint_url(token_endpoint_url)?;
+    let chat_base_url = chat_endpoint_url.unwrap_or(CODEX_CHAT_BASE_URL).trim();
+    validate_token_endpoint_url(chat_base_url)?;
     let verifier = random_url_safe(64)?;
     let challenge = pkce_challenge(&verifier);
     Ok(CodexOAuthSession {
@@ -580,6 +623,8 @@ fn new_codex_session(
         expires_at: (Utc::now() + Duration::seconds(ttl_seconds)).to_rfc3339(),
         scopes: codex_scopes(),
         token_endpoint_url: token_endpoint_url.to_string(),
+        chat_base_url: chat_base_url.trim_end_matches('/').to_string(),
+        chat_model: CODEX_CHAT_MODEL.to_string(),
     })
 }
 
@@ -629,14 +674,15 @@ async fn codex_exchange(
         .as_deref()
         .map(|value| value.split_whitespace().map(str::to_string).collect())
         .unwrap_or_else(|| session.scopes.clone());
-    let expires_at = (Utc::now() + Duration::seconds(token.expires_in.unwrap_or(3600).max(1)))
-        .to_rfc3339();
+    let expires_at = (Utc::now() + Duration::seconds(token.expires_in.unwrap_or(3600))).to_rfc3339();
     let metadata = CodexAuthMetadata {
         provider: provider.to_string(),
         account_label: sanitized_account_label(token.account_label.as_deref()),
         scopes,
         expires_at,
         redacted: crate::secret_store::redact_secret(&token.access_token),
+        chat_base_url: session.chat_base_url,
+        chat_model: session.chat_model,
     };
     store_codex_connection(config_dir, provider, &token, &metadata).await?;
     write_codex_state(config_dir, provider, &CodexOAuthState::default()).await?;
@@ -710,7 +756,45 @@ async fn codex_connected_status(
     if metadata.provider != provider {
         return Err(ProviderAuthError::Storage);
     }
+    if parse_time(&metadata.expires_at)? <= Utc::now() {
+        return Ok(Some(codex_expired_response(provider, metadata)));
+    }
     Ok(Some(codex_connected_response(provider, metadata, None)))
+}
+
+pub async fn experimental_codex_chat_auth(
+    config_dir: &Path,
+) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
+    let provider = "openai";
+    let store = FileSecretStore::new(config_dir);
+    let Some(metadata) = store.get_secret(provider, SecretKind::AuthMetadata).await? else {
+        return Ok(None);
+    };
+    let metadata: CodexAuthMetadata =
+        serde_json::from_str(&metadata).map_err(|_| ProviderAuthError::Storage)?;
+    if metadata.provider != provider || parse_time(&metadata.expires_at)? <= Utc::now() {
+        return Ok(None);
+    }
+    let Some(access_token) = store
+        .get_secret(provider, SecretKind::OAuthAccessToken)
+        .await?
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(None);
+    };
+    Ok(Some(ExperimentalCodexChatAuth {
+        access_token,
+        base_url: metadata.chat_base_url,
+        model: metadata.chat_model,
+    }))
+}
+
+fn default_codex_chat_base_url() -> String {
+    CODEX_CHAT_BASE_URL.to_string()
+}
+
+fn default_codex_chat_model() -> String {
+    CODEX_CHAT_MODEL.to_string()
 }
 
 async fn codex_has_secrets(config_dir: &Path, provider: &str) -> Result<bool, ProviderAuthError> {
