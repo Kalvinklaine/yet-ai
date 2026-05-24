@@ -99,7 +99,11 @@ async fn configure_openai_provider(app: axum::Router, base_url: String, api_key:
     });
     let (status, body) = json_response_from(
         app,
-        authed_request(Method::POST, "/v1/providers", Body::from(provider.to_string())),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -117,32 +121,32 @@ async fn start_mock_provider(
     let expected = expected_auth.map(str::to_string);
     let auth_sender = std::sync::Arc::new(std::sync::Mutex::new(Some(auth_sender)));
     tokio::spawn(async move {
-        let app = axum::Router::new().route(
-            "/chat/completions",
-            axum::routing::post(move |request: axum::http::Request<Body>| {
-                let expected = expected.clone();
-                let auth_sender = auth_sender.clone();
-                async move {
-                    let auth = request
-                        .headers()
-                        .get(header::AUTHORIZATION)
-                        .and_then(|value| value.to_str().ok())
-                        .map(str::to_string);
-                    if let Some(sender) = auth_sender.lock().unwrap().take() {
-                        let _ = sender.send(auth.clone());
-                    }
-                    if let Some(expected) = expected {
-                        assert_eq!(auth.as_deref(), Some(expected.as_str()));
-                    }
-                    (
-                        status,
-                        [(header::CONTENT_TYPE, "text/event-stream")],
-                        stream_body,
-                    )
-                        .into_response()
+        let handler = move |request: axum::http::Request<Body>| {
+            let expected = expected.clone();
+            let auth_sender = auth_sender.clone();
+            async move {
+                let auth = request
+                    .headers()
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                if let Some(sender) = auth_sender.lock().unwrap().take() {
+                    let _ = sender.send(auth.clone());
                 }
-            }),
-        );
+                if let Some(expected) = expected {
+                    assert_eq!(auth.as_deref(), Some(expected.as_str()));
+                }
+                (
+                    status,
+                    [(header::CONTENT_TYPE, "text/event-stream")],
+                    stream_body,
+                )
+                    .into_response()
+            }
+        };
+        let app = axum::Router::new()
+            .route("/chat/completions", axum::routing::post(handler.clone()))
+            .route("/v1/chat/completions", axum::routing::post(handler));
         axum::serve(listener, app).await.unwrap();
     });
     (format!("http://{address}"), auth_receiver)
@@ -185,7 +189,10 @@ fn storage_resolver_uses_yet_ai_names() {
 
 #[test]
 fn default_bind_is_loopback() {
-    assert_eq!(default_bind_addr(8001).ip(), std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+    assert_eq!(
+        default_bind_addr(8001).ip(),
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+    );
 }
 
 #[tokio::test]
@@ -212,8 +219,10 @@ async fn query_string_token_is_not_accepted() {
 
 #[tokio::test]
 async fn ping_returns_identity() {
-    let (status, body) = json_response(authed_request(Method::GET, "/v1/ping", Body::empty())).await;
-    let identity: Value = serde_json::from_str(include_str!("../../../product/identity.json")).unwrap();
+    let (status, body) =
+        json_response(authed_request(Method::GET, "/v1/ping", Body::empty())).await;
+    let identity: Value =
+        serde_json::from_str(include_str!("../../../product/identity.json")).unwrap();
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["productId"], identity["product"]["id"]);
     assert_eq!(body["displayName"], identity["product"]["displayName"]);
@@ -222,22 +231,37 @@ async fn ping_returns_identity() {
 
 #[tokio::test]
 async fn caps_returns_local_direct_runtime() {
-    let (status, body) = json_response(authed_request(Method::GET, "/v1/caps", Body::empty())).await;
-    let identity: Value = serde_json::from_str(include_str!("../../../product/identity.json")).unwrap();
+    let (status, body) =
+        json_response(authed_request(Method::GET, "/v1/caps", Body::empty())).await;
+    let identity: Value =
+        serde_json::from_str(include_str!("../../../product/identity.json")).unwrap();
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["productId"], identity["product"]["id"]);
     assert_eq!(body["runtime"]["mode"], "local");
     assert_eq!(body["runtime"]["cloudRequired"], false);
     assert_eq!(body["runtime"]["providerAccess"], "direct");
-    assert!(body["capabilities"].as_array().unwrap().contains(&json!("chat")));
-    assert!(body["capabilities"].as_array().unwrap().contains(&json!("sse")));
-    assert!(body["capabilities"].as_array().unwrap().contains(&json!("providers")));
-    assert!(body["capabilities"].as_array().unwrap().contains(&json!("bridge")));
+    assert!(body["capabilities"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("chat")));
+    assert!(body["capabilities"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("sse")));
+    assert!(body["capabilities"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("providers")));
+    assert!(body["capabilities"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("bridge")));
 }
 
 #[tokio::test]
 async fn providers_returns_empty_secret_free_registry() {
-    let (status, body) = json_response(authed_request(Method::GET, "/v1/providers", Body::empty())).await;
+    let (status, body) =
+        json_response(authed_request(Method::GET, "/v1/providers", Body::empty())).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["providers"], json!([]));
     assert_eq!(body["cloudRequired"], false);
@@ -251,7 +275,8 @@ async fn providers_returns_empty_secret_free_registry() {
 
 #[tokio::test]
 async fn models_returns_empty_list() {
-    let (status, body) = json_response(authed_request(Method::GET, "/v1/models", Body::empty())).await;
+    let (status, body) =
+        json_response(authed_request(Method::GET, "/v1/models", Body::empty())).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["models"], json!([]));
 }
@@ -285,6 +310,60 @@ async fn create_provider_with_api_key_returns_redacted_response() {
 }
 
 #[tokio::test]
+async fn provider_base_url_validation_accepts_http_roots() {
+    for (id, base_url) in [
+        ("local-http", "http://127.0.0.1:8080/v1/"),
+        ("custom-https", "https://api.example.test/v1"),
+    ] {
+        let provider = json!({
+            "id": id,
+            "kind": "openai-compatible",
+            "displayName": id,
+            "enabled": true,
+            "baseUrl": base_url,
+            "auth": { "type": "none" },
+            "models": [{ "id": "gpt-test", "displayName": "GPT Test" }]
+        });
+        let (status, body) = json_response(authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(body["baseUrl"], base_url.trim_end_matches('/'));
+    }
+}
+
+#[tokio::test]
+async fn provider_base_url_validation_rejects_invalid_values_safely() {
+    for (id, base_url) in [
+        ("bad-scheme", "file:///tmp/provider.sock"),
+        ("bad-userinfo", "http://user:pass@127.0.0.1:8080/v1"),
+        ("bad-malformed", "not a url sk-invalid-url-secret-abcd"),
+    ] {
+        let provider = json!({
+            "id": id,
+            "kind": "openai-compatible",
+            "displayName": id,
+            "enabled": true,
+            "baseUrl": base_url,
+            "auth": { "type": "none" }
+        });
+        let (status, body) = json_response(authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "invalid provider baseUrl");
+        assert!(!body.to_string().contains(base_url));
+        assert!(!body.to_string().contains("sk-invalid-url-secret-abcd"));
+    }
+}
+
+#[tokio::test]
 async fn create_existing_provider_returns_conflict_without_overwrite_or_temp_leftover() {
     let paths = test_storage_paths();
     let app = app(AppState::with_storage_paths(
@@ -310,14 +389,22 @@ async fn create_existing_provider_returns_conflict_without_overwrite_or_temp_lef
     });
     let (status, _) = json_response_from(
         app.clone(),
-        authed_request(Method::POST, "/v1/providers", Body::from(provider.to_string())),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = json_response_from(
         app.clone(),
-        authed_request(Method::POST, "/v1/providers", Body::from(replacement.to_string())),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(replacement.to_string()),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -325,7 +412,11 @@ async fn create_existing_provider_returns_conflict_without_overwrite_or_temp_lef
 
     let (status, body) = json_response_from(
         app,
-        authed_request(Method::GET, "/v1/providers/collision-provider", Body::empty()),
+        authed_request(
+            Method::GET,
+            "/v1/providers/collision-provider",
+            Body::empty(),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -355,7 +446,11 @@ async fn update_with_mismatched_id_is_rejected_without_mutation() {
     });
     let (status, _) = json_response_from(
         app.clone(),
-        authed_request(Method::POST, "/v1/providers", Body::from(provider.to_string())),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -379,7 +474,11 @@ async fn update_with_mismatched_id_is_rejected_without_mutation() {
 
     let (status, body) = json_response_from(
         app,
-        authed_request(Method::GET, "/v1/providers/mismatch-provider", Body::empty()),
+        authed_request(
+            Method::GET,
+            "/v1/providers/mismatch-provider",
+            Body::empty(),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -432,7 +531,11 @@ async fn get_and_list_provider_never_return_raw_api_key() {
     });
     let (status, _) = json_response_from(
         app.clone(),
-        authed_request(Method::POST, "/v1/providers", Body::from(provider.to_string())),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -470,7 +573,11 @@ async fn update_secret_redacts_old_and_new_secrets() {
     });
     let (status, _) = json_response_from(
         app.clone(),
-        authed_request(Method::POST, "/v1/providers", Body::from(provider.to_string())),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -504,7 +611,11 @@ async fn delete_provider_removes_local_config() {
     });
     let (status, body) = json_response_from(
         app.clone(),
-        authed_request(Method::POST, "/v1/providers", Body::from(provider.to_string())),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -512,7 +623,11 @@ async fn delete_provider_removes_local_config() {
 
     let status = empty_response_from(
         app.clone(),
-        authed_request(Method::DELETE, "/v1/providers/delete-provider", Body::empty()),
+        authed_request(
+            Method::DELETE,
+            "/v1/providers/delete-provider",
+            Body::empty(),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
@@ -563,14 +678,21 @@ async fn provider_storage_path_uses_yet_ai_config_dir_not_project_state() {
     });
     let (status, _) = json_response_from(
         app,
-        authed_request(Method::POST, "/v1/providers", Body::from(provider.to_string())),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
     let config_file = paths.config_dir.join("providers.d/storage-provider.json");
     assert!(config_file.exists());
     assert!(config_file.starts_with(paths.config_dir.join("providers.d")));
-    assert!(!paths.project_dir.join("providers.d/storage-provider.json").exists());
+    assert!(!paths
+        .project_dir
+        .join("providers.d/storage-provider.json")
+        .exists());
     let stored = std::fs::read_to_string(config_file).unwrap();
     assert!(stored.contains(api_key));
 }
@@ -587,7 +709,11 @@ async fn provider_operations_do_not_require_cloud_url_or_account() {
     });
     let (status, body) = json_response_from(
         app.clone(),
-        authed_request(Method::POST, "/v1/providers", Body::from(provider.to_string())),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -595,7 +721,11 @@ async fn provider_operations_do_not_require_cloud_url_or_account() {
 
     let (status, body) = json_response_from(
         app,
-        authed_request(Method::POST, "/v1/providers/local-only-provider/test", Body::empty()),
+        authed_request(
+            Method::POST,
+            "/v1/providers/local-only-provider/test",
+            Body::empty(),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -606,7 +736,8 @@ async fn provider_operations_do_not_require_cloud_url_or_account() {
 
 #[tokio::test]
 async fn user_message_command_is_accepted() {
-    let command = include_str!("../../../packages/contracts/examples/engine/user-message-command.json");
+    let command =
+        include_str!("../../../packages/contracts/examples/engine/user-message-command.json");
     let (status, body) = json_response(authed_request(
         Method::POST,
         "/v1/chats/chat-001/commands",
@@ -669,9 +800,16 @@ async fn openai_compatible_streaming_maps_chunks_to_sse_events() {
     let events = sse_json_events(&text);
     assert_eq!(events[0]["type"], "snapshot");
     assert!(events.iter().any(|event| event["type"] == "stream_started"));
-    assert!(events.iter().any(|event| event["type"] == "stream_delta" && event["payload"]["delta"]["content"] == "Hel"));
-    assert!(events.iter().any(|event| event["type"] == "stream_delta" && event["payload"]["delta"]["content"] == "lo"));
-    assert!(events.iter().any(|event| event["type"] == "stream_finished"));
+    assert!(events
+        .iter()
+        .any(|event| event["type"] == "stream_delta"
+            && event["payload"]["delta"]["content"] == "Hel"));
+    assert!(events.iter().any(
+        |event| event["type"] == "stream_delta" && event["payload"]["delta"]["content"] == "lo"
+    ));
+    assert!(events
+        .iter()
+        .any(|event| event["type"] == "stream_finished"));
     let auth = auth_receiver.await.unwrap();
     assert_eq!(auth.as_deref(), Some("Bearer sk-stream-secret-abcd"));
     assert!(!text.contains(api_key));
@@ -680,7 +818,12 @@ async fn openai_compatible_streaming_maps_chunks_to_sse_events() {
 #[tokio::test]
 async fn provider_unauthorized_produces_sanitized_error_event() {
     let api_key = "sk-unauthorized-secret-abcd";
-    let (base_url, _) = start_mock_provider(StatusCode::UNAUTHORIZED, "unauthorized", Some("Bearer sk-unauthorized-secret-abcd")).await;
+    let (base_url, _) = start_mock_provider(
+        StatusCode::UNAUTHORIZED,
+        "unauthorized",
+        Some("Bearer sk-unauthorized-secret-abcd"),
+    )
+    .await;
     let app = test_app();
     configure_openai_provider(app.clone(), base_url, api_key).await;
     let command = json!({
@@ -701,7 +844,10 @@ async fn provider_unauthorized_produces_sanitized_error_event() {
 
     let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-unauthorized").await;
     let events = sse_json_events(&text);
-    let error = events.iter().find(|event| event["type"] == "error").unwrap();
+    let error = events
+        .iter()
+        .find(|event| event["type"] == "error")
+        .unwrap();
     assert_eq!(error["payload"]["code"], "provider_unauthorized");
     assert!(!text.contains(api_key));
     assert!(!text.contains("unauthorized-secret"));
@@ -736,7 +882,10 @@ async fn malformed_provider_chunk_produces_safe_error_event() {
 
     let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-malformed").await;
     let events = sse_json_events(&text);
-    let error = events.iter().find(|event| event["type"] == "error").unwrap();
+    let error = events
+        .iter()
+        .find(|event| event["type"] == "error")
+        .unwrap();
     assert_eq!(error["payload"]["code"], "provider_malformed_stream");
     assert!(!text.contains(api_key));
 }

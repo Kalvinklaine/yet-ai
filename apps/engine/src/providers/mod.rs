@@ -153,6 +153,8 @@ pub enum ProviderError {
     MissingDisplayName,
     #[error("baseUrl is required for this provider kind")]
     MissingBaseUrl,
+    #[error("invalid provider baseUrl")]
+    InvalidBaseUrl,
     #[error("provider not found")]
     NotFound,
     #[error("provider already exists")]
@@ -174,6 +176,7 @@ impl ProviderError {
             | Self::MissingKind
             | Self::MissingDisplayName
             | Self::MissingBaseUrl
+            | Self::InvalidBaseUrl
             | Self::InvalidConfig => http::StatusCode::BAD_REQUEST,
         }
     }
@@ -208,11 +211,18 @@ impl StoredProviderConfig {
 impl StoredAuthConfig {
     fn summary(&self) -> ProviderAuthSummary {
         let configured = self.auth_type == AuthType::ApiKey
-            && self.api_key.as_deref().is_some_and(|value| !value.is_empty());
+            && self
+                .api_key
+                .as_deref()
+                .is_some_and(|value| !value.is_empty());
         ProviderAuthSummary {
             auth_type: self.auth_type.clone(),
             configured,
-            redacted: self.api_key.as_deref().filter(|_| configured).map(redact_secret),
+            redacted: self
+                .api_key
+                .as_deref()
+                .filter(|_| configured)
+                .map(redact_secret),
         }
     }
 }
@@ -243,7 +253,9 @@ pub fn provider_config_path(config_dir: &Path, id: &str) -> Result<PathBuf, Prov
     Ok(providers_dir(config_dir).join(format!("{id}.json")))
 }
 
-pub async fn list_provider_configs(config_dir: &Path) -> Result<Vec<StoredProviderConfig>, ProviderError> {
+pub async fn list_provider_configs(
+    config_dir: &Path,
+) -> Result<Vec<StoredProviderConfig>, ProviderError> {
     let dir = providers_dir(config_dir);
     let mut entries = match tokio::fs::read_dir(&dir).await {
         Ok(entries) => entries,
@@ -251,7 +263,11 @@ pub async fn list_provider_configs(config_dir: &Path) -> Result<Vec<StoredProvid
         Err(_) => return Err(ProviderError::Storage),
     };
     let mut providers = Vec::new();
-    while let Some(entry) = entries.next_entry().await.map_err(|_| ProviderError::Storage)? {
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|_| ProviderError::Storage)?
+    {
         let path = entry.path();
         if path.extension().and_then(|value| value.to_str()) != Some("json") {
             continue;
@@ -331,7 +347,10 @@ pub async fn update_provider_config(
         config.enabled = enabled;
     }
     if request.base_url.is_some() || config.kind == ProviderKind::Ollama {
-        config.base_url = normalize_base_url(config.kind.clone(), request.base_url.or(Some(config.base_url)))?;
+        config.base_url = normalize_base_url(
+            config.kind.clone(),
+            request.base_url.or(Some(config.base_url)),
+        )?;
     }
     if let Some(auth) = request.auth {
         config.auth = merge_auth(config.auth, auth);
@@ -389,9 +408,7 @@ fn validate_config(config: &StoredProviderConfig) -> Result<(), ProviderError> {
     if config.display_name.trim().is_empty() {
         return Err(ProviderError::MissingDisplayName);
     }
-    if config.base_url.trim().is_empty() {
-        return Err(ProviderError::MissingBaseUrl);
-    }
+    validate_provider_base_url(&config.base_url)?;
     Ok(())
 }
 
@@ -415,8 +432,7 @@ async fn write_temp_then(
     path: &Path,
     config: &StoredProviderConfig,
     create_new: bool,
-) -> Result<(), ProviderError>
-{
+) -> Result<(), ProviderError> {
     let dir = path.parent().ok_or(ProviderError::Storage)?;
     tokio::fs::create_dir_all(dir)
         .await
@@ -430,8 +446,13 @@ async fn write_temp_then(
         options.mode(0o600);
     }
     let result = async {
-        let mut file = options.open(&temp_path).await.map_err(|_| ProviderError::Storage)?;
-        file.write_all(&content).await.map_err(|_| ProviderError::Storage)?;
+        let mut file = options
+            .open(&temp_path)
+            .await
+            .map_err(|_| ProviderError::Storage)?;
+        file.write_all(&content)
+            .await
+            .map_err(|_| ProviderError::Storage)?;
         file.sync_all().await.map_err(|_| ProviderError::Storage)?;
         drop(file);
         set_private_permissions(&temp_path).await?;
@@ -488,13 +509,29 @@ async fn set_private_permissions(_path: &Path) -> Result<(), ProviderError> {
     Ok(())
 }
 
-fn normalize_base_url(kind: ProviderKind, base_url: Option<String>) -> Result<String, ProviderError> {
+fn normalize_base_url(
+    kind: ProviderKind,
+    base_url: Option<String>,
+) -> Result<String, ProviderError> {
     let value = base_url.and_then(clean);
-    match (kind, value) {
-        (ProviderKind::Ollama, None) => Ok("http://127.0.0.1:11434".to_string()),
-        (_, Some(value)) => Ok(value),
-        _ => Err(ProviderError::MissingBaseUrl),
+    let value = match (kind, value) {
+        (ProviderKind::Ollama, None) => "http://127.0.0.1:11434".to_string(),
+        (_, Some(value)) => value,
+        _ => return Err(ProviderError::MissingBaseUrl),
+    };
+    validate_provider_base_url(&value)?;
+    Ok(value.trim_end_matches('/').to_string())
+}
+
+pub fn validate_provider_base_url(base_url: &str) -> Result<(), ProviderError> {
+    let url = reqwest::Url::parse(base_url).map_err(|_| ProviderError::InvalidBaseUrl)?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(ProviderError::InvalidBaseUrl);
     }
+    if url.host().is_none() || !url.username().is_empty() || url.password().is_some() {
+        return Err(ProviderError::InvalidBaseUrl);
+    }
+    Ok(())
 }
 
 fn normalize_auth(auth: Option<AuthWriteRequest>) -> StoredAuthConfig {
@@ -542,7 +579,14 @@ fn redact_secret(value: &str) -> String {
         return "...".to_string();
     }
     let prefix: String = chars.iter().take(3).collect();
-    let suffix: String = chars.iter().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+    let suffix: String = chars
+        .iter()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
     format!("{prefix}-...{suffix}")
 }
 
@@ -560,7 +604,10 @@ pub fn empty_models() -> ModelListResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::{redact_secret, validate_provider_id};
+    use super::{
+        normalize_base_url, redact_secret, validate_provider_base_url, validate_provider_id,
+        ProviderError, ProviderKind,
+    };
 
     #[test]
     fn provider_id_validation_rejects_unsafe_paths() {
@@ -568,6 +615,41 @@ mod tests {
         assert!(validate_provider_id("../secret").is_err());
         assert!(validate_provider_id("bad/id").is_err());
         assert!(validate_provider_id(".hidden").is_err());
+    }
+
+    #[test]
+    fn provider_base_url_validation_accepts_http_endpoints() {
+        assert!(validate_provider_base_url("http://127.0.0.1:8080/v1").is_ok());
+        assert!(validate_provider_base_url("https://api.example.test/v1/").is_ok());
+        assert!(validate_provider_base_url("http://localhost:11434").is_ok());
+    }
+
+    #[test]
+    fn provider_base_url_validation_rejects_unsafe_values() {
+        assert!(matches!(
+            validate_provider_base_url("file:///tmp/socket"),
+            Err(ProviderError::InvalidBaseUrl)
+        ));
+        assert!(matches!(
+            validate_provider_base_url("http://user:pass@127.0.0.1:8080/v1"),
+            Err(ProviderError::InvalidBaseUrl)
+        ));
+        assert!(matches!(
+            validate_provider_base_url("not a url"),
+            Err(ProviderError::InvalidBaseUrl)
+        ));
+    }
+
+    #[test]
+    fn provider_base_url_normalization_trims_trailing_slashes() {
+        assert_eq!(
+            normalize_base_url(
+                ProviderKind::OpenAiCompatible,
+                Some(" http://127.0.0.1:8080/v1/ ".to_string())
+            )
+            .unwrap(),
+            "http://127.0.0.1:8080/v1"
+        );
     }
 
     #[test]

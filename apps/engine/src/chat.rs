@@ -67,7 +67,12 @@ impl ChatRuntime {
         Self::default()
     }
 
-    pub async fn accept_user_message(&self, config_dir: std::path::PathBuf, chat_id: String, content: String) {
+    pub async fn accept_user_message(
+        &self,
+        config_dir: std::path::PathBuf,
+        chat_id: String,
+        content: String,
+    ) {
         self.ensure_chat(&chat_id).await;
         let runtime = self.clone();
         tokio::spawn(async move {
@@ -85,12 +90,20 @@ impl ChatRuntime {
     ) -> impl futures_util::Stream<Item = Result<Event, Infallible>> {
         let (snapshot, replay, receiver) = {
             let mut guard = self.inner.lock().await;
-            let state = guard.entry(chat_id.clone()).or_insert_with(|| ChatState::new(&chat_id));
-            (snapshot_event(&chat_id), state.events.clone(), state.sender.subscribe())
+            let state = guard
+                .entry(chat_id.clone())
+                .or_insert_with(|| ChatState::new(&chat_id));
+            (
+                snapshot_event(&chat_id),
+                state.events.clone(),
+                state.sender.subscribe(),
+            )
         };
         let snapshot_stream = futures_util::stream::once(async move { Ok(to_sse_event(snapshot)) });
         let replay_stream = futures_util::stream::iter(
-            replay.into_iter().map(|event| Ok::<Event, Infallible>(to_sse_event(event))),
+            replay
+                .into_iter()
+                .map(|event| Ok::<Event, Infallible>(to_sse_event(event))),
         );
         let live_stream = BroadcastStream::new(receiver).filter_map(|event| async move {
             match event {
@@ -103,12 +116,16 @@ impl ChatRuntime {
 
     async fn ensure_chat(&self, chat_id: &str) {
         let mut guard = self.inner.lock().await;
-        guard.entry(chat_id.to_string()).or_insert_with(|| ChatState::new(chat_id));
+        guard
+            .entry(chat_id.to_string())
+            .or_insert_with(|| ChatState::new(chat_id));
     }
 
     async fn push_event(&self, chat_id: &str, event_type: &str, payload: serde_json::Value) {
         let mut guard = self.inner.lock().await;
-        let state = guard.entry(chat_id.to_string()).or_insert_with(|| ChatState::new(chat_id));
+        let state = guard
+            .entry(chat_id.to_string())
+            .or_insert_with(|| ChatState::new(chat_id));
         let event = ChatEvent {
             seq: state.next_seq,
             event_type: event_type.to_string(),
@@ -121,14 +138,24 @@ impl ChatRuntime {
     }
 
     async fn run_stream(&self, config_dir: std::path::PathBuf, chat_id: String, content: String) {
-        self.push_event(&chat_id, "stream_started", json!({ "role": "assistant" })).await;
+        self.push_event(&chat_id, "stream_started", json!({ "role": "assistant" }))
+            .await;
         match self.stream_provider(&config_dir, &content).await {
             Ok(text) => {
                 for delta in text {
-                    self.push_event(&chat_id, "stream_delta", json!({ "delta": { "content": delta } }))
-                        .await;
+                    self.push_event(
+                        &chat_id,
+                        "stream_delta",
+                        json!({ "delta": { "content": delta } }),
+                    )
+                    .await;
                 }
-                self.push_event(&chat_id, "stream_finished", json!({ "finishReason": "stop" })).await;
+                self.push_event(
+                    &chat_id,
+                    "stream_finished",
+                    json!({ "finishReason": "stop" }),
+                )
+                .await;
             }
             Err(error) => {
                 self.push_event(
@@ -152,7 +179,12 @@ impl ChatRuntime {
             .into_iter()
             .find(|provider| provider.enabled && provider.kind == ProviderKind::OpenAiCompatible)
             .ok_or(ChatError::NoProvider)?;
-        let model = provider.models.first().ok_or(ChatError::NoModel)?.id.clone();
+        let model = provider
+            .models
+            .first()
+            .ok_or(ChatError::NoModel)?
+            .id
+            .clone();
         openai_compatible_stream(&self.client, &provider, &model, content).await
     }
 }
@@ -202,7 +234,9 @@ fn snapshot_event(chat_id: &str) -> ChatEvent {
 }
 
 fn to_sse_event(event: ChatEvent) -> Event {
-    Event::default().event(event.event_type.clone()).data(serde_json::to_string(&event).unwrap())
+    Event::default()
+        .event(event.event_type.clone())
+        .data(serde_json::to_string(&event).unwrap())
 }
 
 async fn openai_compatible_stream(
@@ -211,7 +245,7 @@ async fn openai_compatible_stream(
     model: &str,
     content: &str,
 ) -> Result<Vec<String>, ChatError> {
-    let url = chat_completions_url(&provider.base_url);
+    let url = chat_completions_url(&provider.base_url)?;
     let mut request = client
         .post(url)
         .timeout(Duration::from_secs(10))
@@ -221,7 +255,12 @@ async fn openai_compatible_stream(
             "messages": [{ "role": "user", "content": content }]
         }));
     if provider.auth.auth_type == AuthType::ApiKey {
-        if let Some(api_key) = provider.auth.api_key.as_deref().filter(|value| !value.is_empty()) {
+        if let Some(api_key) = provider
+            .auth
+            .api_key
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
             request = request.bearer_auth(api_key);
         }
     }
@@ -239,8 +278,7 @@ async fn openai_compatible_stream(
         return Err(ChatError::Request);
     }
     let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
-    let mut deltas = Vec::new();
+    let mut parser = OpenAiSseParser::default();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|error| {
             if error.is_timeout() {
@@ -250,48 +288,151 @@ async fn openai_compatible_stream(
             }
         })?;
         let text = std::str::from_utf8(&chunk).map_err(|_| ChatError::MalformedStream)?;
-        buffer.push_str(text);
-        while let Some(index) = buffer.find('\n') {
-            let line = buffer[..index].trim_end_matches('\r').to_string();
-            buffer = buffer[index + 1..].to_string();
-            handle_sse_line(&line, &mut deltas)?;
-        }
+        parser.push(text)?;
     }
-    if !buffer.trim().is_empty() {
-        handle_sse_line(buffer.trim_end_matches('\r'), &mut deltas)?;
-    }
-    Ok(deltas)
+    parser.finish()
 }
 
-fn handle_sse_line(line: &str, deltas: &mut Vec<String>) -> Result<(), ChatError> {
-    let line = line.trim();
-    if line.is_empty() || line.starts_with(':') || line.starts_with("event:") {
-        return Ok(());
-    }
-    let Some(data) = line.strip_prefix("data:").map(str::trim) else {
-        return Err(ChatError::MalformedStream);
-    };
-    if data == "[DONE]" {
-        return Ok(());
-    }
-    let value: serde_json::Value = serde_json::from_str(data).map_err(|_| ChatError::MalformedStream)?;
-    if let Some(content) = value["choices"][0]["delta"]["content"].as_str() {
-        if !content.is_empty() {
-            deltas.push(content.to_string());
+#[derive(Default)]
+struct OpenAiSseParser {
+    buffer: String,
+    data_lines: Vec<String>,
+    deltas: Vec<String>,
+    done: bool,
+}
+
+impl OpenAiSseParser {
+    fn push(&mut self, text: &str) -> Result<(), ChatError> {
+        self.buffer.push_str(text);
+        while let Some(index) = self.buffer.find('\n') {
+            let line = self.buffer[..index].trim_end_matches('\r').to_string();
+            self.buffer = self.buffer[index + 1..].to_string();
+            self.handle_line(&line)?;
         }
         Ok(())
-    } else if value["choices"][0]["finish_reason"].is_string() {
+    }
+
+    fn finish(mut self) -> Result<Vec<String>, ChatError> {
+        if !self.buffer.is_empty() {
+            let line = std::mem::take(&mut self.buffer);
+            self.handle_line(line.trim_end_matches('\r'))?;
+        }
+        self.flush_event()?;
+        Ok(self.deltas)
+    }
+
+    fn handle_line(&mut self, line: &str) -> Result<(), ChatError> {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            return self.flush_event();
+        }
+        if line.starts_with(':') {
+            return Ok(());
+        }
+        if line.starts_with("event:") || line.starts_with("id:") || line.starts_with("retry:") {
+            return Ok(());
+        }
+        let Some(data) = line.strip_prefix("data:") else {
+            return Err(ChatError::MalformedStream);
+        };
+        self.data_lines.push(data.trim_start().to_string());
         Ok(())
-    } else {
-        Err(ChatError::MalformedStream)
+    }
+
+    fn flush_event(&mut self) -> Result<(), ChatError> {
+        if self.data_lines.is_empty() {
+            return Ok(());
+        }
+        let data = self.data_lines.join("\n");
+        self.data_lines.clear();
+        self.handle_data(data.trim())
+    }
+
+    fn handle_data(&mut self, data: &str) -> Result<(), ChatError> {
+        if data.is_empty() || self.done {
+            return Ok(());
+        }
+        if data == "[DONE]" {
+            self.done = true;
+            return Ok(());
+        }
+        let value: serde_json::Value =
+            serde_json::from_str(data).map_err(|_| ChatError::MalformedStream)?;
+        if let Some(content) = value["choices"][0]["delta"]["content"].as_str() {
+            if !content.is_empty() {
+                self.deltas.push(content.to_string());
+            }
+            Ok(())
+        } else if value["choices"][0]["finish_reason"].is_string() {
+            Ok(())
+        } else {
+            Err(ChatError::MalformedStream)
+        }
     }
 }
 
-fn chat_completions_url(base_url: &str) -> String {
-    let base = base_url.trim_end_matches('/');
-    if base.ends_with("/chat/completions") {
-        base.to_string()
+fn chat_completions_url(base_url: &str) -> Result<String, ChatError> {
+    providers::validate_provider_base_url(base_url).map_err(|_| ChatError::ProviderConfig)?;
+    let mut url = reqwest::Url::parse(base_url).map_err(|_| ChatError::ProviderConfig)?;
+    let normalized_path = url.path().trim_end_matches('/').to_string();
+    if normalized_path.ends_with("/chat/completions") {
+        url.set_path(&normalized_path);
     } else {
-        format!("{base}/chat/completions")
+        url.set_path(&format!("{normalized_path}/chat/completions"));
+    }
+    Ok(url.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{chat_completions_url, OpenAiSseParser};
+
+    #[test]
+    fn chat_completions_url_normalizes_api_roots() {
+        assert_eq!(
+            chat_completions_url("http://127.0.0.1:8080/v1").unwrap(),
+            "http://127.0.0.1:8080/v1/chat/completions"
+        );
+        assert_eq!(
+            chat_completions_url("http://127.0.0.1:8080/v1/").unwrap(),
+            "http://127.0.0.1:8080/v1/chat/completions"
+        );
+        assert_eq!(
+            chat_completions_url("http://127.0.0.1:8080/v1/chat/completions/").unwrap(),
+            "http://127.0.0.1:8080/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn chat_completions_url_rejects_invalid_base_url() {
+        assert!(chat_completions_url("file:///tmp/socket").is_err());
+        assert!(chat_completions_url("http://user:pass@127.0.0.1:8080/v1").is_err());
+    }
+
+    #[test]
+    fn openai_sse_parser_handles_common_framing() {
+        let mut parser = OpenAiSseParser::default();
+        parser.push(": comment\n\n").unwrap();
+        parser.push("data: {\"choices\":[{\"delta\":{").unwrap();
+        parser.push("\"content\":\"Hel\"}}]}\n\n").unwrap();
+        parser
+            .push("data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n")
+            .unwrap();
+        parser.push("data: [DONE]\n\n").unwrap();
+        assert_eq!(parser.finish().unwrap(), vec!["Hel", "lo"]);
+    }
+
+    #[test]
+    fn openai_sse_parser_handles_multiline_data() {
+        let mut parser = OpenAiSseParser::default();
+        parser.push("data: {\"choices\":[{\"delta\":{\n").unwrap();
+        parser.push("data: \"content\":\"multi\"}}]}\n\n").unwrap();
+        assert_eq!(parser.finish().unwrap(), vec!["multi"]);
+    }
+
+    #[test]
+    fn openai_sse_parser_rejects_malformed_frames() {
+        let mut parser = OpenAiSseParser::default();
+        assert!(parser.push("data: { not-json }\n\n").is_err());
     }
 }

@@ -64,7 +64,9 @@ Provider configs are stored in the user config dir under `providers.d/{id}.json`
 
 Provider ids are path-safe stable identifiers containing only ASCII letters, digits, `-`, and `_`. `custom` and `openai-compatible` providers require an explicit `baseUrl`. `ollama` defaults to `http://127.0.0.1:11434` when `baseUrl` is omitted.
 
-For `openai-compatible`, `baseUrl` may point either at an API root or directly at `/chat/completions`; the runtime appends `/chat/completions` when needed and sends `Authorization: Bearer <apiKey>` only when API key auth is configured.
+Provider `baseUrl` values must be absolute `http` or `https` URLs with a host and no `user:pass@host` userinfo. Local loopback gateways, LAN gateways, and custom HTTPS endpoints are supported; malformed URLs and non-HTTP schemes are rejected with sanitized errors.
+
+For `openai-compatible`, `baseUrl` may point either at an API root or directly at `/chat/completions`. The runtime normalizes `http://host/v1` and `http://host/v1/` to `http://host/v1/chat/completions`, preserves explicit `http://host/v1/chat/completions`, and sends `Authorization: Bearer <apiKey>` only when API key auth is configured.
 
 ## Current limitations
 
