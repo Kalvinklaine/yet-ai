@@ -66,7 +66,7 @@ Non-loopback runtime URLs are rejected with a visible configuration error before
 
 ## Chat panel
 
-The primary chat area renders a message-oriented local chat view with user, assistant, and safe error bubbles. Sending opens the fetch-streaming SSE subscription for the active chat, posts `user_message` through the local runtime, clears the input only after the command is accepted, and appends streaming assistant text from snapshot/start/delta/finish events. The raw SSE timeline remains available under `SSE debug details` for development troubleshooting.
+The primary chat area renders a message-oriented local chat view with user, assistant, and safe error bubbles. A compact readiness summary near the chat shows local runtime status, enabled provider count, and the first model returned by the runtime as the MVP display default. If no enabled provider/model is available, Send is disabled and the panel points to the OpenAI API-key fallback preset before the first GPT message. Sending opens the fetch-streaming SSE subscription for the active chat, posts `user_message` through the local runtime, clears the input only after the command is accepted, and appends streaming assistant text from snapshot/start/delta/finish events. The raw SSE timeline remains available under `SSE debug details` for development troubleshooting.
 
 ## Provider secret handling
 
