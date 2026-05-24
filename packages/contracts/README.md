@@ -37,7 +37,7 @@ Provider configuration is an engine-owned, local-first BYOK boundary. Current sc
 - `POST /v1/providers/{id}/test` checks config validity from the local runtime and returns sanitized status/errors until real adapters exist.
 - `GET /v1/models` returns normalized model summaries from configured providers and local capability metadata.
 
-Provider response examples must not include API keys, OAuth refresh tokens, environment secrets, or private local paths. GUI clients may submit secrets for save/test actions but must not persist them after the request.
+Provider response examples must not include API keys, OAuth refresh tokens, environment secrets, or private local paths. GUI clients may submit secrets for save/test actions but must not persist them after the request. In provider response `auth` objects, `redacted` is required only when `type = "api_key"` and `configured = true`; it is omitted for unconfigured API-key auth and non-secret auth types.
 
 ## Versioning
 

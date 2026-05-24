@@ -29,6 +29,23 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "configured"],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": { "const": "api_key" },
+              "configured": { "const": true }
+            },
+            "required": ["type", "configured"]
+          },
+          "then": {
+            "properties": {
+              "redacted": true
+            },
+            "required": ["redacted"]
+          }
+        }
+      ],
       "properties": {
         "type": {
           "type": "string",
@@ -38,6 +55,7 @@
           "type": "boolean"
         },
         "redacted": {
+          "description": "Required only when type is api_key and configured is true. Raw secrets must never appear here.",
           "type": "string",
           "minLength": 1
         }
