@@ -10,6 +10,7 @@ use serde_json::json;
 use tokio::sync::{broadcast, Mutex};
 use tokio_stream::wrappers::BroadcastStream;
 
+use crate::provider_auth::{self, ExperimentalCodexChatAuth};
 use crate::providers::{self, AuthType, ProviderKind, StoredProviderConfig};
 
 #[derive(Clone, Debug)]
@@ -173,23 +174,44 @@ impl ChatRuntime {
         config_dir: &std::path::Path,
         content: &str,
     ) -> Result<Vec<String>, ChatError> {
-        let provider = providers::list_provider_configs(config_dir)
+        let selected = providers::list_provider_configs(config_dir)
             .await
             .map_err(|_| ChatError::ProviderConfig)?
             .into_iter()
             .find(|provider| provider.enabled && provider.kind == ProviderKind::OpenAiCompatible)
-            .ok_or(ChatError::NoProvider)?;
-        let provider = providers::get_provider_config_with_secrets(config_dir, &provider.id)
-            .await
-            .map_err(|_| ChatError::ProviderConfig)?;
-        let model = provider
-            .models
-            .first()
-            .ok_or(ChatError::NoModel)?
-            .id
-            .clone();
-        openai_compatible_stream(&self.client, &provider, &model, content).await
+            .map(ChatProvider::OpenAiCompatible);
+        let selected = match selected {
+            Some(provider) => provider,
+            None => provider_auth::experimental_codex_chat_auth(config_dir)
+                .await
+                .map_err(|_| ChatError::ProviderConfig)?
+                .map(ChatProvider::ExperimentalCodex)
+                .ok_or(ChatError::NoProvider)?,
+        };
+        match selected {
+            ChatProvider::OpenAiCompatible(provider) => {
+                let provider = providers::get_provider_config_with_secrets(config_dir, &provider.id)
+                    .await
+                    .map_err(|_| ChatError::ProviderConfig)?;
+                let model = provider
+                    .models
+                    .first()
+                    .ok_or(ChatError::NoModel)?
+                    .id
+                    .clone();
+                openai_compatible_stream(&self.client, &provider, &model, content).await
+            }
+            ChatProvider::ExperimentalCodex(auth) => {
+                bearer_stream(&self.client, &auth.base_url, &auth.model, &auth.access_token, content)
+                    .await
+            }
+        }
     }
+}
+
+enum ChatProvider {
+    OpenAiCompatible(StoredProviderConfig),
+    ExperimentalCodex(ExperimentalCodexChatAuth),
 }
 
 impl ChatState {
@@ -279,6 +301,32 @@ async fn openai_compatible_stream(
             request = request.bearer_auth(api_key);
         }
     }
+    collect_openai_compatible_stream(request).await
+}
+
+async fn bearer_stream(
+    client: &reqwest::Client,
+    base_url: &str,
+    model: &str,
+    access_token: &str,
+    content: &str,
+) -> Result<Vec<String>, ChatError> {
+    let url = chat_completions_url(base_url)?;
+    let request = client
+        .post(url)
+        .timeout(Duration::from_secs(10))
+        .bearer_auth(access_token)
+        .json(&json!({
+            "model": model,
+            "stream": true,
+            "messages": [{ "role": "user", "content": content }]
+        }));
+    collect_openai_compatible_stream(request).await
+}
+
+async fn collect_openai_compatible_stream(
+    request: reqwest::RequestBuilder,
+) -> Result<Vec<String>, ChatError> {
     let response = request.send().await.map_err(|error| {
         if error.is_timeout() {
             ChatError::Timeout
