@@ -22,6 +22,20 @@ Repository validation remains available from the root:
 npm run check
 ```
 
+Manual IDE packaged-asset preview flows:
+
+```sh
+cd apps/gui && npm run build
+cd ../plugins/vscode && npm run copy:gui && npm run compile
+```
+
+```sh
+cd apps/gui && npm run build
+cd ../plugins/jetbrains && gradle build --console=plain
+```
+
+The IDE plugins can also point to `npm run dev` through their loopback GUI dev URL settings during local development.
+
 ## Runtime settings
 
 The browser shell defaults to:
@@ -64,7 +78,8 @@ Browser mock mode is non-privileged and logs messages locally. The adapter sends
 - This is a development MVP shell, not the final production GUI or design system.
 - VS Code packaged GUI assets are generated with `npm run build` and copied into the extension with `cd ../plugins/vscode && npm run copy:gui`; the copied assets remain ignored build output.
 - JetBrains packaged GUI assets are generated with `npm run build` and copied automatically into Gradle generated resources by `cd ../plugins/jetbrains && gradle build --console=plain`; generated assets remain ignored build output.
-- Chat is limited to the current local runtime command/SSE baseline and does not implement full agent autonomy, tool confirmations, indexing, tasks, knowledge, or privileged IDE actions.
+- No marketplace packaging, signed/notarized engine bundle, or production installer is complete.
+- Chat is limited to the current local provider/chat MVP and does not implement full agent autonomy, tool confirmations, indexing, tasks, knowledge, LSP/completions, file edits, or privileged IDE actions.
 - Runtime tokens are held only in page state; do not add persistence without a reviewed host/runtime token policy.
 
 ## Product identity

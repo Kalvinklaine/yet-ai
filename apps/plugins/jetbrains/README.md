@@ -87,14 +87,24 @@ In GUI dev mode the wrapper embeds only loopback GUI URLs, computes the exact de
 
 The runtime connector supports debug connect mode and local launch mode. In `connect` mode it validates the loopback `runtimeUrl`, reads the optional debug token from PasswordSafe, and checks `GET /v1/ping` with the bearer token when present. In `launch` mode, or `auto` mode when a `yet-lsp` binary is discoverable, it starts the binary with a generated per-session token in `YET_AI_AUTH_TOKEN` and the configured runtime port in `YET_AI_HTTP_PORT`, then checks `/v1/ping`. Launched processes are stopped when the application service is disposed. The connector may discover `yet-lsp` on `PATH`; an explicit `engineBinaryPath` must be absolute and point to a file.
 
+Manual local preview:
+
+1. Build the GUI and plugin with the packaged GUI flow above.
+2. Set `launchMode` to `launch` or `auto` and set `engineBinaryPath` to an absolute `yet-lsp` binary path, or set `launchMode` to `connect` for an already running loopback engine.
+3. Open the Yet AI tool window or run `Yet AI: Open Chat`.
+
 No privileged workspace edits, IDE tools, provider adapters, or provider credential persistence are implemented in this shell.
 
 ## Current limitations
 
+- The plugin shell is a dev-preview MVP, not production-ready.
+- No marketplace packaging, signed/notarized engine bundle, or production installer is complete.
 - The local launcher is an MVP: it sets token and HTTP port environment variables only, reads `/v1/ping`, and does not add LSP/completion wiring.
 - The bridge currently accepts only `gui.ready` from the GUI and emits `host.ready` plus `host.openedFromCommand`.
 - Settings use JetBrains application state for non-secret local runtime/debug URLs only. The local session token uses JetBrains PasswordSafe.
-- Packaged production GUI assets are generated build output from `apps/gui/dist`; they are copied into Gradle build resources but are not committed.
+- Packaged GUI assets are generated build output from `apps/gui/dist`; they are copied into Gradle build resources but are not committed and this is not a final release packaging flow.
+- No LSP client, completions, tools, privileged workspace edits, IDE tools, file mutation, shell actions, or provider actions are implemented.
+- Current chat support is limited to the local provider/chat MVP exposed by the engine and GUI.
 
 ## Safety rules
 

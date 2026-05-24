@@ -116,11 +116,11 @@ The clean scaffold path has produced buildable local MVP foundations for the fir
 
 1. `apps/engine` provides the Rust `yet-lsp` local runtime with authenticated loopback HTTP/SSE, identity-aware storage, local provider registry/config files, redacted provider responses, model summaries, and a narrow OpenAI-compatible direct streaming path.
 2. `apps/gui` provides the React/Vite shell with loopback-only runtime client, provider setup/status, chat command submission, fetch-streaming SSE, runtime errors, and logical browser/VS Code/JetBrains bridge handling.
-3. `apps/plugins/vscode` provides a VS Code extension shell with identity validation, local runtime settings, loopback webview/dev URL policy, safe bootstrap, and narrow bridge handling.
-4. `apps/plugins/jetbrains` provides a JetBrains plugin shell with identity validation, Gradle tests/build, loopback runtime/dev URL policy, PasswordSafe local token storage, JCEF hosting, and structural bridge validation.
+3. `apps/plugins/vscode` provides a VS Code extension shell with identity validation, packaged GUI asset loading, local runtime settings, loopback webview/dev URL policy, MVP `connect`/`launch`/`auto` runtime modes, safe bootstrap, and narrow bridge handling.
+4. `apps/plugins/jetbrains` provides a JetBrains plugin shell with identity validation, Gradle tests/build, packaged GUI resource loading, loopback runtime/dev URL policy, MVP `connect`/`launch`/`auto` runtime modes, PasswordSafe local token storage, JCEF hosting, and structural bridge validation.
 5. `packages/contracts` remains the shared schema/example package for current boundaries.
 
-This is not a production assistant. Full agent autonomy, indexing, tool execution, integration workflows, packaged GUI assets, engine launch packaging, LSP features, broader provider support, and privileged IDE actions remain follow-up work. The local-first BYOK/no-required-cloud contract remains the controlling constraint.
+This is not a production assistant. The IDE shells now have packaged GUI asset flows and MVP local runtime connect/launch/auto modes, but marketplace packaging, signed or notarized engine bundles, a production installer, full agent autonomy, indexing, tool execution, integration workflows, LSP/completion features, file edits, broader provider support, and privileged IDE actions remain follow-up work. Current chat is a local provider/chat MVP only. The local-first BYOK/no-required-cloud contract remains the controlling constraint.
 
 ## Criteria for acceptable external module copying
 
@@ -158,10 +158,10 @@ The first six local-first implementation cards have MVP baselines in place:
 2. **Provider registry, configuration, and secret redaction**: complete as a local file-backed development baseline with sanitized GUI-facing responses and redacted hints.
 3. **OpenAI-compatible direct provider adapter and streaming**: complete as the first narrow direct BYOK streaming path through the local runtime.
 4. **GUI local provider setup and runtime client**: complete as a React/Vite shell with provider setup/status, chat/SSE, loopback runtime validation, and bridge diagnostics.
-5. **VS Code local runtime host**: complete as a buildable extension shell with webview bridge and local runtime connection settings.
-6. **JetBrains local runtime host**: complete as a buildable Gradle plugin shell with JCEF bridge and local runtime connection settings.
+5. **VS Code local runtime host**: complete as a buildable extension shell with webview bridge, packaged GUI asset flow, and MVP local runtime connect/launch/auto settings.
+6. **JetBrains local runtime host**: complete as a buildable Gradle plugin shell with JCEF bridge, packaged GUI asset flow, and MVP local runtime connect/launch/auto settings.
 
-Next implementation work should focus on hardening rather than expanding privileged behavior: package GUI assets into IDE hosts, add engine launch lifecycle, move local session tokens to platform secret stores where still missing, tighten schemas for non-`user_message` commands and privileged bridge messages, add smoke tests, and only then introduce IDE/file/tool actions behind explicit policy and confirmation.
+Next implementation work should focus on hardening rather than expanding privileged behavior: turn packaged GUI and launcher MVPs into production packaging flows, add signed/notarized engine bundle and installer decisions, move local session tokens to platform secret stores where still missing, tighten schemas for non-`user_message` commands and privileged bridge messages, add lifecycle and smoke tests, and only then introduce IDE/file/tool actions behind explicit policy and confirmation.
 
 Every follow-up card must keep the no-required-cloud contract intact: core chat, completion, agent, provider setup, local project storage, and IDE GUI workflows must work through the local runtime without a required hosted Yet AI backend, account, managed model gateway, product credit balance, or cloud workspace.
 

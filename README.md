@@ -6,10 +6,11 @@ Yet AI is an architecture-inspired independent AI coding assistant for IDEs. The
 
 - Approach: independent architecture-inspired rebuild, not a fork or rename of any external project.
 - Baseline: buildable MVP scaffolds exist for the engine, GUI, VS Code plugin, and JetBrains plugin. They are suitable for local development and contract hardening, not production release.
+- IDE preview status: VS Code and JetBrains shells can use packaged GUI assets generated from `apps/gui/dist`, or a loopback GUI dev server, and both support MVP local runtime `connect`, `launch`, and `auto` workflows for `yet-lsp`.
 - Product-sensitive values should be centralized in `product/identity.json` where practical. Temporary identity placeholders remain until final product IDs, publishers, domains, and marketplace metadata are approved.
 - Runtime strategy: local-first BYOK. The IDE plugin starts or connects to the local Yet AI runtime on the user's machine; there is no required Yet AI account, hosted backend, managed model gateway, product credit balance, or cloud workspace for core workflows.
 - Model requests go directly from the local runtime to configured hosted providers or local runtimes. Provider settings and credentials remain local, and GUI-facing responses must not include raw secrets.
-- Limitations: the baseline is not production-ready; full agent autonomy, indexing, tool execution, packaged GUI assets, engine launch packaging, LSP features, and privileged IDE actions are not complete.
+- Limitations: the baseline is not production-ready; no marketplace packaging, signed or notarized engine bundles, production installer, LSP/completions/tools/file edits, full agent autonomy, indexing, or integration workflows are complete. Current chat is a local provider/chat MVP only.
 
 ## Repository map
 
@@ -73,6 +74,13 @@ cd apps/gui && npm install && npm run typecheck && npm run build && npm test
 cd apps/plugins/vscode && npm install && npm run compile
 cd apps/plugins/jetbrains && node scripts/check-identity.mjs && gradle test --console=plain && gradle build --console=plain
 ```
+
+Manual IDE dev-preview flows are documented in the subsystem READMEs:
+
+- `apps/plugins/vscode/README.md` — packaged GUI copy flow plus `connect`/`launch`/`auto` runtime modes.
+- `apps/plugins/jetbrains/README.md` — Gradle packaged GUI resource flow plus `connect`/`launch`/`auto` runtime modes.
+- `apps/gui/README.md` — GUI build/dev commands and runtime token behavior.
+- `apps/engine/README.md` — local `yet-lsp` run command and runtime API status.
 
 Run these when changing the corresponding subsystem. The required verification for documentation-only status updates remains `npm run check`.
 
