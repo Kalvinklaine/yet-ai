@@ -18,6 +18,7 @@ Current schemas:
 - `schemas/engine/caps.schema.json` for `GET /v1/caps` responses.
 - `schemas/engine/chat-command.schema.json` for `POST /v1/chats/{chat_id}/commands` requests.
 - `schemas/engine/sse-event.schema.json` for chat SSE event payloads.
+- `schemas/engine/provider-auth-*-response.schema.json` for future sanitized provider login start, status, exchange, and disconnect responses.
 - `schemas/bridge/host-message.schema.json` for IDE host to GUI messages.
 - `schemas/bridge/gui-message.schema.json` for GUI to IDE host messages.
 
@@ -37,7 +38,9 @@ Provider configuration is an engine-owned, local-first BYOK boundary. Current sc
 - `POST /v1/providers/{id}/test` checks config validity from the local runtime and returns sanitized status/errors; current behavior is intentionally narrow and adapter-specific checks should expand incrementally.
 - `GET /v1/models` returns normalized model summaries from configured providers and local capability metadata.
 
-Provider response examples must not include API keys, OAuth refresh tokens, environment secrets, or private local paths. GUI clients may submit secrets for save/test actions but must not persist them after the request. In provider response `auth` objects, `redacted` is required only when `type = "api_key"` and `configured = true`; it is omitted for unconfigured API-key auth and non-secret auth types.
+Future provider-auth schemas cover sanitized responses for `POST /v1/provider-auth/{provider}/start`, `GET /v1/provider-auth/{provider}/status?session_id=...`, `POST /v1/provider-auth/{provider}/exchange`, and `POST /v1/provider-auth/{provider}/disconnect`. These contracts expose only non-secret login progress and configured-state fields such as `status`, `authSource`, `sessionId`, URLs, account labels, scopes, expiry, redacted hints, and messages.
+
+Provider response examples must not include API keys, OAuth refresh tokens, environment secrets, or private local paths. GUI clients may submit secrets for save/test actions but must not persist them after the request. In provider response `auth` objects, `redacted` is required only when `type = "api_key"` and `configured = true`; it is omitted for unconfigured API-key auth and non-secret auth types. Provider-auth responses must not include raw access tokens, refresh tokens, API keys, cookies, authorization codes, browser profile paths, or provider credential file paths.
 
 ## Versioning
 

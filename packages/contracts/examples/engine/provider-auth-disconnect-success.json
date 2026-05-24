@@ -1,0 +1,11 @@
+{
+  "provider": "openai",
+  "configured": false,
+  "status": "revoked",
+  "authSource": "none",
+  "supportsLogin": true,
+  "supportsApiKey": true,
+  "cloudRequired": false,
+  "success": true,
+  "message": "Provider login credentials were disconnected and removed from local engine storage."
+}
