@@ -9,13 +9,16 @@ license = "MIT"
 
 [workspace.dependencies]
 axum = { version = "0.7", features = ["macros"] }
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 futures-util = "0.3"
+getrandom = "0.2"
 http = "1"
 http-body-util = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 thiserror = "1"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal"] }
 tokio-stream = { version = "0.1", features = ["sync"] }

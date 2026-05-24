@@ -249,6 +249,19 @@ fn assert_sanitized_sse_error(text: &str) {
     assert!(!text.contains("raw-provider-body"));
 }
 
+fn assert_provider_auth_response_has_no_codex_secrets(body: &Value) {
+    let text = body.to_string().to_lowercase();
+    assert!(!text.contains("verifier"));
+    assert!(!text.contains("access_token"));
+    assert!(!text.contains("refresh_token"));
+    assert!(!text.contains("api_key"));
+    assert!(!text.contains("bearer"));
+    assert!(!text.contains("cookie"));
+    assert!(!text.contains("auth.json"));
+    assert!(!text.contains("client_secret"));
+    assert!(!text.contains("authorization_code"));
+}
+
 async fn empty_response_from(app: axum::Router, request: Request<Body>) -> StatusCode {
     app.oneshot(request).await.unwrap().status()
 }
@@ -457,6 +470,117 @@ async fn provider_auth_start_exchange_disconnect_are_sanitized_schema_shaped() {
 }
 
 #[tokio::test]
+async fn provider_auth_openai_default_start_still_returns_login_unavailable() {
+    let (status, body) = json_response(authed_request(
+        Method::POST,
+        "/v1/provider-auth/openai/start",
+        Body::from("{}"),
+    ))
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["provider"], "openai");
+    assert_eq!(body["configured"], false);
+    assert_eq!(body["status"], "login_unavailable");
+    assert_eq!(body["authSource"], "none");
+    assert_eq!(body["supportsLogin"], false);
+    assert_eq!(body["supportsApiKey"], true);
+    assert_eq!(body["cloudRequired"], false);
+    assert_eq!(body["success"], false);
+    assert!(body.get("authorizationUrl").is_none());
+    assert!(body.get("sessionId").is_none());
+}
+
+#[tokio::test]
+async fn provider_auth_openai_experimental_codex_like_start_returns_pending_pkce() {
+    let app = test_app();
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(json!({ "experimentalCodexLike": true }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["provider"], "openai");
+    assert_eq!(body["configured"], false);
+    assert_eq!(body["status"], "pending");
+    assert_eq!(body["authSource"], "oauth");
+    assert_eq!(body["supportsLogin"], true);
+    assert_eq!(body["supportsApiKey"], true);
+    assert_eq!(body["cloudRequired"], false);
+    assert_eq!(body["success"], true);
+    assert_eq!(body["pollIntervalSeconds"], 3);
+    assert!(body["message"]
+        .as_str()
+        .unwrap()
+        .contains("Experimental Codex-like"));
+    let session_id = body["sessionId"].as_str().unwrap();
+    assert!(session_id.starts_with("codex-"));
+    assert!(session_id
+        .chars()
+        .all(|value| value.is_ascii_alphanumeric() || value == '-' || value == '_'));
+    chrono::DateTime::parse_from_rfc3339(body["expiresAt"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        body["scopes"],
+        json!(["openid", "profile", "email", "offline_access"])
+    );
+    let authorization_url = body["authorizationUrl"].as_str().unwrap();
+    assert!(authorization_url.starts_with("https://auth.openai.com/oauth/authorize?"));
+    assert!(authorization_url.contains("response_type=code"));
+    assert!(authorization_url.contains("client_id=yet-ai-local-experimental"));
+    assert!(authorization_url
+        .contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A1455%2Fauth%2Fopenai%2Fcallback"));
+    assert!(authorization_url.contains("scope=openid%20profile%20email%20offline_access"));
+    assert!(authorization_url.contains("code_challenge="));
+    assert!(authorization_url.contains("code_challenge_method=S256"));
+    assert!(authorization_url.contains("id_token_add_organizations=true"));
+    assert!(authorization_url.contains("codex_cli_simplified_flow=true"));
+    assert!(authorization_url.contains("state="));
+    assert!(authorization_url.contains("originator=yet_ai_local"));
+    assert_provider_auth_response_has_no_codex_secrets(&body);
+}
+
+#[tokio::test]
+async fn provider_auth_openai_experimental_status_returns_pending_without_verifier() {
+    let app = test_app();
+    let (status, start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(json!({ "experimentalCodexLike": true }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let start_url = start["authorizationUrl"].as_str().unwrap().to_string();
+    let session_id = start["sessionId"].as_str().unwrap().to_string();
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/provider-auth/openai/status",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "pending");
+    assert_eq!(body["authSource"], "oauth");
+    assert_eq!(body["sessionId"], session_id);
+    assert_eq!(body["authorizationUrl"], start_url);
+    assert_eq!(
+        body["scopes"],
+        json!(["openid", "profile", "email", "offline_access"])
+    );
+    assert!(body.get("success").is_none());
+    assert_provider_auth_response_has_no_codex_secrets(&body);
+}
+
+#[tokio::test]
 async fn provider_auth_rejects_unsupported_and_invalid_providers_safely() {
     for (uri, expected_status) in [
         ("/v1/provider-auth/ollama/status", StatusCode::NOT_FOUND),
@@ -486,7 +610,10 @@ async fn provider_auth_mock_oauth_happy_path_start_exchange_status_disconnect() 
     assert_eq!(start["status"], "pending");
     assert_eq!(start["supportsLogin"], true);
     assert_eq!(start["authSource"], "oauth");
-    assert!(start["authorizationUrl"].as_str().unwrap().starts_with("http://127.0.0.1/mock-oauth/authorize"));
+    assert!(start["authorizationUrl"]
+        .as_str()
+        .unwrap()
+        .starts_with("http://127.0.0.1/mock-oauth/authorize"));
     let session_id = start["sessionId"].as_str().unwrap();
     let state = start["authorizationUrl"]
         .as_str()
@@ -523,7 +650,11 @@ async fn provider_auth_mock_oauth_happy_path_start_exchange_status_disconnect() 
 
     let (status, body) = json_response_from(
         app.clone(),
-        authed_request(Method::GET, "/v1/provider-auth/openai/status", Body::empty()),
+        authed_request(
+            Method::GET,
+            "/v1/provider-auth/openai/status",
+            Body::empty(),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -545,7 +676,11 @@ async fn provider_auth_mock_oauth_happy_path_start_exchange_status_disconnect() 
 
     let (status, body) = json_response_from(
         app,
-        authed_request(Method::GET, "/v1/provider-auth/openai/status", Body::empty()),
+        authed_request(
+            Method::GET,
+            "/v1/provider-auth/openai/status",
+            Body::empty(),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -586,7 +721,11 @@ async fn provider_auth_mock_oauth_state_or_session_mismatch_is_rejected() {
 
     let (status, body) = json_response_from(
         app,
-        authed_request(Method::GET, "/v1/provider-auth/openai/status", Body::empty()),
+        authed_request(
+            Method::GET,
+            "/v1/provider-auth/openai/status",
+            Body::empty(),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
