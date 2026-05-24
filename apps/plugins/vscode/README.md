@@ -24,6 +24,19 @@ cd ../plugins/vscode && npm install && npm run copy:gui && npm run compile
 
 `npm run copy:gui` copies `apps/gui/dist` to `apps/plugins/vscode/media/gui`. That directory is ignored because it contains generated assets; release packaging should run this copy step after each GUI build instead of committing the generated files.
 
+## Local engine binary for dev previews
+
+Prepare the local engine binary from the repository root before opening the extension dev host:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+npm run prepare:ide-engine
+```
+
+The helper reads `yet-lsp` from `product/identity.json`, runs `cargo build -p yet-lsp`, copies `target/debug/yet-lsp` to `apps/plugins/vscode/bin/yet-lsp`, and prints the matching settings. `apps/plugins/vscode/bin/` is ignored because it contains generated local binaries. Use `npm run prepare:ide-engine -- --release` when testing a release build, or `-- --no-build` after manually running Cargo.
+
+For first run, keep `yetai.launchMode` as `auto`. The extension discovers the copied `bin/yet-lsp` automatically; alternatively set `yetai.engineBinaryPath` to the absolute path printed by the helper. The helper is intended for macOS/Linux dev previews. Windows is not verified yet; if needed, use the printed absolute `.exe` path.
+
 Repository-level validation is available from the root:
 
 ```sh

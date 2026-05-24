@@ -31,6 +31,19 @@ The Gradle build copies `apps/gui/dist` into generated plugin resources under `b
 
 At runtime the JCEF host prefers `guiDevUrl` when configured. Otherwise it loads packaged GUI resources from `/yet-ai-gui/index.html` when they are present, then falls back to the local placeholder.
 
+## Local engine binary for dev previews
+
+Prepare the local engine binary from the repository root before launching a JetBrains plugin dev preview:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+npm run prepare:ide-engine
+```
+
+The helper reads `yet-lsp` from `product/identity.json`, runs `cargo build -p yet-lsp`, copies a VS Code dev binary for that host, and prints the JetBrains `Engine binary path` value pointing at `target/debug/yet-lsp`. Use `npm run prepare:ide-engine -- --release` when testing `target/release/yet-lsp`, or `-- --no-build` after manually running Cargo.
+
+For first run, keep `Launch mode` as `auto` and either paste the printed absolute `Engine binary path` in the Yet AI settings page or start the IDE with `target/debug` on `PATH` as printed by the helper. Generated binaries under `target/` and the VS Code `bin/` copy are ignored and must not be committed. The helper is intended for macOS/Linux dev previews. Windows is not verified yet; if needed, use the printed absolute `.exe` path.
+
 Repository-level validation is available from the root:
 
 ```sh
