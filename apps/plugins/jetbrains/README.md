@@ -50,6 +50,29 @@ Repository-level validation is available from the root:
 npm run check
 ```
 
+## Dev-preview smoke
+
+From the repository root, run the JetBrains preview readiness smoke after preparing the local engine binary:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+npm run prepare:ide-engine
+npm run smoke:jetbrains-preview
+```
+
+The smoke is local and deterministic. It checks the JetBrains plugin project files, identity-aligned plugin configuration, `target/debug/yet-lsp`, GUI source build output under `apps/gui/dist`, and generated Gradle GUI resources when present. It does not launch a JetBrains IDE, require provider credentials, call OpenAI, or contact hosted Yet AI services.
+
+For a full packaged-GUI readiness check, build the GUI and run the JetBrains Gradle build first:
+
+```sh
+cd apps/gui && npm run build
+cd ../plugins/jetbrains && gradle build --console=plain
+cd ../../..
+npm run smoke:jetbrains-preview
+```
+
+If `apps/gui/dist/index.html` or generated resources are missing, the smoke prints the exact prerequisite command to run. Generated binaries and Gradle output remain ignored and must not be committed.
+
 Required verification for this package:
 
 ```sh
