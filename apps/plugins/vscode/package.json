@@ -72,7 +72,8 @@
     "check:identity": "node scripts/check-identity.mjs",
     "check:webview-safety": "node scripts/check-webview-safety.mjs",
     "copy:gui": "node scripts/copy-gui-dist.mjs",
-    "compile": "npm run check:identity && npm run check:webview-safety && tsc -p ."
+    "compile": "npm run check:identity && npm run check:webview-safety && tsc -p .",
+    "prepare:preview": "npm run copy:gui && npm run compile"
   },
   "devDependencies": {
     "@types/node": "^20.19.25",

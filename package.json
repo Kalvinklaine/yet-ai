@@ -5,6 +5,7 @@
     "check": "node scripts/check.mjs",
     "smoke:local": "node scripts/smoke-local.mjs",
     "prepare:ide-engine": "node scripts/prepare-ide-engine.mjs",
+    "prepare:vscode-preview": "node scripts/prepare-vscode-preview.mjs",
     "validate:identity": "node scripts/validate-product-identity.mjs",
     "validate:hygiene": "node scripts/validate-public-hygiene.mjs",
     "validate:docs": "node scripts/validate-docs-index.mjs",
