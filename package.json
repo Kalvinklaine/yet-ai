@@ -4,6 +4,7 @@
   "scripts": {
     "check": "node scripts/check.mjs",
     "smoke:local": "node scripts/smoke-local.mjs",
+    "smoke:vscode-preview": "node scripts/smoke-vscode-preview.mjs",
     "prepare:ide-engine": "node scripts/prepare-ide-engine.mjs",
     "prepare:vscode-preview": "node scripts/prepare-vscode-preview.mjs",
     "validate:identity": "node scripts/validate-product-identity.mjs",
