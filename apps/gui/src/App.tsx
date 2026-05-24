@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createBridgeAdapter, type BridgeHost } from "./bridge/bridgeAdapter";
+import { createBridgeAdapter, type BridgeHost, type HostReadyPayload } from "./bridge/bridgeAdapter";
 import { listProviders, saveProvider, type ProviderSummary, type ProviderWriteRequest } from "./services/providersClient";
-import { getCaps, getModels, getPing, productIdentity, productIdentityWarning, type CapsResponse, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
+import { getCaps, getModels, getPing, isLoopbackRuntimeUrl, productIdentity, productIdentityWarning, type CapsResponse, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
@@ -54,11 +54,25 @@ export function App() {
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
   const connectionStatus = connectionError ? "error" : ping?.ready ? "connected" : "not checked";
 
+  const applyHostReady = useCallback((payload: HostReadyPayload | undefined) => {
+    if (!payload?.runtimeUrl || !payload.sessionToken || !isLoopbackRuntimeUrl(payload.runtimeUrl)) {
+      return;
+    }
+    setBaseUrl(payload.runtimeUrl);
+    setToken(payload.sessionToken);
+    setTimeline((current) => ["Host runtime settings received", ...current].slice(0, 80));
+  }, []);
+
   useEffect(() => {
     const adapter = createBridgeAdapter((entry) => setBridgeLog((current) => [entry, ...current].slice(0, 20)));
     setBridgeHost(adapter.host);
+    adapter.subscribe((message) => {
+      if (message.type === "host.ready") {
+        applyHostReady(message.payload as HostReadyPayload | undefined);
+      }
+    });
     return () => adapter.dispose();
-  }, []);
+  }, [applyHostReady]);
 
   const addTimeline = useCallback((entry: string) => {
     setTimeline((current) => [entry, ...current].slice(0, 80));
