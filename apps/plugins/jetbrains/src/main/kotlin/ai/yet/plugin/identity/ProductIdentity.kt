@@ -7,4 +7,5 @@ object ProductIdentity {
     const val packageNamespace = "ai.yet.plugin"
     const val bridgeVersion = "2026-05-15"
     const val productId = "yet-ai"
+    const val engineBinaryName = "yet-lsp"
 }

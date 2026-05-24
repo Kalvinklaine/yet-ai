@@ -11,6 +11,8 @@ class YetSettingsConfigurable : Configurable {
     private var panel: JPanel? = null
     private val runtimeUrlField = JBTextField()
     private val guiDevUrlField = JBTextField()
+    private val launchModeField = JBTextField()
+    private val engineBinaryPathField = JBTextField()
     private val sessionTokenField = JBPasswordField()
 
     override fun getDisplayName(): String = "Yet AI"
@@ -19,11 +21,15 @@ class YetSettingsConfigurable : Configurable {
         val state = YetSettingsState.getInstance().state
         runtimeUrlField.text = state.runtimeUrl
         guiDevUrlField.text = state.guiDevUrl
+        launchModeField.text = state.launchMode
+        engineBinaryPathField.text = state.engineBinaryPath
         sessionTokenField.text = SessionTokenStore.getInstance().get()
         panel = FormBuilder.createFormBuilder()
             .addLabeledComponent("Local runtime URL", runtimeUrlField)
             .addLabeledComponent("GUI dev URL", guiDevUrlField)
-            .addLabeledComponent("Local session token", sessionTokenField)
+            .addLabeledComponent("Launch mode", launchModeField)
+            .addLabeledComponent("Engine binary path", engineBinaryPathField)
+            .addLabeledComponent("Debug connection token", sessionTokenField)
             .addComponentFillVertically(JPanel(), 0)
             .panel
         return panel as JPanel
@@ -33,6 +39,8 @@ class YetSettingsConfigurable : Configurable {
         val state = YetSettingsState.getInstance().state
         return runtimeUrlField.text != state.runtimeUrl ||
             guiDevUrlField.text != state.guiDevUrl ||
+            launchModeField.text != state.launchMode ||
+            engineBinaryPathField.text != state.engineBinaryPath ||
             String(sessionTokenField.password) != SessionTokenStore.getInstance().get()
     }
 
@@ -40,6 +48,8 @@ class YetSettingsConfigurable : Configurable {
         val state = YetSettingsState.getInstance().state
         state.runtimeUrl = runtimeUrlField.text.trim()
         state.guiDevUrl = guiDevUrlField.text.trim()
+        state.launchMode = launchModeField.text.trim().ifBlank { "auto" }
+        state.engineBinaryPath = engineBinaryPathField.text.trim()
         SessionTokenStore.getInstance().set(String(sessionTokenField.password))
     }
 
@@ -47,6 +57,8 @@ class YetSettingsConfigurable : Configurable {
         val state = YetSettingsState.getInstance().state
         runtimeUrlField.text = state.runtimeUrl
         guiDevUrlField.text = state.guiDevUrl
+        launchModeField.text = state.launchMode
+        engineBinaryPathField.text = state.engineBinaryPath
         sessionTokenField.text = SessionTokenStore.getInstance().get()
     }
 

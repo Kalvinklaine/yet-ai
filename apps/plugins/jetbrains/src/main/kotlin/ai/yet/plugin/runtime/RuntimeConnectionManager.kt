@@ -1,0 +1,198 @@
+package ai.yet.plugin.runtime
+
+import ai.yet.plugin.identity.ProductIdentity
+import ai.yet.plugin.settings.SessionTokenStore
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.components.Service
+import com.intellij.openapi.components.service
+import com.intellij.openapi.diagnostic.Logger
+import java.io.BufferedReader
+import java.io.File
+import java.io.InputStreamReader
+import java.net.HttpURLConnection
+import java.net.URI
+import java.net.URL
+import java.nio.file.Files
+import java.nio.file.Path
+import java.security.SecureRandom
+import java.util.Base64
+import kotlin.concurrent.thread
+
+@Service(Service.Level.APP)
+class RuntimeConnectionManager : Disposable {
+    private val logger = Logger.getInstance(RuntimeConnectionManager::class.java)
+    private var launchedProcess: Process? = null
+    private var launchedConnection: RuntimeSettings? = null
+
+    @Synchronized
+    fun prepare(): RuntimeConnectionResult {
+        return try {
+            val settings = RuntimeSettings.current()
+            val binaryPath = findEngineBinary(settings.engineBinaryPath)
+            val shouldLaunch = settings.launchMode == LaunchMode.LAUNCH ||
+                (settings.launchMode == LaunchMode.AUTO && binaryPath != null)
+            val connection = if (shouldLaunch) {
+                if (binaryPath == null) {
+                    throw IllegalArgumentException("Yet AI engine binary path must point to ${ProductIdentity.engineBinaryName} when launch mode is enabled")
+                }
+                launchOrReuse(settings, binaryPath)
+            } else {
+                settings
+            }
+            checkHealth(connection)
+            RuntimeConnectionResult(connection, "Connected to Yet AI local runtime at ${connection.runtimeUrl}.", null)
+        } catch (error: Exception) {
+            RuntimeConnectionResult(RuntimeSettings.safeFallback(), null, error.message ?: "Yet AI local runtime connection failed")
+        }
+    }
+
+    @Synchronized
+    private fun launchOrReuse(settings: RuntimeSettings, binaryPath: Path): RuntimeSettings {
+        val existing = launchedProcess
+        val existingConnection = launchedConnection
+        if (existing != null && existing.isAlive && existingConnection?.runtimeUrl == settings.runtimeUrl) {
+            return existingConnection
+        }
+        stopLaunchedProcess()
+        val token = generateSessionToken()
+        val command = buildEngineLaunchCommand(settings.runtimeUrl, binaryPath, token)
+        val process = ProcessBuilder(command.binaryPath.toString())
+            .redirectInput(ProcessBuilder.Redirect.PIPE)
+            .apply { environment().putAll(command.environment) }
+            .start()
+        launchedProcess = process
+        launchedConnection = settings.copyWithSessionToken(token)
+        attachLogs(process, token)
+        logger.info("Started Yet AI local runtime")
+        thread(name = "Yet AI runtime watcher", isDaemon = true) {
+            val code = process.waitFor()
+            logger.info("Yet AI local runtime exited with code $code")
+            synchronized(this@RuntimeConnectionManager) {
+                if (launchedProcess == process) {
+                    launchedProcess = null
+                    launchedConnection = null
+                }
+            }
+        }
+        return launchedConnection ?: settings.copyWithSessionToken(token)
+    }
+
+    private fun attachLogs(process: Process, token: String) {
+        listOf(process.inputStream, process.errorStream).forEach { stream ->
+            thread(name = "Yet AI runtime log", isDaemon = true) {
+                BufferedReader(InputStreamReader(stream)).useLines { lines ->
+                    lines.forEach { line ->
+                        if (line.isNotBlank()) {
+                            logger.info("Yet AI runtime: ${redactLogText(line, token)}")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Synchronized
+    private fun stopLaunchedProcess() {
+        val process = launchedProcess ?: return
+        launchedProcess = null
+        launchedConnection = null
+        if (process.isAlive) {
+            process.destroy()
+        }
+    }
+
+    override fun dispose() {
+        stopLaunchedProcess()
+    }
+
+    companion object {
+        fun getInstance(): RuntimeConnectionManager = service()
+    }
+}
+
+data class RuntimeConnectionResult(
+    val settings: RuntimeSettings,
+    val status: String?,
+    val error: String?,
+)
+
+data class EngineLaunchCommand(
+    val binaryPath: Path,
+    val environment: Map<String, String>,
+)
+
+fun buildEngineLaunchCommand(
+    runtimeUrl: String,
+    binaryPath: Path,
+    sessionToken: String,
+    baseEnvironment: Map<String, String> = System.getenv(),
+): EngineLaunchCommand {
+    val env = baseEnvironment.toMutableMap()
+    env["YET_AI_AUTH_TOKEN"] = sessionToken
+    env["YET_AI_HTTP_PORT"] = parseRuntimePort(runtimeUrl).toString()
+    return EngineLaunchCommand(binaryPath, env)
+}
+
+fun parseRuntimePort(runtimeUrl: String): Int {
+    val uri = URI(runtimeUrl)
+    if (uri.port >= 0) {
+        return uri.port
+    }
+    return if (uri.scheme == "https") 443 else 80
+}
+
+fun findEngineBinary(configuredPath: Path?): Path? {
+    if (configuredPath != null) {
+        if (!isExecutableFile(configuredPath)) {
+            throw IllegalArgumentException("Yet AI engine binary path must point to an executable file")
+        }
+        return configuredPath
+    }
+    val suffixes = if (System.getProperty("os.name").lowercase().contains("win")) listOf(".exe", ".cmd", ".bat", "") else listOf("")
+    val pathEnv = System.getenv("PATH").orEmpty().split(File.pathSeparator).filter { it.isNotBlank() }
+    for (directory in pathEnv) {
+        for (suffix in suffixes) {
+            val candidate = Path.of(directory, ProductIdentity.engineBinaryName + suffix)
+            if (isExecutableFile(candidate)) {
+                return candidate
+            }
+        }
+    }
+    return null
+}
+
+fun checkHealth(settings: RuntimeSettings) {
+    val pingUrl = URL(URI(settings.runtimeUrl).resolve("/v1/ping").toString())
+    var lastError = "no response"
+    repeat(20) {
+        try {
+            val connection = pingUrl.openConnection() as HttpURLConnection
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 250
+            connection.readTimeout = 250
+            settings.sessionToken?.let { connection.setRequestProperty("Authorization", "Bearer $it") }
+            if (connection.responseCode in 200..299) {
+                connection.disconnect()
+                return
+            }
+            lastError = "HTTP ${connection.responseCode}"
+            connection.disconnect()
+        } catch (error: Exception) {
+            lastError = error.message ?: "unknown health check error"
+        }
+        Thread.sleep(250)
+    }
+    throw IllegalStateException("Yet AI local runtime health check failed at /v1/ping: $lastError")
+}
+
+private fun isExecutableFile(path: Path): Boolean = Files.isRegularFile(path)
+
+private fun generateSessionToken(): String {
+    val bytes = ByteArray(32)
+    SecureRandom().nextBytes(bytes)
+    return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+}
+
+private fun redactLogText(value: String, token: String): String = value
+    .replace(token, "[redacted]")
+    .replace(Regex("Bearer\\s+[^\\s\"']+", RegexOption.IGNORE_CASE), "Bearer [redacted]")

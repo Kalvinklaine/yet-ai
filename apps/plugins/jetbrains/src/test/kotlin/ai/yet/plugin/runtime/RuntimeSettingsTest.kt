@@ -30,4 +30,10 @@ class RuntimeSettingsTest {
     fun ipv6OriginFormattedWithBrackets() {
         assertEquals("http://[::1]:5173", loopbackOrigin("http://[::1]:5173/path"))
     }
+
+    @Test
+    fun engineBinaryPathMustBeAbsolute() {
+        assertEquals("/tmp/yet-lsp", requireAbsolutePath("/tmp/yet-lsp", "engineBinaryPath").toString())
+        assertFailsWith<IllegalArgumentException> { requireAbsolutePath("target/debug/yet-lsp", "engineBinaryPath") }
+    }
 }
