@@ -111,6 +111,34 @@ async fn configure_openai_provider(app: axum::Router, base_url: String, api_key:
     assert!(!body.to_string().contains(api_key));
 }
 
+async fn configure_openai_provider_without_models(
+    app: axum::Router,
+    base_url: String,
+    api_key: &str,
+) {
+    let provider = json!({
+        "id": "openai-no-model",
+        "kind": "openai-compatible",
+        "displayName": "OpenAI No Model",
+        "enabled": true,
+        "baseUrl": base_url,
+        "auth": { "type": "api_key", "apiKey": api_key },
+        "models": [],
+        "capabilities": { "chat": true, "completion": false, "embeddings": false }
+    });
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert!(!body.to_string().contains(api_key));
+}
+
 async fn configure_openai_api_provider(app: axum::Router, api_key: &str) {
     let provider = json!({
         "id": "openai-api",
@@ -182,6 +210,43 @@ fn sse_json_events(text: &str) -> Vec<Value> {
         .filter_map(|line| line.strip_prefix("data: "))
         .map(|data| serde_json::from_str(data).unwrap())
         .collect()
+}
+
+async fn send_user_message(app: axum::Router, chat_id: &str) {
+    let command = json!({
+        "requestId": format!("req-{chat_id}"),
+        "type": "user_message",
+        "payload": { "content": "hello" }
+    });
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            &format!("/v1/chats/{chat_id}/commands"),
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accepted"], true);
+}
+
+fn find_error_event(events: &[Value]) -> &Value {
+    events
+        .iter()
+        .find(|event| event["type"] == "error")
+        .unwrap()
+}
+
+fn assert_sanitized_sse_error(text: &str) {
+    let lower = text.to_lowercase();
+    assert!(!text.contains("sk-"));
+    assert!(!lower.contains("bearer "));
+    assert!(!lower.contains("access_token"));
+    assert!(!lower.contains("refresh_token"));
+    assert!(!lower.contains("api_key"));
+    assert!(!text.contains("user:pass@"));
+    assert!(!text.contains("raw-provider-body"));
 }
 
 async fn empty_response_from(app: axum::Router, request: Request<Body>) -> StatusCode {
@@ -1265,39 +1330,59 @@ async fn openai_compatible_streaming_maps_chunks_to_sse_events() {
 }
 
 #[tokio::test]
+async fn no_enabled_provider_replays_provider_not_configured_error_event() {
+    let app = test_app();
+    send_user_message(app.clone(), "chat-no-provider").await;
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-no-provider").await;
+    let events = sse_json_events(&text);
+    assert_eq!(events[0]["type"], "snapshot");
+    assert!(events.iter().any(|event| event["type"] == "stream_started"));
+    let error = find_error_event(&events);
+    assert_eq!(error["payload"]["code"], "provider_not_configured");
+    assert_sanitized_sse_error(&text);
+}
+
+#[tokio::test]
+async fn provider_without_model_replays_model_not_configured_error_event() {
+    let api_key = "sk-no-model-secret-abcd";
+    let (base_url, _) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"unused\"}}]}\n\n",
+        None,
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider_without_models(app.clone(), base_url, api_key).await;
+    send_user_message(app.clone(), "chat-no-model").await;
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-no-model").await;
+    let events = sse_json_events(&text);
+    assert_eq!(events[0]["type"], "snapshot");
+    let error = find_error_event(&events);
+    assert_eq!(error["payload"]["code"], "model_not_configured");
+    assert_sanitized_sse_error(&text);
+}
+
+#[tokio::test]
 async fn provider_unauthorized_produces_sanitized_error_event() {
     let api_key = "sk-unauthorized-secret-abcd";
     let (base_url, _) = start_mock_provider(
         StatusCode::UNAUTHORIZED,
-        "unauthorized",
+        "raw-provider-body access_token=secret-token Bearer should-not-leak",
         Some("Bearer sk-unauthorized-secret-abcd"),
     )
     .await;
     let app = test_app();
     configure_openai_provider(app.clone(), base_url, api_key).await;
-    let command = json!({
-        "requestId": "req-unauthorized",
-        "type": "user_message",
-        "payload": { "content": "hello" }
-    });
-    let (status, _) = json_response_from(
-        app.clone(),
-        authed_request(
-            Method::POST,
-            "/v1/chats/chat-unauthorized/commands",
-            Body::from(command.to_string()),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
+    send_user_message(app.clone(), "chat-unauthorized").await;
 
     let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-unauthorized").await;
     let events = sse_json_events(&text);
-    let error = events
-        .iter()
-        .find(|event| event["type"] == "error")
-        .unwrap();
+    assert_eq!(events[0]["type"], "snapshot");
+    let error = find_error_event(&events);
     assert_eq!(error["payload"]["code"], "provider_unauthorized");
+    assert_sanitized_sse_error(&text);
     assert!(!text.contains(api_key));
     assert!(!text.contains("unauthorized-secret"));
 }
@@ -1307,35 +1392,20 @@ async fn malformed_provider_chunk_produces_safe_error_event() {
     let api_key = "sk-malformed-stream-secret-abcd";
     let (base_url, _) = start_mock_provider(
         StatusCode::OK,
-        "data: { not-json }\n\n",
+        "data: { not-json, api_key=raw-provider-body, url=http://user:pass@127.0.0.1 }\n\n",
         Some("Bearer sk-malformed-stream-secret-abcd"),
     )
     .await;
     let app = test_app();
     configure_openai_provider(app.clone(), base_url, api_key).await;
-    let command = json!({
-        "requestId": "req-malformed",
-        "type": "user_message",
-        "payload": { "content": "hello" }
-    });
-    let (status, _) = json_response_from(
-        app.clone(),
-        authed_request(
-            Method::POST,
-            "/v1/chats/chat-malformed/commands",
-            Body::from(command.to_string()),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
+    send_user_message(app.clone(), "chat-malformed").await;
 
     let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-malformed").await;
     let events = sse_json_events(&text);
-    let error = events
-        .iter()
-        .find(|event| event["type"] == "error")
-        .unwrap();
+    assert_eq!(events[0]["type"], "snapshot");
+    let error = find_error_event(&events);
     assert_eq!(error["payload"]["code"], "provider_malformed_stream");
+    assert_sanitized_sse_error(&text);
     assert!(!text.contains(api_key));
 }
 

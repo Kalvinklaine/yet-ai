@@ -161,7 +161,7 @@ impl ChatRuntime {
                 self.push_event(
                     &chat_id,
                     "error",
-                    json!({ "code": error.code(), "message": error.to_string() }),
+                    json!({ "code": error.code(), "message": error.client_message() }),
                 )
                 .await;
             }
@@ -213,6 +213,18 @@ impl ChatError {
             Self::Timeout => "provider_timeout",
             Self::MalformedStream => "provider_malformed_stream",
             Self::ProviderConfig => "provider_config_error",
+        }
+    }
+
+    fn client_message(&self) -> &'static str {
+        match self {
+            Self::NoProvider => "No enabled OpenAI-compatible provider is configured.",
+            Self::NoModel => "The configured provider has no chat model.",
+            Self::Unauthorized => "Provider authentication failed. Check the configured credentials.",
+            Self::Request => "Provider request failed.",
+            Self::Timeout => "Provider stream timed out.",
+            Self::MalformedStream => "Provider returned malformed streaming data.",
+            Self::ProviderConfig => "Provider configuration is invalid.",
         }
     }
 }
