@@ -45,6 +45,19 @@ YET_AI_AUTH_TOKEN=local-dev-token cargo run -p yet-lsp
 
 The process binds to `127.0.0.1:8001` by default. Override only the port with `YET_AI_HTTP_PORT`; the host remains loopback.
 
+## IDE dev preview binary helper
+
+Build and prepare the local engine binary for IDE plugin dev previews from the repository root:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+npm run prepare:ide-engine
+```
+
+The helper reads the crate and binary names from `product/identity.json`, runs `cargo build -p yet-lsp`, copies `target/debug/yet-lsp` to `apps/plugins/vscode/bin/yet-lsp`, and prints exact VS Code and JetBrains settings values. Use `npm run prepare:ide-engine -- --release` to build and prepare `target/release/yet-lsp`; use `-- --no-build` after an existing Cargo build.
+
+Generated binaries under `target/` and `apps/plugins/vscode/bin/` are ignored and must not be committed. The helper is intended for macOS/Linux dev previews. Windows is not verified yet; the script prints absolute settings values and uses `.exe` when run on Windows.
+
 ## Authentication
 
 All endpoints require:
