@@ -40,6 +40,14 @@ If a lockfile-compatible install is not available in your local workflow, use:
 npm install
 ```
 
+Run the local smoke test from the root to exercise the engine/provider/chat path without real provider credentials or hosted services:
+
+```sh
+npm run smoke:local
+```
+
+`npm run smoke:local` starts the Rust engine on a free loopback port through Cargo, starts a local mock OpenAI-compatible provider, configures a fake local API key, checks ping/caps/provider setup/chat command/SSE streaming, asserts the mock provider receives Authorization, and verifies the raw fake key is not present in client-visible responses or events. Prerequisites: Node 18+ with root dependencies installed and a Rust toolchain with Cargo on `PATH`.
+
 Run repository validation from the root before publishing or handing off changes:
 
 ```sh
