@@ -120,11 +120,11 @@ The clean scaffold path has produced buildable local MVP foundations for the fir
 4. `apps/plugins/jetbrains` provides a JetBrains plugin shell with identity validation, Gradle tests/build, packaged GUI resource loading, loopback runtime/dev URL policy, MVP `connect`/`launch`/`auto` runtime modes, PasswordSafe local token storage, JCEF hosting, and structural bridge validation.
 5. `packages/contracts` remains the shared schema/example package for current boundaries.
 
-This is not a production assistant. The IDE shells now have packaged GUI asset flows and MVP local runtime connect/launch/auto modes, but marketplace packaging, signed or notarized engine bundles, a production installer, full agent autonomy, indexing, tool execution, integration workflows, LSP/completion features, file edits, broader provider support, and privileged IDE actions remain follow-up work. Current chat is a local provider/chat MVP only. The local-first BYOK/no-required-cloud contract remains the controlling constraint.
+This is not a production assistant. The IDE shells now have packaged GUI asset flows and MVP local runtime connect/launch/auto modes, but marketplace packaging, signed or notarized engine bundles, a production installer, full agent autonomy, indexing, tool execution, integration workflows, LSP/completion features, file edits, broader provider support, and privileged IDE actions remain follow-up work. Current chat is a local provider/chat MVP only. The provider-auth baseline includes a GUI login-first status card, API-key fallback, sanitized engine skeleton endpoints, local mock OAuth/PKCE contract coverage, and engine-owned secret storage with a protected-file fallback. It does not include real OpenAI/ChatGPT account login. The local-first BYOK/no-required-cloud contract remains the controlling constraint.
 
 ## OpenAI/ChatGPT auth implementation strategy
 
-Current implementation is API-key/OpenAI-compatible direct access only. It does not implement ChatGPT account login, OpenAI OAuth, token refresh, callback handling, or disconnect endpoints.
+Current real-provider implementation is API-key/OpenAI-compatible direct access only. It does not implement ChatGPT account login, OpenAI OAuth, token refresh, callback handling, or production disconnect/revoke behavior. The engine now exposes provider-auth `start`, `status`, `exchange`, and `disconnect` endpoints as sanitized local skeleton contracts for `openai` and `openai-compatible`; default real-provider start/exchange return login unavailable and do not call external providers. The local mock OAuth/PKCE harness is only for contract and smoke tests. The GUI can render login-first provider-auth statuses and open only safe authorization URLs, but current real-provider use remains the API-key fallback.
 
 External reference inspection for OpenAI/Codex auth found this architecture shape:
 
@@ -142,7 +142,16 @@ Yet AI should implement a safer staged strategy:
 4. If a compliant OAuth/device/browser flow is available, implement it with Yet AI-owned identity, redirect URLs, storage names, and endpoint contracts. The engine starts the flow, stores pending PKCE session state, handles callback/exchange, stores tokens in OS keychain or protected user config, refreshes/revokes credentials, and calls providers directly.
 5. If official account login cannot produce API-use credentials, guide users to the OpenAI platform to create an API key and paste it once. The GUI clears the secret after submit and renders only engine-returned sanitized status.
 
-Future endpoint candidates are `POST /v1/provider-auth/{provider}/start`, `GET /v1/provider-auth/{provider}/status`, `POST /v1/provider-auth/{provider}/exchange`, `POST /v1/provider-auth/{provider}/disconnect`, and an optional loopback callback endpoint. These endpoints should be introduced only with schema fixtures and no-secret regression tests.
+The current provider-auth endpoints are intentionally skeletal and schema-backed. Real login code must not replace the skeleton until this T-49 compliance gate is complete:
+
+- identify an official or otherwise approved OpenAI/ChatGPT auth flow for third-party local apps;
+- document the exact allowed authorization, token, model, revoke, refresh, callback, and device/polling endpoints;
+- review redirect URI or device flow behavior, PKCE parameters, client identity, scopes, account labels, and local callback security;
+- define token storage, refresh, revoke, expiry, disconnect, migration, and no-secret logging policy behind engine-owned secret storage;
+- confirm that the flow does not require a Yet AI hosted backend, account, managed gateway, product credit balance, or cloud workspace for core chat/provider setup;
+- keep cookie scraping, browser profile import, other-product credential reuse, private ChatGPT web endpoints, and provider-private headers out of the default implementation unless a separate approval, provenance review, and security design explicitly allow a specific exception.
+
+Future production provider-auth work may extend `POST /v1/provider-auth/{provider}/start`, `GET /v1/provider-auth/{provider}/status`, `POST /v1/provider-auth/{provider}/exchange`, `POST /v1/provider-auth/{provider}/disconnect`, and an optional loopback callback endpoint. Those changes should include updated schema fixtures, no-secret regression tests, token lifecycle tests, and docs that avoid claiming production readiness before packaging and compliance review are complete.
 
 ## Criteria for acceptable external module copying
 
