@@ -25,6 +25,7 @@ export type ProductIdentity = {
 };
 
 export const extensionCommand = "yetaicmd.openChat";
+export const runtimeStatusCommand = "yetaicmd.showRuntimeStatus";
 export const configurationPrefix = "yetai";
 export const bridgeVersion = "2026-05-15";
 

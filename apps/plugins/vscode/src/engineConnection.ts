@@ -12,6 +12,14 @@ export type EngineConnection = {
   guiDevUrl?: string;
 };
 
+export type RuntimeDiagnostics = {
+  runtimeUrl: string;
+  launchMode: LaunchMode;
+  configuredEngineBinaryPath: boolean;
+  engineBinaryStatus: string;
+  pingStatus: string;
+};
+
 type LaunchMode = "auto" | "connect" | "launch";
 
 type EngineConnectionSettings = EngineConnection & {
@@ -34,6 +42,39 @@ export function readEngineConnection(): EngineConnection {
     sessionToken: settings.sessionToken,
     guiDevUrl: settings.guiDevUrl,
   };
+}
+
+export async function collectRuntimeDiagnostics(
+  context: vscode.ExtensionContext,
+  identity: ProductIdentity,
+): Promise<RuntimeDiagnostics> {
+  const settings = readEngineConnectionSettings();
+  const diagnostics: RuntimeDiagnostics = {
+    runtimeUrl: safeRuntimeUrl(settings.runtimeUrl),
+    launchMode: settings.launchMode,
+    configuredEngineBinaryPath: settings.engineBinaryPath !== undefined,
+    engineBinaryStatus: "not checked",
+    pingStatus: "not checked",
+  };
+
+  try {
+    validateEngineConnectionSettings(settings);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "invalid runtime settings";
+    diagnostics.pingStatus = `skipped: ${message}`;
+    diagnostics.engineBinaryStatus = settings.engineBinaryPath ? `invalid configured path: ${message}` : "not configured";
+    return diagnostics;
+  }
+
+  try {
+    const binaryPath = findEngineBinary(settings.engineBinaryPath, context.extensionPath, identity.engine.binaryName);
+    diagnostics.engineBinaryStatus = binaryPath ? `found: ${binaryPath}` : "not found";
+  } catch (error) {
+    diagnostics.engineBinaryStatus = error instanceof Error ? `not usable: ${error.message}` : "not usable";
+  }
+
+  diagnostics.pingStatus = await pingEngineOnce(settings);
+  return diagnostics;
 }
 
 export async function prepareEngineConnection(
@@ -259,25 +300,50 @@ function redactLogText(value: string, token: string): string {
   return value.replaceAll(token, "[redacted]").replace(/Bearer\s+[^\s"']+/gi, "Bearer [redacted]");
 }
 
-async function checkEngineHealth(connection: EngineConnection, output: vscode.OutputChannel): Promise<void> {
+function safeRuntimeUrl(runtimeUrl: string): string {
+  try {
+    const parsed = new URL(runtimeUrl);
+    if (
+      (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+      (parsed.hostname !== "127.0.0.1" && parsed.hostname !== "localhost" && parsed.hostname !== "[::1]")
+    ) {
+      return "invalid or non-loopback runtime URL";
+    }
+    parsed.username = "";
+    parsed.password = "";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return "invalid runtime URL";
+  }
+}
+
+async function pingEngineOnce(connection: EngineConnection): Promise<string> {
   const pingUrl = new URL("/v1/ping", connection.runtimeUrl).toString();
   const headers: Record<string, string> = {};
   if (connection.sessionToken) {
     headers.Authorization = `Bearer ${connection.sessionToken}`;
   }
 
+  try {
+    const response = await fetch(pingUrl, { headers });
+    return response.ok ? "passed" : `failed: HTTP ${response.status}`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown ping error";
+    return `failed: ${message}`;
+  }
+}
+
+async function checkEngineHealth(connection: EngineConnection, output: vscode.OutputChannel): Promise<void> {
   let lastError: string | undefined;
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    try {
-      const response = await fetch(pingUrl, { headers });
-      if (response.ok) {
-        output.appendLine("Yet AI local runtime health check passed.");
-        return;
-      }
-      lastError = `HTTP ${response.status}`;
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : "unknown health check error";
+    const pingStatus = await pingEngineOnce(connection);
+    if (pingStatus === "passed") {
+      output.appendLine("Yet AI local runtime health check passed.");
+      return;
     }
+    lastError = pingStatus.replace(/^failed: /, "");
     await delay(250);
   }
   throw new Error(`Yet AI local runtime health check failed at /v1/ping: ${lastError ?? "no response"}.`);
