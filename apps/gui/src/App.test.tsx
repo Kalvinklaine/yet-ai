@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import type { ProviderAuthResponse, ProviderAuthStatus } from "./services/providerAuthClient";
 
 const bridgeVersion = "2026-05-15";
 const fetchMock = vi.fn();
@@ -83,6 +84,63 @@ describe("provider secret boundary", () => {
 
     expect(container?.textContent).toContain("Unauthorized local runtime request. Check the session token.");
     expect(container?.textContent).not.toContain("Bearer");
+  });
+
+  it.each([
+    ["login_unavailable", "OpenAI account login is planned/not available yet; use API key fallback."],
+    ["api_key_configured", "OpenAI API key fallback is configured locally. Account login is not required."],
+    ["pending", "OpenAI account login is pending. Finish the browser or device verification flow, then refresh the status."],
+    ["connected", "OpenAI account login is connected through the local runtime."],
+    ["expired", "OpenAI account login expired. Start login again or use the API key fallback."],
+    ["revoked", "OpenAI account login was revoked. Disconnect it or use the API key fallback."],
+  ] satisfies Array<[ProviderAuthStatus, string]>)("renders provider auth status %s", async (status, copy) => {
+    mockRuntimeResponses({ authResponse: providerAuthResponse(status) });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain(status);
+    expect(container?.textContent).toContain(copy);
+  });
+
+  it("enables disconnect for connected account login", async () => {
+    mockRuntimeResponses({ authResponse: providerAuthResponse("connected") });
+    renderApp();
+
+    await flushAsync();
+
+    expect(findButton("Disconnect login").disabled).toBe(false);
+  });
+
+  it("keeps disconnect disabled for API key configured fallback", async () => {
+    mockRuntimeResponses({ authResponse: providerAuthResponse("api_key_configured") });
+    renderApp();
+
+    await flushAsync();
+
+    expect(findButton("Disconnect login").disabled).toBe(true);
+  });
+
+  it("sanitizes token-like provider auth last errors before display", async () => {
+    const rawToken = "Bearer abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    const rawApiKey = "api_key=sk-testabcdefghijklmnopqrstuvwxyz";
+    const longValue = "x".repeat(64);
+    mockRuntimeResponses({
+      authResponse: {
+        ...providerAuthResponse("error"),
+        lastError: `provider failed ${rawToken} ${rawApiKey} access_token=${longValue} refresh_token=${longValue}`,
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Last error: provider failed [redacted]");
+    expect(container?.textContent).not.toContain("Bearer");
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("refresh_token");
+    expect(container?.textContent).not.toContain("api_key");
+    expect(container?.textContent).not.toContain(longValue);
   });
 
   it("browser storage does not contain raw provider API keys", () => {
@@ -214,8 +272,27 @@ type MockRuntimeOptions = {
   authStatusCode?: number;
   authMessage?: string;
   authSupportsLogin?: boolean;
+  authResponse?: ProviderAuthResponse;
   startAuthUrl?: string;
 };
+
+function providerAuthResponse(status: ProviderAuthStatus): ProviderAuthResponse {
+  const authSource = status === "api_key_configured" ? "api_key" : status === "login_unavailable" ? "none" : "oauth";
+  return {
+    provider: "openai",
+    configured: status === "api_key_configured" || status === "connected",
+    status,
+    authSource,
+    supportsLogin: status !== "login_unavailable" && status !== "api_key_configured",
+    supportsApiKey: true,
+    cloudRequired: false,
+    message: `Mock status ${status}`,
+    accountLabel: status === "connected" ? "user@example.test" : undefined,
+    expiresAt: status === "connected" || status === "expired" ? "2026-05-24T01:00:00Z" : undefined,
+    redacted: status === "api_key_configured" ? "sk-...test" : undefined,
+    pollIntervalSeconds: status === "pending" ? 5 : undefined,
+  };
+}
 
 function mockRuntimeResponses(options: MockRuntimeOptions = {}) {
   fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -224,7 +301,7 @@ function mockRuntimeResponses(options: MockRuntimeOptions = {}) {
       if (options.authStatusCode) {
         return Promise.resolve(jsonResponse({ error: "raw-secret should not appear" }, options.authStatusCode));
       }
-      return Promise.resolve(jsonResponse({
+      return Promise.resolve(jsonResponse(options.authResponse ?? {
         provider: "openai",
         configured: false,
         status: options.authSupportsLogin ? "login_available" : "login_unavailable",

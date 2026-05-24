@@ -1,12 +1,37 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBridgeAdapter, type BridgeHost, type HostReadyPayload } from "./bridge/bridgeAdapter";
-import { disconnectProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse } from "./services/providerAuthClient";
+import { disconnectProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { listProviders, saveProvider, type ProviderSummary, type ProviderWriteRequest } from "./services/providersClient";
 import { getCaps, getModels, getPing, isLoopbackRuntimeUrl, productIdentity, productIdentityWarning, type CapsResponse, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
+
+const providerAuthStatusCopy: Record<ProviderAuthStatus, string> = {
+  not_configured: "No account login is configured yet. Use Login with OpenAI when available or the API key fallback.",
+  api_key_configured: "OpenAI API key fallback is configured locally. Account login is not required.",
+  login_available: "OpenAI account login is available through the local runtime.",
+  login_unavailable: "OpenAI account login is planned/not available yet; use API key fallback.",
+  pending: "OpenAI account login is pending. Finish the browser or device verification flow, then refresh the status.",
+  connected: "OpenAI account login is connected through the local runtime.",
+  expired: "OpenAI account login expired. Start login again or use the API key fallback.",
+  revoked: "OpenAI account login was revoked. Disconnect it or use the API key fallback.",
+  error: "OpenAI account login reported an error. Review the sanitized details or use the API key fallback.",
+};
+
+const secretLikePatterns = [
+  /\b(access_token|refresh_token|api_key|authorization|bearer)\b\s*[:=]\s*[^\s,;]+/gi,
+  /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi,
+  /\b(sk-[A-Za-z0-9_-]{8,})\b/g,
+  /\b[A-Za-z0-9_-]{32,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/g,
+  /\b[A-Za-z0-9+/=_-]{48,}\b/g,
+];
+
+function sanitizeDisplayText(value: string): string {
+  const sanitized = secretLikePatterns.reduce((current, pattern) => current.replace(pattern, "[redacted]"), value).trim();
+  return sanitized.length > 240 ? `${sanitized.slice(0, 240)}…` : sanitized;
+}
 
 type ProviderForm = {
   providerId: string;
@@ -439,8 +464,9 @@ export function App() {
           <p className="subtle">Login-first setup is handled only by the local runtime. The GUI shows sanitized status and never stores provider auth state in browser storage.</p>
           {providerAuthError && <ErrorBox error={providerAuthError} />}
           {providerAuthUrlWarning && <div className="error">{providerAuthUrlWarning}</div>}
+          {providerAuthStatus && <ProviderAuthSummary status={providerAuthStatus.status} />}
           {providerAuthStatus?.supportsLogin === false && <p>OpenAI account login is planned/not available yet; use API key fallback.</p>}
-          {providerAuthStatus?.message && <span>{providerAuthStatus.message}</span>}
+          {providerAuthStatus?.message && <span>{sanitizeDisplayText(providerAuthStatus.message)}</span>}
           {providerAuthStatus && <ProviderAuthDetails status={providerAuthStatus} />}
           <div className="row">
             <button type="button" onClick={() => void refreshProviderAuthStatus()}>Refresh login status</button>
@@ -570,6 +596,10 @@ export function App() {
   );
 }
 
+function ProviderAuthSummary({ status }: { status: ProviderAuthStatus }) {
+  return <p>{providerAuthStatusCopy[status]}</p>;
+}
+
 function ProviderAuthDetails({ status }: { status: ProviderAuthResponse }) {
   return (
     <div className="stack">
@@ -580,7 +610,7 @@ function ProviderAuthDetails({ status }: { status: ProviderAuthResponse }) {
       {status.accountLabel && <span>Account: {status.accountLabel}</span>}
       {status.expiresAt && <span>Expires: {status.expiresAt}</span>}
       {status.redacted && <span>Secret configured: {status.redacted}</span>}
-      {status.lastError && <span>Last error: {status.lastError}</span>}
+      {status.lastError && <span>Last error: {sanitizeDisplayText(status.lastError)}</span>}
       {status.pollIntervalSeconds && <span>Poll interval: {status.pollIntervalSeconds} seconds</span>}
     </div>
   );
