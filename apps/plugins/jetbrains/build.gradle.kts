@@ -13,6 +13,14 @@ repositories {
     }
 }
 
+val guiDistDir = layout.projectDirectory.dir("../../gui/dist")
+val packagedGuiResourcesDir = layout.buildDirectory.dir("generated/resources/yet-ai-gui")
+val copyGuiDist by tasks.registering(Copy::class) {
+    onlyIf { guiDistDir.file("index.html").asFile.exists() }
+    from(guiDistDir)
+    into(packagedGuiResourcesDir.map { it.dir("yet-ai-gui") })
+}
+
 dependencies {
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
@@ -25,6 +33,12 @@ dependencies {
 
 kotlin {
     jvmToolchain(17)
+}
+
+sourceSets {
+    main {
+        resources.srcDir(packagedGuiResourcesDir)
+    }
 }
 
 intellijPlatform {
@@ -40,6 +54,10 @@ intellijPlatform {
 }
 
 tasks {
+    processResources {
+        dependsOn(copyGuiDist)
+    }
+
     test {
         useJUnitPlatform()
     }
