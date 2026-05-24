@@ -59,6 +59,7 @@ Non-loopback runtime URLs are rejected with a visible configuration error before
 - `/v1/models`
 - `/v1/providers`
 - `POST /v1/providers` and `PATCH /v1/providers/:id`
+- `/v1/provider-auth/:provider/start`, `/status`, `/exchange`, and `/disconnect` for sanitized engine-owned provider login state
 - `POST /v1/chats/:chat_id/commands` with `user_message`
 - `GET /v1/chats/subscribe?chat_id=...` through fetch streaming SSE
 - Browser, VS Code, and JetBrains-style logical bridge detection
@@ -82,7 +83,7 @@ Current chat generation selects an enabled `openai-compatible` provider in the r
 
 Native provider-specific chat adapters, including native Ollama chat, are future work for this GUI/runtime MVP. Until then, configure Ollama through its OpenAI-compatible `/v1` API if that endpoint is enabled in your local Ollama version.
 
-ChatGPT/OpenAI account login-first support is planned where officially supported. Until that engine-owned auth flow exists, the OpenAI API preset is the fast safe fallback: it only fills local form fields, never includes an API key, and still requires saving through the local runtime. Future OpenAI/ChatGPT account login should keep the same boundary. The GUI may show a sign-in-first provider card, call engine-owned auth endpoints to start login, open the returned authorization or verification URL, poll sanitized status, and offer disconnect. It must not store or display raw access tokens, refresh tokens, API keys, cookies, sessions, authorization codes after exchange, or provider credential files. If account login is not officially available for API use, the GUI should guide the user to the OpenAI platform to create an API key and paste it once, then clear the field after save.
+ChatGPT/OpenAI account login-first support is planned where officially supported. The GUI now shows an OpenAI account login card that calls only engine-owned provider-auth endpoints and renders sanitized status fields such as `status`, `authSource`, `supportsLogin`, `supportsApiKey`, `accountLabel`, `expiresAt`, redacted hints, and messages. Current runtime responses report login unavailable, so the card clearly falls back to the OpenAI API preset. Returned authorization or verification URLs are opened only when they are HTTPS or loopback. The GUI must not store or display raw access tokens, refresh tokens, API keys, cookies, sessions, authorization codes after exchange, or provider credential files. If account login is not officially available for API use, the GUI should guide the user to the OpenAI platform to create an API key and paste it once, then clear the field after save.
 
 ## SSE and bridge behavior
 

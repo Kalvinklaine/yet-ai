@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBridgeAdapter, type BridgeHost, type HostReadyPayload } from "./bridge/bridgeAdapter";
+import { disconnectProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse } from "./services/providerAuthClient";
 import { listProviders, saveProvider, type ProviderSummary, type ProviderWriteRequest } from "./services/providersClient";
 import { getCaps, getModels, getPing, isLoopbackRuntimeUrl, productIdentity, productIdentityWarning, type CapsResponse, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
@@ -136,6 +137,9 @@ export function App() {
   const [connectionError, setConnectionError] = useState<RuntimeError | null>(null);
   const [identityWarnings, setIdentityWarnings] = useState<string[]>([]);
   const [providerError, setProviderError] = useState<RuntimeError | null>(null);
+  const [providerAuthError, setProviderAuthError] = useState<RuntimeError | null>(null);
+  const [providerAuthStatus, setProviderAuthStatus] = useState<ProviderAuthResponse | null>(null);
+  const [providerAuthUrlWarning, setProviderAuthUrlWarning] = useState<string | null>(null);
   const [chatError, setChatError] = useState<RuntimeError | null>(null);
   const [providerForm, setProviderForm] = useState<ProviderForm>(emptyProviderForm);
   const [selectedProviderId, setSelectedProviderId] = useState<string | undefined>();
@@ -219,10 +223,23 @@ export function App() {
     }
   }, [settings]);
 
+  const refreshProviderAuthStatus = useCallback(async () => {
+    setProviderAuthError(null);
+    setProviderAuthUrlWarning(null);
+    const result = await getProviderAuthStatus(settings, "openai");
+    if (result.ok) {
+      setProviderAuthStatus(result.data);
+    } else {
+      setProviderAuthStatus(null);
+      setProviderAuthError(result.error);
+    }
+  }, [settings]);
+
   const connect = useCallback(async () => {
     await refreshRuntime();
     await refreshProviders();
-  }, [refreshProviders, refreshRuntime]);
+    await refreshProviderAuthStatus();
+  }, [refreshProviderAuthStatus, refreshProviders, refreshRuntime]);
 
   useEffect(() => {
     void connect();
@@ -289,6 +306,41 @@ export function App() {
       enabled: preset.enabled ?? true,
       apiKey: "",
     });
+  };
+
+  const applyOpenAiApiPreset = () => {
+    const preset = providerPresets.find((item) => item.id === "openai-api");
+    if (preset) {
+      applyProviderPreset(preset);
+    }
+  };
+
+  const startOpenAiLogin = async () => {
+    setProviderAuthError(null);
+    setProviderAuthUrlWarning(null);
+    const result = await startProviderAuth(settings, "openai");
+    if (!result.ok) {
+      setProviderAuthError(result.error);
+      return;
+    }
+    setProviderAuthStatus(result.data);
+    const authUrl = result.data.authorizationUrl ?? result.data.verificationUrl;
+    if (authUrl) {
+      openSafeAuthUrl(authUrl, setProviderAuthUrlWarning);
+    }
+  };
+
+  const disconnectOpenAiLogin = async () => {
+    setProviderAuthError(null);
+    setProviderAuthUrlWarning(null);
+    const result = await disconnectProviderAuth(settings, "openai");
+    if (result.ok) {
+      setProviderAuthStatus(result.data);
+      await refreshProviders();
+      await refreshRuntime();
+    } else {
+      setProviderAuthError(result.error);
+    }
   };
 
   const startSse = () => {
@@ -379,6 +431,24 @@ export function App() {
         <p className="subtle">ChatGPT/OpenAI account login is planned where officially supported. OpenAI API-key setup is the current safe fallback.</p>
         <p className="subtle">Current chat uses OpenAI-compatible providers only. Ollama is available here through its OpenAI-compatible /v1 endpoint; native Ollama chat is future work.</p>
         {providerError && <ErrorBox error={providerError} />}
+        <div className="provider-item stack">
+          <div className="row">
+            <h3>OpenAI account login</h3>
+            <span className={providerAuthStatus?.configured ? "badge ok" : "badge warn"}>{providerAuthStatus?.status ?? "not checked"}</span>
+          </div>
+          <p className="subtle">Login-first setup is handled only by the local runtime. The GUI shows sanitized status and never stores provider auth state in browser storage.</p>
+          {providerAuthError && <ErrorBox error={providerAuthError} />}
+          {providerAuthUrlWarning && <div className="error">{providerAuthUrlWarning}</div>}
+          {providerAuthStatus?.supportsLogin === false && <p>OpenAI account login is planned/not available yet; use API key fallback.</p>}
+          {providerAuthStatus?.message && <span>{providerAuthStatus.message}</span>}
+          {providerAuthStatus && <ProviderAuthDetails status={providerAuthStatus} />}
+          <div className="row">
+            <button type="button" onClick={() => void refreshProviderAuthStatus()}>Refresh login status</button>
+            <button type="button" onClick={() => void startOpenAiLogin()} disabled={providerAuthStatus?.supportsLogin === false}>Login with OpenAI</button>
+            <button type="button" onClick={() => void disconnectOpenAiLogin()} disabled={!providerAuthStatus?.configured || providerAuthStatus.authSource === "api_key"}>Disconnect login</button>
+            <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>
+          </div>
+        </div>
         <div className="grid">
           <form className="stack" onSubmit={(event) => void submitProvider(event)}>
             <div className="stack">
@@ -498,6 +568,43 @@ export function App() {
       </section>
     </main>
   );
+}
+
+function ProviderAuthDetails({ status }: { status: ProviderAuthResponse }) {
+  return (
+    <div className="stack">
+      <span>Configured: {String(status.configured)}</span>
+      <span>Auth source: {status.authSource}</span>
+      <span>Login supported: {String(status.supportsLogin)}</span>
+      <span>API key fallback supported: {String(status.supportsApiKey)}</span>
+      {status.accountLabel && <span>Account: {status.accountLabel}</span>}
+      {status.expiresAt && <span>Expires: {status.expiresAt}</span>}
+      {status.redacted && <span>Secret configured: {status.redacted}</span>}
+      {status.lastError && <span>Last error: {status.lastError}</span>}
+      {status.pollIntervalSeconds && <span>Poll interval: {status.pollIntervalSeconds} seconds</span>}
+    </div>
+  );
+}
+
+function openSafeAuthUrl(url: string, setWarning: (warning: string | null) => void) {
+  if (!isSafeAuthUrl(url)) {
+    setWarning("Provider auth URL was not opened because it is not HTTPS or loopback.");
+    return;
+  }
+  setWarning(null);
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function isSafeAuthUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (url.protocol === "https:") {
+      return true;
+    }
+    return isLoopbackRuntimeUrl(url.origin);
+  } catch {
+    return false;
+  }
 }
 
 function ErrorBox({ error }: { error: RuntimeError }) {
