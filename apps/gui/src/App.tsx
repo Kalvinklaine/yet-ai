@@ -19,6 +19,14 @@ type ProviderForm = {
   modelDisplayName: string;
 };
 
+type ProviderPreset = {
+  id: string;
+  label: string;
+  description: string;
+  form: Omit<ProviderForm, "apiKey" | "enabled">;
+  enabled?: boolean;
+};
+
 const emptyProviderForm: ProviderForm = {
   providerId: "openai-local",
   kind: "openai-compatible",
@@ -30,6 +38,79 @@ const emptyProviderForm: ProviderForm = {
   modelId: "gpt-4o-mini",
   modelDisplayName: "gpt-4o-mini",
 };
+
+const providerPresets: ProviderPreset[] = [
+  {
+    id: "openai-compatible-custom",
+    label: "OpenAI-compatible /v1",
+    description: "Custom OpenAI-compatible endpoint; add your provider URL and key locally.",
+    form: {
+      providerId: "openai-compatible-custom",
+      kind: "openai-compatible",
+      displayName: "OpenAI-Compatible Provider",
+      baseUrl: "https://api.openai.com/v1",
+      authType: "api_key",
+      modelId: "gpt-4o-mini",
+      modelDisplayName: "gpt-4o-mini",
+    },
+  },
+  {
+    id: "lm-studio-local",
+    label: "LM Studio local",
+    description: "Common LM Studio OpenAI-compatible local server default.",
+    form: {
+      providerId: "lm-studio-local",
+      kind: "openai-compatible",
+      displayName: "LM Studio Local",
+      baseUrl: "http://127.0.0.1:1234/v1",
+      authType: "none",
+      modelId: "local-model",
+      modelDisplayName: "local-model",
+    },
+  },
+  {
+    id: "localai-local",
+    label: "LocalAI local",
+    description: "Common LocalAI OpenAI-compatible local server default.",
+    form: {
+      providerId: "localai-local",
+      kind: "openai-compatible",
+      displayName: "LocalAI Local",
+      baseUrl: "http://127.0.0.1:8080/v1",
+      authType: "none",
+      modelId: "local-model",
+      modelDisplayName: "local-model",
+    },
+  },
+  {
+    id: "ollama-openai-compatible",
+    label: "Ollama OpenAI-compatible",
+    description: "Uses Ollama's OpenAI-compatible /v1 API; native Ollama chat is future work.",
+    form: {
+      providerId: "ollama-openai-compatible",
+      kind: "openai-compatible",
+      displayName: "Ollama OpenAI-Compatible",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      authType: "none",
+      modelId: "llama3.2",
+      modelDisplayName: "llama3.2",
+    },
+  },
+  {
+    id: "custom",
+    label: "Custom",
+    description: "Blank custom local-first provider form.",
+    form: {
+      providerId: "custom-provider",
+      kind: "openai-compatible",
+      displayName: "Custom Provider",
+      baseUrl: "http://127.0.0.1:8080/v1",
+      authType: "api_key",
+      modelId: "custom-model",
+      modelDisplayName: "custom-model",
+    },
+  },
+];
 
 export function App() {
   const [baseUrl, setBaseUrl] = useState(defaultBaseUrl);
@@ -187,6 +268,15 @@ export function App() {
     });
   };
 
+  const applyProviderPreset = (preset: ProviderPreset) => {
+    setSelectedProviderId(undefined);
+    setProviderForm({
+      ...preset.form,
+      enabled: preset.enabled ?? true,
+      apiKey: "",
+    });
+  };
+
   const startSse = () => {
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -272,9 +362,21 @@ export function App() {
       <section className="card stack">
         <h2>Provider setup</h2>
         <p className="subtle">Provider requests go to the local runtime. API key input is cleared after submit and is not written to browser storage.</p>
+        <p className="subtle">Current chat uses OpenAI-compatible providers only. Ollama is available here through its OpenAI-compatible /v1 endpoint; native Ollama chat is future work.</p>
         {providerError && <ErrorBox error={providerError} />}
         <div className="grid">
           <form className="stack" onSubmit={(event) => void submitProvider(event)}>
+            <div className="stack">
+              <strong>Quick presets</strong>
+              <div className="row">
+                {providerPresets.map((preset) => (
+                  <button type="button" key={preset.id} onClick={() => applyProviderPreset(preset)} title={preset.description}>
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+              <span className="subtle">Presets only fill provider fields. They never include API keys and do not contact providers from the GUI.</span>
+            </div>
             <div className="form-grid">
               <label>
                 Provider id

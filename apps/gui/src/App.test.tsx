@@ -39,6 +39,54 @@ describe("provider secret boundary", () => {
     expect(JSON.stringify(localStorage)).not.toContain(secret);
     expect(JSON.stringify(sessionStorage)).not.toContain(secret);
   });
+
+  it("provider presets fill OpenAI-compatible fields without an API key", async () => {
+    mockRuntimeResponses();
+    renderApp();
+
+    await act(async () => {
+      findButton("LM Studio local").click();
+    });
+
+    expect(findInputValue("lm-studio-local")).toBeDefined();
+    expect(findInputValue("http://127.0.0.1:1234/v1")).toBeDefined();
+    expect(findInputValue("local-model")).toBeDefined();
+    expect(findSelectValue("openai-compatible")).toBeDefined();
+    expect(apiKeyInput().value).toBe("");
+
+    await act(async () => {
+      findButton("Ollama OpenAI-compatible").click();
+    });
+
+    expect(findInputValue("ollama-openai-compatible")).toBeDefined();
+    expect(findInputValue("http://127.0.0.1:11434/v1")).toBeDefined();
+    expect(findInputValue("llama3.2")).toBeDefined();
+    expect(apiKeyInput().value).toBe("");
+    expect(container?.textContent).toContain("native Ollama chat is future work");
+  });
+
+  it("submit clears preset API key input and keeps secrets out of browser storage", async () => {
+    const secret = "sk-test-preset-secret";
+    mockRuntimeResponses();
+    renderApp();
+
+    await act(async () => {
+      findButton("OpenAI-compatible /v1").click();
+    });
+    await act(async () => {
+      setInputValue(apiKeyInput(), secret);
+    });
+    expect(apiKeyInput().value).toBe(secret);
+
+    await act(async () => {
+      findButton("Create provider").click();
+    });
+
+    expect(apiKeyInput().value).toBe("");
+    expect(JSON.stringify(localStorage)).not.toContain(secret);
+    expect(JSON.stringify(sessionStorage)).not.toContain(secret);
+    expect(fetchMock.mock.calls.every(([url]) => String(url).startsWith("http://127.0.0.1:8001/"))).toBe(true);
+  });
 });
 
 describe("host.ready runtime bootstrap", () => {
@@ -79,3 +127,92 @@ describe("host.ready runtime bootstrap", () => {
     expect(JSON.stringify(sessionStorage)).not.toContain(token);
   });
 });
+
+function renderApp() {
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  act(() => {
+    root?.render(<App />);
+  });
+}
+
+function mockRuntimeResponses() {
+  fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (init?.method === "POST" && url.endsWith("/v1/providers")) {
+      return Promise.resolve(jsonResponse({
+        id: "openai-compatible-custom",
+        kind: "openai-compatible",
+        displayName: "OpenAI-Compatible Provider",
+        enabled: true,
+        baseUrl: "https://api.openai.com/v1",
+        auth: { type: "api_key", configured: true, redacted: "sk-...test" },
+        models: [{ id: "gpt-4o-mini", displayName: "gpt-4o-mini" }],
+        capabilities: { chat: true, completion: false, embeddings: false },
+      }));
+    }
+    if (url.endsWith("/v1/ping")) {
+      return Promise.resolve(jsonResponse({
+        productId: "yet-ai",
+        displayName: "Yet AI",
+        version: "0.0.0",
+        ready: true,
+        serverTime: "2026-05-24T00:00:00Z",
+      }));
+    }
+    if (url.endsWith("/v1/caps")) {
+      return Promise.resolve(jsonResponse({
+        productId: "yet-ai",
+        protocolVersion: "2026-05-15",
+        runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" },
+        capabilities: [],
+        features: {},
+        providers: [],
+        ide: { bridge: true, lsp: false },
+      }));
+    }
+    if (url.endsWith("/v1/models")) {
+      return Promise.resolve(jsonResponse({ models: [] }));
+    }
+    if (url.endsWith("/v1/providers")) {
+      return Promise.resolve(jsonResponse({ providers: [], cloudRequired: false, providerAccess: "direct" }));
+    }
+    return Promise.resolve(jsonResponse({}));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+}
+
+function jsonResponse(body: unknown) {
+  return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+}
+
+function findButton(name: string) {
+  const button = Array.from(container?.querySelectorAll<HTMLButtonElement>("button") ?? []).find((item) => item.textContent === name);
+  if (!button) {
+    throw new Error(`Button not found: ${name}`);
+  }
+  return button;
+}
+
+function findInputValue(value: string) {
+  return Array.from(container?.querySelectorAll<HTMLInputElement>("input") ?? []).find((input) => input.value === value);
+}
+
+function findSelectValue(value: string) {
+  return Array.from(container?.querySelectorAll<HTMLSelectElement>("select") ?? []).find((select) => select.value === value);
+}
+
+function apiKeyInput() {
+  const input = Array.from(container?.querySelectorAll<HTMLInputElement>('input[type="password"]') ?? [])[1];
+  if (!input) {
+    throw new Error("API key input not found");
+  }
+  return input;
+}
+
+function setInputValue(input: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
