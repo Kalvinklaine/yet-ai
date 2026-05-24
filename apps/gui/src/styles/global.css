@@ -169,6 +169,25 @@ pre,
   padding: 14px;
 }
 
+.readiness-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #e2e7f0;
+  border-radius: 16px;
+  background: #f8faff;
+  padding: 14px;
+}
+
+.readiness-card.ready {
+  border-color: #bce8cc;
+  background: #f4fbf7;
+}
+
+.readiness-card.warn {
+  border-color: #ffe2a3;
+  background: #fffaf0;
+}
+
 .chat-panel {
   display: grid;
   gap: 12px;

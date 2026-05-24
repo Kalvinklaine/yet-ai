@@ -32,7 +32,7 @@ afterEach(() => {
 
 describe("provider secret boundary", () => {
   it("renders OpenAI login unavailable with API key fallback", async () => {
-    mockRuntimeResponses();
+    mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
 
     await flushAsync();
@@ -155,7 +155,7 @@ describe("provider secret boundary", () => {
   });
 
   it("provider presets fill OpenAI-compatible fields without an API key", async () => {
-    mockRuntimeResponses();
+    mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
 
     fetchMock.mockClear();
@@ -198,7 +198,7 @@ describe("provider secret boundary", () => {
 
   it("submit clears preset API key input and keeps secrets out of browser storage", async () => {
     const secret = "sk-test-preset-secret";
-    mockRuntimeResponses();
+    mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
 
     await act(async () => {
@@ -260,8 +260,36 @@ describe("host.ready runtime bootstrap", () => {
 });
 
 describe("chat panel", () => {
-  it("sending message renders user bubble and clears input after accepted command", async () => {
+  it("shows provider/model CTA and disables send when no model is ready", async () => {
     mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Chat readiness");
+    expect(container?.textContent).toContain("0 enabled providers");
+    expect(container?.textContent).toContain("Model: No model available");
+    expect(container?.textContent).toContain("Configure an enabled OpenAI API key fallback provider with a model before sending the first GPT message.");
+    expect(findButton("Send").disabled).toBe(true);
+  });
+
+  it("shows configured provider and first runtime model readiness", async () => {
+    mockRuntimeResponses({
+      providers: [enabledProvider()],
+      models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("1 enabled provider");
+    expect(container?.textContent).toContain("Model: GPT-4o mini (openai-api)");
+    expect(container?.textContent).toContain("Ready to send using GPT-4o mini.");
+    expect(findButton("Send").disabled).toBe(false);
+  });
+
+  it("sending message renders user bubble and clears input after accepted command", async () => {
+    mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
 
     await flushAsync();
@@ -281,6 +309,7 @@ describe("chat panel", () => {
 
   it("renders assistant streaming text from SSE events", async () => {
     mockRuntimeResponses({
+      ...readyRuntimeOptions(),
       sseEvents: [
         { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
         { seq: 1, type: "stream_started", chatId: "chat-001", payload: {} },
@@ -308,7 +337,7 @@ describe("chat panel", () => {
 
   it("renders visible safe error bubbles for request and SSE errors", async () => {
     const rawToken = "Bearer abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    mockRuntimeResponses({ commandStatus: 500, commandError: `failed ${rawToken}` });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), commandStatus: 500, commandError: `failed ${rawToken}` });
     renderApp();
 
     await flushAsync();
@@ -327,7 +356,7 @@ describe("chat panel", () => {
   });
 
   it("changing chat id clears messages for the new chat", async () => {
-    mockRuntimeResponses();
+    mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
 
     await flushAsync();
@@ -352,7 +381,7 @@ describe("chat panel", () => {
   it("does not write chat messages or secrets to browser storage", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     const secret = "sk-chat-secret-value";
-    mockRuntimeResponses();
+    mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
 
     await flushAsync();
@@ -389,6 +418,8 @@ type MockRuntimeOptions = {
   sseEvents?: unknown[];
   commandStatus?: number;
   commandError?: string;
+  providers?: unknown[];
+  models?: unknown[];
 };
 
 function providerAuthResponse(status: ProviderAuthStatus): ProviderAuthResponse {
@@ -406,6 +437,26 @@ function providerAuthResponse(status: ProviderAuthStatus): ProviderAuthResponse 
     expiresAt: status === "connected" || status === "expired" ? "2026-05-24T01:00:00Z" : undefined,
     redacted: status === "api_key_configured" ? "sk-...test" : undefined,
     pollIntervalSeconds: status === "pending" ? 5 : undefined,
+  };
+}
+
+function enabledProvider() {
+  return {
+    id: "openai-api",
+    kind: "openai-compatible",
+    displayName: "OpenAI API",
+    enabled: true,
+    baseUrl: "https://api.openai.com/v1",
+    auth: { type: "api_key", configured: true, redacted: "sk-...test" },
+    models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini" }],
+    capabilities: { chat: true, completion: false, embeddings: false },
+  };
+}
+
+function readyRuntimeOptions(): Pick<MockRuntimeOptions, "providers" | "models"> {
+  return {
+    providers: [enabledProvider()],
+    models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }],
   };
 }
 
@@ -489,10 +540,10 @@ function mockRuntimeResponses(options: MockRuntimeOptions = {}) {
       }));
     }
     if (url.endsWith("/v1/models")) {
-      return Promise.resolve(jsonResponse({ models: [] }));
+      return Promise.resolve(jsonResponse({ models: options.models ?? [] }));
     }
     if (url.endsWith("/v1/providers")) {
-      return Promise.resolve(jsonResponse({ providers: [], cloudRequired: false, providerAccess: "direct" }));
+      return Promise.resolve(jsonResponse({ providers: options.providers ?? [], cloudRequired: false, providerAccess: "direct" }));
     }
     return Promise.resolve(jsonResponse({}));
   });

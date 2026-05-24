@@ -179,6 +179,12 @@ export function App() {
 
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
   const connectionStatus = connectionError ? "error" : ping?.ready ? "connected" : "not checked";
+  const enabledProviders = useMemo(() => providers.filter((provider) => provider.enabled), [providers]);
+  const selectedModel = useMemo(() => models[0] ?? enabledProviders.flatMap((provider) => provider.models.map((model) => ({ ...model, providerId: model.providerId ?? provider.id })))[0], [enabledProviders, models]);
+  const canSendChat = enabledProviders.length > 0 && Boolean(selectedModel);
+  const chatReadinessMessage = canSendChat
+    ? `Ready to send using ${selectedModel?.displayName ?? "the default model"}.`
+    : "Configure an enabled OpenAI API key fallback provider with a model before sending the first GPT message.";
 
   const applyHostReady = useCallback((payload: HostReadyPayload | undefined) => {
     if (!payload?.runtimeUrl || !payload.sessionToken || !isLoopbackRuntimeUrl(payload.runtimeUrl)) {
@@ -589,14 +595,19 @@ export function App() {
       </section>
 
       <section className="card stack">
-        <h2>Model selection placeholder</h2>
-        <select disabled={models.length === 0}>
-          {models.length === 0 ? <option>No runtime models available</option> : models.map((model) => <option key={`${model.providerId ?? "provider"}:${model.id}`}>{model.displayName}</option>)}
-        </select>
-      </section>
-
-      <section className="card stack">
         <h2>Chat</h2>
+        <div className={`readiness-card ${canSendChat ? "ready" : "warn"}`}>
+          <div className="row">
+            <strong>Chat readiness</strong>
+            <span className={`badge ${connectionStatus === "connected" ? "ok" : connectionStatus === "error" ? "warn" : ""}`}>runtime {connectionStatus}</span>
+            <span className={enabledProviders.length > 0 ? "badge ok" : "badge warn"}>{enabledProviders.length} enabled provider{enabledProviders.length === 1 ? "" : "s"}</span>
+          </div>
+          <div className="stack">
+            <span>Model: {selectedModel ? `${selectedModel.displayName}${selectedModel.providerId ? ` (${selectedModel.providerId})` : ""}` : "No model available"}</span>
+            <span>{chatReadinessMessage}</span>
+            {!canSendChat && <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>}
+          </div>
+        </div>
         {chatError && <ErrorBox error={chatError} />}
         <div className="form-grid">
           <label>
@@ -611,7 +622,7 @@ export function App() {
         <form className="stack" onSubmit={(event) => void submitChat(event)}>
           <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder="Ask Yet AI..." />
           <div className="row">
-            <button type="submit">Send</button>
+            <button type="submit" disabled={!canSendChat}>Send</button>
             <button type="button" onClick={stopSse}>Stop SSE</button>
           </div>
         </form>
