@@ -32,6 +32,14 @@ npm run prepare:vscode-preview -- --no-build
 
 Generated outputs under `target/`, `apps/gui/dist/`, `apps/plugins/vscode/media/gui/`, `apps/plugins/vscode/bin/`, and extension `out/` are ignored and must not be committed.
 
+After preparing the preview, run the local artifact smoke without launching VS Code or using provider credentials:
+
+```sh
+npm run smoke:vscode-preview
+```
+
+The smoke checks the copied `yet-lsp` binary, packaged GUI `media/gui/index.html`, compiled `out/extension.js`, manifest `main`, and copied GUI asset references. If preparation has not been run, it fails with the missing artifact and the command to run.
+
 Repository-level validation is available from the root:
 
 ```sh
@@ -41,7 +49,7 @@ npm run check
 Required verification for this package:
 
 ```sh
-export PATH="$HOME/.cargo/bin:$PATH"; npm run prepare:vscode-preview && npm run check
+export PATH="$HOME/.cargo/bin:$PATH"; npm run prepare:vscode-preview && npm run smoke:vscode-preview && npm run check
 ```
 
 ## VS Code dev-preview run guide
@@ -138,6 +146,7 @@ This path does not use a Yet AI account, hosted workspace, managed model gateway
 
 Use this checklist after the steps above:
 
+- `npm run smoke:vscode-preview` passes after preparation without launching VS Code or using provider credentials.
 - Engine binary exists at `apps/plugins/vscode/bin/yet-lsp` or at the configured absolute `yetai.engineBinaryPath`.
 - `apps/gui/dist/index.html` exists after `npm run prepare:vscode-preview`.
 - `apps/plugins/vscode/media/gui/index.html` exists after `npm run prepare:vscode-preview`.
