@@ -73,6 +73,7 @@ Provider setup includes quick presets that only prefill local form fields. They 
 
 Current chat generation selects an enabled `openai-compatible` provider in the runtime. The quick presets therefore target OpenAI-compatible `/v1` endpoints:
 
+- OpenAI API, using `https://api.openai.com/v1`, provider kind `openai-compatible`, API-key auth, a sensible default model, and a blank API key field.
 - OpenAI-compatible custom `/v1`, with `https://api.openai.com/v1` as an editable example endpoint and a blank API key field.
 - LM Studio local, using the common OpenAI-compatible server default `http://127.0.0.1:1234/v1`.
 - LocalAI local, using the common OpenAI-compatible server default `http://127.0.0.1:8080/v1`.
@@ -81,7 +82,7 @@ Current chat generation selects an enabled `openai-compatible` provider in the r
 
 Native provider-specific chat adapters, including native Ollama chat, are future work for this GUI/runtime MVP. Until then, configure Ollama through its OpenAI-compatible `/v1` API if that endpoint is enabled in your local Ollama version.
 
-Future OpenAI/ChatGPT account login should keep the same boundary. The GUI may show a sign-in-first provider card, call engine-owned auth endpoints to start login, open the returned authorization or verification URL, poll sanitized status, and offer disconnect. It must not store or display raw access tokens, refresh tokens, API keys, cookies, sessions, authorization codes after exchange, or provider credential files. If account login is not officially available for API use, the GUI should guide the user to the OpenAI platform to create an API key and paste it once, then clear the field after save.
+ChatGPT/OpenAI account login-first support is planned where officially supported. Until that engine-owned auth flow exists, the OpenAI API preset is the fast safe fallback: it only fills local form fields, never includes an API key, and still requires saving through the local runtime. Future OpenAI/ChatGPT account login should keep the same boundary. The GUI may show a sign-in-first provider card, call engine-owned auth endpoints to start login, open the returned authorization or verification URL, poll sanitized status, and offer disconnect. It must not store or display raw access tokens, refresh tokens, API keys, cookies, sessions, authorization codes after exchange, or provider credential files. If account login is not officially available for API use, the GUI should guide the user to the OpenAI platform to create an API key and paste it once, then clear the field after save.
 
 ## SSE and bridge behavior
 
