@@ -38,13 +38,14 @@ class YetBrowserPanel : JPanel(BorderLayout()) {
     init {
         add(browser.component, BorderLayout.CENTER)
         query.addHandler { raw ->
-            if (!BridgeMessages.isGuiReady(raw)) {
+            val guiReady = BridgeMessages.parseGuiReady(raw)
+            if (guiReady == null) {
                 logger.info("Yet AI rejected invalid GUI bridge message")
                 return@addHandler null
             }
             logger.info("Yet AI received gui.ready")
             val settings = RuntimeSettings.current()
-            sendToGui(BridgeMessages.hostReady(settings, BridgeMessages.requestId(raw)))
+            sendToGui(BridgeMessages.hostReady(settings, guiReady.requestId))
             sendToGui(BridgeMessages.openedFromCommand())
             null
         }

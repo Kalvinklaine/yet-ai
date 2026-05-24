@@ -14,6 +14,9 @@ repositories {
 }
 
 dependencies {
+    testImplementation(kotlin("test"))
+    testImplementation("junit:junit:4.13.2")
+
     intellijPlatform {
         intellijIdeaCommunity("2024.3.7")
         bundledPlugin("com.intellij.java")
@@ -37,6 +40,10 @@ intellijPlatform {
 }
 
 tasks {
+    test {
+        useJUnitPlatform()
+    }
+
     patchPluginXml {
         pluginId = "ai.yet.plugin"
         pluginName = "Yet AI"

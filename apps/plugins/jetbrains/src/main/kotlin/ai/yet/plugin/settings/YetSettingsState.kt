@@ -12,7 +12,6 @@ class YetSettingsState : PersistentStateComponent<YetSettingsState.State> {
     data class State(
         var runtimeUrl: String = "http://127.0.0.1:8001",
         var guiDevUrl: String = "",
-        var sessionToken: String = "",
     )
 
     private var state = State()

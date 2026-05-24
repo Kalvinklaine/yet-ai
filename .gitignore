@@ -12,6 +12,9 @@ dist/
 target/
 .gradle/
 build/
+apps/plugins/jetbrains/.intellijPlatform/
+apps/plugins/jetbrains/.gradle/
+apps/plugins/jetbrains/build/
 
 # Future Yet AI private project state (shareable subfiles must be explicitly allowlisted later)
 .yet-ai/
