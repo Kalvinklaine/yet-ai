@@ -64,6 +64,10 @@ Non-loopback runtime URLs are rejected with a visible configuration error before
 - `GET /v1/chats/subscribe?chat_id=...` through fetch streaming SSE
 - Browser, VS Code, and JetBrains-style logical bridge detection
 
+## Chat panel
+
+The primary chat area renders a message-oriented local chat view with user, assistant, and safe error bubbles. Sending opens the fetch-streaming SSE subscription for the active chat, posts `user_message` through the local runtime, clears the input only after the command is accepted, and appends streaming assistant text from snapshot/start/delta/finish events. The raw SSE timeline remains available under `SSE debug details` for development troubleshooting.
+
 ## Provider secret handling
 
 The provider form allows entering an API key for create/update. After submit, the key field is cleared. The UI renders only `auth.configured` and `auth.redacted` returned by the runtime. Do not add localStorage or sessionStorage persistence for provider keys.
