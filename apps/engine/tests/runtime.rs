@@ -6,6 +6,7 @@ use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tower::ServiceExt;
 use yet_lsp::identity::ProductIdentity;
+use yet_lsp::secret_store::{FileSecretStore, ProviderSecretStore, SecretKind};
 use yet_lsp::storage::{resolve_storage_paths, StoragePaths};
 use yet_lsp::{app, default_bind_addr, AppState, AuthToken};
 const TEST_TOKEN: &str = "test-token";
@@ -955,6 +956,53 @@ async fn get_and_list_provider_never_return_raw_api_key() {
 }
 
 #[tokio::test]
+async fn provider_secret_store_corruption_does_not_expose_raw_secret() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-corrupt-store-secret-abcd";
+    let provider = json!({
+        "id": "corrupt-secret-provider",
+        "kind": "custom",
+        "displayName": "Corrupt Secret Provider",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:9004",
+        "auth": { "type": "api_key", "apiKey": api_key }
+    });
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let secret_path = FileSecretStore::new(&paths.config_dir)
+        .secret_path("corrupt-secret-provider", SecretKind::ApiKey)
+        .unwrap();
+    std::fs::write(&secret_path, r#"{"value":"sk-corrupt-store-secret-abcd""#).unwrap();
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/providers/corrupt-secret-provider",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["auth"]["configured"], false);
+    assert!(!body.to_string().contains(api_key));
+    assert!(!body.to_string().contains("corrupt-store-secret"));
+}
+
+#[tokio::test]
 async fn update_secret_redacts_old_and_new_secrets() {
     let app = test_app();
     let old_key = "sk-old-provider-secret-abcd";
@@ -1090,7 +1138,12 @@ async fn provider_storage_path_uses_yet_ai_config_dir_not_project_state() {
         .join("providers.d/storage-provider.json")
         .exists());
     let stored = std::fs::read_to_string(config_file).unwrap();
-    assert!(stored.contains(api_key));
+    assert!(!stored.contains(api_key));
+    let secret = FileSecretStore::new(&paths.config_dir)
+        .get_secret("storage-provider", SecretKind::ApiKey)
+        .await
+        .unwrap();
+    assert_eq!(secret.as_deref(), Some(api_key));
 }
 
 #[tokio::test]

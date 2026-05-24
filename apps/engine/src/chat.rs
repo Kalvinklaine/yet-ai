@@ -179,6 +179,9 @@ impl ChatRuntime {
             .into_iter()
             .find(|provider| provider.enabled && provider.kind == ProviderKind::OpenAiCompatible)
             .ok_or(ChatError::NoProvider)?;
+        let provider = providers::get_provider_config_with_secrets(config_dir, &provider.id)
+            .await
+            .map_err(|_| ChatError::ProviderConfig)?;
         let model = provider
             .models
             .first()

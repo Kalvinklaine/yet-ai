@@ -118,11 +118,10 @@ pub struct IdeCaps {
 }
 
 async fn caps(_auth: Authenticated, State(state): State<AppState>) -> Response {
-    let provider_list =
-        match providers::list_provider_configs(&state.storage_paths.config_dir).await {
-            Ok(providers) => providers,
-            Err(error) => return provider_error(error),
-        };
+    let provider_list = match providers::provider_summaries(&state.storage_paths.config_dir).await {
+        Ok(providers) => providers,
+        Err(error) => return provider_error(error),
+    };
     Json(CapsResponse {
         product_id: state.identity.product.id,
         protocol_version: "2026-05-15".to_string(),
@@ -190,8 +189,8 @@ async fn providers_get(
     State(state): State<AppState>,
     Path(provider_id): Path<String>,
 ) -> Response {
-    match providers::get_provider_config(&state.storage_paths.config_dir, &provider_id).await {
-        Ok(provider) => Json(provider.summary()).into_response(),
+    match providers::provider_summary(&state.storage_paths.config_dir, &provider_id).await {
+        Ok(provider) => Json(provider).into_response(),
         Err(error) => provider_error(error),
     }
 }
