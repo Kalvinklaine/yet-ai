@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/provider-auth-disconnect-response.schema.json",
+  "title": "Engine Provider Auth Disconnect Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["provider", "configured", "status", "authSource", "supportsLogin", "supportsApiKey", "cloudRequired", "success"],
+  "properties": {
+    "provider": {
+      "$ref": "#/$defs/providerId"
+    },
+    "configured": {
+      "type": "boolean"
+    },
+    "status": {
+      "$ref": "#/$defs/authStatus"
+    },
+    "authSource": {
+      "$ref": "#/$defs/authSource"
+    },
+    "supportsLogin": {
+      "type": "boolean"
+    },
+    "supportsApiKey": {
+      "type": "boolean"
+    },
+    "accountLabel": {
+      "type": "string",
+      "minLength": 1
+    },
+    "redacted": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lastError": {
+      "type": "string",
+      "minLength": 1
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "$defs": {
+    "providerId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+    },
+    "authStatus": {
+      "type": "string",
+      "enum": [
+        "not_configured",
+        "api_key_configured",
+        "login_available",
+        "login_unavailable",
+        "pending",
+        "connected",
+        "expired",
+        "revoked",
+        "error"
+      ]
+    },
+    "authSource": {
+      "type": "string",
+      "enum": ["none", "api_key", "oauth", "device", "browser"]
+    }
+  }
+}

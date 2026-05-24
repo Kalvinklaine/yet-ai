@@ -1,0 +1,10 @@
+{
+  "provider": "openai",
+  "configured": false,
+  "status": "login_unavailable",
+  "authSource": "none",
+  "supportsLogin": false,
+  "supportsApiKey": true,
+  "cloudRequired": false,
+  "message": "OpenAI account login is not available for this local provider path. Create an API key in the provider console and paste it once into Yet AI."
+}

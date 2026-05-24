@@ -1,0 +1,16 @@
+{
+  "provider": "openai",
+  "configured": false,
+  "status": "pending",
+  "authSource": "oauth",
+  "supportsLogin": true,
+  "supportsApiKey": true,
+  "authorizationUrl": "https://auth.openai.com/oauth/authorize?client_id=yet-ai-local&state=provider-login-session-001",
+  "verificationUrl": "https://auth.openai.com/activate",
+  "sessionId": "provider-login-session-001",
+  "scopes": ["model.read", "chat.write"],
+  "cloudRequired": false,
+  "success": true,
+  "pollIntervalSeconds": 3,
+  "message": "Open the authorization URL to continue signing in."
+}
