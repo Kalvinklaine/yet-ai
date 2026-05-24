@@ -17,6 +17,7 @@ apps/plugins/jetbrains/.gradle/
 apps/plugins/jetbrains/build/
 apps/plugins/vscode/media/gui/
 apps/plugins/vscode/bin/
+apps/plugins/vscode/*.vsix
 
 # Future Yet AI private project state (shareable subfiles must be explicitly allowlisted later)
 .yet-ai/
