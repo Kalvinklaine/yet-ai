@@ -47,7 +47,7 @@ Run the local smoke test from the root to exercise the engine/provider/chat path
 npm run smoke:local
 ```
 
-`npm run smoke:local` starts the Rust engine on a free loopback port through Cargo, starts a local mock OpenAI-compatible provider, configures a fake local API key, checks ping/caps/provider setup/chat command/SSE streaming, asserts the mock provider receives Authorization, and verifies the raw fake key is not present in client-visible responses or events. Prerequisites: Node 18+ with root dependencies installed and a Rust toolchain with Cargo on `PATH`.
+`npm run smoke:local` starts the Rust engine on a free loopback port through Cargo, starts a local mock OpenAI-compatible provider, configures a fake local API key, checks ping/caps/provider setup/chat command/SSE streaming, exercises provider-auth default status plus the local mock OAuth start/exchange/status/disconnect flow, asserts the mock provider receives Authorization, and verifies raw fake API keys, provider-auth fake tokens, PKCE verifier values, and mock exchange codes are not present in client-visible responses or events. Prerequisites: Node 18+ with root dependencies installed and a Rust toolchain with Cargo on `PATH`.
 
 Run repository validation from the root before publishing or handing off changes:
 

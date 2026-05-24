@@ -36,6 +36,58 @@ try {
   assert(caps.runtime?.providerAccess === "direct", "caps did not report direct provider access");
   assert(Array.isArray(caps.capabilities) && caps.capabilities.includes("chat"), "caps did not include chat capability");
 
+  const providerAuthStatus = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
+  assert(providerAuthStatus.provider === "openai", "provider-auth status returned unexpected provider");
+  assert(providerAuthStatus.configured === false, "provider-auth default status was unexpectedly configured");
+  assert(providerAuthStatus.status === "login_unavailable", "provider-auth default status was not login_unavailable");
+  assert(providerAuthStatus.authSource === "none", "provider-auth default auth source was not none");
+  assert(providerAuthStatus.supportsLogin === false, "provider-auth default status unexpectedly supports login");
+  assert(providerAuthStatus.supportsApiKey === true, "provider-auth default status did not support API-key fallback");
+  assert(providerAuthStatus.cloudRequired === false, "provider-auth default status unexpectedly requires cloud");
+
+  const providerAuthStart = await requestJson(baseUrl, "/v1/provider-auth/openai/start", {
+    method: "POST",
+    body: JSON.stringify({ mock: true })
+  });
+  assert(providerAuthStart.status === "pending", "provider-auth mock start did not return pending status");
+  assert(providerAuthStart.authSource === "oauth", "provider-auth mock start did not use oauth auth source");
+  assert(providerAuthStart.supportsLogin === true, "provider-auth mock start did not support login");
+  assert(providerAuthStart.cloudRequired === false, "provider-auth mock start unexpectedly requires cloud");
+  assert(providerAuthStart.authorizationUrl?.startsWith("http://127.0.0.1/mock-oauth/authorize"), "provider-auth mock start returned unexpected authorization URL");
+  assert(typeof providerAuthStart.sessionId === "string" && providerAuthStart.sessionId.length > 0, "provider-auth mock start did not return a session id");
+  const providerAuthState = new URL(providerAuthStart.authorizationUrl).searchParams.get("state");
+  assert(providerAuthState?.startsWith("mock-state-"), "provider-auth mock start did not return mock state");
+
+  const providerAuthExchange = await requestJson(baseUrl, "/v1/provider-auth/openai/exchange", {
+    method: "POST",
+    body: JSON.stringify({
+      sessionId: providerAuthStart.sessionId,
+      state: providerAuthState,
+      code: "mock-code-smoke"
+    })
+  });
+  assert(providerAuthExchange.configured === true, "provider-auth mock exchange did not configure auth");
+  assert(providerAuthExchange.status === "connected", "provider-auth mock exchange did not return connected status");
+  assert(providerAuthExchange.authSource === "oauth", "provider-auth mock exchange did not use oauth auth source");
+  assert(providerAuthExchange.redacted === "mock-oauth-...connected", "provider-auth mock exchange returned unexpected redacted hint");
+  assert(providerAuthExchange.cloudRequired === false, "provider-auth mock exchange unexpectedly requires cloud");
+
+  const providerAuthConnected = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
+  assert(providerAuthConnected.configured === true, "provider-auth connected status was not configured");
+  assert(providerAuthConnected.status === "connected", "provider-auth connected status was not connected");
+  assert(providerAuthConnected.authSource === "oauth", "provider-auth connected status did not use oauth auth source");
+
+  const providerAuthDisconnect = await requestJson(baseUrl, "/v1/provider-auth/openai/disconnect", {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+  assert(providerAuthDisconnect.success === true, "provider-auth disconnect did not report success");
+  assert(providerAuthDisconnect.status === "revoked", "provider-auth disconnect did not return revoked status");
+
+  const providerAuthCleared = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
+  assert(providerAuthCleared.configured === false, "provider-auth cleared status was unexpectedly configured");
+  assert(providerAuthCleared.status === "login_unavailable", "provider-auth cleared status was not login_unavailable");
+
   const providerResponse = await requestJson(baseUrl, "/v1/providers", {
     method: "POST",
     body: JSON.stringify({
@@ -76,8 +128,25 @@ try {
   assert(parsedProviderBody.stream === true, "provider request was not streaming");
   assert(parsedProviderBody.model === "smoke-model", "provider request used unexpected model");
 
-  const clientVisible = JSON.stringify({ ping, caps, providerResponse, commandResponse, events, raw });
+  const clientVisible = JSON.stringify({
+    ping,
+    caps,
+    providerAuthStatus,
+    providerAuthStart,
+    providerAuthExchange,
+    providerAuthConnected,
+    providerAuthDisconnect,
+    providerAuthCleared,
+    providerResponse,
+    commandResponse,
+    events,
+    raw
+  });
   assert(!clientVisible.includes(fakeApiKey), "raw fake provider API key leaked to client-visible output");
+  assert(!clientVisible.includes("fake-access-token"), "raw fake provider-auth access token leaked to client-visible output");
+  assert(!clientVisible.includes("fake-refresh-token"), "raw fake provider-auth refresh token leaked to client-visible output");
+  assert(!clientVisible.includes("mock-verifier"), "provider-auth PKCE verifier leaked to client-visible output");
+  assert(!clientVisible.includes("mock-code-smoke"), "provider-auth exchange code leaked to client-visible output");
 
   console.log("Local smoke test passed.");
 } finally {
