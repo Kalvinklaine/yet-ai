@@ -4,6 +4,26 @@ Yet AI is a new product inspired by the external reference project's proven engi
 
 This document defines the target architecture and implementation roadmap. It should guide scaffolding and migration decisions, but it does not require copying all the external reference project code now. Physical folder layout can be introduced gradually as each subsystem becomes real.
 
+## Implemented local baseline
+
+The repository now contains buildable MVP scaffolds for the main local-first subsystems. This baseline is for local development, contract validation, and security hardening; it is not production-ready and does not claim full assistant feature completeness.
+
+Implemented surfaces:
+
+- `apps/engine`: Rust `yet-lsp` runtime with authenticated loopback HTTP/SSE endpoints, identity-aware storage names, local provider registry/config files, redacted provider responses, model summaries, chat command submission, and the first OpenAI-compatible direct streaming path through configured provider data.
+- `apps/gui`: React/Vite browser shell with loopback-only runtime client, provider setup/status UI, chat command submission, fetch-streaming SSE parser, runtime error reporting, and browser/VS Code/JetBrains logical bridge detection.
+- `apps/plugins/vscode`: VS Code extension shell with identity-checked manifest, loopback runtime/dev URL validation, webview host, bootstrap/`host.ready` bridge, and guarded message handling.
+- `apps/plugins/jetbrains`: JetBrains plugin shell with identity checks, Gradle build/tests, loopback runtime/dev URL validation, PasswordSafe-backed local session token, JCEF host boundary, and structural JSON bridge validation.
+- `packages/contracts`: shared JSON Schemas and examples for current engine and bridge boundaries.
+
+Known limitations:
+
+- No production packaging or release flow is complete.
+- IDE plugins connect to an already running local runtime and development GUI shell paths; engine binary launch and packaged GUI asset wiring remain follow-up work unless implemented by a later task.
+- LSP completion/code-lens, full agent autonomy, indexing, tasks/knowledge, tool registry execution, shell/file mutation, and integration workflows are not implemented as production features.
+- Privileged IDE actions remain disabled until strict schemas, request correlation, origin/source checks, engine policy checks, and user confirmation flows are in place.
+- The provider baseline is intentionally narrow: local BYOK configuration plus OpenAI-compatible chat streaming. Broader provider quirks, OAuth, keychain storage, and advanced model capability handling are follow-ups.
+
 ## Architecture principles
 
 - Keep a local engine process as the stable runtime boundary for chat, tools, providers, indexing, storage, and IDE-facing services.
@@ -56,7 +76,7 @@ The engine is the local Yet AI runtime. It is not a required cloud backend and s
 - project, cache, and user config resolution based on `product/identity.json`.
 - local indexes, trajectories, tasks, knowledge, logs, and integration state.
 
-Initial implementation can be much smaller: `/v1/ping`, `/v1/caps`, one chat command endpoint, one SSE stream, and static provider placeholders are enough for a minimal baseline.
+The current MVP implementation includes `/v1/ping`, `/v1/caps`, provider registry endpoints, model summaries, one chat command endpoint, one SSE stream, and a narrow OpenAI-compatible streaming path. It remains a foundation, not a full agent runtime.
 
 Provider settings and credentials are local runtime state. The engine may store secrets in OS credential storage or protected user config, but raw secrets must not be returned to GUI-facing responses after save.
 
@@ -322,49 +342,37 @@ flowchart TD
 
 ## Phased roadmap
 
-The approved near-term implementation sequence is local-first and incremental. Runtime, provider, GUI, and plugin work should proceed in this order so credentials, direct provider calls, and host responsibilities are defined before privileged flows are added.
+The approved near-term implementation sequence is local-first and incremental. Foundation phases 1-6 now have buildable MVP baselines, but they remain development scaffolds and require hardening before production packaging or privileged workflows.
 
-### 1. Local runtime skeleton
+### 1. Local runtime skeleton — MVP baseline complete
 
-- Create the minimal local engine process only when buildable code is needed.
-- Implement health and capability contracts such as `/v1/ping` and `/v1/caps`.
-- Establish local storage roots, loopback binding, session authentication shape, and no-cloud-required capability signals.
-- Keep provider execution as placeholders until provider storage and redaction boundaries exist.
+- Implemented a minimal Rust local runtime with `/v1/ping`, `/v1/caps`, loopback binding, bearer-token authentication, identity-aware storage names, and SSE chat plumbing.
+- Remaining work: production launch lifecycle, stronger CORS/origin policy, optional LSP, shutdown/lifecycle hardening, and packaging.
 
-### 2. Provider registry, configuration, and secret redaction
+### 2. Provider registry, configuration, and secret redaction — MVP baseline complete
 
-- Define local provider configuration storage owned by the engine.
-- Add sanitized provider status responses, secret placeholders, and save/test request contracts.
-- Ensure raw provider credentials stay local and are not returned to GUI-facing clients after save.
-- Keep GUI and plugins out of provider adapter implementation and credential persistence.
+- Implemented local provider configuration storage, sanitized provider status responses, redacted secret hints, provider CRUD/test endpoints, and model summaries.
+- Remaining work: OS keychain storage, broader validation, provider-specific capability discovery, OAuth flows, and migration policy.
 
-### 3. OpenAI-compatible direct provider adapter and streaming
+### 3. OpenAI-compatible direct provider adapter and streaming — MVP baseline complete
 
-- Implement the first direct BYOK provider path for OpenAI-compatible hosted providers and local gateways.
-- Stream model output through the local runtime chat/SSE contract.
-- Preserve the no-required-cloud contract for core chat and provider execution.
-- Add focused contract and runtime tests for streaming and sanitized provider errors.
+- Implemented the first direct BYOK OpenAI-compatible chat path and normalized streamed provider chunks into local chat/SSE events.
+- Remaining work: broader streaming parser coverage, provider quirks, cancellation/shutdown handling, retries, model capability enforcement, and expanded tests.
 
-### 4. GUI local provider setup and runtime client
+### 4. GUI local provider setup and runtime client — MVP baseline complete
 
-- Build the GUI runtime client against the local engine contracts.
-- Add provider setup/status flows that submit secrets only for save/test and discard raw values after requests.
-- Render sanitized provider availability, validation errors, and model summaries from engine responses.
-- Keep the UI visually independent and avoid storing provider secrets in GUI state or browser storage.
+- Implemented a React/Vite shell with loopback runtime URL validation, token-in-memory handling, provider setup/status, secret-field clearing, chat submission, fetch-streaming SSE, and bridge diagnostics.
+- Remaining work: production UI/design system, packaged build consumption by IDE hosts, richer chat state, reconnect UX, accessibility pass, and no-secret regression coverage as surfaces expand.
 
-### 5. VS Code local runtime host
+### 5. VS Code local runtime host — MVP baseline complete
 
-- Add the VS Code host that launches or connects to the local runtime.
-- Host the packaged GUI webview and pass the local session token through the approved bridge flow.
-- Implement bridge messages needed for safe context and basic host actions before privileged IDE/tool flows.
-- Avoid duplicating provider adapters, chat runtime, or credential persistence in the extension.
+- Implemented identity-checked extension metadata, loopback runtime/dev URL validation, webview shell, safe bootstrap serialization, exact-origin dev iframe forwarding, and narrow `gui.ready`/`host.ready` bridge handling.
+- Remaining work: engine binary launch, SecretStorage for local runtime tokens, packaged GUI assets, extension-host tests, LSP wiring, and privileged IDE action policies.
 
-### 6. JetBrains local runtime host
+### 6. JetBrains local runtime host — MVP baseline complete
 
-- Add the JetBrains host that launches or connects to the local runtime.
-- Host the packaged GUI through JCEF and implement the same logical bridge contract.
-- Reuse the local runtime and provider contracts rather than adding JetBrains-specific provider behavior.
-- Add optional LSP only when completion/code-lens work starts.
+- Implemented identity-checked Gradle/plugin metadata, loopback runtime/dev URL validation, PasswordSafe local session token storage, JCEF shell, structured bridge parsing, and bridge/runtime URL tests.
+- Remaining work: engine binary launch, packaged GUI assets, plugin verifier flow, optional LSP wiring, and privileged IDE action policies.
 
 ### Follow-up contract hardening before privileged flows
 
@@ -432,12 +440,14 @@ Each subsystem should be independently buildable and testable.
 - Which parts of `product/identity.json` remain temporary before marketplace packaging.
 - Whether any external reference code is selectively imported later, and under what audit and rewrite rules.
 
-## Near-term acceptance for architecture foundation
+## Architecture foundation status
 
-This target architecture is sufficient when:
+The architecture foundation is sufficient for the current MVP baseline because:
 
 - the repo structure and subsystem boundaries are documented.
 - HTTP, SSE, LSP, postMessage, storage, provider, and integration contracts are described.
 - the roadmap avoids requiring a full external reference copy now.
 - the plan explicitly prioritizes Yet AI's new UI and design system.
-- each future subsystem has an independent build and test strategy.
+- each implemented subsystem has an independent build and test strategy.
+
+Future architecture updates should track production packaging, engine launch lifecycle, privileged tool policy, LSP rollout, and broader provider/indexing/integration phases before those features are implemented.

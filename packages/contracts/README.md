@@ -34,7 +34,7 @@ Provider configuration is an engine-owned, local-first BYOK boundary. Current sc
 - `POST /v1/providers` creates a provider configuration with credentials or endpoint settings stored by the local runtime.
 - `PATCH /v1/providers/{id}` updates provider metadata, enabled state, model placeholders, and replacement credentials without returning raw secrets.
 - `DELETE /v1/providers/{id}` removes a provider configuration and associated local credential material where possible.
-- `POST /v1/providers/{id}/test` checks config validity from the local runtime and returns sanitized status/errors until real adapters exist.
+- `POST /v1/providers/{id}/test` checks config validity from the local runtime and returns sanitized status/errors; current behavior is intentionally narrow and adapter-specific checks should expand incrementally.
 - `GET /v1/models` returns normalized model summaries from configured providers and local capability metadata.
 
 Provider response examples must not include API keys, OAuth refresh tokens, environment secrets, or private local paths. GUI clients may submit secrets for save/test actions but must not persist them after the request. In provider response `auth` objects, `redacted` is required only when `type = "api_key"` and `configured = true`; it is omitted for unconfigured API-key auth and non-secret auth types.

@@ -59,6 +59,13 @@ SSE uses fetch streaming, not native EventSource. The parser handles CRLF, comme
 
 Browser mock mode is non-privileged and logs messages locally. The adapter sends `gui.ready`, validates non-empty `version`, known host `type`, optional string `requestId`, and optional object `payload`, and accepts only the current host message allowlist: `host.ready`, `host.themeChanged`, `host.activeFileChanged`, `host.selectionChanged`, `host.workspaceChanged`, `host.toolResult`, and `host.openedFromCommand`.
 
+## Current limitations
+
+- This is a development MVP shell, not the final production GUI or design system.
+- Packaged GUI assets are not wired into IDE plugin release flows yet.
+- Chat is limited to the current local runtime command/SSE baseline and does not implement full agent autonomy, tool confirmations, indexing, tasks, knowledge, or privileged IDE actions.
+- Runtime tokens are held only in page state; do not add persistence without a reviewed host/runtime token policy.
+
 ## Product identity
 
 GUI constants mirror `product/identity.json` for the Yet AI product id, display name, and package name. `/v1/ping` and `/v1/caps` identity mismatches are shown as warnings without crashing the shell.

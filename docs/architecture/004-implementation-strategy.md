@@ -110,6 +110,18 @@ This path balances product differentiation and practical delivery:
 - It enables a new UI/design from the beginning.
 - It leaves room to reuse difficult, non-visual implementation pieces later when the benefit outweighs coupling and attribution cost.
 
+## Current implemented baseline
+
+The clean scaffold path has produced buildable local MVP foundations for the first implementation sequence:
+
+1. `apps/engine` provides the Rust `yet-lsp` local runtime with authenticated loopback HTTP/SSE, identity-aware storage, local provider registry/config files, redacted provider responses, model summaries, and a narrow OpenAI-compatible direct streaming path.
+2. `apps/gui` provides the React/Vite shell with loopback-only runtime client, provider setup/status, chat command submission, fetch-streaming SSE, runtime errors, and logical browser/VS Code/JetBrains bridge handling.
+3. `apps/plugins/vscode` provides a VS Code extension shell with identity validation, local runtime settings, loopback webview/dev URL policy, safe bootstrap, and narrow bridge handling.
+4. `apps/plugins/jetbrains` provides a JetBrains plugin shell with identity validation, Gradle tests/build, loopback runtime/dev URL policy, PasswordSafe local token storage, JCEF hosting, and structural bridge validation.
+5. `packages/contracts` remains the shared schema/example package for current boundaries.
+
+This is not a production assistant. Full agent autonomy, indexing, tool execution, integration workflows, packaged GUI assets, engine launch packaging, LSP features, broader provider support, and privileged IDE actions remain follow-up work. The local-first BYOK/no-required-cloud contract remains the controlling constraint.
+
 ## Criteria for acceptable external module copying
 
 Copying or substantially adapting external code is acceptable only when all of these criteria are met:
@@ -140,16 +152,18 @@ Good early candidates for possible later reuse are low-level, non-visual logic w
 
 ## Next implementation cards
 
-Approved local-first implementation work should proceed in this order:
+The first six local-first implementation cards have MVP baselines in place:
 
-1. **Local runtime skeleton**: create the minimal local engine process with health/capability contracts, local storage roots, and no provider execution beyond placeholders.
-2. **Provider registry, configuration, and secret redaction**: define local provider configuration storage, sanitized provider status responses, and secret-handling boundaries so raw credentials stay local and are never returned to GUI-facing clients after save.
-3. **OpenAI-compatible direct provider adapter and streaming**: implement the first direct BYOK provider path for OpenAI-compatible hosted providers and local gateways, including streaming through the local runtime contract.
-4. **GUI local provider setup and runtime client**: add GUI flows for connecting to the local runtime, rendering sanitized provider setup/status, submitting credentials for save/test, and discarding raw secrets after requests.
-5. **VS Code local runtime host**: add the VS Code host that launches or connects to the local runtime, serves the webview bridge, and avoids duplicating provider adapters or credential persistence.
-6. **JetBrains local runtime host**: add the JetBrains host that launches or connects to the local runtime, serves the JCEF bridge, and avoids duplicating provider adapters or credential persistence.
+1. **Local runtime skeleton**: complete as a buildable Rust runtime foundation with health/capability contracts, loopback binding, bearer-token authentication, and storage root resolution.
+2. **Provider registry, configuration, and secret redaction**: complete as a local file-backed development baseline with sanitized GUI-facing responses and redacted hints.
+3. **OpenAI-compatible direct provider adapter and streaming**: complete as the first narrow direct BYOK streaming path through the local runtime.
+4. **GUI local provider setup and runtime client**: complete as a React/Vite shell with provider setup/status, chat/SSE, loopback runtime validation, and bridge diagnostics.
+5. **VS Code local runtime host**: complete as a buildable extension shell with webview bridge and local runtime connection settings.
+6. **JetBrains local runtime host**: complete as a buildable Gradle plugin shell with JCEF bridge and local runtime connection settings.
 
-Each card should keep the no-required-cloud contract intact: core chat, completion, agent, provider setup, local project storage, and IDE GUI workflows must work through the local runtime without a required hosted Yet AI backend, account, managed model gateway, product credit balance, or cloud workspace.
+Next implementation work should focus on hardening rather than expanding privileged behavior: package GUI assets into IDE hosts, add engine launch lifecycle, move local session tokens to platform secret stores where still missing, tighten schemas for non-`user_message` commands and privileged bridge messages, add smoke tests, and only then introduce IDE/file/tool actions behind explicit policy and confirmation.
+
+Every follow-up card must keep the no-required-cloud contract intact: core chat, completion, agent, provider setup, local project storage, and IDE GUI workflows must work through the local runtime without a required hosted Yet AI backend, account, managed model gateway, product credit balance, or cloud workspace.
 
 ## Current decision
 

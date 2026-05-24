@@ -49,6 +49,14 @@ In GUI dev mode the wrapper embeds only loopback GUI URLs, computes the exact de
 
 No privileged workspace edits, IDE tools, or provider actions are implemented in this shell.
 
+## Current limitations
+
+- The extension shell is buildable but not production-ready.
+- It connects to an already running local runtime; engine binary launch, lifecycle management, logs, and health recovery are follow-up work.
+- No packaged production GUI asset is wired yet; use `yetai.guiDevUrl` for development or the local placeholder shell.
+- No LSP client, privileged workspace edits, IDE tools, file mutation, shell actions, or provider actions are implemented.
+- `yetai.sessionToken` remains a debug/local runtime setting until VS Code SecretStorage integration is added.
+
 ## Safety rules
 
 - Do not add hosted backend requirements for core chat or agent workflows.
