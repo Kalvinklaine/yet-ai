@@ -37,13 +37,15 @@ cd apps/plugins/vscode && npm run compile && cd ../../.. && npm run check
   - `yetai.sessionToken`, optional local runtime bearer/session token for debug connections.
   - `yetai.guiDevUrl`, optional loopback GUI dev server URL.
 
-`runtimeUrl` and `guiDevUrl` are restricted to loopback `http` or `https` URLs before the webview opens. `sessionToken` is passed only in the webview bootstrap/`host.ready` payload for the local runtime path and is not treated as a provider secret.
+`runtimeUrl` and `guiDevUrl` are restricted to loopback `http` or `https` URLs before the webview opens. `sessionToken` is a sensitive local runtime credential, not a provider secret. It is passed only in the bootstrap/`host.ready` path needed by the trusted GUI runtime client, is not logged, and is not rendered in the placeholder UI. Production token storage with VS Code SecretStorage is a follow-up; raw provider secrets must never be stored in extension settings.
 
 ## Webview and bridge
 
 The command opens a minimal Yet AI webview shell. If `yetai.guiDevUrl` is set, the shell embeds the loopback GUI dev server in an iframe. Otherwise it displays a local placeholder with the configured runtime URL.
 
-The webview sends `gui.ready`. The extension validates the message shape, logs the event, and replies with `host.ready` plus non-secret bootstrap fields: product id, display name, runtime URL, optional local session token, and `cloudRequired: false`. It also sends `host.openedFromCommand`. In GUI dev mode the wrapper forwards `host.ready` to the loopback iframe.
+The wrapper sends `gui.ready` with a request id. The extension accepts only exact-version `gui.ready` messages, rejects unknown or invalid messages without logging payloads, and replies with `host.ready` echoing the request id when present. It also sends `host.openedFromCommand`. Bootstrap data is serialized for script context with `<`, U+2028, and U+2029 escaped to avoid script breakout.
+
+In GUI dev mode the wrapper embeds only loopback GUI URLs, computes the exact dev origin, forwards iframe messages only after checking `event.origin`, and sends iframe `postMessage` calls with that exact `targetOrigin` rather than `*`.
 
 No privileged workspace edits, IDE tools, or provider actions are implemented in this shell.
 
@@ -51,6 +53,8 @@ No privileged workspace edits, IDE tools, or provider actions are implemented in
 
 - Do not add hosted backend requirements for core chat or agent workflows.
 - Do not duplicate chat state, provider secrets, provider adapters, or engine-owned configuration inside plugin storage.
-- Validate bridge messages before dispatch.
+- Validate bridge messages before dispatch, require the exact bridge version, and keep the accepted GUI message allowlist narrow.
+- Use exact dev iframe target origins and check inbound iframe origins before forwarding.
+- Never log bridge payloads that may contain local runtime credentials.
 - Keep privileged editor operations behind strict schemas, request-response correlation, and confirmation policy before adding them.
 - Keep marketplace identity values aligned with `product/identity.json`.

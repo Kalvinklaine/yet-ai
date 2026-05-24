@@ -55,7 +55,8 @@
   },
   "scripts": {
     "check:identity": "node scripts/check-identity.mjs",
-    "compile": "npm run check:identity && tsc -p ."
+    "check:webview-safety": "node scripts/check-webview-safety.mjs",
+    "compile": "npm run check:identity && npm run check:webview-safety && tsc -p ."
   },
   "devDependencies": {
     "@types/node": "^20.19.25",
