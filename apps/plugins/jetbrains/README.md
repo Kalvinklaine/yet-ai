@@ -2,41 +2,71 @@
 
 ## Ownership and boundary
 
-`apps/plugins/jetbrains` will own the future JetBrains plugin host for Yet AI. Its planned responsibilities are plugin metadata, package namespace, engine discovery and launch, lifecycle and logs, JCEF tool window hosting, JetBrains-to-webview bridge implementation, optional LSP client setup, actions, settings, and notifications.
+`apps/plugins/jetbrains` owns the minimal JetBrains plugin host for Yet AI. Its responsibilities are plugin metadata, local runtime connection settings, JCEF tool window hosting, and a narrow JetBrains-to-GUI bridge.
 
-The plugin should stay thin. Engine-owned AI behavior, provider configuration, storage, tool policy, and indexing must not be duplicated in platform services. GUI-owned design and UI state should remain in the packaged webview.
+The plugin stays thin. Chat runtime, provider configuration, tool policy, storage, indexing, and model/provider adapters belong to the engine. UI state and design belong to the GUI.
 
-The plugin starts or connects to the local Yet AI runtime and hosts the GUI for local-first BYOK workflows. It must not require a Yet AI cloud workspace for normal operation and must not duplicate provider adapters, provider credentials, or model gateway logic.
+The plugin connects the GUI to the local Yet AI runtime for local-first BYOK workflows. It does not require a Yet AI cloud workspace, account, hosted model gateway, or managed credit balance for normal operation. It must not persist provider API keys or duplicate provider adapters.
 
-## Current status
-
-Scaffold only. There is no Gradle project, plugin descriptor, Kotlin source, JCEF host, engine launcher, or runtime implementation in this directory yet.
-
-## Future commands
-
-These commands are not available until a JetBrains plugin project exists:
+## Commands
 
 ```sh
-./gradlew build
-./gradlew test
+node scripts/check-identity.mjs
+gradle build
 ```
 
-Repository-level validation is currently available from the root:
+Repository-level validation is available from the root:
 
 ```sh
 npm run check
 ```
 
-## Dependencies
+Required verification for this package:
 
-- Plugin ID, group, plugin name, package namespace, action IDs, and settings namespaces must be generated from or checked against `product/identity.json`.
-- Bridge message contracts should come from `packages/contracts` once contracts are introduced.
-- Engine launch settings must align with the future engine binary and API contracts.
+```sh
+cd apps/plugins/jetbrains && node scripts/check-identity.mjs && gradle build && cd ../../.. && npm run check
+```
+
+If Gradle is not installed locally, run the identity check and root validation, then install Gradle or add a reviewed Gradle wrapper before packaging work. This shell intentionally avoids vendoring a wrapper jar in the first scaffold.
+
+## Plugin surfaces
+
+- Plugin id: `ai.yet.plugin`.
+- Plugin group/vendor: `ai.yet`.
+- Plugin name: `Yet AI`.
+- Kotlin package namespace: `ai.yet.plugin`.
+- Tool window: `Yet AI`.
+- Action: `ai.yet.plugin.OpenChat` (`Yet AI: Open Chat`).
+- Settings:
+  - `runtimeUrl`, default `http://127.0.0.1:8001`.
+  - `sessionToken`, optional local runtime bearer/session token for debug connections.
+  - `guiDevUrl`, optional loopback GUI dev server URL.
+
+`runtimeUrl` and `guiDevUrl` are restricted to loopback `http` or `https` URLs before use. `sessionToken` is a sensitive local runtime credential, not a provider secret. It is passed only through the bootstrap/`host.ready` path needed by the trusted GUI runtime client, is not logged, and is not rendered in the placeholder UI. Raw provider secrets must never be stored in JetBrains plugin settings.
+
+## Webview and bridge
+
+The tool window uses JCEF when available. If `guiDevUrl` is set, the shell embeds the loopback GUI dev server in an iframe. Otherwise it displays a local placeholder with the configured runtime URL.
+
+The wrapper exposes `window.postIntellijMessage` and sends `gui.ready` with a request id. The Kotlin host accepts only exact-version `gui.ready` messages, rejects unknown or invalid messages without logging payloads, and replies with `host.ready` echoing the request id when present. It also sends `host.openedFromCommand`. Bootstrap JSON is escaped for script context with `<`, U+2028, and U+2029 escaped to avoid script breakout.
+
+In GUI dev mode the wrapper embeds only loopback GUI URLs, computes the exact dev origin, forwards iframe messages only after checking `event.origin`, and sends iframe `postMessage` calls with that exact `targetOrigin` rather than `*`.
+
+No privileged workspace edits, IDE tools, engine launch process, provider adapters, or provider credential persistence are implemented in this shell.
+
+## Current limitations
+
+- The plugin connects to an already running local runtime; it does not launch the engine binary yet.
+- The bridge currently accepts only `gui.ready` from the GUI and emits `host.ready` plus `host.openedFromCommand`.
+- Settings use JetBrains application state for local runtime/debug values only. Moving the session token to secure platform storage is a follow-up.
+- No packaged production GUI asset is wired yet; use `guiDevUrl` for development or the placeholder shell.
 
 ## Safety rules
 
-- Do not add runtime plugin code in this scaffold phase.
-- Do not duplicate chat state, provider secrets, or engine-owned configuration inside plugin storage.
-- Validate browser bridge messages before dispatch once bridge code exists.
-- Keep privileged editor operations behind explicit request-response correlation and confirmation policy.
-- Do not hardcode marketplace identity values outside the identity contract.
+- Do not add hosted backend requirements for core chat or agent workflows.
+- Do not duplicate chat state, provider secrets, provider adapters, or engine-owned configuration inside plugin storage.
+- Validate bridge messages before dispatch, require the exact bridge version, and keep the accepted GUI message allowlist narrow.
+- Use exact dev iframe target origins and check inbound iframe origins before forwarding.
+- Never log bridge payloads that may contain local runtime credentials.
+- Keep privileged editor operations behind strict schemas, request-response correlation, and confirmation policy before adding them.
+- Keep marketplace identity values aligned with `product/identity.json`.

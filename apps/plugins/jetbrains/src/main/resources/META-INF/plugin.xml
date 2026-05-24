@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<idea-plugin>
+    <id>ai.yet.plugin</id>
+    <name>Yet AI</name>
+    <vendor>ai.yet</vendor>
+
+    <description><![CDATA[
+        <p>Yet AI local runtime host for JetBrains IDEs.</p>
+        <p>This shell connects a JetBrains tool window to a local Yet AI runtime and GUI for local-first BYOK workflows.</p>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Yet AI"
+                    anchor="right"
+                    canCloseContents="true"
+                    factoryClass="ai.yet.plugin.ui.YetToolWindowFactory"/>
+        <applicationConfigurable parentId="tools"
+                                 instance="ai.yet.plugin.settings.YetSettingsConfigurable"
+                                 id="ai.yet.plugin.settings"
+                                 displayName="Yet AI"/>
+        <applicationService serviceImplementation="ai.yet.plugin.settings.YetSettingsState"/>
+    </extensions>
+
+    <actions>
+        <action id="ai.yet.plugin.OpenChat"
+                class="ai.yet.plugin.actions.OpenChatAction"
+                text="Yet AI: Open Chat"
+                description="Open the Yet AI local runtime chat shell">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>
