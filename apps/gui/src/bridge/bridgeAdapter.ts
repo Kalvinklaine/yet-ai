@@ -9,7 +9,14 @@ export type GuiMessage = {
 
 export type HostMessage = {
   version: string;
-  type: "host.ready" | string;
+  type:
+    | "host.ready"
+    | "host.themeChanged"
+    | "host.activeFileChanged"
+    | "host.selectionChanged"
+    | "host.workspaceChanged"
+    | "host.toolResult"
+    | "host.openedFromCommand";
   requestId?: string;
   payload?: Record<string, unknown>;
 };
@@ -33,6 +40,15 @@ declare global {
 }
 
 const bridgeVersion = "2026-05-15";
+const hostMessageTypes = new Set<HostMessage["type"]>([
+  "host.ready",
+  "host.themeChanged",
+  "host.activeFileChanged",
+  "host.selectionChanged",
+  "host.workspaceChanged",
+  "host.toolResult",
+  "host.openedFromCommand",
+]);
 
 export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapter {
   const log: string[] = [];
@@ -62,6 +78,7 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
   const onMessage = (event: MessageEvent<unknown>) => {
     const message = event.data;
     if (!isHostMessage(message)) {
+      append("Rejected invalid host bridge message");
       return;
     }
     append(`Host message ${message.type}`);
@@ -88,7 +105,13 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
     return false;
   }
   const record = value as Record<string, unknown>;
-  return typeof record.version === "string" && record.version.length > 0 && record.type === "gui.ready";
+  return (
+    typeof record.version === "string" &&
+    record.version.length > 0 &&
+    record.type === "gui.ready" &&
+    (record.requestId === undefined || (typeof record.requestId === "string" && record.requestId.length > 0)) &&
+    (record.payload === undefined || (typeof record.payload === "object" && record.payload !== null && !Array.isArray(record.payload)))
+  );
 }
 
 export function isHostMessage(value: unknown): value is HostMessage {
@@ -96,5 +119,12 @@ export function isHostMessage(value: unknown): value is HostMessage {
     return false;
   }
   const record = value as Record<string, unknown>;
-  return typeof record.version === "string" && record.version.length > 0 && typeof record.type === "string";
+  return (
+    typeof record.version === "string" &&
+    record.version.length > 0 &&
+    typeof record.type === "string" &&
+    hostMessageTypes.has(record.type as HostMessage["type"]) &&
+    (record.requestId === undefined || (typeof record.requestId === "string" && record.requestId.length > 0)) &&
+    (record.payload === undefined || (typeof record.payload === "object" && record.payload !== null && !Array.isArray(record.payload)))
+  );
 }
