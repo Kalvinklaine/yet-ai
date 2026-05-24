@@ -88,6 +88,52 @@ code --install-extension yet-ai-0.0.1.vsix
 
 This package is for local dev-preview testing only. It is not a marketplace release, does not include a production installer, and does not change the local-first BYOK boundary. `.vsix` files are generated artifacts and should not be committed.
 
+## OpenAI API-key fallback milestone smoke
+
+Use this manual smoke only when you intentionally want to test a real OpenAI API-key fallback through the local VS Code dev preview. This is not a production release flow and is not an automated test. Never commit real keys, add them to fixtures, paste them into logs or issue text, or capture screenshots that show secrets.
+
+This path does not use a Yet AI account, hosted workspace, managed model gateway, or product credit balance. It sends model requests from the local `yet-lsp` runtime directly to the configured OpenAI-compatible endpoint. Real ChatGPT/OpenAI account login is not implemented in this baseline and remains compliance-gated; the provider-auth card may explain login is unavailable and offer the API-key fallback.
+
+1. Prepare the VS Code dev preview:
+
+   ```sh
+   export PATH="$HOME/.cargo/bin:$PATH"
+   npm run prepare:ide-engine
+   cd apps/gui && npm install && npm run build
+   cd ../plugins/vscode && npm install && npm run copy:gui && npm run compile
+   ```
+
+2. Open this repository in VS Code and launch the Extension Development Host for `apps/plugins/vscode`.
+
+3. Keep `yetai.launchMode` set to `auto` unless you are deliberately testing `connect` or `launch`. If auto-discovery does not find the binary, set `yetai.engineBinaryPath` to the absolute `apps/plugins/vscode/bin/yet-lsp` path printed by `npm run prepare:ide-engine`.
+
+4. Run `Yet AI: Open Chat` in the Extension Development Host. Confirm the packaged GUI opens, the runtime status becomes reachable, and the `Yet AI Runtime` output channel reports a successful local runtime health check with tokens redacted.
+
+5. In the provider-auth card, confirm OpenAI account login is shown as unavailable or API-key fallback-oriented. Do not expect real ChatGPT/OpenAI account login, browser account reuse, cookie import, or credential import from another tool.
+
+6. Choose `Use OpenAI API key` or the `OpenAI API` provider preset. Confirm the form uses:
+
+   - provider kind `openai-compatible`;
+   - base URL `https://api.openai.com/v1`;
+   - an OpenAI chat model available to your account;
+   - an empty API key field before you paste anything.
+
+7. Paste the real API key once, save the provider, and immediately verify secret handling:
+
+   - the API key input clears after submit;
+   - provider status shows configured/redacted only, for example a short `sk-...abcd` hint;
+   - the raw key is not visible in the GUI, VS Code settings, `Yet AI Runtime` output, browser devtools storage, or repository files.
+
+8. Send this chat message:
+
+   ```text
+   Say hello in one sentence.
+   ```
+
+9. Expected result: the chat first receives a snapshot, then stream start/delta updates, then a finished state. The assistant should produce a short greeting. The exact text can vary by model, but the response should stream into the GUI without requiring any Yet AI-hosted backend.
+
+10. After testing, remove or rotate the real provider key if your local environment policy requires it. Do not leave copied keys in terminal scrollback, notes, screenshots, or documentation.
+
 ## Manual smoke checklist
 
 Use this checklist after the steps above:
@@ -101,11 +147,16 @@ Use this checklist after the steps above:
 - Provider save/test uses an OpenAI API key, OpenAI-compatible endpoint, or local gateway URL and does not require a Yet AI-hosted backend.
 - Provider status after save is configured/redacted; the raw key is not rendered back into the form.
 - A simple chat message produces `snapshot`, stream start/delta, and finish behavior in the GUI.
+- For the real OpenAI API-key fallback smoke, the preset uses `https://api.openai.com/v1`, the API key field clears after save, and no automated test or committed file contains the real key.
 
 ## Troubleshooting
 
 - Missing Node dependencies: run `npm install` at the repository root, `apps/gui`, or `apps/plugins/vscode` if the corresponding command reports missing packages.
 - Token or `401` errors: in `auto` or `launch` mode, do not manually set `yetai.sessionToken`; the extension generates a token and passes it to the engine. In `connect` mode, make sure `yetai.sessionToken` matches the running engine's `YET_AI_AUTH_TOKEN`. Restart the Extension Development Host after changing token-related settings.
+- Provider `401` errors after the runtime is connected: the OpenAI-compatible provider rejected the API key. Check for a missing, expired, revoked, copied-with-whitespace, or wrong-project key. Paste it once in the GUI and save again; do not put it in VS Code settings or repository files.
+- Provider `429` errors: the upstream provider reported rate, quota, or billing limits. Wait, reduce test traffic, or check the provider account outside Yet AI.
+- Model errors: the selected model is unavailable for the key or endpoint. Update the provider model field to a chat model enabled for that account.
+- OpenAI API fallback vs account login: the `OpenAI API` preset is the current real-provider path. ChatGPT/OpenAI account login, browser session reuse, cookie import, and importing another tool's credentials are not implemented.
 - Runtime port conflict: `yetai.runtimeUrl` defaults to `http://127.0.0.1:8001`. If another process owns that port, set `yetai.runtimeUrl` to another loopback port such as `http://127.0.0.1:8011` before opening chat. In launch mode the extension passes that port through `YET_AI_HTTP_PORT`.
 - Missing `yet-lsp` binary: run `export PATH="$HOME/.cargo/bin:$PATH"; npm run prepare:vscode-preview` from the repository root. If discovery still fails, set `yetai.engineBinaryPath` to the absolute binary path and use `yetai.launchMode` `launch`.
 - Packaged GUI not copied: run `npm run prepare:vscode-preview` from the repository root. If the webview still shows the placeholder, check that `apps/plugins/vscode/media/gui/index.html` exists and reopen the command.
