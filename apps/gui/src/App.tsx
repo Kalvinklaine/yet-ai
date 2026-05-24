@@ -41,6 +41,20 @@ const emptyProviderForm: ProviderForm = {
 
 const providerPresets: ProviderPreset[] = [
   {
+    id: "openai-api",
+    label: "OpenAI API",
+    description: "Official OpenAI API endpoint. ChatGPT/OpenAI account login is planned where officially supported; API key is the current safe fallback.",
+    form: {
+      providerId: "openai-api",
+      kind: "openai-compatible",
+      displayName: "OpenAI API",
+      baseUrl: "https://api.openai.com/v1",
+      authType: "api_key",
+      modelId: "gpt-4o-mini",
+      modelDisplayName: "GPT-4o mini",
+    },
+  },
+  {
     id: "openai-compatible-custom",
     label: "OpenAI-compatible /v1",
     description: "Custom OpenAI-compatible endpoint; add your provider URL and key locally.",
@@ -362,6 +376,7 @@ export function App() {
       <section className="card stack">
         <h2>Provider setup</h2>
         <p className="subtle">Provider requests go to the local runtime. API key input is cleared after submit and is not written to browser storage.</p>
+        <p className="subtle">ChatGPT/OpenAI account login is planned where officially supported. OpenAI API-key setup is the current safe fallback.</p>
         <p className="subtle">Current chat uses OpenAI-compatible providers only. Ollama is available here through its OpenAI-compatible /v1 endpoint; native Ollama chat is future work.</p>
         {providerError && <ErrorBox error={providerError} />}
         <div className="grid">

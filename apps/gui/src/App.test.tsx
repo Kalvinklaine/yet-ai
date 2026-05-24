@@ -44,6 +44,23 @@ describe("provider secret boundary", () => {
     mockRuntimeResponses();
     renderApp();
 
+    fetchMock.mockClear();
+
+    await act(async () => {
+      findButton("OpenAI API").click();
+    });
+
+    expect(findInputValue("openai-api")).toBeDefined();
+    expect(findInputValue("https://api.openai.com/v1")).toBeDefined();
+    expect(findInputValue("gpt-4o-mini")).toBeDefined();
+    expect(findInputValue("GPT-4o mini")).toBeDefined();
+    expect(findSelectValue("openai-compatible")).toBeDefined();
+    expect(findSelectValue("api_key")).toBeDefined();
+    expect(apiKeyInput().value).toBe("");
+    expect(fetchMock.mock.calls.every(([url]) => !String(url).includes("api.openai.com"))).toBe(true);
+    expect(JSON.stringify(localStorage)).not.toContain("sk-");
+    expect(JSON.stringify(sessionStorage)).not.toContain("sk-");
+
     await act(async () => {
       findButton("LM Studio local").click();
     });
@@ -71,7 +88,7 @@ describe("provider secret boundary", () => {
     renderApp();
 
     await act(async () => {
-      findButton("OpenAI-compatible /v1").click();
+      findButton("OpenAI API").click();
     });
     await act(async () => {
       setInputValue(apiKeyInput(), secret);
