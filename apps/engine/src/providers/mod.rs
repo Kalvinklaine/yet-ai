@@ -739,6 +739,9 @@ pub fn validate_provider_base_url(base_url: &str) -> Result<(), ProviderError> {
     if url.host().is_none() || !url.username().is_empty() || url.password().is_some() {
         return Err(ProviderError::InvalidBaseUrl);
     }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(ProviderError::InvalidBaseUrl);
+    }
     Ok(())
 }
 
@@ -823,6 +826,14 @@ mod tests {
         ));
         assert!(matches!(
             validate_provider_base_url("http://user:pass@127.0.0.1:8080/v1"),
+            Err(ProviderError::InvalidBaseUrl)
+        ));
+        assert!(matches!(
+            validate_provider_base_url("https://example.test/v1?api_key=secret"),
+            Err(ProviderError::InvalidBaseUrl)
+        ));
+        assert!(matches!(
+            validate_provider_base_url("https://example.test/v1#token"),
             Err(ProviderError::InvalidBaseUrl)
         ));
         assert!(matches!(
