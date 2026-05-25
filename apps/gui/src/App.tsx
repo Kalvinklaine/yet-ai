@@ -49,13 +49,13 @@ function sanitizeDisplayValue(value: unknown): unknown {
     return value.map((item) => sanitizeDisplayValue(item));
   }
   if (typeof value === "object" && value !== null) {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [isSecretLikeKey(key) ? "[redacted]" : key, sanitizeDisplayValue(item)]));
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => isSecretLikeKey(key) ? ["[redacted]", "[redacted]"] : [key, sanitizeDisplayValue(item)]));
   }
   return value;
 }
 
 function isSecretLikeKey(key: string): boolean {
-  return /access[_-]?token|refresh[_-]?token|api[_-]?key|authorization|bearer|cookie|code[_-]?verifier|pkce[_-]?verifier/i.test(key);
+  return /access[_-]?token|refresh[_-]?token|session[_-]?token|api[_-]?key|client[_-]?secret|authorization|bearer|cookie|code[_-]?verifier|pkce[_-]?verifier/i.test(key);
 }
 
 function sanitizeSseEvent(event: SseEvent): SseEvent {
@@ -284,6 +284,9 @@ export function App() {
     });
     activeStreamRef.current?.controller.abort();
     activeStreamRef.current = null;
+    setProviderAuthExchangeCode("");
+    setProviderAuthExchangeWorking(false);
+    setProviderAuthExchangeError(null);
   }, []);
 
   const updateBaseUrl = useCallback((nextBaseUrl: string) => {
@@ -522,11 +525,11 @@ export function App() {
         embeddings: false,
       },
     };
+    setProviderForm((current) => ({ ...current, apiKey: "" }));
     const result = await saveProvider(targetSettings, selectedProviderId, request);
     if (!isCurrentRefresh(targetRevision)) {
       return;
     }
-    setProviderForm((current) => ({ ...current, apiKey: "" }));
     if (result.ok) {
       setSelectedProviderId(result.data.id);
       await connect();
@@ -664,10 +667,8 @@ export function App() {
         setProviderAuthError(result.error);
       }
     } finally {
-      if (isCurrentRefresh(targetRevision)) {
-        setProviderAuthExchangeCode("");
-        setProviderAuthExchangeWorking(false);
-      }
+      setProviderAuthExchangeCode("");
+      setProviderAuthExchangeWorking(false);
     }
   };
 

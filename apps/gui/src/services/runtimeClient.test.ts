@@ -41,6 +41,23 @@ describe("runtimeClient", () => {
     expect(validateRuntimeBaseUrl("http://192.168.0.2:8001").ok).toBe(false);
   });
 
+  it("rejects runtime URLs with userinfo query or hash without echoing secrets", async () => {
+    vi.stubGlobal("fetch", fetchMock);
+    for (const baseUrl of [
+      "http://user:secret@127.0.0.1:8001",
+      "http://127.0.0.1:8001?token=secret",
+      "http://127.0.0.1:8001#secret",
+    ]) {
+      const result = await runtimeFetch({ baseUrl, token: "runtime-token" }, "/v1/ping");
+      expect(result.ok).toBe(false);
+      expect(result.ok ? undefined : result.error.status).toBe("configuration");
+      expect(result.ok ? "" : result.error.message).toContain("must not include credentials");
+      expect(result.ok ? "" : result.error.message).not.toContain("secret");
+      expect(result.ok ? "" : result.error.message).not.toContain("runtime-token");
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("warns on runtime product identity mismatch", () => {
     expect(productIdentityWarning({ productId: "yet-ai", displayName: "Yet AI" })).toBeNull();
     expect(productIdentityWarning({ productId: "other", displayName: "Other" })).toContain("Runtime identity mismatch");
@@ -103,6 +120,30 @@ describe("runtimeClient", () => {
     expect(message).not.toContain("verifier");
     expect(message).not.toContain("auth.json");
     expect(message).not.toContain(longToken);
+  });
+
+  it("sanitizes JSON-style secret fields and JWT-like values in HTTP errors", async () => {
+    const jwt = `${"a".repeat(20)}.${"b".repeat(20)}.${"c".repeat(20)}`;
+    const body = {
+      error: `provider rejected {"access_token":"short-secret","refresh_token": "${jwt}","client_secret":"tiny","cookie":"sid=abc"}`,
+    };
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(body), { status: 502 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await runtimeFetch({ baseUrl: "http://127.0.0.1:8001", token: "runtime-token" }, "/v1/ping");
+
+    expect(result.ok).toBe(false);
+    const message = result.ok ? "" : result.error.message;
+    expect(message).toContain("provider rejected");
+    expect(message).toContain("[redacted]");
+    expect(message).not.toContain("access_token");
+    expect(message).not.toContain("refresh_token");
+    expect(message).not.toContain("client_secret");
+    expect(message).not.toContain("cookie");
+    expect(message).not.toContain("short-secret");
+    expect(message).not.toContain("tiny");
+    expect(message).not.toContain("sid=abc");
+    expect(message).not.toContain(jwt);
   });
 
   it("sanitizes network and parse errors", async () => {

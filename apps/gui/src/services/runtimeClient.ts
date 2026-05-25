@@ -222,6 +222,16 @@ export function validateRuntimeBaseUrl(baseUrl: string): RuntimeResult<URL> {
     };
   }
 
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    return {
+      ok: false,
+      error: {
+        status: "configuration",
+        message: "Runtime base URL must not include credentials, query parameters, or fragments.",
+      },
+    };
+  }
+
   return { ok: true, data: parsed };
 }
 
@@ -277,7 +287,9 @@ function combineSignals(callerSignal: AbortSignal | null | undefined, timeoutSig
 
 function sanitizeRuntimeErrorText(value: string): string {
   const redacted = value
+    .replace(/(["'])(?:access_token|refresh_token|api_key|authorization|client_secret|session_token|cookie|set-cookie|code_verifier|pkce_verifier|verifier)\1\s*:\s*(["'])(?:\\.|(?!\2).)*\2/gi, "[redacted]")
     .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "[redacted]")
+    .replace(/\b[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/g, "[redacted]")
     .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[redacted]")
     .replace(/\b(?:access_token|refresh_token|api_key|authorization|client_secret|code|verifier|cookie|set-cookie)\b\s*[:=]\s*[^\s,;)}\]]+/gi, "[redacted]")
     .replace(/\b(?:auth\.json|\.codex\/auth\.json)\b/gi, "[redacted]")

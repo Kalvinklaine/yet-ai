@@ -95,7 +95,7 @@ try {
     failures.push("GUI iframe did not send gui.ready to the parent wrapper.");
   }
 
-  const runtimeInput = frameLocator.locator("input").first();
+  const runtimeInput = frameLocator.getByLabel("Runtime base URL");
   const runtimeInputValue = await runtimeInput.inputValue({ timeout: 5000 }).catch(() => "");
   if (runtimeInputValue !== "http://127.0.0.1:8001") {
     failures.push("Iframe GUI did not naturally apply wrapper host.ready runtime settings.");
