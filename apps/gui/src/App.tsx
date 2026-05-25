@@ -180,6 +180,10 @@ export function App() {
   const [timeline, setTimeline] = useState<string[]>([]);
   const [bridgeLog, setBridgeLog] = useState<string[]>([]);
   const [bridgeHost, setBridgeHost] = useState<BridgeHost>("browser");
+  const [runtimeRefreshStatus, setRuntimeRefreshStatus] = useState<{ state: "checking" | "connected" | "failed"; attempt: number; checkedAt: string; detail: string } | null>(null);
+  const [runtimeRefreshInFlight, setRuntimeRefreshInFlight] = useState(false);
+  const runtimeRefreshAttemptRef = useRef(0);
+  const runtimeRefreshInFlightRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
@@ -202,11 +206,13 @@ export function App() {
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(providerAuthStatus), [providerAuthStatus]);
 
   const applyHostReady = useCallback((payload: HostReadyPayload | undefined) => {
-    if (!payload?.runtimeUrl || !payload.sessionToken || !isLoopbackRuntimeUrl(payload.runtimeUrl)) {
+    if (!payload?.runtimeUrl || !isLoopbackRuntimeUrl(payload.runtimeUrl)) {
       return;
     }
     setBaseUrl(payload.runtimeUrl);
-    setToken(payload.sessionToken);
+    if (payload.sessionToken) {
+      setToken(payload.sessionToken);
+    }
     setTimeline((current) => ["Host runtime settings received", ...current].slice(0, 80));
   }, []);
 
@@ -234,7 +240,13 @@ export function App() {
     }));
   }, []);
 
-  const refreshRuntime = useCallback(async () => {
+  const refreshRuntime = useCallback(async (keepInFlight = false) => {
+    const attempt = runtimeRefreshAttemptRef.current + 1;
+    runtimeRefreshAttemptRef.current = attempt;
+    const checkedAt = new Date().toLocaleTimeString();
+    runtimeRefreshInFlightRef.current = true;
+    setRuntimeRefreshInFlight(true);
+    setRuntimeRefreshStatus({ state: "checking", attempt, checkedAt, detail: "Checking runtime…" });
     setConnectionError(null);
     setIdentityWarnings([]);
     const [nextPing, nextCaps, nextModels] = await Promise.all([
@@ -243,6 +255,7 @@ export function App() {
       getModels(settings),
     ]);
     const warnings: string[] = [];
+    let lastError: RuntimeError | null = null;
     if (nextPing.ok) {
       setPing(nextPing.data);
       const warning = productIdentityWarning(nextPing.data);
@@ -252,6 +265,7 @@ export function App() {
     } else {
       setPing(null);
       setConnectionError(nextPing.error);
+      lastError = nextPing.error;
     }
     if (nextCaps.ok) {
       setCaps(nextCaps.data);
@@ -262,11 +276,22 @@ export function App() {
     } else {
       setCaps(null);
       setConnectionError(nextCaps.error);
+      lastError = nextCaps.error;
     }
     if (nextModels.ok) {
       setModels(nextModels.data.models);
     }
     setIdentityWarnings(warnings);
+    setRuntimeRefreshStatus({
+      state: lastError ? "failed" : "connected",
+      attempt,
+      checkedAt: new Date().toLocaleTimeString(),
+      detail: lastError ? `Runtime check failed: ${lastError.status} ${sanitizeDisplayText(lastError.message)}` : "Runtime connected",
+    });
+    if (!keepInFlight) {
+      runtimeRefreshInFlightRef.current = false;
+      setRuntimeRefreshInFlight(false);
+    }
   }, [settings]);
 
   const refreshProviders = useCallback(async () => {
@@ -294,9 +319,19 @@ export function App() {
   }, [settings]);
 
   const connect = useCallback(async () => {
-    await refreshRuntime();
-    await refreshProviders();
-    await refreshProviderAuthStatus();
+    if (runtimeRefreshInFlightRef.current) {
+      return;
+    }
+    runtimeRefreshInFlightRef.current = true;
+    setRuntimeRefreshInFlight(true);
+    try {
+      await refreshRuntime(true);
+      await refreshProviders();
+      await refreshProviderAuthStatus();
+    } finally {
+      runtimeRefreshInFlightRef.current = false;
+      setRuntimeRefreshInFlight(false);
+    }
   }, [refreshProviderAuthStatus, refreshProviders, refreshRuntime]);
 
   useEffect(() => {
@@ -546,10 +581,12 @@ export function App() {
             <input type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="Bearer token for local runtime" />
           </label>
         </div>
+        <p className="subtle">In VS Code or JetBrains, the local runtime session token is normally provided by the IDE host through host.ready. Paste a token only when connecting to a manually started runtime such as one launched with YET_AI_AUTH_TOKEN=.... This local runtime token is not an OpenAI key or provider API key.</p>
         <div className="row">
-          <button onClick={() => void connect()}>Refresh runtime</button>
+          <button onClick={() => void connect()} disabled={runtimeRefreshInFlight}>{runtimeRefreshInFlight ? "Checking runtime…" : "Refresh runtime"}</button>
           <span className="subtle">Authorization header is sent only to validated loopback runtime URLs.</span>
         </div>
+        {runtimeRefreshStatus && <div className={`refresh-status ${runtimeRefreshStatus.state}`} role="status"><strong>{runtimeRefreshStatus.detail}</strong><span>Attempt {runtimeRefreshStatus.attempt} at {runtimeRefreshStatus.checkedAt}</span></div>}
         {connectionError && <ErrorBox error={connectionError} />}
         {identityWarnings.map((warning) => <div className="error" key={warning}>{warning}</div>)}
         <div className="grid">
