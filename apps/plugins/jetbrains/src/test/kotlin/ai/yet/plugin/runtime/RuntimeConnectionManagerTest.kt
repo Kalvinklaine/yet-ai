@@ -302,10 +302,15 @@ class RuntimeConnectionManagerTest {
     fun redactsCookieLikeKeyValueLines() {
         val cases = listOf(
             "cookie=session=secret; refresh=also-secret",
+            "cookie: session=secret; refresh=also-secret",
             "set_cookie=sid=secret; refresh=also-secret",
+            "set_cookie: sid=secret; refresh=also-secret",
             "set-cookie=sid=secret; Path=/; HttpOnly; refresh=also-secret",
+            "set-cookie: sid=secret; Path=/; HttpOnly",
             "setCookie=sid=secret; refresh=also-secret",
+            "setCookie: sid=secret; refresh=also-secret",
             "Cookie=session=secret; Refresh=also-secret",
+            "SetCookie: sid=secret; Path=/; HttpOnly",
         )
 
         cases.forEach { input ->

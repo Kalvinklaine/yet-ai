@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -172,11 +172,15 @@ async function extractZipEntryText(zipPath, entry, message) {
 }
 
 async function extractZipEntryBytes(zipPath, entry) {
+  if (!isSafeZipEntryPath(entry)) {
+    failures.push(`${path.relative(root, zipPath)} contains unsafe ZIP/JAR entry path ${JSON.stringify(entry)}.`);
+    return undefined;
+  }
   const result = spawnSync("unzip", ["-p", zipPath, entry], {
     cwd: root,
     encoding: "buffer",
     stdio: ["ignore", "pipe", "pipe"],
-    shell: process.platform === "win32",
+    shell: false,
   });
   if (result.status === 0) {
     return result.stdout;
@@ -187,17 +191,51 @@ async function extractZipEntryBytes(zipPath, entry) {
       cwd: tempDir,
       encoding: "buffer",
       stdio: ["ignore", "pipe", "pipe"],
-      shell: process.platform === "win32",
+      shell: false,
     });
     if (jarResult.status !== 0) {
       return undefined;
     }
-    return await readFile(path.join(tempDir, entry));
+    const extractedPath = await resolveExtractedEntryPath(tempDir, entry);
+    if (extractedPath === undefined) {
+      failures.push(`${path.relative(root, zipPath)} extracted unsafe ZIP/JAR entry path ${JSON.stringify(entry)} outside the temporary directory.`);
+      return undefined;
+    }
+    return await readFile(extractedPath);
   } catch {
     return undefined;
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
+}
+
+function isSafeZipEntryPath(entry) {
+  if (typeof entry !== "string" || entry.length === 0) {
+    return false;
+  }
+  if (path.posix.isAbsolute(entry) || path.win32.isAbsolute(entry) || /^[A-Za-z]:/.test(entry)) {
+    return false;
+  }
+  const segments = entry.split(/[\\/]/);
+  return segments.every((segment) => segment !== "" && segment !== "." && segment !== "..");
+}
+
+async function resolveExtractedEntryPath(tempDir, entry) {
+  if (!isSafeZipEntryPath(entry)) {
+    return undefined;
+  }
+  const resolvedTempDir = await realpath(tempDir);
+  const resolvedPath = path.resolve(resolvedTempDir, ...entry.split(/[\\/]/));
+  const relative = path.relative(resolvedTempDir, resolvedPath);
+  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
+    return undefined;
+  }
+  const realExtractedPath = await realpath(resolvedPath);
+  const realRelative = path.relative(resolvedTempDir, realExtractedPath);
+  if (realRelative === "" || realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+    return undefined;
+  }
+  return realExtractedPath;
 }
 
 function requireReferencedGuiScripts(jarListing, indexHtml, zipPath) {
@@ -229,7 +267,7 @@ function listZip(zipPath) {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-      shell: process.platform === "win32",
+      shell: false,
     });
     if (result.status === 0) {
       return result.stdout;
