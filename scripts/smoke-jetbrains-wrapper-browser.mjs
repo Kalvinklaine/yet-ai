@@ -101,6 +101,24 @@ try {
     failures.push("Iframe GUI did not naturally apply wrapper host.ready runtime settings.");
   }
 
+  await page.evaluate((version) => {
+    window.postMessage({
+      version,
+      type: "host.ready",
+      payload: {
+        runtimeUrl: "http://127.0.0.1:9009",
+        productId: "yet-ai",
+        displayName: "Yet AI",
+        cloudRequired: false,
+      },
+    }, window.location.origin);
+  }, bridgeVersion);
+  await page.waitForTimeout(250);
+  const runtimeInputValueAfterHostileMessage = await runtimeInput.inputValue({ timeout: 5000 }).catch(() => "");
+  if (runtimeInputValueAfterHostileMessage !== "http://127.0.0.1:8001") {
+    failures.push("Wrapper relayed an arbitrary wrapper-origin host.ready postMessage into the iframe.");
+  }
+
   const refreshButton = frameLocator.getByRole("button", { name: "Refresh runtime" });
   await refreshButton.click();
   const refreshFeedbackVisible = await frameLocator.getByText(/Runtime (connected|check failed)|Checking runtime…/).first().isVisible({ timeout: 5000 }).catch(() => false);
@@ -221,12 +239,13 @@ window.postIntellijMessage = (message) => {
   window.__yetAiBridgeMessages.push(message);
 };
 const sendToFrame = (message) => {
-  if (frame && frame.contentWindow && frameTargetOrigin) {
+  if (frame && frame.contentWindow && frameTargetOrigin && isHostMessage(message)) {
     frame.contentWindow.postMessage(message, frameTargetOrigin);
   }
 };
-const isHostMessage = (message) => message && message.version === bridgeVersion && (message.type === "host.ready" || message.type === "host.openedFromCommand");
+const isHostMessage = (message) => message && message.version === bridgeVersion && (message.type === "host.ready" || message.type === "host.openedFromCommand") && (message.payload === undefined || (typeof message.payload === "object" && message.payload !== null && !Array.isArray(message.payload)));
 const isGuiMessage = (message) => message && message.version === bridgeVersion && message.type === "gui.ready";
+window.__yetAiSendHostMessageToFrame = sendToFrame;
 window.addEventListener("message", (event) => {
   if (event.source === frame?.contentWindow) {
     if (frameTargetOrigin && frameTargetOrigin !== "*" && event.origin !== frameTargetOrigin) {
@@ -241,10 +260,6 @@ window.addEventListener("message", (event) => {
       console.log("Yet AI rejected invalid iframe GUI bridge message");
     }
     return;
-  }
-  if (isHostMessage(event.data)) {
-    console.log("Yet AI host message", event.data.type);
-    sendToFrame(event.data);
   }
 });
 if (frame) {

@@ -58,7 +58,7 @@ class YetBrowserPanel : JPanel(BorderLayout()) {
     }
 
     private fun sendToGui(message: String) {
-        browser.cefBrowser.executeJavaScript("window.postMessage($message, window.location.origin);", browser.cefBrowser.url, 0)
+        browser.cefBrowser.executeJavaScript("window.__yetAiSendHostMessageToFrame?.($message);", browser.cefBrowser.url, 0)
     }
 }
 
@@ -101,7 +101,6 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         <script>
         const bootstrapHostReady = $bootstrap;
         const bridgeVersion = "${ProductIdentity.bridgeVersion}";
-        const requestId = "$requestId";
         const frame = document.querySelector("iframe");
         const frameTargetOrigin = $frameOrigin;
         const shellStatus = document.getElementById("yet-ai-shell-status");
@@ -119,12 +118,13 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         }
         window.postIntellijMessage = (message) => { $postIntellij };
         const sendToFrame = (message) => {
-          if (frame && frame.contentWindow && frameTargetOrigin) {
+          if (frame && frame.contentWindow && frameTargetOrigin && isHostMessage(message)) {
             frame.contentWindow.postMessage(message, frameTargetOrigin);
           }
         };
-        const isHostMessage = (message) => message && message.version === bridgeVersion && (message.type === "host.ready" || message.type === "host.openedFromCommand");
+        const isHostMessage = (message) => message && message.version === bridgeVersion && (message.type === "host.ready" || message.type === "host.openedFromCommand") && (message.payload === undefined || (typeof message.payload === "object" && message.payload !== null && !Array.isArray(message.payload)));
         const isGuiMessage = (message) => message && message.version === bridgeVersion && message.type === "gui.ready";
+        window.__yetAiSendHostMessageToFrame = sendToFrame;
         window.addEventListener("message", (event) => {
           if (event.source === frame?.contentWindow) {
             if (frameTargetOrigin && frameTargetOrigin !== "*" && event.origin !== frameTargetOrigin) {
@@ -138,12 +138,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
             }
             return;
           }
-          if (isHostMessage(event.data)) {
-            console.log("Yet AI host message", event.data.type);
-            sendToFrame(event.data);
-          }
         });
-        window.postIntellijMessage({ version: bridgeVersion, type: "gui.ready", requestId, payload: { supportedBridgeVersion: bridgeVersion } });
         if (frame) {
           frame.addEventListener("load", () => {
             markLoaded();
