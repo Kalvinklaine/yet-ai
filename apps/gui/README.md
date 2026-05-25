@@ -21,9 +21,12 @@ Repository validation and the local browser non-blank smoke remain available fro
 ```sh
 npm run check
 npm run smoke:gui-browser
+npm run smoke:gui-runtime-e2e
 ```
 
 Build the GUI first with `cd apps/gui && npm run build`. The browser smoke serves `apps/gui/dist` on `127.0.0.1`, opens the built page with Playwright Chromium, and fails on blank UI, page JavaScript errors, or broken local JS/CSS assets without requiring the engine or provider credentials. If Playwright or Chromium is missing, run `npm install` from the repository root and `npx playwright install chromium`.
+
+The runtime e2e smoke also requires `cargo build -p yet-lsp`. It starts `target/debug/yet-lsp` with a generated local runtime token and isolated temp HOME/config/cache, starts a loopback mock OpenAI-compatible streaming provider, drives the built GUI in Playwright, configures a fake API-key provider, sends a chat message, verifies streamed assistant text, and checks DOM text, browser storage, console/page errors, and smoke output boundaries for generated-token/API-key leaks. It uses only loopback URLs and fake credentials.
 
 Manual IDE packaged-asset preview flows:
 
