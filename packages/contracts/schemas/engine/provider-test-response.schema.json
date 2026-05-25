@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/provider-test-response.schema.json",
+  "title": "Engine Provider Test Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "providerId", "status", "message", "cloudRequired"],
+  "properties": {
+    "ok": {
+      "type": "boolean"
+    },
+    "providerId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "reachable",
+        "unsupported_kind",
+        "missing_secret",
+        "missing_model",
+        "bad_url",
+        "unauthorized",
+        "timeout",
+        "unreachable",
+        "upstream_error"
+      ]
+    },
+    "message": {
+      "type": "string"
+    },
+    "modelId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    }
+  }
+}

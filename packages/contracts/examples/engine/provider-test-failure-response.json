@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "providerId": "openai-local",
+  "status": "unauthorized",
+  "message": "Provider authentication failed. Check the configured credentials.",
+  "cloudRequired": false
+}

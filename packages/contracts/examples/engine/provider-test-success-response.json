@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "providerId": "openai-local",
+  "status": "reachable",
+  "message": "Provider is reachable and accepted the configured credentials.",
+  "modelId": "gpt-local",
+  "cloudRequired": false
+}
