@@ -53,7 +53,7 @@ export function applyChatViewEvent(state: ChatViewState, event: SseEvent): ChatV
     case "stream_finished":
       return applyStreamFinished(state);
     case "error":
-      return appendMessage(state, {
+      return appendMessage(stopStreamingAssistant(state), {
         role: "error",
         content: sanitizeErrorText(readErrorMessage(event.payload)),
         status: "error",

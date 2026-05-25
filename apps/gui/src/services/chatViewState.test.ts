@@ -97,6 +97,19 @@ describe("chatViewState", () => {
     expect(state.messages[0].content).not.toContain("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
   });
 
+  it("terminates active assistant streaming before appending an error", () => {
+    const started = applyChatViewEvent(createInitialChatViewState("chat-1"), event("stream_started", { role: "assistant" }));
+    const delta = applyChatViewEvent(started, event("stream_delta", { delta: { content: "Partial" } }));
+    const failed = applyChatViewEvent(delta, event("error", { message: "Provider failed auth_token=secret" }));
+
+    expect(failed.messages).toHaveLength(2);
+    expect(failed.messages[0]).toMatchObject({ role: "assistant", content: "Partial", status: "complete" });
+    expect(failed.messages[1]).toMatchObject({ role: "error", status: "error" });
+    expect(failed.messages.some((message) => message.status === "streaming")).toBe(false);
+    expect(failed.messages[1].content).not.toContain("auth_token");
+    expect(failed.messages[1].content).not.toContain("secret");
+  });
+
   it("clears streaming status with local stop helper", () => {
     const started = applyChatViewEvent(createInitialChatViewState("chat-1"), event("stream_delta", { delta: { content: "Partial" } }));
     const stopped = stopStreamingAssistant(started);
