@@ -71,6 +71,7 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
 
   const vscode = window.acquireVsCodeApi?.();
   const postIntellijMessage = window.postIntellijMessage;
+  const parentBridge = !vscode && !postIntellijMessage && window.parent !== window ? window.parent : undefined;
   const host: BridgeHost = vscode ? "vscode" : postIntellijMessage ? "jetbrains" : "browser";
 
   const post = (message: GuiMessage) => {
@@ -82,6 +83,8 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
       vscode.postMessage(message);
     } else if (postIntellijMessage) {
       postIntellijMessage(message);
+    } else if (parentBridge) {
+      parentBridge.postMessage(message, "*");
     } else {
       append(`Browser mock sent ${message.type}`);
     }
