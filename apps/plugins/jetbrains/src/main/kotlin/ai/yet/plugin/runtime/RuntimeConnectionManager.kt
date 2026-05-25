@@ -1,6 +1,7 @@
 package ai.yet.plugin.runtime
 
 import ai.yet.plugin.identity.ProductIdentity
+import ai.yet.plugin.settings.YetSettingsState
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
@@ -22,29 +23,81 @@ class RuntimeConnectionManager : Disposable {
     private val logger = Logger.getInstance(RuntimeConnectionManager::class.java)
     private var launchedProcess: Process? = null
     private var launchedConnection: RuntimeSettings? = null
+    private var lastHealthResult: String? = null
+    private var lastConnectionError: String? = null
 
     @Synchronized
     fun prepare(): RuntimeConnectionResult {
         val settings = try {
             RuntimeSettings.current()
         } catch (error: Exception) {
+            lastHealthResult = null
+            lastConnectionError = sanitizedRuntimeError("Yet AI runtime settings are invalid", error)
             return RuntimeConnectionResult(
                 RuntimeSettings.safeFallback(),
                 null,
-                sanitizedRuntimeError("Yet AI runtime settings are invalid", error),
+                lastConnectionError,
             )
         }
         val connection = try {
             prepareConnectionSettings(settings)
         } catch (error: Exception) {
-            return failedRuntimeConnection(settings, null, "Yet AI local runtime launch failed", error)
+            val result = failedRuntimeConnection(settings, null, "Yet AI local runtime launch failed", error)
+            lastHealthResult = null
+            lastConnectionError = result.error
+            return result
         }
         return try {
             checkHealth(connection)
+            lastHealthResult = "/v1/ping returned 2xx"
+            lastConnectionError = null
             RuntimeConnectionResult(connection, "Connected to Yet AI local runtime at ${connection.runtimeUrl}.", null)
         } catch (error: Exception) {
-            failedRuntimeConnection(settings, connection, "Yet AI local runtime connection failed", error)
+            val result = failedRuntimeConnection(settings, connection, "Yet AI local runtime connection failed", error)
+            lastHealthResult = null
+            lastConnectionError = result.error
+            result
         }
+    }
+
+    @Synchronized
+    fun restartRuntime(): RuntimeConnectionResult {
+        stopLaunchedProcess()
+        return prepare()
+    }
+
+    @Synchronized
+    fun runtimeDiagnostics(): String {
+        val state = YetSettingsState.getInstance().state
+        val rawRuntimeUrl = state.runtimeUrl
+        val rawLaunchMode = state.launchMode
+        val rawEngineBinaryPath = state.engineBinaryPath
+        val settings = try {
+            RuntimeSettings.current()
+        } catch (error: Exception) {
+            return formatRuntimeDiagnostics(
+                RuntimeDiagnostics(
+                    launchMode = rawLaunchMode.trim().ifBlank { "auto" },
+                    runtimeUrl = sanitizeRuntimeUrlForDiagnostics(rawRuntimeUrl),
+                    engineBinaryConfigured = rawEngineBinaryPath.isNotBlank(),
+                    binaryStatus = "settings invalid: ${redactLogText(error.message ?: error::class.java.simpleName, "")}",
+                    launchedByPlugin = launchedProcess?.isAlive == true,
+                    health = null,
+                    error = sanitizedRuntimeError("Yet AI runtime settings are invalid", error),
+                ),
+            )
+        }
+        return formatRuntimeDiagnostics(
+            RuntimeDiagnostics(
+                launchMode = settings.launchMode.name.lowercase(),
+                runtimeUrl = sanitizeRuntimeUrlForDiagnostics(settings.runtimeUrl),
+                engineBinaryConfigured = settings.engineBinaryPath != null,
+                binaryStatus = describeEngineBinaryStatus(settings),
+                launchedByPlugin = launchedProcess?.isAlive == true,
+                health = lastHealthResult,
+                error = lastConnectionError,
+            ),
+        )
     }
 
     @Synchronized
@@ -114,6 +167,7 @@ class RuntimeConnectionManager : Disposable {
         val process = launchedProcess ?: return
         launchedProcess = null
         launchedConnection = null
+        lastHealthResult = null
         stopProcess(process)
     }
 
@@ -147,6 +201,71 @@ data class EngineLaunchCommand(
     val binaryPath: Path,
     val environment: Map<String, String>,
 )
+
+data class RuntimeDiagnostics(
+    val launchMode: String,
+    val runtimeUrl: String,
+    val engineBinaryConfigured: Boolean,
+    val binaryStatus: String,
+    val launchedByPlugin: Boolean,
+    val health: String?,
+    val error: String?,
+)
+
+fun formatRuntimeDiagnostics(diagnostics: RuntimeDiagnostics): String {
+    val mode = diagnostics.launchMode.lowercase()
+    val guidance = when (mode) {
+        "connect" -> "Connect mode expects an already running loopback Yet AI runtime. Verify the URL, port, and debug token match the runtime process."
+        "launch" -> "Launch mode requires an executable ${ProductIdentity.engineBinaryName} path and an http runtime URL with an explicit nonzero port."
+        else -> "Auto mode launches ${ProductIdentity.engineBinaryName} when a binary is configured or discoverable on PATH; otherwise it connects to the configured loopback URL."
+    }
+    return listOf(
+        "Yet AI Runtime Status",
+        "Launch mode: $mode",
+        "Runtime URL: ${diagnostics.runtimeUrl}",
+        "Engine binary path configured: ${if (diagnostics.engineBinaryConfigured) "yes" else "no"}",
+        "Binary status: ${redactLogText(diagnostics.binaryStatus, "")}",
+        "Plugin-launched process: ${if (diagnostics.launchedByPlugin) "running" else "not running"}",
+        "Last health: ${diagnostics.health?.let { redactLogText(it, "") } ?: "not checked yet"}",
+        "Last error: ${diagnostics.error?.let { redactLogText(it, "") } ?: "none"}",
+        "Guidance: $guidance",
+        "Restart: Yet AI: Restart Runtime stops only a process launched by this plugin, then prepares the current settings again.",
+    ).joinToString("\n")
+}
+
+fun sanitizeRuntimeUrlForDiagnostics(value: String): String {
+    val uri = try {
+        URI(value.trim())
+    } catch (_: Exception) {
+        return redactLogText(value.trim().ifBlank { "not configured" }, "")
+    }
+    val scheme = uri.scheme ?: return redactLogText(value.trim(), "")
+    val host = uri.host?.let { if (it == "::1") "[::1]" else it } ?: "unknown-host"
+    val port = if (uri.port >= 0) ":${uri.port}" else ""
+    val path = uri.rawPath?.takeIf { it.isNotBlank() } ?: ""
+    return "$scheme://$host$port$path"
+}
+
+fun describeEngineBinaryStatus(settings: RuntimeSettings): String = when (settings.launchMode) {
+    LaunchMode.CONNECT -> "not used in connect mode"
+    LaunchMode.LAUNCH -> {
+        val path = settings.engineBinaryPath
+        when {
+            path == null -> "configured path missing"
+            isLaunchableEngineFile(path) -> "configured binary is executable"
+            else -> "configured binary is not executable"
+        }
+    }
+    LaunchMode.AUTO -> {
+        val path = settings.engineBinaryPath
+        when {
+            path != null && isLaunchableEngineFile(path) -> "configured binary is executable"
+            path != null -> "configured binary is not executable"
+            findEngineBinary(null) != null -> "discovered ${ProductIdentity.engineBinaryName} on PATH"
+            else -> "no configured or discovered binary; connect-only fallback"
+        }
+    }
+}
 
 fun buildEngineLaunchCommand(
     runtimeUrl: String,
