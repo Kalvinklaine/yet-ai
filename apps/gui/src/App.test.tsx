@@ -1491,6 +1491,90 @@ describe("chat panel", () => {
     sseController?.close();
   });
 
+  it("token-only changes abort the active stream with the old token", async () => {
+    const oldToken = "old-token-only-secret";
+    const stream = mockStreamingReadyRuntime();
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setInputValue(sessionTokenInput(), oldToken);
+    });
+    await act(async () => {
+      setTextareaValue(chatInput(), "stream before token change");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    fetchMock.mockClear();
+
+    await act(async () => {
+      setInputValue(sessionTokenInput(), "new-token-only-secret");
+      await Promise.resolve();
+    });
+
+    const abortCalls = abortCommandCalls();
+    expect(abortCalls).toHaveLength(1);
+    expect(String(abortCalls[0][0])).toBe("http://127.0.0.1:8001/v1/chats/chat-001/commands");
+    expect(new Headers(abortCalls[0][1]?.headers).get("Authorization")).toBe(`Bearer ${oldToken}`);
+    stream.close();
+  });
+
+  it("chat id changes abort the old active chat and not the new chat", async () => {
+    const stream = mockStreamingReadyRuntime();
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setTextareaValue(chatInput(), "stream before chat change");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    fetchMock.mockClear();
+
+    await act(async () => {
+      setInputValue(findInputValue("chat-001")!, "chat-002");
+      await Promise.resolve();
+    });
+
+    const abortCalls = abortCommandCalls();
+    expect(abortCalls).toHaveLength(1);
+    expect(String(abortCalls[0][0])).toBe("http://127.0.0.1:8001/v1/chats/chat-001/commands");
+    expect(String(abortCalls[0][0])).not.toContain("chat-002");
+    stream.close();
+  });
+
+  it("unmount cleanup aborts the active stream without state update warnings", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const stream = mockStreamingReadyRuntime();
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setTextareaValue(chatInput(), "stream before unmount");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    fetchMock.mockClear();
+
+    await act(async () => {
+      root?.unmount();
+      root = undefined;
+      await Promise.resolve();
+    });
+
+    const abortCalls = abortCommandCalls();
+    expect(abortCalls).toHaveLength(1);
+    expect(String(abortCalls[0][0])).toBe("http://127.0.0.1:8001/v1/chats/chat-001/commands");
+    expect(consoleError.mock.calls.flat().join("\n")).not.toContain("state update on an unmounted component");
+    stream.close();
+  });
+
   it("sanitizes SSE debug timeline payloads before rendering", async () => {
     mockRuntimeResponses({
       ...readyRuntimeOptions(),
@@ -1627,6 +1711,52 @@ function readyRuntimeOptions(): Pick<MockRuntimeOptions, "providers" | "models">
     providers: [enabledProvider()],
     models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }],
   };
+}
+
+function mockStreamingReadyRuntime() {
+  let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("/v1/chats/subscribe?chat_id=")) {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          sseController = controller;
+        },
+        cancel() {},
+      });
+      return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+    }
+    if (url.endsWith("/v1/ping")) {
+      return Promise.resolve(jsonResponse({ productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: "2026-05-24T00:00:00Z" }));
+    }
+    if (url.endsWith("/v1/caps")) {
+      return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
+    }
+    if (url.endsWith("/v1/models")) {
+      return Promise.resolve(jsonResponse({ models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }] }));
+    }
+    if (url.endsWith("/v1/providers")) {
+      return Promise.resolve(jsonResponse({ providers: [enabledProvider()], cloudRequired: false, providerAccess: "direct" }));
+    }
+    if (url.endsWith("/v1/provider-auth/openai/status")) {
+      return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
+    }
+    if (init?.method === "POST" && url.includes("/v1/chats/") && url.endsWith("/commands")) {
+      return Promise.resolve(jsonResponse({ accepted: true, chatId: "chat-001", requestId: "request-001", type: JSON.parse(String(init.body)).type }));
+    }
+    return Promise.resolve(jsonResponse({}));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return { close: () => sseController?.close() };
+}
+
+function abortCommandCalls() {
+  return fetchMock.mock.calls.filter(([url, init]) => {
+    if (!String(url).includes("/v1/chats/") || !String(url).endsWith("/commands") || init?.method !== "POST") {
+      return false;
+    }
+    return (JSON.parse(String(init.body)) as { type?: string }).type === "abort";
+  });
 }
 
 function mockRuntimeResponses(options: MockRuntimeOptions = {}) {
