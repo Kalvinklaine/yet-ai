@@ -59,6 +59,18 @@ try {
   });
 
   await page.goto(`${wrapperBaseUrl}/wrapper.html`, { waitUntil: "domcontentloaded" });
+  const preInitState = await page.evaluate(() => ({
+    hostQueue: window.__yetAiPendingHostMessages?.length,
+    diagnosticQueue: window.__yetAiPendingDiagnostics?.length,
+    diagnosticText: document.getElementById("yet-ai-shell-status")?.textContent ?? "",
+  }));
+  if (preInitState.hostQueue !== 1) {
+    failures.push(`Wrapper did not preserve pre-init queued host message before helper setup; queue length ${String(preInitState.hostQueue)}.`);
+  }
+  if (preInitState.diagnosticQueue !== 1 || !preInitState.diagnosticText.includes("Runtime error: Queued diagnostic before wrapper init")) {
+    failures.push("Wrapper did not preserve or display pre-init queued diagnostic before helper setup.");
+  }
+  await page.waitForFunction(() => window.__yetAiWrapperInitialized === true, undefined, { timeout: 5000 }).catch(() => failures.push("Wrapper helper initialization marker was not set."));
   await page.waitForSelector("iframe[title='Yet AI GUI']", { state: "visible", timeout: 5000 });
 
   const iframeElement = page.locator("iframe[title='Yet AI GUI']");
@@ -93,6 +105,18 @@ try {
   const iframeGuiReady = await page.evaluate(() => window.__yetAiIframeGuiReady === true);
   if (!iframeGuiReady) {
     failures.push("GUI iframe did not send gui.ready to the parent wrapper.");
+  }
+  const queueStateAfterReady = await page.evaluate(() => ({
+    hostQueue: window.__yetAiPendingHostMessages?.length,
+    diagnosticQueue: window.__yetAiPendingDiagnostics?.length,
+    flushedPreInitHost: window.__yetAiPreInitHostFlushed === true,
+    diagnosticText: document.getElementById("yet-ai-shell-status")?.textContent ?? "",
+  }));
+  if (queueStateAfterReady.hostQueue !== 0 || !queueStateAfterReady.flushedPreInitHost) {
+    failures.push("Wrapper did not flush the pre-init queued host message after iframe load/gui.ready.");
+  }
+  if (queueStateAfterReady.diagnosticQueue !== 0 || !queueStateAfterReady.diagnosticText.includes("Queued diagnostic before wrapper init")) {
+    failures.push("Wrapper did not adopt and flush the pre-init queued diagnostic.");
   }
 
   const runtimeInput = frameLocator.getByLabel("Runtime base URL");
@@ -215,6 +239,20 @@ iframe { width: 100vw; height: 100vh; border: 0; }
 <div id="yet-ai-shell-fallback" role="alert" hidden>Packaged Yet AI GUI did not finish loading from the local loopback server.</div>
 <iframe title="Yet AI GUI" src="${escapeHtml(indexUrl)}"></iframe>
 <script>
+window.__yetAiPendingHostMessages = [{
+  version: "${bridgeVersion}",
+  type: "host.ready",
+  requestId: "pre-init-smoke",
+  payload: {
+    runtimeUrl: "http://127.0.0.1:8001",
+    productId: "yet-ai",
+    displayName: "Yet AI",
+    cloudRequired: false,
+  },
+}];
+window.__yetAiPendingDiagnostics = ["Queued diagnostic before wrapper init"];
+</script>
+<script defer>
 const bootstrapHostReady = ${bootstrapHostReady};
 const bridgeVersion = "${bridgeVersion}";
 const frame = document.querySelector("iframe");
@@ -225,6 +263,22 @@ window.__yetAiBridgeMessages = [];
 window.__yetAiFrameTargetOrigin = frameTargetOrigin;
 window.__yetAiIframeGuiReady = false;
 let frameLoaded = false;
+let frameReady = false;
+const pendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : [];
+const pendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : [];
+window.__yetAiPendingHostMessages = pendingHostMessages;
+window.__yetAiPendingDiagnostics = pendingDiagnostics;
+const showDiagnostic = (message) => {
+  if (shellStatus && typeof message === "string") {
+    shellStatus.hidden = false;
+    shellStatus.textContent = "Runtime error: " + message;
+  }
+};
+window.__yetAiSetRuntimeDiagnostic = (message) => {
+  if (!frameReady) pendingDiagnostics.push(message);
+  showDiagnostic(message);
+};
+showDiagnostic("Queued diagnostic before wrapper init");
 const markLoaded = () => {
   frameLoaded = true;
   if (shellStatus) shellStatus.hidden = true;
@@ -238,14 +292,28 @@ if (shellFallback && frame) {
 window.postIntellijMessage = (message) => {
   window.__yetAiBridgeMessages.push(message);
 };
-const sendToFrame = (message) => {
+const postToFrame = (message) => {
   if (frame && frame.contentWindow && frameTargetOrigin && isHostMessage(message)) {
     frame.contentWindow.postMessage(message, frameTargetOrigin);
+    if (message?.requestId === "pre-init-smoke") window.__yetAiPreInitHostFlushed = true;
   }
+};
+const flushPending = () => {
+  while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift());
+  while (pendingHostMessages.length > 0) postToFrame(pendingHostMessages.shift());
+};
+const sendToFrame = (message) => {
+  if (!isHostMessage(message)) return;
+  if (!frameReady) {
+    pendingHostMessages.push(message);
+    return;
+  }
+  postToFrame(message);
 };
 const isHostMessage = (message) => message && message.version === bridgeVersion && (message.type === "host.ready" || message.type === "host.openedFromCommand") && (message.payload === undefined || (typeof message.payload === "object" && message.payload !== null && !Array.isArray(message.payload)));
 const isGuiMessage = (message) => message && message.version === bridgeVersion && message.type === "gui.ready";
 window.__yetAiSendHostMessageToFrame = sendToFrame;
+window.__yetAiWrapperInitialized = true;
 window.addEventListener("message", (event) => {
   if (event.source === frame?.contentWindow) {
     if (frameTargetOrigin && frameTargetOrigin !== "*" && event.origin !== frameTargetOrigin) {
@@ -253,6 +321,8 @@ window.addEventListener("message", (event) => {
       return;
     }
     if (isGuiMessage(event.data)) {
+      frameReady = true;
+      flushPending();
       window.__yetAiIframeGuiReady = true;
       window.postIntellijMessage(event.data);
       sendToFrame(bootstrapHostReady);
@@ -265,6 +335,8 @@ window.addEventListener("message", (event) => {
 if (frame) {
   frame.addEventListener("load", () => {
     markLoaded();
+    frameReady = true;
+    flushPending();
     sendToFrame(bootstrapHostReady);
   });
 }

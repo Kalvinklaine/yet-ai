@@ -252,9 +252,7 @@ fun sanitizedRuntimeError(prefix: String, error: Exception): String {
     return "$prefix: ${redactRuntimeError(detail)}"
 }
 
-private fun redactRuntimeError(value: String): String = value
-    .replace(Regex("Bearer\\s+[^\\s\"']+", RegexOption.IGNORE_CASE), "Bearer [redacted]")
-    .replace(Regex("(?i)(sessionToken|accessToken|refreshToken|apiKey|secret|token)=([^\\s&]+)"), "${'$'}1=[redacted]")
+private fun redactRuntimeError(value: String): String = redactSensitiveText(value, null)
 
 private fun generateSessionToken(): String {
     val bytes = ByteArray(32)
@@ -262,6 +260,20 @@ private fun generateSessionToken(): String {
     return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 }
 
-private fun redactLogText(value: String, token: String): String = value
-    .replace(token, "[redacted]")
-    .replace(Regex("Bearer\\s+[^\\s\"']+", RegexOption.IGNORE_CASE), "Bearer [redacted]")
+fun redactLogText(value: String, token: String): String = redactSensitiveText(value, token)
+
+private fun redactSensitiveText(value: String, exactToken: String?): String {
+    var redacted = value
+    if (!exactToken.isNullOrBlank()) {
+        redacted = redacted.replace(exactToken, "[redacted]")
+    }
+    redacted = redacted
+        .replace(Regex("([\"'])(?:access_token|refresh_token|api_key|authorization|client_secret|session_token|cookie|set-cookie|code_verifier|pkce_verifier|verifier|sessionToken|accessToken|refreshToken|apiKey|clientSecret)\\1\\s*:\\s*([\"'])(?:\\\\.|(?!\\2).)*\\2", RegexOption.IGNORE_CASE), "[redacted]")
+        .replace(Regex("Bearer\\s+[^\\s\"']+", RegexOption.IGNORE_CASE), "Bearer [redacted]")
+        .replace(Regex("\\b[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}\\b"), "[redacted]")
+        .replace(Regex("\\bsk-[A-Za-z0-9_-]{8,}\\b"), "[redacted]")
+        .replace(Regex("\\b(?:api_key|access_token|refresh_token|authorization|client_secret|session_token|cookie|set-cookie|code_verifier|pkce_verifier|verifier|sessionToken|accessToken|refreshToken|apiKey|clientSecret)\\b\\s*[:=]\\s*[^\\s,;)}\\]]+", RegexOption.IGNORE_CASE), "[redacted]")
+        .replace(Regex("\\b(?:auth\\.json|\\.codex/auth\\.json)\\b", RegexOption.IGNORE_CASE), "[redacted]")
+        .replace(Regex("\\b[A-Za-z0-9_-]{48,}\\b"), "[redacted]")
+    return if (redacted.length > 500) redacted.take(500) + "…" else redacted
+}
