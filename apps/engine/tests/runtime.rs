@@ -677,6 +677,72 @@ async fn provider_auth_openai_experimental_status_returns_pending_without_verifi
 }
 
 #[tokio::test]
+async fn provider_auth_openai_experimental_loopback_overrides_are_accepted() {
+    let app = test_app();
+    for (token_endpoint_url, chat_endpoint_url) in [
+        (
+            "http://127.0.0.1:1455/oauth/token",
+            "http://127.0.0.1:1456/backend-api/codex",
+        ),
+        (
+            "http://localhost:1455/oauth/token",
+            "http://localhost:1456/backend-api/codex",
+        ),
+        (
+            "http://[::1]:1455/oauth/token",
+            "http://[::1]:1456/backend-api/codex",
+        ),
+    ] {
+        let (status, body) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::POST,
+                "/v1/provider-auth/openai/start",
+                Body::from(
+                    json!({
+                        "experimentalCodexLike": true,
+                        "tokenEndpointUrl": token_endpoint_url,
+                        "chatEndpointUrl": chat_endpoint_url
+                    })
+                    .to_string(),
+                ),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "pending");
+        assert_provider_auth_response_has_no_codex_secrets(&body);
+    }
+}
+
+#[tokio::test]
+async fn provider_auth_openai_experimental_overrides_must_be_loopback_and_safe() {
+    let forbidden_secret_url = "https://user:pass@evil.example/token?access_token=secret";
+    for body in [
+        json!({ "experimentalCodexLike": true, "tokenEndpointUrl": "https://evil.example/token" }),
+        json!({ "experimentalCodexLike": true, "chatEndpointUrl": "https://evil.example/backend-api/codex" }),
+        json!({ "experimentalCodexLike": true, "tokenEndpointUrl": forbidden_secret_url }),
+        json!({ "experimentalCodexLike": true, "tokenEndpointUrl": "file:///tmp/token" }),
+        json!({ "experimentalCodexLike": true, "tokenEndpointUrl": "not a url sk-secret-endpoint-abcd" }),
+    ] {
+        let (status, body) = json_response(authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(body.to_string()),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "invalid provider auth request");
+        let text = body.to_string();
+        assert!(!text.contains("evil.example"));
+        assert!(!text.contains("user:pass"));
+        assert!(!text.contains("access_token"));
+        assert!(!text.contains("sk-secret-endpoint-abcd"));
+        assert_provider_auth_response_has_no_codex_secrets(&body);
+    }
+}
+
+#[tokio::test]
 async fn provider_auth_openai_experimental_exchange_stores_tokens_and_returns_connected() {
     let paths = test_storage_paths();
     let app = app(AppState::with_storage_paths(
