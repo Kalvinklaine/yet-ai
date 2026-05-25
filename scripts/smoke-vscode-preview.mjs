@@ -23,6 +23,9 @@ const requiredConfigurationProperties = [
   "yetai.engineBinaryPath",
 ];
 
+const staleToleranceMs = 2000;
+const prepareMessage = "Run `npm run prepare:vscode-preview` from the repository root to rebuild generated preview artifacts.";
+
 checkManifestSurfaces(vscodePackage);
 
 await checkFile(
@@ -50,6 +53,12 @@ if (extensionJs !== undefined) {
   checkCompiledExtensionSurfaces(extensionJs);
 }
 
+await checkFreshness(extensionPath, [
+  path.join(vscodeRoot, "src", "extension.ts"),
+  path.join(vscodeRoot, "src", "webview.ts"),
+  path.join(vscodeRoot, "src", "engineConnection.ts"),
+], "Compiled extension out/extension.js is older than VS Code source files.");
+
 const guiRoot = path.join(vscodeRoot, "media", "gui");
 const guiIndex = path.join(guiRoot, "index.html");
 const guiHtml = await readTextFile(
@@ -61,6 +70,8 @@ if (guiHtml !== undefined) {
   await checkGuiAssetReferences(guiHtml, guiRoot);
 }
 
+await checkFreshness(guiIndex, [path.join(root, "apps", "gui", "dist", "index.html")], "Packaged GUI media/gui/index.html is older than apps/gui/dist/index.html.");
+
 if (failures.length > 0) {
   console.error("VS Code dev-preview smoke failed:");
   for (const failure of failures) {
@@ -70,7 +81,7 @@ if (failures.length > 0) {
 }
 
 console.log("VS Code dev-preview smoke passed.");
-console.log("Checked copied engine binary, packaged GUI assets, compiled extension entry, manifest commands, activation events, and configuration surfaces.");
+console.log("Checked copied engine binary, packaged GUI assets, compiled extension entry, manifest commands, activation events, configuration surfaces, and obvious stale generated artifacts.");
 console.log("No VS Code UI, provider credentials, or hosted services were used.");
 
 function checkManifestSurfaces(manifest) {
@@ -203,6 +214,33 @@ function toLocalAssetPath(value) {
     return undefined;
   }
   return normalized;
+}
+
+async function checkFreshness(generatedPath, sourcePaths, staleMessage) {
+  let generatedStat;
+  try {
+    generatedStat = await stat(generatedPath);
+  } catch {
+    return;
+  }
+  if (!generatedStat.isFile()) {
+    return;
+  }
+
+  for (const sourcePath of sourcePaths) {
+    let sourceStat;
+    try {
+      sourceStat = await stat(sourcePath);
+    } catch {
+      continue;
+    }
+    if (!sourceStat.isFile()) {
+      continue;
+    }
+    if (generatedStat.mtimeMs + staleToleranceMs < sourceStat.mtimeMs) {
+      failures.push(`${staleMessage} ${prepareMessage} Generated: ${relative(generatedPath)}; newer source: ${relative(sourcePath)}.`);
+    }
+  }
 }
 
 function relative(filePath) {
