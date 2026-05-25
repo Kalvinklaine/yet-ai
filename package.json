@@ -9,6 +9,7 @@
     "smoke:jetbrains-preview": "node scripts/smoke-jetbrains-preview.mjs",
     "smoke:jetbrains-installable": "node scripts/smoke-jetbrains-installable.mjs",
     "smoke:jetbrains-gui-browser": "node scripts/smoke-jetbrains-gui-browser.mjs",
+    "smoke:jetbrains-wrapper-browser": "node scripts/smoke-jetbrains-wrapper-browser.mjs",
     "prepare:ide-engine": "node scripts/prepare-ide-engine.mjs",
     "prepare:vscode-preview": "node scripts/prepare-vscode-preview.mjs",
     "prepare:jetbrains-preview": "node scripts/prepare-jetbrains-preview.mjs",
