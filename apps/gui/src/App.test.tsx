@@ -811,10 +811,14 @@ describe("provider secret boundary", () => {
 
   it("ignores stale provider save errors after runtime settings change", async () => {
     const providerSave = deferred<Response>();
+    const secret = "sk-stale-save-secret";
     mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
 
     await flushAsync();
+    await act(async () => {
+      setInputValue(apiKeyInput(), secret);
+    });
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (init?.method === "POST" && url === "http://127.0.0.1:8001/v1/providers") {
@@ -842,6 +846,7 @@ describe("provider secret boundary", () => {
       findButton("Create provider").click();
       await Promise.resolve();
     });
+    expect(apiKeyInput().value).toBe("");
     await act(async () => {
       setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
     });
@@ -850,6 +855,60 @@ describe("provider secret boundary", () => {
 
     expect(container?.textContent).not.toContain("stale save failed");
     expect(container?.textContent).not.toContain("verysecrettokenvalue");
+    expect(browserStorageDump()).not.toContain(secret);
+  });
+
+  it("clears manual authorization code and working state when settings change during exchange", async () => {
+    const exchange = deferred<Response>();
+    const code = "manual-code-stale";
+    mockRuntimeResponses({ authResponse: pendingExperimentalAuthResponse() });
+    renderApp();
+
+    await flushAsync();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url === "http://127.0.0.1:8001/v1/provider-auth/openai/exchange") {
+        return exchange.promise;
+      }
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
+      }
+      if (url.endsWith("/v1/ping")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: "2026-05-24T00:00:00Z" }));
+      }
+      if (url.endsWith("/v1/caps")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
+      }
+      if (url.endsWith("/v1/models")) {
+        return Promise.resolve(jsonResponse({ models: [] }));
+      }
+      if (url.endsWith("/v1/providers")) {
+        return Promise.resolve(jsonResponse({ providers: [], cloudRequired: false, providerAccess: "direct" }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    await act(async () => {
+      setInputValue(authCodeInput(), code);
+    });
+    await act(async () => {
+      findButton("Exchange authorization code").click();
+      await Promise.resolve();
+    });
+
+    expect(findButton("Exchanging…").disabled).toBe(true);
+
+    await act(async () => {
+      setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
+    });
+    exchange.resolve(jsonResponse({ ...connectedExperimentalAuthResponse(), message: "stale connected" }));
+    await flushAsync();
+
+    expect(authCodeInputOptional()?.value ?? "").toBe("");
+    expect(container?.textContent).not.toContain("Exchanging…");
+    expect(container?.textContent).not.toContain(code);
+    expect(container?.textContent).not.toContain("stale connected");
+    expect(browserStorageDump()).not.toContain(code);
   });
 
   it("sanitizes provider metadata before visible rendering", async () => {
@@ -1359,7 +1418,7 @@ describe("chat panel", () => {
       ...readyRuntimeOptions(),
       sseEvents: [
         { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
-        { seq: 1, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: "safe text" }, access_token: "s".repeat(64), header: "Bearer abcdefghijklmnopqrstuvwxyz1234567890" } },
+        { seq: 1, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: "safe text", accessToken: "short" }, access_token: "s".repeat(64), nested: { clientSecret: "tiny" }, header: "Bearer abcdefghijklmnopqrstuvwxyz1234567890" } },
       ],
     });
     renderApp();
@@ -1375,7 +1434,11 @@ describe("chat panel", () => {
     });
 
     expect(container?.textContent).toContain("safe text");
+    expect(container?.textContent).toContain('"[redacted]": "[redacted]"');
     expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("accessToken");
+    expect(container?.textContent).not.toContain("clientSecret");
+    expect(container?.textContent).not.toContain("tiny");
     expect(container?.textContent).not.toContain("abcdefghijklmnopqrstuvwxyz1234567890");
   });
 });
