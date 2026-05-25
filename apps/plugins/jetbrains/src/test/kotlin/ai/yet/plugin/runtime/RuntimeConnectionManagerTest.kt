@@ -299,6 +299,25 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun redactsCookieLikeKeyValueLines() {
+        val cases = listOf(
+            "cookie=session=secret; refresh=also-secret",
+            "set_cookie=sid=secret; refresh=also-secret",
+            "set-cookie=sid=secret; Path=/; HttpOnly; refresh=also-secret",
+            "setCookie=sid=secret; refresh=also-secret",
+            "Cookie=session=secret; Refresh=also-secret",
+        )
+
+        cases.forEach { input ->
+            val redacted = redactLogText(input, "")
+            assertTrue(redacted.contains("[redacted]"), redacted)
+            listOf("session=secret", "refresh=also-secret", "sid=secret", "Path=/", "HttpOnly", "Refresh=also-secret").forEach { secret ->
+                assertFalse(redacted.contains(secret), redacted)
+            }
+        }
+    }
+
+    @Test
     fun redactsJwtAndLongOpaqueTokens() {
         val jwt = "aaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbb.cccccccccccccccc"
         val opaque = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"

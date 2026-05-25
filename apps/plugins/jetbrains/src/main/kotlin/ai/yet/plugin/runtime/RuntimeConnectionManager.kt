@@ -387,6 +387,9 @@ private fun redactSensitiveText(value: String, exactToken: String?): String {
         redacted = redacted.replace(exactToken, "[redacted]")
     }
     redacted = redacted
+        .replace(Regex("(?i)(^|[\\r\\n])([^\\r\\n]*\\b(?:cookie|set[-_]?cookie)\\s*=\\s*)[^\\r\\n]*")) { match ->
+            match.groupValues[1] + match.groupValues[2] + "[redacted]"
+        }
         .replace(Regex("(?i)\\b(?:Authorization|Cookie|Set-Cookie)\\s*:\\s*[^\\r\\n]+"), "[redacted]")
         .replace(Regex("(?i)([\"'])(?:[A-Za-z0-9_-]*(?:access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|token|api[_-]?key|authorization|bearer|cookie|client[_-]?secret|code[_-]?verifier|pkce[_-]?verifier|verifier)[A-Za-z0-9_-]*)\\1\\s*:\\s*([\"'])(?:\\\\.|(?!\\2).)*\\2"), "[redacted]")
         .replace(Regex("(?i)\\bBearer\\s+[^\\s\"']+"), "Bearer [redacted]")
