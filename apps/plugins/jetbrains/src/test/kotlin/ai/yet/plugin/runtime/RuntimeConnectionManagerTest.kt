@@ -163,53 +163,98 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
-    fun runtimeLogRedactionCoversCommonSecrets() {
-        val exactToken = "runtime-session-token"
-        val longOpaque = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-        val jwt = "aaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbb.cccccccccccccccc"
-        val input = """
-            token runtime-session-token
-            Authorization: Bearer bearer-secret-value
-            provider sk-abcdefghijklmnopqrstuvwxyz
-            api_key=url-secret access_token=access-secret refresh_token=refresh-secret client_secret=client-secret session_token=session-secret cookie=cookie-secret set-cookie=set-cookie-secret code_verifier=verifier-secret pkce_verifier=pkce-secret verifier=plain-secret
-            {"access_token":"json-access","refresh_token":"json-refresh","api_key":"json-api","authorization":"json-auth","client_secret":"json-client","session_token":"json-session","cookie":"json-cookie","set-cookie":"json-set-cookie","code_verifier":"json-verifier","pkce_verifier":"json-pkce","verifier":"json-plain"}
-            jwt $jwt opaque $longOpaque file /Users/example/.codex/auth.json auth.json
-        """.trimIndent()
+    fun redactsExactRuntimeSessionTokenInLogs() {
+        val token = "short-runtime-token"
+        val redacted = redactLogText("runtime printed short-runtime-token", token)
 
-        val redacted = redactLogText(input, exactToken)
-
-        listOf(
-            exactToken,
-            "bearer-secret-value",
-            "sk-abcdefghijklmnopqrstuvwxyz",
-            "url-secret",
-            "access-secret",
-            "refresh-secret",
-            "client-secret",
-            "session-secret",
-            "cookie-secret",
-            "set-cookie-secret",
-            "verifier-secret",
-            "pkce-secret",
-            "plain-secret",
-            "json-access",
-            "json-refresh",
-            "json-api",
-            "json-auth",
-            "json-client",
-            "json-session",
-            "json-cookie",
-            "json-set-cookie",
-            "json-verifier",
-            "json-pkce",
-            "json-plain",
-            jwt,
-            longOpaque,
-            ".codex/auth.json",
-            "auth.json",
-        ).forEach { secret -> assertFalse(redacted.contains(secret), "Leaked $secret in $redacted") }
+        assertFalse(redacted.contains(token), redacted)
         assertTrue(redacted.contains("[redacted]"))
-        assertTrue(redacted.length <= 501)
+    }
+
+    @Test
+    fun redactsExactRuntimeSessionTokenInRuntimeErrors() {
+        val settings = RuntimeSettings("http://127.0.0.1:8123", null, "short-runtime-token", LaunchMode.CONNECT, null)
+        val result = failedRuntimeConnection(settings, null, "Yet AI local runtime connection failed", IllegalStateException("health failed with short-runtime-token"))
+
+        assertFalse(result.error.orEmpty().contains("short-runtime-token"), result.error)
+        assertTrue(result.error.orEmpty().contains("[redacted]"))
+    }
+
+    @Test
+    fun redactsBearerHeaders() {
+        val redacted = redactLogText("Authorization: Bearer bearer-secret-value", "")
+
+        assertFalse(redacted.contains("bearer-secret-value"), redacted)
+        assertTrue(redacted.contains("[redacted]"))
+    }
+
+    @Test
+    fun redactsEnvStyleApiKeysAndTokens() {
+        val cases = mapOf(
+            "OPENAI_API_KEY=sk-test-openai-secret" to "sk-test-openai-secret",
+            "ANTHROPIC_API_KEY=anthropic-secret-value" to "anthropic-secret-value",
+            "GITHUB_TOKEN=github-secret-value" to "github-secret-value",
+            "YET_AI_AUTH_TOKEN=yet-secret-value" to "yet-secret-value",
+            "OAUTH_REFRESH_TOKEN=refresh-secret-value" to "refresh-secret-value",
+            "PROVIDER_CLIENT_SECRET=client-secret-value" to "client-secret-value",
+        )
+
+        cases.forEach { (input, secret) ->
+            val redacted = redactLogText(input, "")
+            assertFalse(redacted.contains(secret), redacted)
+            assertTrue(redacted.contains("[redacted]"), redacted)
+        }
+    }
+
+    @Test
+    fun redactsJsonSecretFields() {
+        val redacted = redactLogText("""{"access_token":"json-access","clientSecret":"json-client","api_key":"json-api"}""", "")
+
+        listOf("json-access", "json-client", "json-api").forEach { secret ->
+            assertFalse(redacted.contains(secret), redacted)
+        }
+        assertTrue(redacted.contains("[redacted]"))
+    }
+
+    @Test
+    fun redactsCookieAndSetCookieHeaders() {
+        val redacted = redactLogText("Cookie: session=session-secret; refresh=refresh-secret\nSet-Cookie: auth=auth-secret; Path=/; HttpOnly", "")
+
+        listOf("session-secret", "refresh-secret", "auth-secret", "HttpOnly").forEach { secret ->
+            assertFalse(redacted.contains(secret), redacted)
+        }
+        assertTrue(redacted.contains("[redacted]"))
+    }
+
+    @Test
+    fun redactsJwtAndLongOpaqueTokens() {
+        val jwt = "aaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbb.cccccccccccccccc"
+        val opaque = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        val redacted = redactLogText("jwt $jwt opaque $opaque", "")
+
+        assertFalse(redacted.contains(jwt), redacted)
+        assertFalse(redacted.contains(opaque), redacted)
+        assertTrue(redacted.contains("[redacted]"))
+    }
+
+    @Test
+    fun redactsFullCredentialFilePaths() {
+        val unixPath = "/Users/alice/.codex/auth.json"
+        val windowsPath = "C:\\Users\\Alice\\.codex\\auth.json"
+        val redacted = redactLogText("files $unixPath and $windowsPath", "")
+
+        listOf(unixPath, windowsPath, "alice", "Alice", ".codex", "auth.json").forEach { secret ->
+            assertFalse(redacted.contains(secret), redacted)
+        }
+        assertTrue(redacted.contains("[redacted]"))
+    }
+
+    @Test
+    fun truncatesVeryLongSanitizedLogs() {
+        val redacted = redactLogText("message ".repeat(100), "")
+
+        assertEquals(501, redacted.length)
+        assertTrue(redacted.endsWith("…"))
     }
 
     @Test

@@ -134,7 +134,7 @@ fun failedRuntimeConnection(
 ): RuntimeConnectionResult = RuntimeConnectionResult(
     attemptedSettings ?: settings,
     null,
-    sanitizedRuntimeError(prefix, error),
+    sanitizedRuntimeError(prefix, error, attemptedSettings?.sessionToken ?: settings.sessionToken),
 )
 
 data class RuntimeConnectionResult(
@@ -247,12 +247,12 @@ fun isLaunchableEngineFile(path: Path, osName: String = System.getProperty("os.n
     return Files.isExecutable(path)
 }
 
-fun sanitizedRuntimeError(prefix: String, error: Exception): String {
+fun sanitizedRuntimeError(prefix: String, error: Exception, exactToken: String? = null): String {
     val detail = error.message?.takeIf { it.isNotBlank() } ?: error::class.java.simpleName
-    return "$prefix: ${redactRuntimeError(detail)}"
+    return prefix + ": " + redactRuntimeError(detail, exactToken)
 }
 
-private fun redactRuntimeError(value: String): String = redactSensitiveText(value, null)
+private fun redactRuntimeError(value: String, exactToken: String?): String = redactSensitiveText(value, exactToken)
 
 private fun generateSessionToken(): String {
     val bytes = ByteArray(32)
@@ -268,12 +268,13 @@ private fun redactSensitiveText(value: String, exactToken: String?): String {
         redacted = redacted.replace(exactToken, "[redacted]")
     }
     redacted = redacted
-        .replace(Regex("([\"'])(?:access_token|refresh_token|api_key|authorization|client_secret|session_token|cookie|set-cookie|code_verifier|pkce_verifier|verifier|sessionToken|accessToken|refreshToken|apiKey|clientSecret)\\1\\s*:\\s*([\"'])(?:\\\\.|(?!\\2).)*\\2", RegexOption.IGNORE_CASE), "[redacted]")
-        .replace(Regex("Bearer\\s+[^\\s\"']+", RegexOption.IGNORE_CASE), "Bearer [redacted]")
+        .replace(Regex("(?i)\\b(?:Authorization|Cookie|Set-Cookie)\\s*:\\s*[^\\r\\n]+"), "[redacted]")
+        .replace(Regex("(?i)([\"'])(?:[A-Za-z0-9_-]*(?:access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|token|api[_-]?key|authorization|bearer|cookie|client[_-]?secret|code[_-]?verifier|pkce[_-]?verifier|verifier)[A-Za-z0-9_-]*)\\1\\s*:\\s*([\"'])(?:\\\\.|(?!\\2).)*\\2"), "[redacted]")
+        .replace(Regex("(?i)\\bBearer\\s+[^\\s\"']+"), "Bearer [redacted]")
         .replace(Regex("\\b[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}\\b"), "[redacted]")
         .replace(Regex("\\bsk-[A-Za-z0-9_-]{8,}\\b"), "[redacted]")
-        .replace(Regex("\\b(?:api_key|access_token|refresh_token|authorization|client_secret|session_token|cookie|set-cookie|code_verifier|pkce_verifier|verifier|sessionToken|accessToken|refreshToken|apiKey|clientSecret)\\b\\s*[:=]\\s*[^\\s,;)}\\]]+", RegexOption.IGNORE_CASE), "[redacted]")
-        .replace(Regex("\\b(?:auth\\.json|\\.codex/auth\\.json)\\b", RegexOption.IGNORE_CASE), "[redacted]")
+        .replace(Regex("(?i)(?:^|[\\s,{(])(?:[A-Za-z0-9_-]*(?:access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|token|api[_-]?key|authorization|bearer|cookie|client[_-]?secret|code[_-]?verifier|pkce[_-]?verifier|verifier)[A-Za-z0-9_-]*)\\s*[:=]\\s*[^\\s,)}\\]]+"), "[redacted]")
+        .replace(Regex("(?i)(?:[A-Za-z]:)?(?:[/\\\\][^\\s,;:)}\\]]*)*(?:[/\\\\](?:\\.codex[/\\\\])?auth\\.json)"), "[redacted]")
         .replace(Regex("\\b[A-Za-z0-9_-]{48,}\\b"), "[redacted]")
     return if (redacted.length > 500) redacted.take(500) + "…" else redacted
 }

@@ -157,6 +157,23 @@ describe("bridgeAdapter", () => {
     adapter.dispose();
   });
 
+  it("delivers synchronous VS Code host.ready replies after subscribe", () => {
+    const logs: string[] = [];
+    window.acquireVsCodeApi = () => ({
+      postMessage: () => window.dispatchEvent(new MessageEvent("message", { data: hostReady({ sessionToken: "sync-vscode-token" }) })),
+    });
+
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    const messages: unknown[] = [];
+    adapter.subscribe((message) => messages.push(message));
+
+    expect(messages).toHaveLength(1);
+    expect(JSON.stringify(messages[0])).toContain("sync-vscode-token");
+    expect(logs).toContain("Host runtime settings received");
+    expect(logs.join("\n")).not.toContain("sync-vscode-token");
+    adapter.dispose();
+  });
+
   it("keeps direct JetBrains mode posting and receiving", () => {
     const logs: string[] = [];
     const postIntellijMessage = vi.fn();
@@ -175,6 +192,67 @@ describe("bridgeAdapter", () => {
     });
     expect(messages).toHaveLength(1);
     adapter.dispose();
+  });
+
+  it("delivers synchronous JetBrains host.ready replies after subscribe", () => {
+    const logs: string[] = [];
+    window.postIntellijMessage = () => window.dispatchEvent(new MessageEvent("message", { data: hostReady({ sessionToken: "sync-jetbrains-token" }) }));
+
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    const messages: unknown[] = [];
+    adapter.subscribe((message) => messages.push(message));
+
+    expect(adapter.host).toBe("jetbrains");
+    expect(messages).toHaveLength(1);
+    expect(JSON.stringify(messages[0])).toContain("sync-jetbrains-token");
+    expect(logs.join("\n")).not.toContain("sync-jetbrains-token");
+    adapter.dispose();
+  });
+
+  it("does not flush invalid queued host replies", () => {
+    window.postIntellijMessage = () => window.dispatchEvent(new MessageEvent("message", { data: { version: bridgeVersion, type: "host.ready", payload: { sessionToken: 123 } } }));
+
+    const logs: string[] = [];
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    const messages: unknown[] = [];
+    adapter.subscribe((message) => messages.push(message));
+
+    expect(messages).toHaveLength(0);
+    expect(logs).toContain("Rejected invalid host bridge message");
+    adapter.dispose();
+  });
+
+  it("does not flush wrong-source queued parent messages", () => {
+    const parent = {
+      postMessage: () => window.dispatchEvent(new MessageEvent("message", {
+        data: hostReady(),
+        source: { postMessage: vi.fn() } as unknown as Window,
+      })),
+    };
+    Object.defineProperty(window, "parent", {
+      configurable: true,
+      value: parent,
+    });
+
+    const logs: string[] = [];
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    const messages: unknown[] = [];
+    adapter.subscribe((message) => messages.push(message));
+
+    expect(messages).toHaveLength(0);
+    expect(logs).toContain("Rejected host bridge message from unexpected source");
+    adapter.dispose();
+  });
+
+  it("clears pending host replies on dispose", () => {
+    window.postIntellijMessage = () => window.dispatchEvent(new MessageEvent("message", { data: hostReady() }));
+
+    const adapter = createBridgeAdapter(() => undefined);
+    adapter.dispose();
+    const messages: unknown[] = [];
+    adapter.subscribe((message) => messages.push(message));
+
+    expect(messages).toHaveLength(0);
   });
 
   it("accepts allowlisted host messages", () => {

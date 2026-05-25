@@ -76,6 +76,8 @@ function expectedParentOrigin(): string | undefined {
 export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapter {
   const log: string[] = [];
   const handlers = new Set<HostMessageHandler>();
+  const pendingMessages: HostMessage[] = [];
+  const maxPendingMessages = 8;
   const append = (entry: string) => {
     log.push(entry);
     onLog(entry);
@@ -105,6 +107,8 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
 
   const subscribe = (handler: HostMessageHandler) => {
     handlers.add(handler);
+    const pending = pendingMessages.splice(0);
+    pending.forEach((message) => handler(message));
     return () => handlers.delete(handler);
   };
 
@@ -123,6 +127,13 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
       return;
     }
     append(message.type === "host.ready" ? "Host runtime settings received" : `Host message ${message.type}`);
+    if (handlers.size === 0) {
+      pendingMessages.push(message);
+      if (pendingMessages.length > maxPendingMessages) {
+        pendingMessages.shift();
+      }
+      return;
+    }
     handlers.forEach((handler) => handler(message));
   };
 
@@ -141,6 +152,7 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
     subscribe,
     dispose: () => {
       handlers.clear();
+      pendingMessages.splice(0);
       window.removeEventListener("message", onMessage);
     },
   };
