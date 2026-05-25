@@ -608,10 +608,8 @@ fn new_codex_session(
     token_endpoint_url: Option<&str>,
     chat_endpoint_url: Option<&str>,
 ) -> Result<CodexOAuthSession, ProviderAuthError> {
-    let token_endpoint_url = token_endpoint_url.unwrap_or(CODEX_TOKEN_URL).trim();
-    validate_token_endpoint_url(token_endpoint_url)?;
-    let chat_base_url = chat_endpoint_url.unwrap_or(CODEX_CHAT_BASE_URL).trim();
-    validate_token_endpoint_url(chat_base_url)?;
+    let token_endpoint_url = experimental_endpoint_url(token_endpoint_url, CODEX_TOKEN_URL)?;
+    let chat_base_url = experimental_endpoint_url(chat_endpoint_url, CODEX_CHAT_BASE_URL)?;
     let verifier = random_url_safe(64)?;
     let challenge = pkce_challenge(&verifier);
     Ok(CodexOAuthSession {
@@ -622,13 +620,27 @@ fn new_codex_session(
         challenge,
         expires_at: (Utc::now() + Duration::seconds(ttl_seconds)).to_rfc3339(),
         scopes: codex_scopes(),
-        token_endpoint_url: token_endpoint_url.to_string(),
+        token_endpoint_url,
         chat_base_url: chat_base_url.trim_end_matches('/').to_string(),
         chat_model: CODEX_CHAT_MODEL.to_string(),
     })
 }
 
-fn validate_token_endpoint_url(value: &str) -> Result<(), ProviderAuthError> {
+fn experimental_endpoint_url(
+    request_value: Option<&str>,
+    default_value: &str,
+) -> Result<String, ProviderAuthError> {
+    match request_value {
+        Some(value) => validate_experimental_endpoint_url(value, true),
+        None => validate_experimental_endpoint_url(default_value, false),
+    }
+}
+
+fn validate_experimental_endpoint_url(
+    value: &str,
+    require_loopback: bool,
+) -> Result<String, ProviderAuthError> {
+    let value = value.trim();
     let parsed = reqwest::Url::parse(value).map_err(|_| ProviderAuthError::InvalidRequest)?;
     if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
         return Err(ProviderAuthError::InvalidRequest);
@@ -636,7 +648,14 @@ fn validate_token_endpoint_url(value: &str) -> Result<(), ProviderAuthError> {
     if !parsed.username().is_empty() || parsed.password().is_some() {
         return Err(ProviderAuthError::InvalidRequest);
     }
-    Ok(())
+    if require_loopback && !is_allowed_loopback_host(&parsed) {
+        return Err(ProviderAuthError::InvalidRequest);
+    }
+    Ok(value.to_string())
+}
+
+fn is_allowed_loopback_host(url: &reqwest::Url) -> bool {
+    matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "::1" | "[::1]"))
 }
 
 async fn codex_exchange(
