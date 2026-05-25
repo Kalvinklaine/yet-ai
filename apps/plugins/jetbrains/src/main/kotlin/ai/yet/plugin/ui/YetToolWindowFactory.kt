@@ -46,6 +46,8 @@ class YetBrowserPanel : JPanel(BorderLayout()), Disposable {
     private val query = JBCefJSQuery.create(browser as JBCefBrowser)
     @Volatile
     private var latestConnection = RuntimeConnectionResult(RuntimeSettings.safeFallback(), "Connecting to Yet AI local runtime...", null)
+    @Volatile
+    private var disposed = false
 
     init {
         add(browser.component, BorderLayout.CENTER)
@@ -69,23 +71,28 @@ class YetBrowserPanel : JPanel(BorderLayout()), Disposable {
             val connection = RuntimeConnectionManager.getInstance().prepare()
             latestConnection = connection
             ApplicationManager.getApplication().invokeLater {
-                sendToGui(BridgeMessages.hostReady(connection.settings, "jb-runtime-ready"))
-                sendToGui(BridgeMessages.openedFromCommand())
-                connection.error?.let { error -> sendDiagnostic(error) }
+                if (!disposed) {
+                    sendToGui(BridgeMessages.hostReady(connection.settings, "jb-runtime-ready"))
+                    sendToGui(BridgeMessages.openedFromCommand())
+                    connection.error?.let { error -> sendDiagnostic(error) }
+                }
             }
         }
     }
 
     private fun sendToGui(message: String) {
-        browser.cefBrowser.executeJavaScript("window.__yetAiSendHostMessageToFrame?.($message);", browser.cefBrowser.url, 0)
+        if (disposed) return
+        browser.cefBrowser.executeJavaScript("window.__yetAiSendHostMessageToFrame($message);", browser.cefBrowser.url, 0)
     }
 
     private fun sendDiagnostic(error: String) {
+        if (disposed) return
         val escaped = BridgeMessages.escapeScriptJson(JsonPrimitive(error).toString())
-        browser.cefBrowser.executeJavaScript("window.__yetAiSetRuntimeDiagnostic?.($escaped);", browser.cefBrowser.url, 0)
+        browser.cefBrowser.executeJavaScript("window.__yetAiSetRuntimeDiagnostic($escaped);", browser.cefBrowser.url, 0)
     }
 
     override fun dispose() {
+        disposed = true
         query.dispose()
         browser.dispose()
     }
@@ -141,11 +148,18 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const shellStatus = document.getElementById("yet-ai-shell-status");
         const shellFallback = document.getElementById("yet-ai-shell-fallback");
         let frameLoaded = false;
-        window.__yetAiSetRuntimeDiagnostic = (message) => {
+        let frameReady = false;
+        const pendingHostMessages = [];
+        const pendingDiagnostics = [];
+        const showDiagnostic = (message) => {
           if (shellStatus && typeof message === "string") {
             shellStatus.hidden = false;
             shellStatus.textContent = `Runtime error: ${'$'}{message}`;
           }
+        };
+        window.__yetAiSetRuntimeDiagnostic = (message) => {
+          if (!frameReady) pendingDiagnostics.push(message);
+          showDiagnostic(message);
         };
         const markLoaded = () => {
           frameLoaded = true;
@@ -158,10 +172,22 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           }, 8000);
         }
         window.postIntellijMessage = (message) => { $postIntellij };
-        const sendToFrame = (message) => {
+        const postToFrame = (message) => {
           if (frame && frame.contentWindow && frameTargetOrigin && isHostMessage(message)) {
             frame.contentWindow.postMessage(message, frameTargetOrigin);
           }
+        };
+        const flushPending = () => {
+          while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift());
+          while (pendingHostMessages.length > 0) postToFrame(pendingHostMessages.shift());
+        };
+        const sendToFrame = (message) => {
+          if (!isHostMessage(message)) return;
+          if (!frameReady) {
+            pendingHostMessages.push(message);
+            return;
+          }
+          postToFrame(message);
         };
         const isHostMessage = (message) => message && message.version === bridgeVersion && (message.type === "host.ready" || message.type === "host.openedFromCommand") && (message.payload === undefined || (typeof message.payload === "object" && message.payload !== null && !Array.isArray(message.payload)));
         const isGuiMessage = (message) => message && message.version === bridgeVersion && message.type === "gui.ready";
@@ -173,6 +199,8 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
               return;
             }
             if (isGuiMessage(event.data)) {
+              frameReady = true;
+              flushPending();
               window.postIntellijMessage(event.data);
             } else {
               console.log("Yet AI rejected invalid iframe GUI bridge message");
@@ -183,6 +211,8 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         if (frame) {
           frame.addEventListener("load", () => {
             markLoaded();
+            frameReady = true;
+            flushPending();
             sendToFrame(bootstrapHostReady);
           });
         }

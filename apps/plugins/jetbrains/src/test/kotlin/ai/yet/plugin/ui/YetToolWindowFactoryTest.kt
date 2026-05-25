@@ -25,13 +25,48 @@ class YetToolWindowFactoryTest {
         assertContains(html, "window.setTimeout")
         assertContains(html, "window.__yetAiSendHostMessageToFrame = sendToFrame")
         assertContains(html, "window.__yetAiSetRuntimeDiagnostic")
+        assertContains(html, "const pendingHostMessages = []")
+        assertContains(html, "const pendingDiagnostics = []")
+        assertContains(html, "if (!frameReady) {")
+        assertContains(html, "pendingHostMessages.push(message)")
+        assertContains(html, "flushPending()")
         assertFalse(html.contains("isHostMessage(event.data)"))
         assertFalse(html.contains("window.postIntellijMessage({ version: bridgeVersion, type: \"gui.ready\""))
         assertFalse(html.contains("Yet AI host message"))
+        assertFalse(html.contains("window.__yetAiSendHostMessageToFrame?."))
+        assertFalse(html.contains("window.postMessage(message"))
         assertFalse(html.contains("jar:file:"))
         assertFalse(html.contains("const frameTargetOrigin = \"*\";"))
         assertFalse(html.contains("<div id=\"root\"></div>"))
         assertFalse(html.contains("/assets/index-"))
+    }
+
+    @Test
+    fun wrapperFlushesQueuedMessagesWhenFrameLoadsOrGuiIsReady() {
+        val html = renderHtml(
+            RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, "runtime unavailable"),
+            "console.log('bridge')",
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+        )
+
+        assertContains(html, "let frameReady = false")
+        assertContains(html, "while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift())")
+        assertContains(html, "while (pendingHostMessages.length > 0) postToFrame(pendingHostMessages.shift())")
+        assertContains(html, "frameReady = true;")
+        assertContains(html, "flushPending();")
+        assertContains(html, "window.postIntellijMessage(event.data);")
+        assertContains(html, "sendToFrame(bootstrapHostReady);")
+    }
+
+    @Test
+    fun panelSourceContainsDisposalGuardForAsyncDelivery() {
+        val source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/kotlin/ai/yet/plugin/ui/YetToolWindowFactory.kt"))
+
+        assertContains(source, "private var disposed = false")
+        assertContains(source, "invokeLater {")
+        assertContains(source, "if (!disposed) {")
+        assertContains(source, "if (disposed) return")
+        assertContains(source, "disposed = true")
     }
 
     @Test
