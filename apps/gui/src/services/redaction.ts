@@ -7,6 +7,7 @@ const secretKeyRegExp = new RegExp(secretKeyPattern, "i");
 
 const redactionPatterns: Array<[RegExp, string]> = [
   [/\b(?:Authorization|Proxy-Authorization|Cookie|Set-Cookie)\s*:\s*[^\r\n]*/gi, "[redacted]"],
+  [new RegExp(String.raw`\b(?:cookie|set[_-]?cookie)\b\s*[:=]\s*[^\r\n]*`, "gi"), "[redacted]"],
   [new RegExp(String.raw`\b(?:authorization|proxy[_-]?authorization)\b\s*[:=]\s*Bearer\s+[^\s,;)}\]]+`, "gi"), "[redacted]"],
   [new RegExp(String.raw`([?&;])${secretKeyPattern}\s*=\s*[^\s&#;]+`, "gi"), "$1[redacted]"],
   [new RegExp(String.raw`(["'])${secretKeyPattern}\1\s*:\s*(["'])(?:\\.|(?!\2).)*\2`, "gi"), "[redacted]"],
