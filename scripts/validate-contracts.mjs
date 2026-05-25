@@ -201,22 +201,28 @@ const parsedInvalidExamples = new Map();
 let schemaFiles = [];
 let exampleFiles = [];
 let invalidExampleFiles = [];
+let schemaDiscoverySucceeded = false;
+let exampleDiscoverySucceeded = false;
+let invalidExampleDiscoverySucceeded = false;
 let identity = null;
 
 try {
   schemaFiles = await discoverJsonFiles("packages/contracts/schemas");
+  schemaDiscoverySucceeded = true;
 } catch (error) {
   failures.push(`packages/contracts/schemas: read failure (${error.message})`);
 }
 
 try {
   exampleFiles = await discoverJsonFiles("packages/contracts/examples");
+  exampleDiscoverySucceeded = true;
 } catch (error) {
   failures.push(`packages/contracts/examples: read failure (${error.message})`);
 }
 
 try {
   invalidExampleFiles = await discoverJsonFiles("packages/contracts/examples-invalid");
+  invalidExampleDiscoverySucceeded = true;
 } catch (error) {
   failures.push(`packages/contracts/examples-invalid: read failure (${error.message})`);
 }
@@ -227,11 +233,23 @@ try {
   failures.push(error.message);
 }
 
-if (schemaFiles.length > 0 && exampleFiles.length > 0) {
+if (schemaDiscoverySucceeded && schemaFiles.length === 0) {
+  failures.push("packages/contracts/schemas: no contract schemas discovered");
+}
+
+if (exampleDiscoverySucceeded && exampleFiles.length === 0) {
+  failures.push("packages/contracts/examples: no positive contract examples discovered");
+}
+
+if (invalidExampleDiscoverySucceeded && invalidExampleFiles.length === 0) {
+  failures.push("packages/contracts/examples-invalid: no invalid contract examples discovered");
+}
+
+if (schemaDiscoverySucceeded && exampleDiscoverySucceeded) {
   failures.push(...collectMappingCoverageFailures(exampleFiles, schemaFiles));
 }
 
-if (schemaFiles.length > 0 && invalidExampleFiles.length > 0) {
+if (schemaDiscoverySucceeded && invalidExampleDiscoverySucceeded) {
   failures.push(...collectInvalidMappingCoverageFailures(invalidExampleFiles, schemaFiles));
 }
 
