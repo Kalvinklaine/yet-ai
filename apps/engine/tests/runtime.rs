@@ -167,16 +167,14 @@ async fn configure_openai_api_provider(app: axum::Router, api_key: &str) {
 async fn start_mock_provider(
     status: StatusCode,
     stream_body: &'static str,
-    expected_auth: Option<&'static str>,
+    _observed_auth_only: Option<&'static str>,
 ) -> (String, oneshot::Receiver<Option<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (auth_sender, auth_receiver) = oneshot::channel();
-    let expected = expected_auth.map(str::to_string);
     let auth_sender = std::sync::Arc::new(std::sync::Mutex::new(Some(auth_sender)));
     tokio::spawn(async move {
         let handler = move |request: axum::http::Request<Body>| {
-            let expected = expected.clone();
             let auth_sender = auth_sender.clone();
             async move {
                 let auth = request
@@ -186,9 +184,6 @@ async fn start_mock_provider(
                     .map(str::to_string);
                 if let Some(sender) = auth_sender.lock().unwrap().take() {
                     let _ = sender.send(auth.clone());
-                }
-                if let Some(expected) = expected {
-                    assert_eq!(auth.as_deref(), Some(expected.as_str()));
                 }
                 (
                     status,
@@ -209,16 +204,14 @@ async fn start_mock_provider(
 async fn start_mock_models_provider(
     status: StatusCode,
     body: &'static str,
-    expected_auth: Option<&'static str>,
+    _observed_auth_only: Option<&'static str>,
 ) -> (String, oneshot::Receiver<Option<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (auth_sender, auth_receiver) = oneshot::channel();
-    let expected = expected_auth.map(str::to_string);
     let auth_sender = std::sync::Arc::new(std::sync::Mutex::new(Some(auth_sender)));
     tokio::spawn(async move {
         let handler = move |request: axum::http::Request<Body>| {
-            let expected = expected.clone();
             let auth_sender = auth_sender.clone();
             async move {
                 let auth = request
@@ -228,9 +221,6 @@ async fn start_mock_models_provider(
                     .map(str::to_string);
                 if let Some(sender) = auth_sender.lock().unwrap().take() {
                     let _ = sender.send(auth.clone());
-                }
-                if let Some(expected) = expected {
-                    assert_eq!(auth.as_deref(), Some(expected.as_str()));
                 }
                 (status, [(header::CONTENT_TYPE, "application/json")], body).into_response()
             }
@@ -244,16 +234,14 @@ async fn start_mock_models_provider(
 }
 
 async fn start_slow_models_provider(
-    expected_auth: Option<&'static str>,
+    _observed_auth_only: Option<&'static str>,
 ) -> (String, oneshot::Receiver<Option<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (auth_sender, auth_receiver) = oneshot::channel();
-    let expected = expected_auth.map(str::to_string);
     let auth_sender = std::sync::Arc::new(std::sync::Mutex::new(Some(auth_sender)));
     tokio::spawn(async move {
         let handler = move |request: axum::http::Request<Body>| {
-            let expected = expected.clone();
             let auth_sender = auth_sender.clone();
             async move {
                 let auth = request
@@ -263,9 +251,6 @@ async fn start_slow_models_provider(
                     .map(str::to_string);
                 if let Some(sender) = auth_sender.lock().unwrap().take() {
                     let _ = sender.send(auth.clone());
-                }
-                if let Some(expected) = expected {
-                    assert_eq!(auth.as_deref(), Some(expected.as_str()));
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(4)).await;
                 (
@@ -284,15 +269,30 @@ async fn start_slow_models_provider(
     (format!("http://{address}"), auth_receiver)
 }
 
-async fn closed_loopback_base_url() -> String {
+async fn assert_received_auth(
+    auth_receiver: oneshot::Receiver<Option<String>>,
+    expected_auth: &'static str,
+) {
+    let auth = tokio::time::timeout(std::time::Duration::from_secs(2), auth_receiver)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(auth.as_deref(), Some(expected_auth));
+}
+
+async fn start_dropping_loopback_base_url() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    drop(listener);
+    tokio::spawn(async move {
+        if let Ok((stream, _)) = listener.accept().await {
+            drop(stream);
+        }
+    });
     format!("http://{address}/v1")
 }
 
 async fn start_slow_mock_provider(
-    expected_auth: Option<&'static str>,
+    _observed_auth_only: Option<&'static str>,
 ) -> (
     String,
     oneshot::Receiver<Option<String>>,
@@ -304,13 +304,11 @@ async fn start_slow_mock_provider(
     let (auth_sender, auth_receiver) = oneshot::channel();
     let (first_sender, first_receiver) = oneshot::channel();
     let (continue_sender, continue_receiver) = oneshot::channel();
-    let expected = expected_auth.map(str::to_string);
     let auth_sender = std::sync::Arc::new(std::sync::Mutex::new(Some(auth_sender)));
     let first_sender = std::sync::Arc::new(std::sync::Mutex::new(Some(first_sender)));
     let continue_receiver = std::sync::Arc::new(std::sync::Mutex::new(Some(continue_receiver)));
     tokio::spawn(async move {
         let handler = move |request: axum::http::Request<Body>| {
-            let expected = expected.clone();
             let auth_sender = auth_sender.clone();
             let first_sender = first_sender.clone();
             let continue_receiver = continue_receiver.clone();
@@ -322,9 +320,6 @@ async fn start_slow_mock_provider(
                     .map(str::to_string);
                 if let Some(sender) = auth_sender.lock().unwrap().take() {
                     let _ = sender.send(auth.clone());
-                }
-                if let Some(expected) = expected {
-                    assert_eq!(auth.as_deref(), Some(expected.as_str()));
                 }
                 let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(8);
                 tokio::spawn(async move {
@@ -2389,8 +2384,7 @@ async fn provider_test_openai_compatible_success_uses_loopback_models_and_auth()
     assert_eq!(body["modelId"], "gpt-test");
     assert_eq!(body["cloudRequired"], false);
     assert!(!body.to_string().contains(api_key));
-    let auth = auth_receiver.await.unwrap();
-    assert_eq!(auth.as_deref(), Some("Bearer sk-provider-test-secret-abcd"));
+    assert_received_auth(auth_receiver, "Bearer sk-provider-test-secret-abcd").await;
 }
 
 #[tokio::test]
@@ -2424,17 +2418,13 @@ async fn provider_test_openai_compatible_chat_completions_base_url_uses_models_e
     assert_eq!(body["status"], "reachable");
     assert_eq!(body["modelId"], "gpt-test");
     assert!(!body.to_string().contains(api_key));
-    let auth = auth_receiver.await.unwrap();
-    assert_eq!(
-        auth.as_deref(),
-        Some("Bearer sk-provider-test-chat-url-abcd")
-    );
+    assert_received_auth(auth_receiver, "Bearer sk-provider-test-chat-url-abcd").await;
 }
 
 #[tokio::test]
 async fn provider_test_openai_compatible_unauthorized_is_sanitized() {
     let api_key = "sk-provider-test-unauthorized-abcd";
-    let (base_url, _) = start_mock_models_provider(
+    let (base_url, auth_receiver) = start_mock_models_provider(
         StatusCode::UNAUTHORIZED,
         "raw-provider-body access_token=secret Bearer should-not-leak",
         Some("Bearer sk-provider-test-unauthorized-abcd"),
@@ -2459,13 +2449,19 @@ async fn provider_test_openai_compatible_unauthorized_is_sanitized() {
     assert!(!text.contains(api_key));
     assert!(!text.contains("access_token"));
     assert!(!text.contains("should-not-leak"));
+    assert_received_auth(auth_receiver, "Bearer sk-provider-test-unauthorized-abcd").await;
 }
 
 #[tokio::test]
 async fn provider_test_openai_compatible_down_is_sanitized() {
     let api_key = "sk-provider-test-down-abcd";
     let app = test_app();
-    configure_openai_provider(app.clone(), closed_loopback_base_url().await, api_key).await;
+    configure_openai_provider(
+        app.clone(),
+        start_dropping_loopback_base_url().await,
+        api_key,
+    )
+    .await;
 
     let (status, body) = json_response_from(
         app,
@@ -2505,11 +2501,7 @@ async fn provider_test_openai_compatible_timeout_is_sanitized() {
     let text = body.to_string();
     assert!(!text.contains(api_key));
     assert!(!text.contains("provider-test-timeout"));
-    let auth = auth_receiver.await.unwrap();
-    assert_eq!(
-        auth.as_deref(),
-        Some("Bearer sk-provider-test-timeout-abcd")
-    );
+    assert_received_auth(auth_receiver, "Bearer sk-provider-test-timeout-abcd").await;
 }
 
 #[tokio::test]
@@ -2566,7 +2558,7 @@ async fn provider_test_missing_provider_and_missing_secret_are_stable() {
 #[tokio::test]
 async fn provider_test_missing_model_and_upstream_error_are_sanitized() {
     let api_key = "sk-provider-test-upstream-abcd";
-    let (base_url, _) = start_mock_models_provider(
+    let (base_url, auth_receiver) = start_mock_models_provider(
         StatusCode::INTERNAL_SERVER_ERROR,
         "raw-provider-body api_key=secret-token Bearer should-not-leak",
         Some("Bearer sk-provider-test-upstream-abcd"),
@@ -2605,6 +2597,7 @@ async fn provider_test_missing_model_and_upstream_error_are_sanitized() {
     assert!(!text.contains(api_key));
     assert!(!text.contains("api_key"));
     assert!(!text.contains("should-not-leak"));
+    assert_received_auth(auth_receiver, "Bearer sk-provider-test-upstream-abcd").await;
 }
 
 #[tokio::test]
@@ -2884,8 +2877,7 @@ async fn openai_compatible_streaming_maps_chunks_to_sse_events() {
     assert!(events
         .iter()
         .any(|event| event["type"] == "stream_finished"));
-    let auth = auth_receiver.await.unwrap();
-    assert_eq!(auth.as_deref(), Some("Bearer sk-stream-secret-abcd"));
+    assert_received_auth(auth_receiver, "Bearer sk-stream-secret-abcd").await;
     assert!(!text.contains(api_key));
 }
 
@@ -2932,8 +2924,7 @@ async fn abort_cancels_active_provider_stream_without_later_deltas() {
         .iter()
         .any(|event| event["type"] == "stream_finished"
             && event["payload"]["finishReason"] == "abort"));
-    let auth = auth_receiver.await.unwrap();
-    assert_eq!(auth.as_deref(), Some("Bearer sk-abort-stream-secret-abcd"));
+    assert_received_auth(auth_receiver, "Bearer sk-abort-stream-secret-abcd").await;
     assert!(!text.contains(api_key));
     assert_sanitized_sse_error(&text);
 }
@@ -2966,11 +2957,7 @@ async fn experimental_openai_oauth_token_streams_chat_via_mock_endpoint() {
     assert!(events
         .iter()
         .any(|event| event["type"] == "stream_finished"));
-    let auth = auth_receiver.await.unwrap();
-    assert_eq!(
-        auth.as_deref(),
-        Some("Bearer codex-access-token-secret-abcd")
-    );
+    assert_received_auth(auth_receiver, "Bearer codex-access-token-secret-abcd").await;
     assert!(!text.contains("codex-access-token-secret"));
     assert!(!text.contains("codex-refresh-token-secret"));
 }
@@ -3001,8 +2988,7 @@ async fn api_key_provider_is_preferred_over_experimental_openai_oauth() {
     assert!(!text.contains("oauth"));
     assert!(!text.contains(api_key));
     assert!(!text.contains("codex-access-token-secret"));
-    let auth = api_auth_receiver.await.unwrap();
-    assert_eq!(auth.as_deref(), Some("Bearer sk-preferred-secret-abcd"));
+    assert_received_auth(api_auth_receiver, "Bearer sk-preferred-secret-abcd").await;
     assert!(oauth_auth_receiver.try_recv().is_err());
 }
 
@@ -3041,7 +3027,7 @@ async fn expired_experimental_openai_oauth_falls_back_to_provider_not_configured
 
 #[tokio::test]
 async fn experimental_openai_oauth_unauthorized_error_is_sanitized() {
-    let (chat_base_url, _) = start_mock_provider(
+    let (chat_base_url, auth_receiver) = start_mock_provider(
         StatusCode::UNAUTHORIZED,
         "raw-provider-body access_token=secret-token Bearer should-not-leak",
         Some("Bearer codex-access-token-secret-abcd"),
@@ -3057,6 +3043,7 @@ async fn experimental_openai_oauth_unauthorized_error_is_sanitized() {
     let error = find_error_event(&events);
     assert_eq!(error["payload"]["code"], "provider_unauthorized");
     assert_sanitized_sse_error(&text);
+    assert_received_auth(auth_receiver, "Bearer codex-access-token-secret-abcd").await;
 }
 
 #[tokio::test]
@@ -3097,7 +3084,7 @@ async fn provider_without_model_replays_model_not_configured_error_event() {
 #[tokio::test]
 async fn provider_unauthorized_produces_sanitized_error_event() {
     let api_key = "sk-unauthorized-secret-abcd";
-    let (base_url, _) = start_mock_provider(
+    let (base_url, auth_receiver) = start_mock_provider(
         StatusCode::UNAUTHORIZED,
         "raw-provider-body access_token=secret-token Bearer should-not-leak",
         Some("Bearer sk-unauthorized-secret-abcd"),
@@ -3115,12 +3102,13 @@ async fn provider_unauthorized_produces_sanitized_error_event() {
     assert_sanitized_sse_error(&text);
     assert!(!text.contains(api_key));
     assert!(!text.contains("unauthorized-secret"));
+    assert_received_auth(auth_receiver, "Bearer sk-unauthorized-secret-abcd").await;
 }
 
 #[tokio::test]
 async fn malformed_provider_chunk_produces_safe_error_event() {
     let api_key = "sk-malformed-stream-secret-abcd";
-    let (base_url, _) = start_mock_provider(
+    let (base_url, auth_receiver) = start_mock_provider(
         StatusCode::OK,
         "data: { not-json, api_key=raw-provider-body, url=http://user:pass@127.0.0.1 }\n\n",
         Some("Bearer sk-malformed-stream-secret-abcd"),
@@ -3137,12 +3125,13 @@ async fn malformed_provider_chunk_produces_safe_error_event() {
     assert_eq!(error["payload"]["code"], "provider_malformed_stream");
     assert_sanitized_sse_error(&text);
     assert!(!text.contains(api_key));
+    assert_received_auth(auth_receiver, "Bearer sk-malformed-stream-secret-abcd").await;
 }
 
 #[tokio::test]
 async fn streaming_chat_does_not_require_yet_ai_backend_account_or_cloud_url() {
     let api_key = "sk-local-only-stream-secret-abcd";
-    let (base_url, _) = start_mock_provider(
+    let (base_url, auth_receiver) = start_mock_provider(
         StatusCode::OK,
         "data: {\"choices\":[{\"delta\":{\"content\":\"local\"}}]}\n\ndata: [DONE]\n\n",
         Some("Bearer sk-local-only-stream-secret-abcd"),
@@ -3172,6 +3161,7 @@ async fn streaming_chat_does_not_require_yet_ai_backend_account_or_cloud_url() {
     assert!(!lower.contains("account"));
     assert!(!lower.contains("cloud"));
     assert!(!lower.contains("backend"));
+    assert_received_auth(auth_receiver, "Bearer sk-local-only-stream-secret-abcd").await;
 }
 
 #[tokio::test]
