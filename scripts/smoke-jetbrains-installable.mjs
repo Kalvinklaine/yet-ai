@@ -134,49 +134,70 @@ async function checkZip(zipPath) {
   if (pluginJar === undefined) {
     return;
   }
-  const jarListing = listZip(pluginJar);
-  if (jarListing === undefined) {
+  try {
+    const jarListing = listZip(pluginJar);
+    if (jarListing === undefined) {
+      return;
+    }
+    requireZipEntry(jarListing, "META-INF/plugin.xml", `${path.relative(root, zipPath)} plugin JAR must contain META-INF/plugin.xml.`);
+    requireZipEntry(jarListing, "yet-ai-gui/index.html", `${path.relative(root, zipPath)} plugin JAR must contain packaged GUI resources with yet-ai-gui/index.html. Run npm run prepare:jetbrains-preview after building GUI assets.`);
+    const indexHtml = await extractZipEntryText(pluginJar, "yet-ai-gui/index.html", `${path.relative(root, zipPath)} plugin JAR must allow reading yet-ai-gui/index.html.`);
+    if (indexHtml !== undefined) {
+      requireReferencedGuiScripts(jarListing, indexHtml, zipPath);
+    }
+  } finally {
     await rm(path.dirname(pluginJar), { recursive: true, force: true });
-    return;
   }
-  requireZipEntry(jarListing, "META-INF/plugin.xml", `${path.relative(root, zipPath)} plugin JAR must contain META-INF/plugin.xml.`);
-  requireZipEntry(jarListing, "yet-ai-gui/index.html", `${path.relative(root, zipPath)} plugin JAR must contain packaged GUI resources with yet-ai-gui/index.html. Run npm run prepare:jetbrains-preview after building GUI assets.`);
-  const indexHtml = await extractZipEntryText(pluginJar, "yet-ai-gui/index.html", `${path.relative(root, zipPath)} plugin JAR must allow reading yet-ai-gui/index.html.`);
-  if (indexHtml !== undefined) {
-    requireReferencedGuiScripts(jarListing, indexHtml, zipPath);
-  }
-  await rm(path.dirname(pluginJar), { recursive: true, force: true });
 }
 
 async function extractZipEntry(zipPath, entry) {
+  const content = await extractZipEntryBytes(zipPath, entry);
+  if (content === undefined) {
+    failures.push(`Could not extract ${entry} from ${path.relative(root, zipPath)} with unzip -p or JDK jar. Install unzip or ensure jar is available with a JDK to inspect nested plugin JARs.`);
+    return undefined;
+  }
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "yet-ai-jetbrains-"));
+  const jarPath = path.join(tempDir, path.basename(entry));
+  await writeFile(jarPath, content);
+  return jarPath;
+}
+
+async function extractZipEntryText(zipPath, entry, message) {
+  const content = await extractZipEntryBytes(zipPath, entry);
+  if (content === undefined) {
+    failures.push(`${message} Could not extract ${entry} from ${path.relative(root, zipPath)} with unzip -p or JDK jar.`);
+    return undefined;
+  }
+  return content.toString("utf8");
+}
+
+async function extractZipEntryBytes(zipPath, entry) {
   const result = spawnSync("unzip", ["-p", zipPath, entry], {
     cwd: root,
     encoding: "buffer",
     stdio: ["ignore", "pipe", "pipe"],
     shell: process.platform === "win32",
   });
-  if (result.status !== 0) {
-    failures.push(`Could not extract ${entry} from ${path.relative(root, zipPath)}. Install unzip to inspect nested plugin JARs.`);
-    return undefined;
+  if (result.status === 0) {
+    return result.stdout;
   }
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "yet-ai-jetbrains-"));
-  const jarPath = path.join(tempDir, path.basename(entry));
-  await writeFile(jarPath, result.stdout);
-  return jarPath;
-}
-
-async function extractZipEntryText(zipPath, entry, message) {
-  const result = spawnSync("unzip", ["-p", zipPath, entry], {
-    cwd: root,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: process.platform === "win32",
-  });
-  if (result.status !== 0) {
-    failures.push(message);
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "yet-ai-jetbrains-extract-"));
+  try {
+    const jarResult = spawnSync("jar", ["xf", zipPath, entry], {
+      cwd: tempDir,
+      encoding: "buffer",
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: process.platform === "win32",
+    });
+    if (jarResult.status !== 0) {
+      return undefined;
+    }
+    return await readFile(path.join(tempDir, entry));
+  } catch {
     return undefined;
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
   }
-  return result.stdout;
 }
 
 function requireReferencedGuiScripts(jarListing, indexHtml, zipPath) {
