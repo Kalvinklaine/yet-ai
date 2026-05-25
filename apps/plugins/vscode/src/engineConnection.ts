@@ -69,11 +69,25 @@ export async function collectRuntimeDiagnostics(
     return diagnostics;
   }
 
+  let binaryPath: string | undefined;
+  if (settings.launchMode === "connect") {
+    diagnostics.engineBinaryStatus = "not checked in connect mode";
+  } else {
+    try {
+      binaryPath = findEngineBinary(settings.engineBinaryPath, context.extensionPath, identity.engine.binaryName);
+      diagnostics.engineBinaryStatus = describeEngineBinaryStatus(binaryPath, settings.engineBinaryPath !== undefined);
+    } catch (error) {
+      diagnostics.engineBinaryStatus = error instanceof Error ? `not usable: ${redactRuntimeDiagnosticText(error.message, settings.sessionToken)}` : "not usable";
+    }
+  }
+
+  const shouldLaunch = settings.launchMode === "launch" || (settings.launchMode === "auto" && binaryPath !== undefined);
   try {
-    const binaryPath = findEngineBinary(settings.engineBinaryPath, context.extensionPath, identity.engine.binaryName);
-    diagnostics.engineBinaryStatus = describeEngineBinaryStatus(binaryPath, settings.engineBinaryPath !== undefined);
+    validateRuntimeLaunchProtocol(settings.runtimeUrl, settings.launchMode, shouldLaunch);
   } catch (error) {
-    diagnostics.engineBinaryStatus = error instanceof Error ? `not usable: ${redactRuntimeDiagnosticText(error.message, settings.sessionToken)}` : "not usable";
+    const message = error instanceof Error ? redactRuntimeDiagnosticText(error.message, settings.sessionToken) : "invalid runtime launch policy";
+    diagnostics.pingStatus = `skipped: ${message}`;
+    return diagnostics;
   }
 
   diagnostics.pingStatus = await pingEngineOnce(settings);
@@ -87,7 +101,7 @@ export async function prepareEngineConnection(
 ): Promise<EngineConnection> {
   const settings = await readEngineConnectionSettings(context);
   validateEngineConnectionSettings(settings);
-  const binaryPath = findEngineBinary(settings.engineBinaryPath, context.extensionPath, identity.engine.binaryName);
+  const binaryPath = settings.launchMode === "connect" ? undefined : findEngineBinary(settings.engineBinaryPath, context.extensionPath, identity.engine.binaryName);
   const shouldLaunch = settings.launchMode === "launch" || (settings.launchMode === "auto" && binaryPath !== undefined);
 
   if (shouldLaunch) {
@@ -216,7 +230,7 @@ export function validateEngineConnection(connection: EngineConnection): void {
 
 export function validateEngineConnectionSettings(settings: EngineConnectionSettings): void {
   validateEngineConnection(settings);
-  if (settings.engineBinaryPath && !path.isAbsolute(settings.engineBinaryPath)) {
+  if (settings.launchMode !== "connect" && settings.engineBinaryPath && !path.isAbsolute(settings.engineBinaryPath)) {
     throw new Error(`${configurationPrefix}.engineBinaryPath must be an absolute path.`);
   }
 }
@@ -294,6 +308,10 @@ function describeEngineBinaryStatus(binaryPath: string | undefined, configured: 
   return configured ? `found configured binary: ${fileName}` : `found discovered binary: ${fileName}`;
 }
 
+export function formatStartedRuntimeMessage(binaryPath: string): string {
+  return `Started Yet AI local runtime from ${path.basename(binaryPath)}.`;
+}
+
 async function launchOrReuseEngine(runtimeUrl: string, binaryPath: string, output: vscode.OutputChannel): Promise<EngineConnection> {
   const existing = launchedEngine;
   if (existing && existing.runtimeUrl === runtimeUrl && !existing.process.killed) {
@@ -322,7 +340,7 @@ async function launchOrReuseEngine(runtimeUrl: string, binaryPath: string, outpu
     sessionToken: token,
   };
   launchedEngine = engine;
-  output.appendLine(`Started Yet AI local runtime from ${binaryPath}.`);
+  output.appendLine(formatStartedRuntimeMessage(binaryPath));
   attachProcessLogs(child, token, output);
   child.on("exit", (code, signal) => {
     output.appendLine(`Yet AI local runtime exited with code ${code ?? "null"} and signal ${signal ?? "null"}.`);
@@ -380,7 +398,7 @@ const runtimeRedactionPatterns: Array<[RegExp, string]> = [
   [/\b(?:Authorization|Proxy-Authorization|Cookie|Set-Cookie)\s*:\s*[^\r\n]*/gi, "[redacted]"],
   [new RegExp(String.raw`\b(?:cookie|set[_-]?cookie|setCookie)\b\s*[:=]\s*[^\r\n]*`, "gi"), "[redacted]"],
   [new RegExp(String.raw`\b(?:authorization|proxy[_-]?authorization)\b\s*[:=]\s*(?:[A-Za-z][A-Za-z0-9._~-]*\s+)?[^\s,;)}\]]+`, "gi"), "[redacted]"],
-  [new RegExp(String.raw`([?&;])${secretDiagnosticKeyPattern}\s*=\s*[^\s&#;]+`, "gi"), "$1[redacted]"],
+  [new RegExp(String.raw`([?&;#])${secretDiagnosticKeyPattern}\s*=\s*[^\s&#;]+`, "gi"), "$1[redacted]"],
   [new RegExp(String.raw`(["'])${secretDiagnosticKeyPattern}\1\s*:\s*(["'])(?:\\.|(?!\2).)*\2`, "gi"), "[redacted]"],
   [new RegExp(String.raw`(["'])${secretDiagnosticKeyPattern}\1\s*:\s*(?:-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)\b`, "gi"), "[redacted]"],
   [new RegExp(String.raw`\b${secretDiagnosticKeyPattern}\b\s*[:=]\s*[^\s,;)}\]]+`, "gi"), "[redacted]"],

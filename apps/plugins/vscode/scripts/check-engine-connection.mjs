@@ -33,6 +33,7 @@ try {
   const {
     collectRuntimeDiagnostics,
     findEngineBinary,
+    formatStartedRuntimeMessage,
     redactRuntimeDiagnosticText,
     resolveSessionToken,
     safeRuntimeUrl,
@@ -140,6 +141,10 @@ try {
   const fakeQuerySecret = "fake-query-secret-sentinel";
   const fakeOauthCode = "fake-oauth-code-sentinel";
   const fakeCodeVerifier = "fake-code-verifier-sentinel";
+  const fakeFragmentAccessToken = "fake-fragment-access-token-sentinel";
+  const fakeFragmentRefreshToken = "fake-fragment-refresh-token-sentinel";
+  const fakeFragmentOauthCode = "fake-fragment-oauth-code-sentinel";
+  const fakeFragmentCodeVerifier = "fake-fragment-code-verifier-sentinel";
   const fakeJsonApiKey = "fake-json-api-key-sentinel";
   const fakeJsonApiKeySnake = "fake-json-api-key-snake-sentinel";
   const fakeJsonAccessToken = "fake-json-access-token-sentinel";
@@ -160,6 +165,7 @@ try {
       fakeSetCookie,
       fakeSetCookieValue,
       `http://127.0.0.1:8001/v1/ping?api_key=${fakeQueryApiKey}&access_token=${fakeQueryAccessToken}&refresh_token=${fakeQueryRefreshToken}&token=${fakeQueryToken}&session=${fakeQuerySession}&secret=${fakeQuerySecret}&oauth_code=${fakeOauthCode}&code_verifier=${fakeCodeVerifier}`,
+      `http://127.0.0.1:8001/callback#access_token=${fakeFragmentAccessToken}&refresh_token=${fakeFragmentRefreshToken}&oauth_code=${fakeFragmentOauthCode}&code_verifier=${fakeFragmentCodeVerifier}`,
       `{"apiKey":"${fakeJsonApiKey}","api_key":"${fakeJsonApiKeySnake}","access_token":"${fakeJsonAccessToken}","refresh_token":"${fakeJsonRefreshToken}","sessionToken":"${fakeJsonSessionToken}","authorization":"${fakeJsonAuthorization}","cookie":"${fakeJsonCookie}","setCookie":"${fakeJsonSetCookie}","client_secret":"${fakeJsonClientSecret}"}`,
       "local-dev-token",
       fakeLongOpaque,
@@ -188,6 +194,10 @@ try {
     fakeQuerySecret,
     fakeOauthCode,
     fakeCodeVerifier,
+    fakeFragmentAccessToken,
+    fakeFragmentRefreshToken,
+    fakeFragmentOauthCode,
+    fakeFragmentCodeVerifier,
     fakeJsonApiKey,
     fakeJsonApiKeySnake,
     fakeJsonAccessToken,
@@ -217,6 +227,10 @@ try {
     if (process.platform !== "win32") {
       fs.chmodSync(nonExecutable, 0o600);
       fs.chmodSync(executable, 0o700);
+      const startMessage = formatStartedRuntimeMessage(executable);
+      assert.equal(startMessage.includes(executable), false);
+      assert.equal(startMessage.includes(privateDirectory), false);
+      assert.match(startMessage, /yet-lsp-executable/);
       assert.throws(
         () => findEngineBinary(nonExecutable, tempRoot, "yet-lsp"),
         /engineBinaryPath must point to an executable file/,
@@ -237,6 +251,61 @@ try {
     assert.match(diagnostics.engineBinaryStatus, /found configured binary: yet-lsp-executable/);
     assert.equal(diagnostics.engineBinaryStatus.includes(tempRoot), false, "diagnostics exposed a private temp path");
     assert.equal(diagnostics.engineBinaryStatus.includes(privateDirectory), false, "diagnostics exposed a private directory path");
+
+    const staleConfiguredPath = path.join(privateDirectory, "missing-yet-lsp");
+    configValues = {
+      runtimeUrl: "https://127.0.0.1:8001",
+      launchMode: "connect",
+      engineBinaryPath: staleConfiguredPath,
+    };
+    let pingedConnectHttps = false;
+    globalThis.fetch = async () => {
+      pingedConnectHttps = true;
+      return { ok: true, status: 200 };
+    };
+    const connectDiagnostics = await collectRuntimeDiagnostics(
+      { ...fakeContext, extensionPath: tempRoot },
+      { engine: { binaryName: "yet-lsp" } },
+    );
+    assert.equal(connectDiagnostics.engineBinaryStatus, "not checked in connect mode");
+    assert.equal(connectDiagnostics.pingStatus, "passed");
+    assert.equal(pingedConnectHttps, true);
+
+    configValues = {
+      runtimeUrl: "https://127.0.0.1:8001",
+      launchMode: "launch",
+      engineBinaryPath: executable,
+    };
+    let launchHttpsPinged = false;
+    globalThis.fetch = async () => {
+      launchHttpsPinged = true;
+      return { ok: true, status: 200 };
+    };
+    const launchHttpsDiagnostics = await collectRuntimeDiagnostics(
+      { ...fakeContext, extensionPath: tempRoot },
+      { engine: { binaryName: "yet-lsp" } },
+    );
+    assert.match(launchHttpsDiagnostics.engineBinaryStatus, /found configured binary: yet-lsp-executable/);
+    assert.match(launchHttpsDiagnostics.pingStatus, /^skipped: yetai\.runtimeUrl must use http/);
+    assert.equal(launchHttpsPinged, false);
+
+    configValues = {
+      runtimeUrl: "https://127.0.0.1:8001",
+      launchMode: "auto",
+      engineBinaryPath: executable,
+    };
+    let autoHttpsPinged = false;
+    globalThis.fetch = async () => {
+      autoHttpsPinged = true;
+      return { ok: true, status: 200 };
+    };
+    const autoHttpsDiagnostics = await collectRuntimeDiagnostics(
+      { ...fakeContext, extensionPath: tempRoot },
+      { engine: { binaryName: "yet-lsp" } },
+    );
+    assert.match(autoHttpsDiagnostics.engineBinaryStatus, /found configured binary: yet-lsp-executable/);
+    assert.match(autoHttpsDiagnostics.pingStatus, /^skipped: yetai\.runtimeUrl must use http/);
+    assert.equal(autoHttpsPinged, false);
   } finally {
     configValues = {};
     globalThis.fetch = originalFetch;
