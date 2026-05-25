@@ -591,6 +591,13 @@ async fn empty_response_from(app: axum::Router, request: Request<Body>) -> Statu
     app.oneshot(request).await.unwrap().status()
 }
 
+async fn text_response_from(app: axum::Router, request: Request<Body>) -> (StatusCode, String) {
+    let response = app.oneshot(request).await.unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (status, String::from_utf8(bytes.to_vec()).unwrap())
+}
+
 #[test]
 fn identity_loading_matches_contract() {
     let identity = ProductIdentity::load().unwrap();
@@ -2669,6 +2676,135 @@ async fn abort_command_example_is_accepted() {
 }
 
 #[tokio::test]
+async fn abort_command_with_empty_payload_is_accepted() {
+    let command = json!({
+        "requestId": "req-abort-empty-payload",
+        "type": "abort",
+        "payload": {}
+    });
+    let (status, body) = json_response(authed_request(
+        Method::POST,
+        "/v1/chats/chat-001/commands",
+        Body::from(command.to_string()),
+    ))
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accepted"], true);
+    assert_eq!(body["type"], "abort");
+}
+
+#[tokio::test]
+async fn abort_command_rejects_non_empty_or_privileged_payload() {
+    for payload in [
+        json!({ "reason": "sk-abort-payload-secret-abcd" }),
+        json!({ "toolCallId": "secret-tool-call", "allow": true }),
+        json!("sk-abort-payload-secret-abcd"),
+    ] {
+        let command = json!({
+            "requestId": "req-abort-invalid-payload",
+            "type": "abort",
+            "payload": payload
+        });
+        let (status, text) = text_response_from(
+            test_app(),
+            authed_request(
+                Method::POST,
+                "/v1/chats/chat-001/commands",
+                Body::from(command.to_string()),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(!text.contains("sk-abort-payload-secret-abcd"));
+        assert!(!text.contains("secret-tool-call"));
+        assert!(!text.contains("toolCallId"));
+    }
+}
+
+#[tokio::test]
+async fn user_message_command_rejects_extra_payload_fields() {
+    let command = json!({
+        "requestId": "req-extra-payload",
+        "type": "user_message",
+        "payload": {
+            "content": "hello",
+            "apiKey": "sk-extra-payload-secret-abcd"
+        }
+    });
+    let (status, text) = text_response_from(
+        test_app(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-001/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(!text.contains("sk-extra-payload-secret-abcd"));
+    assert!(!text.contains("apiKey"));
+}
+
+#[tokio::test]
+async fn user_message_command_rejects_empty_content() {
+    let command = json!({
+        "requestId": "req-empty-content",
+        "type": "user_message",
+        "payload": { "content": "" }
+    });
+    let (status, text) = text_response_from(
+        test_app(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-001/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(text.is_empty());
+}
+
+#[tokio::test]
+async fn chat_command_rejects_too_long_request_id() {
+    let command = json!({
+        "requestId": "r".repeat(129),
+        "type": "user_message",
+        "payload": { "content": "hello sk-too-long-request-secret-abcd" }
+    });
+    let (status, text) = text_response_from(
+        test_app(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-001/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(!text.contains("sk-too-long-request-secret-abcd"));
+}
+
+#[tokio::test]
+async fn user_message_command_rejects_too_long_content() {
+    let command = json!({
+        "requestId": "req-too-long-content",
+        "type": "user_message",
+        "payload": { "content": "x".repeat(20001) }
+    });
+    let status = empty_response_from(
+        test_app(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-001/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn unsupported_privileged_commands_remain_rejected() {
     for command_type in [
         "tool_decision",
@@ -2677,21 +2813,31 @@ async fn unsupported_privileged_commands_remain_rejected() {
         "remove_message",
         "regenerate",
         "set_params",
+        "shell_exec",
+        "file_edit",
     ] {
         let command = json!({
             "requestId": format!("req-{command_type}"),
             "type": command_type,
-            "payload": {}
+            "payload": {
+                "command": "rm -rf / sk-privileged-command-secret-abcd",
+                "path": "/tmp/secret-file"
+            }
         });
-        let response = test_app()
-            .oneshot(authed_request(
+        let (status, text) = text_response_from(
+            test_app(),
+            authed_request(
                 Method::POST,
                 "/v1/chats/chat-001/commands",
                 Body::from(command.to_string()),
-            ))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+        assert!(text.contains("unsupported command type"));
+        assert!(!text.contains(command_type));
+        assert!(!text.contains("sk-privileged-command-secret-abcd"));
+        assert!(!text.contains("secret-file"));
     }
 }
 

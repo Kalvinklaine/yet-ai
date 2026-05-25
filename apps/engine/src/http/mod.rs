@@ -292,8 +292,11 @@ fn provider_error(error: providers::ProviderError) -> Response {
     (status, Json(json!({ "error": error.to_string() }))).into_response()
 }
 
+const CHAT_COMMAND_REQUEST_ID_MAX_LENGTH: usize = 128;
+const CHAT_COMMAND_CONTENT_MAX_LENGTH: usize = 20_000;
+
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ChatCommandRequest {
     request_id: String,
     #[serde(rename = "type")]
@@ -307,55 +310,74 @@ async fn chat_command(
     Path(chat_id): Path<String>,
     Json(command): Json<ChatCommandRequest>,
 ) -> Response {
-    if chat_id.is_empty() || command.request_id.is_empty() {
+    if chat_id.is_empty()
+        || !valid_bounded_string(&command.request_id, CHAT_COMMAND_REQUEST_ID_MAX_LENGTH)
+    {
         return StatusCode::BAD_REQUEST.into_response();
     }
 
-    if command.command_type == "abort" {
-        state.chat_runtime.accept_abort(&chat_id).await;
-        return Json(json!({
-            "accepted": true,
-            "chatId": chat_id,
-            "requestId": command.request_id,
-            "type": command.command_type
-        }))
-        .into_response();
-    }
+    match command.command_type.as_str() {
+        "abort" => {
+            if !valid_abort_payload(command.payload.as_ref()) {
+                return StatusCode::BAD_REQUEST.into_response();
+            }
+            state.chat_runtime.accept_abort(&chat_id).await;
+            Json(json!({
+                "accepted": true,
+                "chatId": chat_id,
+                "requestId": command.request_id,
+                "type": command.command_type
+            }))
+            .into_response()
+        }
+        "user_message" => {
+            let Some(content) = user_message_content(command.payload.as_ref()) else {
+                return StatusCode::BAD_REQUEST.into_response();
+            };
+            state
+                .chat_runtime
+                .accept_user_message(
+                    state.storage_paths.config_dir.clone(),
+                    chat_id.clone(),
+                    content.to_string(),
+                )
+                .await;
 
-    if command.command_type != "user_message" {
-        return (
+            Json(json!({
+                "accepted": true,
+                "chatId": chat_id,
+                "requestId": command.request_id,
+                "type": command.command_type
+            }))
+            .into_response()
+        }
+        _ => (
             StatusCode::NOT_IMPLEMENTED,
             Json(json!({ "error": "unsupported command type" })),
         )
-            .into_response();
+            .into_response(),
     }
+}
 
-    let Some(payload) = command.payload else {
-        return StatusCode::BAD_REQUEST.into_response();
-    };
-    let Some(content) = payload.get("content").and_then(|value| value.as_str()) else {
-        return StatusCode::BAD_REQUEST.into_response();
-    };
-    if content.is_empty() {
-        return StatusCode::BAD_REQUEST.into_response();
+fn valid_bounded_string(value: &str, max_length: usize) -> bool {
+    !value.is_empty() && value.chars().count() <= max_length
+}
+
+fn valid_abort_payload(payload: Option<&serde_json::Value>) -> bool {
+    match payload {
+        None => true,
+        Some(serde_json::Value::Object(object)) => object.is_empty(),
+        Some(_) => false,
     }
+}
 
-    state
-        .chat_runtime
-        .accept_user_message(
-            state.storage_paths.config_dir.clone(),
-            chat_id.clone(),
-            content.to_string(),
-        )
-        .await;
-
-    Json(json!({
-        "accepted": true,
-        "chatId": chat_id,
-        "requestId": command.request_id,
-        "type": command.command_type
-    }))
-    .into_response()
+fn user_message_content(payload: Option<&serde_json::Value>) -> Option<&str> {
+    let object = payload?.as_object()?;
+    if object.len() != 1 {
+        return None;
+    }
+    let content = object.get("content")?.as_str()?;
+    valid_bounded_string(content, CHAT_COMMAND_CONTENT_MAX_LENGTH).then_some(content)
 }
 
 #[derive(Debug, Deserialize)]
