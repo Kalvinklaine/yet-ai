@@ -73,7 +73,7 @@ export async function collectRuntimeDiagnostics(
     const binaryPath = findEngineBinary(settings.engineBinaryPath, context.extensionPath, identity.engine.binaryName);
     diagnostics.engineBinaryStatus = binaryPath ? `found: ${binaryPath}` : "not found";
   } catch (error) {
-    diagnostics.engineBinaryStatus = error instanceof Error ? `not usable: ${error.message}` : "not usable";
+    diagnostics.engineBinaryStatus = error instanceof Error ? `not usable: ${redactRuntimeDiagnosticText(error.message, settings.sessionToken)}` : "not usable";
   }
 
   diagnostics.pingStatus = await pingEngineOnce(settings);
@@ -332,10 +332,20 @@ function appendEngineLog(output: vscode.OutputChannel, token: string, chunk: Buf
 }
 
 function redactLogText(value: string, token: string): string {
-  return value.replaceAll(token, "[redacted]").replace(/Bearer\s+[^\s"']+/gi, "Bearer [redacted]");
+  return redactRuntimeDiagnosticText(value, token);
 }
 
-function safeRuntimeUrl(runtimeUrl: string): string {
+export function redactRuntimeDiagnosticText(value: string, token?: string): string {
+  let redacted = value.replace(/Bearer\s+[^\s"']+/gi, "Bearer [redacted]");
+  redacted = redacted.replace(/\b(?:sk|sess|token)-[A-Za-z0-9_-]{8,}\b/g, "[redacted]");
+  redacted = redacted.replace(/\b[A-Za-z0-9_-]{24,}\b/g, "[redacted]");
+  if (token && token.length > 0) {
+    redacted = redacted.replaceAll(token, "[redacted]");
+  }
+  return redacted;
+}
+
+export function safeRuntimeUrl(runtimeUrl: string): string {
   try {
     const parsed = new URL(runtimeUrl);
     if (
@@ -366,7 +376,7 @@ async function pingEngineOnce(connection: EngineConnection): Promise<string> {
     return response.ok ? "passed" : `failed: HTTP ${response.status}`;
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown ping error";
-    return `failed: ${message}`;
+    return `failed: ${redactRuntimeDiagnosticText(message, connection.sessionToken)}`;
   }
 }
 

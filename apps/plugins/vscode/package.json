@@ -86,8 +86,9 @@
   "scripts": {
     "check:identity": "node scripts/check-identity.mjs",
     "check:webview-safety": "node scripts/check-webview-safety.mjs",
+    "check:engine-connection": "node scripts/check-engine-connection.mjs",
     "copy:gui": "node scripts/copy-gui-dist.mjs",
-    "compile": "npm run check:identity && tsc -p . && npm run check:webview-safety",
+    "compile": "npm run check:identity && tsc -p . && npm run check:webview-safety && npm run check:engine-connection",
     "prepare:preview": "npm run copy:gui && npm run compile"
   },
   "devDependencies": {
