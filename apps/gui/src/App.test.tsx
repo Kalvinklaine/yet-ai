@@ -674,9 +674,9 @@ describe("provider secret boundary", () => {
     mockRuntimeResponses({
       authResponse: {
         ...providerAuthResponse("pending"),
-        message: `experimental pending ${rawCode}`,
-        accountLabel: rawToken,
-        scopes: ["openid", "access_token=" + "y".repeat(64)],
+        message: `experimental pending ${rawCode} Authorization: Bearer short-secret`,
+        accountLabel: `${rawToken} Cookie: session=secret; refresh=also-secret`,
+        scopes: ["openid", `access_token=${"y".repeat(64)}`, "C:\\Users\\alice\\.codex\\auth.json OPENAI_API_KEY=env-secret"],
       },
     });
     renderApp();
@@ -687,6 +687,10 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).not.toContain("code-secret-value");
     expect(container?.textContent).not.toContain("refresh_token");
     expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("short-secret");
+    expect(container?.textContent).not.toContain("session=secret");
+    expect(container?.textContent).not.toContain("auth.json");
+    expect(container?.textContent).not.toContain("OPENAI_API_KEY");
     expect(container?.textContent).not.toContain("z".repeat(64));
     expect(container?.textContent).not.toContain("y".repeat(64));
   });
@@ -918,7 +922,7 @@ describe("provider secret boundary", () => {
         ...enabledProvider(),
         id: `provider-${rawSecret}`,
         displayName: `Provider ${rawSecret}`,
-        baseUrl: `http://127.0.0.1:9000/v1?api_key=sk-${"q".repeat(32)}`,
+        baseUrl: `http://127.0.0.1:9000/v1?api_key=short-secret`,
         models: [{ id: "model-1", displayName: `Model refresh_token=${"r".repeat(64)}` }],
       }],
     });
@@ -931,6 +935,7 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).not.toContain("access_token");
     expect(container?.textContent).not.toContain("refresh_token");
     expect(container?.textContent).not.toContain("api_key");
+    expect(container?.textContent).not.toContain("short-secret");
     expect(container?.textContent).not.toContain("p".repeat(64));
     expect(container?.textContent).not.toContain("r".repeat(64));
   });
@@ -1273,7 +1278,7 @@ describe("chat panel", () => {
     expect(browserStorageDump()).not.toContain(secret);
   });
 
-  it("Stop SSE sends abort and clears the local subscription", async () => {
+  it("Stop SSE with no active stream sends no abort", async () => {
     mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
 
@@ -1293,6 +1298,76 @@ describe("chat panel", () => {
     });
     expect(abortCall).toBeUndefined();
     expect(container?.textContent).toContain("SSE stopped");
+  });
+
+  it("Stop SSE during active streaming sends abort and removes streaming indicator", async () => {
+    let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const encoder = new TextEncoder();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/v1/chats/subscribe?chat_id=")) {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            sseController = controller;
+          },
+          cancel() {},
+        });
+        return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+      }
+      if (url.endsWith("/v1/ping")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: "2026-05-24T00:00:00Z" }));
+      }
+      if (url.endsWith("/v1/caps")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
+      }
+      if (url.endsWith("/v1/models")) {
+        return Promise.resolve(jsonResponse({ models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }] }));
+      }
+      if (url.endsWith("/v1/providers")) {
+        return Promise.resolve(jsonResponse({ providers: [enabledProvider()], cloudRequired: false, providerAccess: "direct" }));
+      }
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
+      }
+      if (init?.method === "POST" && url.includes("/v1/chats/") && url.endsWith("/commands")) {
+        return Promise.resolve(jsonResponse({ accepted: true, chatId: "chat-001", requestId: "request-001", type: JSON.parse(String(init.body)).type }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setTextareaValue(chatInput(), "stream then stop");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 0, type: "snapshot", chatId: "chat-001", payload: {} })}\n\n`));
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 1, type: "stream_started", chatId: "chat-001", payload: {} })}\n\n`));
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 2, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: "Partial" } } })}\n\n`));
+      await Promise.resolve();
+    });
+    fetchMock.mockClear();
+
+    expect(container?.textContent).toContain("Assistant is streaming…");
+
+    await act(async () => {
+      findButton("Stop SSE").click();
+      await Promise.resolve();
+    });
+
+    const abortCalls = fetchMock.mock.calls.filter(([url, init]) => {
+      if (!String(url).endsWith("/v1/chats/chat-001/commands") || init?.method !== "POST") {
+        return false;
+      }
+      return (JSON.parse(String(init.body)) as { type?: string }).type === "abort";
+    });
+    expect(abortCalls).toHaveLength(1);
+    expect(container?.textContent).not.toContain("Assistant is streaming…");
   });
 
   it("ignores active SSE events from old runtime settings after settings change", async () => {
@@ -1351,7 +1426,8 @@ describe("chat panel", () => {
     expect(container?.textContent).not.toContain("stale old runtime token");
   });
 
-  it("Stop SSE sends abort to the active stream runtime settings instead of the new runtime", async () => {
+  it("settings changes send abort to the active stream runtime settings instead of the new runtime", async () => {
+    const oldToken = "old-runtime-token";
     let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -1389,6 +1465,9 @@ describe("chat panel", () => {
 
     await flushAsync();
     await act(async () => {
+      setInputValue(sessionTokenInput(), oldToken);
+    });
+    await act(async () => {
       setTextareaValue(chatInput(), "stream before retarget");
     });
     await act(async () => {
@@ -1397,9 +1476,6 @@ describe("chat panel", () => {
     });
     await act(async () => {
       setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
-    });
-    await act(async () => {
-      findButton("Stop SSE").click();
       await Promise.resolve();
     });
 
@@ -1409,7 +1485,9 @@ describe("chat panel", () => {
       }
       return (JSON.parse(String(init.body)) as { type?: string }).type === "abort";
     });
-    expect(abortCalls).toHaveLength(0);
+    expect(abortCalls).toHaveLength(1);
+    expect(String(abortCalls[0][0])).toBe("http://127.0.0.1:8001/v1/chats/chat-001/commands");
+    expect(new Headers(abortCalls[0][1]?.headers).get("Authorization")).toBe(`Bearer ${oldToken}`);
     sseController?.close();
   });
 
@@ -1418,7 +1496,7 @@ describe("chat panel", () => {
       ...readyRuntimeOptions(),
       sseEvents: [
         { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
-        { seq: 1, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: "safe text", accessToken: "short" }, access_token: "s".repeat(64), nested: { clientSecret: "tiny" }, header: "Bearer abcdefghijklmnopqrstuvwxyz1234567890" } },
+        { seq: 1, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: "safe text", accessToken: "short" }, access_token: "s".repeat(64), nested: { clientSecret: "tiny" }, header: "Authorization: Bearer short-secret", cookie: "Cookie: session=secret; refresh=also-secret", path: "../.codex/auth.json" } },
       ],
     });
     renderApp();
@@ -1439,7 +1517,9 @@ describe("chat panel", () => {
     expect(container?.textContent).not.toContain("accessToken");
     expect(container?.textContent).not.toContain("clientSecret");
     expect(container?.textContent).not.toContain("tiny");
-    expect(container?.textContent).not.toContain("abcdefghijklmnopqrstuvwxyz1234567890");
+    expect(container?.textContent).not.toContain("short-secret");
+    expect(container?.textContent).not.toContain("session=secret");
+    expect(container?.textContent).not.toContain("auth.json");
   });
 });
 
