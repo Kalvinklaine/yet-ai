@@ -1,11 +1,17 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBridgeAdapter, isHostMessage } from "./bridgeAdapter";
 
 const bridgeVersion = "2026-05-15";
+const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
 
 afterEach(() => {
   delete window.acquireVsCodeApi;
   delete window.postIntellijMessage;
+  localStorage.clear();
+  sessionStorage.clear();
+  if (parentDescriptor) {
+    Object.defineProperty(window, "parent", parentDescriptor);
+  }
 });
 
 describe("bridgeAdapter", () => {
@@ -15,6 +21,58 @@ describe("bridgeAdapter", () => {
     expect(adapter.host).toBe("browser");
     expect(logs).toContain("Bridge host browser");
     expect(logs).toContain("Browser mock sent gui.ready");
+    adapter.dispose();
+  });
+
+  it("sends gui.ready to an iframe parent when direct host APIs are absent", () => {
+    const logs: string[] = [];
+    const postMessage = vi.fn();
+    Object.defineProperty(window, "parent", {
+      configurable: true,
+      value: { postMessage },
+    });
+
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+
+    expect(adapter.host).toBe("browser");
+    expect(logs).toContain("Bridge host browser");
+    expect(logs).not.toContain("Browser mock sent gui.ready");
+    expect(postMessage).toHaveBeenCalledWith({
+      version: bridgeVersion,
+      type: "gui.ready",
+      payload: { supportedBridgeVersion: bridgeVersion },
+    }, "*");
+    adapter.dispose();
+  });
+
+  it("receives iframe parent host.ready without token logging or storage", () => {
+    const token = "iframe-parent-session-token-secret";
+    const logs: string[] = [];
+    const messages: unknown[] = [];
+    Object.defineProperty(window, "parent", {
+      configurable: true,
+      value: { postMessage: vi.fn() },
+    });
+
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    adapter.subscribe((message) => messages.push(message));
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version: bridgeVersion,
+        type: "host.ready",
+        payload: {
+          runtimeUrl: "http://127.0.0.1:8765",
+          sessionToken: token,
+        },
+      },
+    }));
+
+    expect(messages).toHaveLength(1);
+    expect(JSON.stringify(messages[0])).toContain(token);
+    expect(logs).toContain("Host runtime settings received");
+    expect(logs.join("\n")).not.toContain(token);
+    expect(JSON.stringify(localStorage)).not.toContain(token);
+    expect(JSON.stringify(sessionStorage)).not.toContain(token);
     adapter.dispose();
   });
 
