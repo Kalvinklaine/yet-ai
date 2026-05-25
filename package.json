@@ -4,6 +4,7 @@
   "scripts": {
     "check": "node scripts/check.mjs",
     "smoke:local": "node scripts/smoke-local.mjs",
+    "smoke:gui-browser": "node scripts/smoke-gui-browser.mjs",
     "smoke:vscode-preview": "node scripts/smoke-vscode-preview.mjs",
     "smoke:jetbrains-preview": "node scripts/smoke-jetbrains-preview.mjs",
     "smoke:jetbrains-installable": "node scripts/smoke-jetbrains-installable.mjs",
@@ -17,6 +18,7 @@
   },
   "devDependencies": {
     "ajv": "^8.20.0",
-    "ajv-formats": "^3.0.1"
+    "ajv-formats": "^3.0.1",
+    "playwright": "^1.60.0"
   }
 }
