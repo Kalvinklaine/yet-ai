@@ -14,7 +14,7 @@ class ShowRuntimeStatusAction : DumbAwareAction() {
     }
 }
 
-class RuntimeStatusActionRunner(
+internal class RuntimeStatusActionRunner(
     private val diagnostics: () -> String = { RuntimeConnectionManager.getInstance().runtimeDiagnostics() },
     private val scheduler: StatusActionScheduler = IntellijStatusActionScheduler,
     private val presenter: StatusActionPresenter = DialogStatusActionPresenter,
@@ -35,17 +35,17 @@ class RuntimeStatusActionRunner(
     }
 }
 
-interface StatusActionScheduler {
+internal interface StatusActionScheduler {
     fun background(task: () -> Unit)
     fun ui(task: () -> Unit)
 }
 
-interface StatusActionPresenter {
+internal interface StatusActionPresenter {
     fun info(project: Project?, message: String)
     fun error(project: Project?, message: String)
 }
 
-object IntellijStatusActionScheduler : StatusActionScheduler {
+internal object IntellijStatusActionScheduler : StatusActionScheduler {
     override fun background(task: () -> Unit) {
         ApplicationManager.getApplication().executeOnPooledThread(task)
     }
@@ -55,7 +55,7 @@ object IntellijStatusActionScheduler : StatusActionScheduler {
     }
 }
 
-object DialogStatusActionPresenter : StatusActionPresenter {
+internal object DialogStatusActionPresenter : StatusActionPresenter {
     override fun info(project: Project?, message: String) {
         Messages.showInfoMessage(project, message, "Yet AI Runtime Status")
     }
@@ -65,7 +65,7 @@ object DialogStatusActionPresenter : StatusActionPresenter {
     }
 }
 
-fun sanitizeStatusError(error: Throwable): String {
+internal fun sanitizeStatusError(error: Throwable): String {
     val detail = error.message?.takeIf { it.isNotBlank() } ?: error::class.java.simpleName
     return "Unable to collect Yet AI runtime status: ${redactLogText(detail, "")}"
 }
