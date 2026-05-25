@@ -125,7 +125,10 @@ If Gradle is not installed locally, run the identity check and root validation, 
 - Plugin name: `Yet AI`.
 - Kotlin package namespace: `ai.yet.plugin`.
 - Tool window: `Yet AI`.
-- Action: `ai.yet.plugin.OpenChat` (`Yet AI: Open Chat`).
+- Actions:
+  - `ai.yet.plugin.OpenChat` (`Yet AI: Open Chat`).
+  - `ai.yet.plugin.ShowRuntimeStatus` (`Yet AI: Show Runtime Status`).
+  - `ai.yet.plugin.RestartRuntime` (`Yet AI: Restart Runtime`).
 - Settings:
   - `runtimeUrl`, default `http://127.0.0.1:8001`.
   - `launchMode`, one of `auto`, `connect`, or `launch`.
@@ -154,6 +157,14 @@ Manual local preview:
 3. Open the Yet AI tool window or run `Yet AI: Open Chat`.
 
 No privileged workspace edits, IDE tools, provider adapters, or provider credential persistence are implemented in this shell.
+
+## Runtime diagnostics and restart
+
+Use Tools → `Yet AI: Show Runtime Status` when the tool window cannot connect, the packaged GUI reports runtime failures, or before filing a manual reinstall report. The status dialog is sanitized and includes the launch mode, loopback runtime URL without userinfo/query/hash, whether an engine binary path is configured, configured/discovered binary status, whether the plugin currently owns a launched process, the last `/v1/ping` health result or sanitized connection error, and mode-specific guidance for `auto`, `launch`, or `connect`.
+
+Use Tools → `Yet AI: Restart Runtime` to stop only the process launched by this plugin and prepare the current settings again. It does not stop externally managed runtimes used in `connect` mode, does not inspect provider configuration, and does not expose the local runtime session token. If restart reports a missing binary, invalid configured path, port conflict, runtime-down health failure, or 401/token mismatch, copy the sanitized status text and verify the settings above before reinstalling the ZIP.
+
+Diagnostics and restart output must not include session tokens, bearer/authorization headers, raw bridge payloads, provider API keys, environment dumps, provider tokens, or raw process output containing secrets. Runtime process logs and connection failures are redacted before IDE display/logging.
 
 ## Current limitations
 

@@ -32,5 +32,17 @@
                 description="Open the Yet AI local runtime chat shell">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
+        <action id="ai.yet.plugin.ShowRuntimeStatus"
+                class="ai.yet.plugin.actions.ShowRuntimeStatusAction"
+                text="Yet AI: Show Runtime Status"
+                description="Show sanitized Yet AI local runtime diagnostics">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="ai.yet.plugin.RestartRuntime"
+                class="ai.yet.plugin.actions.RestartRuntimeAction"
+                text="Yet AI: Restart Runtime"
+                description="Restart the Yet AI local runtime process launched by this plugin">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
     </actions>
 </idea-plugin>

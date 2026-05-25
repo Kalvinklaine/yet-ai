@@ -193,6 +193,57 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun diagnosticsStripUrlSecretsAndRedactErrors() {
+        val diagnostics = formatRuntimeDiagnostics(
+            RuntimeDiagnostics(
+                launchMode = "connect",
+                runtimeUrl = sanitizeRuntimeUrlForDiagnostics("http://user:password@127.0.0.1:8123/runtime?access_token=url-secret#token-fragment"),
+                engineBinaryConfigured = false,
+                binaryStatus = "not used in connect mode",
+                launchedByPlugin = false,
+                health = null,
+                error = "Authorization: Bearer runtime-secret",
+            ),
+        )
+
+        assertTrue(diagnostics.contains("Launch mode: connect"), diagnostics)
+        assertTrue(diagnostics.contains("Runtime URL: http://127.0.0.1:8123/runtime"), diagnostics)
+        listOf("user", "password", "url-secret", "token-fragment", "runtime-secret", "Authorization").forEach { secret ->
+            assertFalse(diagnostics.contains(secret), diagnostics)
+        }
+        assertTrue(diagnostics.contains("[redacted]"), diagnostics)
+    }
+
+    @Test
+    fun diagnosticsDescribeModeGuidanceAndBinaryStatus() {
+        val diagnostics = formatRuntimeDiagnostics(
+            RuntimeDiagnostics(
+                launchMode = "launch",
+                runtimeUrl = "http://127.0.0.1:8123",
+                engineBinaryConfigured = true,
+                binaryStatus = "configured binary is executable",
+                launchedByPlugin = true,
+                health = "/v1/ping returned 2xx",
+                error = null,
+            ),
+        )
+
+        assertTrue(diagnostics.contains("Engine binary path configured: yes"), diagnostics)
+        assertTrue(diagnostics.contains("Binary status: configured binary is executable"), diagnostics)
+        assertTrue(diagnostics.contains("Plugin-launched process: running"), diagnostics)
+        assertTrue(diagnostics.contains("Last health: /v1/ping returned 2xx"), diagnostics)
+        assertTrue(diagnostics.contains("Launch mode requires an executable"), diagnostics)
+        assertTrue(diagnostics.contains("Restart:"), diagnostics)
+    }
+
+    @Test
+    fun engineBinaryStatusSkipsBinaryInConnectMode() {
+        val settings = RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.CONNECT, Path.of("/missing/not-used"))
+
+        assertEquals("not used in connect mode", describeEngineBinaryStatus(settings))
+    }
+
+    @Test
     fun redactsEnvStyleApiKeysAndTokens() {
         val cases = mapOf(
             "OPENAI_API_KEY=sk-test-openai-secret" to "sk-test-openai-secret",
