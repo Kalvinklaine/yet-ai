@@ -15,7 +15,6 @@ import com.intellij.ui.jcef.JBCefApp
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefJSQuery
 import java.awt.BorderLayout
-import java.net.URL
 import javax.swing.JLabel
 import javax.swing.JPanel
 
@@ -53,7 +52,7 @@ class YetBrowserPanel : JPanel(BorderLayout()) {
             null
         }
         val connection = RuntimeConnectionManager.getInstance().prepare()
-        val packagedGui = if (connection.settings.guiDevUrl == null) PackagedGui.find() else null
+        val packagedGui = if (connection.settings.guiDevUrl == null) PackagedGuiServer.getInstance().start() else null
         val postIntellij = query.inject("JSON.stringify(message)", "function(error) { console.log('Yet AI bridge send failed'); }", "function(response) {}")
         browser.loadHTML(renderHtml(connection, postIntellij, packagedGui))
     }
@@ -78,6 +77,9 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
     } else {
         ""
     }
+    val diagnostics = packagedGui?.let {
+        "<div id=\"yet-ai-shell-status\" role=\"status\">Loading packaged Yet AI GUI from <code>${html(it.indexUrl)}</code> with origin <code>${html(it.origin)}</code>.</div><div id=\"yet-ai-shell-fallback\" role=\"alert\" hidden>Packaged Yet AI GUI did not finish loading from the local loopback server. Reinstall the latest ZIP or rebuild with <code>npm run prepare:jetbrains-preview</code>.</div>"
+    } ?: ""
     return """
         <!DOCTYPE html>
         <html lang="en">
@@ -89,16 +91,32 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         body { margin: 0; font-family: sans-serif; }
         main { padding: 24px; }
         iframe { width: 100vw; height: 100vh; border: 0; }
+        #yet-ai-shell-status, #yet-ai-shell-fallback { position: fixed; left: 12px; bottom: 12px; z-index: 1; max-width: 80vw; padding: 8px 10px; border-radius: 8px; background: #111827; color: #f9fafb; font-size: 12px; }
+        #yet-ai-shell-fallback { top: 24px; bottom: auto; background: #7f1d1d; }
+        #yet-ai-shell-fallback[hidden], #yet-ai-shell-status[hidden] { display: none; }
         </style>
         </head>
         <body>
-        $placeholder$frame
+        $placeholder$diagnostics$frame
         <script>
         const bootstrapHostReady = $bootstrap;
         const bridgeVersion = "${ProductIdentity.bridgeVersion}";
         const requestId = "$requestId";
         const frame = document.querySelector("iframe");
         const frameTargetOrigin = $frameOrigin;
+        const shellStatus = document.getElementById("yet-ai-shell-status");
+        const shellFallback = document.getElementById("yet-ai-shell-fallback");
+        let frameLoaded = false;
+        const markLoaded = () => {
+          frameLoaded = true;
+          if (shellStatus) shellStatus.hidden = true;
+          if (shellFallback) shellFallback.hidden = true;
+        };
+        if (shellFallback && frame) {
+          window.setTimeout(() => {
+            if (!frameLoaded) shellFallback.hidden = false;
+          }, 8000);
+        }
         window.postIntellijMessage = (message) => { $postIntellij };
         const sendToFrame = (message) => {
           if (frame && frame.contentWindow && frameTargetOrigin) {
@@ -127,7 +145,10 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         });
         window.postIntellijMessage({ version: bridgeVersion, type: "gui.ready", requestId, payload: { supportedBridgeVersion: bridgeVersion } });
         if (frame) {
-          frame.addEventListener("load", () => sendToFrame(bootstrapHostReady));
+          frame.addEventListener("load", () => {
+            markLoaded();
+            sendToFrame(bootstrapHostReady);
+          });
         }
         </script>
         </body>
@@ -137,25 +158,14 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
 
 fun buildGuiFrame(guiDevUrl: String?, packagedGui: PackagedGui?): String = when {
     guiDevUrl != null -> "<iframe title=\"Yet AI GUI\" src=\"${html(guiDevUrl)}\"></iframe>"
-    packagedGui != null -> "<iframe title=\"Yet AI GUI\" src=\"${html(packagedGui.indexUrl.toExternalForm())}\"></iframe>"
+    packagedGui != null -> "<iframe title=\"Yet AI GUI\" src=\"${html(packagedGui.indexUrl)}\"></iframe>"
     else -> ""
 }
 
 fun buildFrameOrigin(guiDevUrl: String?, packagedGui: PackagedGui?): String = when {
     guiDevUrl != null -> "\"${html(loopbackOrigin(guiDevUrl))}\""
-    packagedGui != null -> "\"*\""
+    packagedGui != null -> "\"${html(packagedGui.origin)}\""
     else -> "undefined"
-}
-
-data class PackagedGui(val indexUrl: URL) {
-    companion object {
-        private const val ResourceRoot = "/yet-ai-gui/"
-
-        fun find(): PackagedGui? {
-            val indexUrl = PackagedGui::class.java.getResource("${ResourceRoot}index.html") ?: return null
-            return PackagedGui(indexUrl)
-        }
-    }
 }
 
 private fun html(value: String): String = value

@@ -63,7 +63,7 @@ gradle build --console=plain
 
 The Gradle build copies `apps/gui/dist` into generated plugin resources under `build/generated/resources/yet-ai-gui/yet-ai-gui`. Generated GUI assets are not committed. If `apps/gui/dist/index.html` is absent, the build still succeeds and the tool window uses the placeholder shell unless `guiDevUrl` is configured.
 
-At runtime the JCEF host prefers `guiDevUrl` when configured. Otherwise it loads packaged GUI resources from `/yet-ai-gui/index.html` when they are present, then falls back to the local placeholder.
+At runtime the JCEF host prefers `guiDevUrl` when configured. Otherwise it starts a plugin-owned static HTTP server bound to `127.0.0.1` on an ephemeral port, serves packaged `/yet-ai-gui/index.html` and `/yet-ai-gui/assets/*` from plugin resources as `/index.html` and `/assets/*`, and embeds `http://127.0.0.1:<port>/index.html` with the exact loopback origin. This replaces direct `jar:file:` iframe loading in installed IDEs, keeps the GUI on a normal local HTTP origin for JCEF asset loading, and falls back to the local placeholder if packaged resources are absent. The static server is separate from the engine runtime and serves only generated GUI files, never provider secrets.
 
 ## Local engine binary for dev previews
 
@@ -136,7 +136,7 @@ If Gradle is not installed locally, run the identity check and root validation, 
 
 ## Webview and bridge
 
-The tool window uses JCEF when available. If `guiDevUrl` is set, the shell embeds the loopback GUI dev server in an iframe. Otherwise it loads packaged GUI resources copied from `apps/gui/dist` when available, then falls back to a local placeholder with the configured runtime URL.
+The tool window uses JCEF when available. If `guiDevUrl` is set, the shell embeds the loopback GUI dev server in an iframe. Otherwise it reuses the packaged GUI loopback server and embeds `http://127.0.0.1:<port>/index.html`, then falls back to a local placeholder with the configured runtime URL when resources are missing. The wrapper shows a non-secret loading line with the packaged GUI URL/origin and a visible timeout fallback if the iframe does not load, so an installed plugin should not fail as a blank panel.
 
 The wrapper exposes `window.postIntellijMessage` and sends `gui.ready` with a request id. The Kotlin host parses bridge input as JSON, accepts only JSON objects with the exact bridge version and `type: "gui.ready"`, validates optional request ids as short non-empty strings without control characters, requires optional payloads to be JSON objects, rejects arrays/scalars/null/malformed JSON/unknown types without logging payloads, and replies with `host.ready` echoing the request id when present. It also sends `host.openedFromCommand`. Host messages are built as structured JSON objects. Bootstrap JSON is escaped for script context with `<`, U+2028, and U+2029 escaped to avoid script breakout.
 
