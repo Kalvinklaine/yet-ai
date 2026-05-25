@@ -54,7 +54,8 @@ class YetBrowserPanel : JPanel(BorderLayout()) {
         }
         val connection = RuntimeConnectionManager.getInstance().prepare()
         val packagedGui = if (connection.settings.guiDevUrl == null) PackagedGui.find() else null
-        browser.loadHTML(renderHtml(connection, query, packagedGui))
+        val postIntellij = query.inject("JSON.stringify(message)", "function(error) { console.log('Yet AI bridge send failed'); }", "function(response) {}")
+        browser.loadHTML(renderHtml(connection, postIntellij, packagedGui))
     }
 
     private fun sendToGui(message: String) {
@@ -62,17 +63,14 @@ class YetBrowserPanel : JPanel(BorderLayout()) {
     }
 }
 
-private fun renderHtml(connection: RuntimeConnectionResult, query: JBCefJSQuery, packagedGui: PackagedGui?): String {
+fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packagedGui: PackagedGui?): String {
     val settings = connection.settings
     val requestId = "jb-${System.currentTimeMillis()}"
-    val guiDevOrigin = settings.guiDevUrl?.let { loopbackOrigin(it) }
+    val frame = buildGuiFrame(settings.guiDevUrl, packagedGui)
+    val frameOrigin = buildFrameOrigin(settings.guiDevUrl, packagedGui)
     val bootstrap = BridgeMessages.escapeScriptJson(
         BridgeMessages.hostReady(settings, requestId)
     )
-    val frame = settings.guiDevUrl?.let { "<iframe title=\"Yet AI GUI\" src=\"${html(it)}\"></iframe>" } ?: ""
-    val packagedGuiHead = packagedGui?.head ?: ""
-    val packagedGuiHtml = packagedGui?.body ?: ""
-    val packagedGuiBase = packagedGui?.baseUrl?.let { "<base href=\"${html(it.toExternalForm())}\">" } ?: ""
     val status = connection.status?.let { "<p>${html(it)}</p>" } ?: ""
     val error = connection.error?.let { "<p><strong>Runtime error:</strong> ${html(it)}</p>" } ?: ""
     val placeholder = if (settings.guiDevUrl == null && packagedGui == null) {
@@ -80,8 +78,6 @@ private fun renderHtml(connection: RuntimeConnectionResult, query: JBCefJSQuery,
     } else {
         ""
     }
-    val postIntellij = query.inject("JSON.stringify(message)", "function(error) { console.log('Yet AI bridge send failed'); }", "function(response) {}")
-    val frameOrigin = guiDevOrigin?.let { "\"${html(it)}\"" } ?: "undefined"
     return """
         <!DOCTYPE html>
         <html lang="en">
@@ -89,8 +85,6 @@ private fun renderHtml(connection: RuntimeConnectionResult, query: JBCefJSQuery,
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Yet AI</title>
-        $packagedGuiBase
-        $packagedGuiHead
         <style>
         body { margin: 0; font-family: sans-serif; }
         main { padding: 24px; }
@@ -98,7 +92,7 @@ private fun renderHtml(connection: RuntimeConnectionResult, query: JBCefJSQuery,
         </style>
         </head>
         <body>
-        $placeholder$frame$packagedGuiHtml
+        $placeholder$frame
         <script>
         const bootstrapHostReady = $bootstrap;
         const bridgeVersion = "${ProductIdentity.bridgeVersion}";
@@ -115,7 +109,7 @@ private fun renderHtml(connection: RuntimeConnectionResult, query: JBCefJSQuery,
         const isGuiMessage = (message) => message && message.version === bridgeVersion && message.type === "gui.ready";
         window.addEventListener("message", (event) => {
           if (event.source === frame?.contentWindow) {
-            if (event.origin !== frameTargetOrigin) {
+            if (frameTargetOrigin && frameTargetOrigin !== "*" && event.origin !== frameTargetOrigin) {
               console.log("Yet AI rejected iframe message from unexpected origin");
               return;
             }
@@ -141,16 +135,25 @@ private fun renderHtml(connection: RuntimeConnectionResult, query: JBCefJSQuery,
     """.trimIndent()
 }
 
-private data class PackagedGui(val baseUrl: URL, val head: String, val body: String) {
+fun buildGuiFrame(guiDevUrl: String?, packagedGui: PackagedGui?): String = when {
+    guiDevUrl != null -> "<iframe title=\"Yet AI GUI\" src=\"${html(guiDevUrl)}\"></iframe>"
+    packagedGui != null -> "<iframe title=\"Yet AI GUI\" src=\"${html(packagedGui.indexUrl.toExternalForm())}\"></iframe>"
+    else -> ""
+}
+
+fun buildFrameOrigin(guiDevUrl: String?, packagedGui: PackagedGui?): String = when {
+    guiDevUrl != null -> "\"${html(loopbackOrigin(guiDevUrl))}\""
+    packagedGui != null -> "\"*\""
+    else -> "undefined"
+}
+
+data class PackagedGui(val indexUrl: URL) {
     companion object {
         private const val ResourceRoot = "/yet-ai-gui/"
 
         fun find(): PackagedGui? {
             val indexUrl = PackagedGui::class.java.getResource("${ResourceRoot}index.html") ?: return null
-            val html = indexUrl.readText()
-            val head = Regex("<head[^>]*>([\\s\\S]*?)</head>", RegexOption.IGNORE_CASE).find(html)?.groupValues?.get(1) ?: ""
-            val body = Regex("<body[^>]*>([\\s\\S]*?)</body>", RegexOption.IGNORE_CASE).find(html)?.groupValues?.get(1) ?: html
-            return PackagedGui(indexUrl, head, body)
+            return PackagedGui(indexUrl)
         }
     }
 }
