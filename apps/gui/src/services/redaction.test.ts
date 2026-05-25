@@ -26,6 +26,7 @@ describe("redaction", () => {
       ["set_cookie=sid=secret; refresh=also-secret", ["sid=secret", "refresh=also-secret"]],
       ["set-cookie=sid=secret; Path=/; HttpOnly; refresh=also-secret", ["sid=secret", "Path=/", "HttpOnly", "refresh=also-secret"]],
       ["setCookie=sid=secret; refresh=also-secret", ["sid=secret", "refresh=also-secret"]],
+      ["setCookie: sid=secret; refresh=also-secret", ["sid=secret", "refresh=also-secret"]],
       ["Cookie=session=secret; Refresh=also-secret", ["session=secret", "Refresh=also-secret"]],
     ];
     for (const [input, rawFragments] of cases) {
@@ -41,6 +42,17 @@ describe("redaction", () => {
     expectRedacted(`https://x.test/cb?api_key=short-secret&access_token=${longOpaque};code_verifier=verifier-secret&ok=1`, ["short-secret", longOpaque, "verifier-secret", "api_key", "access_token", "code_verifier"]);
   });
 
+  it("redacts setCookie URL params", () => {
+    const cases: Array<[string, string[]]> = [
+      ["https://x.test/cb?setCookie=sid=secret&ok=1", ["setCookie", "sid=secret"]],
+      ["https://x.test/cb?ok=1&setCookie=sid=secret", ["setCookie", "sid=secret"]],
+      ["https://x.test/cb;setCookie=sid=secret", ["setCookie", "sid=secret"]],
+    ];
+    for (const [input, rawFragments] of cases) {
+      expectRedacted(input, rawFragments);
+    }
+  });
+
   it("redacts JSON and string fields", () => {
     expectRedacted(`{"access_token":"short","clientSecret":"tiny","safe":"ok"} authorization=Bearer-secret`, ["access_token", "short", "clientSecret", "tiny", "Bearer-secret"]);
   });
@@ -50,11 +62,12 @@ describe("redaction", () => {
   });
 
   it("redacts JSON primitive secret fields and set-cookie variants", () => {
-    expectRedacted(`{"access_token":123456} {"apiKey":true} {"refreshToken":null} {"setCookie":"sid=secret"} {"set_cookie":"sid=secret"} {"set-cookie":"sid=secret"}`, ["access_token", "123456", "apiKey", "true", "refreshToken", "null", "setCookie", "set_cookie", "set-cookie", "sid=secret"]);
+    expectRedacted(`{"access_token":123456} {"apiKey":true} {"refreshToken":null} {"setCookie":"sid=secret; refresh=also-secret"} {"set_cookie":"sid=secret"} {"set-cookie":"sid=secret"}`, ["access_token", "123456", "apiKey", "true", "refreshToken", "null", "setCookie", "set_cookie", "set-cookie", "sid=secret", "refresh=also-secret"]);
   });
 
   it("redacts object secret-like keys and values", () => {
     expect(sanitizeDisplayValue({ accessToken: "short", nested: { clientSecret: "tiny" }, safe: "ok" })).toEqual({ "[redacted]": "[redacted]", nested: { "[redacted]": "[redacted]" }, safe: "ok" });
+    expect(sanitizeDisplayValue({ setCookie: "sid=secret; refresh=also-secret" })).toEqual({ "[redacted]": "[redacted]" });
     expect(isSecretLikeKey("PROVIDER_CLIENT_SECRET")).toBe(true);
   });
 
