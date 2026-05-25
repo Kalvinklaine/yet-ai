@@ -71,7 +71,7 @@ export async function collectRuntimeDiagnostics(
 
   try {
     const binaryPath = findEngineBinary(settings.engineBinaryPath, context.extensionPath, identity.engine.binaryName);
-    diagnostics.engineBinaryStatus = binaryPath ? `found: ${binaryPath}` : "not found";
+    diagnostics.engineBinaryStatus = describeEngineBinaryStatus(binaryPath, settings.engineBinaryPath !== undefined);
   } catch (error) {
     diagnostics.engineBinaryStatus = error instanceof Error ? `not usable: ${redactRuntimeDiagnosticText(error.message, settings.sessionToken)}` : "not usable";
   }
@@ -217,7 +217,7 @@ function validateEngineConnectionSettings(settings: EngineConnectionSettings): v
   }
 }
 
-function findEngineBinary(configuredPath: string | undefined, extensionPath: string, binaryName: string): string | undefined {
+export function findEngineBinary(configuredPath: string | undefined, extensionPath: string, binaryName: string): string | undefined {
   if (configuredPath) {
     if (!isExecutableFile(configuredPath)) {
       throw new Error(`${configurationPrefix}.engineBinaryPath must point to an executable file.`);
@@ -258,10 +258,24 @@ function findOnPath(binaryName: string): string | undefined {
 function isExecutableFile(filePath: string): boolean {
   try {
     const stat = fs.statSync(filePath);
-    return stat.isFile();
+    if (!stat.isFile()) {
+      return false;
+    }
+    if (os.platform() !== "win32") {
+      fs.accessSync(filePath, fs.constants.X_OK);
+    }
+    return true;
   } catch {
     return false;
   }
+}
+
+function describeEngineBinaryStatus(binaryPath: string | undefined, configured: boolean): string {
+  if (!binaryPath) {
+    return "not found";
+  }
+  const basename = path.basename(binaryPath);
+  return configured ? `found configured binary: ${basename}` : `found discovered binary: ${basename}`;
 }
 
 async function launchOrReuseEngine(runtimeUrl: string, binaryPath: string, output: vscode.OutputChannel): Promise<EngineConnection> {
