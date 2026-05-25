@@ -260,8 +260,8 @@ impl StoredAuthConfig {
     }
 
     fn summary_with_secret(&self, api_key: Option<&str>) -> ProviderAuthSummary {
-        let configured = self.auth_type == AuthType::ApiKey
-            && api_key.is_some_and(|value| !value.is_empty());
+        let configured =
+            self.auth_type == AuthType::ApiKey && api_key.is_some_and(|value| !value.is_empty());
         ProviderAuthSummary {
             auth_type: self.auth_type.clone(),
             configured,
@@ -369,6 +369,11 @@ pub async fn create_provider_config(
     let id = clean_required(request.id, ProviderError::MissingId)?;
     validate_provider_id(&id)?;
     let path = provider_config_path(config_dir, &id)?;
+    match tokio::fs::metadata(&path).await {
+        Ok(_) => return Err(ProviderError::AlreadyExists),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err(ProviderError::Storage),
+    }
     let kind = request.kind.ok_or(ProviderError::MissingKind)?;
     let config = StoredProviderConfig {
         id,
@@ -381,8 +386,12 @@ pub async fn create_provider_config(
         capabilities: request.capabilities.unwrap_or_default(),
     };
     validate_config(&config)?;
-    let config = persist_config_secrets(config_dir, config).await?;
+    let (config, secret_change) = prepare_config_secrets(config);
     create_provider_config_file(&path, &config).await?;
+    if let Err(error) = commit_secret_change(config_dir, &config.id, secret_change).await {
+        let _ = tokio::fs::remove_file(&path).await;
+        return Err(error);
+    }
     get_provider_config_with_secrets(config_dir, &config.id).await
 }
 
@@ -423,9 +432,16 @@ pub async fn update_provider_config(
         config.capabilities = capabilities;
     }
     validate_config(&config)?;
-    let config = persist_config_secrets(config_dir, config).await?;
+    let (config, secret_change) = prepare_config_secrets(config);
+    let previous_secret = FileSecretStore::new(config_dir)
+        .get_secret(id, SecretKind::ApiKey)
+        .await?;
     let path = provider_config_path(config_dir, id)?;
     write_provider_config(&path, &config).await?;
+    if let Err(error) = commit_secret_change(config_dir, id, secret_change).await {
+        rollback_secret(config_dir, id, previous_secret).await?;
+        return Err(error);
+    }
     get_provider_config_with_secrets(config_dir, id).await
 }
 
@@ -474,7 +490,10 @@ pub async fn models(config_dir: &Path) -> Result<ModelListResponse, ProviderErro
     Ok(ModelListResponse { models })
 }
 
-pub async fn test_provider(config_dir: &Path, id: &str) -> Result<ProviderTestResponse, ProviderError> {
+pub async fn test_provider(
+    config_dir: &Path,
+    id: &str,
+) -> Result<ProviderTestResponse, ProviderError> {
     let provider = get_provider_config_with_secrets(config_dir, id).await?;
     Ok(match provider.kind {
         ProviderKind::OpenAiCompatible => test_openai_compatible_provider(&provider).await,
@@ -482,7 +501,9 @@ pub async fn test_provider(config_dir: &Path, id: &str) -> Result<ProviderTestRe
             ok: false,
             provider_id: provider.id,
             status: ProviderTestStatus::UnsupportedKind,
-            message: "Provider reachability test is currently available for OpenAI-compatible providers.".to_string(),
+            message:
+                "Provider reachability test is currently available for OpenAI-compatible providers."
+                    .to_string(),
             model_id: None,
             cloud_required: false,
         },
@@ -491,22 +512,52 @@ pub async fn test_provider(config_dir: &Path, id: &str) -> Result<ProviderTestRe
 
 async fn test_openai_compatible_provider(provider: &StoredProviderConfig) -> ProviderTestResponse {
     let Some(model) = provider.models.first() else {
-        return provider_test_response(provider, false, ProviderTestStatus::MissingModel, "Provider has no configured model.", None);
+        return provider_test_response(
+            provider,
+            false,
+            ProviderTestStatus::MissingModel,
+            "Provider has no configured model.",
+            None,
+        );
     };
     if provider.auth.auth_type == AuthType::ApiKey
-        && provider.auth.api_key.as_deref().is_none_or(|value| value.is_empty())
+        && provider
+            .auth
+            .api_key
+            .as_deref()
+            .is_none_or(|value| value.is_empty())
     {
-        return provider_test_response(provider, false, ProviderTestStatus::MissingSecret, "Provider API key is not configured.", Some(model.id.clone()));
+        return provider_test_response(
+            provider,
+            false,
+            ProviderTestStatus::MissingSecret,
+            "Provider API key is not configured.",
+            Some(model.id.clone()),
+        );
     }
     let Ok(url) = models_url(&provider.base_url) else {
-        return provider_test_response(provider, false, ProviderTestStatus::BadUrl, "Provider base URL is invalid.", Some(model.id.clone()));
+        return provider_test_response(
+            provider,
+            false,
+            ProviderTestStatus::BadUrl,
+            "Provider base URL is invalid.",
+            Some(model.id.clone()),
+        );
     };
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(3))
         .build()
     {
         Ok(client) => client,
-        Err(_) => return provider_test_response(provider, false, ProviderTestStatus::Unreachable, "Provider test client could not be initialized.", Some(model.id.clone())),
+        Err(_) => {
+            return provider_test_response(
+                provider,
+                false,
+                ProviderTestStatus::Unreachable,
+                "Provider test client could not be initialized.",
+                Some(model.id.clone()),
+            )
+        }
     };
     let mut request = client.get(url);
     if provider.auth.auth_type == AuthType::ApiKey {
@@ -515,11 +566,46 @@ async fn test_openai_compatible_provider(provider: &StoredProviderConfig) -> Pro
         }
     }
     match request.send().await {
-        Ok(response) if response.status().is_success() => provider_test_response(provider, true, ProviderTestStatus::Reachable, "Provider is reachable and accepted the configured credentials.", Some(model.id.clone())),
-        Ok(response) if response.status() == reqwest::StatusCode::UNAUTHORIZED || response.status() == reqwest::StatusCode::FORBIDDEN => provider_test_response(provider, false, ProviderTestStatus::Unauthorized, "Provider authentication failed. Check the configured credentials.", Some(model.id.clone())),
-        Ok(_) => provider_test_response(provider, false, ProviderTestStatus::UpstreamError, "Provider returned an error during the reachability check.", Some(model.id.clone())),
-        Err(error) if error.is_timeout() => provider_test_response(provider, false, ProviderTestStatus::Timeout, "Provider reachability check timed out.", Some(model.id.clone())),
-        Err(_) => provider_test_response(provider, false, ProviderTestStatus::Unreachable, "Provider could not be reached.", Some(model.id.clone())),
+        Ok(response) if response.status().is_success() => provider_test_response(
+            provider,
+            true,
+            ProviderTestStatus::Reachable,
+            "Provider is reachable and accepted the configured credentials.",
+            Some(model.id.clone()),
+        ),
+        Ok(response)
+            if response.status() == reqwest::StatusCode::UNAUTHORIZED
+                || response.status() == reqwest::StatusCode::FORBIDDEN =>
+        {
+            provider_test_response(
+                provider,
+                false,
+                ProviderTestStatus::Unauthorized,
+                "Provider authentication failed. Check the configured credentials.",
+                Some(model.id.clone()),
+            )
+        }
+        Ok(_) => provider_test_response(
+            provider,
+            false,
+            ProviderTestStatus::UpstreamError,
+            "Provider returned an error during the reachability check.",
+            Some(model.id.clone()),
+        ),
+        Err(error) if error.is_timeout() => provider_test_response(
+            provider,
+            false,
+            ProviderTestStatus::Timeout,
+            "Provider reachability check timed out.",
+            Some(model.id.clone()),
+        ),
+        Err(_) => provider_test_response(
+            provider,
+            false,
+            ProviderTestStatus::Unreachable,
+            "Provider could not be reached.",
+            Some(model.id.clone()),
+        ),
     }
 }
 
@@ -543,7 +629,13 @@ fn provider_test_response(
 fn models_url(base_url: &str) -> Result<String, ProviderError> {
     validate_provider_base_url(base_url)?;
     let mut url = reqwest::Url::parse(base_url).map_err(|_| ProviderError::InvalidBaseUrl)?;
-    let normalized_path = url.path().trim_end_matches('/').to_string();
+    let mut normalized_path = url.path().trim_end_matches('/').to_string();
+    for suffix in ["/v1/chat/completions", "/chat/completions"] {
+        if normalized_path.ends_with(suffix) {
+            normalized_path.truncate(normalized_path.len() - suffix.len());
+            break;
+        }
+    }
     if normalized_path.ends_with("/models") {
         url.set_path(&normalized_path);
     } else {
@@ -588,27 +680,58 @@ async fn configured_api_key(
     }
 }
 
-async fn persist_config_secrets(
-    config_dir: &Path,
+enum SecretChange {
+    None,
+    Put(String),
+    Delete,
+}
+
+fn prepare_config_secrets(
     mut config: StoredProviderConfig,
-) -> Result<StoredProviderConfig, ProviderError> {
+) -> (StoredProviderConfig, SecretChange) {
+    let secret_change = match config.auth.auth_type {
+        AuthType::None => SecretChange::Delete,
+        AuthType::ApiKey => config
+            .auth
+            .api_key
+            .take()
+            .filter(|value| !value.is_empty())
+            .map_or(SecretChange::None, SecretChange::Put),
+    };
+    config.auth.api_key = None;
+    (config, secret_change)
+}
+
+async fn commit_secret_change(
+    config_dir: &Path,
+    id: &str,
+    secret_change: SecretChange,
+) -> Result<(), ProviderError> {
     let store = FileSecretStore::new(config_dir);
-    match config.auth.auth_type {
-        AuthType::None => {
-            store.delete_secret(&config.id, SecretKind::ApiKey).await?;
-            config.auth.api_key = None;
-        }
-        AuthType::ApiKey => {
-            if let Some(api_key) = config.auth.api_key.as_deref().filter(|value| !value.is_empty())
-            {
-                store
-                    .put_secret(&config.id, SecretKind::ApiKey, api_key)
-                    .await?;
-            }
-            config.auth.api_key = None;
-        }
+    match secret_change {
+        SecretChange::None => Ok(()),
+        SecretChange::Put(api_key) => store
+            .put_secret(id, SecretKind::ApiKey, &api_key)
+            .await
+            .map_err(Into::into),
+        SecretChange::Delete => store
+            .delete_secret(id, SecretKind::ApiKey)
+            .await
+            .map_err(Into::into),
     }
-    Ok(config)
+}
+
+async fn rollback_secret(
+    config_dir: &Path,
+    id: &str,
+    previous_secret: Option<String>,
+) -> Result<(), ProviderError> {
+    let store = FileSecretStore::new(config_dir);
+    match previous_secret {
+        Some(secret) => store.put_secret(id, SecretKind::ApiKey, &secret).await?,
+        None => store.delete_secret(id, SecretKind::ApiKey).await?,
+    }
+    Ok(())
 }
 
 fn validate_config(config: &StoredProviderConfig) -> Result<(), ProviderError> {
@@ -856,6 +979,9 @@ mod tests {
 
     #[test]
     fn redaction_keeps_only_small_signal() {
-        assert_eq!(crate::secret_store::redact_secret("sk-test-secret-abcd"), "sk--...abcd");
+        assert_eq!(
+            crate::secret_store::redact_secret("sk-test-secret-abcd"),
+            "sk--...abcd"
+        );
     }
 }
