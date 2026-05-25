@@ -1,4 +1,4 @@
-import { access, readFile, stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,21 @@ const identity = JSON.parse(await readFile(path.join(root, "product", "identity.
 const vscodePackage = JSON.parse(await readFile(path.join(vscodeRoot, "package.json"), "utf8"));
 const binaryFileName = process.platform === "win32" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
 const failures = [];
+const requiredCommands = [
+  "yetaicmd.openChat",
+  "yetaicmd.showRuntimeStatus",
+  "yetaicmd.setLocalRuntimeSessionToken",
+  "yetaicmd.clearLocalRuntimeSessionToken",
+];
+const requiredConfigurationProperties = [
+  "yetai.runtimeUrl",
+  "yetai.sessionToken",
+  "yetai.guiDevUrl",
+  "yetai.launchMode",
+  "yetai.engineBinaryPath",
+];
+
+checkManifestSurfaces(vscodePackage);
 
 await checkFile(
   path.join(vscodeRoot, "bin", binaryFileName),
@@ -20,10 +35,20 @@ if (main !== "./out/extension.js") {
   failures.push("apps/plugins/vscode/package.json must keep main set to ./out/extension.js for the compiled dev-preview extension.");
 }
 
+const extensionPath = path.join(vscodeRoot, main.length > 0 ? main : "out/extension.js");
 await checkFile(
-  path.join(vscodeRoot, main.length > 0 ? main : "out/extension.js"),
+  extensionPath,
   "Compiled extension is missing. Run `npm run prepare:vscode-preview` so `cd apps/plugins/vscode && npm run compile` produces out/extension.js.",
 );
+
+const extensionJs = await readTextFile(
+  extensionPath,
+  "Compiled extension is missing. Run `npm run prepare:vscode-preview` so `cd apps/plugins/vscode && npm run compile` produces out/extension.js.",
+);
+
+if (extensionJs !== undefined) {
+  checkCompiledExtensionSurfaces(extensionJs);
+}
 
 const guiRoot = path.join(vscodeRoot, "media", "gui");
 const guiIndex = path.join(guiRoot, "index.html");
@@ -45,8 +70,68 @@ if (failures.length > 0) {
 }
 
 console.log("VS Code dev-preview smoke passed.");
-console.log("Checked copied engine binary, packaged GUI, compiled extension entry, manifest main, and GUI asset references.");
+console.log("Checked copied engine binary, packaged GUI assets, compiled extension entry, manifest commands, activation events, and configuration surfaces.");
 console.log("No VS Code UI, provider credentials, or hosted services were used.");
+
+function checkManifestSurfaces(manifest) {
+  const contributedCommands = new Set(
+    Array.isArray(manifest.contributes?.commands)
+      ? manifest.contributes.commands.map((command) => command?.command).filter((command) => typeof command === "string")
+      : [],
+  );
+  for (const commandId of requiredCommands) {
+    if (!contributedCommands.has(commandId)) {
+      failures.push(`apps/plugins/vscode/package.json must contribute command ${commandId} for the dev-preview command palette flow.`);
+    }
+  }
+
+  const activationEvents = new Set(Array.isArray(manifest.activationEvents) ? manifest.activationEvents.filter((event) => typeof event === "string") : []);
+  for (const commandId of requiredCommands) {
+    const activationEvent = `onCommand:${commandId}`;
+    if (!activationEvents.has(activationEvent)) {
+      failures.push(`apps/plugins/vscode/package.json must include activation event ${activationEvent} for the dev-preview command palette flow.`);
+    }
+  }
+
+  const properties = manifest.contributes?.configuration?.properties ?? {};
+  for (const propertyName of requiredConfigurationProperties) {
+    if (!Object.hasOwn(properties, propertyName)) {
+      failures.push(`apps/plugins/vscode/package.json must contribute configuration property ${propertyName} for the documented dev-preview flow.`);
+    }
+  }
+
+  const guiDevUrlDescription = properties["yetai.guiDevUrl"]?.description;
+  if (typeof guiDevUrlDescription !== "string" || !guiDevUrlDescription.toLowerCase().includes("loopback")) {
+    failures.push("apps/plugins/vscode/package.json configuration yetai.guiDevUrl description must mention loopback URL requirements.");
+  }
+}
+
+function checkCompiledExtensionSurfaces(source) {
+  for (const commandId of requiredCommands) {
+    const constantName = commandIdentifierName(commandId);
+    if (!source.includes(commandId) && !source.includes(constantName)) {
+      failures.push(`Compiled extension out/extension.js must include command registration surface for ${commandId}. Run \`npm run prepare:vscode-preview\` to rebuild generated artifacts.`);
+    }
+  }
+  if (!source.includes("registerCommand")) {
+    failures.push("Compiled extension out/extension.js must include VS Code command registration calls. Run `npm run prepare:vscode-preview` to rebuild generated artifacts.");
+  }
+}
+
+function commandIdentifierName(commandId) {
+  switch (commandId) {
+    case "yetaicmd.openChat":
+      return "extensionCommand";
+    case "yetaicmd.showRuntimeStatus":
+      return "runtimeStatusCommand";
+    case "yetaicmd.setLocalRuntimeSessionToken":
+      return "setSessionTokenCommand";
+    case "yetaicmd.clearLocalRuntimeSessionToken":
+      return "clearSessionTokenCommand";
+    default:
+      return commandId;
+  }
+}
 
 async function checkFile(filePath, message) {
   try {
@@ -70,10 +155,17 @@ async function readTextFile(filePath, message) {
 
 async function checkGuiAssetReferences(html, guiRootPath) {
   const references = collectLocalAssetReferences(html);
+  const assetReferences = [...references].filter((reference) => /\.(?:js|css)$/i.test(reference));
+  if (assetReferences.length === 0) {
+    failures.push("Packaged GUI index.html must reference at least one local JS or CSS asset. Re-run `npm run prepare:vscode-preview` to rebuild and copy GUI assets.");
+  }
   for (const reference of references) {
     const assetPath = path.join(guiRootPath, reference);
     try {
-      await access(assetPath);
+      const assetStat = await stat(assetPath);
+      if (!assetStat.isFile()) {
+        failures.push(`Packaged GUI references ${reference}, but it is not a file. Re-run \`npm run prepare:vscode-preview\` to rebuild and copy GUI assets.`);
+      }
     } catch {
       failures.push(`Packaged GUI references missing asset ${reference}. Re-run \`npm run prepare:vscode-preview\` to rebuild and copy GUI assets.`);
     }
