@@ -61,16 +61,24 @@ export PATH="$HOME/.cargo/bin:$PATH"; npm run prepare:vscode-preview && npm run 
 
 ## VS Code dev-preview run guide
 
-This is the first manual path for trying the local-first VS Code dev preview with the packaged GUI and a local engine launcher. It does not require a Yet AI cloud account, hosted workspace, managed model gateway, or product credit balance.
+This is the nearest hands-on path for trying the local-first VS Code dev preview with the packaged GUI and a local engine launcher. It does not require a Yet AI cloud account, hosted workspace, managed model gateway, or product credit balance.
 
-1. From the repository root, prepare the extension:
+1. From the repository root, prepare and smoke-check the extension artifacts:
 
    ```sh
    export PATH="$HOME/.cargo/bin:$PATH"
    npm run prepare:vscode-preview
+   npm run smoke:vscode-preview
    ```
 
-2. In VS Code, open this repository or `apps/plugins/vscode` and start an Extension Development Host for the extension. Use your normal VS Code extension development flow, for example the Run and Debug extension host launcher when available.
+2. Open the extension workspace and start an Extension Development Host:
+
+   ```sh
+   cd apps/plugins/vscode
+   code .
+   ```
+
+   Use your normal VS Code extension development flow, for example Run and Debug → Extension Development Host.
 
 3. Keep `yetai.launchMode` as `auto` for normal dev-preview. The extension discovers the copied `apps/plugins/vscode/bin/yet-lsp` binary automatically. If discovery is not enough, set `yetai.engineBinaryPath` to the absolute binary path printed by the helper.
 
@@ -84,9 +92,15 @@ This is the first manual path for trying the local-first VS Code dev preview wit
 
 5. In the Extension Development Host, run `Yet AI: Open Chat` from the Command Palette.
 
-6. Verify that the packaged GUI opens instead of the placeholder. The GUI runtime status should show the local runtime as reachable after `/v1/ping` and `/v1/caps` succeed. Runtime logs are available in the `Yet AI Runtime` output channel with bearer tokens redacted.
+6. Verify the visible success signals:
 
-7. Configure a provider in the GUI. For GPT via API key, choose the `OpenAI API` preset, paste your own API key once, save the provider, and confirm that the form clears the raw key. Provider settings and credentials are stored by the local engine, not by the VS Code extension.
+   - the packaged GUI opens, not the placeholder shell;
+   - the GUI shows local runtime connection/status after `/v1/ping` and `/v1/caps` succeed;
+   - Provider setup is visible;
+   - saved providers show a provider test action;
+   - runtime and provider errors are shown in sanitized form, without raw bearer tokens, session tokens, or provider API keys.
+
+7. Configure a local or OpenAI-compatible provider in the GUI. For GPT via API key, choose the `OpenAI API` preset, paste your own API key once, save the provider, confirm that the form clears the raw key, and use the provider test action. Provider settings and credentials are stored by the local engine, not by the VS Code extension.
 
 8. Send a simple chat message, such as `Say hello in one sentence.` Confirm that the response streams in the GUI.
 
@@ -200,7 +214,8 @@ Use `Yet AI: Show Runtime Status` to write sanitized local runtime diagnostics t
 - OpenAI API fallback vs account login: the `OpenAI API` preset is the safe/default real-provider path. The experimental Codex-like OpenAI account action is separate, explicit-risk, private-endpoint-style, covered automatically only by loopback mocks, and not official public OpenAI OAuth support or production-ready. Any real account testing is manual, risky, account-specific, and outside CI. Browser session reuse, cookie import, browser profile import/reuse, direct reading of `~/.codex/auth.json`, and importing other tools' credential files are not allowed.
 - Runtime port conflict: `yetai.runtimeUrl` defaults to `http://127.0.0.1:8001`. If another process owns that port, set `yetai.runtimeUrl` to another loopback port such as `http://127.0.0.1:8011` before opening chat. In launch mode the extension passes that port through `YET_AI_HTTP_PORT`.
 - Missing `yet-lsp` binary: run `export PATH="$HOME/.cargo/bin:$PATH"; npm run prepare:vscode-preview` from the repository root. If discovery still fails, set `yetai.engineBinaryPath` to the absolute binary path and use `yetai.launchMode` `launch`.
-- Packaged GUI not copied: run `npm run prepare:vscode-preview` from the repository root. If the webview still shows the placeholder, check that `apps/plugins/vscode/media/gui/index.html` exists and reopen the command.
+- Packaged GUI not copied: run `npm run prepare:vscode-preview` from the repository root, or `npm run prepare:preview` from `apps/plugins/vscode` after building `apps/gui`. If the webview still shows the placeholder, check that `apps/plugins/vscode/media/gui/index.html` exists and reopen the command.
+- GUI dev server URL blocked or blank: `yetai.guiDevUrl` must be a loopback `http` or `https` URL, such as `https://127.0.0.1:5173`. HTTPS loopback GUI dev URLs are supported by the webview CSP; non-loopback dev URLs are rejected.
 - Provider base URL normalization: for OpenAI-compatible providers, `http://host/v1`, `http://host/v1/`, and an explicit `http://host/v1/chat/completions` are accepted. The engine appends `/chat/completions` when needed. Use absolute `http` or `https` URLs with a host and no `user:pass@host` userinfo.
 
 ## Extension surfaces
