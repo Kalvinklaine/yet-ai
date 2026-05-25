@@ -107,6 +107,7 @@ First-message smoke:
 - `/v1/models`
 - `/v1/providers`
 - `POST /v1/providers` and `PATCH /v1/providers/:id`
+- `POST /v1/providers/:id/test` for local-runtime provider reachability checks
 - `/v1/provider-auth/:provider/start`, `/status`, `/exchange`, and `/disconnect` for sanitized engine-owned provider login state
 - `POST /v1/chats/:chat_id/commands` with `user_message`
 - `GET /v1/chats/subscribe?chat_id=...` through fetch streaming SSE
@@ -119,6 +120,8 @@ The primary chat area renders a message-oriented local chat view with user, assi
 ## Provider secret handling
 
 The provider form allows entering an API key for create/update. After submit, the key field is cleared. The UI renders only `auth.configured` and `auth.redacted` returned by the runtime. Do not add localStorage or sessionStorage persistence for provider keys.
+
+Each saved provider summary includes a `Test provider` action. The GUI sends that action only to the local runtime endpoint `POST /v1/providers/:id/test`; it never contacts the provider URL directly. The runtime loads local provider config and secrets, performs a short OpenAI-compatible `/models` reachability/auth probe when supported, and returns sanitized `ok`, `status`, `message`, and optional `modelId` fields. Failures such as unauthorized, timeout, missing key, missing model, unsupported kind, and upstream errors are displayed without raw upstream response bodies or provider secrets. The test is optional and does not change existing Send readiness rules.
 
 ## Provider presets
 

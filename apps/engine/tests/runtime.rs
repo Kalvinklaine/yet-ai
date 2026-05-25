@@ -206,6 +206,43 @@ async fn start_mock_provider(
     (format!("http://{address}"), auth_receiver)
 }
 
+async fn start_mock_models_provider(
+    status: StatusCode,
+    body: &'static str,
+    expected_auth: Option<&'static str>,
+) -> (String, oneshot::Receiver<Option<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (auth_sender, auth_receiver) = oneshot::channel();
+    let expected = expected_auth.map(str::to_string);
+    let auth_sender = std::sync::Arc::new(std::sync::Mutex::new(Some(auth_sender)));
+    tokio::spawn(async move {
+        let handler = move |request: axum::http::Request<Body>| {
+            let expected = expected.clone();
+            let auth_sender = auth_sender.clone();
+            async move {
+                let auth = request
+                    .headers()
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                if let Some(sender) = auth_sender.lock().unwrap().take() {
+                    let _ = sender.send(auth.clone());
+                }
+                if let Some(expected) = expected {
+                    assert_eq!(auth.as_deref(), Some(expected.as_str()));
+                }
+                (status, [(header::CONTENT_TYPE, "application/json")], body).into_response()
+            }
+        };
+        let app = axum::Router::new()
+            .route("/models", axum::routing::get(handler.clone()))
+            .route("/v1/models", axum::routing::get(handler));
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{address}"), auth_receiver)
+}
+
 async fn start_slow_mock_provider(
     expected_auth: Option<&'static str>,
 ) -> (
@@ -2055,6 +2092,164 @@ async fn provider_storage_path_uses_yet_ai_config_dir_not_project_state() {
 }
 
 #[tokio::test]
+async fn provider_test_openai_compatible_success_uses_loopback_models_and_auth() {
+    let api_key = "sk-provider-test-secret-abcd";
+    let (base_url, auth_receiver) = start_mock_models_provider(
+        StatusCode::OK,
+        r#"{"data":[{"id":"gpt-test"}]}"#,
+        Some("Bearer sk-provider-test-secret-abcd"),
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/providers/openai-stream/test",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["providerId"], "openai-stream");
+    assert_eq!(body["status"], "reachable");
+    assert_eq!(body["modelId"], "gpt-test");
+    assert_eq!(body["cloudRequired"], false);
+    assert!(!body.to_string().contains(api_key));
+    let auth = auth_receiver.await.unwrap();
+    assert_eq!(auth.as_deref(), Some("Bearer sk-provider-test-secret-abcd"));
+}
+
+#[tokio::test]
+async fn provider_test_openai_compatible_unauthorized_is_sanitized() {
+    let api_key = "sk-provider-test-unauthorized-abcd";
+    let (base_url, _) = start_mock_models_provider(
+        StatusCode::UNAUTHORIZED,
+        "raw-provider-body access_token=secret Bearer should-not-leak",
+        Some("Bearer sk-provider-test-unauthorized-abcd"),
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(Method::POST, "/v1/providers/openai-stream/test", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["status"], "unauthorized");
+    let text = body.to_string();
+    assert!(!text.contains(api_key));
+    assert!(!text.contains("access_token"));
+    assert!(!text.contains("should-not-leak"));
+}
+
+#[tokio::test]
+async fn provider_test_openai_compatible_down_is_sanitized() {
+    let api_key = "sk-provider-test-down-abcd";
+    let app = test_app();
+    configure_openai_provider(app.clone(), "http://127.0.0.1:9/v1".to_string(), api_key).await;
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(Method::POST, "/v1/providers/openai-stream/test", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["status"], "unreachable");
+    assert!(!body.to_string().contains(api_key));
+}
+
+#[tokio::test]
+async fn provider_test_missing_provider_and_missing_secret_are_stable() {
+    let app = test_app();
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(Method::POST, "/v1/providers/missing-provider/test", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["error"], "provider not found");
+
+    let provider = json!({
+        "id": "openai-missing-secret",
+        "kind": "openai-compatible",
+        "displayName": "OpenAI Missing Secret",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:8080/v1",
+        "auth": { "type": "api_key" },
+        "models": [{ "id": "gpt-test", "displayName": "GPT Test" }],
+        "capabilities": { "chat": true, "completion": false, "embeddings": false }
+    });
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(Method::POST, "/v1/providers", Body::from(provider.to_string())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/providers/openai-missing-secret/test",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["status"], "missing_secret");
+    assert!(!body.to_string().contains("api_key"));
+}
+
+#[tokio::test]
+async fn provider_test_missing_model_and_upstream_error_are_sanitized() {
+    let api_key = "sk-provider-test-upstream-abcd";
+    let (base_url, _) = start_mock_models_provider(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "raw-provider-body api_key=secret-token Bearer should-not-leak",
+        Some("Bearer sk-provider-test-upstream-abcd"),
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider_without_models(app.clone(), base_url.clone(), api_key).await;
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/providers/openai-no-model/test",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["status"], "missing_model");
+
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+    let (status, body) = json_response_from(
+        app,
+        authed_request(Method::POST, "/v1/providers/openai-stream/test", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["status"], "upstream_error");
+    let text = body.to_string();
+    assert!(!text.contains(api_key));
+    assert!(!text.contains("api_key"));
+    assert!(!text.contains("should-not-leak"));
+}
+
+#[tokio::test]
 async fn provider_operations_do_not_require_cloud_url_or_account() {
     let app = test_app();
     let provider = json!({
@@ -2086,7 +2281,8 @@ async fn provider_operations_do_not_require_cloud_url_or_account() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["ok"], true);
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["status"], "unsupported_kind");
     assert_eq!(body["cloudRequired"], false);
     assert!(!body.to_string().to_lowercase().contains("account"));
 }

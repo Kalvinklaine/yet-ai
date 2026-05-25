@@ -225,14 +225,8 @@ async fn providers_test(
     State(state): State<AppState>,
     Path(provider_id): Path<String>,
 ) -> Response {
-    match providers::get_provider_config(&state.storage_paths.config_dir, &provider_id).await {
-        Ok(provider) => Json(providers::ProviderTestResponse {
-            ok: true,
-            provider_id: provider.id,
-            cloud_required: false,
-            message: "configuration is valid".to_string(),
-        })
-        .into_response(),
+    match providers::test_provider(&state.storage_paths.config_dir, &provider_id).await {
+        Ok(response) => Json(response).into_response(),
         Err(error) => provider_error(error),
     }
 }

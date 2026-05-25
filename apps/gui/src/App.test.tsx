@@ -964,6 +964,52 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).not.toContain("Alice Smith");
     expect(container?.textContent).not.toContain("auth.json");
   });
+
+  it("tests a saved provider through the local runtime and renders success", async () => {
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Test provider").click();
+      await Promise.resolve();
+    });
+
+    const testCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/providers/openai-api/test") && init?.method === "POST");
+    expect(testCall).toBeDefined();
+    expect(String(testCall?.[0])).toBe("http://127.0.0.1:8001/v1/providers/openai-api/test");
+    expect(container?.textContent).toContain("Provider test succeeded");
+    expect(container?.textContent).toContain("reachable: Provider is reachable and accepted the configured credentials. Model: gpt-4o-mini.");
+    expect(fetchMock.mock.calls.every(([url]) => !String(url).includes("api.openai.com"))).toBe(true);
+  });
+
+  it("renders sanitized provider test failures and keeps browser storage secret-free", async () => {
+    const secret = "sk-provider-test-visible-secret";
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      providerTestResponse: {
+        ok: false,
+        providerId: "openai-api",
+        status: "unauthorized",
+        message: `Provider authentication failed Authorization: Bearer ${secret} cookie=session-secret`,
+        modelId: "gpt-4o-mini",
+        cloudRequired: false,
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Test provider").click();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("Provider test failed");
+    expect(container?.textContent).toContain("unauthorized: Provider authentication failed [redacted]");
+    expect(container?.textContent).not.toContain(secret);
+    expect(container?.textContent).not.toContain("session-secret");
+    expect(browserStorageDump()).not.toContain(secret);
+  });
 });
 
 describe("runtime debug redaction", () => {
@@ -1758,6 +1804,8 @@ type MockRuntimeOptions = {
   runtimeFailure?: boolean;
   pingResponse?: unknown;
   capsResponse?: unknown;
+  providerTestResponse?: unknown;
+  providerTestStatus?: number;
 };
 
 function providerAuthResponse(status: ProviderAuthStatus): ProviderAuthResponse {
@@ -1921,6 +1969,16 @@ function mockRuntimeResponses(options: MockRuntimeOptions = {}) {
         models: [{ id: "gpt-4o-mini", displayName: "gpt-4o-mini" }],
         capabilities: { chat: true, completion: false, embeddings: false },
       }));
+    }
+    if (init?.method === "POST" && url.includes("/v1/providers/") && url.endsWith("/test")) {
+      return Promise.resolve(jsonResponse(options.providerTestResponse ?? {
+        ok: true,
+        providerId: "openai-api",
+        status: "reachable",
+        message: "Provider is reachable and accepted the configured credentials.",
+        modelId: "gpt-4o-mini",
+        cloudRequired: false,
+      }, options.providerTestStatus ?? 200));
     }
     if (url.includes("/v1/chats/subscribe?chat_id=")) {
       return Promise.resolve(sseResponse(options.sseEvents ?? []));
