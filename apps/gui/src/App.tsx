@@ -56,6 +56,12 @@ type ActiveStream = {
   chatId: string;
 };
 
+type AbortActiveStreamOptions = {
+  finalizeStreaming?: boolean;
+  addTimelineEntry?: boolean;
+  reportAbortErrors?: boolean;
+};
+
 const emptyProviderForm: ProviderForm = {
   providerId: "openai-local",
   kind: "openai-compatible",
@@ -238,7 +244,8 @@ export function App() {
     setTimeline((current) => [entry, ...current].slice(0, 80));
   }, []);
 
-  const abortActiveStream = useCallback((timelineMessage: string, finalizeStreaming: boolean) => {
+  const abortActiveStream = useCallback((timelineMessage: string, options: AbortActiveStreamOptions = {}) => {
+    const { finalizeStreaming = true, addTimelineEntry = true, reportAbortErrors = true } = options;
     const activeStream = activeStreamRef.current;
     if (!activeStream) {
       return null;
@@ -249,16 +256,18 @@ export function App() {
       setChatView((current) => stopStreamingAssistant(current));
     }
     void sendAbort(activeStream.settings, activeStream.chatId).then((result) => {
-      if (!result.ok) {
+      if (reportAbortErrors && !result.ok) {
         addTimeline(`Abort command error: ${sanitizeDisplayText(result.error.message)}`);
       }
     });
-    addTimeline(timelineMessage);
+    if (addTimelineEntry) {
+      addTimeline(timelineMessage);
+    }
     return activeStream;
   }, [addTimeline]);
 
   const markSettingsChanged = useCallback(() => {
-    abortActiveStream("SSE stopped and abort requested for previous runtime settings", true);
+    abortActiveStream("SSE stopped and abort requested for previous runtime settings");
     settingsRevisionRef.current += 1;
     setSettingsRevision(settingsRevisionRef.current);
     setRuntimeDataRevision(null);
@@ -275,21 +284,23 @@ export function App() {
     setProviderAuthExchangeError(null);
   }, [abortActiveStream]);
 
-  const updateBaseUrl = useCallback((nextBaseUrl: string) => {
-    if (settingsRef.current.baseUrl !== nextBaseUrl) {
-      settingsRef.current = { ...settingsRef.current, baseUrl: nextBaseUrl };
+  const updateRuntimeSettings = useCallback((nextSettings: RuntimeSettings) => {
+    const changed = settingsRef.current.baseUrl !== nextSettings.baseUrl || settingsRef.current.token !== nextSettings.token;
+    if (changed) {
+      settingsRef.current = nextSettings;
       markSettingsChanged();
     }
-    setBaseUrl(nextBaseUrl);
+    setBaseUrl(nextSettings.baseUrl);
+    setToken(nextSettings.token ?? "");
   }, [markSettingsChanged]);
 
+  const updateBaseUrl = useCallback((nextBaseUrl: string) => {
+    updateRuntimeSettings({ ...settingsRef.current, baseUrl: nextBaseUrl });
+  }, [updateRuntimeSettings]);
+
   const updateToken = useCallback((nextToken: string) => {
-    if (settingsRef.current.token !== nextToken) {
-      settingsRef.current = { ...settingsRef.current, token: nextToken };
-      markSettingsChanged();
-    }
-    setToken(nextToken);
-  }, [markSettingsChanged]);
+    updateRuntimeSettings({ ...settingsRef.current, token: nextToken });
+  }, [updateRuntimeSettings]);
 
   const applyHostReady = useCallback((payload: HostReadyPayload | undefined) => {
     if (!payload?.runtimeUrl || !isLoopbackRuntimeUrl(payload.runtimeUrl)) {
@@ -297,14 +308,14 @@ export function App() {
     }
     const hostRuntimeUrl = payload.runtimeUrl;
     const currentBaseUrl = settingsRef.current.baseUrl;
-    updateBaseUrl(hostRuntimeUrl);
-    if (payload.sessionToken !== undefined) {
-      updateToken(payload.sessionToken);
-    } else if (normalizeRuntimeUrl(hostRuntimeUrl) !== normalizeRuntimeUrl(currentBaseUrl)) {
-      updateToken("");
-    }
+    const nextToken = payload.sessionToken !== undefined
+      ? payload.sessionToken
+      : normalizeRuntimeUrl(hostRuntimeUrl) !== normalizeRuntimeUrl(currentBaseUrl)
+        ? ""
+        : settingsRef.current.token;
+    updateRuntimeSettings({ baseUrl: hostRuntimeUrl, token: nextToken });
     setTimeline((current) => ["Host runtime settings received", ...current].slice(0, 80));
-  }, [updateBaseUrl, updateToken]);
+  }, [updateRuntimeSettings]);
 
   useEffect(() => {
     const adapter = createBridgeAdapter((entry) => setBridgeLog((current) => [entry, ...current].slice(0, 20)));
@@ -655,14 +666,14 @@ export function App() {
   };
 
   useEffect(() => {
-    abortActiveStream("SSE stopped and abort requested for previous chat", true);
+    abortActiveStream("SSE stopped and abort requested for previous chat");
     setChatError(null);
     setChatView(resetChatViewState(chatId));
     setTimeline([]);
   }, [abortActiveStream, chatId]);
 
   useEffect(() => () => {
-    abortActiveStream("SSE stopped and abort requested on cleanup", true);
+    abortActiveStream("SSE stopped and abort requested on cleanup", { finalizeStreaming: false, addTimelineEntry: false, reportAbortErrors: false });
   }, [abortActiveStream]);
 
   const startSse = useCallback((targetChatId = chatId) => {
@@ -710,7 +721,7 @@ export function App() {
   }, [addTimeline, appendChatError, chatId]);
 
   const stopSse = () => {
-    if (!abortActiveStream("SSE stopped and abort requested", true)) {
+    if (!abortActiveStream("SSE stopped and abort requested")) {
       addTimeline("SSE stopped");
     }
   };
@@ -906,8 +917,8 @@ export function App() {
                   <strong>{sanitizeDisplayText(provider.displayName)}</strong>
                   <span className={provider.enabled ? "badge ok" : "badge warn"}>{provider.enabled ? "enabled" : "disabled"}</span>
                 </div>
-                <span className="subtle">{sanitizeDisplayText(provider.id)} · {provider.kind} · {sanitizeDisplayText(provider.baseUrl)}</span>
-                <span>Secret configured: {String(provider.auth.configured)} {provider.auth.redacted ? `(${provider.auth.redacted})` : ""}</span>
+                <span className="subtle">{sanitizeDisplayText(provider.id)} · {sanitizeDisplayText(provider.kind)} · {sanitizeDisplayText(provider.baseUrl)}</span>
+                <span>Secret configured: {String(provider.auth.configured)} {provider.auth.redacted ? `(${sanitizeDisplayText(provider.auth.redacted)})` : ""}</span>
                 <span>Models: {provider.models.map((model) => sanitizeDisplayText(model.displayName)).join(", ") || "none"}</span>
                 <button type="button" onClick={() => editProvider(provider)}>Edit</button>
               </div>
@@ -1052,10 +1063,11 @@ function ErrorBox({ error }: { error: RuntimeError }) {
 }
 
 function StatusBlock({ title, value }: { title: string; value: unknown }) {
+  const safeValue = sanitizeDisplayValue(value);
   return (
     <div className="stack">
       <h3>{title}</h3>
-      <pre>{value ? JSON.stringify(value, null, 2) : "No data"}</pre>
+      <pre>{value ? JSON.stringify(safeValue, null, 2) : "No data"}</pre>
     </div>
   );
 }
