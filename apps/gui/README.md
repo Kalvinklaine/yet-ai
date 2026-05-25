@@ -72,7 +72,7 @@ Runtime base URL = http://127.0.0.1:8001
 Session token = local-dev-token
 ```
 
-The runtime clients attach the Session token only after validating that the runtime URL is loopback (`127.0.0.1`, `localhost`, or `[::1]` / `::1`) over `http` or `https`:
+The runtime clients attach the Session token only after validating that the runtime URL is loopback (`127.0.0.1`, `localhost`, or `[::1]` / `::1`) over `http` or `https` and has no credentials, query parameters, or fragments:
 
 ```txt
 Authorization: Bearer <token>
@@ -109,7 +109,7 @@ First-message smoke:
 - `POST /v1/providers` and `PATCH /v1/providers/:id`
 - `POST /v1/providers/:id/test` for local-runtime provider reachability checks
 - `/v1/provider-auth/:provider/start`, `/status`, `/exchange`, and `/disconnect` for sanitized engine-owned provider login state
-- `POST /v1/chats/:chat_id/commands` with `user_message`
+- `POST /v1/chats/:chat_id/commands` with strict current `user_message` and `abort`
 - `GET /v1/chats/subscribe?chat_id=...` through fetch streaming SSE
 - Browser, VS Code, and JetBrains-style logical bridge detection
 
@@ -166,9 +166,9 @@ Common real-provider troubleshooting from the GUI side:
 
 ## SSE and bridge behavior
 
-SSE uses fetch streaming, not native EventSource. The parser handles CRLF, comments, split frame boundaries, multiple events per chunk, and multi-line `data:` frames. Network, HTTP, parse/protocol, sequence, and configuration failures are surfaced as typed runtime errors.
+SSE uses fetch streaming, not native EventSource. The parser handles CRLF, comments, split frame boundaries, multiple events per chunk, and multi-line `data:` frames. Network, HTTP, parse/protocol, sequence, and configuration failures are surfaced as typed runtime errors. Runtime boundary errors and SSE error bubbles use the shared GUI redaction rules; an SSE `error` event completes any active streaming assistant state before adding the sanitized error bubble.
 
-Browser mock mode is non-privileged and logs messages locally. When the packaged GUI runs inside a JetBrains wrapper iframe without direct host globals, the adapter sends `gui.ready` to the parent window so the wrapper can reply with runtime settings. If the browser exposes a deterministic parent origin through `document.referrer`, the adapter uses it as the `postMessage` target origin and validates inbound parent messages against it. Some wrapper/JCEF loads may not expose a usable referrer, so the adapter falls back to `*` only for outbound `gui.ready` and still accepts iframe host messages only from the captured parent window. The adapter rejects valid-looking host messages from unrelated `window.message` sources without logging payloads. It validates the current bridge `version`, known host `type`, optional string `requestId`, and optional object `payload`, and accepts only the current host message allowlist: `host.ready`, `host.themeChanged`, `host.activeFileChanged`, `host.selectionChanged`, `host.workspaceChanged`, `host.toolResult`, and `host.openedFromCommand`. `host.ready` may include `runtimeUrl`, `sessionToken`, `productId`, `displayName`, and `cloudRequired`; subscribers receive the validated message so the app can update runtime settings without browser storage persistence.
+Browser mock mode is non-privileged and logs messages locally. When the packaged GUI runs inside a JetBrains wrapper iframe without direct host globals, the adapter sends strict `gui.ready` to the parent window so the wrapper can reply with runtime settings. If the browser exposes a deterministic parent origin through `document.referrer`, the adapter uses it as the `postMessage` target origin and validates inbound parent messages against it. Some wrapper/JCEF loads may not expose a usable referrer, so the adapter falls back to `*` only for outbound `gui.ready` and still accepts iframe host messages only from the captured parent window. The adapter rejects valid-looking host messages from unrelated `window.message` sources without logging payloads. It requires the exact bridge `version`, known host `type`, no unknown top-level fields, bounded non-empty `requestId` when present, and strict payload keys. The current host message allowlist is limited to `host.ready` and `host.openedFromCommand`; `host.ready.cloudRequired` must be omitted or `false`, and `host.openedFromCommand` may only have no payload or an empty payload object. Privileged bridge, tool, and file-edit messages are not implemented in the GUI bridge. Subscribers receive the validated message so the app can update runtime settings without browser storage persistence.
 
 ## Current limitations
 
