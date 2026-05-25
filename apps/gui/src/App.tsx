@@ -36,6 +36,35 @@ function sanitizeDisplayText(value: string): string {
   return sanitized.length > 240 ? `${sanitized.slice(0, 240)}…` : sanitized;
 }
 
+function sanitizeTimelineText(value: string): string {
+  const sanitized = secretLikePatterns.reduce((current, pattern) => current.replace(pattern, "[redacted]"), value);
+  return sanitized.length > 2000 ? `${sanitized.slice(0, 2000)}…` : sanitized;
+}
+
+function sanitizeDisplayValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    return sanitizeTimelineText(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeDisplayValue(item));
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [isSecretLikeKey(key) ? "[redacted]" : key, sanitizeDisplayValue(item)]));
+  }
+  return value;
+}
+
+function isSecretLikeKey(key: string): boolean {
+  return /access[_-]?token|refresh[_-]?token|api[_-]?key|authorization|bearer|cookie|code[_-]?verifier|pkce[_-]?verifier/i.test(key);
+}
+
+function sanitizeSseEvent(event: SseEvent): SseEvent {
+  return {
+    ...event,
+    payload: sanitizeDisplayValue(event.payload) as Record<string, unknown> | undefined,
+  };
+}
+
 type ProviderForm = {
   providerId: string;
   kind: "openai-compatible" | "ollama" | "custom";
@@ -54,6 +83,13 @@ type ProviderPreset = {
   description: string;
   form: Omit<ProviderForm, "apiKey" | "enabled">;
   enabled?: boolean;
+};
+
+type ActiveStream = {
+  controller: AbortController;
+  settings: RuntimeSettings;
+  revision: number;
+  chatId: string;
 };
 
 const emptyProviderForm: ProviderForm = {
@@ -192,7 +228,7 @@ export function App() {
   const [runtimeDataRevision, setRuntimeDataRevision] = useState<number | null>(null);
   const [providerDataRevision, setProviderDataRevision] = useState<number | null>(null);
   const [providerAuthDataRevision, setProviderAuthDataRevision] = useState<number | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const activeStreamRef = useRef<ActiveStream | null>(null);
 
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
   settingsRef.current = settings;
@@ -214,17 +250,19 @@ export function App() {
   const apiKeyChatReady = runtimeConnected && !activeModelError && enabledProviders.length > 0 && Boolean(selectedModel);
   const experimentalOauthChatReady = runtimeConnected && !apiKeyChatReady && activeProviderAuthStatus?.configured === true && activeProviderAuthStatus.authSource === "oauth" && activeProviderAuthStatus.status === "connected";
   const canSendChat = apiKeyChatReady || experimentalOauthChatReady;
+  const selectedModelDisplayName = selectedModel ? sanitizeDisplayText(selectedModel.displayName) : undefined;
+  const selectedModelProviderId = selectedModel?.providerId ? sanitizeDisplayText(selectedModel.providerId) : undefined;
   const chatReadinessLabel = !runtimeConnected
     ? "Runtime unavailable"
     : apiKeyChatReady
-      ? `${selectedModel?.displayName ?? "the default model"}${selectedModel?.providerId ? ` (${selectedModel.providerId})` : ""}`
+      ? `${selectedModelDisplayName ?? "the default model"}${selectedModelProviderId ? ` (${selectedModelProviderId})` : ""}`
       : experimentalOauthChatReady
         ? "Experimental OpenAI account / gpt-5-codex"
         : "No model available";
   const chatReadinessMessage = !runtimeConnected
     ? "Runtime is not connected. Refresh runtime and fix the local runtime problem before sending the first GPT message."
     : apiKeyChatReady
-      ? `Ready to send using ${selectedModel?.displayName ?? "the default model"}.`
+      ? `Ready to send using ${selectedModelDisplayName ?? "the default model"}.`
       : experimentalOauthChatReady
         ? "Experimental Codex-like OpenAI account chat is connected through the local runtime. This private-endpoint path is high-risk, not official public OAuth support, and not production-ready."
         : activeModelError
@@ -238,6 +276,14 @@ export function App() {
     setRuntimeDataRevision(null);
     setProviderDataRevision(null);
     setProviderAuthDataRevision(null);
+    setRuntimeRefreshStatus({
+      state: "checking",
+      attempt: runtimeRefreshAttemptRef.current + 1,
+      checkedAt: new Date().toLocaleTimeString(),
+      detail: "Runtime settings changed; checking current runtime…",
+    });
+    activeStreamRef.current?.controller.abort();
+    activeStreamRef.current = null;
   }, []);
 
   const updateBaseUrl = useCallback((nextBaseUrl: string) => {
@@ -447,7 +493,10 @@ export function App() {
 
   const submitProvider = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const targetSettings = settingsRef.current;
+    const targetRevision = settingsRevisionRef.current;
     setProviderError(null);
+    setProviderDataRevision(null);
     const modelsToSave = providerForm.modelId.trim()
       ? [
           {
@@ -473,11 +522,14 @@ export function App() {
         embeddings: false,
       },
     };
-    const result = await saveProvider(settings, selectedProviderId, request);
+    const result = await saveProvider(targetSettings, selectedProviderId, request);
+    if (!isCurrentRefresh(targetRevision)) {
+      return;
+    }
     setProviderForm((current) => ({ ...current, apiKey: "" }));
     if (result.ok) {
-      await connect();
       setSelectedProviderId(result.data.id);
+      await connect();
     } else {
       setProviderError(result.error);
     }
@@ -515,16 +567,21 @@ export function App() {
   };
 
   const startOpenAiLogin = async () => {
+    const targetSettings = settingsRef.current;
+    const targetRevision = settingsRevisionRef.current;
     setProviderAuthError(null);
     setProviderAuthUrlWarning(null);
     setProviderAuthExchangeError(null);
-    const result = await startProviderAuth(settings, "openai");
+    const result = await startProviderAuth(targetSettings, "openai");
+    if (!isCurrentRefresh(targetRevision)) {
+      return;
+    }
     if (!result.ok) {
       setProviderAuthError(result.error);
       return;
     }
     setProviderAuthStatus(result.data);
-    setProviderAuthDataRevision(settingsRevisionRef.current);
+    setProviderAuthDataRevision(targetRevision);
     const authUrl = result.data.authorizationUrl ?? result.data.verificationUrl;
     if (authUrl) {
       openSafeAuthUrl(authUrl, setProviderAuthUrlWarning);
@@ -532,17 +589,22 @@ export function App() {
   };
 
   const startExperimentalOpenAiLogin = async () => {
+    const targetSettings = settingsRef.current;
+    const targetRevision = settingsRevisionRef.current;
     setProviderAuthError(null);
     setProviderAuthUrlWarning(null);
     setProviderAuthExchangeError(null);
     setProviderAuthExchangeCode("");
-    const result = await startProviderAuth(settings, "openai", { experimentalCodexLike: true });
+    const result = await startProviderAuth(targetSettings, "openai", { experimentalCodexLike: true });
+    if (!isCurrentRefresh(targetRevision)) {
+      return;
+    }
     if (!result.ok) {
       setProviderAuthError(result.error);
       return;
     }
     setProviderAuthStatus(result.data);
-    setProviderAuthDataRevision(settingsRevisionRef.current);
+    setProviderAuthDataRevision(targetRevision);
     const authUrl = result.data.authorizationUrl ?? result.data.verificationUrl;
     if (authUrl) {
       openSafeAuthUrl(authUrl, setProviderAuthUrlWarning);
@@ -550,14 +612,19 @@ export function App() {
   };
 
   const disconnectOpenAiLogin = async () => {
+    const targetSettings = settingsRef.current;
+    const targetRevision = settingsRevisionRef.current;
     setProviderAuthError(null);
     setProviderAuthUrlWarning(null);
     setProviderAuthExchangeError(null);
     setProviderAuthExchangeCode("");
-    const result = await disconnectProviderAuth(settings, "openai");
+    const result = await disconnectProviderAuth(targetSettings, "openai");
+    if (!isCurrentRefresh(targetRevision)) {
+      return;
+    }
     if (result.ok) {
       setProviderAuthStatus(result.data);
-      setProviderAuthDataRevision(settingsRevisionRef.current);
+      setProviderAuthDataRevision(targetRevision);
       await connect();
     } else {
       setProviderAuthError(result.error);
@@ -574,17 +641,21 @@ export function App() {
     setProviderAuthError(null);
     setProviderAuthExchangeError(null);
     setProviderAuthExchangeWorking(true);
+    const targetSettings = settingsRef.current;
+    const targetRevision = settingsRevisionRef.current;
     try {
-      const result = await exchangeProviderAuth(settings, "openai", sessionId, code, providerAuthPendingState.state);
+      const result = await exchangeProviderAuth(targetSettings, "openai", sessionId, code, providerAuthPendingState.state);
+      if (!isCurrentRefresh(targetRevision)) {
+        return;
+      }
       if (result.ok) {
-        const exchangeRevision = settingsRevisionRef.current;
         setProviderAuthStatus(result.data);
-        setProviderAuthDataRevision(exchangeRevision);
+        setProviderAuthDataRevision(targetRevision);
         if (result.data.success) {
           await connect();
-          if (isCurrentRefresh(exchangeRevision)) {
+          if (isCurrentRefresh(targetRevision)) {
             setProviderAuthStatus(result.data);
-            setProviderAuthDataRevision(exchangeRevision);
+            setProviderAuthDataRevision(targetRevision);
           }
         } else {
           setProviderAuthExchangeError(result.data.lastError ?? result.data.message ?? providerAuthStatusCopy[result.data.status]);
@@ -593,35 +664,52 @@ export function App() {
         setProviderAuthError(result.error);
       }
     } finally {
-      setProviderAuthExchangeCode("");
-      setProviderAuthExchangeWorking(false);
+      if (isCurrentRefresh(targetRevision)) {
+        setProviderAuthExchangeCode("");
+        setProviderAuthExchangeWorking(false);
+      }
     }
   };
 
   useEffect(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
+    activeStreamRef.current?.controller.abort();
+    activeStreamRef.current = null;
     setChatError(null);
     setChatView(resetChatViewState(chatId));
     setTimeline([]);
   }, [chatId]);
 
   const startSse = useCallback((targetChatId = chatId) => {
-    if (abortRef.current) {
+    if (activeStreamRef.current) {
       return;
     }
     const controller = new AbortController();
-    abortRef.current = controller;
+    const stream: ActiveStream = {
+      controller,
+      settings: settingsRef.current,
+      revision: settingsRevisionRef.current,
+      chatId: targetChatId,
+    };
+    activeStreamRef.current = stream;
     addTimeline(`Opening SSE for ${targetChatId}`);
     void subscribeToChat(
-      settings,
+      stream.settings,
       targetChatId,
       {
         onEvent: (event: SseEvent) => {
-          setChatView((current) => applyChatViewEvent(current, event));
-          addTimeline(`${event.seq} ${event.type}\n${JSON.stringify(event.payload ?? {}, null, 2)}`);
+          const activeStream = activeStreamRef.current;
+          if (activeStream !== stream || stream.revision !== settingsRevisionRef.current || event.chatId !== stream.chatId) {
+            return;
+          }
+          const safeEvent = sanitizeSseEvent(event);
+          setChatView((current) => applyChatViewEvent(current, safeEvent));
+          addTimeline(sanitizeTimelineText(`${event.seq} ${event.type}\n${JSON.stringify(safeEvent.payload ?? {}, null, 2)}`));
         },
         onError: (error) => {
+          const activeStream = activeStreamRef.current;
+          if (activeStream !== stream || stream.revision !== settingsRevisionRef.current) {
+            return;
+          }
           setChatError(error);
           appendChatError(error.message);
           addTimeline(`SSE error: ${sanitizeDisplayText(error.message)}`);
@@ -629,20 +717,27 @@ export function App() {
       },
       controller.signal,
     ).finally(() => {
-      if (abortRef.current === controller) {
-        abortRef.current = null;
+      if (activeStreamRef.current === stream) {
+        activeStreamRef.current = null;
       }
     });
-  }, [addTimeline, appendChatError, chatId, settings]);
+  }, [addTimeline, appendChatError, chatId]);
 
   const stopSse = () => {
-    void sendAbort(settings, chatId).then((result) => {
+    const activeStream = activeStreamRef.current;
+    if (!activeStream) {
+      addTimeline("SSE stopped");
+      return;
+    }
+    const abortSettings = activeStream.settings;
+    const abortChatId = activeStream.chatId;
+    activeStream.controller.abort();
+    activeStreamRef.current = null;
+    void sendAbort(abortSettings, abortChatId).then((result) => {
       if (!result.ok) {
         addTimeline(`Abort command error: ${sanitizeDisplayText(result.error.message)}`);
       }
     });
-    abortRef.current?.abort();
-    abortRef.current = null;
     addTimeline("SSE stopped and abort requested");
   };
 
@@ -701,7 +796,7 @@ export function App() {
           </label>
           <label>
             Session token
-            <input type="password" value={token} onChange={(event) => updateToken(event.target.value)} placeholder="Bearer token for local runtime" />
+            <input type="password" value={token} onChange={(event) => updateToken(event.target.value)} placeholder="Bearer token for local runtime" autoComplete="off" />
           </label>
         </div>
         <p className="subtle">In VS Code or JetBrains, the local runtime session token is normally provided by the IDE host through host.ready. Paste a token only when connecting to a manually started runtime such as one launched with YET_AI_AUTH_TOKEN=.... This local runtime token is not an OpenAI key or provider API key.</p>
@@ -834,12 +929,12 @@ export function App() {
             {activeProviders.length === 0 ? <p className="subtle">No providers returned.</p> : activeProviders.map((provider) => (
               <div className="provider-item stack" key={provider.id}>
                 <div className="row">
-                  <strong>{provider.displayName}</strong>
+                  <strong>{sanitizeDisplayText(provider.displayName)}</strong>
                   <span className={provider.enabled ? "badge ok" : "badge warn"}>{provider.enabled ? "enabled" : "disabled"}</span>
                 </div>
-                <span className="subtle">{provider.id} · {provider.kind} · {provider.baseUrl}</span>
+                <span className="subtle">{sanitizeDisplayText(provider.id)} · {provider.kind} · {sanitizeDisplayText(provider.baseUrl)}</span>
                 <span>Secret configured: {String(provider.auth.configured)} {provider.auth.redacted ? `(${provider.auth.redacted})` : ""}</span>
-                <span>Models: {provider.models.map((model) => model.displayName).join(", ") || "none"}</span>
+                <span>Models: {provider.models.map((model) => sanitizeDisplayText(model.displayName)).join(", ") || "none"}</span>
                 <button type="button" onClick={() => editProvider(provider)}>Edit</button>
               </div>
             ))}

@@ -145,6 +145,15 @@ describe("runtime refresh feedback", () => {
     expect(browserStorageDump()).not.toContain(runtimeToken);
   });
 
+  it("disables Session token autocomplete", async () => {
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+
+    expect(sessionTokenInput().autocomplete).toBe("off");
+  });
+
 
   it("queues latest runtime settings when host.ready arrives during an in-flight refresh", async () => {
     const hostToken = "queued-host-token-secret";
@@ -420,6 +429,55 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).toContain("Expires: 2026-05-24T01:00:00Z");
     expect(container?.textContent).toContain("Scopes: openid, profile, email, offline_access");
     expect(container?.textContent).toContain("Use OpenAI API key fallback");
+  });
+
+  it("ignores stale provider auth start responses after runtime settings change", async () => {
+    const openMock = vi.spyOn(window, "open").mockImplementation(() => null);
+    const startAuth = deferred<Response>();
+    mockRuntimeResponses({ authSupportsLogin: true });
+    renderApp();
+
+    await flushAsync();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url === "http://127.0.0.1:8001/v1/provider-auth/openai/start") {
+        return startAuth.promise;
+      }
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
+      }
+      if (url.endsWith("/v1/ping")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: "2026-05-24T00:00:00Z" }));
+      }
+      if (url.endsWith("/v1/caps")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
+      }
+      if (url.endsWith("/v1/models")) {
+        return Promise.resolve(jsonResponse({ models: [] }));
+      }
+      if (url.endsWith("/v1/providers")) {
+        return Promise.resolve(jsonResponse({ providers: [], cloudRequired: false, providerAccess: "direct" }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    await act(async () => {
+      findButton("Login with OpenAI").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
+    });
+    startAuth.resolve(jsonResponse({
+      ...pendingExperimentalAuthResponse(),
+      authorizationUrl: "https://auth.openai.com/oauth/authorize?state=stale-secret",
+      message: "stale auth response",
+    }));
+    await flushAsync();
+
+    expect(openMock).not.toHaveBeenCalled();
+    expect(container?.textContent).not.toContain("stale auth response");
+    expect(container?.textContent).not.toContain("Session: provider-login-session-001");
   });
 
   it("enables pending experimental authorization-code exchange", async () => {
@@ -704,6 +762,118 @@ describe("provider secret boundary", () => {
     expect(apiKeyInput().value).toBe("");
     expect(browserStorageDump()).not.toContain(secret);
     expect(fetchMock.mock.calls.every(([url]) => String(url).startsWith("http://127.0.0.1:8001/"))).toBe(true);
+  });
+
+  it("provider mutation invalidates readiness until provider refresh completes", async () => {
+    const providerSave = deferred<Response>();
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    expect(findButton("Send").disabled).toBe(false);
+
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url.endsWith("/v1/providers")) {
+        return providerSave.promise;
+      }
+      if (url.endsWith("/v1/ping")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: "2026-05-24T00:00:00Z" }));
+      }
+      if (url.endsWith("/v1/caps")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
+      }
+      if (url.endsWith("/v1/models")) {
+        return Promise.resolve(jsonResponse({ models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }] }));
+      }
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
+      }
+      if (url.endsWith("/v1/providers")) {
+        return Promise.resolve(jsonResponse({ providers: [enabledProvider()], cloudRequired: false, providerAccess: "direct" }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    await act(async () => {
+      findButton("Create provider").click();
+      await Promise.resolve();
+    });
+
+    expect(findButton("Send").disabled).toBe(true);
+
+    providerSave.resolve(jsonResponse(enabledProvider()));
+    await flushAsync();
+    await flushAsync();
+
+    expect(findButton("Send").disabled).toBe(false);
+  });
+
+  it("ignores stale provider save errors after runtime settings change", async () => {
+    const providerSave = deferred<Response>();
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url === "http://127.0.0.1:8001/v1/providers") {
+        return providerSave.promise;
+      }
+      if (url.endsWith("/v1/ping")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: "2026-05-24T00:00:00Z" }));
+      }
+      if (url.endsWith("/v1/caps")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
+      }
+      if (url.endsWith("/v1/models")) {
+        return Promise.resolve(jsonResponse({ models: [] }));
+      }
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
+      }
+      if (url.endsWith("/v1/providers")) {
+        return Promise.resolve(jsonResponse({ providers: [], cloudRequired: false, providerAccess: "direct" }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    await act(async () => {
+      findButton("Create provider").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
+    });
+    providerSave.resolve(jsonResponse({ error: "stale save failed Bearer verysecrettokenvalue123456789" }, 500));
+    await flushAsync();
+
+    expect(container?.textContent).not.toContain("stale save failed");
+    expect(container?.textContent).not.toContain("verysecrettokenvalue");
+  });
+
+  it("sanitizes provider metadata before visible rendering", async () => {
+    const rawSecret = "access_token=" + "p".repeat(64);
+    mockRuntimeResponses({
+      providers: [{
+        ...enabledProvider(),
+        id: `provider-${rawSecret}`,
+        displayName: `Provider ${rawSecret}`,
+        baseUrl: `http://127.0.0.1:9000/v1?api_key=sk-${"q".repeat(32)}`,
+        models: [{ id: "model-1", displayName: `Model refresh_token=${"r".repeat(64)}` }],
+      }],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Provider [redacted]");
+    expect(container?.textContent).toContain("Models: Model [redacted]");
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("refresh_token");
+    expect(container?.textContent).not.toContain("api_key");
+    expect(container?.textContent).not.toContain("p".repeat(64));
+    expect(container?.textContent).not.toContain("r".repeat(64));
   });
 });
 
@@ -1062,8 +1232,151 @@ describe("chat panel", () => {
       const body = JSON.parse(String(init.body)) as { type?: string };
       return body.type === "abort";
     });
-    expect(abortCall).toBeDefined();
-    expect(container?.textContent).toContain("SSE stopped and abort requested");
+    expect(abortCall).toBeUndefined();
+    expect(container?.textContent).toContain("SSE stopped");
+  });
+
+  it("ignores active SSE events from old runtime settings after settings change", async () => {
+    let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const encoder = new TextEncoder();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/v1/chats/subscribe?chat_id=")) {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            sseController = controller;
+          },
+          cancel() {},
+        });
+        return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+      }
+      if (url.endsWith("/v1/ping")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: "2026-05-24T00:00:00Z" }));
+      }
+      if (url.endsWith("/v1/caps")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
+      }
+      if (url.endsWith("/v1/models")) {
+        return Promise.resolve(jsonResponse({ models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }] }));
+      }
+      if (url.endsWith("/v1/providers")) {
+        return Promise.resolve(jsonResponse({ providers: [enabledProvider()], cloudRequired: false, providerAccess: "direct" }));
+      }
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
+      }
+      if (init?.method === "POST" && url.includes("/v1/chats/") && url.endsWith("/commands")) {
+        return Promise.resolve(jsonResponse({ accepted: true, chatId: "chat-001", requestId: "request-001", type: "user_message" }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setTextareaValue(chatInput(), "old runtime stream");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
+    });
+    await act(async () => {
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 1, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: "stale old runtime token" } } })}\n\n`));
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).not.toContain("stale old runtime token");
+  });
+
+  it("Stop SSE sends abort to the active stream runtime settings instead of the new runtime", async () => {
+    let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/v1/chats/subscribe?chat_id=")) {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            sseController = controller;
+          },
+          cancel() {},
+        });
+        return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+      }
+      if (url.endsWith("/v1/ping")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: "2026-05-24T00:00:00Z" }));
+      }
+      if (url.endsWith("/v1/caps")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
+      }
+      if (url.endsWith("/v1/models")) {
+        return Promise.resolve(jsonResponse({ models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }] }));
+      }
+      if (url.endsWith("/v1/providers")) {
+        return Promise.resolve(jsonResponse({ providers: [enabledProvider()], cloudRequired: false, providerAccess: "direct" }));
+      }
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
+      }
+      if (init?.method === "POST" && url.includes("/v1/chats/") && url.endsWith("/commands")) {
+        return Promise.resolve(jsonResponse({ accepted: true, chatId: "chat-001", requestId: "request-001", type: JSON.parse(String(init.body)).type }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setTextareaValue(chatInput(), "stream before retarget");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
+    });
+    await act(async () => {
+      findButton("Stop SSE").click();
+      await Promise.resolve();
+    });
+
+    const abortCalls = fetchMock.mock.calls.filter(([url, init]) => {
+      if (!String(url).includes("/v1/chats/chat-001/commands") || init?.method !== "POST") {
+        return false;
+      }
+      return (JSON.parse(String(init.body)) as { type?: string }).type === "abort";
+    });
+    expect(abortCalls).toHaveLength(0);
+    sseController?.close();
+  });
+
+  it("sanitizes SSE debug timeline payloads before rendering", async () => {
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      sseEvents: [
+        { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
+        { seq: 1, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: "safe text" }, access_token: "s".repeat(64), header: "Bearer abcdefghijklmnopqrstuvwxyz1234567890" } },
+      ],
+    });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setTextareaValue(chatInput(), "secret stream");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("safe text");
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("abcdefghijklmnopqrstuvwxyz1234567890");
   });
 });
 
