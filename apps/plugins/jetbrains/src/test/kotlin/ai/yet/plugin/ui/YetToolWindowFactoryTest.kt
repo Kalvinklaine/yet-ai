@@ -20,9 +20,11 @@ class YetToolWindowFactoryTest {
         assertContains(html, "<iframe title=\"Yet AI GUI\" src=\"http://127.0.0.1:49221/index.html\"></iframe>")
         assertContains(html, "const frameTargetOrigin = \"http://127.0.0.1:49221\";")
         assertContains(html, "Loading packaged Yet AI GUI from <code>http://127.0.0.1:49221/index.html</code>")
+        assertContains(html, "Connecting to Yet AI local runtime")
         assertContains(html, "Packaged Yet AI GUI did not finish loading from the local loopback server")
         assertContains(html, "window.setTimeout")
         assertContains(html, "window.__yetAiSendHostMessageToFrame = sendToFrame")
+        assertContains(html, "window.__yetAiSetRuntimeDiagnostic")
         assertFalse(html.contains("isHostMessage(event.data)"))
         assertFalse(html.contains("window.postIntellijMessage({ version: bridgeVersion, type: \"gui.ready\""))
         assertFalse(html.contains("Yet AI host message"))
@@ -50,6 +52,7 @@ class YetToolWindowFactoryTest {
         )
 
         assertContains(html, "Run <code>cd apps/gui && npm run build</code>")
+        assertContains(html, "Connected")
         assertFalse(html.contains("<iframe title=\"Yet AI GUI\""))
     }
 }

@@ -6,8 +6,12 @@ import ai.yet.plugin.runtime.RuntimeConnectionManager
 import ai.yet.plugin.runtime.RuntimeConnectionResult
 import ai.yet.plugin.runtime.RuntimeSettings
 import ai.yet.plugin.runtime.loopbackOrigin
+import com.google.gson.JsonPrimitive
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.content.ContentFactory
@@ -28,14 +32,20 @@ class YetToolWindowFactory : ToolWindowFactory {
                 add(JLabel("Yet AI requires JCEF support to host the GUI shell."), BorderLayout.CENTER)
             }
         }
-        toolWindow.contentManager.addContent(contentFactory.createContent(component, ProductIdentity.pluginName, false))
+        val content = contentFactory.createContent(component, ProductIdentity.pluginName, false)
+        if (component is Disposable) {
+            Disposer.register(content, component)
+        }
+        toolWindow.contentManager.addContent(content)
     }
 }
 
-class YetBrowserPanel : JPanel(BorderLayout()) {
+class YetBrowserPanel : JPanel(BorderLayout()), Disposable {
     private val logger = Logger.getInstance(YetBrowserPanel::class.java)
     private val browser = JBCefBrowser()
     private val query = JBCefJSQuery.create(browser as JBCefBrowser)
+    @Volatile
+    private var latestConnection = RuntimeConnectionResult(RuntimeSettings.safeFallback(), "Connecting to Yet AI local runtime...", null)
 
     init {
         add(browser.component, BorderLayout.CENTER)
@@ -46,19 +56,44 @@ class YetBrowserPanel : JPanel(BorderLayout()) {
                 return@addHandler null
             }
             logger.info("Yet AI received gui.ready")
-            val settings = RuntimeSettings.current()
-            sendToGui(BridgeMessages.hostReady(settings, guiReady.requestId))
+            sendToGui(BridgeMessages.hostReady(latestConnection.settings, guiReady.requestId))
             sendToGui(BridgeMessages.openedFromCommand())
             null
         }
-        val connection = RuntimeConnectionManager.getInstance().prepare()
-        val packagedGui = if (connection.settings.guiDevUrl == null) PackagedGuiServer.getInstance().start() else null
+        val initialSettings = initialSettings()
+        latestConnection = RuntimeConnectionResult(initialSettings, "Connecting to Yet AI local runtime...", null)
+        val packagedGui = if (initialSettings.guiDevUrl == null) PackagedGuiServer.getInstance().start() else null
         val postIntellij = query.inject("JSON.stringify(message)", "function(error) { console.log('Yet AI bridge send failed'); }", "function(response) {}")
-        browser.loadHTML(renderHtml(connection, postIntellij, packagedGui))
+        browser.loadHTML(renderHtml(latestConnection, postIntellij, packagedGui))
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val connection = RuntimeConnectionManager.getInstance().prepare()
+            latestConnection = connection
+            ApplicationManager.getApplication().invokeLater {
+                sendToGui(BridgeMessages.hostReady(connection.settings, "jb-runtime-ready"))
+                sendToGui(BridgeMessages.openedFromCommand())
+                connection.error?.let { error -> sendDiagnostic(error) }
+            }
+        }
     }
 
     private fun sendToGui(message: String) {
         browser.cefBrowser.executeJavaScript("window.__yetAiSendHostMessageToFrame?.($message);", browser.cefBrowser.url, 0)
+    }
+
+    private fun sendDiagnostic(error: String) {
+        val escaped = BridgeMessages.escapeScriptJson(JsonPrimitive(error).toString())
+        browser.cefBrowser.executeJavaScript("window.__yetAiSetRuntimeDiagnostic?.($escaped);", browser.cefBrowser.url, 0)
+    }
+
+    override fun dispose() {
+        query.dispose()
+        browser.dispose()
+    }
+
+    private fun initialSettings(): RuntimeSettings = try {
+        RuntimeSettings.current()
+    } catch (_: Exception) {
+        RuntimeSettings.safeFallback()
     }
 }
 
@@ -78,8 +113,8 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         ""
     }
     val diagnostics = packagedGui?.let {
-        "<div id=\"yet-ai-shell-status\" role=\"status\">Loading packaged Yet AI GUI from <code>${html(it.indexUrl)}</code> with origin <code>${html(it.origin)}</code>.</div><div id=\"yet-ai-shell-fallback\" role=\"alert\" hidden>Packaged Yet AI GUI did not finish loading from the local loopback server. Reinstall the latest ZIP or rebuild with <code>npm run prepare:jetbrains-preview</code>.</div>"
-    } ?: ""
+        "<div id=\"yet-ai-shell-status\" role=\"status\">Loading packaged Yet AI GUI from <code>${html(it.indexUrl)}</code> with origin <code>${html(it.origin)}</code>. ${html(connection.status ?: "Connecting to Yet AI local runtime...")}</div><div id=\"yet-ai-shell-fallback\" role=\"alert\" hidden>Packaged Yet AI GUI did not finish loading from the local loopback server. Reinstall the latest ZIP or rebuild with <code>npm run prepare:jetbrains-preview</code>.</div>"
+    } ?: "<div id=\"yet-ai-shell-status\" role=\"status\">${html(connection.status ?: "Connecting to Yet AI local runtime...")}</div>"
     return """
         <!DOCTYPE html>
         <html lang="en">
@@ -106,6 +141,12 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const shellStatus = document.getElementById("yet-ai-shell-status");
         const shellFallback = document.getElementById("yet-ai-shell-fallback");
         let frameLoaded = false;
+        window.__yetAiSetRuntimeDiagnostic = (message) => {
+          if (shellStatus && typeof message === "string") {
+            shellStatus.hidden = false;
+            shellStatus.textContent = `Runtime error: ${'$'}{message}`;
+          }
+        };
         const markLoaded = () => {
           frameLoaded = true;
           if (shellStatus) shellStatus.hidden = true;

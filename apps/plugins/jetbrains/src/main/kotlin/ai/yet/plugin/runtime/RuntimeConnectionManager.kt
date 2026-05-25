@@ -1,7 +1,6 @@
 package ai.yet.plugin.runtime
 
 import ai.yet.plugin.identity.ProductIdentity
-import ai.yet.plugin.settings.SessionTokenStore
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
@@ -96,9 +95,7 @@ class RuntimeConnectionManager : Disposable {
         val process = launchedProcess ?: return
         launchedProcess = null
         launchedConnection = null
-        if (process.isAlive) {
-            process.destroy()
-        }
+        stopProcess(process)
     }
 
     override fun dispose() {
@@ -129,7 +126,7 @@ fun buildEngineLaunchCommand(
 ): EngineLaunchCommand {
     val env = baseEnvironment.toMutableMap()
     env["YET_AI_AUTH_TOKEN"] = sessionToken
-    env["YET_AI_HTTP_PORT"] = parseRuntimePort(runtimeUrl).toString()
+    env["YET_AI_HTTP_PORT"] = parseExplicitRuntimePort(runtimeUrl).toString()
     return EngineLaunchCommand(binaryPath, env)
 }
 
@@ -141,9 +138,17 @@ fun parseRuntimePort(runtimeUrl: String): Int {
     return if (uri.scheme == "https") 443 else 80
 }
 
+fun parseExplicitRuntimePort(runtimeUrl: String): Int {
+    val uri = URI(runtimeUrl)
+    if (uri.port >= 0) {
+        return uri.port
+    }
+    throw IllegalArgumentException("Yet AI launch mode requires runtime URL with an explicit port such as http://127.0.0.1:8001")
+}
+
 fun findEngineBinary(configuredPath: Path?): Path? {
     if (configuredPath != null) {
-        if (!isExecutableFile(configuredPath)) {
+        if (!isLaunchableEngineFile(configuredPath)) {
             throw IllegalArgumentException("Yet AI engine binary path must point to an executable file")
         }
         return configuredPath
@@ -153,7 +158,7 @@ fun findEngineBinary(configuredPath: Path?): Path? {
     for (directory in pathEnv) {
         for (suffix in suffixes) {
             val candidate = Path.of(directory, ProductIdentity.engineBinaryName + suffix)
-            if (isExecutableFile(candidate)) {
+            if (isLaunchableEngineFile(candidate)) {
                 return candidate
             }
         }
@@ -165,27 +170,49 @@ fun checkHealth(settings: RuntimeSettings) {
     val pingUrl = URL(URI(settings.runtimeUrl).resolve("/v1/ping").toString())
     var lastError = "no response"
     repeat(20) {
+        var connection: HttpURLConnection? = null
         try {
-            val connection = pingUrl.openConnection() as HttpURLConnection
+            connection = pingUrl.openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
             connection.connectTimeout = 250
             connection.readTimeout = 250
             settings.sessionToken?.let { connection.setRequestProperty("Authorization", "Bearer $it") }
             if (connection.responseCode in 200..299) {
-                connection.disconnect()
                 return
             }
             lastError = "HTTP ${connection.responseCode}"
-            connection.disconnect()
         } catch (error: Exception) {
             lastError = error.message ?: "unknown health check error"
+        } finally {
+            connection?.disconnect()
         }
         Thread.sleep(250)
     }
     throw IllegalStateException("Yet AI local runtime health check failed at /v1/ping: $lastError")
 }
 
-private fun isExecutableFile(path: Path): Boolean = Files.isRegularFile(path)
+fun stopProcess(process: Process, waitMillis: Long = 1500): Boolean {
+    if (!process.isAlive) {
+        return true
+    }
+    process.destroy()
+    if (process.waitFor(waitMillis, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+        return true
+    }
+    process.destroyForcibly()
+    return process.waitFor(waitMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
+}
+
+fun isLaunchableEngineFile(path: Path, osName: String = System.getProperty("os.name")): Boolean {
+    if (!Files.isRegularFile(path)) {
+        return false
+    }
+    if (osName.lowercase().contains("win")) {
+        val name = path.fileName.toString().lowercase()
+        return name.endsWith(".exe") || name.endsWith(".cmd") || name.endsWith(".bat") || Files.isExecutable(path)
+    }
+    return Files.isExecutable(path)
+}
 
 private fun generateSessionToken(): String {
     val bytes = ByteArray(32)
