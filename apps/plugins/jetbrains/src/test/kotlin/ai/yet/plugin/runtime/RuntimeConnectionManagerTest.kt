@@ -1,7 +1,11 @@
 package ai.yet.plugin.runtime
 
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 import java.nio.file.Path
-import kotlin.io.path.createTempDirectory
+import java.util.concurrent.TimeUnit
 import kotlin.io.path.createTempFile
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.setPosixFilePermissions
@@ -207,6 +211,23 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun redactsUrlQuerySecretParameters() {
+        val cases = mapOf(
+            "https://example.invalid/callback?api_key=short-secret" to "short-secret",
+            "https://example.invalid/callback?ok=1&access_token=access-secret" to "access-secret",
+            "https://example.invalid/callback?refresh_token=refresh-secret" to "refresh-secret",
+            "https://example.invalid/callback;code_verifier=verifier-secret" to "verifier-secret",
+            "https://example.invalid/callback?Api_Key=mixed-secret" to "mixed-secret",
+        )
+
+        cases.forEach { (input, secret) ->
+            val redacted = redactLogText(input, "")
+            assertFalse(redacted.contains(secret), redacted)
+            assertTrue(redacted.contains("[redacted]"), redacted)
+        }
+    }
+
+    @Test
     fun redactsJsonSecretFields() {
         val redacted = redactLogText("""{"access_token":"json-access","clientSecret":"json-client","api_key":"json-api"}""", "")
 
@@ -250,6 +271,25 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun redactsBareAndRelativeCredentialMarkers() {
+        val cases = listOf(
+            "auth.json",
+            ".codex/auth.json",
+            ".codex\\auth.json",
+            "./.codex/auth.json",
+            "../.codex/auth.json",
+        )
+
+        cases.forEach { marker ->
+            val redacted = redactLogText("credential file $marker", "")
+            assertFalse(redacted.contains(marker), redacted)
+            assertFalse(redacted.contains(".codex"), redacted)
+            assertFalse(redacted.contains("auth.json"), redacted)
+            assertTrue(redacted.contains("[redacted]"), redacted)
+        }
+    }
+
+    @Test
     fun truncatesVeryLongSanitizedLogs() {
         val redacted = redactLogText("message ".repeat(100), "")
 
@@ -259,27 +299,69 @@ class RuntimeConnectionManagerTest {
 
     @Test
     fun stopProcessDestroysAliveProcess() {
-        val process = stubbornProcess() ?: return
-        try {
-            assertTrue(process.isAlive)
-            assertTrue(stopProcess(process, waitMillis = 100))
-            assertFalse(process.isAlive)
-        } finally {
-            if (process.isAlive) {
-                process.destroyForcibly()
-            }
-        }
+        val process = FakeProcess(destroyWaitResults = listOf(true))
+
+        assertTrue(process.isAlive)
+        assertTrue(stopProcess(process, waitMillis = 100))
+        assertFalse(process.isAlive)
+        assertEquals(1, process.destroyCalls)
+        assertEquals(0, process.destroyForciblyCalls)
     }
 
-    private fun stubbornProcess(): Process? {
-        val os = System.getProperty("os.name").lowercase()
-        return if (os.contains("win")) {
-            val script = createTempDirectory(prefix = "yet-stop-process").resolve("sleep.cmd")
-            java.nio.file.Files.writeString(script, "@echo off\r\nping -n 20 127.0.0.1 > nul\r\n")
-            ProcessBuilder("cmd", "/c", script.toString()).start()
-        } else {
-            val shell = listOf("/bin/sh", "/usr/bin/sh").firstOrNull { java.nio.file.Files.isExecutable(Path.of(it)) } ?: return null
-            ProcessBuilder(shell, "-c", "trap '' TERM; sleep 20").start()
-        }
+    @Test
+    fun stopProcessEscalatesWhenDestroyDoesNotExit() {
+        val process = FakeProcess(destroyWaitResults = listOf(false, true))
+
+        assertTrue(stopProcess(process, waitMillis = 100))
+        assertFalse(process.isAlive)
+        assertEquals(1, process.destroyCalls)
+        assertEquals(1, process.destroyForciblyCalls)
     }
+}
+
+private class FakeProcess(private val destroyWaitResults: List<Boolean>) : Process() {
+    var destroyCalls = 0
+        private set
+    var destroyForciblyCalls = 0
+        private set
+    private var alive = true
+    private var waitCalls = 0
+
+    override fun getOutputStream(): OutputStream = ByteArrayOutputStream()
+
+    override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun waitFor(): Int {
+        alive = false
+        return 0
+    }
+
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean {
+        val result = destroyWaitResults.getOrElse(waitCalls) { true }
+        waitCalls += 1
+        if (result) {
+            alive = false
+        }
+        return result
+    }
+
+    override fun exitValue(): Int {
+        if (alive) {
+            throw IllegalThreadStateException("process is alive")
+        }
+        return 0
+    }
+
+    override fun destroy() {
+        destroyCalls += 1
+    }
+
+    override fun destroyForcibly(): Process {
+        destroyForciblyCalls += 1
+        return this
+    }
+
+    override fun isAlive(): Boolean = alive
 }

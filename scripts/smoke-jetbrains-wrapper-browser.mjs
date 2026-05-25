@@ -59,18 +59,17 @@ try {
   });
 
   await page.goto(`${wrapperBaseUrl}/wrapper.html`, { waitUntil: "domcontentloaded" });
-  const preInitState = await page.evaluate(() => ({
-    hostQueue: window.__yetAiPendingHostMessages?.length,
-    diagnosticQueue: window.__yetAiPendingDiagnostics?.length,
-    diagnosticText: document.getElementById("yet-ai-shell-status")?.textContent ?? "",
-  }));
-  if (preInitState.hostQueue !== 1) {
-    failures.push(`Wrapper did not preserve pre-init queued host message before helper setup; queue length ${String(preInitState.hostQueue)}.`);
-  }
-  if (preInitState.diagnosticQueue !== 1 || !preInitState.diagnosticText.includes("Runtime error: Queued diagnostic before wrapper init")) {
-    failures.push("Wrapper did not preserve or display pre-init queued diagnostic before helper setup.");
-  }
   await page.waitForFunction(() => window.__yetAiWrapperInitialized === true, undefined, { timeout: 5000 }).catch(() => failures.push("Wrapper helper initialization marker was not set."));
+  const adoptionState = await page.evaluate(() => ({
+    hostAdopted: window.__yetAiAdoptedPreInitHost === true,
+    diagnosticAdopted: window.__yetAiAdoptedPreInitDiagnostic === true,
+  }));
+  if (!adoptionState.hostAdopted) {
+    failures.push("Wrapper did not deterministically adopt the pre-init host-message queue.");
+  }
+  if (!adoptionState.diagnosticAdopted) {
+    failures.push("Wrapper did not deterministically adopt the pre-init diagnostic queue.");
+  }
   await page.waitForSelector("iframe[title='Yet AI GUI']", { state: "visible", timeout: 5000 });
 
   const iframeElement = page.locator("iframe[title='Yet AI GUI']");
@@ -110,12 +109,13 @@ try {
     hostQueue: window.__yetAiPendingHostMessages?.length,
     diagnosticQueue: window.__yetAiPendingDiagnostics?.length,
     flushedPreInitHost: window.__yetAiPreInitHostFlushed === true,
+    flushedPreInitDiagnostic: window.__yetAiPreInitDiagnosticFlushed === true,
     diagnosticText: document.getElementById("yet-ai-shell-status")?.textContent ?? "",
   }));
   if (queueStateAfterReady.hostQueue !== 0 || !queueStateAfterReady.flushedPreInitHost) {
     failures.push("Wrapper did not flush the pre-init queued host message after iframe load/gui.ready.");
   }
-  if (queueStateAfterReady.diagnosticQueue !== 0 || !queueStateAfterReady.diagnosticText.includes("Queued diagnostic before wrapper init")) {
+  if (queueStateAfterReady.diagnosticQueue !== 0 || !queueStateAfterReady.flushedPreInitDiagnostic || !queueStateAfterReady.diagnosticText.includes("Queued diagnostic before wrapper init")) {
     failures.push("Wrapper did not adopt and flush the pre-init queued diagnostic.");
   }
 
@@ -266,19 +266,21 @@ let frameLoaded = false;
 let frameReady = false;
 const pendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : [];
 const pendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : [];
+window.__yetAiAdoptedPreInitHost = pendingHostMessages.some((message) => message?.requestId === "pre-init-smoke");
+window.__yetAiAdoptedPreInitDiagnostic = pendingDiagnostics.includes("Queued diagnostic before wrapper init");
 window.__yetAiPendingHostMessages = pendingHostMessages;
 window.__yetAiPendingDiagnostics = pendingDiagnostics;
 const showDiagnostic = (message) => {
   if (shellStatus && typeof message === "string") {
     shellStatus.hidden = false;
     shellStatus.textContent = "Runtime error: " + message;
+    if (message === "Queued diagnostic before wrapper init") window.__yetAiPreInitDiagnosticFlushed = true;
   }
 };
 window.__yetAiSetRuntimeDiagnostic = (message) => {
   if (!frameReady) pendingDiagnostics.push(message);
   showDiagnostic(message);
 };
-showDiagnostic("Queued diagnostic before wrapper init");
 const markLoaded = () => {
   frameLoaded = true;
   if (shellStatus) shellStatus.hidden = true;
