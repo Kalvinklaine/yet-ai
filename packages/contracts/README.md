@@ -82,8 +82,8 @@ npm run check
 ## Security expectations
 
 - Every privileged bridge message must be schema-validated and policy-checked by future implementations before it can trigger file edits, IDE tool execution, shell-like behavior, workspace mutation, or privileged host actions.
-- Bridge payload schemas for privileged GUI/plugin messages must be strict before those privileged flows are implemented.
-- Non-`user_message` chat command payload schemas must be strict before tool decisions, IDE tool results, parameter changes, message mutation, abort, or regeneration flows can trigger privileged engine behavior.
+- Current bridge schemas are strict only for `gui.ready`, `host.ready`, and `host.openedFromCommand`; privileged GUI/plugin messages remain disabled until strict schemas, policy, request correlation, and confirmation are implemented.
+- Current chat command schemas are strict only for non-privileged `user_message` and `abort`; tool decisions, IDE tool results, parameter changes, message mutation, and regeneration remain disabled until schema, policy, and confirmation are implemented.
 - Receivers should validate every engine HTTP request, engine HTTP response, SSE event, and bridge message at subsystem boundaries.
 - Bridge receivers must verify host/source/origin where the platform supports it and correlate request-response messages with outstanding requests.
 - Safe UI messages such as theme and active file updates must remain conceptually separate from privileged requests such as workspace edits and IDE tool execution.

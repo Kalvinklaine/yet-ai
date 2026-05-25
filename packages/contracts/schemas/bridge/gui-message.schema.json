@@ -2,34 +2,52 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.yet-ai.example/contracts/bridge/gui-message.schema.json",
   "title": "GUI to IDE Host Message",
+  "description": "Current non-privileged GUI readiness message only. File open/reveal, workspace edits, notifications, context requests, and IDE tool execution remain disabled until strict schemas, policy, request correlation, and confirmation are implemented.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "type"],
   "properties": {
     "version": {
       "type": "string",
-      "minLength": 1
+      "const": "2026-05-15"
     },
     "type": {
       "type": "string",
-      "enum": [
-        "gui.ready",
-        "gui.openFile",
-        "gui.revealRange",
-        "gui.applyWorkspaceEditRequest",
-        "gui.copyText",
-        "gui.showNotification",
-        "gui.executeIdeTool",
-        "gui.getHostContext"
-      ]
+      "enum": ["gui.ready"]
     },
     "requestId": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "maxLength": 128
     },
     "payload": {
-      "type": "object",
-      "additionalProperties": true
+      "type": "object"
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "gui.ready"
+          }
+        },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "supportedBridgeVersion": {
+                "type": "string",
+                "const": "2026-05-15"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

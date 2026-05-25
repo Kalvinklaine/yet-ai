@@ -2444,21 +2444,45 @@ async fn user_message_command_is_accepted() {
 }
 
 #[tokio::test]
-async fn unsupported_command_is_rejected() {
-    let command = json!({
-        "requestId": "req-002",
-        "type": "tool_decision",
-        "payload": {}
-    });
-    let response = test_app()
-        .oneshot(authed_request(
-            Method::POST,
-            "/v1/chats/chat-001/commands",
-            Body::from(command.to_string()),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+async fn abort_command_example_is_accepted() {
+    let command = include_str!("../../../packages/contracts/examples/engine/abort-command.json");
+    let (status, body) = json_response(authed_request(
+        Method::POST,
+        "/v1/chats/chat-001/commands",
+        Body::from(command),
+    ))
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accepted"], true);
+    assert_eq!(body["type"], "abort");
+    assert_eq!(body["chatId"], "chat-001");
+}
+
+#[tokio::test]
+async fn unsupported_privileged_commands_remain_rejected() {
+    for command_type in [
+        "tool_decision",
+        "ide_tool_result",
+        "update_message",
+        "remove_message",
+        "regenerate",
+        "set_params",
+    ] {
+        let command = json!({
+            "requestId": format!("req-{command_type}"),
+            "type": command_type,
+            "payload": {}
+        });
+        let response = test_app()
+            .oneshot(authed_request(
+                Method::POST,
+                "/v1/chats/chat-001/commands",
+                Body::from(command.to_string()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+    }
 }
 
 #[tokio::test]

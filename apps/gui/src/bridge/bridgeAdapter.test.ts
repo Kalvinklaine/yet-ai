@@ -255,12 +255,14 @@ describe("bridgeAdapter", () => {
     expect(messages).toHaveLength(0);
   });
 
-  it("accepts allowlisted host messages", () => {
+  it("accepts current non-privileged host messages", () => {
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready" })).toBe(true);
-    expect(isHostMessage({ version: bridgeVersion, type: "host.themeChanged", requestId: "r1", payload: { theme: "dark" } })).toBe(true);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.openedFromCommand", payload: {} })).toBe(true);
   });
 
-  it("rejects unknown or invalid host messages", () => {
+  it("rejects unknown, disabled, or invalid host messages", () => {
+    expect(isHostMessage({ version: bridgeVersion, type: "host.themeChanged", requestId: "r1", payload: { theme: "dark" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.openedFromCommand", payload: { action: "edit" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.unknown" })).toBe(false);
     expect(isHostMessage({ version: "", type: "host.ready" })).toBe(false);
     expect(isHostMessage({ version: "1", type: "host.ready" })).toBe(false);
