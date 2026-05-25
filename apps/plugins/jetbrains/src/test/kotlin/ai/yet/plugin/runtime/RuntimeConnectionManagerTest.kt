@@ -43,7 +43,35 @@ class RuntimeConnectionManagerTest {
             )
         }
 
-        assertEquals("Yet AI launch mode requires runtime URL with an explicit port such as http://127.0.0.1:8001", error.message)
+        assertEquals("Yet AI launch mode requires runtime URL with an explicit nonzero port such as http://127.0.0.1:8001", error.message)
+    }
+
+    @Test
+    fun launchCommandRejectsZeroPort() {
+        val error = assertFailsWith<IllegalArgumentException> {
+            buildEngineLaunchCommand(
+                runtimeUrl = "http://127.0.0.1:0",
+                binaryPath = Path.of("/tmp/yet-lsp"),
+                sessionToken = "session-secret",
+                baseEnvironment = emptyMap(),
+            )
+        }
+
+        assertEquals("Yet AI launch mode requires runtime URL with an explicit nonzero port such as http://127.0.0.1:8001", error.message)
+    }
+
+    @Test
+    fun launchCommandRejectsHttpsUrl() {
+        val error = assertFailsWith<IllegalArgumentException> {
+            buildEngineLaunchCommand(
+                runtimeUrl = "https://127.0.0.1:8123",
+                binaryPath = Path.of("/tmp/yet-lsp"),
+                sessionToken = "session-secret",
+                baseEnvironment = emptyMap(),
+            )
+        }
+
+        assertEquals("Yet AI launch mode requires runtime URL to use http", error.message)
     }
 
     @Test
@@ -67,6 +95,46 @@ class RuntimeConnectionManagerTest {
         } finally {
             file.deleteIfExists()
         }
+    }
+
+    @Test
+    fun connectModeIgnoresConfiguredEnginePath() {
+        val file = createTempFile(prefix = "yet-lsp-connect-not-executable")
+        try {
+            if (!System.getProperty("os.name").lowercase().contains("win")) {
+                file.setPosixFilePermissions(emptySet())
+            }
+            val settings = RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.CONNECT, file)
+
+            assertEquals(settings, RuntimeConnectionManager().prepareConnectionSettings(settings))
+        } finally {
+            file.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun launchModeRejectsNonExecutableConfiguredPath() {
+        val file = createTempFile(prefix = "yet-lsp-launch-not-executable")
+        try {
+            if (!System.getProperty("os.name").lowercase().contains("win")) {
+                file.setPosixFilePermissions(emptySet())
+                val settings = RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.LAUNCH, file)
+                val error = assertFailsWith<IllegalArgumentException> { RuntimeConnectionManager().prepareConnectionSettings(settings) }
+
+                assertEquals("Yet AI engine binary path must point to an executable file", error.message)
+            }
+        } finally {
+            file.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun failureResultPreservesConfiguredSettings() {
+        val settings = RuntimeSettings("http://127.0.0.1:8123", null, "session-secret", LaunchMode.CONNECT, Path.of("/tmp/stale-yet-lsp"))
+        val result = failedRuntimeConnection(settings, null, "Yet AI local runtime connection failed", IllegalStateException("Bearer session-secret failed"))
+
+        assertEquals(settings, result.settings)
+        assertEquals("Yet AI local runtime connection failed: Bearer [redacted] failed", result.error)
     }
 
     @Test

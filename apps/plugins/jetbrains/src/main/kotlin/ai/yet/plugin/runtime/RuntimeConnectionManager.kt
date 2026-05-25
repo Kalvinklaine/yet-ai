@@ -25,23 +25,42 @@ class RuntimeConnectionManager : Disposable {
 
     @Synchronized
     fun prepare(): RuntimeConnectionResult {
+        val settings = try {
+            RuntimeSettings.current()
+        } catch (error: Exception) {
+            return RuntimeConnectionResult(
+                RuntimeSettings.safeFallback(),
+                null,
+                sanitizedRuntimeError("Yet AI runtime settings are invalid", error),
+            )
+        }
+        val connection = try {
+            prepareConnectionSettings(settings)
+        } catch (error: Exception) {
+            return failedRuntimeConnection(settings, null, "Yet AI local runtime launch failed", error)
+        }
         return try {
-            val settings = RuntimeSettings.current()
-            val binaryPath = findEngineBinary(settings.engineBinaryPath)
-            val shouldLaunch = settings.launchMode == LaunchMode.LAUNCH ||
-                (settings.launchMode == LaunchMode.AUTO && binaryPath != null)
-            val connection = if (shouldLaunch) {
-                if (binaryPath == null) {
-                    throw IllegalArgumentException("Yet AI engine binary path must point to ${ProductIdentity.engineBinaryName} when launch mode is enabled")
-                }
-                launchOrReuse(settings, binaryPath)
-            } else {
-                settings
-            }
             checkHealth(connection)
             RuntimeConnectionResult(connection, "Connected to Yet AI local runtime at ${connection.runtimeUrl}.", null)
         } catch (error: Exception) {
-            RuntimeConnectionResult(RuntimeSettings.safeFallback(), null, error.message ?: "Yet AI local runtime connection failed")
+            failedRuntimeConnection(settings, connection, "Yet AI local runtime connection failed", error)
+        }
+    }
+
+    @Synchronized
+    fun prepareConnectionSettings(settings: RuntimeSettings): RuntimeSettings {
+        val binaryPath = when (settings.launchMode) {
+            LaunchMode.CONNECT -> null
+            LaunchMode.LAUNCH -> findEngineBinary(settings.engineBinaryPath)
+                ?: throw IllegalArgumentException("Yet AI engine binary path must point to ${ProductIdentity.engineBinaryName} when launch mode is enabled")
+            LaunchMode.AUTO -> findEngineBinary(settings.engineBinaryPath)
+        }
+        val shouldLaunch = settings.launchMode == LaunchMode.LAUNCH ||
+            (settings.launchMode == LaunchMode.AUTO && binaryPath != null)
+        return if (shouldLaunch) {
+            launchOrReuse(settings, requireNotNull(binaryPath))
+        } else {
+            settings
         }
     }
 
@@ -107,6 +126,17 @@ class RuntimeConnectionManager : Disposable {
     }
 }
 
+fun failedRuntimeConnection(
+    settings: RuntimeSettings,
+    attemptedSettings: RuntimeSettings?,
+    prefix: String,
+    error: Exception,
+): RuntimeConnectionResult = RuntimeConnectionResult(
+    attemptedSettings ?: settings,
+    null,
+    sanitizedRuntimeError(prefix, error),
+)
+
 data class RuntimeConnectionResult(
     val settings: RuntimeSettings,
     val status: String?,
@@ -140,10 +170,13 @@ fun parseRuntimePort(runtimeUrl: String): Int {
 
 fun parseExplicitRuntimePort(runtimeUrl: String): Int {
     val uri = URI(runtimeUrl)
-    if (uri.port >= 0) {
-        return uri.port
+    if (uri.scheme?.lowercase() != "http") {
+        throw IllegalArgumentException("Yet AI launch mode requires runtime URL to use http")
     }
-    throw IllegalArgumentException("Yet AI launch mode requires runtime URL with an explicit port such as http://127.0.0.1:8001")
+    if (uri.port <= 0) {
+        throw IllegalArgumentException("Yet AI launch mode requires runtime URL with an explicit nonzero port such as http://127.0.0.1:8001")
+    }
+    return uri.port
 }
 
 fun findEngineBinary(configuredPath: Path?): Path? {
@@ -213,6 +246,15 @@ fun isLaunchableEngineFile(path: Path, osName: String = System.getProperty("os.n
     }
     return Files.isExecutable(path)
 }
+
+fun sanitizedRuntimeError(prefix: String, error: Exception): String {
+    val detail = error.message?.takeIf { it.isNotBlank() } ?: error::class.java.simpleName
+    return "$prefix: ${redactRuntimeError(detail)}"
+}
+
+private fun redactRuntimeError(value: String): String = value
+    .replace(Regex("Bearer\\s+[^\\s\"']+", RegexOption.IGNORE_CASE), "Bearer [redacted]")
+    .replace(Regex("(?i)(sessionToken|accessToken|refreshToken|apiKey|secret|token)=([^\\s&]+)"), "${'$'}1=[redacted]")
 
 private fun generateSessionToken(): String {
     val bytes = ByteArray(32)
