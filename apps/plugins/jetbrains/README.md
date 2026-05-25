@@ -43,9 +43,12 @@ Verify the installable artifact without launching IntelliJ IDEA:
 
 ```sh
 npm run smoke:jetbrains-installable
+npm run smoke:jetbrains-gui-browser
 ```
 
-The smoke checks that a distribution ZIP exists, contains `META-INF/plugin.xml` and packaged GUI `yet-ai-gui/index.html`, and that docs describe Install Plugin from Disk plus `Engine binary path` expectations. No provider credentials, real OpenAI/ChatGPT calls, JetBrains IDE launch, or hosted Yet AI services are required.
+The installable smoke checks that a distribution ZIP exists, contains `META-INF/plugin.xml` and packaged GUI `yet-ai-gui/index.html`, and that docs describe Install Plugin from Disk plus `Engine binary path` expectations. The packaged GUI browser smoke extracts `yet-ai-gui/index.html` and `yet-ai-gui/assets/*` from the ZIP's nested plugin JAR into a temporary local directory, serves it on loopback, and verifies that the core GUI renders non-blank with working JavaScript and CSS assets. If the ZIP is missing, run `npm run prepare:jetbrains-preview` first. No provider credentials, real OpenAI/ChatGPT calls, JetBrains IDE launch, JCEF automation, or hosted Yet AI services are required.
+
+The browser smoke catches broken packaged GUI resources before manual IDE install testing, but it complements rather than replaces manual JetBrains/JCEF testing because browser rendering is not identical to the installed IDE tool window.
 
 This is dev-preview/manual installability only: no signing, marketplace publication, production installer, bundled notarized engine, or official release packaging is produced.
 
