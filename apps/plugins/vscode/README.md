@@ -190,6 +190,38 @@ Use this checklist after the steps above:
 - A simple chat message produces `snapshot`, stream start/delta, and finish behavior in the GUI.
 - For the real OpenAI API-key fallback smoke, the preset uses `https://api.openai.com/v1`, the API key field clears after save, and no automated test or committed file contains the real key.
 
+## Manual preview report template
+
+Use this template for hands-on VS Code dev-preview issues. Keep reports safe to share and omit secrets, private paths, query strings, and URL fragments.
+
+```text
+VS Code preview report
+
+Environment:
+- OS/architecture:
+- VS Code version:
+- Launch mode: auto | launch | connect
+- Runtime URL: http://127.0.0.1:<port> (omit query/hash)
+- GUI mode: packaged GUI | guiDevUrl loopback
+
+Commands run:
+- npm run prepare:vscode-preview: pass | fail
+- npm run smoke:vscode-preview: pass | fail
+- Yet AI: Open Chat: pass | fail
+- Yet AI: Show Runtime Status: not run | pass | sanitized failure
+
+Visible results:
+- Webview: packaged GUI | placeholder | blank/error
+- Runtime: connected | sanitized failure
+- Provider setup/test: visible | not visible | sanitized failure
+- First chat message: streamed | accepted but no stream | failed with sanitized error
+
+Notes:
+- Include concise sanitized error text only.
+- Never paste provider API keys or local runtime session tokens.
+- Never include raw bearer headers, Authorization values, cookies, OAuth codes, or screenshots showing secrets.
+```
+
 ## Refresh runtime and first message
 
 In the packaged GUI, `Refresh runtime` checks `/v1/ping`, `/v1/caps`, `/v1/models`, provider summaries, and OpenAI provider-auth status through the local runtime. Connected feedback means the local runtime and provider/model metadata are reachable for current settings. Network/configuration errors usually point to the runtime URL, port, binary discovery, or process startup. Runtime `401` means the local Session token is wrong; provider `401` means the upstream OpenAI/OpenAI-compatible provider rejected the API key.
