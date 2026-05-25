@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import Module from "node:module";
+import os from "node:os";
 import path from "node:path";
 
 const source = fs.readFileSync(path.join(process.cwd(), "src/webview.ts"), "utf8");
@@ -131,29 +132,68 @@ const connection = {
 
 const html = renderWebviewHtml(webview, extensionUri, identity, connection);
 
-for (const value of fakeSecretValues) {
-  if (html.includes(value)) {
-    throw new Error(`VS Code behavioral webview render leaked secret sentinel: ${value}`);
+assertNoSecretSentinels(html, fakeSecretValues, "VS Code behavioral webview render");
+assertRequiredSafetyStructure(html, "VS Code behavioral webview render");
+assertNoInlineSessionToken(html, "VS Code behavioral webview render");
+
+const tempExtensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), "yet-ai-vscode-webview-safety-"));
+try {
+  const fakeGuiRoot = path.join(tempExtensionRoot, "media", "gui");
+  fs.mkdirSync(path.join(fakeGuiRoot, "assets"), { recursive: true });
+  fs.writeFileSync(
+    path.join(fakeGuiRoot, "index.html"),
+    `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Fake Packaged GUI</title>
+  <link rel="stylesheet" href="./assets/app.css">
+</head>
+<body>
+  <main data-yet-ai-packaged-gui-marker="behavioral-safety-check">Fake packaged GUI marker</main>
+  <link rel="stylesheet" href="./assets/app.css">
+  <script type="module" src="/assets/app.js"></script>
+</body>
+</html>`,
+  );
+  fs.writeFileSync(path.join(fakeGuiRoot, "assets", "app.js"), "window.fakeYetAiPackagedGui = true;\n");
+  fs.writeFileSync(path.join(fakeGuiRoot, "assets", "app.css"), "body { color: var(--vscode-foreground); }\n");
+
+  const packagedWebview = {
+    ...webview,
+    asWebviewUri(uri) {
+      return {
+        toString() {
+          return `vscode-resource://yet-ai-test/${path.relative(tempExtensionRoot, uri.fsPath).replaceAll(path.sep, "/")}`;
+        },
+      };
+    },
+  };
+  const packagedHtml = renderWebviewHtml(packagedWebview, { fsPath: tempExtensionRoot }, identity, connection);
+
+  assertNoSecretSentinels(packagedHtml, fakeSecretValues, "VS Code packaged behavioral webview render");
+  assertRequiredSafetyStructure(packagedHtml, "VS Code packaged behavioral webview render");
+  assertNoInlineSessionToken(packagedHtml, "VS Code packaged behavioral webview render");
+
+  if (!packagedHtml.includes('data-yet-ai-packaged-gui-marker="behavioral-safety-check"')) {
+    throw new Error("VS Code behavioral webview render did not use the packaged GUI path.");
   }
-}
 
-const requiredHtmlPatterns = [
-  /<meta http-equiv="Content-Security-Policy" content="[^"]*script-src [^"]*'nonce-[^']+'[^"]*">/,
-  /<style nonce="[^"]+">/,
-  /<script nonce="[^"]+">/,
-  /const vscode = acquireVsCodeApi\(\);/,
-  /window\.yetAiBootstrap = bootstrap;/,
-  /vscode\.postMessage\(\{ version: bootstrap\.bridgeVersion, type: "gui\.ready"/,
-];
-
-for (const pattern of requiredHtmlPatterns) {
-  if (!pattern.test(html)) {
-    throw new Error(`VS Code behavioral webview render missing expected safety structure: ${pattern}`);
+  if (packagedHtml.includes("Local runtime shell is ready")) {
+    throw new Error("VS Code behavioral webview render unexpectedly used the fallback placeholder path.");
   }
-}
 
-if (/sessionToken\s*:/.test(html) || /"sessionToken"/.test(html)) {
-  throw new Error("VS Code behavioral webview render must not expose inline sessionToken data.");
+  const expectedAssetUris = [
+    'href="vscode-resource://yet-ai-test/media/gui/assets/app.css"',
+    'src="vscode-resource://yet-ai-test/media/gui/assets/app.js"',
+  ];
+  for (const expectedAssetUri of expectedAssetUris) {
+    if (!packagedHtml.includes(expectedAssetUri)) {
+      throw new Error(`VS Code behavioral webview render did not rewrite packaged asset URI: ${expectedAssetUri}`);
+    }
+  }
+} finally {
+  fs.rmSync(tempExtensionRoot, { recursive: true, force: true });
 }
 
 const httpsGuiDevHtml = renderWebviewHtml(webview, extensionUri, identity, {
@@ -161,11 +201,7 @@ const httpsGuiDevHtml = renderWebviewHtml(webview, extensionUri, identity, {
   guiDevUrl: "https://127.0.0.1:5173",
 });
 
-for (const value of fakeSecretValues) {
-  if (httpsGuiDevHtml.includes(value)) {
-    throw new Error(`VS Code HTTPS loopback webview render leaked secret sentinel: ${value}`);
-  }
-}
+assertNoSecretSentinels(httpsGuiDevHtml, fakeSecretValues, "VS Code HTTPS loopback webview render");
 
 const httpsLoopbackPatterns = [
   /<iframe title="Yet AI Test GUI" src="https:\/\/127\.0\.0\.1:5173"><\/iframe>/,
@@ -178,8 +214,37 @@ for (const pattern of httpsLoopbackPatterns) {
   }
 }
 
-if (/sessionToken\s*:/.test(httpsGuiDevHtml) || /"sessionToken"/.test(httpsGuiDevHtml)) {
-  throw new Error("VS Code HTTPS loopback webview render must not expose inline sessionToken data.");
+assertNoInlineSessionToken(httpsGuiDevHtml, "VS Code HTTPS loopback webview render");
+
+function assertNoSecretSentinels(html, values, label) {
+  for (const value of values) {
+    if (html.includes(value)) {
+      throw new Error(`${label} leaked secret sentinel: ${value}`);
+    }
+  }
+}
+
+function assertRequiredSafetyStructure(html, label) {
+  const requiredHtmlPatterns = [
+    /<meta http-equiv="Content-Security-Policy" content="[^"]*script-src [^"]*'nonce-[^']+'[^"]*">/,
+    /<style nonce="[^"]+">/,
+    /<script nonce="[^"]+">/,
+    /const vscode = acquireVsCodeApi\(\);/,
+    /window\.yetAiBootstrap = bootstrap;/,
+    /vscode\.postMessage\(\{ version: bootstrap\.bridgeVersion, type: "gui\.ready"/,
+  ];
+
+  for (const pattern of requiredHtmlPatterns) {
+    if (!pattern.test(html)) {
+      throw new Error(`${label} missing expected safety structure: ${pattern}`);
+    }
+  }
+}
+
+function assertNoInlineSessionToken(html, label) {
+  if (/sessionToken\s*:/.test(html) || /"sessionToken"/.test(html)) {
+    throw new Error(`${label} must not expose inline sessionToken data.`);
+  }
 }
 
 function extractSection(startMarker, endMarker, haystack = source) {
