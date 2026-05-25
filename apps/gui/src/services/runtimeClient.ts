@@ -4,7 +4,7 @@ export type RuntimeSettings = {
 };
 
 export type RuntimeError = {
-  status: number | "network" | "parse" | "protocol" | "sequence" | "configuration";
+  status: number | "network" | "timeout" | "parse" | "protocol" | "sequence" | "configuration";
   message: string;
 };
 
@@ -74,6 +74,9 @@ export const productIdentity = {
   guiPackage: "yet-ai-chat-js",
 } as const;
 
+const runtimeFetchTimeoutMs = 10_000;
+const maxErrorMessageChars = 500;
+
 export function authHeaders(settings: RuntimeSettings): HeadersInit {
   const headers: Record<string, string> = {
     Accept: "application/json",
@@ -95,26 +98,34 @@ export async function runtimeFetch<T>(
     return { ok: false, error: validation.error };
   }
 
-  const headers = new Headers(authHeaders(settings));
+  const headers = new Headers(init.headers);
   if (init.body !== undefined) {
     headers.set("Content-Type", "application/json");
   }
-  new Headers(init.headers).forEach((value, key) => headers.set(key, value));
+  new Headers(authHeaders(settings)).forEach((value, key) => headers.set(key, value));
+
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), runtimeFetchTimeoutMs);
+  const combinedSignal = combineSignals(init.signal, timeoutController.signal);
 
   let response: Response;
   try {
     response = await fetch(joinUrl(settings.baseUrl, path), {
       ...init,
       headers,
+      signal: combinedSignal,
     });
   } catch (error) {
+    const timedOut = timeoutController.signal.aborted && !init.signal?.aborted;
     return {
       ok: false,
       error: {
-        status: "network",
-        message: error instanceof Error ? error.message : "Runtime is unavailable",
+        status: timedOut ? "timeout" : "network",
+        message: timedOut ? "Runtime request timed out." : sanitizeRuntimeErrorText(error instanceof Error ? error.message : "Runtime is unavailable"),
       },
     };
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   if (!response.ok) {
@@ -135,7 +146,7 @@ export async function runtimeFetch<T>(
       ok: false,
       error: {
         status: "parse",
-        message: error instanceof Error ? error.message : "Invalid runtime JSON response",
+        message: sanitizeRuntimeErrorText(error instanceof Error ? error.message : "Invalid runtime JSON response"),
       },
     };
   }
@@ -243,8 +254,33 @@ async function errorMessage(response: Response): Promise<string> {
   try {
     const parsed = JSON.parse(text) as { error?: unknown; message?: unknown; detail?: unknown };
     const message = parsed.error ?? parsed.message ?? parsed.detail;
-    return typeof message === "string" ? message : text;
+    return sanitizeRuntimeErrorText(typeof message === "string" ? message : text);
   } catch {
-    return text;
+    return sanitizeRuntimeErrorText(text);
   }
+}
+
+function combineSignals(callerSignal: AbortSignal | null | undefined, timeoutSignal: AbortSignal): AbortSignal {
+  if (!callerSignal) {
+    return timeoutSignal;
+  }
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (callerSignal.aborted || timeoutSignal.aborted) {
+    controller.abort();
+    return controller.signal;
+  }
+  callerSignal.addEventListener("abort", abort, { once: true });
+  timeoutSignal.addEventListener("abort", abort, { once: true });
+  return controller.signal;
+}
+
+function sanitizeRuntimeErrorText(value: string): string {
+  const redacted = value
+    .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "[redacted]")
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[redacted]")
+    .replace(/\b(?:access_token|refresh_token|api_key|authorization|client_secret|code|verifier|cookie|set-cookie)\b\s*[:=]\s*[^\s,;)}\]]+/gi, "[redacted]")
+    .replace(/\b(?:auth\.json|\.codex\/auth\.json)\b/gi, "[redacted]")
+    .replace(/\b[A-Za-z0-9_-]{48,}\b/g, "[redacted]");
+  return redacted.length > maxErrorMessageChars ? `${redacted.slice(0, maxErrorMessageChars)}…` : redacted;
 }

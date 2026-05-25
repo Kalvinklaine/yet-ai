@@ -1,8 +1,14 @@
-import { describe, expect, it } from "vitest";
-import { drainFrames, parseSseFrame, validateSseSequence, type SseEvent } from "./sseClient";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { drainFrames, parseSseFrame, subscribeToChat, validateSseSequence, type SseEvent } from "./sseClient";
 
 const snapshot: SseEvent = { seq: 0, type: "snapshot", chatId: "chat-1", payload: { messages: [] } };
 const delta: SseEvent = { seq: 1, type: "stream_delta", chatId: "chat-1", payload: { text: "hello" } };
+const fetchMock = vi.fn();
+
+afterEach(() => {
+  fetchMock.mockReset();
+  vi.unstubAllGlobals();
+});
 
 describe("sseClient", () => {
   it("parses snapshot and delta events", () => {
@@ -48,4 +54,79 @@ describe("sseClient", () => {
     expect(gap.error?.status).toBe("sequence");
     expect(gap.nextExpectedSeq).toBe(4);
   });
+
+  it("delivers normal snapshot and sequence path", async () => {
+    const onEvent = vi.fn();
+    const onError = vi.fn();
+    fetchMock.mockResolvedValue(sseResponse([snapshot, delta]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await subscribeToChat({ baseUrl: "http://127.0.0.1:8001", token: "token" }, "chat-1", { onEvent, onError }, new AbortController().signal);
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(onEvent).toHaveBeenCalledTimes(2);
+    expect(onEvent.mock.calls.map(([event]) => event.type)).toEqual(["snapshot", "stream_delta"]);
+  });
+
+  it("reports sequence gap and does not deliver the invalid event", async () => {
+    const onEvent = vi.fn();
+    const onError = vi.fn();
+    const cancel = vi.fn();
+    fetchMock.mockResolvedValue(sseResponse([snapshot, { ...delta, seq: 3 }, { ...delta, seq: 4, payload: { text: "late" } }], cancel, false));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await subscribeToChat({ baseUrl: "http://127.0.0.1:8001", token: "token" }, "chat-1", { onEvent, onError }, new AbortController().signal);
+
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ status: "sequence" }));
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(onEvent).toHaveBeenCalledWith(snapshot);
+    expect(cancel).toHaveBeenCalled();
+  });
+
+  it("reports mismatched chat id and does not deliver the invalid event", async () => {
+    const onEvent = vi.fn();
+    const onError = vi.fn();
+    const cancel = vi.fn();
+    fetchMock.mockResolvedValue(sseResponse([snapshot, { ...delta, chatId: "chat-2" }], cancel, false));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await subscribeToChat({ baseUrl: "http://127.0.0.1:8001", token: "token" }, "chat-1", { onEvent, onError }, new AbortController().signal);
+
+    expect(onError).toHaveBeenCalledWith({ status: "protocol", message: "SSE event chat id did not match subscription." });
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(onEvent).toHaveBeenCalledWith(snapshot);
+    expect(cancel).toHaveBeenCalled();
+  });
+
+  it("cancels stream on fatal parse protocol error", async () => {
+    const onEvent = vi.fn();
+    const onError = vi.fn();
+    const cancel = vi.fn();
+    fetchMock.mockResolvedValue(rawSseResponse(`data: ${JSON.stringify(snapshot)}\n\ndata: {\n\n`, cancel, false));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await subscribeToChat({ baseUrl: "http://127.0.0.1:8001", token: "token" }, "chat-1", { onEvent, onError }, new AbortController().signal);
+
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ status: "parse" }));
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalled();
+  });
 });
+
+function sseResponse(events: unknown[], cancel?: () => void, close = true) {
+  return rawSseResponse(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), cancel, close);
+}
+
+function rawSseResponse(content: string, cancel?: () => void, close = true) {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode(content));
+      if (close) {
+        controller.close();
+      }
+    },
+    cancel,
+  });
+  return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+}
