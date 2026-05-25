@@ -25,8 +25,10 @@ class YetToolWindowFactoryTest {
         assertContains(html, "window.setTimeout")
         assertContains(html, "window.__yetAiSendHostMessageToFrame = sendToFrame")
         assertContains(html, "window.__yetAiSetRuntimeDiagnostic")
-        assertContains(html, "const pendingHostMessages = []")
-        assertContains(html, "const pendingDiagnostics = []")
+        assertContains(html, "const pendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : []")
+        assertContains(html, "const pendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : []")
+        assertContains(html, "window.__yetAiPendingHostMessages = pendingHostMessages")
+        assertContains(html, "window.__yetAiPendingDiagnostics = pendingDiagnostics")
         assertContains(html, "if (!frameReady) {")
         assertContains(html, "pendingHostMessages.push(message)")
         assertContains(html, "flushPending()")
@@ -66,6 +68,10 @@ class YetToolWindowFactoryTest {
         assertContains(source, "invokeLater {")
         assertContains(source, "if (!disposed) {")
         assertContains(source, "if (disposed) return")
+        assertContains(source, "window.__yetAiPendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : []")
+        assertContains(source, "window.__yetAiPendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : []")
+        assertContains(source, "window.__yetAiPendingHostMessages.push(message)")
+        assertContains(source, "window.__yetAiPendingDiagnostics.push(message)")
         assertContains(source, "disposed = true")
     }
 

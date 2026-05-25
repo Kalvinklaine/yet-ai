@@ -1,6 +1,7 @@
 package ai.yet.plugin.runtime
 
 import java.nio.file.Path
+import kotlin.io.path.createTempDirectory
 import kotlin.io.path.createTempFile
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.setPosixFilePermissions
@@ -162,8 +163,58 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun runtimeLogRedactionCoversCommonSecrets() {
+        val exactToken = "runtime-session-token"
+        val longOpaque = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        val jwt = "aaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbb.cccccccccccccccc"
+        val input = """
+            token runtime-session-token
+            Authorization: Bearer bearer-secret-value
+            provider sk-abcdefghijklmnopqrstuvwxyz
+            api_key=url-secret access_token=access-secret refresh_token=refresh-secret client_secret=client-secret session_token=session-secret cookie=cookie-secret set-cookie=set-cookie-secret code_verifier=verifier-secret pkce_verifier=pkce-secret verifier=plain-secret
+            {"access_token":"json-access","refresh_token":"json-refresh","api_key":"json-api","authorization":"json-auth","client_secret":"json-client","session_token":"json-session","cookie":"json-cookie","set-cookie":"json-set-cookie","code_verifier":"json-verifier","pkce_verifier":"json-pkce","verifier":"json-plain"}
+            jwt $jwt opaque $longOpaque file /Users/example/.codex/auth.json auth.json
+        """.trimIndent()
+
+        val redacted = redactLogText(input, exactToken)
+
+        listOf(
+            exactToken,
+            "bearer-secret-value",
+            "sk-abcdefghijklmnopqrstuvwxyz",
+            "url-secret",
+            "access-secret",
+            "refresh-secret",
+            "client-secret",
+            "session-secret",
+            "cookie-secret",
+            "set-cookie-secret",
+            "verifier-secret",
+            "pkce-secret",
+            "plain-secret",
+            "json-access",
+            "json-refresh",
+            "json-api",
+            "json-auth",
+            "json-client",
+            "json-session",
+            "json-cookie",
+            "json-set-cookie",
+            "json-verifier",
+            "json-pkce",
+            "json-plain",
+            jwt,
+            longOpaque,
+            ".codex/auth.json",
+            "auth.json",
+        ).forEach { secret -> assertFalse(redacted.contains(secret), "Leaked $secret in $redacted") }
+        assertTrue(redacted.contains("[redacted]"))
+        assertTrue(redacted.length <= 501)
+    }
+
+    @Test
     fun stopProcessDestroysAliveProcess() {
-        val process = ProcessBuilder("sh", "-c", "trap '' TERM; sleep 20").start()
+        val process = stubbornProcess() ?: return
         try {
             assertTrue(process.isAlive)
             assertTrue(stopProcess(process, waitMillis = 100))
@@ -172,6 +223,18 @@ class RuntimeConnectionManagerTest {
             if (process.isAlive) {
                 process.destroyForcibly()
             }
+        }
+    }
+
+    private fun stubbornProcess(): Process? {
+        val os = System.getProperty("os.name").lowercase()
+        return if (os.contains("win")) {
+            val script = createTempDirectory(prefix = "yet-stop-process").resolve("sleep.cmd")
+            java.nio.file.Files.writeString(script, "@echo off\r\nping -n 20 127.0.0.1 > nul\r\n")
+            ProcessBuilder("cmd", "/c", script.toString()).start()
+        } else {
+            val shell = listOf("/bin/sh", "/usr/bin/sh").firstOrNull { java.nio.file.Files.isExecutable(Path.of(it)) } ?: return null
+            ProcessBuilder(shell, "-c", "trap '' TERM; sleep 20").start()
         }
     }
 }

@@ -82,13 +82,33 @@ class YetBrowserPanel : JPanel(BorderLayout()), Disposable {
 
     private fun sendToGui(message: String) {
         if (disposed) return
-        browser.cefBrowser.executeJavaScript("window.__yetAiSendHostMessageToFrame($message);", browser.cefBrowser.url, 0)
+        browser.cefBrowser.executeJavaScript("""
+            (() => {
+              const message = $message;
+              if (typeof window.__yetAiSendHostMessageToFrame === "function") {
+                window.__yetAiSendHostMessageToFrame(message);
+                return;
+              }
+              window.__yetAiPendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : [];
+              window.__yetAiPendingHostMessages.push(message);
+            })();
+        """.trimIndent(), browser.cefBrowser.url, 0)
     }
 
     private fun sendDiagnostic(error: String) {
         if (disposed) return
         val escaped = BridgeMessages.escapeScriptJson(JsonPrimitive(error).toString())
-        browser.cefBrowser.executeJavaScript("window.__yetAiSetRuntimeDiagnostic($escaped);", browser.cefBrowser.url, 0)
+        browser.cefBrowser.executeJavaScript("""
+            (() => {
+              const message = $escaped;
+              if (typeof window.__yetAiSetRuntimeDiagnostic === "function") {
+                window.__yetAiSetRuntimeDiagnostic(message);
+                return;
+              }
+              window.__yetAiPendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : [];
+              window.__yetAiPendingDiagnostics.push(message);
+            })();
+        """.trimIndent(), browser.cefBrowser.url, 0)
     }
 
     override fun dispose() {
@@ -149,8 +169,10 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const shellFallback = document.getElementById("yet-ai-shell-fallback");
         let frameLoaded = false;
         let frameReady = false;
-        const pendingHostMessages = [];
-        const pendingDiagnostics = [];
+        const pendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : [];
+        const pendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : [];
+        window.__yetAiPendingHostMessages = pendingHostMessages;
+        window.__yetAiPendingDiagnostics = pendingDiagnostics;
         const showDiagnostic = (message) => {
           if (shellStatus && typeof message === "string") {
             shellStatus.hidden = false;
