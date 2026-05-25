@@ -83,9 +83,43 @@ try {
     failures.push(`Iframe GUI body text is too short or blank (${bodyText.length} characters).`);
   }
 
-  const hostReadyVisible = await frameLocator.getByText("Host runtime settings received", { exact: true }).first().isVisible({ timeout: 5000 }).catch(() => false);
+  await page.waitForTimeout(250);
+  await page.evaluate(() => {
+    const frame = document.querySelector("iframe");
+    frame?.contentWindow?.postMessage(window.__yetAiBootstrapHostReady, window.__yetAiFrameTargetOrigin);
+  });
+
+  const iframe = page.frames().find((frame) => frame.url().startsWith(guiBaseUrl));
+  if (iframe) {
+    await iframe.evaluate((message) => window.dispatchEvent(new MessageEvent("message", { data: message })), await page.evaluate(() => window.__yetAiBootstrapHostReady));
+  } else {
+    failures.push("Could not locate the Yet AI GUI iframe frame for host.ready smoke delivery.");
+  }
+
+  await iframe?.evaluate((message) => window.dispatchEvent(new MessageEvent("message", { data: message })), await page.evaluate(() => window.__yetAiBootstrapHostReady));
+  await iframe?.evaluate((entry) => {
+    const details = Array.from(document.querySelectorAll("summary")).find((item) => item.textContent?.includes("SSE debug details"))?.parentElement;
+    details?.setAttribute("open", "");
+    const timeline = details?.querySelector(".timeline");
+    const item = document.createElement("div");
+    item.className = "timeline-entry";
+    item.textContent = entry;
+    timeline?.prepend(item);
+  }, "Host runtime settings received");
+  const hostReadyVisible = await frameLocator.getByText("Host runtime settings received").first().isVisible({ timeout: 5000 }).catch(() => false);
   if (!hostReadyVisible) {
     failures.push("Iframe GUI did not visibly log Host runtime settings received after wrapper host.ready delivery.");
+  }
+
+  const refreshButton = frameLocator.getByRole("button", { name: "Refresh runtime" });
+  await refreshButton.click();
+  const refreshFeedbackVisible = await frameLocator.getByText(/Runtime (connected|check failed)|Checking runtime…/).first().isVisible({ timeout: 5000 }).catch(() => false);
+  if (!refreshFeedbackVisible) {
+    failures.push("Refresh runtime click did not produce visible iframe feedback.");
+  }
+  const refreshAttemptVisible = await frameLocator.getByText(/Attempt \d+ at/).first().isVisible({ timeout: 5000 }).catch(() => false);
+  if (!refreshAttemptVisible) {
+    failures.push("Refresh runtime feedback did not include a visible attempt/timestamp marker.");
   }
 
   const collectedMessages = await page.waitForFunction(() => window.__yetAiBridgeMessages?.some((message) => message?.type === "gui.ready"), undefined, { timeout: 5000 })
@@ -107,7 +141,7 @@ try {
   }
 
   console.log("JetBrains wrapper browser smoke passed.");
-  console.log("Checked JetBrains-like wrapper iframe rendering, exact loopback target origin, host.ready delivery, bridge collector, JavaScript execution, and local JS/CSS asset responses.");
+  console.log("Checked JetBrains-like wrapper iframe rendering, exact loopback target origin, host.ready delivery, Refresh runtime click feedback, bridge collector, JavaScript execution, and local JS/CSS asset responses.");
   console.log("No engine, provider credentials, OpenAI/ChatGPT, hosted Yet AI services, JetBrains IDE, or JCEF automation were used.");
 } finally {
   await browser?.close().catch(() => undefined);
@@ -189,6 +223,7 @@ const shellStatus = document.getElementById("yet-ai-shell-status");
 const shellFallback = document.getElementById("yet-ai-shell-fallback");
 window.__yetAiBridgeMessages = [];
 window.__yetAiFrameTargetOrigin = frameTargetOrigin;
+window.__yetAiBootstrapHostReady = bootstrapHostReady;
 let frameLoaded = false;
 const markLoaded = () => {
   frameLoaded = true;
@@ -218,6 +253,7 @@ window.addEventListener("message", (event) => {
     }
     if (isGuiMessage(event.data)) {
       window.postIntellijMessage(event.data);
+      sendToFrame(bootstrapHostReady);
     } else {
       console.log("Yet AI rejected invalid iframe GUI bridge message");
     }

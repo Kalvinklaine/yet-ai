@@ -47,7 +47,9 @@ The browser shell defaults to:
 http://127.0.0.1:8001
 ```
 
-A session token can be entered for local runtime API calls, or supplied by a trusted IDE host through a validated `host.ready` bridge message with `runtimeUrl` and `sessionToken`. The runtime clients attach it only after validating that the runtime URL is loopback (`127.0.0.1`, `localhost`, or `[::1]` / `::1`) over `http` or `https`:
+In VS Code or JetBrains plugin mode, the local runtime session token is normally supplied by the trusted IDE host through a validated `host.ready` bridge message. Paste a session token in the GUI only when connecting to a manually started runtime, for example one launched with `YET_AI_AUTH_TOKEN=local-dev-token`. This local runtime token authorizes GUI-to-runtime requests only; it is not an OpenAI key, project key, provider API key, or account login secret.
+
+A session token can be entered for local runtime API calls, or supplied by a trusted IDE host through a validated `host.ready` bridge message with `runtimeUrl` and optional `sessionToken`. The runtime clients attach it only after validating that the runtime URL is loopback (`127.0.0.1`, `localhost`, or `[::1]` / `::1`) over `http` or `https`:
 
 ```txt
 Authorization: Bearer <token>

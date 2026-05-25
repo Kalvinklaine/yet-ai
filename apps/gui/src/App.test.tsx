@@ -30,6 +30,64 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("runtime refresh feedback", () => {
+  it("manual Refresh runtime click shows in-flight feedback and then success status", async () => {
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    fetchMock.mockClear();
+
+    await act(async () => {
+      findButton("Refresh runtime").click();
+    });
+
+    expect(container?.textContent).toContain("Runtime connected");
+    expect(container?.textContent).toContain("Attempt 2 at");
+    expect(findButton("Refresh runtime").disabled).toBe(false);
+  });
+
+  it("failed Refresh runtime attempts are visibly distinguishable", async () => {
+    mockRuntimeResponses({ runtimeFailure: true });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Runtime check failed");
+    expect(container?.textContent).toContain("Attempt 1 at");
+
+    await act(async () => {
+      findButton("Refresh runtime").click();
+    });
+
+    expect(container?.textContent).toContain("Runtime check failed");
+    expect(container?.textContent).toContain("Attempt 2 at");
+    expect(findButton("Refresh runtime").disabled).toBe(false);
+  });
+
+  it("renders Session token guidance and does not persist a manually entered token", async () => {
+    const runtimeToken = "local-dev-token-secret";
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("normally provided by the IDE host through host.ready");
+    expect(container?.textContent).toContain("YET_AI_AUTH_TOKEN");
+    expect(container?.textContent).toContain("not an OpenAI key or provider API key");
+
+    await act(async () => {
+      setInputValue(sessionTokenInput(), runtimeToken);
+    });
+
+    expect(sessionTokenInput().value).toBe(runtimeToken);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(JSON.stringify(localStorage)).not.toContain(runtimeToken);
+    expect(JSON.stringify(sessionStorage)).not.toContain(runtimeToken);
+  });
+});
+
 describe("provider secret boundary", () => {
   it("renders OpenAI login unavailable with API key fallback", async () => {
     mockRuntimeResponses(readyRuntimeOptions());
@@ -659,6 +717,7 @@ type MockRuntimeOptions = {
   commandError?: string;
   providers?: unknown[];
   models?: unknown[];
+  runtimeFailure?: boolean;
 };
 
 function providerAuthResponse(status: ProviderAuthStatus): ProviderAuthResponse {
@@ -789,6 +848,9 @@ function mockRuntimeResponses(options: MockRuntimeOptions = {}) {
       }));
     }
     if (url.endsWith("/v1/ping")) {
+      if (options.runtimeFailure) {
+        return Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1:8001"));
+      }
       return Promise.resolve(jsonResponse({
         productId: "yet-ai",
         displayName: "Yet AI",
@@ -798,6 +860,9 @@ function mockRuntimeResponses(options: MockRuntimeOptions = {}) {
       }));
     }
     if (url.endsWith("/v1/caps")) {
+      if (options.runtimeFailure) {
+        return Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1:8001"));
+      }
       return Promise.resolve(jsonResponse({
         productId: "yet-ai",
         protocolVersion: "2026-05-15",
@@ -856,6 +921,14 @@ function findInputValue(value: string) {
 
 function findSelectValue(value: string) {
   return Array.from(container?.querySelectorAll<HTMLSelectElement>("select") ?? []).find((select) => select.value === value);
+}
+
+function sessionTokenInput() {
+  const input = Array.from(container?.querySelectorAll<HTMLInputElement>('input[type="password"]') ?? [])[0];
+  if (!input) {
+    throw new Error("Session token input not found");
+  }
+  return input;
 }
 
 function apiKeyInput() {
