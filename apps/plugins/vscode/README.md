@@ -87,6 +87,14 @@ This is the first manual path for trying the local-first VS Code dev preview wit
 
 8. Send a simple chat message, such as `Say hello in one sentence.` Confirm that the response streams in the GUI.
 
+For IDE-launched `auto` or `launch` mode, do not paste `local-dev-token` into the GUI. The extension generates a per-session local runtime token, starts `yet-lsp` with `YET_AI_AUTH_TOKEN`, and provides the token to the GUI through `host.ready`. Enter `local-dev-token` only when you deliberately use `connect` mode with a runtime started manually:
+
+```sh
+YET_AI_AUTH_TOKEN=local-dev-token YET_AI_HTTP_PORT=8001 cargo run -p yet-lsp
+```
+
+Then set `yetai.runtimeUrl` to `http://127.0.0.1:8001` and `yetai.sessionToken` to `local-dev-token`. This Session token is not an OpenAI API key or provider key.
+
 ## Optional local install/package route
 
 The primary path is Extension Development Host. If you want a local `.vsix` dev-preview package, use the VS Code packaging tool without adding it as a repository dependency:
@@ -164,10 +172,24 @@ Use this checklist after the steps above:
 - A simple chat message produces `snapshot`, stream start/delta, and finish behavior in the GUI.
 - For the real OpenAI API-key fallback smoke, the preset uses `https://api.openai.com/v1`, the API key field clears after save, and no automated test or committed file contains the real key.
 
+## Refresh runtime and first message
+
+In the packaged GUI, `Refresh runtime` checks `/v1/ping`, `/v1/caps`, `/v1/models`, provider summaries, and OpenAI provider-auth status through the local runtime. Connected feedback means the local runtime and provider/model metadata are reachable for current settings. Network/configuration errors usually point to the runtime URL, port, binary discovery, or process startup. Runtime `401` means the local Session token is wrong; provider `401` means the upstream OpenAI/OpenAI-compatible provider rejected the API key.
+
+First-message smoke:
+
+1. Prepare and open the VS Code dev preview.
+2. Use `auto` or `launch` mode, or use manual `connect` mode with the `YET_AI_AUTH_TOKEN=local-dev-token` command above.
+3. Click `Refresh runtime` and wait for connected feedback or a clear sanitized error.
+4. Configure the `OpenAI API` API-key fallback or a local OpenAI-compatible mock/provider. Provider keys belong only in the GUI Provider setup API key field, are sent to the local runtime, and clear after save.
+5. Send `Say hello in one sentence.` Expected behavior: the chat receives snapshot/start/delta/finish SSE updates and renders a short assistant response without any Yet AI hosted backend.
+
+Use `Yet AI: Show Runtime Status` to write sanitized local runtime diagnostics to the `Yet AI Runtime` output channel when GUI feedback is not enough.
+
 ## Troubleshooting
 
 - Missing Node dependencies: run `npm install` at the repository root, `apps/gui`, or `apps/plugins/vscode` if the corresponding command reports missing packages.
-- Token or `401` errors: in `auto` or `launch` mode, do not manually set `yetai.sessionToken`; the extension generates a token and passes it to the engine. In `connect` mode, make sure `yetai.sessionToken` matches the running engine's `YET_AI_AUTH_TOKEN`. Restart the Extension Development Host after changing token-related settings.
+- Runtime token or runtime `401` errors: in `auto` or `launch` mode, do not manually set `yetai.sessionToken` or paste `local-dev-token` into the GUI; the extension generates a token, passes it to the engine as `YET_AI_AUTH_TOKEN`, and sends it to the GUI through `host.ready`. In `connect` mode, make sure `yetai.sessionToken` matches the running engine's `YET_AI_AUTH_TOKEN`, for example `local-dev-token` only if you manually started the runtime with that value. Restart the Extension Development Host after changing token-related settings.
 - Provider `401` errors after the runtime is connected: the OpenAI-compatible provider rejected the API key. Check for a missing, expired, revoked, copied-with-whitespace, or wrong-project key. Paste it once in the GUI and save again; do not put it in VS Code settings or repository files.
 - Provider `429` errors: the upstream provider reported rate, quota, or billing limits. Wait, reduce test traffic, or check the provider account outside Yet AI.
 - Model errors: the selected model is unavailable for the key or endpoint. Update the provider model field to a chat model enabled for that account.

@@ -41,6 +41,16 @@ Manual IntelliJ IDEA install-from-disk steps:
 6. Open the Yet AI tool window and verify that the packaged GUI loads.
 7. Optional safe real-provider smoke: configure the OpenAI API-key fallback in the GUI, confirm the key field clears after save, then send a short chat prompt. The experimental OpenAI account path remains explicit-risk, mock-covered in automation, and any real account test is manual/high-risk/outside CI.
 
+For the normal plugin-launched path, do not paste `local-dev-token` into the GUI. Keep `Launch mode` as `auto` or `launch`; the plugin generates the local runtime session token, starts `yet-lsp` with it, stores debug tokens only in PasswordSafe when configured, and sends the active token to the GUI through trusted `host.ready`. Configure `Engine binary path = /absolute/path/to/target/debug/yet-lsp` only when discovery from `PATH` is insufficient.
+
+Use `local-dev-token` only for manual `connect` mode with a runtime you started yourself:
+
+```sh
+YET_AI_AUTH_TOKEN=local-dev-token YET_AI_HTTP_PORT=8001 cargo run -p yet-lsp
+```
+
+Then set JetBrains `Launch mode = connect`, `runtimeUrl = http://127.0.0.1:8001`, and the local session token to `local-dev-token`. This token is only the local runtime bearer token; it is not an OpenAI API key or provider key.
+
 Verify the installable artifact without launching IntelliJ IDEA:
 
 ```sh
@@ -155,10 +165,15 @@ Manual local preview:
 1. Build the GUI and plugin with the packaged GUI flow above.
 2. Set `launchMode` to `launch` or `auto` and set `engineBinaryPath` to an absolute `yet-lsp` binary path, or set `launchMode` to `connect` for an already running loopback engine.
 3. Open the Yet AI tool window or run `Yet AI: Open Chat`.
+4. Click `Refresh runtime` in the GUI. It checks `/v1/ping`, `/v1/caps`, `/v1/models`, provider summaries, and OpenAI provider-auth status through the local runtime.
+5. Configure either the `OpenAI API` API-key fallback or a local OpenAI-compatible mock/provider. The OpenAI/provider key belongs only in the Provider setup API key field, is sent to the local runtime, and is cleared after save; never put it in the Session token setting.
+6. Send `Say hello in one sentence.` Expected behavior: chat accepts the message and streams snapshot/start/delta/finish updates in the GUI without a Yet AI hosted backend.
 
 No privileged workspace edits, IDE tools, provider adapters, or provider credential persistence are implemented in this shell.
 
 ## Runtime diagnostics and restart
+
+Use the GUI `Refresh runtime` button first for normal troubleshooting. It checks `/v1/ping`, `/v1/caps`, `/v1/models`, provider summaries, and OpenAI provider-auth status through the local runtime. Connected feedback means the local runtime and provider/model metadata are reachable enough for the current settings. Network/configuration failures usually point to URL, port, launch mode, binary path, or runtime startup issues. Runtime `401` means the local Session token does not match the runtime's `YET_AI_AUTH_TOKEN`; provider `401` after runtime connection means the upstream provider rejected the OpenAI/OpenAI-compatible API key.
 
 Use Tools → `Yet AI: Show Runtime Status` when the tool window cannot connect, the packaged GUI reports runtime failures, or before filing a manual reinstall report. The status dialog is sanitized and includes the launch mode, loopback runtime URL without userinfo/query/hash, whether an engine binary path is configured, configured/discovered binary status, whether the plugin currently owns a launched process, the last `/v1/ping` health result or sanitized connection error, and mode-specific guidance for `auto`, `launch`, or `connect`.
 
