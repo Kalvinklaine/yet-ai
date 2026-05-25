@@ -682,7 +682,14 @@ async fn codex_exchange(
         return Err(ProviderAuthError::SessionExpired);
     }
 
-    let token = exchange_codex_token(&session, &code).await?;
+    let token = match exchange_codex_token(&session, &code).await {
+        Ok(token) => token,
+        Err(error) => {
+            codex.pending = Some(session);
+            write_codex_state(config_dir, provider, &codex).await?;
+            return Err(error);
+        }
+    };
     if token.access_token.trim().is_empty() {
         codex.pending = Some(session);
         write_codex_state(config_dir, provider, &codex).await?;

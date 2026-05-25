@@ -323,6 +323,51 @@ async fn start_mock_codex_token_endpoint_with(
     (format!("http://{address}/oauth/token"), body_receiver)
 }
 
+async fn start_flaky_codex_token_endpoint() -> (String, mpsc::Receiver<Value>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (body_sender, body_receiver) = mpsc::channel(4);
+    let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    tokio::spawn(async move {
+        let handler = move |request: axum::http::Request<Body>| {
+            let body_sender = body_sender.clone();
+            let attempts = attempts.clone();
+            async move {
+                let bytes = to_bytes(request.into_body(), usize::MAX).await.unwrap();
+                let body: Value = serde_json::from_slice(&bytes).unwrap();
+                let _ = body_sender.send(body).await;
+                if attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        [(header::CONTENT_TYPE, "application/json")],
+                        json!({
+                            "error": "temporary failure codex-access-token-secret-abcd codex-code-retry"
+                        })
+                        .to_string(),
+                    )
+                        .into_response();
+                }
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "application/json")],
+                    json!({
+                        "access_token": "codex-access-token-secret-abcd",
+                        "refresh_token": "codex-refresh-token-secret-wxyz",
+                        "expires_in": 1800,
+                        "scope": "openid profile email offline_access",
+                        "account_label": "mock-user@example.test"
+                    })
+                    .to_string(),
+                )
+                    .into_response()
+            }
+        };
+        let app = axum::Router::new().route("/oauth/token", axum::routing::post(handler));
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{address}/oauth/token"), body_receiver)
+}
+
 async fn connect_experimental_openai_oauth(
     app: axum::Router,
     token_endpoint_url: String,
@@ -927,6 +972,113 @@ async fn provider_auth_openai_experimental_exchange_stores_tokens_and_returns_co
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "connected");
     assert_provider_auth_response_has_no_codex_secrets(&body);
+}
+
+#[tokio::test]
+async fn provider_auth_openai_experimental_exchange_failure_keeps_pending_for_retry() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let (token_endpoint_url, mut token_body_receiver) = start_flaky_codex_token_endpoint().await;
+    let (status, start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(
+                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                    .to_string(),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let session_id = start["sessionId"].as_str().unwrap().to_string();
+    let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap()).to_string();
+    let exchange = json!({
+        "sessionId": session_id,
+        "state": state,
+        "code": "codex-code-retry"
+    });
+
+    let (status, failure) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from(exchange.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert_eq!(failure["error"], "provider auth token exchange failed");
+    assert_provider_auth_response_has_no_codex_secrets(&failure);
+
+    let first_token_body = token_body_receiver.recv().await.unwrap();
+    assert_eq!(first_token_body["code"], "codex-code-retry");
+    assert!(first_token_body["code_verifier"].as_str().unwrap().len() > 20);
+
+    let (status, pending) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::GET,
+            "/v1/provider-auth/openai/status",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(pending["status"], "pending");
+    assert_eq!(pending["sessionId"], session_id);
+    assert_provider_auth_response_has_no_codex_secrets(&pending);
+
+    let store = FileSecretStore::new(&paths.config_dir);
+    assert_eq!(
+        store
+            .get_secret("openai", SecretKind::OAuthAccessToken)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        store
+            .get_secret("openai", SecretKind::OAuthRefreshToken)
+            .await
+            .unwrap(),
+        None
+    );
+
+    let (status, connected) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from(exchange.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(connected["status"], "connected");
+    assert_provider_auth_response_has_no_codex_secrets(&connected);
+
+    let second_token_body = token_body_receiver.recv().await.unwrap();
+    assert_eq!(second_token_body["code"], "codex-code-retry");
+
+    let (status, duplicate) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from(exchange.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(duplicate["error"], "provider auth session was not found");
+    assert_provider_auth_response_has_no_codex_secrets(&duplicate);
 }
 
 #[tokio::test]
