@@ -74,10 +74,11 @@ export function exchangeProviderAuth(
   provider: string,
   sessionId: string,
   code?: string,
+  state?: string,
 ): Promise<RuntimeResult<ProviderAuthExchangeResponse>> {
   return runtimeFetch<ProviderAuthExchangeResponse>(settings, `/v1/provider-auth/${encodeURIComponent(provider)}/exchange`, {
     method: "POST",
-    body: JSON.stringify({ sessionId, code }),
+    body: JSON.stringify({ sessionId, code, state }),
   });
 }
 

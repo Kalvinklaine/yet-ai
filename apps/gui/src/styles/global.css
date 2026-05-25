@@ -150,6 +150,17 @@ textarea {
   padding: 14px;
 }
 
+.manual-exchange-card {
+  border: 1px solid #cdd8ff;
+  border-radius: 14px;
+  background: #f6f8ff;
+  padding: 14px;
+}
+
+.auth-code-row label {
+  flex: 1 1 260px;
+}
+
 .danger-button {
   background: #9f2d20;
 }

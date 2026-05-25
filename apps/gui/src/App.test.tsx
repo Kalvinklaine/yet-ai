@@ -101,6 +101,112 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).toContain("Use OpenAI API key fallback");
   });
 
+  it("enables pending experimental authorization-code exchange", async () => {
+    mockRuntimeResponses({ authResponse: pendingExperimentalAuthResponse() });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Manual authorization-code exchange");
+    expect(findButton("Exchange authorization code").disabled).toBe(true);
+
+    await act(async () => {
+      setInputValue(authCodeInput(), "manual-code-123");
+    });
+
+    expect(findButton("Exchange authorization code").disabled).toBe(false);
+  });
+
+  it("sends session id state and code for manual exchange and clears code", async () => {
+    const code = "manual-code-456";
+    mockRuntimeResponses({ authResponse: pendingExperimentalAuthResponse(), exchangeResponse: connectedExperimentalAuthResponse() });
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      setInputValue(authCodeInput(), code);
+    });
+    await act(async () => {
+      findButton("Exchange authorization code").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const exchangeCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/provider-auth/openai/exchange") && init?.method === "POST");
+    expect(exchangeCall?.[1]?.body).toBe(JSON.stringify({ sessionId: "provider-login-session-001", code, state: "codex-state-001" }));
+    expect(authCodeInputOptional()?.value ?? "").toBe("");
+  });
+
+  it("renders connected sanitized status after successful manual exchange", async () => {
+    mockRuntimeResponses({ authResponse: pendingExperimentalAuthResponse(), exchangeResponse: connectedExperimentalAuthResponse() });
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      setInputValue(authCodeInput(), "manual-code-789");
+    });
+    await act(async () => {
+      findButton("Exchange authorization code").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("OpenAI account login is connected through the local runtime.");
+    expect(container?.textContent).toContain("Account: user@example.test");
+    expect(container?.textContent).not.toContain("manual-code-789");
+    expect(container?.textContent).not.toContain("access_token");
+  });
+
+  it("renders sanitized manual exchange failures and clears code", async () => {
+    const code = "manual-code-fail";
+    const rawToken = "access_token=" + "a".repeat(64);
+    mockRuntimeResponses({
+      authResponse: pendingExperimentalAuthResponse(),
+      exchangeResponse: {
+        ...providerAuthResponse("expired"),
+        configured: false,
+        success: false,
+        lastError: `Expired duplicate exchange ${rawToken} verifier=${"b".repeat(64)} auth.json cookie=secret`,
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      setInputValue(authCodeInput(), code);
+    });
+    await act(async () => {
+      findButton("Exchange authorization code").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(authCodeInputOptional()?.value ?? "").toBe("");
+    expect(container?.textContent).toContain("Expired duplicate exchange [redacted]");
+    expect(container?.textContent).not.toContain(code);
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("verifier");
+    expect(container?.textContent).not.toContain("auth.json");
+    expect(container?.textContent).not.toContain("cookie=secret");
+  });
+
+  it("disables manual exchange when pending authorization state cannot be parsed", async () => {
+    mockRuntimeResponses({ authResponse: { ...pendingExperimentalAuthResponse(), authorizationUrl: "not a url" } });
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      setInputValue(authCodeInput(), "manual-code-disabled");
+    });
+
+    expect(container?.textContent).toContain("Authorization state cannot be parsed from the pending login response.");
+    expect(findButton("Exchange authorization code").disabled).toBe(true);
+  });
+
   it("default OpenAI login does not start the experimental path", async () => {
     vi.spyOn(window, "open").mockImplementation(() => null);
     mockRuntimeResponses({ authSupportsLogin: true });
@@ -525,6 +631,7 @@ type MockRuntimeOptions = {
   authResponse?: ProviderAuthResponse;
   startAuthUrl?: string;
   startAuthMessage?: string;
+  exchangeResponse?: ProviderAuthResponse & { success: boolean };
   sseEvents?: unknown[];
   commandStatus?: number;
   commandError?: string;
@@ -547,6 +654,31 @@ function providerAuthResponse(status: ProviderAuthStatus): ProviderAuthResponse 
     expiresAt: status === "connected" || status === "expired" ? "2026-05-24T01:00:00Z" : undefined,
     redacted: status === "api_key_configured" ? "sk-...test" : undefined,
     pollIntervalSeconds: status === "pending" ? 5 : undefined,
+  };
+}
+
+function pendingExperimentalAuthResponse(): ProviderAuthResponse {
+  return {
+    provider: "openai",
+    configured: false,
+    status: "pending",
+    authSource: "oauth",
+    supportsLogin: true,
+    supportsApiKey: true,
+    authorizationUrl: "https://auth.openai.com/oauth/authorize?client_id=yet-ai-local&state=codex-state-001",
+    sessionId: "provider-login-session-001",
+    expiresAt: "2026-05-24T01:00:00Z",
+    scopes: ["openid", "profile", "email", "offline_access"],
+    cloudRequired: false,
+    message: "Experimental high-risk Codex-like OpenAI login is pending.",
+  };
+}
+
+function connectedExperimentalAuthResponse(): ProviderAuthResponse & { success: boolean } {
+  return {
+    ...providerAuthResponse("connected"),
+    success: true,
+    message: "OpenAI login is connected.",
   };
 }
 
@@ -604,6 +736,9 @@ function mockRuntimeResponses(options: MockRuntimeOptions = {}) {
         success: true,
         message: options.startAuthMessage ?? "Open the authorization URL to continue signing in.",
       }));
+    }
+    if (init?.method === "POST" && url.endsWith("/v1/provider-auth/openai/exchange")) {
+      return Promise.resolve(jsonResponse(options.exchangeResponse ?? connectedExperimentalAuthResponse()));
     }
     if (init?.method === "POST" && url.endsWith("/v1/providers")) {
       return Promise.resolve(jsonResponse({
@@ -707,6 +842,18 @@ function apiKeyInput() {
     throw new Error("API key input not found");
   }
   return input;
+}
+
+function authCodeInput() {
+  const input = authCodeInputOptional();
+  if (!input) {
+    throw new Error("Authorization code input not found");
+  }
+  return input;
+}
+
+function authCodeInputOptional() {
+  return Array.from(container?.querySelectorAll<HTMLInputElement>('input[type="password"]') ?? []).find((item) => item.placeholder === "Paste authorization code");
 }
 
 function chatInput() {
