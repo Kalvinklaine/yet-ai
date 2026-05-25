@@ -1607,6 +1607,123 @@ describe("chat panel", () => {
     expect(container?.textContent).not.toContain("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
   });
 
+  it("redacts terminal command runtime errors before rendering", async () => {
+    const apiKey = "sk-test-command-placeholder";
+    const opaqueToken = "Z".repeat(64);
+    const jwt = `${"a".repeat(16)}.${"b".repeat(16)}.${"c".repeat(16)}`;
+    const rawFragments = [
+      "test-runtime-token",
+      apiKey,
+      "command-cookie-secret",
+      "command-set-cookie-secret",
+      "command-query-secret",
+      "command-oauth-secret",
+      "auth.json",
+      opaqueToken,
+      jwt,
+    ];
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      commandStatus: 500,
+      commandError: [
+        "terminal command failed",
+        "Authorization: Bearer test-runtime-token",
+        apiKey,
+        "Cookie: session=command-cookie-secret",
+        "setCookie=sid=command-set-cookie-secret",
+        "https://callback.test/return?api_key=command-query-secret",
+        "oauth_refresh_token=command-oauth-secret",
+        "../.codex/auth.json",
+        opaqueToken,
+        jwt,
+      ].join("\n"),
+    });
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "Fail with terminal command error");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Error");
+    expect(text).toContain("terminal command failed");
+    expect(text).toContain("[redacted]");
+    for (const fragment of rawFragments) {
+      expect(text).not.toContain(fragment);
+    }
+  });
+
+  it("redacts terminal SSE error events and stops assistant streaming", async () => {
+    const opaqueToken = "Y".repeat(64);
+    const jwt = `${"d".repeat(16)}.${"e".repeat(16)}.${"f".repeat(16)}`;
+    const rawFragments = [
+      "test-runtime-token",
+      "sse-api-placeholder",
+      "sse-cookie-secret",
+      "sse-set-cookie-secret",
+      "sse-query-secret",
+      "sse-oauth-secret",
+      "auth.json",
+      opaqueToken,
+      jwt,
+    ];
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      sseEvents: [
+        { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
+        { seq: 1, type: "stream_started", chatId: "chat-001", payload: {} },
+        { seq: 2, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: "Partial safe answer" } } },
+        {
+          seq: 3,
+          type: "error",
+          chatId: "chat-001",
+          payload: {
+            message: [
+              "terminal SSE failed",
+              "Authorization: Bearer test-runtime-token",
+              "OPENAI_API_KEY=sse-api-placeholder",
+              "Cookie: session=sse-cookie-secret",
+              "setCookie=sid=sse-set-cookie-secret",
+              "https://callback.test/return?api_key=sse-query-secret",
+              "oauth_refresh_token=sse-oauth-secret",
+              "../.codex/auth.json",
+              opaqueToken,
+              jwt,
+            ].join("\n"),
+          },
+        },
+      ],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "Stream then terminal error");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Partial safe answer");
+    expect(text).toContain("Error");
+    expect(text).toContain("terminal SSE failed");
+    expect(text).toContain("[redacted]");
+    expect(text).not.toContain("Assistant is streaming…");
+    for (const fragment of rawFragments) {
+      expect(text).not.toContain(fragment);
+    }
+  });
+
   it("changing chat id clears messages for the new chat", async () => {
     mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
