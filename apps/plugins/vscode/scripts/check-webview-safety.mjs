@@ -63,23 +63,27 @@ if (!/Object\.keys\(message\)\.every\(\(key\) => key === "version" \|\| key === 
 }
 
 const originalLoad = Module._load;
-Module._load = function load(request, parent, isMain) {
-  if (request === "vscode") {
-    return {
-      Uri: {
-        joinPath(base, ...segments) {
-          return { fsPath: path.join(base.fsPath, ...segments) };
+let renderWebviewHtml;
+try {
+  Module._load = function load(request, parent, isMain) {
+    if (request === "vscode") {
+      return {
+        Uri: {
+          joinPath(base, ...segments) {
+            return { fsPath: path.join(base.fsPath, ...segments) };
+          },
+          parse(value) {
+            return { fsPath: value };
+          },
         },
-        parse(value) {
-          return { fsPath: value };
-        },
-      },
-    };
-  }
-  return originalLoad.call(this, request, parent, isMain);
-};
-const { renderWebviewHtml } = await import("../out/webview.js");
-Module._load = originalLoad;
+      };
+    }
+    return originalLoad.call(this, request, parent, isMain);
+  };
+  ({ renderWebviewHtml } = await import("../out/webview.js"));
+} finally {
+  Module._load = originalLoad;
+}
 
 const fakeSecretValues = [
   "fake-session-token-webview-behavioral-sentinel",
@@ -196,25 +200,33 @@ try {
   fs.rmSync(tempExtensionRoot, { recursive: true, force: true });
 }
 
-const httpsGuiDevHtml = renderWebviewHtml(webview, extensionUri, identity, {
-  ...connection,
-  guiDevUrl: "https://127.0.0.1:5173",
-});
-
-assertNoSecretSentinels(httpsGuiDevHtml, fakeSecretValues, "VS Code HTTPS loopback webview render");
-
-const httpsLoopbackPatterns = [
-  /<iframe title="Yet AI Test GUI" src="https:\/\/127\.0\.0\.1:5173"><\/iframe>/,
-  /frame-src [^";]*http:\/\/127\.0\.0\.1:\* [^";]*http:\/\/localhost:\* [^";]*http:\/\/\[::1\]:\* [^";]*https:\/\/127\.0\.0\.1:\* [^";]*https:\/\/localhost:\* [^";]*https:\/\/\[::1\]:\*/,
+const httpsLoopbackFrameSourcePattern = /frame-src [^";]*http:\/\/127\.0\.0\.1:\* [^";]*http:\/\/localhost:\* [^";]*http:\/\/\[::1\]:\* [^";]*https:\/\/127\.0\.0\.1:\* [^";]*https:\/\/localhost:\* [^";]*https:\/\/\[::1\]:\*/;
+const httpsLoopbackGuiDevUrls = [
+  "https://127.0.0.1:5173",
+  "https://localhost:5173",
+  "https://[::1]:5173",
 ];
 
-for (const pattern of httpsLoopbackPatterns) {
-  if (!pattern.test(httpsGuiDevHtml)) {
-    throw new Error(`VS Code HTTPS loopback webview render missing expected structure: ${pattern}`);
-  }
-}
+for (const guiDevUrl of httpsLoopbackGuiDevUrls) {
+  const httpsGuiDevHtml = renderWebviewHtml(webview, extensionUri, identity, {
+    ...connection,
+    guiDevUrl,
+  });
+  const label = `VS Code HTTPS loopback webview render for ${guiDevUrl}`;
 
-assertNoInlineSessionToken(httpsGuiDevHtml, "VS Code HTTPS loopback webview render");
+  assertNoSecretSentinels(httpsGuiDevHtml, fakeSecretValues, label);
+
+  const expectedIframe = `<iframe title="Yet AI Test GUI" src="${guiDevUrl}"></iframe>`;
+  if (!httpsGuiDevHtml.includes(expectedIframe)) {
+    throw new Error(`${label} missing exact iframe src: ${expectedIframe}`);
+  }
+
+  if (!httpsLoopbackFrameSourcePattern.test(httpsGuiDevHtml)) {
+    throw new Error(`${label} missing HTTPS loopback CSP frame-src entries.`);
+  }
+
+  assertNoInlineSessionToken(httpsGuiDevHtml, label);
+}
 
 function assertNoSecretSentinels(html, values, label) {
   for (const value of values) {
