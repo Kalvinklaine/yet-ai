@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import Module from "node:module";
+import os from "node:os";
 import path from "node:path";
 
 const source = fs.readFileSync(path.join(process.cwd(), "src/webview.ts"), "utf8");
@@ -86,71 +87,115 @@ const fakeSecretValues = [
   "connection.sessionToken",
 ];
 
-const html = renderWebviewHtml(
-  {
-    cspSource: "vscode-resource://yet-ai-test",
-    asWebviewUri(uri) {
-      return {
-        toString() {
-          return `vscode-resource://yet-ai-test/${uri.fsPath}`;
-        },
-      };
-    },
-  },
-  { fsPath: path.join(process.cwd(), "__missing_extension_root__") },
-  {
-    product: {
-      id: "yet-ai-test",
-      displayName: "Yet AI Test",
-    },
-    engine: {
-      binaryName: "yet-lsp",
-    },
-    gui: {
-      npmPackage: "@yet-ai/gui",
-    },
-    vscode: {
-      publisher: "yet-ai-placeholder",
-      name: "yet-ai",
-      displayName: "Yet AI Test",
-      configurationPrefix: "yetai",
-      commandPrefix: "yetaicmd",
-      activityBarId: "yet-ai-toolbox-pane",
-    },
-  },
-  {
-    runtimeUrl: "http://127.0.0.1:8025",
-    sessionToken: "fake-session-token-webview-behavioral-sentinel",
-    providerApiKey: "sk-webview-behavioral-provider-key-sentinel",
-    headers: {
-      Authorization: "Bearer fake-session-token-webview-behavioral-sentinel",
-    },
-  },
-);
+const tempExtensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), "yet-ai-vscode-webview-safety-"));
+try {
+  const fakeGuiRoot = path.join(tempExtensionRoot, "media", "gui");
+  fs.mkdirSync(path.join(fakeGuiRoot, "assets"), { recursive: true });
+  fs.writeFileSync(
+    path.join(fakeGuiRoot, "index.html"),
+    `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Fake Packaged GUI</title>
+  <link rel="stylesheet" href="./assets/app.css">
+</head>
+<body>
+  <main data-yet-ai-packaged-gui-marker="behavioral-safety-check">Fake packaged GUI marker</main>
+  <link rel="stylesheet" href="./assets/app.css">
+  <script type="module" src="/assets/app.js"></script>
+</body>
+</html>`,
+  );
+  fs.writeFileSync(path.join(fakeGuiRoot, "assets", "app.js"), "window.fakeYetAiPackagedGui = true;\n");
+  fs.writeFileSync(path.join(fakeGuiRoot, "assets", "app.css"), "body { color: var(--vscode-foreground); }\n");
 
-for (const value of fakeSecretValues) {
-  if (html.includes(value)) {
-    throw new Error(`VS Code behavioral webview render leaked secret sentinel: ${value}`);
+  const html = renderWebviewHtml(
+    {
+      cspSource: "vscode-resource://yet-ai-test",
+      asWebviewUri(uri) {
+        return {
+          toString() {
+            return `vscode-resource://yet-ai-test/${path.relative(tempExtensionRoot, uri.fsPath).replaceAll(path.sep, "/")}`;
+          },
+        };
+      },
+    },
+    { fsPath: tempExtensionRoot },
+    {
+      product: {
+        id: "yet-ai-test",
+        displayName: "Yet AI Test",
+      },
+      engine: {
+        binaryName: "yet-lsp",
+      },
+      gui: {
+        npmPackage: "@yet-ai/gui",
+      },
+      vscode: {
+        publisher: "yet-ai-placeholder",
+        name: "yet-ai",
+        displayName: "Yet AI Test",
+        configurationPrefix: "yetai",
+        commandPrefix: "yetaicmd",
+        activityBarId: "yet-ai-toolbox-pane",
+      },
+    },
+    {
+      runtimeUrl: "http://127.0.0.1:8025",
+      sessionToken: "fake-session-token-webview-behavioral-sentinel",
+      providerApiKey: "sk-webview-behavioral-provider-key-sentinel",
+      headers: {
+        Authorization: "Bearer fake-session-token-webview-behavioral-sentinel",
+      },
+    },
+  );
+
+  for (const value of fakeSecretValues) {
+    if (html.includes(value)) {
+      throw new Error(`VS Code behavioral webview render leaked secret sentinel: ${value}`);
+    }
   }
-}
 
-const requiredHtmlPatterns = [
-  /<meta http-equiv="Content-Security-Policy" content="[^"]*script-src [^"]*'nonce-[^']+'[^"]*">/,
-  /<style nonce="[^"]+">/,
-  /<script nonce="[^"]+">/,
-  /const vscode = acquireVsCodeApi\(\);/,
-  /window\.yetAiBootstrap = bootstrap;/,
-  /vscode\.postMessage\(\{ version: bootstrap\.bridgeVersion, type: "gui\.ready"/,
-];
+  const requiredHtmlPatterns = [
+    /<meta http-equiv="Content-Security-Policy" content="[^"]*script-src [^"]*'nonce-[^']+'[^"]*">/,
+    /<style nonce="[^"]+">/,
+    /<script nonce="[^"]+">/,
+    /const vscode = acquireVsCodeApi\(\);/,
+    /window\.yetAiBootstrap = bootstrap;/,
+    /vscode\.postMessage\(\{ version: bootstrap\.bridgeVersion, type: "gui\.ready"/,
+  ];
 
-for (const pattern of requiredHtmlPatterns) {
-  if (!pattern.test(html)) {
-    throw new Error(`VS Code behavioral webview render missing expected safety structure: ${pattern}`);
+  for (const pattern of requiredHtmlPatterns) {
+    if (!pattern.test(html)) {
+      throw new Error(`VS Code behavioral webview render missing expected safety structure: ${pattern}`);
+    }
   }
-}
 
-if (/sessionToken\s*:/.test(html) || /"sessionToken"/.test(html)) {
-  throw new Error("VS Code behavioral webview render must not expose inline sessionToken data.");
+  if (!html.includes('data-yet-ai-packaged-gui-marker="behavioral-safety-check"')) {
+    throw new Error("VS Code behavioral webview render did not use the packaged GUI path.");
+  }
+
+  if (html.includes("Local runtime shell is ready")) {
+    throw new Error("VS Code behavioral webview render unexpectedly used the fallback placeholder path.");
+  }
+
+  const expectedAssetUris = [
+    'href="vscode-resource://yet-ai-test/media/gui/assets/app.css"',
+    'src="vscode-resource://yet-ai-test/media/gui/assets/app.js"',
+  ];
+  for (const expectedAssetUri of expectedAssetUris) {
+    if (!html.includes(expectedAssetUri)) {
+      throw new Error(`VS Code behavioral webview render did not rewrite packaged asset URI: ${expectedAssetUri}`);
+    }
+  }
+
+  if (/sessionToken\s*:/.test(html) || /"sessionToken"/.test(html)) {
+    throw new Error("VS Code behavioral webview render must not expose inline sessionToken data.");
+  }
+} finally {
+  fs.rmSync(tempExtensionRoot, { recursive: true, force: true });
 }
 
 function extractSection(startMarker, endMarker, haystack = source) {
