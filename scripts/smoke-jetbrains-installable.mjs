@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jetbrainsRoot = path.join(root, "apps", "plugins", "jetbrains");
 const distributionsDir = path.join(jetbrainsRoot, "build", "distributions");
+const rootDistDir = path.join(root, "dist", "plugins", "jetbrains");
 const failures = [];
 
 const zipPaths = await findDistributionZips();
@@ -17,6 +19,13 @@ if (zipPaths.length === 0) {
   for (const zipPath of zipPaths) {
     await checkZip(zipPath);
   }
+}
+
+const rootDistZipPath = await findRootDistZip();
+if (rootDistZipPath === undefined) {
+  failures.push("No root JetBrains dev-preview artifact found under dist/plugins/jetbrains/. Run `npm run prepare:jetbrains-preview` first.");
+} else {
+  await checkRootDistArtifact(rootDistZipPath);
 }
 
 await checkDocs();
@@ -33,7 +42,62 @@ console.log("JetBrains installable ZIP smoke passed.");
 for (const zipPath of zipPaths) {
   console.log(`Checked ${path.relative(root, zipPath)}.`);
 }
+if (rootDistZipPath !== undefined) {
+  console.log(`Checked ${path.relative(root, rootDistZipPath)} and checksum.`);
+}
 console.log("Verified installable ZIP structure and manual install docs without launching an IDE, using provider credentials, calling OpenAI, or contacting hosted Yet AI services.");
+
+async function findRootDistZip() {
+  try {
+    const entries = await readdir(rootDistDir);
+    const zips = [];
+    for (const entry of entries) {
+      if (!entry.endsWith("-dev-preview.zip")) {
+        continue;
+      }
+      const zipPath = path.join(rootDistDir, entry);
+      const zipStat = await stat(zipPath);
+      if (zipStat.isFile()) {
+        zips.push(zipPath);
+      }
+    }
+    if (zips.length > 1) {
+      failures.push("dist/plugins/jetbrains/ must contain exactly one current dev-preview ZIP after prepare.");
+    }
+    return zips.sort()[0];
+  } catch {
+    return undefined;
+  }
+}
+
+async function checkRootDistArtifact(zipPath) {
+  const relativeZip = path.relative(root, zipPath);
+  if (!path.basename(zipPath).match(/^yet-ai-jetbrains-.+-dev-preview\.zip$/)) {
+    failures.push(`${relativeZip} must use the stable yet-ai-jetbrains-<version>-dev-preview.zip naming pattern.`);
+  }
+  await checkChecksum(zipPath);
+  await checkZip(zipPath);
+}
+
+async function checkChecksum(zipPath) {
+  const checksumPath = `${zipPath}.sha256`;
+  let checksumText;
+  try {
+    checksumText = await readFile(checksumPath, "utf8");
+  } catch {
+    failures.push(`${path.relative(root, checksumPath)} must exist next to the root dev-preview ZIP.`);
+    return;
+  }
+  const expected = checksumText.trim().split(/\s+/)[0];
+  if (!expected?.match(/^[a-f0-9]{64}$/i)) {
+    failures.push(`${path.relative(root, checksumPath)} must contain a SHA-256 digest.`);
+    return;
+  }
+  const actual = createHash("sha256").update(await readFile(zipPath)).digest("hex");
+  if (actual.toLowerCase() !== expected.toLowerCase()) {
+    failures.push(`${path.relative(root, checksumPath)} does not match ${path.relative(root, zipPath)}.`);
+  }
+}
 
 async function findDistributionZips() {
   try {
@@ -168,6 +232,8 @@ async function checkDocs() {
   requireDoc(combined, "Engine binary path", "Docs must mention Engine binary path expectations for the local runtime.");
   requireDoc(combined, "npm run prepare:jetbrains-preview", "Docs must mention the one-command JetBrains preview preparation command.");
   requireDoc(combined, "npm run smoke:jetbrains-installable", "Docs must mention the installable ZIP smoke command.");
+  requireDoc(combined, "dist/plugins/jetbrains/", "Docs must mention the stable root JetBrains dev-preview artifact directory.");
+  requireDoc(combined, "yet-ai-jetbrains-<version>-dev-preview.zip", "Docs must mention the stable root JetBrains dev-preview ZIP naming pattern.");
   requireDoc(combined, "No provider credentials", "Docs must state provider credentials are not required for the installable smoke.");
   requireDoc(combined, "no signing", "Docs must keep dev-preview limitations clear and avoid release overclaims.");
 }

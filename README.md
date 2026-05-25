@@ -92,13 +92,13 @@ export PATH="$HOME/.cargo/bin:$PATH"
 npm run prepare:jetbrains-preview
 ```
 
-The command builds/prepares `yet-lsp`, builds `apps/gui`, runs the JetBrains Gradle build, and prints the ZIP path under `apps/plugins/jetbrains/build/distributions/` plus the local `Engine binary path` to configure when the plugin cannot discover the engine from `PATH`.
+The command builds/prepares `yet-lsp`, builds `apps/gui`, runs the JetBrains Gradle build, prints the original ZIP path under `apps/plugins/jetbrains/build/distributions/`, and copies the current dev-preview artifact plus checksum to the stable ignored root path `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip` and `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip.sha256`. It also prints the local `Engine binary path` to configure when the plugin cannot discover the engine from `PATH`.
 
 Manual IntelliJ IDEA smoke steps:
 
 1. Run `npm run prepare:jetbrains-preview`.
 2. Open IntelliJ IDEA Settings/Preferences → Plugins → gear → Install Plugin from Disk.
-3. Choose the printed ZIP and restart the IDE.
+3. Choose the stable root ZIP at `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip` and restart the IDE. The Gradle output path printed under `apps/plugins/jetbrains/build/distributions/` is kept for diagnostics.
 4. Set `Launch mode` / `Engine binary path` if needed.
 5. Open the Yet AI tool window and verify the packaged UI/chat path.
 6. Optional safe provider smoke: use the OpenAI API-key fallback. The experimental account login remains explicit-risk; automated coverage is mock-only and real account testing is manual/high-risk/outside CI.
@@ -109,7 +109,7 @@ Validate the local ZIP without launching an IDE:
 npm run smoke:jetbrains-installable
 ```
 
-The smoke checks ZIP structure and docs only. No provider credentials, real OpenAI/ChatGPT calls, hosted Yet AI services, signing, marketplace publication, production installer, or bundled notarized engine are involved.
+The smoke checks Gradle ZIP structure, the copied root `dist/plugins/jetbrains/` dev-preview artifact, checksum matching, packaged GUI contents, and docs only. No provider credentials, real OpenAI/ChatGPT calls, hosted Yet AI services, signing, marketplace publication, production installer, or bundled notarized engine are involved.
 
 ### Manual OpenAI API-key milestone smoke
 
