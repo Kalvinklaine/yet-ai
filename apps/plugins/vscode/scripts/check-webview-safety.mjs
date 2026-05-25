@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import Module from "node:module";
 import path from "node:path";
 
 const source = fs.readFileSync(path.join(process.cwd(), "src/webview.ts"), "utf8");
@@ -58,6 +59,98 @@ if (!/const isBoundedRequestId = \(value\) => value === undefined \|\| \(typeof 
 
 if (!/Object\.keys\(message\)\.every\(\(key\) => key === "version" \|\| key === "type" \|\| key === "requestId" \|\| key === "payload"\)/.test(renderWebviewHtmlSource)) {
   throw new Error("VS Code webview wrapper must reject gui.ready messages with extra top-level fields.");
+}
+
+const originalLoad = Module._load;
+Module._load = function load(request, parent, isMain) {
+  if (request === "vscode") {
+    return {
+      Uri: {
+        joinPath(base, ...segments) {
+          return { fsPath: path.join(base.fsPath, ...segments) };
+        },
+      },
+    };
+  }
+  return originalLoad.call(this, request, parent, isMain);
+};
+const { renderWebviewHtml } = await import("../out/webview.js");
+Module._load = originalLoad;
+
+const fakeSecretValues = [
+  "fake-session-token-webview-behavioral-sentinel",
+  "sk-webview-behavioral-provider-key-sentinel",
+  "Bearer fake-session-token-webview-behavioral-sentinel",
+  "Authorization",
+  "sessionToken",
+  "connection.sessionToken",
+];
+
+const html = renderWebviewHtml(
+  {
+    cspSource: "vscode-resource://yet-ai-test",
+    asWebviewUri(uri) {
+      return {
+        toString() {
+          return `vscode-resource://yet-ai-test/${uri.fsPath}`;
+        },
+      };
+    },
+  },
+  { fsPath: path.join(process.cwd(), "__missing_extension_root__") },
+  {
+    product: {
+      id: "yet-ai-test",
+      displayName: "Yet AI Test",
+    },
+    engine: {
+      binaryName: "yet-lsp",
+    },
+    gui: {
+      npmPackage: "@yet-ai/gui",
+    },
+    vscode: {
+      publisher: "yet-ai-placeholder",
+      name: "yet-ai",
+      displayName: "Yet AI Test",
+      configurationPrefix: "yetai",
+      commandPrefix: "yetaicmd",
+      activityBarId: "yet-ai-toolbox-pane",
+    },
+  },
+  {
+    runtimeUrl: "http://127.0.0.1:8025",
+    sessionToken: "fake-session-token-webview-behavioral-sentinel",
+    providerApiKey: "sk-webview-behavioral-provider-key-sentinel",
+    headers: {
+      Authorization: "Bearer fake-session-token-webview-behavioral-sentinel",
+    },
+  },
+);
+
+for (const value of fakeSecretValues) {
+  if (html.includes(value)) {
+    throw new Error(`VS Code behavioral webview render leaked secret sentinel: ${value}`);
+  }
+}
+
+const requiredHtmlPatterns = [
+  /<meta http-equiv="Content-Security-Policy" content="[^"]*script-src [^"]*'nonce-[^']+'[^"]*">/,
+  /<style nonce="[^"]+">/,
+  /<script nonce="[^"]+">/,
+  /const vscode = acquireVsCodeApi\(\);/,
+  /window\.yetAiBootstrap = bootstrap;/,
+  /vscode\.postMessage\(\{ version: bootstrap\.bridgeVersion, type: "gui\.ready"/,
+];
+
+for (const pattern of requiredHtmlPatterns) {
+  if (!pattern.test(html)) {
+    throw new Error(`VS Code behavioral webview render missing expected safety structure: ${pattern}`);
+  }
+}
+
+if (/sessionToken\s*:/.test(html) || /"sessionToken"/.test(html)) {
+  throw new Error("VS Code behavioral webview render must not expose inline sessionToken data.");
 }
 
 function extractSection(startMarker, endMarker, haystack = source) {
