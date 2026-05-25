@@ -147,64 +147,90 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
 }
 
 export function isGuiMessage(value: unknown): value is GuiMessage {
-  if (typeof value !== "object" || value === null) {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["version", "type", "requestId", "payload"])) {
     return false;
   }
-  const record = value as Record<string, unknown>;
   return (
-    typeof record.version === "string" &&
-    record.version.length > 0 &&
-    record.type === "gui.ready" &&
-    (record.requestId === undefined || (typeof record.requestId === "string" && record.requestId.length > 0)) &&
-    (record.payload === undefined || (typeof record.payload === "object" && record.payload !== null && !Array.isArray(record.payload)))
+    value.version === bridgeVersion &&
+    value.type === "gui.ready" &&
+    isBoundedRequestId(value.requestId) &&
+    isGuiReadyPayload(value.payload)
   );
 }
 
 export function isHostMessage(value: unknown): value is HostMessage {
-  if (typeof value !== "object" || value === null) {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["version", "type", "requestId", "payload"])) {
     return false;
   }
-  const record = value as Record<string, unknown>;
   if (
-    record.version !== bridgeVersion ||
-    typeof record.type !== "string" ||
-    !hostMessageTypes.has(record.type as HostMessage["type"]) ||
-    (record.requestId !== undefined && (typeof record.requestId !== "string" || record.requestId.length === 0)) ||
-    !isObjectPayload(record.payload)
+    value.version !== bridgeVersion ||
+    typeof value.type !== "string" ||
+    !hostMessageTypes.has(value.type as HostMessage["type"]) ||
+    !isBoundedRequestId(value.requestId)
   ) {
     return false;
   }
-  if (record.type === "host.ready") {
-    return isHostReadyPayload(record.payload);
+  if (value.type === "host.ready") {
+    return isHostReadyPayload(value.payload);
   }
-  return record.type !== "host.openedFromCommand" || isEmptyPayload(record.payload);
+  return value.type !== "host.openedFromCommand" || isEmptyPayload(value.payload);
 }
 
 export function isHostReadyPayload(value: unknown): value is HostReadyPayload {
-  if (!isObjectPayload(value)) {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired"])) {
     return false;
   }
-  if (value === undefined) {
-    return true;
-  }
-  const record = value;
   return (
-    optionalString(record.runtimeUrl) &&
-    optionalString(record.sessionToken) &&
-    optionalString(record.productId) &&
-    optionalString(record.displayName) &&
-    (record.cloudRequired === undefined || typeof record.cloudRequired === "boolean")
+    optionalHttpUrl(value.runtimeUrl) &&
+    optionalString(value.sessionToken, 4096) &&
+    optionalNonEmptyString(value.productId, 256) &&
+    optionalNonEmptyString(value.displayName, 256) &&
+    (value.cloudRequired === undefined || value.cloudRequired === false)
   );
 }
 
-function isObjectPayload(value: unknown): value is Record<string, unknown> | undefined {
-  return value === undefined || (typeof value === "object" && value !== null && !Array.isArray(value));
+function isGuiReadyPayload(value: unknown): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  return isPlainObject(value) && hasOnlyKeys(value, ["supportedBridgeVersion"]) && (value.supportedBridgeVersion === undefined || value.supportedBridgeVersion === bridgeVersion);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, keys: string[]): boolean {
+  return Object.keys(value).every((key) => keys.includes(key));
+}
+
+function isBoundedRequestId(value: unknown): boolean {
+  return value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 128);
 }
 
 function isEmptyPayload(value: unknown): boolean {
-  return value === undefined || (isObjectPayload(value) && Object.keys(value).length === 0);
+  return value === undefined || (isPlainObject(value) && Object.keys(value).length === 0);
 }
 
-function optionalString(value: unknown): boolean {
-  return value === undefined || typeof value === "string";
+function optionalString(value: unknown, maxLength: number): boolean {
+  return value === undefined || (typeof value === "string" && value.length <= maxLength);
+}
+
+function optionalNonEmptyString(value: unknown, maxLength: number): boolean {
+  return value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength);
+}
+
+function optionalHttpUrl(value: unknown): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  if (typeof value !== "string" || value.length === 0 || value.length > 2048) {
+    return false;
+  }
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
