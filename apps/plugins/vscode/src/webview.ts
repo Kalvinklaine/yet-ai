@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import { EngineConnection, getLoopbackOrigin } from "./engineConnection";
 import { ProductIdentity, bridgeVersion, configurationPrefix } from "./identity";
@@ -114,13 +115,28 @@ const bootstrap = ${bootstrap};
 window.yetAiBootstrap = bootstrap;
 const frame = document.querySelector("iframe");
 const frameTargetOrigin = bootstrap.guiDevOrigin;
+let latestHostReady;
+let frameReady = false;
+const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+const isBoundedRequestId = (value) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 128);
+const isStrictGuiReadyPayload = (payload) => {
+  if (payload === undefined) {
+    return true;
+  }
+  return isPlainObject(payload) && Object.keys(payload).every((key) => key === "supportedBridgeVersion") && (payload.supportedBridgeVersion === undefined || payload.supportedBridgeVersion === bootstrap.bridgeVersion);
+};
+const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload);
+const isHostMessage = (message) => isPlainObject(message) && message.version === bootstrap.bridgeVersion && (message.type === "host.ready" || message.type === "host.openedFromCommand");
 const sendToFrame = (message) => {
   if (frame && frame.contentWindow && frameTargetOrigin) {
     frame.contentWindow.postMessage(message, frameTargetOrigin);
   }
 };
-const isHostMessage = (message) => message && message.version === bootstrap.bridgeVersion && (message.type === "host.ready" || message.type === "host.openedFromCommand");
-const isFrameGuiMessage = (message) => message && message.version === bootstrap.bridgeVersion && message.type === "gui.ready";
+const replayHostReady = () => {
+  if (frameReady && latestHostReady) {
+    sendToFrame(latestHostReady);
+  }
+};
 vscode.postMessage({ version: bootstrap.bridgeVersion, type: "gui.ready", requestId: bootstrap.requestId, payload: { supportedBridgeVersion: bootstrap.bridgeVersion } });
 window.addEventListener("message", (event) => {
   if (event.source === frame?.contentWindow) {
@@ -129,7 +145,9 @@ window.addEventListener("message", (event) => {
       return;
     }
     if (isFrameGuiMessage(event.data)) {
+      frameReady = true;
       vscode.postMessage(event.data);
+      replayHostReady();
     } else {
       console.log("Yet AI rejected invalid iframe GUI bridge message");
     }
@@ -137,12 +155,14 @@ window.addEventListener("message", (event) => {
   }
   if (isHostMessage(event.data)) {
     console.log("Yet AI host message", event.data.type);
+    if (event.data.type === "host.ready") {
+      latestHostReady = event.data;
+      replayHostReady();
+      return;
+    }
     sendToFrame(event.data);
   }
 });
-if (frame) {
-  frame.addEventListener("load", () => sendToFrame({ version: bootstrap.bridgeVersion, type: "host.ready", requestId: bootstrap.requestId, payload: bootstrap }));
-}
 </script>
 </body>
 </html>`;
@@ -192,26 +212,41 @@ export function serializeScriptJson(value: unknown): string {
     .replace(/\u2029/g, "\\u2029");
 }
 
-function isGuiMessage(value: unknown): value is GuiMessage {
-  if (typeof value !== "object" || value === null) {
+export function isGuiMessage(value: unknown): value is GuiMessage {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
   const record = value as Record<string, unknown>;
   return (
+    hasOnlyKeys(record, ["version", "type", "requestId", "payload"]) &&
     record.version === bridgeVersion &&
     record.type === "gui.ready" &&
-    (record.requestId === undefined || (typeof record.requestId === "string" && record.requestId.length > 0)) &&
-    (record.payload === undefined || (typeof record.payload === "object" && record.payload !== null && !Array.isArray(record.payload)))
+    isBoundedRequestId(record.requestId) &&
+    isGuiReadyPayload(record.payload)
   );
 }
 
-function createNonce(): string {
-  const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let text = "";
-  for (let i = 0; i < 32; i += 1) {
-    text += possible.charAt(Math.floor(Math.random() * possible.length));
+export function createNonce(): string {
+  return crypto.randomBytes(24).toString("base64url");
+}
+
+function isBoundedRequestId(value: unknown): boolean {
+  return value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 128);
+}
+
+function isGuiReadyPayload(value: unknown): boolean {
+  if (value === undefined) {
+    return true;
   }
-  return text;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return hasOnlyKeys(record, ["supportedBridgeVersion"]) && (record.supportedBridgeVersion === undefined || record.supportedBridgeVersion === bridgeVersion);
+}
+
+function hasOnlyKeys(record: Record<string, unknown>, allowedKeys: string[]): boolean {
+  return Object.keys(record).every((key) => allowedKeys.includes(key));
 }
 
 function createRequestId(): string {
