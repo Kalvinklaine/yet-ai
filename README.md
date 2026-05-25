@@ -83,6 +83,36 @@ Manual IDE dev-preview flows are documented in the subsystem READMEs:
 - `apps/gui/README.md` — GUI build/dev commands and runtime token behavior.
 - `apps/engine/README.md` — local `yet-lsp` run command and runtime API status.
 
+### Runtime token quick guide
+
+There are two separate secret categories in the dev preview:
+
+- Local runtime Session token: authorizes GUI-to-`yet-lsp` loopback HTTP/SSE requests only.
+- Provider API key: authorizes model-provider calls made by the local runtime, for example an OpenAI API key saved through Provider setup.
+
+For IDE-launched runtimes, do not paste `local-dev-token` into the GUI. In VS Code and JetBrains `auto` or `launch` mode, the plugin generates a local runtime token, starts `yet-lsp` with `YET_AI_AUTH_TOKEN`, and provides the token to the packaged GUI through trusted `host.ready` bootstrap. In JetBrains normal dev-preview testing, keep `Launch mode = auto` or `launch` and set `Engine binary path = /absolute/path/to/target/debug/yet-lsp` only when discovery from `PATH` is insufficient.
+
+Use `local-dev-token` only for a manually started runtime:
+
+```sh
+YET_AI_AUTH_TOKEN=local-dev-token YET_AI_HTTP_PORT=8001 cargo run -p yet-lsp
+```
+
+Then set GUI runtime settings to `Runtime base URL = http://127.0.0.1:8001` and `Session token = local-dev-token`. Do not put OpenAI or provider API keys in the Session token field; choose the GUI `OpenAI API` provider preset, paste the provider key once in the API key field, save, and confirm the field clears.
+
+### First-message IDE smoke
+
+Use this concise smoke after preparing either IDE dev preview:
+
+1. Open the Yet AI chat/tool window.
+2. Use the plugin-launched runtime path (`auto` or `launch`) or the manual runtime path above.
+3. Click `Refresh runtime`. It checks `/v1/ping`, `/v1/caps`, `/v1/models`, provider summaries, and OpenAI provider-auth status through the local runtime.
+4. Interpret runtime feedback: connected means the loopback runtime and model/provider metadata are reachable; network/configuration errors mean URL, port, binary, or runtime startup problems; runtime `401` means the local Session token does not match `YET_AI_AUTH_TOKEN`; provider `401` means the provider API key was rejected by the upstream provider.
+5. Configure the safe/default `OpenAI API` API-key fallback or a local OpenAI-compatible mock/provider. The key belongs only in Provider setup, is sent to the local runtime, and is cleared after save.
+6. Send `Say hello in one sentence.` Expected behavior: the user message is accepted, SSE opens, the assistant streams snapshot/start/delta/finish updates, and no Yet AI hosted backend or account is required.
+
+For JetBrains runtime failures, use Tools → `Yet AI: Show Runtime Status` for sanitized launch/binary/ping diagnostics and Tools → `Yet AI: Restart Runtime` to restart only the plugin-owned local runtime.
+
 ### JetBrains installable ZIP dev preview
 
 Build a local IntelliJ IDEA install-from-disk ZIP with:
