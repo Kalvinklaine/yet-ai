@@ -163,6 +163,7 @@ export function App() {
   const [models, setModels] = useState<ModelSummary[]>([]);
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
   const [connectionError, setConnectionError] = useState<RuntimeError | null>(null);
+  const [modelError, setModelError] = useState<RuntimeError | null>(null);
   const [identityWarnings, setIdentityWarnings] = useState<string[]>([]);
   const [providerError, setProviderError] = useState<RuntimeError | null>(null);
   const [providerAuthError, setProviderAuthError] = useState<RuntimeError | null>(null);
@@ -190,7 +191,7 @@ export function App() {
   const connectionStatus = connectionError ? "error" : ping?.ready ? "connected" : "not checked";
   const enabledProviders = useMemo(() => providers.filter((provider) => provider.enabled), [providers]);
   const selectedModel = useMemo(() => models[0] ?? enabledProviders.flatMap((provider) => provider.models.map((model) => ({ ...model, providerId: model.providerId ?? provider.id })))[0], [enabledProviders, models]);
-  const apiKeyChatReady = enabledProviders.length > 0 && Boolean(selectedModel);
+  const apiKeyChatReady = !modelError && enabledProviders.length > 0 && Boolean(selectedModel);
   const experimentalOauthChatReady = !apiKeyChatReady && providerAuthStatus?.configured === true && providerAuthStatus.authSource === "oauth" && providerAuthStatus.status === "connected";
   const canSendChat = apiKeyChatReady || experimentalOauthChatReady;
   const chatReadinessLabel = apiKeyChatReady
@@ -202,19 +203,24 @@ export function App() {
     ? `Ready to send using ${selectedModel?.displayName ?? "the default model"}.`
     : experimentalOauthChatReady
       ? "Experimental Codex-like OpenAI account chat is connected through the local runtime. This private-endpoint path is high-risk, not official public OAuth support, and not production-ready."
-      : "Configure an enabled OpenAI API key fallback provider with a model before sending the first GPT message.";
+      : modelError
+        ? "Runtime model refresh failed. Refresh runtime again before sending the first GPT message."
+        : "Configure an enabled OpenAI API key fallback provider with a model before sending the first GPT message.";
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(providerAuthStatus), [providerAuthStatus]);
 
   const applyHostReady = useCallback((payload: HostReadyPayload | undefined) => {
     if (!payload?.runtimeUrl || !isLoopbackRuntimeUrl(payload.runtimeUrl)) {
       return;
     }
-    setBaseUrl(payload.runtimeUrl);
-    if (payload.sessionToken) {
+    const hostRuntimeUrl = payload.runtimeUrl;
+    setBaseUrl(hostRuntimeUrl);
+    if (payload.sessionToken !== undefined) {
       setToken(payload.sessionToken);
+    } else if (normalizeRuntimeUrl(hostRuntimeUrl) !== normalizeRuntimeUrl(baseUrl)) {
+      setToken("");
     }
     setTimeline((current) => ["Host runtime settings received", ...current].slice(0, 80));
-  }, []);
+  }, [baseUrl]);
 
   useEffect(() => {
     const adapter = createBridgeAdapter((entry) => setBridgeLog((current) => [entry, ...current].slice(0, 20)));
@@ -248,49 +254,71 @@ export function App() {
     setRuntimeRefreshInFlight(true);
     setRuntimeRefreshStatus({ state: "checking", attempt, checkedAt, detail: "Checking runtime…" });
     setConnectionError(null);
+    setModelError(null);
     setIdentityWarnings([]);
-    const [nextPing, nextCaps, nextModels] = await Promise.all([
-      getPing(settings),
-      getCaps(settings),
-      getModels(settings),
-    ]);
-    const warnings: string[] = [];
-    let lastError: RuntimeError | null = null;
-    if (nextPing.ok) {
-      setPing(nextPing.data);
-      const warning = productIdentityWarning(nextPing.data);
-      if (warning) {
-        warnings.push(warning);
+    try {
+      const [nextPing, nextCaps, nextModels] = await Promise.all([
+        getPing(settings),
+        getCaps(settings),
+        getModels(settings),
+      ]);
+      const warnings: string[] = [];
+      let lastError: RuntimeError | null = null;
+      if (nextPing.ok) {
+        setPing(nextPing.data);
+        const warning = productIdentityWarning(nextPing.data);
+        if (warning) {
+          warnings.push(warning);
+        }
+      } else {
+        setPing(null);
+        setConnectionError(nextPing.error);
+        lastError = nextPing.error;
       }
-    } else {
-      setPing(null);
-      setConnectionError(nextPing.error);
-      lastError = nextPing.error;
-    }
-    if (nextCaps.ok) {
-      setCaps(nextCaps.data);
-      const warning = productIdentityWarning(nextCaps.data);
-      if (warning) {
-        warnings.push(warning);
+      if (nextCaps.ok) {
+        setCaps(nextCaps.data);
+        const warning = productIdentityWarning(nextCaps.data);
+        if (warning) {
+          warnings.push(warning);
+        }
+      } else {
+        setCaps(null);
+        setConnectionError(nextCaps.error);
+        lastError = nextCaps.error;
       }
-    } else {
-      setCaps(null);
-      setConnectionError(nextCaps.error);
-      lastError = nextCaps.error;
-    }
-    if (nextModels.ok) {
-      setModels(nextModels.data.models);
-    }
-    setIdentityWarnings(warnings);
-    setRuntimeRefreshStatus({
-      state: lastError ? "failed" : "connected",
-      attempt,
-      checkedAt: new Date().toLocaleTimeString(),
-      detail: lastError ? `Runtime check failed: ${lastError.status} ${sanitizeDisplayText(lastError.message)}` : "Runtime connected",
-    });
-    if (!keepInFlight) {
-      runtimeRefreshInFlightRef.current = false;
-      setRuntimeRefreshInFlight(false);
+      if (nextModels.ok) {
+        setModels(nextModels.data.models);
+      } else {
+        setModels([]);
+        setModelError(nextModels.error);
+        lastError = nextModels.error;
+      }
+      setIdentityWarnings(warnings);
+      setRuntimeRefreshStatus({
+        state: lastError ? "failed" : "connected",
+        attempt,
+        checkedAt: new Date().toLocaleTimeString(),
+        detail: lastError ? `Runtime check failed: ${lastError.status} ${sanitizeDisplayText(lastError.message)}` : "Runtime connected",
+      });
+    } catch (error) {
+      const runtimeError: RuntimeError = {
+        status: "network",
+        message: error instanceof Error ? error.message : "Runtime refresh failed",
+      };
+      setModels([]);
+      setConnectionError(runtimeError);
+      setModelError(runtimeError);
+      setRuntimeRefreshStatus({
+        state: "failed",
+        attempt,
+        checkedAt: new Date().toLocaleTimeString(),
+        detail: `Runtime check failed: ${runtimeError.status} ${sanitizeDisplayText(runtimeError.message)}`,
+      });
+    } finally {
+      if (!keepInFlight) {
+        runtimeRefreshInFlightRef.current = false;
+        setRuntimeRefreshInFlight(false);
+      }
     }
   }, [settings]);
 
@@ -588,6 +616,7 @@ export function App() {
         </div>
         {runtimeRefreshStatus && <div className={`refresh-status ${runtimeRefreshStatus.state}`} role="status"><strong>{runtimeRefreshStatus.detail}</strong><span>Attempt {runtimeRefreshStatus.attempt} at {runtimeRefreshStatus.checkedAt}</span></div>}
         {connectionError && <ErrorBox error={connectionError} />}
+        {modelError && <div className="error">Models refresh failed: {modelError.status}: {sanitizeDisplayText(modelError.message)}</div>}
         {identityWarnings.map((warning) => <div className="error" key={warning}>{warning}</div>)}
         <div className="grid">
           <StatusBlock title="/v1/ping" value={ping} />
@@ -842,6 +871,15 @@ function isSafeAuthUrl(value: string): boolean {
     return isLoopbackRuntimeUrl(url.origin);
   } catch {
     return false;
+  }
+}
+
+function normalizeRuntimeUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    return url.href.replace(/\/+$/, "");
+  } catch {
+    return value.trim().replace(/\/+$/, "");
   }
 }
 

@@ -31,16 +31,52 @@ afterEach(() => {
 });
 
 describe("runtime refresh feedback", () => {
-  it("manual Refresh runtime click shows in-flight feedback and then success status", async () => {
+  it("manual Refresh runtime click shows in-flight feedback before resolving and then success status", async () => {
     mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
 
     await flushAsync();
     fetchMock.mockClear();
 
-    await act(async () => {
+    const ping = deferred<Response>();
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/v1/ping")) {
+        return ping.promise;
+      }
+      if (url.endsWith("/v1/caps")) {
+        return Promise.resolve(jsonResponse({
+          productId: "yet-ai",
+          protocolVersion: "2026-05-15",
+          runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" },
+          capabilities: [],
+          features: {},
+          providers: [],
+          ide: { bridge: true, lsp: false },
+        }));
+      }
+      if (url.endsWith("/v1/models")) {
+        return Promise.resolve(jsonResponse({ models: readyRuntimeOptions().models }));
+      }
+      return Promise.resolve(jsonResponse({ providers: [], cloudRequired: false, providerAccess: "direct" }));
+    });
+
+    act(() => {
       findButton("Refresh runtime").click();
     });
+
+    expect(findButton("Checking runtime…").disabled).toBe(true);
+    expect(container?.textContent).toContain("Checking runtime…");
+    expect(container?.textContent).toContain("Attempt 2 at");
+
+    ping.resolve(jsonResponse({
+      productId: "yet-ai",
+      displayName: "Yet AI",
+      version: "0.0.0",
+      ready: true,
+      serverTime: "2026-05-24T00:00:00Z",
+    }));
+    await flushAsync();
 
     expect(container?.textContent).toContain("Runtime connected");
     expect(container?.textContent).toContain("Attempt 2 at");
@@ -65,6 +101,29 @@ describe("runtime refresh feedback", () => {
     expect(findButton("Refresh runtime").disabled).toBe(false);
   });
 
+  it("clears stale runtime models when model refresh fails", async () => {
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Model: GPT-4o mini (openai-api)");
+    expect(findButton("Send").disabled).toBe(false);
+
+    fetchMock.mockClear();
+    mockRuntimeResponses({ providers: [enabledProvider()], modelsFailure: true });
+
+    await act(async () => {
+      findButton("Refresh runtime").click();
+    });
+
+    expect(container?.textContent).toContain("Runtime check failed: 503 models unavailable");
+    expect(container?.textContent).toContain("Models refresh failed: 503: models unavailable");
+    expect(container?.textContent).toContain("Model: No model available");
+    expect(container?.textContent).toContain("Runtime model refresh failed. Refresh runtime again before sending the first GPT message.");
+    expect(findButton("Send").disabled).toBe(true);
+  });
+
   it("renders Session token guidance and does not persist a manually entered token", async () => {
     const runtimeToken = "local-dev-token-secret";
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
@@ -83,8 +142,7 @@ describe("runtime refresh feedback", () => {
 
     expect(sessionTokenInput().value).toBe(runtimeToken);
     expect(localSetItem).not.toHaveBeenCalled();
-    expect(JSON.stringify(localStorage)).not.toContain(runtimeToken);
-    expect(JSON.stringify(sessionStorage)).not.toContain(runtimeToken);
+    expect(browserStorageDump()).not.toContain(runtimeToken);
   });
 });
 
@@ -450,39 +508,79 @@ describe("provider secret boundary", () => {
 describe("host.ready runtime bootstrap", () => {
   it("updates runtime settings from host.ready without persisting the token", async () => {
     const token = "host-session-token-secret";
-    fetchMock.mockResolvedValue(new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } }));
-    vi.stubGlobal("fetch", fetchMock);
-    container = document.createElement("div");
-    document.body.append(container);
-    root = createRoot(container);
+    mockRuntimeResponses();
+    renderApp();
 
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: token });
+
+    expect(findInputValue("http://127.0.0.1:8765")).toBeDefined();
+    expect(sessionTokenInput().value).toBe(token);
+    expect(container?.textContent).toContain("Host runtime settings received");
+    expect(browserStorageDump()).not.toContain(token);
+  });
+
+  it("keeps an existing token when URL-only host.ready repeats the same runtime URL", async () => {
+    const token = "same-url-token-secret";
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
     await act(async () => {
-      root?.render(<App />);
+      setInputValue(sessionTokenInput(), token);
     });
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
 
+    expect(findInputValue("http://127.0.0.1:8001")).toBeDefined();
+    expect(sessionTokenInput().value).toBe(token);
+    expect(browserStorageDump()).not.toContain(token);
+  });
+
+  it("clears an existing token when URL-only host.ready changes runtime URL", async () => {
+    const token = "retarget-token-secret";
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
     await act(async () => {
-      window.dispatchEvent(new MessageEvent("message", {
-        data: {
-          version: bridgeVersion,
-          type: "host.ready",
-          payload: {
-            runtimeUrl: "http://127.0.0.1:8765",
-            sessionToken: token,
-            productId: "yet-ai",
-            displayName: "Yet AI",
-            cloudRequired: false,
-          },
-        },
-      }));
+      setInputValue(sessionTokenInput(), token);
     });
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765" });
 
-    const runtimeUrlInput = Array.from(container.querySelectorAll("input")).find((input) => input.value === "http://127.0.0.1:8765");
-    const tokenInput = Array.from(container.querySelectorAll("input")).find((input) => input.value === token);
-    expect(runtimeUrlInput).toBeDefined();
-    expect(tokenInput).toBeDefined();
-    expect(container.textContent).toContain("Host runtime settings received");
-    expect(JSON.stringify(localStorage)).not.toContain(token);
-    expect(JSON.stringify(sessionStorage)).not.toContain(token);
+    expect(findInputValue("http://127.0.0.1:8765")).toBeDefined();
+    expect(sessionTokenInput().value).toBe("");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith("http://127.0.0.1:8765/")).every(([, init]) => !new Headers(init?.headers).get("Authorization")?.includes(token))).toBe(true);
+    expect(browserStorageDump()).not.toContain(token);
+  });
+
+  it("ignores invalid non-loopback URL-only host.ready", async () => {
+    const token = "invalid-host-token-secret";
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setInputValue(sessionTokenInput(), token);
+    });
+    await dispatchHostReady({ runtimeUrl: "https://example.test:8765" });
+
+    expect(findInputValue("http://127.0.0.1:8001")).toBeDefined();
+    expect(sessionTokenInput().value).toBe(token);
+    expect(container?.textContent).not.toContain("https://example.test:8765");
+  });
+
+  it("treats empty host.ready sessionToken as an explicit token clear", async () => {
+    const token = "empty-token-clear-secret";
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setInputValue(sessionTokenInput(), token);
+    });
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001", sessionToken: "" });
+
+    expect(sessionTokenInput().value).toBe("");
+    expect(browserStorageDump()).not.toContain(token);
   });
 });
 
@@ -695,6 +793,23 @@ describe("chat panel", () => {
   });
 });
 
+async function dispatchHostReady(payload: { runtimeUrl: string; sessionToken?: string }) {
+  await act(async () => {
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version: bridgeVersion,
+        type: "host.ready",
+        payload: {
+          ...payload,
+          productId: "yet-ai",
+          displayName: "Yet AI",
+          cloudRequired: false,
+        },
+      },
+    }));
+  });
+}
+
 function renderApp() {
   container = document.createElement("div");
   document.body.append(container);
@@ -717,6 +832,7 @@ type MockRuntimeOptions = {
   commandError?: string;
   providers?: unknown[];
   models?: unknown[];
+  modelsFailure?: boolean;
   runtimeFailure?: boolean;
 };
 
@@ -874,6 +990,9 @@ function mockRuntimeResponses(options: MockRuntimeOptions = {}) {
       }));
     }
     if (url.endsWith("/v1/models")) {
+      if (options.modelsFailure) {
+        return Promise.resolve(jsonResponse({ error: "models unavailable" }, 503));
+      }
       return Promise.resolve(jsonResponse({ models: options.models ?? [] }));
     }
     if (url.endsWith("/v1/providers")) {
@@ -888,6 +1007,29 @@ async function flushAsync() {
   await act(async () => {
     await Promise.resolve();
   });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
+function browserStorageDump() {
+  const values: string[] = [];
+  for (const storage of [localStorage, sessionStorage]) {
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key) {
+        values.push(key, storage.getItem(key) ?? "");
+      }
+    }
+  }
+  return values.join("\n");
 }
 
 function jsonResponse(body: unknown, status = 200) {
