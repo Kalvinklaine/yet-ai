@@ -30,23 +30,25 @@ Provider endpoints manage local BYOK provider configuration files under the user
 
 ## Provider auth roadmap
 
-Current provider authentication is API-key/OpenAI-compatible direct access only. ChatGPT/OpenAI account login is not implemented in this baseline. The provider-auth endpoints are available as a sanitized local skeleton for `openai` and `openai-compatible`: `status` reports login unavailable plus API-key fallback, detects matching configured API-key providers with only a redacted hint, default `start` and `exchange` do not contact OpenAI and return login-unavailable responses, and `disconnect` clears only mock/future OAuth state. It does not delete current API-key provider configs. The official OpenAI API-key or project-key path remains the safe/default real-provider route.
+The safe/default real-provider route is API-key/OpenAI-compatible direct access. Users can configure an OpenAI API key or project key through the local runtime, and this route remains preferred whenever an enabled OpenAI-compatible provider exists. The provider-auth endpoints are available as sanitized local endpoints for `openai` and `openai-compatible`: default `status` reports API-key fallback or an API-key-configured state with only a redacted hint, default non-experimental `start` and `exchange` do not contact OpenAI, and `disconnect` does not delete current API-key provider configs.
+
+An explicit-risk experimental Codex-like OpenAI account path now exists for `openai` only. It is not the safe/default route, not official public OpenAI OAuth support, and not production-ready. Automated coverage is limited to loopback/mock token and chat endpoints; any real account testing is manual, high-risk, account-specific, and outside CI.
 
 A local mock OAuth/PKCE harness exists for tests only. `POST /v1/provider-auth/{provider}/start` with `{ "mock": true }` creates a temporary local mock session with a session id, state, simplified PKCE verifier/challenge, local mock authorization URL, and expiry. `POST /v1/provider-auth/{provider}/exchange` validates the provider, session id, state, mock code, and expiry, then stores fake token material only under local mock auth test state. `status` can report sanitized `pending` or `connected` mock OAuth state, and `disconnect` clears it. The harness never calls OpenAI, ChatGPT, or any external provider, and responses must never include fake access or refresh tokens. It is not production OpenAI login and is only a contract/security test harness.
 
-The planned first-phase UX is: sign in first where supported; API key fallback otherwise. The engine should own any future provider-auth flow:
+Provider-auth flows remain engine-owned. For safe/default provider use, configure an API key or project key through the local runtime. For any supported account-style flow, including the explicit-risk experimental Codex-like path, the engine owns the sensitive state:
 
 - start browser/device login and hold pending PKCE/session state locally;
 - receive loopback callback or exchange/polling requests;
 - store access tokens, refresh tokens, API keys, and revocation state in engine-owned OS keychain or protected user config storage;
-- refresh or revoke/disconnect credentials without exposing raw secrets;
+- refresh, revoke, or disconnect credentials where implemented without exposing raw secrets;
 - return only sanitized status such as connected/configured, auth source, expiry, account label, scopes, redacted hints, and safe error text.
 
 The user approved an experimental, high-risk T-49 Codex-like OpenAI/ChatGPT login task chain despite the lack of a public third-party OpenAI OAuth program. That approval allows a local engine-owned flow modeled after Codex-like behavior. The current experimental slice is available only for `openai`: `start` with `{ "experimentalCodexLike": true }` creates local PKCE/session state, and `exchange` validates session id, state, authorization code, and expiry before posting to the configured token endpoint. The production default token endpoint remains the approved Codex-like OpenAI auth URL when no override is supplied, while automated tests may inject only local loopback mock `tokenEndpointUrl` / `chatEndpointUrl` overrides so CI never calls OpenAI. Request-provided experimental endpoint overrides must be absolute `http` or `https` URLs with a host, no userinfo, and loopback-only hosts (`127.0.0.1`, `localhost`, or `[::1]`); non-loopback, malformed, credential-bearing, or non-HTTP(S) override URLs are rejected with sanitized errors. On success, the engine stores the access token, refresh token, and auth metadata through the engine secret store under protected local config storage and returns only sanitized connected status, account label, expiry, scopes, redacted hint, and message. When no enabled OpenAI-compatible API-key provider is configured, chat can use the unexpired stored OAuth access token with the explicit experimental chat defaults `baseUrl: https://chatgpt.com/backend-api/codex` and `model: gpt-5-codex`; tests override the chat endpoint to a local loopback mock. This private-backend-style route is experimental/high-risk, not official public third-party OpenAI OAuth support, and raw access tokens, refresh tokens, and Authorization headers must never be returned or logged. `disconnect` removes experimental OAuth secrets and pending state while preserving API-key provider configuration.
 
 Future work in this approved high-risk area remains:
 
-- refresh, revoke/disconnect against the provider, expiry handling, and migration behind the engine secret store;
+- provider-side refresh/revoke behavior, broader expiry handling, and migration behind the engine secret store;
 - OS keychain support behind the same secret-store boundary;
 - GUI-facing responses limited to sanitized status, account labels, expiry, scopes, redacted hints, and safe error text.
 

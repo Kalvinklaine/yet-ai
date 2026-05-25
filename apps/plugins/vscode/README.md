@@ -105,7 +105,7 @@ This package is for local dev-preview testing only. It is not a marketplace rele
 
 Use this manual smoke only when you intentionally want to test a real OpenAI API-key fallback through the local VS Code dev preview. This is not a production release flow and is not an automated test. Never commit real keys, add them to fixtures, paste them into logs or issue text, or capture screenshots that show secrets.
 
-This path does not use a Yet AI account, hosted workspace, managed model gateway, or product credit balance. It sends model requests from the local `yet-lsp` runtime directly to the configured OpenAI-compatible endpoint. The experimental Codex-like OpenAI account path is high-risk and private-endpoint-style: automated coverage is limited to `npm run smoke:local` with loopback token/chat mocks, while real account testing is manual, risky, account-specific, and outside CI. The provider-auth card may show the separate experimental action, but this milestone smoke should use the API-key fallback.
+This path does not use a Yet AI account, hosted workspace, managed model gateway, or product credit balance. It sends model requests from the local `yet-lsp` runtime directly to the configured OpenAI-compatible endpoint. The `OpenAI API` preset remains the safe/default real-provider path. The experimental Codex-like OpenAI account path is separate, explicit-risk, high-risk, private-endpoint-style, not official public OpenAI OAuth support, and not production-ready: automated coverage is limited to `npm run smoke:local` with loopback token/chat mocks, while real account testing is manual, risky, account-specific, and outside CI. The provider-auth card may show the separate experimental action, but this milestone smoke should use the API-key fallback.
 
 1. Prepare the VS Code dev preview:
 
@@ -122,7 +122,7 @@ This path does not use a Yet AI account, hosted workspace, managed model gateway
 
 4. Run `Yet AI: Open Chat` in the Extension Development Host. Confirm the packaged GUI opens, the runtime status becomes reachable, and the `Yet AI Runtime` output channel reports a successful local runtime health check with tokens redacted.
 
-5. In the provider-auth card, keep to the API-key fallback for this milestone. Do not use the experimental Codex-like account action unless you are deliberately performing separate manual high-risk testing outside CI. Do not expect browser account reuse, cookie import, or credential import from another tool.
+5. In the provider-auth card, keep to the API-key fallback for this milestone. Do not use the experimental Codex-like account action unless you are deliberately performing separate manual high-risk testing outside CI. Do not expect browser account reuse, cookie import, browser profile import/reuse, direct reading of `~/.codex/auth.json`, or credential import from another tool.
 
 6. Choose `Use OpenAI API key` or the `OpenAI API` provider preset. Confirm the form uses:
 
@@ -171,7 +171,7 @@ Use this checklist after the steps above:
 - Provider `401` errors after the runtime is connected: the OpenAI-compatible provider rejected the API key. Check for a missing, expired, revoked, copied-with-whitespace, or wrong-project key. Paste it once in the GUI and save again; do not put it in VS Code settings or repository files.
 - Provider `429` errors: the upstream provider reported rate, quota, or billing limits. Wait, reduce test traffic, or check the provider account outside Yet AI.
 - Model errors: the selected model is unavailable for the key or endpoint. Update the provider model field to a chat model enabled for that account.
-- OpenAI API fallback vs account login: the `OpenAI API` preset is the current real-provider path. ChatGPT/OpenAI account login, browser session reuse, cookie import, and importing another tool's credentials are not implemented.
+- OpenAI API fallback vs account login: the `OpenAI API` preset is the safe/default real-provider path. The experimental Codex-like OpenAI account action is separate, explicit-risk, private-endpoint-style, covered automatically only by loopback mocks, and not official public OpenAI OAuth support or production-ready. Any real account testing is manual, risky, account-specific, and outside CI. Browser session reuse, cookie import, browser profile import/reuse, direct reading of `~/.codex/auth.json`, and importing other tools' credential files are not allowed.
 - Runtime port conflict: `yetai.runtimeUrl` defaults to `http://127.0.0.1:8001`. If another process owns that port, set `yetai.runtimeUrl` to another loopback port such as `http://127.0.0.1:8011` before opening chat. In launch mode the extension passes that port through `YET_AI_HTTP_PORT`.
 - Missing `yet-lsp` binary: run `export PATH="$HOME/.cargo/bin:$PATH"; npm run prepare:vscode-preview` from the repository root. If discovery still fails, set `yetai.engineBinaryPath` to the absolute binary path and use `yetai.launchMode` `launch`.
 - Packaged GUI not copied: run `npm run prepare:vscode-preview` from the repository root. If the webview still shows the placeholder, check that `apps/plugins/vscode/media/gui/index.html` exists and reopen the command.
