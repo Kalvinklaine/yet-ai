@@ -6,6 +6,7 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class YetToolWindowFactoryTest {
     @Test
@@ -61,6 +62,17 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
+    fun deliveryGateSkipsJavaScriptAfterDispose() {
+        val executed = mutableListOf<String>()
+        val gate = TestDeliveryGate { executed.add(it) }
+
+        assertTrue(gate.deliver("first"))
+        gate.dispose()
+        assertFalse(gate.deliver("second"))
+        assertEquals(listOf("first"), executed)
+    }
+
+    @Test
     fun panelSourceContainsDisposalGuardForAsyncDelivery() {
         val source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/kotlin/ai/yet/plugin/ui/YetToolWindowFactory.kt"))
 
@@ -73,6 +85,24 @@ class YetToolWindowFactoryTest {
         assertContains(source, "window.__yetAiPendingHostMessages.push(message)")
         assertContains(source, "window.__yetAiPendingDiagnostics.push(message)")
         assertContains(source, "disposed = true")
+    }
+
+    @Test
+    fun wrapperScriptDeliveryQueuesBeforeWrapperHelpersExist() {
+        val delivery = WrapperScriptDelivery()
+        val hostScript = delivery.hostMessage("{\"version\":\"2026-05-15\",\"type\":\"host.ready\",\"payload\":{}}")
+        val diagnosticScript = delivery.diagnostic("runtime failed")
+
+        assertContains(hostScript, "if (typeof window.__yetAiSendHostMessageToFrame === \"function\")")
+        assertContains(hostScript, "window.__yetAiSendHostMessageToFrame(message);")
+        assertContains(hostScript, "window.__yetAiPendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : []")
+        assertContains(hostScript, "window.__yetAiPendingHostMessages.push(message)")
+        assertFalse(hostScript.contains("window.postMessage"))
+        assertContains(diagnosticScript, "if (typeof window.__yetAiSetRuntimeDiagnostic === \"function\")")
+        assertContains(diagnosticScript, "window.__yetAiSetRuntimeDiagnostic(message);")
+        assertContains(diagnosticScript, "window.__yetAiPendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : []")
+        assertContains(diagnosticScript, "window.__yetAiPendingDiagnostics.push(message)")
+        assertContains(diagnosticScript, "runtime failed")
     }
 
     @Test
@@ -95,5 +125,19 @@ class YetToolWindowFactoryTest {
         assertContains(html, "Run <code>cd apps/gui && npm run build</code>")
         assertContains(html, "Connected")
         assertFalse(html.contains("<iframe title=\"Yet AI GUI\""))
+    }
+}
+
+private class TestDeliveryGate(private val execute: (String) -> Unit) {
+    private var disposed = false
+
+    fun deliver(script: String): Boolean {
+        if (disposed) return false
+        execute(script)
+        return true
+    }
+
+    fun dispose() {
+        disposed = true
     }
 }

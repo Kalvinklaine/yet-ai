@@ -22,6 +22,35 @@ import java.awt.BorderLayout
 import javax.swing.JLabel
 import javax.swing.JPanel
 
+class WrapperScriptDelivery {
+    fun hostMessage(message: String): String = """
+        (() => {
+          const message = $message;
+          if (typeof window.__yetAiSendHostMessageToFrame === "function") {
+            window.__yetAiSendHostMessageToFrame(message);
+            return;
+          }
+          window.__yetAiPendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : [];
+          window.__yetAiPendingHostMessages.push(message);
+        })();
+    """.trimIndent()
+
+    fun diagnostic(error: String): String {
+        val escaped = BridgeMessages.escapeScriptJson(JsonPrimitive(error).toString())
+        return """
+            (() => {
+              const message = $escaped;
+              if (typeof window.__yetAiSetRuntimeDiagnostic === "function") {
+                window.__yetAiSetRuntimeDiagnostic(message);
+                return;
+              }
+              window.__yetAiPendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : [];
+              window.__yetAiPendingDiagnostics.push(message);
+            })();
+        """.trimIndent()
+    }
+}
+
 class YetToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val contentFactory = ContentFactory.getInstance()
@@ -44,6 +73,7 @@ class YetBrowserPanel : JPanel(BorderLayout()), Disposable {
     private val logger = Logger.getInstance(YetBrowserPanel::class.java)
     private val browser = JBCefBrowser()
     private val query = JBCefJSQuery.create(browser as JBCefBrowser)
+    private val delivery = WrapperScriptDelivery()
     @Volatile
     private var latestConnection = RuntimeConnectionResult(RuntimeSettings.safeFallback(), "Connecting to Yet AI local runtime...", null)
     @Volatile
@@ -82,33 +112,12 @@ class YetBrowserPanel : JPanel(BorderLayout()), Disposable {
 
     private fun sendToGui(message: String) {
         if (disposed) return
-        browser.cefBrowser.executeJavaScript("""
-            (() => {
-              const message = $message;
-              if (typeof window.__yetAiSendHostMessageToFrame === "function") {
-                window.__yetAiSendHostMessageToFrame(message);
-                return;
-              }
-              window.__yetAiPendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : [];
-              window.__yetAiPendingHostMessages.push(message);
-            })();
-        """.trimIndent(), browser.cefBrowser.url, 0)
+        browser.cefBrowser.executeJavaScript(delivery.hostMessage(message), browser.cefBrowser.url, 0)
     }
 
     private fun sendDiagnostic(error: String) {
         if (disposed) return
-        val escaped = BridgeMessages.escapeScriptJson(JsonPrimitive(error).toString())
-        browser.cefBrowser.executeJavaScript("""
-            (() => {
-              const message = $escaped;
-              if (typeof window.__yetAiSetRuntimeDiagnostic === "function") {
-                window.__yetAiSetRuntimeDiagnostic(message);
-                return;
-              }
-              window.__yetAiPendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : [];
-              window.__yetAiPendingDiagnostics.push(message);
-            })();
-        """.trimIndent(), browser.cefBrowser.url, 0)
+        browser.cefBrowser.executeJavaScript(delivery.diagnostic(error), browser.cefBrowser.url, 0)
     }
 
     override fun dispose() {
