@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "providerId": "provider-id-that-is-intentionally-longer-than-sixty-four-characters-total",
+  "status": "unreachable",
+  "message": "Provider is unreachable.",
+  "cloudRequired": false
+}

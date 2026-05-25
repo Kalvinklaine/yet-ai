@@ -1,0 +1,8 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.ready",
+  "payload": {
+    "supportedBridgeVersion": "2026-05-15",
+    "workspaceName": "example-workspace"
+  }
+}

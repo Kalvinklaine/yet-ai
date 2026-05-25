@@ -32,6 +32,41 @@ const mappings = [
   ["packages/contracts/examples/bridge/gui-ready-message.json", "packages/contracts/schemas/bridge/gui-message.schema.json"]
 ].map(([examplePath, schemaPath]) => [normalizeContractPath(examplePath), normalizeContractPath(schemaPath)]);
 
+const invalidMappings = [
+  [
+    "packages/contracts/examples-invalid/engine/chat-command-tool-call.json",
+    "packages/contracts/schemas/engine/chat-command.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/chat-command-abort-payload.json",
+    "packages/contracts/schemas/engine/chat-command.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/bridge/gui-ready-extra-payload.json",
+    "packages/contracts/schemas/bridge/gui-message.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/bridge/host-opened-from-command-payload.json",
+    "packages/contracts/schemas/bridge/host-message.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/provider-test-ok-timeout.json",
+    "packages/contracts/schemas/engine/provider-test-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/provider-test-fail-reachable.json",
+    "packages/contracts/schemas/engine/provider-test-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/provider-test-bad-provider-id.json",
+    "packages/contracts/schemas/engine/provider-test-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/provider-test-long-provider-id.json",
+    "packages/contracts/schemas/engine/provider-test-response.schema.json"
+  ]
+].map(([examplePath, schemaPath]) => [normalizeContractPath(examplePath), normalizeContractPath(schemaPath)]);
+
 const allowlistedUnmappedExamples = [].map(normalizeContractPath);
 
 const identityChecks = [
@@ -125,15 +160,47 @@ function collectMappingCoverageFailures(exampleFiles, schemaFiles) {
   return failures;
 }
 
+function collectInvalidMappingCoverageFailures(exampleFiles, schemaFiles) {
+  const discoveredExamples = new Set(exampleFiles.map(normalizeContractPath));
+  const discoveredSchemas = new Set(schemaFiles.map(normalizeContractPath));
+  const mappedExamples = new Set(invalidMappings.map(([examplePath]) => examplePath));
+  const mappedSchemas = new Set(invalidMappings.map(([, schemaPath]) => schemaPath));
+  const failures = [];
+
+  for (const examplePath of discoveredExamples) {
+    if (!mappedExamples.has(examplePath)) {
+      failures.push(
+        `${examplePath}: unmapped invalid contract example; add an explicit invalid example→schema mapping`
+      );
+    }
+  }
+
+  for (const examplePath of mappedExamples) {
+    if (!discoveredExamples.has(examplePath)) {
+      failures.push(`${examplePath}: mapped invalid example file was not discovered`);
+    }
+  }
+
+  for (const schemaPath of mappedSchemas) {
+    if (!discoveredSchemas.has(schemaPath)) {
+      failures.push(`${schemaPath}: invalid example mapped schema file was not discovered`);
+    }
+  }
+
+  return failures;
+}
+
 const ajv = new Ajv({ allErrors: true, strict: true });
 addFormats(ajv);
 
 const failures = [];
 const compiledSchemas = new Map();
 const parsedExamples = new Map();
+const parsedInvalidExamples = new Map();
 
 let schemaFiles = [];
 let exampleFiles = [];
+let invalidExampleFiles = [];
 let identity = null;
 
 try {
@@ -149,6 +216,12 @@ try {
 }
 
 try {
+  invalidExampleFiles = await discoverJsonFiles("packages/contracts/examples-invalid");
+} catch (error) {
+  failures.push(`packages/contracts/examples-invalid: read failure (${error.message})`);
+}
+
+try {
   identity = await readJson("product/identity.json");
 } catch (error) {
   failures.push(error.message);
@@ -156,6 +229,10 @@ try {
 
 if (schemaFiles.length > 0 && exampleFiles.length > 0) {
   failures.push(...collectMappingCoverageFailures(exampleFiles, schemaFiles));
+}
+
+if (schemaFiles.length > 0 && invalidExampleFiles.length > 0) {
+  failures.push(...collectInvalidMappingCoverageFailures(invalidExampleFiles, schemaFiles));
 }
 
 for (const schemaPath of schemaFiles) {
@@ -175,6 +252,14 @@ for (const examplePath of exampleFiles) {
   }
 }
 
+for (const examplePath of invalidExampleFiles) {
+  try {
+    parsedInvalidExamples.set(examplePath, await readJson(examplePath));
+  } catch (error) {
+    failures.push(error.message);
+  }
+}
+
 for (const [examplePath, schemaPath] of mappings) {
   try {
     const validate = compiledSchemas.get(schemaPath);
@@ -186,7 +271,24 @@ for (const [examplePath, schemaPath] of mappings) {
 
     if (!validate(example)) {
       const details = ajv.errorsText(validate.errors, { separator: "\n  " });
-      failures.push(`${examplePath}: schema validation failure against ${schemaPath}:\n  ${details}`);
+      failures.push(`${examplePath}: positive example failed schema validation against ${schemaPath}:\n  ${details}`);
+    }
+  } catch (error) {
+    failures.push(error.message);
+  }
+}
+
+for (const [examplePath, schemaPath] of invalidMappings) {
+  try {
+    const validate = compiledSchemas.get(schemaPath);
+    const example = parsedInvalidExamples.get(examplePath);
+
+    if (validate === undefined || example === undefined) {
+      continue;
+    }
+
+    if (validate(example)) {
+      failures.push(`${examplePath}: invalid example unexpectedly passed schema validation against ${schemaPath}`);
     }
   } catch (error) {
     failures.push(error.message);
@@ -221,5 +323,5 @@ if (failures.length > 0) {
 }
 
 console.log(
-  `Contract validation passed (${schemaFiles.length} schemas, ${exampleFiles.length} examples).`
+  `Contract validation passed (${schemaFiles.length} schemas, ${exampleFiles.length} examples, ${invalidExampleFiles.length} invalid examples).`
 );

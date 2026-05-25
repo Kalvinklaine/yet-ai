@@ -1,0 +1,8 @@
+{
+  "requestId": "req-tool-call-001",
+  "type": "tool_call",
+  "payload": {
+    "name": "read_file",
+    "arguments": {}
+  }
+}

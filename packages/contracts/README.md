@@ -22,7 +22,7 @@ Current schemas:
 - `schemas/bridge/host-message.schema.json` for IDE host to GUI messages.
 - `schemas/bridge/gui-message.schema.json` for GUI to IDE host messages.
 
-Example payloads live under `examples/` and should stay small, stable, and free of secrets or local paths.
+Positive example payloads live under `examples/` and should stay small, stable, and free of secrets or local paths. Negative examples live under `examples-invalid/` and intentionally demonstrate payloads that must fail a mapped schema without using real secrets or local paths.
 
 `GET /v1/caps` includes a minimal local runtime signal: `runtime.mode = "local"`, `runtime.cloudRequired = false`, and `runtime.providerAccess = "direct"`. This records the product contract that Yet AI core runs through the local runtime and does not require a hosted Yet AI backend or managed model gateway.
 
@@ -58,7 +58,7 @@ These commands are available from the repository root:
 npm run validate:contracts
 ```
 
-Contract validation recursively discovers every schema under `schemas/**/*.json` and every example under `examples/**/*.json`. Discovered paths and configured mappings are normalized to POSIX-style `/` separators so mappings stay portable across platforms. Every discovered schema is compiled with AJV in strict mode, even if no example currently maps to it. Every example must have an explicit example-to-schema mapping unless it is intentionally allowlisted in the validator with a clear reason. Examples that include product identity fields must match `product/identity.json`.
+Contract validation recursively discovers every schema under `schemas/**/*.json`, every positive example under `examples/**/*.json`, and every negative example under `examples-invalid/**/*.json`. Discovered paths and configured mappings are normalized to POSIX-style `/` separators so mappings stay portable across platforms. Every discovered schema is compiled with AJV in strict mode, even if no example currently maps to it. Every positive example must have an explicit example-to-schema mapping unless it is intentionally allowlisted in the validator with a clear reason. Every negative example must have an explicit invalid example-to-schema mapping and must fail that schema; validation fails if a negative example unexpectedly passes. Examples that include product identity fields must match `product/identity.json`.
 
 These commands are not available until generation and package-specific tests exist:
 

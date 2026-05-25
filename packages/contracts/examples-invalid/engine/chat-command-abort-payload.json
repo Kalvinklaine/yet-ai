@@ -1,0 +1,7 @@
+{
+  "requestId": "req-abort-invalid-001",
+  "type": "abort",
+  "payload": {
+    "reason": "stop current work"
+  }
+}
