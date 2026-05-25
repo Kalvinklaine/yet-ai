@@ -68,7 +68,7 @@ function createHostReady(
   };
 }
 
-function renderWebviewHtml(
+export function renderWebviewHtml(
   webview: vscode.Webview,
   extensionUri: vscode.Uri,
   identity: ProductIdentity,
