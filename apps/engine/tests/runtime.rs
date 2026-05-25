@@ -243,6 +243,54 @@ async fn start_mock_models_provider(
     (format!("http://{address}"), auth_receiver)
 }
 
+async fn start_slow_models_provider(
+    expected_auth: Option<&'static str>,
+) -> (String, oneshot::Receiver<Option<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (auth_sender, auth_receiver) = oneshot::channel();
+    let expected = expected_auth.map(str::to_string);
+    let auth_sender = std::sync::Arc::new(std::sync::Mutex::new(Some(auth_sender)));
+    tokio::spawn(async move {
+        let handler = move |request: axum::http::Request<Body>| {
+            let expected = expected.clone();
+            let auth_sender = auth_sender.clone();
+            async move {
+                let auth = request
+                    .headers()
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                if let Some(sender) = auth_sender.lock().unwrap().take() {
+                    let _ = sender.send(auth.clone());
+                }
+                if let Some(expected) = expected {
+                    assert_eq!(auth.as_deref(), Some(expected.as_str()));
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "application/json")],
+                    r#"{"data":[{"id":"gpt-test"}]}"#,
+                )
+                    .into_response()
+            }
+        };
+        let app = axum::Router::new()
+            .route("/models", axum::routing::get(handler.clone()))
+            .route("/v1/models", axum::routing::get(handler));
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{address}"), auth_receiver)
+}
+
+async fn closed_loopback_base_url() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    format!("http://{address}/v1")
+}
+
 async fn start_slow_mock_provider(
     expected_auth: Option<&'static str>,
 ) -> (
@@ -1682,6 +1730,8 @@ async fn provider_base_url_validation_rejects_invalid_values_safely() {
     for (id, base_url) in [
         ("bad-scheme", "file:///tmp/provider.sock"),
         ("bad-userinfo", "http://user:pass@127.0.0.1:8080/v1"),
+        ("bad-query", "https://example.test/v1?api_key=secret"),
+        ("bad-fragment", "https://example.test/v1#token"),
         ("bad-malformed", "not a url sk-invalid-url-secret-abcd"),
     ] {
         let provider = json!({
@@ -1700,8 +1750,12 @@ async fn provider_base_url_validation_rejects_invalid_values_safely() {
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["error"], "invalid provider baseUrl");
-        assert!(!body.to_string().contains(base_url));
-        assert!(!body.to_string().contains("sk-invalid-url-secret-abcd"));
+        let text = body.to_string();
+        assert!(!text.contains(base_url));
+        assert!(!text.contains("api_key"));
+        assert!(!text.contains("secret"));
+        assert!(!text.contains("token"));
+        assert!(!text.contains("sk-invalid-url-secret-abcd"));
     }
 }
 
@@ -2153,7 +2207,7 @@ async fn provider_test_openai_compatible_unauthorized_is_sanitized() {
 async fn provider_test_openai_compatible_down_is_sanitized() {
     let api_key = "sk-provider-test-down-abcd";
     let app = test_app();
-    configure_openai_provider(app.clone(), "http://127.0.0.1:9/v1".to_string(), api_key).await;
+    configure_openai_provider(app.clone(), closed_loopback_base_url().await, api_key).await;
 
     let (status, body) = json_response_from(
         app,
@@ -2164,6 +2218,29 @@ async fn provider_test_openai_compatible_down_is_sanitized() {
     assert_eq!(body["ok"], false);
     assert_eq!(body["status"], "unreachable");
     assert!(!body.to_string().contains(api_key));
+}
+
+#[tokio::test]
+async fn provider_test_openai_compatible_timeout_is_sanitized() {
+    let api_key = "sk-provider-test-timeout-abcd";
+    let (base_url, auth_receiver) =
+        start_slow_models_provider(Some("Bearer sk-provider-test-timeout-abcd")).await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(Method::POST, "/v1/providers/openai-stream/test", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["status"], "timeout");
+    let text = body.to_string();
+    assert!(!text.contains(api_key));
+    assert!(!text.contains("provider-test-timeout"));
+    let auth = auth_receiver.await.unwrap();
+    assert_eq!(auth.as_deref(), Some("Bearer sk-provider-test-timeout-abcd"));
 }
 
 #[tokio::test]
