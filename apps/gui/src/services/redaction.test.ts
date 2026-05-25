@@ -32,6 +32,14 @@ describe("redaction", () => {
     expectRedacted(`{"access_token":"short","clientSecret":"tiny","safe":"ok"} authorization=Bearer-secret`, ["access_token", "short", "clientSecret", "tiny", "Bearer-secret"]);
   });
 
+  it("redacts authorization key value bearer forms", () => {
+    expectRedacted("authorization=Bearer short-secret proxy_authorization=Bearer proxy-secret authorization: Bearer short-secret", ["Bearer short-secret", "Bearer proxy-secret", "short-secret", "proxy-secret"]);
+  });
+
+  it("redacts JSON primitive secret fields and set-cookie variants", () => {
+    expectRedacted(`{"access_token":123456} {"apiKey":true} {"refreshToken":null} {"setCookie":"sid=secret"} {"set_cookie":"sid=secret"} {"set-cookie":"sid=secret"}`, ["access_token", "123456", "apiKey", "true", "refreshToken", "null", "setCookie", "set_cookie", "set-cookie", "sid=secret"]);
+  });
+
   it("redacts object secret-like keys and values", () => {
     expect(sanitizeDisplayValue({ accessToken: "short", nested: { clientSecret: "tiny" }, safe: "ok" })).toEqual({ "[redacted]": "[redacted]", nested: { "[redacted]": "[redacted]" }, safe: "ok" });
     expect(isSecretLikeKey("PROVIDER_CLIENT_SECRET")).toBe(true);
@@ -39,6 +47,10 @@ describe("redaction", () => {
 
   it("redacts credential paths and markers", () => {
     expectRedacted("auth.json .codex/auth.json .codex\\auth.json ./.codex/auth.json ../.codex/auth.json /Users/alice/.codex/auth.json C:\\Users\\alice\\.codex\\auth.json", ["auth.json", ".codex", "Users", "alice"]);
+  });
+
+  it("redacts credential paths with spaces", () => {
+    expectRedacted("/Users/Alice Smith/.codex/auth.json C:\\Users\\Alice Smith\\.codex\\auth.json /Users/Alice Smith/auth.json C:\\Users\\Alice Smith\\auth.json", ["Alice Smith", ".codex", "auth.json"]);
   });
 
   it("redacts JWT sk keys and long opaque values", () => {
