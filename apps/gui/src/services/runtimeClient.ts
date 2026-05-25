@@ -55,8 +55,8 @@ export type ModelsResponse = {
 
 export type ChatCommand = {
   requestId: string;
-  type: "user_message";
-  payload: {
+  type: "user_message" | "abort";
+  payload?: {
     content: string;
   };
 };
@@ -162,6 +162,20 @@ export function sendUserMessage(
     requestId: crypto.randomUUID(),
     type: "user_message",
     payload: { content },
+  };
+  return runtimeFetch<ChatCommandResponse>(settings, `/v1/chats/${encodeURIComponent(chatId)}/commands`, {
+    method: "POST",
+    body: JSON.stringify(command),
+  });
+}
+
+export function sendAbort(
+  settings: RuntimeSettings,
+  chatId: string,
+): Promise<RuntimeResult<ChatCommandResponse>> {
+  const command: ChatCommand = {
+    requestId: crypto.randomUUID(),
+    type: "abort",
   };
   return runtimeFetch<ChatCommandResponse>(settings, `/v1/chats/${encodeURIComponent(chatId)}/commands`, {
     method: "POST",

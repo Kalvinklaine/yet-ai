@@ -613,6 +613,28 @@ describe("chat panel", () => {
     expect(JSON.stringify(localStorage)).not.toContain(secret);
     expect(JSON.stringify(sessionStorage)).not.toContain(secret);
   });
+
+  it("Stop SSE sends abort and clears the local subscription", async () => {
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Stop SSE").click();
+      await Promise.resolve();
+    });
+
+    const abortCall = fetchMock.mock.calls.find(([url, init]) => {
+      if (!String(url).endsWith("/v1/chats/chat-001/commands") || init?.method !== "POST") {
+        return false;
+      }
+      const body = JSON.parse(String(init.body)) as { type?: string };
+      return body.type === "abort";
+    });
+    expect(abortCall).toBeDefined();
+    expect(container?.textContent).toContain("SSE stopped and abort requested");
+  });
 });
 
 function renderApp() {

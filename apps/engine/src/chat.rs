@@ -7,7 +7,8 @@ use axum::response::sse::Event;
 use futures_util::StreamExt;
 use serde::Serialize;
 use serde_json::json;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, oneshot, Mutex};
+use tokio::task::JoinHandle;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::provider_auth::{self, ExperimentalCodexChatAuth};
@@ -24,6 +25,14 @@ struct ChatState {
     events: Vec<ChatEvent>,
     next_seq: u64,
     sender: broadcast::Sender<ChatEvent>,
+    active_stream: Option<ActiveStream>,
+    next_stream_id: u64,
+}
+
+#[derive(Debug)]
+struct ActiveStream {
+    id: u64,
+    handle: JoinHandle<()>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -74,15 +83,56 @@ impl ChatRuntime {
         chat_id: String,
         content: String,
     ) {
-        self.ensure_chat(&chat_id).await;
         let runtime = self.clone();
-        tokio::spawn(async move {
-            runtime.run_stream(config_dir, chat_id, content).await;
+        let stream_id = {
+            let mut guard = self.inner.lock().await;
+            let state = guard
+                .entry(chat_id.clone())
+                .or_insert_with(|| ChatState::new(&chat_id));
+            if let Some(active) = state.active_stream.take() {
+                active.handle.abort();
+            }
+            let stream_id = state.next_stream_id;
+            state.next_stream_id += 1;
+            stream_id
+        };
+        let task_chat_id = chat_id.clone();
+        let (start_sender, start_receiver) = oneshot::channel();
+        let handle = tokio::spawn(async move {
+            if start_receiver.await.is_ok() {
+                runtime
+                    .run_stream(config_dir, task_chat_id, stream_id, content)
+                    .await;
+            }
         });
+        let mut guard = self.inner.lock().await;
+        let state = guard
+            .entry(chat_id.clone())
+            .or_insert_with(|| ChatState::new(&chat_id));
+        state.active_stream = Some(ActiveStream {
+            id: stream_id,
+            handle,
+        });
+        let _ = start_sender.send(());
     }
 
     pub async fn accept_abort(&self, chat_id: &str) {
-        self.ensure_chat(chat_id).await;
+        let active = {
+            let mut guard = self.inner.lock().await;
+            let state = guard
+                .entry(chat_id.to_string())
+                .or_insert_with(|| ChatState::new(chat_id));
+            state.active_stream.take()
+        };
+        if let Some(active) = active {
+            active.handle.abort();
+            self.push_event(
+                chat_id,
+                "stream_finished",
+                json!({ "finishReason": "abort" }),
+            )
+            .await;
+        }
     }
 
     pub async fn subscribe(
@@ -115,13 +165,6 @@ impl ChatRuntime {
         snapshot_stream.chain(replay_stream).chain(live_stream)
     }
 
-    async fn ensure_chat(&self, chat_id: &str) {
-        let mut guard = self.inner.lock().await;
-        guard
-            .entry(chat_id.to_string())
-            .or_insert_with(|| ChatState::new(chat_id));
-    }
-
     async fn push_event(&self, chat_id: &str, event_type: &str, payload: serde_json::Value) {
         let mut guard = self.inner.lock().await;
         let state = guard
@@ -138,19 +181,17 @@ impl ChatRuntime {
         let _ = state.sender.send(event);
     }
 
-    async fn run_stream(&self, config_dir: std::path::PathBuf, chat_id: String, content: String) {
+    async fn run_stream(
+        &self,
+        config_dir: std::path::PathBuf,
+        chat_id: String,
+        stream_id: u64,
+        content: String,
+    ) {
         self.push_event(&chat_id, "stream_started", json!({ "role": "assistant" }))
             .await;
-        match self.stream_provider(&config_dir, &content).await {
-            Ok(text) => {
-                for delta in text {
-                    self.push_event(
-                        &chat_id,
-                        "stream_delta",
-                        json!({ "delta": { "content": delta } }),
-                    )
-                    .await;
-                }
+        match self.stream_provider(&config_dir, &chat_id, &content).await {
+            Ok(()) => {
                 self.push_event(
                     &chat_id,
                     "stream_finished",
@@ -167,13 +208,28 @@ impl ChatRuntime {
                 .await;
             }
         }
+        self.clear_active_stream(&chat_id, stream_id).await;
+    }
+
+    async fn clear_active_stream(&self, chat_id: &str, stream_id: u64) {
+        let mut guard = self.inner.lock().await;
+        if let Some(state) = guard.get_mut(chat_id) {
+            if state
+                .active_stream
+                .as_ref()
+                .is_some_and(|active| active.id == stream_id)
+            {
+                state.active_stream = None;
+            }
+        }
     }
 
     async fn stream_provider(
         &self,
         config_dir: &std::path::Path,
+        chat_id: &str,
         content: &str,
-    ) -> Result<Vec<String>, ChatError> {
+    ) -> Result<(), ChatError> {
         let selected = providers::list_provider_configs(config_dir)
             .await
             .map_err(|_| ChatError::ProviderConfig)?
@@ -190,20 +246,30 @@ impl ChatRuntime {
         };
         match selected {
             ChatProvider::OpenAiCompatible(provider) => {
-                let provider = providers::get_provider_config_with_secrets(config_dir, &provider.id)
-                    .await
-                    .map_err(|_| ChatError::ProviderConfig)?;
+                let provider =
+                    providers::get_provider_config_with_secrets(config_dir, &provider.id)
+                        .await
+                        .map_err(|_| ChatError::ProviderConfig)?;
                 let model = provider
                     .models
                     .first()
                     .ok_or(ChatError::NoModel)?
                     .id
                     .clone();
-                openai_compatible_stream(&self.client, &provider, &model, content).await
+                openai_compatible_stream(self, &self.client, &provider, &model, chat_id, content)
+                    .await
             }
             ChatProvider::ExperimentalCodex(auth) => {
-                bearer_stream(&self.client, &auth.base_url, &auth.model, &auth.access_token, content)
-                    .await
+                bearer_stream(
+                    self,
+                    &self.client,
+                    &auth.base_url,
+                    &auth.model,
+                    &auth.access_token,
+                    chat_id,
+                    content,
+                )
+                .await
             }
         }
     }
@@ -221,6 +287,8 @@ impl ChatState {
             events: Vec::new(),
             next_seq: 1,
             sender,
+            active_stream: None,
+            next_stream_id: 1,
         }
     }
 }
@@ -242,7 +310,9 @@ impl ChatError {
         match self {
             Self::NoProvider => "No enabled OpenAI-compatible provider is configured.",
             Self::NoModel => "The configured provider has no chat model.",
-            Self::Unauthorized => "Provider authentication failed. Check the configured credentials.",
+            Self::Unauthorized => {
+                "Provider authentication failed. Check the configured credentials."
+            }
             Self::Request => "Provider request failed.",
             Self::Timeout => "Provider stream timed out.",
             Self::MalformedStream => "Provider returned malformed streaming data.",
@@ -277,11 +347,13 @@ fn to_sse_event(event: ChatEvent) -> Event {
 }
 
 async fn openai_compatible_stream(
+    runtime: &ChatRuntime,
     client: &reqwest::Client,
     provider: &StoredProviderConfig,
     model: &str,
+    chat_id: &str,
     content: &str,
-) -> Result<Vec<String>, ChatError> {
+) -> Result<(), ChatError> {
     let url = chat_completions_url(&provider.base_url)?;
     let mut request = client
         .post(url)
@@ -301,16 +373,18 @@ async fn openai_compatible_stream(
             request = request.bearer_auth(api_key);
         }
     }
-    collect_openai_compatible_stream(request).await
+    collect_openai_compatible_stream(runtime, chat_id, request).await
 }
 
 async fn bearer_stream(
+    runtime: &ChatRuntime,
     client: &reqwest::Client,
     base_url: &str,
     model: &str,
     access_token: &str,
+    chat_id: &str,
     content: &str,
-) -> Result<Vec<String>, ChatError> {
+) -> Result<(), ChatError> {
     let url = chat_completions_url(base_url)?;
     let request = client
         .post(url)
@@ -321,12 +395,14 @@ async fn bearer_stream(
             "stream": true,
             "messages": [{ "role": "user", "content": content }]
         }));
-    collect_openai_compatible_stream(request).await
+    collect_openai_compatible_stream(runtime, chat_id, request).await
 }
 
 async fn collect_openai_compatible_stream(
+    runtime: &ChatRuntime,
+    chat_id: &str,
     request: reqwest::RequestBuilder,
-) -> Result<Vec<String>, ChatError> {
+) -> Result<(), ChatError> {
     let response = request.send().await.map_err(|error| {
         if error.is_timeout() {
             ChatError::Timeout
@@ -352,8 +428,26 @@ async fn collect_openai_compatible_stream(
         })?;
         let text = std::str::from_utf8(&chunk).map_err(|_| ChatError::MalformedStream)?;
         parser.push(text)?;
+        for delta in parser.drain_deltas() {
+            runtime
+                .push_event(
+                    chat_id,
+                    "stream_delta",
+                    json!({ "delta": { "content": delta } }),
+                )
+                .await;
+        }
     }
-    parser.finish()
+    for delta in parser.finish()? {
+        runtime
+            .push_event(
+                chat_id,
+                "stream_delta",
+                json!({ "delta": { "content": delta } }),
+            )
+            .await;
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -382,6 +476,10 @@ impl OpenAiSseParser {
         }
         self.flush_event()?;
         Ok(self.deltas)
+    }
+
+    fn drain_deltas(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.deltas)
     }
 
     fn handle_line(&mut self, line: &str) -> Result<(), ChatError> {
