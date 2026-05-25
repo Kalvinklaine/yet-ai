@@ -26,6 +26,9 @@ try {
     resolveSessionToken,
     safeRuntimeUrl,
     setStoredSessionToken,
+    validateEngineConnectionSettings,
+    validateLoopbackUrl,
+    validateRuntimeLaunchProtocol,
   } = await import("../out/engineConnection.js");
 
   assert.deepEqual(resolveSessionToken(" secret-token ", " legacy-token "), {
@@ -37,6 +40,42 @@ try {
     source: "legacySetting",
   });
   assert.deepEqual(resolveSessionToken("", "  "), { source: "none" });
+
+  assert.doesNotThrow(() => validateLoopbackUrl("https://127.0.0.1:5173", "yetai.guiDevUrl"));
+  assert.throws(
+    () => validateLoopbackUrl("http://127.0.0.1:8001/?token=fake-secret", "yetai.runtimeUrl"),
+    /yetai\.runtimeUrl must not include query parameters or fragments\./,
+  );
+  assert.throws(
+    () => validateLoopbackUrl("http://127.0.0.1:8001/#fake-secret", "yetai.runtimeUrl"),
+    /yetai\.runtimeUrl must not include query parameters or fragments\./,
+  );
+  assert.throws(
+    () => validateLoopbackUrl("https://localhost:5173/?token=fake-secret", "yetai.guiDevUrl"),
+    /yetai\.guiDevUrl must not include query parameters or fragments\./,
+  );
+  assert.throws(
+    () => validateLoopbackUrl("https://localhost:5173/#fake-secret", "yetai.guiDevUrl"),
+    /yetai\.guiDevUrl must not include query parameters or fragments\./,
+  );
+
+  const connectHttpsSettings = {
+    runtimeUrl: "https://127.0.0.1:8001",
+    guiDevUrl: "https://127.0.0.1:5173",
+    launchMode: "connect",
+    sessionTokenSource: "secretStorage",
+  };
+  assert.doesNotThrow(() => validateEngineConnectionSettings(connectHttpsSettings));
+  assert.doesNotThrow(() => validateRuntimeLaunchProtocol(connectHttpsSettings.runtimeUrl, "connect", false));
+  assert.throws(
+    () => validateRuntimeLaunchProtocol("https://127.0.0.1:8001", "launch", true),
+    /yetai\.runtimeUrl must use http when yetai\.launchMode launch starts the local engine\./,
+  );
+  assert.throws(
+    () => validateRuntimeLaunchProtocol("https://127.0.0.1:8001", "auto", true),
+    /yetai\.runtimeUrl must use http when yetai\.launchMode auto starts the local engine\./,
+  );
+  assert.doesNotThrow(() => validateRuntimeLaunchProtocol("http://127.0.0.1:8001", "launch", true));
 
   const secretOperations = [];
   const fakeContext = {

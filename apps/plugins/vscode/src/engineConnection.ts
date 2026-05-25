@@ -22,7 +22,7 @@ export type RuntimeDiagnostics = {
 
 type LaunchMode = "auto" | "connect" | "launch";
 
-type EngineConnectionSettings = EngineConnection & {
+export type EngineConnectionSettings = EngineConnection & {
   engineBinaryPath?: string;
   launchMode: LaunchMode;
   sessionTokenSource: SessionTokenSource;
@@ -91,6 +91,7 @@ export async function prepareEngineConnection(
   const shouldLaunch = settings.launchMode === "launch" || (settings.launchMode === "auto" && binaryPath !== undefined);
 
   if (shouldLaunch) {
+    validateRuntimeLaunchProtocol(settings.runtimeUrl, settings.launchMode, shouldLaunch);
     if (!binaryPath) {
       throw new Error(`${configurationPrefix}.engineBinaryPath must point to ${identity.engine.binaryName} when launch mode is enabled.`);
     }
@@ -192,6 +193,9 @@ export function validateLoopbackUrl(value: string, settingName: string): vscode.
   if (parsed.username.length > 0 || parsed.password.length > 0) {
     throw new Error(`${settingName} must not include user info.`);
   }
+  if (parsed.search.length > 0 || parsed.hash.length > 0) {
+    throw new Error(`${settingName} must not include query parameters or fragments.`);
+  }
   if (parsed.hostname !== "127.0.0.1" && parsed.hostname !== "localhost" && parsed.hostname !== "[::1]") {
     throw new Error(`${settingName} must point to a loopback host.`);
   }
@@ -210,10 +214,22 @@ export function validateEngineConnection(connection: EngineConnection): void {
   }
 }
 
-function validateEngineConnectionSettings(settings: EngineConnectionSettings): void {
+export function validateEngineConnectionSettings(settings: EngineConnectionSettings): void {
   validateEngineConnection(settings);
   if (settings.engineBinaryPath && !path.isAbsolute(settings.engineBinaryPath)) {
     throw new Error(`${configurationPrefix}.engineBinaryPath must be an absolute path.`);
+  }
+}
+
+export function validateRuntimeLaunchProtocol(runtimeUrl: string, launchMode: LaunchMode, willLaunch: boolean): void {
+  if (!willLaunch) {
+    return;
+  }
+  const parsed = new URL(runtimeUrl);
+  if (parsed.protocol === "https:") {
+    throw new Error(
+      `${configurationPrefix}.runtimeUrl must use http when ${configurationPrefix}.launchMode ${launchMode} starts the local engine. Use connect mode for an externally managed loopback HTTPS runtime.`,
+    );
   }
 }
 
