@@ -105,6 +105,31 @@ try {
   if (!iframeGuiReady) {
     failures.push("GUI iframe did not send gui.ready to the parent wrapper.");
   }
+  const bridgeMessageCountBeforeHostileGui = await page.evaluate(() => window.__yetAiBridgeMessages.length);
+  await frameLocator.locator("body").evaluate((body, version) => {
+    window.parent.postMessage({
+      version,
+      type: "gui.ready",
+      payload: {
+        supportedBridgeVersion: version,
+        extra: true,
+      },
+    }, document.referrer ? new URL(document.referrer).origin : "*");
+  }, bridgeVersion);
+  await frameLocator.locator("body").evaluate((body, version) => {
+    window.parent.postMessage({
+      version: `${version}-old`,
+      type: "gui.ready",
+      payload: {
+        supportedBridgeVersion: version,
+      },
+    }, document.referrer ? new URL(document.referrer).origin : "*");
+  }, bridgeVersion);
+  await page.waitForTimeout(100);
+  const bridgeMessageCountAfterHostileGui = await page.evaluate(() => window.__yetAiBridgeMessages.length);
+  if (bridgeMessageCountAfterHostileGui !== bridgeMessageCountBeforeHostileGui) {
+    failures.push("Wrapper forwarded schema-invalid or wrong-version gui.ready from the iframe.");
+  }
   const queueStateAfterReady = await page.evaluate(() => ({
     hostQueue: window.__yetAiPendingHostMessages?.length,
     diagnosticQueue: window.__yetAiPendingDiagnostics?.length,
@@ -128,6 +153,45 @@ try {
   const runtimeInputValue = await runtimeInput.inputValue({ timeout: 5000 }).catch(() => "");
   if (runtimeInputValue !== "http://127.0.0.1:8001") {
     failures.push("Iframe GUI did not naturally apply wrapper host.ready runtime settings.");
+  }
+
+  const hostMessagesPostedBeforeInvalidOpened = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
+  await page.evaluate((version) => {
+    window.__yetAiSendHostMessageToFrame({
+      version,
+      type: "host.openedFromCommand",
+      payload: {
+        command: "free-form",
+      },
+    });
+    window.__yetAiSendHostMessageToFrame({
+      version,
+      type: "host.ready",
+      requestId: "invalid-host-ready-extra-field",
+      payload: {
+        runtimeUrl: "http://127.0.0.1:9010",
+        productId: "yet-ai",
+        displayName: "Yet AI",
+        cloudRequired: false,
+        extra: true,
+      },
+    });
+    window.__yetAiSendHostMessageToFrame({
+      version,
+      type: "host.ready",
+      requestId: "invalid-host-ready-cloud",
+      payload: {
+        runtimeUrl: "http://127.0.0.1:9011",
+        productId: "yet-ai",
+        displayName: "Yet AI",
+        cloudRequired: true,
+      },
+    });
+  }, bridgeVersion);
+  await page.waitForTimeout(100);
+  const hostMessagesPostedAfterInvalidOpened = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
+  if (hostMessagesPostedAfterInvalidOpened !== hostMessagesPostedBeforeInvalidOpened) {
+    failures.push("Wrapper relayed a schema-invalid host message into the iframe.");
   }
 
   await page.evaluate((version) => {
@@ -268,6 +332,7 @@ window.__yetAiBridgeMessages = [];
 window.__yetAiFrameTargetOrigin = frameTargetOrigin;
 window.__yetAiIframeGuiReady = false;
 window.__yetAiBootstrapHostReadySentCount = 0;
+window.__yetAiHostMessagesPostedCount = 0;
 let frameLoaded = false;
 let frameReady = false;
 let flushingPending = false;
@@ -309,6 +374,7 @@ window.postIntellijMessage = (message) => {
 const postToFrame = (message) => {
   if (frame && frame.contentWindow && frameTargetOrigin && isHostMessage(message)) {
     frame.contentWindow.postMessage(message, frameTargetOrigin);
+    window.__yetAiHostMessagesPostedCount += 1;
     if (message?.requestId === "pre-init-smoke") window.__yetAiPreInitHostFlushed = true;
   }
 };
@@ -332,8 +398,21 @@ const sendBootstrap = () => {
   window.__yetAiBootstrapHostReadySentCount += 1;
   sendToFrame(bootstrapHostReady);
 };
-const isHostMessage = (message) => message && message.version === bridgeVersion && (message.type === "host.ready" || message.type === "host.openedFromCommand") && (message.payload === undefined || (typeof message.payload === "object" && message.payload !== null && !Array.isArray(message.payload)));
-const isGuiMessage = (message) => message && message.version === bridgeVersion && message.type === "gui.ready";
+const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+const hasOnlyKeys = (record, keys) => Object.keys(record).every((key) => keys.includes(key));
+const isRequestId = (value) => value === undefined || (typeof value === "string" && value.length >= 1 && value.length <= 128);
+const optionalString = (value) => value === undefined || typeof value === "string";
+const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && optionalString(payload.runtimeUrl) && optionalString(payload.sessionToken) && optionalString(payload.productId) && optionalString(payload.displayName) && payload.cloudRequired === false;
+const isHostMessage = (message) => {
+  if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || !isRequestId(message.requestId)) return false;
+  if (message.type === "host.ready") return isHostReadyPayload(message.payload);
+  if (message.type === "host.openedFromCommand") return message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0);
+  return false;
+};
+const isGuiMessage = (message) => {
+  if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.ready" || !isRequestId(message.requestId)) return false;
+  return message.payload === undefined || (isPlainObject(message.payload) && hasOnlyKeys(message.payload, ["supportedBridgeVersion"]) && (message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion));
+};
 window.__yetAiSendHostMessageToFrame = sendToFrame;
 window.__yetAiWrapperInitialized = true;
 window.addEventListener("message", (event) => {
@@ -370,6 +449,11 @@ if (frame) {
 async function startStaticServer(staticRoot) {
   const realStaticRoot = await realpath(staticRoot);
   const server = http.createServer(async (request, response) => {
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      response.writeHead(405, { allow: "GET, HEAD" });
+      response.end("Method not allowed");
+      return;
+    }
     let requestUrl;
     let pathname;
     try {
@@ -402,7 +486,18 @@ async function startStaticServer(staticRoot) {
         return;
       }
       response.writeHead(200, { "content-type": contentType(realRequestedPath) });
-      createReadStream(realRequestedPath).pipe(response);
+      if (request.method === "HEAD") {
+        response.end();
+        return;
+      }
+      const stream = createReadStream(realRequestedPath);
+      stream.on("error", () => {
+        if (!response.headersSent) {
+          response.writeHead(404);
+        }
+        response.end();
+      });
+      stream.pipe(response);
     } catch {
       response.writeHead(404);
       response.end("Not found");
