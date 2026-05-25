@@ -1,9 +1,10 @@
+use axum::body::Bytes;
 use axum::body::{to_bytes, Body};
 use axum::http::{header, Method, Request, StatusCode};
 use axum::response::IntoResponse;
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tower::ServiceExt;
 use yet_lsp::identity::ProductIdentity;
 use yet_lsp::secret_store::{FileSecretStore, ProviderSecretStore, SecretKind};
@@ -205,11 +206,89 @@ async fn start_mock_provider(
     (format!("http://{address}"), auth_receiver)
 }
 
+async fn start_slow_mock_provider(
+    expected_auth: Option<&'static str>,
+) -> (
+    String,
+    oneshot::Receiver<Option<String>>,
+    oneshot::Receiver<()>,
+    oneshot::Sender<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (auth_sender, auth_receiver) = oneshot::channel();
+    let (first_sender, first_receiver) = oneshot::channel();
+    let (continue_sender, continue_receiver) = oneshot::channel();
+    let expected = expected_auth.map(str::to_string);
+    let auth_sender = std::sync::Arc::new(std::sync::Mutex::new(Some(auth_sender)));
+    let first_sender = std::sync::Arc::new(std::sync::Mutex::new(Some(first_sender)));
+    let continue_receiver = std::sync::Arc::new(std::sync::Mutex::new(Some(continue_receiver)));
+    tokio::spawn(async move {
+        let handler = move |request: axum::http::Request<Body>| {
+            let expected = expected.clone();
+            let auth_sender = auth_sender.clone();
+            let first_sender = first_sender.clone();
+            let continue_receiver = continue_receiver.clone();
+            async move {
+                let auth = request
+                    .headers()
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                if let Some(sender) = auth_sender.lock().unwrap().take() {
+                    let _ = sender.send(auth.clone());
+                }
+                if let Some(expected) = expected {
+                    assert_eq!(auth.as_deref(), Some(expected.as_str()));
+                }
+                let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(8);
+                tokio::spawn(async move {
+                    let _ = tx
+                        .send(Ok(Bytes::from_static(
+                            b"data: {\"choices\":[{\"delta\":{\"content\":\"first\"}}]}\n\n",
+                        )))
+                        .await;
+                    if let Some(sender) = first_sender.lock().unwrap().take() {
+                        let _ = sender.send(());
+                    }
+                    let receiver = continue_receiver.lock().unwrap().take();
+                    if let Some(receiver) = receiver {
+                        let _ = receiver.await;
+                    }
+                    let _ = tx
+                        .send(Ok(Bytes::from_static(
+                            b"data: {\"choices\":[{\"delta\":{\"content\":\"second\"}}]}\n\ndata: [DONE]\n\n",
+                        )))
+                        .await;
+                });
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "text/event-stream")],
+                    Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx)),
+                )
+                    .into_response()
+            }
+        };
+        let app = axum::Router::new()
+            .route("/chat/completions", axum::routing::post(handler.clone()))
+            .route("/v1/chat/completions", axum::routing::post(handler));
+        axum::serve(listener, app).await.unwrap();
+    });
+    (
+        format!("http://{address}"),
+        auth_receiver,
+        first_receiver,
+        continue_sender,
+    )
+}
+
 async fn start_mock_codex_token_endpoint() -> (String, oneshot::Receiver<Value>) {
     start_mock_codex_token_endpoint_with(1800).await
 }
 
-async fn start_mock_codex_token_endpoint_with(expires_in: i64) -> (String, oneshot::Receiver<Value>) {
+async fn start_mock_codex_token_endpoint_with(
+    expires_in: i64,
+) -> (String, oneshot::Receiver<Value>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (body_sender, body_receiver) = oneshot::channel();
@@ -320,6 +399,26 @@ async fn send_user_message(app: axum::Router, chat_id: &str) {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["accepted"], true);
+}
+
+async fn send_abort(app: axum::Router, chat_id: &str, request_id: &str) {
+    let command = json!({
+        "requestId": request_id,
+        "type": "abort",
+        "payload": {}
+    });
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            &format!("/v1/chats/{chat_id}/commands"),
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accepted"], true);
+    assert_eq!(body["type"], "abort");
 }
 
 fn find_error_event(events: &[Value]) -> &Value {
@@ -785,7 +884,10 @@ async fn provider_auth_openai_experimental_exchange_stores_tokens_and_returns_co
     assert_eq!(body["status"], "connected");
     assert_eq!(body["authSource"], "oauth");
     assert_eq!(body["accountLabel"], "mock-user@example.test");
-    assert_eq!(body["scopes"], json!(["openid", "profile", "email", "offline_access"]));
+    assert_eq!(
+        body["scopes"],
+        json!(["openid", "profile", "email", "offline_access"])
+    );
     chrono::DateTime::parse_from_rfc3339(body["expiresAt"].as_str().unwrap()).unwrap();
     assert_provider_auth_response_has_no_codex_secrets(&body);
 
@@ -1919,6 +2021,55 @@ async fn openai_compatible_streaming_maps_chunks_to_sse_events() {
 }
 
 #[tokio::test]
+async fn abort_with_no_active_stream_is_accepted_and_multiple_aborts_are_safe() {
+    let app = test_app();
+    send_abort(app.clone(), "chat-no-active-abort", "req-abort-1").await;
+    send_abort(app.clone(), "chat-no-active-abort", "req-abort-2").await;
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-no-active-abort").await;
+    let events = sse_json_events(&text);
+    assert_eq!(events[0]["type"], "snapshot");
+    assert!(!events.iter().any(|event| event["type"] == "stream_delta"));
+    assert!(!text.to_lowercase().contains("token"));
+}
+
+#[tokio::test]
+async fn abort_cancels_active_provider_stream_without_later_deltas() {
+    let api_key = "sk-abort-stream-secret-abcd";
+    let (base_url, auth_receiver, first_receiver, continue_sender) =
+        start_slow_mock_provider(Some("Bearer sk-abort-stream-secret-abcd")).await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+    send_user_message(app.clone(), "chat-abort-stream").await;
+    first_receiver.await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    send_abort(app.clone(), "chat-abort-stream", "req-abort-stream-1").await;
+    send_abort(app.clone(), "chat-abort-stream", "req-abort-stream-2").await;
+    let _ = continue_sender.send(());
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-abort-stream").await;
+    let events = sse_json_events(&text);
+    assert!(events.iter().any(|event| event["type"] == "stream_started"));
+    assert!(events
+        .iter()
+        .any(|event| event["type"] == "stream_delta"
+            && event["payload"]["delta"]["content"] == "first"));
+    assert!(!events
+        .iter()
+        .any(|event| event["type"] == "stream_delta"
+            && event["payload"]["delta"]["content"] == "second"));
+    assert!(events
+        .iter()
+        .any(|event| event["type"] == "stream_finished"
+            && event["payload"]["finishReason"] == "abort"));
+    let auth = auth_receiver.await.unwrap();
+    assert_eq!(auth.as_deref(), Some("Bearer sk-abort-stream-secret-abcd"));
+    assert!(!text.contains(api_key));
+    assert_sanitized_sse_error(&text);
+}
+
+#[tokio::test]
 async fn experimental_openai_oauth_token_streams_chat_via_mock_endpoint() {
     let (chat_base_url, auth_receiver) = start_mock_provider(
         StatusCode::OK,
@@ -1935,15 +2086,22 @@ async fn experimental_openai_oauth_token_streams_chat_via_mock_endpoint() {
     let events = sse_json_events(&text);
     assert_eq!(events[0]["type"], "snapshot");
     assert!(events.iter().any(|event| event["type"] == "stream_started"));
-    assert!(events.iter().any(|event| event["type"] == "stream_delta"
-        && event["payload"]["delta"]["content"] == "OAuth"));
-    assert!(events.iter().any(|event| event["type"] == "stream_delta"
-        && event["payload"]["delta"]["content"] == " chat"));
+    assert!(events
+        .iter()
+        .any(|event| event["type"] == "stream_delta"
+            && event["payload"]["delta"]["content"] == "OAuth"));
+    assert!(events
+        .iter()
+        .any(|event| event["type"] == "stream_delta"
+            && event["payload"]["delta"]["content"] == " chat"));
     assert!(events
         .iter()
         .any(|event| event["type"] == "stream_finished"));
     let auth = auth_receiver.await.unwrap();
-    assert_eq!(auth.as_deref(), Some("Bearer codex-access-token-secret-abcd"));
+    assert_eq!(
+        auth.as_deref(),
+        Some("Bearer codex-access-token-secret-abcd")
+    );
     assert!(!text.contains("codex-access-token-secret"));
     assert!(!text.contains("codex-refresh-token-secret"));
 }

@@ -3,7 +3,7 @@ import { createBridgeAdapter, type BridgeHost, type HostReadyPayload } from "./b
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, resetChatViewState, type ChatViewMessage } from "./services/chatViewState";
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { listProviders, saveProvider, type ProviderSummary, type ProviderWriteRequest } from "./services/providersClient";
-import { getCaps, getModels, getPing, isLoopbackRuntimeUrl, productIdentity, productIdentityWarning, type CapsResponse, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
+import { getCaps, getModels, getPing, isLoopbackRuntimeUrl, productIdentity, productIdentityWarning, sendAbort, type CapsResponse, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
@@ -488,9 +488,14 @@ export function App() {
   }, [addTimeline, appendChatError, chatId, settings]);
 
   const stopSse = () => {
+    void sendAbort(settings, chatId).then((result) => {
+      if (!result.ok) {
+        addTimeline(`Abort command error: ${sanitizeDisplayText(result.error.message)}`);
+      }
+    });
     abortRef.current?.abort();
     abortRef.current = null;
-    addTimeline("SSE stopped");
+    addTimeline("SSE stopped and abort requested");
   };
 
   const submitChat = async (event: FormEvent<HTMLFormElement>) => {
