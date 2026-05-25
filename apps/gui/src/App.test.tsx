@@ -144,6 +144,90 @@ describe("runtime refresh feedback", () => {
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain(runtimeToken);
   });
+
+
+  it("queues latest runtime settings when host.ready arrives during an in-flight refresh", async () => {
+    const hostToken = "queued-host-token-secret";
+    const initialPing = deferred<Response>();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "http://127.0.0.1:8001/v1/ping") {
+        return initialPing.promise;
+      }
+      if (url.endsWith("/v1/ping")) {
+        return Promise.resolve(jsonResponse({
+          productId: "yet-ai",
+          displayName: "Yet AI",
+          version: "0.0.0",
+          ready: true,
+          serverTime: "2026-05-24T00:00:00Z",
+        }));
+      }
+      if (url.endsWith("/v1/caps")) {
+        return Promise.resolve(jsonResponse({
+          productId: "yet-ai",
+          protocolVersion: "2026-05-15",
+          runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" },
+          capabilities: [],
+          features: {},
+          providers: [],
+          ide: { bridge: true, lsp: false },
+        }));
+      }
+      if (url.endsWith("/v1/models")) {
+        return Promise.resolve(jsonResponse({ models: [] }));
+      }
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
+      }
+      if (url.endsWith("/v1/providers")) {
+        return Promise.resolve(jsonResponse({ providers: [], cloudRequired: false, providerAccess: "direct" }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderApp();
+    await flushAsync();
+
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: hostToken });
+
+    initialPing.resolve(jsonResponse({
+      productId: "yet-ai",
+      displayName: "Yet AI",
+      version: "0.0.0",
+      ready: true,
+      serverTime: "2026-05-24T00:00:00Z",
+    }));
+    await flushAsync();
+    await flushAsync();
+
+    const retargetedCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("http://127.0.0.1:8765/"));
+    expect(retargetedCalls.length).toBeGreaterThan(0);
+    expect(retargetedCalls.every(([, init]) => new Headers(init?.headers).get("Authorization") === `Bearer ${hostToken}`)).toBe(true);
+  });
+
+  it("clears stale ping caps and identity warnings after unexpected refresh exceptions", async () => {
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Runtime connected");
+    expect(container?.textContent).toContain("/v1/ping");
+    expect(container?.textContent).toContain("\"ready\": true");
+
+    fetchMock.mockImplementation(() => Promise.reject(new Error("unexpected refresh crash")));
+
+    await act(async () => {
+      findButton("Refresh runtime").click();
+    });
+
+    expect(container?.textContent).toContain("Runtime check failed: network unexpected refresh crash");
+    expect(container?.textContent).toContain("No data");
+    expect(container?.textContent).not.toContain("\"ready\": true");
+    expect(container?.textContent).not.toContain("\"protocolVersion\": \"2026-05-15\"");
+  });
 });
 
 describe("provider secret boundary", () => {
@@ -545,10 +629,13 @@ describe("host.ready runtime bootstrap", () => {
       setInputValue(sessionTokenInput(), token);
     });
     await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765" });
+    await flushAsync();
 
     expect(findInputValue("http://127.0.0.1:8765")).toBeDefined();
     expect(sessionTokenInput().value).toBe("");
-    expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith("http://127.0.0.1:8765/")).every(([, init]) => !new Headers(init?.headers).get("Authorization")?.includes(token))).toBe(true);
+    const retargetedCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("http://127.0.0.1:8765/"));
+    expect(retargetedCalls.length).toBeGreaterThan(0);
+    expect(retargetedCalls.every(([, init]) => !new Headers(init?.headers).get("Authorization")?.includes(token))).toBe(true);
     expect(browserStorageDump()).not.toContain(token);
   });
 
@@ -581,6 +668,27 @@ describe("host.ready runtime bootstrap", () => {
 
     expect(sessionTokenInput().value).toBe("");
     expect(browserStorageDump()).not.toContain(token);
+  });
+
+
+  it("does not recreate the bridge adapter when runtime URL input changes", async () => {
+    const postIntellijMessage = vi.fn();
+    window.postIntellijMessage = postIntellijMessage;
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+    expect(postIntellijMessage).toHaveBeenCalledTimes(1);
+    expect(container?.textContent).toContain("bridge jetbrains");
+
+    await act(async () => {
+      setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
+    });
+    await flushAsync();
+
+    expect(postIntellijMessage).toHaveBeenCalledTimes(1);
+    const bridgeHostEntries = Array.from(container?.querySelectorAll(".timeline-entry") ?? []).filter((entry) => entry.textContent === "Bridge host jetbrains");
+    expect(bridgeHostEntries).toHaveLength(1);
   });
 });
 
@@ -657,6 +765,35 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("Model: GPT-4o mini (openai-api)");
     expect(container?.textContent).toContain("Ready to send using GPT-4o mini.");
     expect(findButton("Send").disabled).toBe(false);
+  });
+
+
+  it("disables Send when provider and model data exists but runtime connectivity fails", async () => {
+    mockRuntimeResponses({
+      runtimeFailure: true,
+      providers: [enabledProvider()],
+      models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("runtime error");
+    expect(container?.textContent).toContain("1 enabled provider");
+    expect(container?.textContent).toContain("Model: Runtime unavailable");
+    expect(container?.textContent).toContain("Runtime is not connected. Refresh runtime and fix the local runtime problem before sending the first GPT message.");
+    expect(findButton("Send").disabled).toBe(true);
+  });
+
+  it("disables experimental OAuth Send when runtime connectivity fails", async () => {
+    mockRuntimeResponses({ runtimeFailure: true, authResponse: providerAuthResponse("connected") });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Model: Runtime unavailable");
+    expect(container?.textContent).toContain("Runtime is not connected. Refresh runtime and fix the local runtime problem before sending the first GPT message.");
+    expect(findButton("Send").disabled).toBe(true);
   });
 
   it("sending message renders user bubble and clears input after accepted command", async () => {

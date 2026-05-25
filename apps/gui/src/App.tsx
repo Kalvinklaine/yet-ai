@@ -185,27 +185,35 @@ export function App() {
   const [runtimeRefreshInFlight, setRuntimeRefreshInFlight] = useState(false);
   const runtimeRefreshAttemptRef = useRef(0);
   const runtimeRefreshInFlightRef = useRef(false);
+  const runtimeRefreshQueuedRef = useRef(false);
+  const settingsRef = useRef<RuntimeSettings>({ baseUrl: defaultBaseUrl, token: "" });
   const abortRef = useRef<AbortController | null>(null);
 
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
+  settingsRef.current = settings;
+  const runtimeConnected = ping?.ready === true && !connectionError;
   const connectionStatus = connectionError ? "error" : ping?.ready ? "connected" : "not checked";
   const enabledProviders = useMemo(() => providers.filter((provider) => provider.enabled), [providers]);
   const selectedModel = useMemo(() => models[0] ?? enabledProviders.flatMap((provider) => provider.models.map((model) => ({ ...model, providerId: model.providerId ?? provider.id })))[0], [enabledProviders, models]);
-  const apiKeyChatReady = !modelError && enabledProviders.length > 0 && Boolean(selectedModel);
-  const experimentalOauthChatReady = !apiKeyChatReady && providerAuthStatus?.configured === true && providerAuthStatus.authSource === "oauth" && providerAuthStatus.status === "connected";
+  const apiKeyChatReady = runtimeConnected && !modelError && enabledProviders.length > 0 && Boolean(selectedModel);
+  const experimentalOauthChatReady = runtimeConnected && !apiKeyChatReady && providerAuthStatus?.configured === true && providerAuthStatus.authSource === "oauth" && providerAuthStatus.status === "connected";
   const canSendChat = apiKeyChatReady || experimentalOauthChatReady;
-  const chatReadinessLabel = apiKeyChatReady
-    ? `${selectedModel?.displayName ?? "the default model"}${selectedModel?.providerId ? ` (${selectedModel.providerId})` : ""}`
-    : experimentalOauthChatReady
-      ? "Experimental OpenAI account / gpt-5-codex"
-      : "No model available";
-  const chatReadinessMessage = apiKeyChatReady
-    ? `Ready to send using ${selectedModel?.displayName ?? "the default model"}.`
-    : experimentalOauthChatReady
-      ? "Experimental Codex-like OpenAI account chat is connected through the local runtime. This private-endpoint path is high-risk, not official public OAuth support, and not production-ready."
-      : modelError
-        ? "Runtime model refresh failed. Refresh runtime again before sending the first GPT message."
-        : "Configure an enabled OpenAI API key fallback provider with a model before sending the first GPT message.";
+  const chatReadinessLabel = !runtimeConnected
+    ? "Runtime unavailable"
+    : apiKeyChatReady
+      ? `${selectedModel?.displayName ?? "the default model"}${selectedModel?.providerId ? ` (${selectedModel.providerId})` : ""}`
+      : experimentalOauthChatReady
+        ? "Experimental OpenAI account / gpt-5-codex"
+        : "No model available";
+  const chatReadinessMessage = !runtimeConnected
+    ? "Runtime is not connected. Refresh runtime and fix the local runtime problem before sending the first GPT message."
+    : apiKeyChatReady
+      ? `Ready to send using ${selectedModel?.displayName ?? "the default model"}.`
+      : experimentalOauthChatReady
+        ? "Experimental Codex-like OpenAI account chat is connected through the local runtime. This private-endpoint path is high-risk, not official public OAuth support, and not production-ready."
+        : modelError
+          ? "Runtime model refresh failed. Refresh runtime again before sending the first GPT message."
+          : "Configure an enabled OpenAI API key fallback provider with a model before sending the first GPT message.";
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(providerAuthStatus), [providerAuthStatus]);
 
   const applyHostReady = useCallback((payload: HostReadyPayload | undefined) => {
@@ -213,14 +221,15 @@ export function App() {
       return;
     }
     const hostRuntimeUrl = payload.runtimeUrl;
+    const currentBaseUrl = settingsRef.current.baseUrl;
     setBaseUrl(hostRuntimeUrl);
     if (payload.sessionToken !== undefined) {
       setToken(payload.sessionToken);
-    } else if (normalizeRuntimeUrl(hostRuntimeUrl) !== normalizeRuntimeUrl(baseUrl)) {
+    } else if (normalizeRuntimeUrl(hostRuntimeUrl) !== normalizeRuntimeUrl(currentBaseUrl)) {
       setToken("");
     }
     setTimeline((current) => ["Host runtime settings received", ...current].slice(0, 80));
-  }, [baseUrl]);
+  }, []);
 
   useEffect(() => {
     const adapter = createBridgeAdapter((entry) => setBridgeLog((current) => [entry, ...current].slice(0, 20)));
@@ -246,7 +255,7 @@ export function App() {
     }));
   }, []);
 
-  const refreshRuntime = useCallback(async (keepInFlight = false) => {
+  const refreshRuntime = useCallback(async (targetSettings: RuntimeSettings, keepInFlight = false) => {
     const attempt = runtimeRefreshAttemptRef.current + 1;
     runtimeRefreshAttemptRef.current = attempt;
     const checkedAt = new Date().toLocaleTimeString();
@@ -258,9 +267,9 @@ export function App() {
     setIdentityWarnings([]);
     try {
       const [nextPing, nextCaps, nextModels] = await Promise.all([
-        getPing(settings),
-        getCaps(settings),
-        getModels(settings),
+        getPing(targetSettings),
+        getCaps(targetSettings),
+        getModels(targetSettings),
       ]);
       const warnings: string[] = [];
       let lastError: RuntimeError | null = null;
@@ -305,7 +314,10 @@ export function App() {
         status: "network",
         message: error instanceof Error ? error.message : "Runtime refresh failed",
       };
+      setPing(null);
+      setCaps(null);
       setModels([]);
+      setIdentityWarnings([]);
       setConnectionError(runtimeError);
       setModelError(runtimeError);
       setRuntimeRefreshStatus({
@@ -320,51 +332,57 @@ export function App() {
         setRuntimeRefreshInFlight(false);
       }
     }
-  }, [settings]);
+  }, []);
 
-  const refreshProviders = useCallback(async () => {
+  const refreshProviders = useCallback(async (targetSettings = settingsRef.current) => {
     setProviderError(null);
-    const result = await listProviders(settings);
+    const result = await listProviders(targetSettings);
     if (result.ok) {
       setProviders(result.data.providers);
     } else {
       setProviders([]);
       setProviderError(result.error);
     }
-  }, [settings]);
+  }, []);
 
-  const refreshProviderAuthStatus = useCallback(async () => {
+  const refreshProviderAuthStatus = useCallback(async (targetSettings = settingsRef.current) => {
     setProviderAuthError(null);
     setProviderAuthUrlWarning(null);
     setProviderAuthExchangeError(null);
-    const result = await getProviderAuthStatus(settings, "openai");
+    const result = await getProviderAuthStatus(targetSettings, "openai");
     if (result.ok) {
       setProviderAuthStatus(result.data);
     } else {
       setProviderAuthStatus(null);
       setProviderAuthError(result.error);
     }
-  }, [settings]);
+  }, []);
 
   const connect = useCallback(async () => {
     if (runtimeRefreshInFlightRef.current) {
+      runtimeRefreshQueuedRef.current = true;
       return;
     }
     runtimeRefreshInFlightRef.current = true;
     setRuntimeRefreshInFlight(true);
     try {
-      await refreshRuntime(true);
-      await refreshProviders();
-      await refreshProviderAuthStatus();
+      do {
+        runtimeRefreshQueuedRef.current = false;
+        const targetSettings = settingsRef.current;
+        await refreshRuntime(targetSettings, true);
+        await refreshProviders(targetSettings);
+        await refreshProviderAuthStatus(targetSettings);
+      } while (runtimeRefreshQueuedRef.current);
     } finally {
       runtimeRefreshInFlightRef.current = false;
+      runtimeRefreshQueuedRef.current = false;
       setRuntimeRefreshInFlight(false);
     }
   }, [refreshProviderAuthStatus, refreshProviders, refreshRuntime]);
 
   useEffect(() => {
     void connect();
-  }, [connect]);
+  }, [connect, settings]);
 
   const submitProvider = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -398,7 +416,7 @@ export function App() {
     setProviderForm((current) => ({ ...current, apiKey: "" }));
     if (result.ok) {
       await refreshProviders();
-      await refreshRuntime();
+      await refreshRuntime(settingsRef.current);
       setSelectedProviderId(result.data.id);
     } else {
       setProviderError(result.error);
@@ -478,7 +496,7 @@ export function App() {
     if (result.ok) {
       setProviderAuthStatus(result.data);
       await refreshProviders();
-      await refreshRuntime();
+      await refreshRuntime(settingsRef.current);
     } else {
       setProviderAuthError(result.error);
     }
@@ -500,7 +518,7 @@ export function App() {
         setProviderAuthStatus(result.data);
         if (result.data.success) {
           await refreshProviders();
-          await refreshRuntime();
+          await refreshRuntime(settingsRef.current);
         } else {
           setProviderAuthExchangeError(result.data.lastError ?? result.data.message ?? providerAuthStatusCopy[result.data.status]);
         }
