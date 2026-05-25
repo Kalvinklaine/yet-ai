@@ -55,7 +55,7 @@ A session token can be entered for local runtime API calls, or supplied by a tru
 Authorization: Bearer <token>
 ```
 
-Non-loopback runtime URLs are rejected with a visible configuration error before fetch, and the bearer token is not sent. The token is kept only in React state for the current page lifetime. Bridge logs show `Host runtime settings received` for `host.ready` and never include raw tokens.
+Non-loopback runtime URLs are rejected with a visible configuration error before fetch, and the bearer token is not sent. The token is kept only in React state for the current page lifetime. Bridge logs show `Host runtime settings received` for `host.ready` and never include raw tokens. If a trusted host sends a different loopback `runtimeUrl` without a `sessionToken`, the GUI clears any existing runtime token instead of reusing it for the new URL. A URL-only `host.ready` for the same runtime URL keeps the current token, and an explicit empty `sessionToken` clears it.
 
 ## Implemented surfaces
 
