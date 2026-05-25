@@ -26,7 +26,7 @@ packages/
   contracts/           # Shared schemas, examples, and boundary contracts
 ```
 
-Each subsystem README describes current ownership, implemented surfaces, commands, dependencies on `product/identity.json` and contracts, current limitations, and safety rules. For the first manual VS Code dev-preview path with the packaged GUI and local engine launcher, see `apps/plugins/vscode/README.md`.
+Each subsystem README describes current ownership, implemented surfaces, commands, dependencies on `product/identity.json` and contracts, current limitations, and safety rules. For the first manual VS Code dev-preview path with the packaged GUI and local engine launcher, see `apps/plugins/vscode/README.md`. For a manual IntelliJ IDEA install-from-disk ZIP preview, see `apps/plugins/jetbrains/README.md`.
 
 ## Verification
 
@@ -82,6 +82,34 @@ Manual IDE dev-preview flows are documented in the subsystem READMEs:
 - `apps/plugins/jetbrains/README.md` — Gradle packaged GUI resource flow plus `connect`/`launch`/`auto` runtime modes.
 - `apps/gui/README.md` — GUI build/dev commands and runtime token behavior.
 - `apps/engine/README.md` — local `yet-lsp` run command and runtime API status.
+
+### JetBrains installable ZIP dev preview
+
+Build a local IntelliJ IDEA install-from-disk ZIP with:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+npm run prepare:jetbrains-preview
+```
+
+The command builds/prepares `yet-lsp`, builds `apps/gui`, runs the JetBrains Gradle build, and prints the ZIP path under `apps/plugins/jetbrains/build/distributions/` plus the local `Engine binary path` to configure when the plugin cannot discover the engine from `PATH`.
+
+Manual IntelliJ IDEA smoke steps:
+
+1. Run `npm run prepare:jetbrains-preview`.
+2. Open IntelliJ IDEA Settings/Preferences → Plugins → gear → Install Plugin from Disk.
+3. Choose the printed ZIP and restart the IDE.
+4. Set `Launch mode` / `Engine binary path` if needed.
+5. Open the Yet AI tool window and verify the packaged UI/chat path.
+6. Optional safe provider smoke: use the OpenAI API-key fallback. The experimental account login remains explicit-risk; automated coverage is mock-only and real account testing is manual/high-risk/outside CI.
+
+Validate the local ZIP without launching an IDE:
+
+```sh
+npm run smoke:jetbrains-installable
+```
+
+The smoke checks ZIP structure and docs only. No provider credentials, real OpenAI/ChatGPT calls, hosted Yet AI services, signing, marketplace publication, production installer, or bundled notarized engine are involved.
 
 ### Manual OpenAI API-key milestone smoke
 
