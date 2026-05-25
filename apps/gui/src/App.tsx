@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBridgeAdapter, type BridgeHost, type HostReadyPayload } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, resetChatViewState, type ChatViewMessage } from "./services/chatViewState";
-import { disconnectProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
+import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { listProviders, saveProvider, type ProviderSummary, type ProviderWriteRequest } from "./services/providersClient";
 import { getCaps, getModels, getPing, isLoopbackRuntimeUrl, productIdentity, productIdentityWarning, type CapsResponse, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
@@ -23,6 +23,8 @@ const providerAuthStatusCopy: Record<ProviderAuthStatus, string> = {
 
 const secretLikePatterns = [
   /\b(access_token|refresh_token|api_key|authorization|bearer)\b\s*[:=]\s*[^\s,;]+/gi,
+  /\b(pkce_verifier|code_verifier|verifier|cookie)\b\s*[:=]?\s*[^\s,;]*/gi,
+  /(?:^|[\s/])(?:\.codex\/auth\.json|auth\.json)(?=$|[\s,;])/gi,
   /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi,
   /\b(sk-[A-Za-z0-9_-]{8,})\b/g,
   /\b[A-Za-z0-9_-]{32,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/g,
@@ -166,6 +168,9 @@ export function App() {
   const [providerAuthError, setProviderAuthError] = useState<RuntimeError | null>(null);
   const [providerAuthStatus, setProviderAuthStatus] = useState<ProviderAuthResponse | null>(null);
   const [providerAuthUrlWarning, setProviderAuthUrlWarning] = useState<string | null>(null);
+  const [providerAuthExchangeCode, setProviderAuthExchangeCode] = useState("");
+  const [providerAuthExchangeError, setProviderAuthExchangeError] = useState<string | null>(null);
+  const [providerAuthExchangeWorking, setProviderAuthExchangeWorking] = useState(false);
   const [chatError, setChatError] = useState<RuntimeError | null>(null);
   const [providerForm, setProviderForm] = useState<ProviderForm>(emptyProviderForm);
   const [selectedProviderId, setSelectedProviderId] = useState<string | undefined>();
@@ -194,6 +199,7 @@ export function App() {
     : experimentalOauthChatReady
       ? "Experimental Codex-like OpenAI account chat is connected through the local runtime. This private-endpoint path is high-risk, not official public OAuth support, and not production-ready."
       : "Configure an enabled OpenAI API key fallback provider with a model before sending the first GPT message.";
+  const providerAuthPendingState = useMemo(() => parseProviderAuthState(providerAuthStatus), [providerAuthStatus]);
 
   const applyHostReady = useCallback((payload: HostReadyPayload | undefined) => {
     if (!payload?.runtimeUrl || !payload.sessionToken || !isLoopbackRuntimeUrl(payload.runtimeUrl)) {
@@ -277,6 +283,7 @@ export function App() {
   const refreshProviderAuthStatus = useCallback(async () => {
     setProviderAuthError(null);
     setProviderAuthUrlWarning(null);
+    setProviderAuthExchangeError(null);
     const result = await getProviderAuthStatus(settings, "openai");
     if (result.ok) {
       setProviderAuthStatus(result.data);
@@ -369,6 +376,7 @@ export function App() {
   const startOpenAiLogin = async () => {
     setProviderAuthError(null);
     setProviderAuthUrlWarning(null);
+    setProviderAuthExchangeError(null);
     const result = await startProviderAuth(settings, "openai");
     if (!result.ok) {
       setProviderAuthError(result.error);
@@ -384,6 +392,8 @@ export function App() {
   const startExperimentalOpenAiLogin = async () => {
     setProviderAuthError(null);
     setProviderAuthUrlWarning(null);
+    setProviderAuthExchangeError(null);
+    setProviderAuthExchangeCode("");
     const result = await startProviderAuth(settings, "openai", { experimentalCodexLike: true });
     if (!result.ok) {
       setProviderAuthError(result.error);
@@ -399,6 +409,8 @@ export function App() {
   const disconnectOpenAiLogin = async () => {
     setProviderAuthError(null);
     setProviderAuthUrlWarning(null);
+    setProviderAuthExchangeError(null);
+    setProviderAuthExchangeCode("");
     const result = await disconnectProviderAuth(settings, "openai");
     if (result.ok) {
       setProviderAuthStatus(result.data);
@@ -406,6 +418,35 @@ export function App() {
       await refreshRuntime();
     } else {
       setProviderAuthError(result.error);
+    }
+  };
+
+  const exchangeOpenAiLoginCode = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const sessionId = providerAuthStatus?.sessionId;
+    const code = providerAuthExchangeCode.trim();
+    if (!sessionId || !code || !providerAuthPendingState.state) {
+      return;
+    }
+    setProviderAuthError(null);
+    setProviderAuthExchangeError(null);
+    setProviderAuthExchangeWorking(true);
+    try {
+      const result = await exchangeProviderAuth(settings, "openai", sessionId, code, providerAuthPendingState.state);
+      if (result.ok) {
+        setProviderAuthStatus(result.data);
+        if (result.data.success) {
+          await refreshProviders();
+          await refreshRuntime();
+        } else {
+          setProviderAuthExchangeError(result.data.lastError ?? result.data.message ?? providerAuthStatusCopy[result.data.status]);
+        }
+      } else {
+        setProviderAuthError(result.error);
+      }
+    } finally {
+      setProviderAuthExchangeCode("");
+      setProviderAuthExchangeWorking(false);
     }
   };
 
@@ -534,6 +575,23 @@ export function App() {
           {providerAuthStatus?.supportsLogin === false && <p>OpenAI account login is planned/not available yet; use API key fallback.</p>}
           {providerAuthStatus?.message && <span>{sanitizeDisplayText(providerAuthStatus.message)}</span>}
           {providerAuthStatus && <ProviderAuthDetails status={providerAuthStatus} />}
+          {providerAuthStatus?.status === "pending" && providerAuthStatus.authSource === "oauth" && providerAuthStatus.sessionId && (
+            <form className="manual-exchange-card stack" onSubmit={(event) => void exchangeOpenAiLoginCode(event)}>
+              <strong>Manual authorization-code exchange</strong>
+              <span className="subtle">After approving the experimental login in the browser, paste only the authorization code here. The code is sent once to the local runtime, then cleared from the form.</span>
+              {providerAuthPendingState.error && <div className="error">{providerAuthPendingState.error}</div>}
+              {providerAuthExchangeError && <div className="error">{sanitizeDisplayText(providerAuthExchangeError)}</div>}
+              <div className="row auth-code-row">
+                <label>
+                  Authorization code
+                  <input type="password" value={providerAuthExchangeCode} onChange={(event) => setProviderAuthExchangeCode(event.target.value)} placeholder="Paste authorization code" autoComplete="off" />
+                </label>
+                <button type="submit" disabled={providerAuthExchangeWorking || !providerAuthExchangeCode.trim() || !providerAuthPendingState.state}>
+                  {providerAuthExchangeWorking ? "Exchanging…" : "Exchange authorization code"}
+                </button>
+              </div>
+            </form>
+          )}
           <div className="row">
             <button type="button" onClick={() => void refreshProviderAuthStatus()}>Refresh login status</button>
             <button type="button" onClick={() => void startOpenAiLogin()} disabled={providerAuthStatus?.supportsLogin === false}>Login with OpenAI</button>
@@ -704,6 +762,24 @@ function ProviderAuthDetails({ status }: { status: ProviderAuthResponse }) {
       {status.pollIntervalSeconds && <span>Poll interval: {status.pollIntervalSeconds} seconds</span>}
     </div>
   );
+}
+
+function parseProviderAuthState(status: ProviderAuthResponse | null): { state?: string; error?: string } {
+  if (!status || status.status !== "pending" || status.authSource !== "oauth" || !status.sessionId) {
+    return {};
+  }
+  if (!status.authorizationUrl) {
+    return { error: "Authorization state cannot be read from the pending login response. Start experimental login again or use API key fallback." };
+  }
+  try {
+    const state = new URL(status.authorizationUrl).searchParams.get("state")?.trim();
+    if (!state) {
+      return { error: "Authorization state is missing from the pending login response. Start experimental login again or use API key fallback." };
+    }
+    return { state };
+  } catch {
+    return { error: "Authorization state cannot be parsed from the pending login response. Start experimental login again or use API key fallback." };
+  }
 }
 
 function openSafeAuthUrl(url: string, setWarning: (warning: string | null) => void) {
