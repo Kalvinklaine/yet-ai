@@ -939,6 +939,83 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).not.toContain("p".repeat(64));
     expect(container?.textContent).not.toContain("r".repeat(64));
   });
+
+  it("sanitizes provider auth redacted values before visible rendering", async () => {
+    mockRuntimeResponses({
+      providers: [{
+        ...enabledProvider(),
+        kind: "openai-compatible Authorization: Bearer provider-kind-secret",
+        auth: {
+          type: "api_key",
+          configured: true,
+          redacted: "Authorization: Bearer provider-secret Cookie: session=cookie-secret; refresh=also-secret http://127.0.0.1:8080/v1?api_key=query-secret /Users/Alice Smith/.codex/auth.json",
+        },
+      }],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Secret configured: true ([redacted]");
+    expect(container?.textContent).not.toContain("provider-secret");
+    expect(container?.textContent).not.toContain("provider-kind-secret");
+    expect(container?.textContent).not.toContain("cookie-secret");
+    expect(container?.textContent).not.toContain("query-secret");
+    expect(container?.textContent).not.toContain("Alice Smith");
+    expect(container?.textContent).not.toContain("auth.json");
+  });
+});
+
+describe("runtime debug redaction", () => {
+  it("sanitizes unexpected /v1/ping secret-like fields before rendering", async () => {
+    mockRuntimeResponses({
+      pingResponse: {
+        productId: "yet-ai",
+        displayName: "Yet AI",
+        version: "0.0.0",
+        ready: true,
+        serverTime: "2026-05-24T00:00:00Z",
+        access_token: "ping-secret",
+        header: "Authorization: Bearer ping-bearer-secret",
+        path: "/Users/Alice Smith/auth.json",
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain('"[redacted]": "[redacted]"');
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("ping-secret");
+    expect(container?.textContent).not.toContain("ping-bearer-secret");
+    expect(container?.textContent).not.toContain("Alice Smith");
+    expect(container?.textContent).not.toContain("auth.json");
+  });
+
+  it("sanitizes unexpected /v1/caps secret-like fields before rendering", async () => {
+    mockRuntimeResponses({
+      capsResponse: {
+        productId: "yet-ai",
+        protocolVersion: "2026-05-15",
+        runtime: { mode: "local", cloudRequired: false, providerAccess: "direct", cookie: "session=caps-secret" },
+        capabilities: ["chat Authorization: Bearer caps-bearer-secret"],
+        features: {},
+        providers: [{ id: "provider", accessToken: "caps-token-secret", path: "C:\\Users\\Alice Smith\\.codex\\auth.json" }],
+        ide: { bridge: true, lsp: false },
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain('"[redacted]": "[redacted]"');
+    expect(container?.textContent).not.toContain("accessToken");
+    expect(container?.textContent).not.toContain("caps-token-secret");
+    expect(container?.textContent).not.toContain("caps-bearer-secret");
+    expect(container?.textContent).not.toContain("caps-secret");
+    expect(container?.textContent).not.toContain("Alice Smith");
+    expect(container?.textContent).not.toContain("auth.json");
+  });
 });
 
 describe("host.ready runtime bootstrap", () => {
@@ -1041,6 +1118,34 @@ describe("host.ready runtime bootstrap", () => {
     expect(postIntellijMessage).toHaveBeenCalledTimes(1);
     const bridgeHostEntries = Array.from(container?.querySelectorAll(".timeline-entry") ?? []).filter((entry) => entry.textContent === "Bridge host jetbrains");
     expect(bridgeHostEntries).toHaveLength(1);
+  });
+
+  it("host.ready with changed URL and token aborts the old stream once", async () => {
+    const stream = mockStreamingReadyRuntime();
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setInputValue(sessionTokenInput(), "old-host-ready-token");
+    });
+    await act(async () => {
+      setTextareaValue(chatInput(), "stream before atomic host ready");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    fetchMock.mockClear();
+
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: "new-host-ready-token" });
+    await flushAsync();
+
+    const abortCalls = abortCommandCalls();
+    expect(abortCalls).toHaveLength(1);
+    expect(String(abortCalls[0][0])).toBe("http://127.0.0.1:8001/v1/chats/chat-001/commands");
+    expect(new Headers(abortCalls[0][1]?.headers).get("Authorization")).toBe("Bearer old-host-ready-token");
+    expect(abortCalls.some(([url]) => String(url).startsWith("http://127.0.0.1:8765/"))).toBe(false);
+    stream.close();
   });
 });
 
@@ -1547,9 +1652,10 @@ describe("chat panel", () => {
     stream.close();
   });
 
-  it("unmount cleanup aborts the active stream without state update warnings", async () => {
+  it("unmount cleanup aborts the active stream without state updates or async abort error reporting", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const stream = mockStreamingReadyRuntime();
+    const abortFailure = deferred<Response>();
+    const stream = mockStreamingReadyRuntime({ abortResponse: abortFailure.promise });
     renderApp();
 
     await flushAsync();
@@ -1567,11 +1673,13 @@ describe("chat panel", () => {
       root = undefined;
       await Promise.resolve();
     });
+    abortFailure.resolve(jsonResponse({ error: "Abort failed Authorization: Bearer post-unmount-secret" }, 500));
+    await flushAsync();
 
     const abortCalls = abortCommandCalls();
     expect(abortCalls).toHaveLength(1);
     expect(String(abortCalls[0][0])).toBe("http://127.0.0.1:8001/v1/chats/chat-001/commands");
-    expect(consoleError.mock.calls.flat().join("\n")).not.toContain("state update on an unmounted component");
+    expect(consoleError).not.toHaveBeenCalled();
     stream.close();
   });
 
@@ -1648,6 +1756,8 @@ type MockRuntimeOptions = {
   models?: unknown[];
   modelsFailure?: boolean;
   runtimeFailure?: boolean;
+  pingResponse?: unknown;
+  capsResponse?: unknown;
 };
 
 function providerAuthResponse(status: ProviderAuthStatus): ProviderAuthResponse {
@@ -1713,7 +1823,7 @@ function readyRuntimeOptions(): Pick<MockRuntimeOptions, "providers" | "models">
   };
 }
 
-function mockStreamingReadyRuntime() {
+function mockStreamingReadyRuntime(options: { abortResponse?: Promise<Response> } = {}) {
   let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
   fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -1742,6 +1852,9 @@ function mockStreamingReadyRuntime() {
       return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
     }
     if (init?.method === "POST" && url.includes("/v1/chats/") && url.endsWith("/commands")) {
+      if ((JSON.parse(String(init.body)) as { type?: string }).type === "abort" && options.abortResponse) {
+        return options.abortResponse;
+      }
       return Promise.resolve(jsonResponse({ accepted: true, chatId: "chat-001", requestId: "request-001", type: JSON.parse(String(init.body)).type }));
     }
     return Promise.resolve(jsonResponse({}));
@@ -1827,7 +1940,7 @@ function mockRuntimeResponses(options: MockRuntimeOptions = {}) {
       if (options.runtimeFailure) {
         return Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1:8001"));
       }
-      return Promise.resolve(jsonResponse({
+      return Promise.resolve(jsonResponse(options.pingResponse ?? {
         productId: "yet-ai",
         displayName: "Yet AI",
         version: "0.0.0",
@@ -1839,7 +1952,7 @@ function mockRuntimeResponses(options: MockRuntimeOptions = {}) {
       if (options.runtimeFailure) {
         return Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1:8001"));
       }
-      return Promise.resolve(jsonResponse({
+      return Promise.resolve(jsonResponse(options.capsResponse ?? {
         productId: "yet-ai",
         protocolVersion: "2026-05-15",
         runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" },

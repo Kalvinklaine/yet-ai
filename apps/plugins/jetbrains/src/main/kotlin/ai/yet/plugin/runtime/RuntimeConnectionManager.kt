@@ -283,7 +283,7 @@ private fun redactSensitiveText(value: String, exactToken: String?): String {
         .replace(Regex("(?i)(^|[\\s\"'`=:(,{])auth\\.json(?=$|[\\s\"'`,;:)}\\]])")) { match ->
             match.groupValues[1] + "[redacted]"
         }
-        .replace(Regex("(?i)(?:[A-Za-z]:)?(?:[/\\\\][^\\s,;:)}\\]]*)*(?:[/\\\\](?:\\.codex[/\\\\])?auth\\.json)"), "[redacted]")
+        .replace(Regex("(?i)(?:[A-Za-z]:)?(?:[/\\\\][^\\r\\n,;)}\\]]*)*(?:[/\\\\](?:\\.codex[/\\\\])?auth\\.json)"), "[redacted]")
         .replace(Regex("\\b[A-Za-z0-9_-]{48,}\\b"), "[redacted]")
     return if (redacted.length > 500) redacted.take(500) + "…" else redacted
 }

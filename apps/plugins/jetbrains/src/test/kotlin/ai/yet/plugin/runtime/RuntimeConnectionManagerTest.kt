@@ -271,6 +271,24 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun redactsCredentialFilePathsWithSpaces() {
+        val cases = listOf(
+            "/Users/Alice Smith/.codex/auth.json",
+            "C:\\Users\\Alice Smith\\.codex\\auth.json",
+            "/Users/Alice Smith/auth.json",
+            "C:\\Users\\Alice Smith\\auth.json",
+        )
+
+        cases.forEach { path ->
+            val redacted = redactLogText("credential path $path", "")
+            listOf("Alice Smith", ".codex", "auth.json").forEach { secret ->
+                assertFalse(redacted.contains(secret), redacted)
+            }
+            assertTrue(redacted.contains("[redacted]"), redacted)
+        }
+    }
+
+    @Test
     fun redactsBareAndRelativeCredentialMarkers() {
         val cases = listOf(
             "auth.json",
