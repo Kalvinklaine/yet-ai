@@ -146,6 +146,44 @@ describe("runtimeClient", () => {
     expect(message).not.toContain(jwt);
   });
 
+  it("uses shared redaction coverage for runtime HTTP errors", async () => {
+    const body = {
+      error: [
+        "setCookie=sid=secret; refresh=also-secret",
+        "set_cookie=sid=secret; Path=/; auth_token=also-secret",
+        "session_token=runtime-secret",
+        "OPENAI_API_KEY=provider-secret",
+        "YET_AI_AUTH_TOKEN=yet-secret",
+        "?api_key=query-secret",
+        "C:\\Users\\Alice Smith\\.codex\\auth.json",
+        "/Users/Alice Smith/.codex/auth.json",
+        "../.codex/auth.json",
+      ].join(" "),
+    };
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(body), { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await runtimeFetch({ baseUrl: "http://127.0.0.1:8001", token: "runtime-token" }, "/v1/ping");
+
+    expect(result.ok).toBe(false);
+    const message = result.ok ? "" : result.error.message;
+    expect(message).toContain("[redacted]");
+    expect(message).not.toContain("setCookie");
+    expect(message).not.toContain("set_cookie");
+    expect(message).not.toContain("sid=secret");
+    expect(message).not.toContain("also-secret");
+    expect(message).not.toContain("session_token");
+    expect(message).not.toContain("runtime-secret");
+    expect(message).not.toContain("OPENAI_API_KEY");
+    expect(message).not.toContain("provider-secret");
+    expect(message).not.toContain("YET_AI_AUTH_TOKEN");
+    expect(message).not.toContain("yet-secret");
+    expect(message).not.toContain("api_key");
+    expect(message).not.toContain("query-secret");
+    expect(message).not.toContain("Alice Smith");
+    expect(message).not.toContain("auth.json");
+  });
+
   it("sanitizes network and parse errors", async () => {
     fetchMock.mockRejectedValueOnce(new Error(`network failed access_token=${"a".repeat(64)} .codex/auth.json`));
     vi.stubGlobal("fetch", fetchMock);
