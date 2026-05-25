@@ -48,7 +48,7 @@ Run the local smoke test from the root to exercise the engine/provider/chat path
 npm run smoke:local
 ```
 
-`npm run smoke:local` starts the Rust engine on a free loopback port through Cargo, starts local mock OpenAI-compatible, experimental token, and experimental chat endpoints, configures a fake local API key, checks ping/caps/provider setup/chat command/SSE streaming, exercises provider-auth default status plus the local mock OAuth start/exchange/status/disconnect flow, and covers the approved experimental Codex-like start/exchange/chat fallback through loopback mocks only. It asserts the mock providers receive the expected Authorization headers internally while verifying raw fake API keys, OAuth access tokens, refresh tokens, Authorization header values, cookies, PKCE verifier values, mock auth codes, and Codex credential-file paths are not present in client-visible responses or events. Prerequisites: Node 18+ with root dependencies installed and a Rust toolchain with Cargo on `PATH`.
+`npm run smoke:local` starts the Rust engine on a free loopback port through Cargo, starts local mock OpenAI-compatible, experimental token, and experimental chat endpoints, configures a fake local API key, checks ping/caps/provider setup/chat command/SSE streaming, exercises provider-auth default status plus the local mock OAuth start/exchange/status/disconnect flow, and covers the approved experimental Codex-like start/exchange/chat fallback through loopback mocks only. Runtime and provider-test regressions use deterministic loopback mock helpers; Authorization expectations are asserted by the Rust test bodies from observed mock requests rather than hidden provider calls. It verifies raw fake API keys, OAuth access tokens, refresh tokens, Authorization header values, cookies, PKCE verifier values, mock auth codes, and Codex credential-file paths are not present in client-visible responses or events. Prerequisites: Node 18+ with root dependencies installed and a Rust toolchain with Cargo on `PATH`.
 
 Run repository validation from the root before publishing or handing off changes:
 
@@ -56,7 +56,7 @@ Run repository validation from the root before publishing or handing off changes
 npm run check
 ```
 
-`npm run check` validates product identity, public repository hygiene, the documentation index, and contract schemas/examples.
+`npm run check` validates product identity, public repository hygiene, the documentation index, and contract schemas/examples, including required positive and negative contract fixture coverage.
 
 Contract schemas and examples can be validated separately with:
 

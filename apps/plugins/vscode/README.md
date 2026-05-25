@@ -90,7 +90,7 @@ This is the first manual path for trying the local-first VS Code dev preview wit
 
 8. Send a simple chat message, such as `Say hello in one sentence.` Confirm that the response streams in the GUI.
 
-For IDE-launched `auto` or `launch` mode, do not paste `local-dev-token` into the GUI. The extension generates a per-session local runtime token, starts `yet-lsp` with `YET_AI_AUTH_TOKEN`, and provides the token to the GUI through `host.ready`. Enter `local-dev-token` only when you deliberately use `connect` mode with a runtime started manually:
+For IDE-launched `auto` or `launch` mode, do not paste `local-dev-token` into the GUI. The extension generates a per-session local runtime token, starts `yet-lsp` with `YET_AI_AUTH_TOKEN`, and provides the token to the GUI through the trusted `host.ready` postMessage path. The token is not serialized into the inline webview bootstrap HTML. Enter `local-dev-token` only when you deliberately use `connect` mode with a runtime started manually:
 
 ```sh
 YET_AI_AUTH_TOKEN=local-dev-token YET_AI_HTTP_PORT=8001 cargo run -p yet-lsp
@@ -241,7 +241,7 @@ Manual local preview:
 
 The command opens a minimal Yet AI webview shell. If `yetai.guiDevUrl` is set, the shell embeds the loopback GUI dev server in an iframe. Otherwise it first looks for packaged GUI assets at `media/gui/index.html`; when those generated assets are absent, it displays a local placeholder with the configured runtime URL.
 
-The wrapper sends `gui.ready` with a request id. The extension accepts only exact-version `gui.ready` messages, rejects unknown or invalid messages without logging payloads, and replies with `host.ready` echoing the request id when present. It also sends `host.openedFromCommand`. Bootstrap data is serialized for script context with `<`, U+2028, and U+2029 escaped to avoid script breakout.
+The wrapper sends strict `gui.ready` with a bounded request id and `supportedBridgeVersion` payload. The extension accepts only exact-version `gui.ready` messages with no unknown top-level or payload fields, rejects unknown or invalid messages without logging payloads, and replies with `host.ready` echoing the request id when present. It also sends `host.openedFromCommand` with an empty payload. Bootstrap data is serialized for script context with `<`, U+2028, and U+2029 escaped to avoid script breakout, and local runtime Session tokens are delivered only through the trusted `host.ready` message path rather than inline HTML.
 
 In GUI dev mode the wrapper embeds only loopback GUI URLs, computes the exact dev origin, forwards iframe messages only after checking `event.origin`, and sends iframe `postMessage` calls with that exact `targetOrigin` rather than `*`.
 

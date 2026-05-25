@@ -18,9 +18,12 @@ Current schemas:
 - `schemas/engine/caps.schema.json` for `GET /v1/caps` responses.
 - `schemas/engine/chat-command.schema.json` for `POST /v1/chats/{chat_id}/commands` requests.
 - `schemas/engine/sse-event.schema.json` for chat SSE event payloads.
+- `schemas/engine/provider-*.schema.json` for local provider summaries, writes, model lists, and sanitized provider test responses.
 - `schemas/engine/provider-auth-*-response.schema.json` for future sanitized provider login start, status, exchange, and disconnect responses.
 - `schemas/bridge/host-message.schema.json` for IDE host to GUI messages.
 - `schemas/bridge/gui-message.schema.json` for GUI to IDE host messages.
+
+The current strict runtime contract is intentionally narrow. Chat command validation covers only `user_message` with a bounded non-empty `requestId` and a strict `payload.content`, plus `abort` with no payload or an empty payload object. Bridge validation covers only exact-version `gui.ready`, `host.ready`, and `host.openedFromCommand` shapes. Privileged bridge, tool, and file-edit flows remain disabled until schemas, policy, request correlation, and user confirmation exist.
 
 Positive example payloads live under `examples/` and should stay small, stable, and free of secrets or local paths. Negative examples live under `examples-invalid/` and intentionally demonstrate payloads that must fail a mapped schema without using real secrets or local paths.
 
