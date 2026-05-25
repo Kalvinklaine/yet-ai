@@ -28,7 +28,7 @@ The helper orchestrates the existing safe local steps:
 
 1. `npm run prepare:ide-engine` builds the identity-defined `yet-lsp` crate and copies the generated binary into `apps/plugins/vscode/bin/`.
 2. `cd apps/gui && npm run build` builds the packaged GUI assets.
-3. `cd apps/plugins/vscode && npm run prepare:preview` copies GUI `dist` into `media/gui/` and compiles the extension.
+3. `cd apps/plugins/vscode && npm run prepare:preview` copies GUI `dist` into `media/gui/`, copies `product/identity.json` into `out/product/identity.json` for local package routes, and compiles the extension.
 
 Pass engine-preparation flags after `--` when needed:
 
@@ -45,7 +45,7 @@ After preparing the preview, run the local artifact smoke without launching VS C
 npm run smoke:vscode-preview
 ```
 
-The smoke checks the copied `yet-lsp` binary, packaged GUI `media/gui/index.html`, compiled `out/extension.js`, manifest `main`, copied GUI asset references, and obvious stale-artifact mtimes against existing GUI dist and VS Code source files. If preparation has not been run or generated artifacts are stale, it fails with the artifact and the command to run.
+The smoke checks the copied `yet-lsp` binary, packaged GUI `media/gui/index.html`, bundled `out/product/identity.json`, compiled `out/extension.js`, manifest `main`, copied GUI asset references, and obvious stale-artifact mtimes against existing GUI dist and VS Code source files. If preparation has not been run or generated artifacts are stale, it fails with the artifact and the command to run.
 
 Repository-level validation is available from the root:
 
@@ -126,6 +126,8 @@ code --install-extension yet-ai-0.0.1.vsix
 
 This package is for local dev-preview testing only. It is not a marketplace release, does not include a production installer, and does not change the local-first BYOK boundary. `.vsix` files are generated artifacts and should not be committed.
 
+The local package route includes a generated `out/product/identity.json` copied from the repository product identity. At runtime the extension loads that bundled identity first, then falls back to the repository `product/identity.json` only in development worktrees. This keeps local VSIX metadata checks self-contained without claiming marketplace readiness.
+
 ## OpenAI API-key fallback milestone smoke
 
 Use this manual smoke only when you intentionally want to test a real OpenAI API-key fallback through the local VS Code dev preview. This is not a production release flow and is not an automated test. Never commit real keys, add them to fixtures, paste them into logs or issue text, or capture screenshots that show secrets.
@@ -181,7 +183,7 @@ Use this checklist after the steps above:
 - `apps/gui/dist/index.html` exists after `npm run prepare:vscode-preview`.
 - `apps/plugins/vscode/media/gui/index.html` exists after `npm run prepare:vscode-preview`.
 - `Yet AI: Open Chat` opens the packaged GUI, not only the placeholder text.
-- `Yet AI: Show Runtime Status` reports the loopback runtime URL, launch mode, engine binary status, and ping result without tokens or provider secrets.
+- `Yet AI: Show Runtime Status` reports the loopback runtime URL, launch mode, engine binary basename/status, and ping result without tokens, private paths, or provider secrets.
 - `Yet AI: Set Local Runtime Session Token` and `Yet AI: Clear Local Runtime Session Token` update VS Code SecretStorage without printing the raw token.
 - The `Yet AI Runtime` output channel reports `Yet AI local runtime health check passed.`
 - The GUI shows runtime status as connected/reachable.
@@ -192,7 +194,7 @@ Use this checklist after the steps above:
 
 ## Manual preview report template
 
-Use this template for hands-on VS Code dev-preview issues. Keep reports safe to share and omit secrets, private paths, query strings, and URL fragments.
+Use this template for hands-on VS Code dev-preview issues. Keep reports safe to share and omit secrets, private paths, query strings, URL fragments, bridge payloads, and provider responses. Runtime diagnostics are redacted before they reach the output channel, but reports should still include only concise sanitized error text.
 
 ```text
 VS Code preview report
@@ -245,14 +247,14 @@ Use `Yet AI: Show Runtime Status` to write sanitized local runtime diagnostics t
 - Model errors: the selected model is unavailable for the key or endpoint. Update the provider model field to a chat model enabled for that account.
 - OpenAI API fallback vs account login: the `OpenAI API` preset is the safe/default real-provider path. The experimental Codex-like OpenAI account action is separate, explicit-risk, private-endpoint-style, covered automatically only by loopback mocks, and not official public OpenAI OAuth support or production-ready. Any real account testing is manual, risky, account-specific, and outside CI. Browser session reuse, cookie import, browser profile import/reuse, direct reading of `~/.codex/auth.json`, and importing other tools' credential files are not allowed.
 - Runtime port conflict: `yetai.runtimeUrl` defaults to `http://127.0.0.1:8001`. If another process owns that port, set `yetai.runtimeUrl` to another loopback `http` URL without query or fragment, such as `http://127.0.0.1:8011`, before opening chat. In launch mode the extension passes that port through `YET_AI_HTTP_PORT`; loopback `https` runtime URLs are accepted only in `connect` mode for externally managed runtimes.
-- Missing `yet-lsp` binary: run `export PATH="$HOME/.cargo/bin:$PATH"; npm run prepare:vscode-preview` from the repository root. If discovery still fails, set `yetai.engineBinaryPath` to the absolute binary path and use `yetai.launchMode` `launch`.
+- Missing `yet-lsp` binary: run `export PATH="$HOME/.cargo/bin:$PATH"; npm run prepare:vscode-preview` from the repository root. If discovery still fails, set `yetai.engineBinaryPath` to the absolute binary path and use `yetai.launchMode` `launch`. On non-Windows systems the configured or discovered binary must have executable permission. Diagnostics report only binary basenames, not private absolute paths.
 - Packaged GUI not copied or stale preview artifacts: run `npm run prepare:vscode-preview` from the repository root, or `npm run prepare:preview` from `apps/plugins/vscode` after building `apps/gui`. If the webview still shows the placeholder, check that `apps/plugins/vscode/media/gui/index.html` exists and reopen the command.
 - GUI dev server URL blocked or blank: `yetai.guiDevUrl` must be a loopback `http` or `https` URL without userinfo, query, or fragment, such as `https://127.0.0.1:5173`. HTTPS loopback GUI dev URLs are supported by the webview CSP; non-loopback dev URLs are rejected.
 - Provider base URL normalization: for OpenAI-compatible providers, `http://host/v1`, `http://host/v1/`, and an explicit `http://host/v1/chat/completions` are accepted. The engine appends `/chat/completions` when needed. Use absolute `http` or `https` URLs with a host and no `user:pass@host` userinfo.
 
 ## Extension surfaces
 
-- Manifest identity is checked against `product/identity.json`.
+- Manifest identity is checked against `product/identity.json`; local package builds also carry generated `out/product/identity.json` so VSIX-style dev previews can load identity without repository fallback.
 - Command: `yetaicmd.openChat` (`Yet AI: Open Chat`).
 - Command: `yetaicmd.showRuntimeStatus` (`Yet AI: Show Runtime Status`).
 - Command: `yetaicmd.setLocalRuntimeSessionToken` (`Yet AI: Set Local Runtime Session Token`).
@@ -265,7 +267,7 @@ Use `Yet AI: Show Runtime Status` to write sanitized local runtime diagnostics t
   - `yetai.launchMode`, one of `auto`, `connect`, or `launch`.
   - `yetai.engineBinaryPath`, optional absolute path to `yet-lsp`.
 
-`runtimeUrl` and `guiDevUrl` are restricted to loopback `http` or `https` URLs without userinfo, query, or fragment before the webview opens. `runtimeUrl` must use `http` when `auto` or `launch` starts the bundled local engine; `connect` may use `https` only for an externally managed loopback runtime. The manual local runtime `sessionToken` is a sensitive local runtime credential, not a provider secret. It is stored in VS Code SecretStorage through the command palette, passed only in the bootstrap/`host.ready` path needed by the trusted GUI runtime client, is not logged, and is not rendered in the placeholder UI. The legacy `yetai.sessionToken` setting remains a deprecated dev-preview fallback only when SecretStorage has no token; raw provider secrets must never be stored in extension settings or SecretStorage by this plugin.
+`runtimeUrl` and `guiDevUrl` are restricted to loopback `http` or `https` URLs without userinfo, query, or fragment before the webview opens. `runtimeUrl` must use `http` when `auto` or `launch` starts the bundled local engine; `connect` may use `https` only for an externally managed loopback runtime. The manual local runtime `sessionToken` is a sensitive local runtime credential, not a provider secret. It is stored in VS Code SecretStorage through the command palette, passed only in the trusted `host.ready` bridge path needed by the GUI runtime client, is not logged, and is not rendered in the placeholder UI. The legacy `yetai.sessionToken` setting remains a deprecated dev-preview fallback only when SecretStorage has no token; raw provider secrets must never be stored in extension settings or SecretStorage by this plugin.
 
 ## Runtime connection and launch
 
@@ -276,7 +278,7 @@ The extension supports two runtime workflows:
 
 The default `auto` mode launches a configured or discoverable `yet-lsp` binary when available; otherwise it behaves like debug connect mode. Discovery checks packaged `bin/` locations, repository `target/debug` and `target/release`, then `PATH`.
 
-Basic engine stdout/stderr lines are captured in the `Yet AI Runtime` output channel. The generated session token and bearer headers are redacted before logging. `Yet AI: Show Runtime Status` uses only local settings, binary discovery, and `/v1/ping`; it does not call model providers or provider-auth endpoints. Provider configuration and provider secrets remain engine-owned and are not stored or logged by the extension.
+Basic engine stdout/stderr lines are captured in the `Yet AI Runtime` output channel. Session tokens, bearer and authorization headers, cookies, secret query parameters, JSON secret fields, OAuth/code-verifier values, known dev tokens, JWT-like values, and long opaque token-like values are redacted before logging. `Yet AI: Show Runtime Status` uses only local settings, binary discovery, and `/v1/ping`; it reports binary basenames instead of private paths and does not call model providers or provider-auth endpoints. Provider configuration and provider secrets remain engine-owned and are not stored or logged by the extension.
 
 Manual local preview:
 

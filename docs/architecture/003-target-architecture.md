@@ -12,7 +12,7 @@ Implemented surfaces:
 
 - `apps/engine`: Rust `yet-lsp` runtime with authenticated loopback HTTP/SSE endpoints, identity-aware storage names, local provider registry/config files, redacted provider responses, model summaries, chat command submission, and the first OpenAI-compatible direct streaming path through configured provider data.
 - `apps/gui`: React/Vite browser shell with loopback-only runtime client, provider setup/status UI, chat command submission, fetch-streaming SSE parser, runtime error reporting, and browser/VS Code/JetBrains logical bridge detection.
-- `apps/plugins/vscode`: VS Code extension shell with identity-checked manifest, loopback runtime/dev URL validation, packaged GUI asset loading with placeholder fallback, MVP `connect`/`launch`/`auto` runtime modes, webview host, bootstrap/`host.ready` bridge, and guarded message handling.
+- `apps/plugins/vscode`: VS Code extension shell with identity-checked manifest and bundled package-route identity, loopback runtime/dev URL validation, SecretStorage-backed manual runtime tokens, packaged GUI asset loading with placeholder fallback, MVP `connect`/`launch`/`auto` runtime modes, webview host, bootstrap/`host.ready` bridge, redacted runtime diagnostics, and guarded message handling.
 - `apps/plugins/jetbrains`: JetBrains plugin shell with identity checks, Gradle build/tests, loopback runtime/dev URL validation, packaged GUI resource loading with placeholder fallback, MVP `connect`/`launch`/`auto` runtime modes, PasswordSafe-backed local session token, JCEF host boundary, and structural JSON bridge validation.
 - `packages/contracts`: shared JSON Schemas and examples for current engine and bridge boundaries.
 
@@ -138,6 +138,14 @@ The VS Code plugin should own:
 It should avoid duplicating chat state or provider configuration beyond native IDE settings needed to locate and launch the engine.
 
 It must not implement provider adapters or require a Yet AI cloud workspace for normal operation.
+
+Current VS Code runtime-token behavior is split by launch mode. Manual `connect` tokens are stored through VS Code SecretStorage under the Yet AI local runtime token key, with the deprecated `yetai.sessionToken` setting kept only as a dev-preview fallback. In `auto` and `launch`, the extension generates an ephemeral per-session token, passes it to the engine through `YET_AI_AUTH_TOKEN`, and delivers it to the GUI only through the trusted `host.ready` bridge rather than inline HTML or settings. Provider API keys are never stored by the VS Code extension; they are submitted to and stored by the local engine provider flow.
+
+Current VS Code URL policy requires `runtimeUrl` and `guiDevUrl` to be loopback `http` or `https` URLs with no userinfo, query string, or fragment. `guiDevUrl` supports HTTP and HTTPS loopback dev servers. A plugin-launched runtime uses HTTP because the local engine launcher binds the loopback HTTP API; HTTPS runtime URLs are valid only in `connect` mode for an externally managed loopback runtime.
+
+Current VS Code diagnostics and reports are safe-share surfaces. Runtime diagnostics redact local session tokens, bearer and authorization headers, cookies, secret query parameters, JSON secret fields, OAuth/code-verifier values, known dev tokens, JWT-like values, long opaque token-like values, and private binary paths by reporting configured/discovered engine binary basenames. Manual preview reports should omit secrets, private paths, query strings, URL fragments, bridge payloads, and provider responses.
+
+Local VSIX dev-preview packaging copies `product/identity.json` into the compiled extension output as bundled identity metadata. The extension loads bundled identity first and falls back to the repository identity only for development worktrees. This is a local package-route integrity check, not a marketplace or production release claim.
 
 ### `apps/plugins/jetbrains`
 
@@ -402,8 +410,8 @@ The approved near-term implementation sequence is local-first and incremental. F
 
 ### 5. VS Code local runtime host — MVP baseline complete
 
-- Implemented identity-checked extension metadata, loopback runtime/dev URL validation, packaged GUI asset loading, webview shell, safe bootstrap serialization, exact-origin dev iframe forwarding, MVP local runtime `connect`/`launch`/`auto` modes, `/v1/ping` health check, redacted runtime logs, cleanup on deactivate, and narrow `gui.ready`/`host.ready` bridge handling.
-- Remaining work: marketplace packaging, signed/notarized engine bundles, production installer, SecretStorage for local runtime tokens, deeper extension-host lifecycle tests, LSP wiring, and privileged IDE action policies.
+- Implemented identity-checked extension metadata, bundled identity loading for local package routes, strict loopback runtime/dev URL validation, packaged GUI asset loading, webview shell, safe bootstrap serialization, exact-origin dev iframe forwarding, MVP local runtime `connect`/`launch`/`auto` modes, SecretStorage for manual connect-mode runtime tokens, ephemeral launch-mode tokens delivered through `host.ready`, `/v1/ping` health check, redacted runtime diagnostics/logs, cleanup on deactivate, and narrow `gui.ready`/`host.ready` bridge handling.
+- Remaining work: marketplace packaging, signed/notarized engine bundles, production installer, deeper extension-host lifecycle tests, LSP wiring, and privileged IDE action policies.
 
 ### 6. JetBrains local runtime host — MVP baseline complete
 
