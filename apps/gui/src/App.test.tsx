@@ -228,6 +228,128 @@ describe("runtime refresh feedback", () => {
     expect(container?.textContent).not.toContain("\"ready\": true");
     expect(container?.textContent).not.toContain("\"protocolVersion\": \"2026-05-15\"");
   });
+
+  it("keeps Send disabled after settings change until the new runtime is verified", async () => {
+    const runtimeBPing = deferred<Response>();
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+
+    expect(findButton("Send").disabled).toBe(false);
+
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "http://127.0.0.1:8765/v1/ping") {
+        return runtimeBPing.promise;
+      }
+      if (url.startsWith("http://127.0.0.1:8765/")) {
+        if (url.endsWith("/v1/caps")) {
+          return Promise.resolve(jsonResponse({
+            productId: "yet-ai",
+            protocolVersion: "2026-05-15",
+            runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" },
+            capabilities: [],
+            features: {},
+            providers: [],
+            ide: { bridge: true, lsp: false },
+          }));
+        }
+        if (url.endsWith("/v1/models")) {
+          return Promise.resolve(jsonResponse({ models: [{ id: "gpt-b", displayName: "GPT B", providerId: "runtime-b" }] }));
+        }
+        if (url.endsWith("/v1/providers")) {
+          return Promise.resolve(jsonResponse({ providers: [{ ...enabledProvider(), id: "runtime-b", displayName: "Runtime B", models: [{ id: "gpt-b", displayName: "GPT B" }] }], cloudRequired: false, providerAccess: "direct" }));
+        }
+        if (url.endsWith("/v1/provider-auth/openai/status")) {
+          return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
+        }
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    await act(async () => {
+      setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
+    });
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Model: Runtime unavailable");
+    expect(findButton("Send").disabled).toBe(true);
+
+    runtimeBPing.resolve(jsonResponse({
+      productId: "yet-ai",
+      displayName: "Yet AI",
+      version: "0.0.0",
+      ready: true,
+      serverTime: "2026-05-24T00:00:00Z",
+    }));
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Model: GPT B (runtime-b)");
+    expect(findButton("Send").disabled).toBe(false);
+  });
+
+  it("ignores old refresh results that resolve after settings change", async () => {
+    const oldPing = deferred<Response>();
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "http://127.0.0.1:8001/v1/ping") {
+        return oldPing.promise;
+      }
+      if (url.endsWith("/v1/caps")) {
+        return Promise.resolve(jsonResponse({
+          productId: "yet-ai",
+          protocolVersion: "2026-05-15",
+          runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" },
+          capabilities: [],
+          features: {},
+          providers: [],
+          ide: { bridge: true, lsp: false },
+        }));
+      }
+      if (url.endsWith("/v1/models")) {
+        return Promise.resolve(jsonResponse({ models: url.startsWith("http://127.0.0.1:8001/") ? [{ id: "old-model", displayName: "Old Model", providerId: "old-runtime" }] : [{ id: "new-model", displayName: "New Model", providerId: "new-runtime" }] }));
+      }
+      if (url.endsWith("/v1/providers")) {
+        const isOld = url.startsWith("http://127.0.0.1:8001/");
+        return Promise.resolve(jsonResponse({ providers: [{ ...enabledProvider(), id: isOld ? "old-runtime" : "new-runtime", displayName: isOld ? "Old Runtime" : "New Runtime", models: [{ id: isOld ? "old-model" : "new-model", displayName: isOld ? "Old Model" : "New Model" }] }], cloudRequired: false, providerAccess: "direct" }));
+      }
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
+      }
+      if (url === "http://127.0.0.1:8765/v1/ping") {
+        return Promise.resolve(jsonResponse({
+          productId: "yet-ai",
+          displayName: "Yet AI",
+          version: "0.0.0",
+          ready: true,
+          serverTime: "2026-05-24T00:00:00Z",
+        }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
+    });
+
+    oldPing.resolve(jsonResponse({
+      productId: "yet-ai",
+      displayName: "Yet AI",
+      version: "0.0.0",
+      ready: true,
+      serverTime: "2026-05-24T00:00:00Z",
+    }));
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Model: New Model (new-runtime)");
+    expect(container?.textContent).not.toContain("Model: Old Model (old-runtime)");
+  });
 });
 
 describe("provider secret boundary", () => {
@@ -257,8 +379,7 @@ describe("provider secret boundary", () => {
 
     await flushAsync();
 
-    expect(JSON.stringify(localStorage)).not.toContain(secret);
-    expect(JSON.stringify(sessionStorage)).not.toContain(secret);
+    expect(browserStorageDump()).not.toContain(secret);
   });
 
   it("does not open invalid provider auth URLs", async () => {
@@ -519,8 +640,7 @@ describe("provider secret boundary", () => {
     const transientForm = { apiKey: secret };
     const clearedForm = { ...transientForm, apiKey: "" };
     expect(clearedForm.apiKey).toBe("");
-    expect(JSON.stringify(localStorage)).not.toContain(secret);
-    expect(JSON.stringify(sessionStorage)).not.toContain(secret);
+    expect(browserStorageDump()).not.toContain(secret);
   });
 
   it("provider presets fill OpenAI-compatible fields without an API key", async () => {
@@ -541,8 +661,7 @@ describe("provider secret boundary", () => {
     expect(findSelectValue("api_key")).toBeDefined();
     expect(apiKeyInput().value).toBe("");
     expect(fetchMock.mock.calls.every(([url]) => !String(url).includes("api.openai.com"))).toBe(true);
-    expect(JSON.stringify(localStorage)).not.toContain("sk-");
-    expect(JSON.stringify(sessionStorage)).not.toContain("sk-");
+    expect(browserStorageDump()).not.toContain("sk-");
 
     await act(async () => {
       findButton("LM Studio local").click();
@@ -583,8 +702,7 @@ describe("provider secret boundary", () => {
     });
 
     expect(apiKeyInput().value).toBe("");
-    expect(JSON.stringify(localStorage)).not.toContain(secret);
-    expect(JSON.stringify(sessionStorage)).not.toContain(secret);
+    expect(browserStorageDump()).not.toContain(secret);
     expect(fetchMock.mock.calls.every(([url]) => String(url).startsWith("http://127.0.0.1:8001/"))).toBe(true);
   });
 });
@@ -720,8 +838,7 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("OpenAI API-key fallback remains the safe/default setup");
     expect(findButton("Send").disabled).toBe(false);
     expect(localSetItem).not.toHaveBeenCalled();
-    expect(JSON.stringify(localStorage)).not.toContain("oauth");
-    expect(JSON.stringify(sessionStorage)).not.toContain("oauth");
+    expect(browserStorageDump()).not.toContain("oauth");
   });
 
   it("keeps API-key provider readiness preferred over connected experimental OAuth", async () => {
@@ -815,6 +932,27 @@ describe("chat panel", () => {
     expect(chatInput().value).toBe("");
   });
 
+  it("blocks programmatic submit while Send is disabled without opening SSE or posting a command", async () => {
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+    fetchMock.mockClear();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "Blocked message");
+    });
+    await act(async () => {
+      chatInput().closest("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("Chat is not ready for the current runtime settings. Refresh runtime and configure a provider before sending.");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/v1/chats/subscribe"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes("/v1/chats/") && String(url).endsWith("/commands") && init?.method === "POST")).toBe(false);
+    expect(chatInput().value).toBe("Blocked message");
+  });
+
   it("renders assistant streaming text from SSE events", async () => {
     mockRuntimeResponses({
       ...readyRuntimeOptions(),
@@ -903,8 +1041,7 @@ describe("chat panel", () => {
     });
 
     expect(localSetItem).not.toHaveBeenCalled();
-    expect(JSON.stringify(localStorage)).not.toContain(secret);
-    expect(JSON.stringify(sessionStorage)).not.toContain(secret);
+    expect(browserStorageDump()).not.toContain(secret);
   });
 
   it("Stop SSE sends abort and clears the local subscription", async () => {
