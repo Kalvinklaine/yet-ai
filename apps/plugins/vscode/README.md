@@ -14,6 +14,8 @@ VS Code command palette commands:
 
 - `Yet AI: Open Chat` opens the dev-preview chat webview and prepares or checks the local runtime.
 - `Yet AI: Show Runtime Status` writes safe local runtime diagnostics to the `Yet AI Runtime` output channel, including the loopback runtime URL without query data, launch mode, engine binary discovery status, and `/v1/ping` result. It does not show session tokens, bearer headers, provider credentials, bridge payloads, provider-auth state, or model-provider responses.
+- `Yet AI: Set Local Runtime Session Token` stores the manual local runtime session token in VS Code SecretStorage for `connect` mode or other manual debug connections. This token is not a provider API key.
+- `Yet AI: Clear Local Runtime Session Token` removes the SecretStorage token.
 
 From the repository root, run the single dev-preview preparation command:
 
@@ -77,7 +79,8 @@ This is the first manual path for trying the local-first VS Code dev preview wit
    - `yetai.launchMode`: `auto` for normal dev-preview, `launch` to require starting a local binary, or `connect` to use an already running loopback runtime.
    - `yetai.engineBinaryPath`: optional absolute path to the built `yet-lsp`.
    - `yetai.runtimeUrl`: keep a loopback URL such as `http://127.0.0.1:8001`. The port is passed to the launched engine as `YET_AI_HTTP_PORT`.
-   - `yetai.sessionToken`: only for `connect` mode when an already running engine requires a known local bearer token. In `auto` or `launch`, the extension generates a per-session token.
+   - Manual local runtime session token: use `Yet AI: Set Local Runtime Session Token` for `connect` mode when an already running engine requires a known local bearer token. The token is stored in VS Code SecretStorage. In `auto` or `launch`, the extension generates a per-session token and does not persist it.
+   - `yetai.sessionToken`: deprecated dev-preview fallback only. Prefer the SecretStorage command.
 
 5. In the Extension Development Host, run `Yet AI: Open Chat` from the Command Palette.
 
@@ -93,7 +96,7 @@ For IDE-launched `auto` or `launch` mode, do not paste `local-dev-token` into th
 YET_AI_AUTH_TOKEN=local-dev-token YET_AI_HTTP_PORT=8001 cargo run -p yet-lsp
 ```
 
-Then set `yetai.runtimeUrl` to `http://127.0.0.1:8001` and `yetai.sessionToken` to `local-dev-token`. This Session token is not an OpenAI API key or provider key.
+Then set `yetai.runtimeUrl` to `http://127.0.0.1:8001` and run `Yet AI: Set Local Runtime Session Token` with `local-dev-token`. This Session token is stored in VS Code SecretStorage and is not an OpenAI API key or provider key. The deprecated `yetai.sessionToken` setting remains a dev-preview fallback only when SecretStorage has no token.
 
 ## Optional local install/package route
 
@@ -165,6 +168,7 @@ Use this checklist after the steps above:
 - `apps/plugins/vscode/media/gui/index.html` exists after `npm run prepare:vscode-preview`.
 - `Yet AI: Open Chat` opens the packaged GUI, not only the placeholder text.
 - `Yet AI: Show Runtime Status` reports the loopback runtime URL, launch mode, engine binary status, and ping result without tokens or provider secrets.
+- `Yet AI: Set Local Runtime Session Token` and `Yet AI: Clear Local Runtime Session Token` update VS Code SecretStorage without printing the raw token.
 - The `Yet AI Runtime` output channel reports `Yet AI local runtime health check passed.`
 - The GUI shows runtime status as connected/reachable.
 - Provider save/test uses an OpenAI API key, OpenAI-compatible endpoint, or local gateway URL and does not require a Yet AI-hosted backend.
@@ -189,7 +193,7 @@ Use `Yet AI: Show Runtime Status` to write sanitized local runtime diagnostics t
 ## Troubleshooting
 
 - Missing Node dependencies: run `npm install` at the repository root, `apps/gui`, or `apps/plugins/vscode` if the corresponding command reports missing packages.
-- Runtime token or runtime `401` errors: in `auto` or `launch` mode, do not manually set `yetai.sessionToken` or paste `local-dev-token` into the GUI; the extension generates a token, passes it to the engine as `YET_AI_AUTH_TOKEN`, and sends it to the GUI through `host.ready`. In `connect` mode, make sure `yetai.sessionToken` matches the running engine's `YET_AI_AUTH_TOKEN`, for example `local-dev-token` only if you manually started the runtime with that value. Restart the Extension Development Host after changing token-related settings.
+- Runtime token or runtime `401` errors: in `auto` or `launch` mode, do not manually set a token or paste `local-dev-token` into the GUI; the extension generates a token, passes it to the engine as `YET_AI_AUTH_TOKEN`, and sends it to the GUI through `host.ready` without persisting it. In `connect` mode, make sure the SecretStorage token set by `Yet AI: Set Local Runtime Session Token` matches the running engine's `YET_AI_AUTH_TOKEN`, for example `local-dev-token` only if you manually started the runtime with that value. If no SecretStorage token exists, the deprecated `yetai.sessionToken` setting is used as a dev-preview fallback and the output channel shows a sanitized warning. Restart the Extension Development Host after changing token-related settings.
 - Provider `401` errors after the runtime is connected: the OpenAI-compatible provider rejected the API key. Check for a missing, expired, revoked, copied-with-whitespace, or wrong-project key. Paste it once in the GUI and save again; do not put it in VS Code settings or repository files.
 - Provider `429` errors: the upstream provider reported rate, quota, or billing limits. Wait, reduce test traffic, or check the provider account outside Yet AI.
 - Model errors: the selected model is unavailable for the key or endpoint. Update the provider model field to a chat model enabled for that account.
@@ -204,21 +208,23 @@ Use `Yet AI: Show Runtime Status` to write sanitized local runtime diagnostics t
 - Manifest identity is checked against `product/identity.json`.
 - Command: `yetaicmd.openChat` (`Yet AI: Open Chat`).
 - Command: `yetaicmd.showRuntimeStatus` (`Yet AI: Show Runtime Status`).
+- Command: `yetaicmd.setLocalRuntimeSessionToken` (`Yet AI: Set Local Runtime Session Token`).
+- Command: `yetaicmd.clearLocalRuntimeSessionToken` (`Yet AI: Clear Local Runtime Session Token`).
 - Activity bar container id: `yet-ai-toolbox-pane`.
 - Settings:
   - `yetai.runtimeUrl`, default `http://127.0.0.1:8001`.
-  - `yetai.sessionToken`, optional local runtime bearer/session token for debug connections.
+  - `yetai.sessionToken`, deprecated dev-preview fallback local runtime bearer/session token for debug connections. Use `Yet AI: Set Local Runtime Session Token` instead.
   - `yetai.guiDevUrl`, optional loopback GUI dev server URL.
   - `yetai.launchMode`, one of `auto`, `connect`, or `launch`.
   - `yetai.engineBinaryPath`, optional absolute path to `yet-lsp`.
 
-`runtimeUrl` and `guiDevUrl` are restricted to loopback `http` or `https` URLs before the webview opens. `sessionToken` is a sensitive local runtime credential, not a provider secret. It is passed only in the bootstrap/`host.ready` path needed by the trusted GUI runtime client, is not logged, and is not rendered in the placeholder UI. Production token storage with VS Code SecretStorage is a follow-up; raw provider secrets must never be stored in extension settings.
+`runtimeUrl` and `guiDevUrl` are restricted to loopback `http` or `https` URLs before the webview opens. The manual local runtime `sessionToken` is a sensitive local runtime credential, not a provider secret. It is stored in VS Code SecretStorage through the command palette, passed only in the bootstrap/`host.ready` path needed by the trusted GUI runtime client, is not logged, and is not rendered in the placeholder UI. The legacy `yetai.sessionToken` setting remains a deprecated dev-preview fallback only when SecretStorage has no token; raw provider secrets must never be stored in extension settings or SecretStorage by this plugin.
 
 ## Runtime connection and launch
 
 The extension supports two runtime workflows:
 
-- Debug connect mode: set `yetai.launchMode` to `connect`, set `yetai.runtimeUrl` to an already running loopback engine, and set `yetai.sessionToken` to that engine's local bearer token when required. The extension validates the URL and checks `GET /v1/ping` before opening the webview.
+- Debug connect mode: set `yetai.launchMode` to `connect`, set `yetai.runtimeUrl` to an already running loopback engine, and run `Yet AI: Set Local Runtime Session Token` with that engine's local bearer token when required. The extension validates the URL and checks `GET /v1/ping` before opening the webview. SecretStorage tokens take priority over the deprecated `yetai.sessionToken` fallback setting.
 - Local launch mode: set `yetai.launchMode` to `launch` and configure `yetai.engineBinaryPath` with an absolute path to `yet-lsp`. The extension starts the process, generates a per-session token, passes it in `YET_AI_AUTH_TOKEN`, passes the port from `yetai.runtimeUrl` in `YET_AI_HTTP_PORT`, checks `GET /v1/ping`, and stops the launched process on extension deactivate.
 
 The default `auto` mode launches a configured or discoverable `yet-lsp` binary when available; otherwise it behaves like debug connect mode. Discovery checks packaged `bin/` locations, repository `target/debug` and `target/release`, then `PATH`.
@@ -249,7 +255,7 @@ No privileged workspace edits, IDE tools, or provider actions are implemented in
 - Packaged GUI assets are supported through the documented `npm run prepare:vscode-preview` flow, but generated assets are not committed and this is not a final release packaging flow.
 - No LSP client, completions, tools, privileged workspace edits, IDE tools, file mutation, shell actions, or provider actions are implemented.
 - Current chat support is limited to the local provider/chat MVP exposed by the engine and GUI.
-- `yetai.sessionToken` remains a debug/local runtime setting until VS Code SecretStorage integration is added.
+- Legacy `yetai.sessionToken` remains only as a deprecated dev-preview fallback for existing local setups.
 
 ## Safety rules
 

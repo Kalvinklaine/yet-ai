@@ -14,7 +14,9 @@
   ],
   "activationEvents": [
     "onCommand:yetaicmd.openChat",
-    "onCommand:yetaicmd.showRuntimeStatus"
+    "onCommand:yetaicmd.showRuntimeStatus",
+    "onCommand:yetaicmd.setLocalRuntimeSessionToken",
+    "onCommand:yetaicmd.clearLocalRuntimeSessionToken"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -26,6 +28,14 @@
       {
         "command": "yetaicmd.showRuntimeStatus",
         "title": "Yet AI: Show Runtime Status"
+      },
+      {
+        "command": "yetaicmd.setLocalRuntimeSessionToken",
+        "title": "Yet AI: Set Local Runtime Session Token"
+      },
+      {
+        "command": "yetaicmd.clearLocalRuntimeSessionToken",
+        "title": "Yet AI: Clear Local Runtime Session Token"
       }
     ],
     "configuration": {
@@ -39,7 +49,7 @@
         "yetai.sessionToken": {
           "type": "string",
           "default": "",
-          "description": "Optional local runtime bearer/session token passed to the webview shell for debug connections. Do not store provider API keys here."
+          "description": "Deprecated dev-preview fallback local runtime bearer/session token for debug connections. Use the Yet AI: Set Local Runtime Session Token command so the value is stored in VS Code SecretStorage. Do not store provider API keys here."
         },
         "yetai.guiDevUrl": {
           "type": "string",

@@ -4,7 +4,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { ProductIdentity, configurationPrefix } from "./identity";
+import { ProductIdentity, configurationPrefix, sessionTokenSecretKey } from "./identity";
 
 export type EngineConnection = {
   runtimeUrl: string;
@@ -25,7 +25,10 @@ type LaunchMode = "auto" | "connect" | "launch";
 type EngineConnectionSettings = EngineConnection & {
   engineBinaryPath?: string;
   launchMode: LaunchMode;
+  sessionTokenSource: SessionTokenSource;
 };
+
+export type SessionTokenSource = "none" | "secretStorage" | "legacySetting";
 
 type LaunchedEngine = {
   process: childProcess.ChildProcess;
@@ -35,8 +38,8 @@ type LaunchedEngine = {
 
 let launchedEngine: LaunchedEngine | undefined;
 
-export function readEngineConnection(): EngineConnection {
-  const settings = readEngineConnectionSettings();
+export async function readEngineConnection(context: vscode.ExtensionContext): Promise<EngineConnection> {
+  const settings = await readEngineConnectionSettings(context);
   return {
     runtimeUrl: settings.runtimeUrl,
     sessionToken: settings.sessionToken,
@@ -48,7 +51,7 @@ export async function collectRuntimeDiagnostics(
   context: vscode.ExtensionContext,
   identity: ProductIdentity,
 ): Promise<RuntimeDiagnostics> {
-  const settings = readEngineConnectionSettings();
+  const settings = await readEngineConnectionSettings(context);
   const diagnostics: RuntimeDiagnostics = {
     runtimeUrl: safeRuntimeUrl(settings.runtimeUrl),
     launchMode: settings.launchMode,
@@ -82,7 +85,7 @@ export async function prepareEngineConnection(
   identity: ProductIdentity,
   output: vscode.OutputChannel,
 ): Promise<EngineConnection> {
-  const settings = readEngineConnectionSettings();
+  const settings = await readEngineConnectionSettings(context);
   validateEngineConnectionSettings(settings);
   const binaryPath = findEngineBinary(settings.engineBinaryPath, context.extensionPath, identity.engine.binaryName);
   const shouldLaunch = settings.launchMode === "launch" || (settings.launchMode === "auto" && binaryPath !== undefined);
@@ -105,8 +108,25 @@ export async function prepareEngineConnection(
     sessionToken: settings.sessionToken,
     guiDevUrl: settings.guiDevUrl,
   };
+  if (settings.sessionTokenSource === "legacySetting") {
+    output.appendLine(`Warning: ${configurationPrefix}.sessionToken is deprecated. Use the Yet AI command to store the local runtime session token in VS Code SecretStorage.`);
+  }
   await checkEngineHealth(connection, output);
   return connection;
+}
+
+export async function setStoredSessionToken(context: vscode.ExtensionContext, value: string): Promise<boolean> {
+  const token = value.trim();
+  if (token.length === 0) {
+    await clearStoredSessionToken(context);
+    return false;
+  }
+  await context.secrets.store(sessionTokenSecretKey, token);
+  return true;
+}
+
+export async function clearStoredSessionToken(context: vscode.ExtensionContext): Promise<void> {
+  await context.secrets.delete(sessionTokenSecretKey);
 }
 
 export function stopLaunchedEngine(output?: vscode.OutputChannel): void {
@@ -121,20 +141,35 @@ export function stopLaunchedEngine(output?: vscode.OutputChannel): void {
   }
 }
 
-function readEngineConnectionSettings(): EngineConnectionSettings {
+async function readEngineConnectionSettings(context: vscode.ExtensionContext): Promise<EngineConnectionSettings> {
   const config = vscode.workspace.getConfiguration(configurationPrefix);
   const runtimeUrl = config.get<string>("runtimeUrl", "http://127.0.0.1:8001").trim();
-  const sessionToken = config.get<string>("sessionToken", "").trim();
+  const secretStorageToken = (await context.secrets.get(sessionTokenSecretKey))?.trim() ?? "";
+  const legacySessionToken = config.get<string>("sessionToken", "").trim();
+  const sessionToken = resolveSessionToken(secretStorageToken, legacySessionToken);
   const guiDevUrl = config.get<string>("guiDevUrl", "").trim();
   const engineBinaryPath = config.get<string>("engineBinaryPath", "").trim();
   const configuredLaunchMode = config.get<string>("launchMode", "auto").trim();
   return {
     runtimeUrl,
-    sessionToken: sessionToken.length > 0 ? sessionToken : undefined,
+    sessionToken: sessionToken.value,
+    sessionTokenSource: sessionToken.source,
     guiDevUrl: guiDevUrl.length > 0 ? guiDevUrl : undefined,
     engineBinaryPath: engineBinaryPath.length > 0 ? engineBinaryPath : undefined,
     launchMode: parseLaunchMode(configuredLaunchMode),
   };
+}
+
+export function resolveSessionToken(secretStorageToken: string, legacySettingToken: string): { value?: string; source: SessionTokenSource } {
+  const secret = secretStorageToken.trim();
+  if (secret.length > 0) {
+    return { value: secret, source: "secretStorage" };
+  }
+  const legacy = legacySettingToken.trim();
+  if (legacy.length > 0) {
+    return { value: legacy, source: "legacySetting" };
+  }
+  return { source: "none" };
 }
 
 function parseLaunchMode(value: string): LaunchMode {

@@ -26,8 +26,11 @@ export type ProductIdentity = {
 
 export const extensionCommand = "yetaicmd.openChat";
 export const runtimeStatusCommand = "yetaicmd.showRuntimeStatus";
+export const setSessionTokenCommand = "yetaicmd.setLocalRuntimeSessionToken";
+export const clearSessionTokenCommand = "yetaicmd.clearLocalRuntimeSessionToken";
 export const configurationPrefix = "yetai";
 export const bridgeVersion = "2026-05-15";
+export const sessionTokenSecretKey = "yetai.localRuntimeSessionToken";
 
 export function loadProductIdentity(extensionPath: string): ProductIdentity {
   const identityPath = path.resolve(extensionPath, "..", "..", "..", "product", "identity.json");
