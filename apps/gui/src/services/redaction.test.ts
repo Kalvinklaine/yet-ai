@@ -20,6 +20,19 @@ describe("redaction", () => {
     expectRedacted("Cookie: session=secret; refresh=also-secret\nSet-Cookie: sid=secret; HttpOnly", ["session=secret", "refresh=also-secret", "sid=secret"]);
   });
 
+  it("redacts cookie-like key value strings", () => {
+    const cases: Array<[string, string[]]> = [
+      ["cookie=session=secret; refresh=also-secret", ["session=secret", "refresh=also-secret"]],
+      ["set_cookie=sid=secret; refresh=also-secret", ["sid=secret", "refresh=also-secret"]],
+      ["set-cookie=sid=secret; Path=/; HttpOnly; refresh=also-secret", ["sid=secret", "Path=/", "HttpOnly", "refresh=also-secret"]],
+      ["setCookie=sid=secret; refresh=also-secret", ["sid=secret", "refresh=also-secret"]],
+      ["Cookie=session=secret; Refresh=also-secret", ["session=secret", "Refresh=also-secret"]],
+    ];
+    for (const [input, rawFragments] of cases) {
+      expectRedacted(input, rawFragments);
+    }
+  });
+
   it("redacts env-style secret keys", () => {
     expectRedacted("OPENAI_API_KEY=oa-secret ANTHROPIC_API_KEY=anthropic GITHUB_TOKEN=gh YET_AI_AUTH_TOKEN=yet OAUTH_REFRESH_TOKEN=refresh PROVIDER_CLIENT_SECRET=client", ["oa-secret", "anthropic", "GITHUB_TOKEN", "refresh", "client"]);
   });
