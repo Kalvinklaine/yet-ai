@@ -18,6 +18,37 @@ gradle build --console=plain
 
 ## Packaged GUI flow
 
+## Installable ZIP dev preview
+
+From the repository root, build the local engine, GUI, and JetBrains installable ZIP with one command:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+npm run prepare:jetbrains-preview
+```
+
+The helper reuses `prepare:ide-engine`, runs the GUI build, and invokes `gradle buildPlugin --console=plain` in `apps/plugins/jetbrains`. It prints every ZIP found under `apps/plugins/jetbrains/build/distributions/`, plus the local `Engine binary path` to use if the plugin does not discover `yet-lsp` from `PATH`. If `gradle` is not installed, install Gradle or add a reviewed project wrapper later; this repository does not vendor a Gradle wrapper for the preview path.
+
+Manual IntelliJ IDEA install-from-disk steps:
+
+1. Run `npm run prepare:jetbrains-preview` from the repository root.
+2. Open IntelliJ IDEA Settings/Preferences → Plugins → gear → Install Plugin from Disk.
+3. Choose the ZIP path printed by the preparation command.
+4. Restart the IDE when prompted.
+5. Open Yet AI settings and keep `Launch mode` as `auto`, or set it to `launch`; set `Engine binary path` to the printed `target/debug/yet-lsp` path if discovery from `PATH` is not enough. Use `connect` only for an already running loopback runtime.
+6. Open the Yet AI tool window and verify that the packaged GUI loads.
+7. Optional safe real-provider smoke: configure the OpenAI API-key fallback in the GUI, confirm the key field clears after save, then send a short chat prompt. The experimental OpenAI account path remains explicit-risk, mock-covered in automation, and any real account test is manual/high-risk/outside CI.
+
+Verify the installable artifact without launching IntelliJ IDEA:
+
+```sh
+npm run smoke:jetbrains-installable
+```
+
+The smoke checks that a distribution ZIP exists, contains `META-INF/plugin.xml` and packaged GUI `yet-ai-gui/index.html`, and that docs describe Install Plugin from Disk plus `Engine binary path` expectations. No provider credentials, real OpenAI/ChatGPT calls, JetBrains IDE launch, or hosted Yet AI services are required.
+
+This is dev-preview/manual installability only: no signing, marketplace publication, production installer, bundled notarized engine, or official release packaging is produced.
+
 Build the GUI first, then build the plugin:
 
 ```sh
