@@ -83,32 +83,21 @@ try {
     failures.push(`Iframe GUI body text is too short or blank (${bodyText.length} characters).`);
   }
 
-  await page.waitForTimeout(250);
-  await page.evaluate(() => {
-    const frame = document.querySelector("iframe");
-    frame?.contentWindow?.postMessage(window.__yetAiBootstrapHostReady, window.__yetAiFrameTargetOrigin);
-  });
-
-  const iframe = page.frames().find((frame) => frame.url().startsWith(guiBaseUrl));
-  if (iframe) {
-    await iframe.evaluate((message) => window.dispatchEvent(new MessageEvent("message", { data: message })), await page.evaluate(() => window.__yetAiBootstrapHostReady));
-  } else {
-    failures.push("Could not locate the Yet AI GUI iframe frame for host.ready smoke delivery.");
+  const collectedMessages = await page.waitForFunction(() => window.__yetAiBridgeMessages?.some((message) => message?.type === "gui.ready"), undefined, { timeout: 5000 })
+    .then(() => page.evaluate(() => window.__yetAiBridgeMessages))
+    .catch(() => []);
+  if (!Array.isArray(collectedMessages) || !collectedMessages.some((message) => message?.type === "gui.ready" && message?.version === bridgeVersion)) {
+    failures.push("Wrapper fake postIntellijMessage bridge did not collect gui.ready from the iframe.");
   }
 
-  await iframe?.evaluate((message) => window.dispatchEvent(new MessageEvent("message", { data: message })), await page.evaluate(() => window.__yetAiBootstrapHostReady));
-  await iframe?.evaluate((entry) => {
-    const details = Array.from(document.querySelectorAll("summary")).find((item) => item.textContent?.includes("SSE debug details"))?.parentElement;
-    details?.setAttribute("open", "");
-    const timeline = details?.querySelector(".timeline");
-    const item = document.createElement("div");
-    item.className = "timeline-entry";
-    item.textContent = entry;
-    timeline?.prepend(item);
-  }, "Host runtime settings received");
-  const hostReadyVisible = await frameLocator.getByText("Host runtime settings received").first().isVisible({ timeout: 5000 }).catch(() => false);
-  if (!hostReadyVisible) {
-    failures.push("Iframe GUI did not visibly log Host runtime settings received after wrapper host.ready delivery.");
+  const iframeGuiReady = await page.evaluate(() => window.__yetAiIframeGuiReady === true);
+  if (!iframeGuiReady) {
+    failures.push("GUI iframe did not send gui.ready to the parent wrapper.");
+  }
+
+  const hostReadyApplied = await frameLocator.locator("input[value='http://127.0.0.1:8001']").first().isVisible({ timeout: 5000 }).catch(() => false);
+  if (!hostReadyApplied) {
+    failures.push("Iframe GUI did not naturally apply wrapper host.ready runtime settings.");
   }
 
   const refreshButton = frameLocator.getByRole("button", { name: "Refresh runtime" });
@@ -120,13 +109,6 @@ try {
   const refreshAttemptVisible = await frameLocator.getByText(/Attempt \d+ at/).first().isVisible({ timeout: 5000 }).catch(() => false);
   if (!refreshAttemptVisible) {
     failures.push("Refresh runtime feedback did not include a visible attempt/timestamp marker.");
-  }
-
-  const collectedMessages = await page.waitForFunction(() => window.__yetAiBridgeMessages?.some((message) => message?.type === "gui.ready"), undefined, { timeout: 5000 })
-    .then(() => page.evaluate(() => window.__yetAiBridgeMessages))
-    .catch(() => []);
-  if (!Array.isArray(collectedMessages) || !collectedMessages.some((message) => message?.type === "gui.ready" && message?.version === bridgeVersion)) {
-    failures.push("Wrapper fake postIntellijMessage bridge did not collect gui.ready.");
   }
 
   const targetOrigin = await page.evaluate(() => window.__yetAiFrameTargetOrigin);
@@ -141,7 +123,7 @@ try {
   }
 
   console.log("JetBrains wrapper browser smoke passed.");
-  console.log("Checked JetBrains-like wrapper iframe rendering, exact loopback target origin, host.ready delivery, Refresh runtime click feedback, bridge collector, JavaScript execution, and local JS/CSS asset responses.");
+  console.log("Checked JetBrains-like wrapper iframe rendering, exact loopback target origin, real gui.ready to host.ready wrapper bridge delivery, Refresh runtime click feedback, bridge collector, JavaScript execution, and local JS/CSS asset responses.");
   console.log("No engine, provider credentials, OpenAI/ChatGPT, hosted Yet AI services, JetBrains IDE, or JCEF automation were used.");
 } finally {
   await browser?.close().catch(() => undefined);
@@ -223,7 +205,7 @@ const shellStatus = document.getElementById("yet-ai-shell-status");
 const shellFallback = document.getElementById("yet-ai-shell-fallback");
 window.__yetAiBridgeMessages = [];
 window.__yetAiFrameTargetOrigin = frameTargetOrigin;
-window.__yetAiBootstrapHostReady = bootstrapHostReady;
+window.__yetAiIframeGuiReady = false;
 let frameLoaded = false;
 const markLoaded = () => {
   frameLoaded = true;
@@ -252,6 +234,7 @@ window.addEventListener("message", (event) => {
       return;
     }
     if (isGuiMessage(event.data)) {
+      window.__yetAiIframeGuiReady = true;
       window.postIntellijMessage(event.data);
       sendToFrame(bootstrapHostReady);
     } else {

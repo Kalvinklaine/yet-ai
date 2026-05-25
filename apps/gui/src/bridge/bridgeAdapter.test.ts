@@ -3,6 +3,7 @@ import { createBridgeAdapter, isHostMessage } from "./bridgeAdapter";
 
 const bridgeVersion = "2026-05-15";
 const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
+const referrerDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "referrer");
 
 afterEach(() => {
   delete window.acquireVsCodeApi;
@@ -11,6 +12,9 @@ afterEach(() => {
   sessionStorage.clear();
   if (parentDescriptor) {
     Object.defineProperty(window, "parent", parentDescriptor);
+  }
+  if (referrerDescriptor) {
+    Object.defineProperty(Document.prototype, "referrer", referrerDescriptor);
   }
 });
 
@@ -24,9 +28,13 @@ describe("bridgeAdapter", () => {
     adapter.dispose();
   });
 
-  it("sends gui.ready to an iframe parent when direct host APIs are absent", () => {
+  it("sends gui.ready to an iframe parent using the referrer origin when available", () => {
     const logs: string[] = [];
     const postMessage = vi.fn();
+    Object.defineProperty(Document.prototype, "referrer", {
+      configurable: true,
+      get: () => "https://wrapper.example/shell.html",
+    });
     Object.defineProperty(window, "parent", {
       configurable: true,
       value: { postMessage },
@@ -41,12 +49,37 @@ describe("bridgeAdapter", () => {
       version: bridgeVersion,
       type: "gui.ready",
       payload: { supportedBridgeVersion: bridgeVersion },
-    }, "*");
+    }, "https://wrapper.example");
     adapter.dispose();
   });
 
-  it("receives iframe parent host.ready without token logging or storage", () => {
+  it("accepts host.ready from the captured iframe parent without token logging or storage", () => {
     const token = "iframe-parent-session-token-secret";
+    const logs: string[] = [];
+    const messages: unknown[] = [];
+    const parent = { postMessage: vi.fn() };
+    Object.defineProperty(window, "parent", {
+      configurable: true,
+      value: parent,
+    });
+
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    adapter.subscribe((message) => messages.push(message));
+    window.dispatchEvent(new MessageEvent("message", {
+      data: hostReady({ sessionToken: token }),
+      source: parent as unknown as Window,
+    }));
+
+    expect(messages).toHaveLength(1);
+    expect(JSON.stringify(messages[0])).toContain(token);
+    expect(logs).toContain("Host runtime settings received");
+    expect(logs.join("\n")).not.toContain(token);
+    expect(JSON.stringify(localStorage)).not.toContain(token);
+    expect(JSON.stringify(sessionStorage)).not.toContain(token);
+    adapter.dispose();
+  });
+
+  it("rejects valid-looking host messages from an unexpected iframe source", () => {
     const logs: string[] = [];
     const messages: unknown[] = [];
     Object.defineProperty(window, "parent", {
@@ -57,22 +90,90 @@ describe("bridgeAdapter", () => {
     const adapter = createBridgeAdapter((entry) => logs.push(entry));
     adapter.subscribe((message) => messages.push(message));
     window.dispatchEvent(new MessageEvent("message", {
-      data: {
-        version: bridgeVersion,
-        type: "host.ready",
-        payload: {
-          runtimeUrl: "http://127.0.0.1:8765",
-          sessionToken: token,
-        },
-      },
+      data: hostReady(),
+      source: { postMessage: vi.fn() } as unknown as Window,
     }));
 
+    expect(messages).toHaveLength(0);
+    expect(logs).toContain("Rejected host bridge message from unexpected source");
+    expect(logs).not.toContain("Host runtime settings received");
+    adapter.dispose();
+  });
+
+  it("rejects parent host messages from the wrong origin when referrer origin is known", () => {
+    const logs: string[] = [];
+    const messages: unknown[] = [];
+    const parent = { postMessage: vi.fn() };
+    Object.defineProperty(Document.prototype, "referrer", {
+      configurable: true,
+      get: () => "https://wrapper.example/shell.html",
+    });
+    Object.defineProperty(window, "parent", {
+      configurable: true,
+      value: parent,
+    });
+
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    adapter.subscribe((message) => messages.push(message));
+    window.dispatchEvent(new MessageEvent("message", {
+      data: hostReady(),
+      origin: "https://attacker.example",
+      source: parent as unknown as Window,
+    }));
+
+    expect(messages).toHaveLength(0);
+    expect(logs).toContain("Rejected host bridge message from unexpected origin");
+    adapter.dispose();
+  });
+
+  it("keeps top-level browser mock message behavior", () => {
+    const logs: string[] = [];
+    const messages: unknown[] = [];
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    adapter.subscribe((message) => messages.push(message));
+    window.dispatchEvent(new MessageEvent("message", { data: hostReady() }));
     expect(messages).toHaveLength(1);
-    expect(JSON.stringify(messages[0])).toContain(token);
     expect(logs).toContain("Host runtime settings received");
-    expect(logs.join("\n")).not.toContain(token);
-    expect(JSON.stringify(localStorage)).not.toContain(token);
-    expect(JSON.stringify(sessionStorage)).not.toContain(token);
+    adapter.dispose();
+  });
+
+  it("keeps direct VS Code mode posting and receiving", () => {
+    const logs: string[] = [];
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    const messages: unknown[] = [];
+    adapter.subscribe((message) => messages.push(message));
+    window.dispatchEvent(new MessageEvent("message", { data: hostReady() }));
+
+    expect(adapter.host).toBe("vscode");
+    expect(postMessage).toHaveBeenCalledWith({
+      version: bridgeVersion,
+      type: "gui.ready",
+      payload: { supportedBridgeVersion: bridgeVersion },
+    });
+    expect(messages).toHaveLength(1);
+    adapter.dispose();
+  });
+
+  it("keeps direct JetBrains mode posting and receiving", () => {
+    const logs: string[] = [];
+    const postIntellijMessage = vi.fn();
+    window.postIntellijMessage = postIntellijMessage;
+
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    const messages: unknown[] = [];
+    adapter.subscribe((message) => messages.push(message));
+    window.dispatchEvent(new MessageEvent("message", { data: hostReady() }));
+
+    expect(adapter.host).toBe("jetbrains");
+    expect(postIntellijMessage).toHaveBeenCalledWith({
+      version: bridgeVersion,
+      type: "gui.ready",
+      payload: { supportedBridgeVersion: bridgeVersion },
+    });
+    expect(messages).toHaveLength(1);
     adapter.dispose();
   });
 
@@ -95,7 +196,7 @@ describe("bridgeAdapter", () => {
     const logs: string[] = [];
     const adapter = createBridgeAdapter((entry) => logs.push(entry));
     window.dispatchEvent(new MessageEvent("message", { data: { version: bridgeVersion, type: "host.unknown" } }));
-    window.dispatchEvent(new MessageEvent("message", { data: { version: bridgeVersion, type: "host.ready" } }));
+    window.dispatchEvent(new MessageEvent("message", { data: hostReady() }));
     expect(logs).toContain("Rejected invalid host bridge message");
     expect(logs).toContain("Host runtime settings received");
     adapter.dispose();
@@ -108,18 +209,7 @@ describe("bridgeAdapter", () => {
     const adapter = createBridgeAdapter((entry) => logs.push(entry));
     adapter.subscribe((message) => messages.push(message));
     window.dispatchEvent(new MessageEvent("message", {
-      data: {
-        version: bridgeVersion,
-        type: "host.ready",
-        requestId: "r1",
-        payload: {
-          runtimeUrl: "http://127.0.0.1:8765",
-          sessionToken: token,
-          productId: "yet-ai",
-          displayName: "Yet AI",
-          cloudRequired: false,
-        },
-      },
+      data: hostReady({ sessionToken: token }),
     }));
     expect(messages).toHaveLength(1);
     expect(JSON.stringify(messages[0])).toContain(token);
@@ -128,3 +218,18 @@ describe("bridgeAdapter", () => {
     adapter.dispose();
   });
 });
+
+function hostReady(payload: Record<string, unknown> = {}) {
+  return {
+    version: bridgeVersion,
+    type: "host.ready",
+    requestId: "r1",
+    payload: {
+      runtimeUrl: "http://127.0.0.1:8765",
+      productId: "yet-ai",
+      displayName: "Yet AI",
+      cloudRequired: false,
+      ...payload,
+    },
+  };
+}
