@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import process from "node:process";
@@ -368,6 +368,7 @@ if (frame) {
 }
 
 async function startStaticServer(staticRoot) {
+  const realStaticRoot = await realpath(staticRoot);
   const server = http.createServer(async (request, response) => {
     let requestUrl;
     let pathname;
@@ -379,27 +380,40 @@ async function startStaticServer(staticRoot) {
       response.end("Bad request");
       return;
     }
-    const requestedPath = path.normalize(path.join(staticRoot, pathname));
-    if (!requestedPath.startsWith(staticRoot + path.sep) && requestedPath !== staticRoot) {
+    const requestedPath = path.normalize(path.join(realStaticRoot, pathname));
+    let realRequestedPath;
+    try {
+      realRequestedPath = await realpath(requestedPath);
+    } catch {
+      response.writeHead(404);
+      response.end("Not found");
+      return;
+    }
+    if (!isPathInsideRoot(realStaticRoot, realRequestedPath)) {
       response.writeHead(403);
       response.end("Forbidden");
       return;
     }
     try {
-      const fileStat = await stat(requestedPath);
+      const fileStat = await stat(realRequestedPath);
       if (!fileStat.isFile()) {
         response.writeHead(404);
         response.end("Not found");
         return;
       }
-      response.writeHead(200, { "content-type": contentType(requestedPath) });
-      createReadStream(requestedPath).pipe(response);
+      response.writeHead(200, { "content-type": contentType(realRequestedPath) });
+      createReadStream(realRequestedPath).pipe(response);
     } catch {
       response.writeHead(404);
       response.end("Not found");
     }
   });
   return listen(server);
+}
+
+function isPathInsideRoot(rootPath, requestedPath) {
+  const relativePath = path.relative(rootPath, requestedPath);
+  return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
 }
 
 async function listen(server) {

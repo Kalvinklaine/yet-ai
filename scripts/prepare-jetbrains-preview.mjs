@@ -15,11 +15,10 @@ const identity = JSON.parse(await readFile(path.join(root, "product", "identity.
 function run(command, commandArgs, options = {}) {
   const printable = [command, ...commandArgs].join(" ");
   console.log(`\n> ${printable}`);
-  const result = spawnSync(command, commandArgs, {
+  const result = spawnSync(platformCommand(command), commandArgs, {
     cwd: options.cwd ?? root,
     stdio: "inherit",
     env: process.env,
-    shell: process.platform === "win32",
   });
   if (result.error?.code === "ENOENT") {
     console.error(`Required command \`${command}\` was not found on PATH.`);
@@ -29,6 +28,16 @@ function run(command, commandArgs, options = {}) {
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
+}
+
+function platformCommand(command) {
+  if (process.platform !== "win32") {
+    return command;
+  }
+  return {
+    npm: "npm.cmd",
+    gradle: "gradle.bat",
+  }[command] ?? command;
 }
 
 run("npm", ["run", "prepare:ide-engine", "--", ...args]);

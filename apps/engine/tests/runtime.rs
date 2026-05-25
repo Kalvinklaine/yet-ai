@@ -1760,6 +1760,70 @@ async fn provider_base_url_validation_rejects_invalid_values_safely() {
 }
 
 #[tokio::test]
+async fn provider_base_url_update_rejects_query_fragment_without_mutation() {
+    let app = test_app();
+    let provider = json!({
+        "id": "url-update-provider",
+        "kind": "openai-compatible",
+        "displayName": "URL Update Provider",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:8080/v1",
+        "auth": { "type": "none" },
+        "models": [{ "id": "gpt-test", "displayName": "GPT Test" }]
+    });
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    for base_url in [
+        "https://example.test/v1?api_key=sk-update-query-secret-abcd",
+        "https://example.test/v1#access_token=sk-update-fragment-secret-wxyz",
+    ] {
+        let update = json!({
+            "baseUrl": base_url,
+            "displayName": "Mutated URL Provider"
+        });
+        let (status, body) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::PATCH,
+                "/v1/providers/url-update-provider",
+                Body::from(update.to_string()),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "invalid provider baseUrl");
+        let text = body.to_string();
+        assert!(!text.contains(base_url));
+        assert!(!text.contains("api_key"));
+        assert!(!text.contains("access_token"));
+        assert!(!text.contains("update-query-secret"));
+        assert!(!text.contains("update-fragment-secret"));
+
+        let (status, stored) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::GET,
+                "/v1/providers/url-update-provider",
+                Body::empty(),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(stored["displayName"], "URL Update Provider");
+        assert_eq!(stored["baseUrl"], "http://127.0.0.1:8080/v1");
+    }
+}
+
+#[tokio::test]
 async fn create_existing_provider_returns_conflict_without_overwrite_or_temp_leftover() {
     let paths = test_storage_paths();
     let app = app(AppState::with_storage_paths(
