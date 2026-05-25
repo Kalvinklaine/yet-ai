@@ -16,11 +16,14 @@ npm test
 npm run dev
 ```
 
-Repository validation remains available from the root:
+Repository validation and the local browser non-blank smoke remain available from the root:
 
 ```sh
 npm run check
+npm run smoke:gui-browser
 ```
+
+Build the GUI first with `cd apps/gui && npm run build`. The browser smoke serves `apps/gui/dist` on `127.0.0.1`, opens the built page with Playwright Chromium, and fails on blank UI, page JavaScript errors, or broken local JS/CSS assets without requiring the engine or provider credentials. If Playwright or Chromium is missing, run `npm install` from the repository root and `npx playwright install chromium`.
 
 Manual IDE packaged-asset preview flows:
 
