@@ -95,8 +95,9 @@ try {
     failures.push("GUI iframe did not send gui.ready to the parent wrapper.");
   }
 
-  const hostReadyApplied = await frameLocator.locator("input[value='http://127.0.0.1:8001']").first().isVisible({ timeout: 5000 }).catch(() => false);
-  if (!hostReadyApplied) {
+  const runtimeInput = frameLocator.locator("input").first();
+  const runtimeInputValue = await runtimeInput.inputValue({ timeout: 5000 }).catch(() => "");
+  if (runtimeInputValue !== "http://127.0.0.1:8001") {
     failures.push("Iframe GUI did not naturally apply wrapper host.ready runtime settings.");
   }
 
@@ -198,7 +199,6 @@ iframe { width: 100vw; height: 100vh; border: 0; }
 <script>
 const bootstrapHostReady = ${bootstrapHostReady};
 const bridgeVersion = "${bridgeVersion}";
-const requestId = "browser-smoke";
 const frame = document.querySelector("iframe");
 const frameTargetOrigin = "${guiBaseUrl}";
 const shellStatus = document.getElementById("yet-ai-shell-status");
@@ -247,7 +247,6 @@ window.addEventListener("message", (event) => {
     sendToFrame(event.data);
   }
 });
-window.postIntellijMessage({ version: bridgeVersion, type: "gui.ready", requestId, payload: { supportedBridgeVersion: bridgeVersion } });
 if (frame) {
   frame.addEventListener("load", () => {
     markLoaded();
@@ -261,8 +260,16 @@ if (frame) {
 
 async function startStaticServer(staticRoot) {
   const server = http.createServer(async (request, response) => {
-    const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
-    const pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
+    let requestUrl;
+    let pathname;
+    try {
+      requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+      pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
+    } catch {
+      response.writeHead(400);
+      response.end("Bad request");
+      return;
+    }
     const requestedPath = path.normalize(path.join(staticRoot, pathname));
     if (!requestedPath.startsWith(staticRoot + path.sep) && requestedPath !== staticRoot) {
       response.writeHead(403);

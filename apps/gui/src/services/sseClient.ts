@@ -41,8 +41,8 @@ const sseEventTypes = new Set<SseEvent["type"]>([
   "error",
 ]);
 
-const maxBufferBytes = 1_000_000;
-const maxFrameBytes = 250_000;
+const maxBufferChars = 1_000_000;
+const maxFrameChars = 250_000;
 
 export async function subscribeToChat(
   settings: RuntimeSettings,
@@ -101,8 +101,9 @@ export async function subscribeToChat(
         break;
       }
       buffer += decoder.decode(value, { stream: true });
-      if (buffer.length > maxBufferBytes) {
+      if (buffer.length > maxBufferChars) {
         callbacks.onError({ status: "protocol", message: "SSE buffer exceeded maximum size." });
+        await cancelReader(reader);
         return;
       }
       const parsed = drainFrames(buffer);
@@ -111,16 +112,24 @@ export async function subscribeToChat(
         const result = parseSseFrame(frame);
         if (!result.ok) {
           callbacks.onError(result.error);
-          continue;
+          await cancelReader(reader);
+          return;
         }
         const event = result.data;
         if (!event) {
           continue;
         }
+        if (event.chatId !== chatId) {
+          callbacks.onError({ status: "protocol", message: "SSE event chat id did not match subscription." });
+          await cancelReader(reader);
+          return;
+        }
         const sequenceError = validateSseSequence(event, expectedSeq);
         expectedSeq = sequenceError.nextExpectedSeq;
         if (sequenceError.error) {
           callbacks.onError(sequenceError.error);
+          await cancelReader(reader);
+          return;
         }
         callbacks.onEvent(event);
       }
@@ -138,7 +147,7 @@ export async function subscribeToChat(
 }
 
 export function parseSseFrame(frame: string): { ok: true; data: SseEvent | null } | { ok: false; error: RuntimeError } {
-  if (frame.length > maxFrameBytes) {
+  if (frame.length > maxFrameChars) {
     return { ok: false, error: { status: "protocol", message: "SSE frame exceeded maximum size." } };
   }
   const dataLines: string[] = [];
@@ -199,6 +208,14 @@ export function validateSseSequence(
     };
   }
   return { nextExpectedSeq: expectedSeq + 1 };
+}
+
+async function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+  try {
+    await reader.cancel();
+  } catch {
+    return;
+  }
 }
 
 function isSseEvent(value: unknown): value is SseEvent {

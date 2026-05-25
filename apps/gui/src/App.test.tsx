@@ -1167,7 +1167,7 @@ describe("chat panel", () => {
     });
 
     expect(container?.textContent).toContain("Error");
-    expect(container?.textContent).toContain("failed Bearer [redacted]");
+    expect(container?.textContent).toContain("failed [redacted]");
     expect(container?.textContent).not.toContain("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
   });
 
