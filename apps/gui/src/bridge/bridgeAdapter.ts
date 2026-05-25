@@ -61,6 +61,18 @@ const hostMessageTypes = new Set<HostMessage["type"]>([
   "host.openedFromCommand",
 ]);
 
+function expectedParentOrigin(): string | undefined {
+  if (!document.referrer) {
+    return undefined;
+  }
+  try {
+    const origin = new URL(document.referrer).origin;
+    return origin === "null" ? undefined : origin;
+  } catch {
+    return undefined;
+  }
+}
+
 export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapter {
   const log: string[] = [];
   const handlers = new Set<HostMessageHandler>();
@@ -72,6 +84,7 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
   const vscode = window.acquireVsCodeApi?.();
   const postIntellijMessage = window.postIntellijMessage;
   const parentBridge = !vscode && !postIntellijMessage && window.parent !== window ? window.parent : undefined;
+  const parentOrigin = parentBridge ? expectedParentOrigin() : undefined;
   const host: BridgeHost = vscode ? "vscode" : postIntellijMessage ? "jetbrains" : "browser";
 
   const post = (message: GuiMessage) => {
@@ -84,7 +97,7 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
     } else if (postIntellijMessage) {
       postIntellijMessage(message);
     } else if (parentBridge) {
-      parentBridge.postMessage(message, "*");
+      parentBridge.postMessage(message, parentOrigin ?? "*");
     } else {
       append(`Browser mock sent ${message.type}`);
     }
@@ -99,6 +112,14 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
     const message = event.data;
     if (!isHostMessage(message)) {
       append("Rejected invalid host bridge message");
+      return;
+    }
+    if (parentBridge && event.source !== parentBridge) {
+      append("Rejected host bridge message from unexpected source");
+      return;
+    }
+    if (parentBridge && parentOrigin && event.origin !== parentOrigin) {
+      append("Rejected host bridge message from unexpected origin");
       return;
     }
     append(message.type === "host.ready" ? "Host runtime settings received" : `Host message ${message.type}`);
