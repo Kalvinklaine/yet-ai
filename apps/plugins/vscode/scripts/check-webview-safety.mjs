@@ -69,6 +69,9 @@ Module._load = function load(request, parent, isMain) {
         joinPath(base, ...segments) {
           return { fsPath: path.join(base.fsPath, ...segments) };
         },
+        parse(value) {
+          return { fsPath: value };
+        },
       },
     };
   }
@@ -86,47 +89,47 @@ const fakeSecretValues = [
   "connection.sessionToken",
 ];
 
-const html = renderWebviewHtml(
-  {
-    cspSource: "vscode-resource://yet-ai-test",
-    asWebviewUri(uri) {
-      return {
-        toString() {
-          return `vscode-resource://yet-ai-test/${uri.fsPath}`;
-        },
-      };
-    },
+const webview = {
+  cspSource: "vscode-resource://yet-ai-test",
+  asWebviewUri(uri) {
+    return {
+      toString() {
+        return `vscode-resource://yet-ai-test/${uri.fsPath}`;
+      },
+    };
   },
-  { fsPath: path.join(process.cwd(), "__missing_extension_root__") },
-  {
-    product: {
-      id: "yet-ai-test",
-      displayName: "Yet AI Test",
-    },
-    engine: {
-      binaryName: "yet-lsp",
-    },
-    gui: {
-      npmPackage: "@yet-ai/gui",
-    },
-    vscode: {
-      publisher: "yet-ai-placeholder",
-      name: "yet-ai",
-      displayName: "Yet AI Test",
-      configurationPrefix: "yetai",
-      commandPrefix: "yetaicmd",
-      activityBarId: "yet-ai-toolbox-pane",
-    },
+};
+const extensionUri = { fsPath: path.join(process.cwd(), "__missing_extension_root__") };
+const identity = {
+  product: {
+    id: "yet-ai-test",
+    displayName: "Yet AI Test",
   },
-  {
-    runtimeUrl: "http://127.0.0.1:8025",
-    sessionToken: "fake-session-token-webview-behavioral-sentinel",
-    providerApiKey: "sk-webview-behavioral-provider-key-sentinel",
-    headers: {
-      Authorization: "Bearer fake-session-token-webview-behavioral-sentinel",
-    },
+  engine: {
+    binaryName: "yet-lsp",
   },
-);
+  gui: {
+    npmPackage: "@yet-ai/gui",
+  },
+  vscode: {
+    publisher: "yet-ai-placeholder",
+    name: "yet-ai",
+    displayName: "Yet AI Test",
+    configurationPrefix: "yetai",
+    commandPrefix: "yetaicmd",
+    activityBarId: "yet-ai-toolbox-pane",
+  },
+};
+const connection = {
+  runtimeUrl: "http://127.0.0.1:8025",
+  sessionToken: "fake-session-token-webview-behavioral-sentinel",
+  providerApiKey: "sk-webview-behavioral-provider-key-sentinel",
+  headers: {
+    Authorization: "Bearer fake-session-token-webview-behavioral-sentinel",
+  },
+};
+
+const html = renderWebviewHtml(webview, extensionUri, identity, connection);
 
 for (const value of fakeSecretValues) {
   if (html.includes(value)) {
@@ -151,6 +154,32 @@ for (const pattern of requiredHtmlPatterns) {
 
 if (/sessionToken\s*:/.test(html) || /"sessionToken"/.test(html)) {
   throw new Error("VS Code behavioral webview render must not expose inline sessionToken data.");
+}
+
+const httpsGuiDevHtml = renderWebviewHtml(webview, extensionUri, identity, {
+  ...connection,
+  guiDevUrl: "https://127.0.0.1:5173",
+});
+
+for (const value of fakeSecretValues) {
+  if (httpsGuiDevHtml.includes(value)) {
+    throw new Error(`VS Code HTTPS loopback webview render leaked secret sentinel: ${value}`);
+  }
+}
+
+const httpsLoopbackPatterns = [
+  /<iframe title="Yet AI Test GUI" src="https:\/\/127\.0\.0\.1:5173"><\/iframe>/,
+  /frame-src [^";]*http:\/\/127\.0\.0\.1:\* [^";]*http:\/\/localhost:\* [^";]*http:\/\/\[::1\]:\* [^";]*https:\/\/127\.0\.0\.1:\* [^";]*https:\/\/localhost:\* [^";]*https:\/\/\[::1\]:\*/,
+];
+
+for (const pattern of httpsLoopbackPatterns) {
+  if (!pattern.test(httpsGuiDevHtml)) {
+    throw new Error(`VS Code HTTPS loopback webview render missing expected structure: ${pattern}`);
+  }
+}
+
+if (/sessionToken\s*:/.test(httpsGuiDevHtml) || /"sessionToken"/.test(httpsGuiDevHtml)) {
+  throw new Error("VS Code HTTPS loopback webview render must not expose inline sessionToken data.");
 }
 
 function extractSection(startMarker, endMarker, haystack = source) {
