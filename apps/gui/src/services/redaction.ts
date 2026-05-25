@@ -2,12 +2,12 @@ const shortDisplayLimit = 240;
 const timelineDisplayLimit = 2000;
 const defaultDisplayLimit = 500;
 
-const secretKeyPattern = String.raw`(?:access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|api[_-]?key|client[_-]?secret|authorization|proxy[_-]?authorization|bearer|cookie|set[_-]?cookie|code[_-]?verifier|pkce[_-]?verifier|verifier|github[_-]?token|oauth[_-]?refresh[_-]?token|provider[_-]?client[_-]?secret|openai[_-]?api[_-]?key|anthropic[_-]?api[_-]?key|yet[_-]?ai[_-]?auth[_-]?token)`;
+const secretKeyPattern = String.raw`(?:access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|api[_-]?key|client[_-]?secret|authorization|proxy[_-]?authorization|bearer|cookie|set[_-]?cookie|setCookie|code[_-]?verifier|pkce[_-]?verifier|verifier|github[_-]?token|oauth[_-]?refresh[_-]?token|provider[_-]?client[_-]?secret|openai[_-]?api[_-]?key|anthropic[_-]?api[_-]?key|yet[_-]?ai[_-]?auth[_-]?token)`;
 const secretKeyRegExp = new RegExp(secretKeyPattern, "i");
 
 const redactionPatterns: Array<[RegExp, string]> = [
   [/\b(?:Authorization|Proxy-Authorization|Cookie|Set-Cookie)\s*:\s*[^\r\n]*/gi, "[redacted]"],
-  [new RegExp(String.raw`\b(?:cookie|set[_-]?cookie)\b\s*[:=]\s*[^\r\n]*`, "gi"), "[redacted]"],
+  [new RegExp(String.raw`\b(?:cookie|set[_-]?cookie|setCookie)\b\s*[:=]\s*[^\r\n]*`, "gi"), "[redacted]"],
   [new RegExp(String.raw`\b(?:authorization|proxy[_-]?authorization)\b\s*[:=]\s*Bearer\s+[^\s,;)}\]]+`, "gi"), "[redacted]"],
   [new RegExp(String.raw`([?&;])${secretKeyPattern}\s*=\s*[^\s&#;]+`, "gi"), "$1[redacted]"],
   [new RegExp(String.raw`(["'])${secretKeyPattern}\1\s*:\s*(["'])(?:\\.|(?!\2).)*\2`, "gi"), "[redacted]"],
