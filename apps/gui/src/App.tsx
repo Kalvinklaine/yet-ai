@@ -183,20 +183,36 @@ export function App() {
   const [bridgeHost, setBridgeHost] = useState<BridgeHost>("browser");
   const [runtimeRefreshStatus, setRuntimeRefreshStatus] = useState<{ state: "checking" | "connected" | "failed"; attempt: number; checkedAt: string; detail: string } | null>(null);
   const [runtimeRefreshInFlight, setRuntimeRefreshInFlight] = useState(false);
+  const [settingsRevision, setSettingsRevision] = useState(0);
   const runtimeRefreshAttemptRef = useRef(0);
   const runtimeRefreshInFlightRef = useRef(false);
   const runtimeRefreshQueuedRef = useRef(false);
+  const settingsRevisionRef = useRef(0);
   const settingsRef = useRef<RuntimeSettings>({ baseUrl: defaultBaseUrl, token: "" });
+  const [runtimeDataRevision, setRuntimeDataRevision] = useState<number | null>(null);
+  const [providerDataRevision, setProviderDataRevision] = useState<number | null>(null);
+  const [providerAuthDataRevision, setProviderAuthDataRevision] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
   settingsRef.current = settings;
-  const runtimeConnected = ping?.ready === true && !connectionError;
-  const connectionStatus = connectionError ? "error" : ping?.ready ? "connected" : "not checked";
-  const enabledProviders = useMemo(() => providers.filter((provider) => provider.enabled), [providers]);
-  const selectedModel = useMemo(() => models[0] ?? enabledProviders.flatMap((provider) => provider.models.map((model) => ({ ...model, providerId: model.providerId ?? provider.id })))[0], [enabledProviders, models]);
-  const apiKeyChatReady = runtimeConnected && !modelError && enabledProviders.length > 0 && Boolean(selectedModel);
-  const experimentalOauthChatReady = runtimeConnected && !apiKeyChatReady && providerAuthStatus?.configured === true && providerAuthStatus.authSource === "oauth" && providerAuthStatus.status === "connected";
+  const runtimeDataCurrent = runtimeDataRevision === settingsRevision;
+  const providerDataCurrent = providerDataRevision === settingsRevision;
+  const providerAuthDataCurrent = providerAuthDataRevision === settingsRevision;
+  const activePing = runtimeDataCurrent ? ping : null;
+  const activeCaps = runtimeDataCurrent ? caps : null;
+  const activeModels = runtimeDataCurrent ? models : [];
+  const activeConnectionError = runtimeDataCurrent ? connectionError : null;
+  const activeModelError = runtimeDataCurrent ? modelError : null;
+  const activeIdentityWarnings = runtimeDataCurrent ? identityWarnings : [];
+  const activeProviders = providerDataCurrent ? providers : [];
+  const activeProviderAuthStatus = providerAuthDataCurrent ? providerAuthStatus : null;
+  const runtimeConnected = activePing?.ready === true && !activeConnectionError;
+  const connectionStatus = activeConnectionError ? "error" : activePing?.ready ? "connected" : "not checked";
+  const enabledProviders = useMemo(() => activeProviders.filter((provider) => provider.enabled), [activeProviders]);
+  const selectedModel = useMemo(() => activeModels[0] ?? enabledProviders.flatMap((provider) => provider.models.map((model) => ({ ...model, providerId: model.providerId ?? provider.id })))[0], [enabledProviders, activeModels]);
+  const apiKeyChatReady = runtimeConnected && !activeModelError && enabledProviders.length > 0 && Boolean(selectedModel);
+  const experimentalOauthChatReady = runtimeConnected && !apiKeyChatReady && activeProviderAuthStatus?.configured === true && activeProviderAuthStatus.authSource === "oauth" && activeProviderAuthStatus.status === "connected";
   const canSendChat = apiKeyChatReady || experimentalOauthChatReady;
   const chatReadinessLabel = !runtimeConnected
     ? "Runtime unavailable"
@@ -211,10 +227,34 @@ export function App() {
       ? `Ready to send using ${selectedModel?.displayName ?? "the default model"}.`
       : experimentalOauthChatReady
         ? "Experimental Codex-like OpenAI account chat is connected through the local runtime. This private-endpoint path is high-risk, not official public OAuth support, and not production-ready."
-        : modelError
+        : activeModelError
           ? "Runtime model refresh failed. Refresh runtime again before sending the first GPT message."
           : "Configure an enabled OpenAI API key fallback provider with a model before sending the first GPT message.";
-  const providerAuthPendingState = useMemo(() => parseProviderAuthState(providerAuthStatus), [providerAuthStatus]);
+  const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
+
+  const markSettingsChanged = useCallback(() => {
+    settingsRevisionRef.current += 1;
+    setSettingsRevision(settingsRevisionRef.current);
+    setRuntimeDataRevision(null);
+    setProviderDataRevision(null);
+    setProviderAuthDataRevision(null);
+  }, []);
+
+  const updateBaseUrl = useCallback((nextBaseUrl: string) => {
+    if (settingsRef.current.baseUrl !== nextBaseUrl) {
+      settingsRef.current = { ...settingsRef.current, baseUrl: nextBaseUrl };
+      markSettingsChanged();
+    }
+    setBaseUrl(nextBaseUrl);
+  }, [markSettingsChanged]);
+
+  const updateToken = useCallback((nextToken: string) => {
+    if (settingsRef.current.token !== nextToken) {
+      settingsRef.current = { ...settingsRef.current, token: nextToken };
+      markSettingsChanged();
+    }
+    setToken(nextToken);
+  }, [markSettingsChanged]);
 
   const applyHostReady = useCallback((payload: HostReadyPayload | undefined) => {
     if (!payload?.runtimeUrl || !isLoopbackRuntimeUrl(payload.runtimeUrl)) {
@@ -222,14 +262,14 @@ export function App() {
     }
     const hostRuntimeUrl = payload.runtimeUrl;
     const currentBaseUrl = settingsRef.current.baseUrl;
-    setBaseUrl(hostRuntimeUrl);
+    updateBaseUrl(hostRuntimeUrl);
     if (payload.sessionToken !== undefined) {
-      setToken(payload.sessionToken);
+      updateToken(payload.sessionToken);
     } else if (normalizeRuntimeUrl(hostRuntimeUrl) !== normalizeRuntimeUrl(currentBaseUrl)) {
-      setToken("");
+      updateToken("");
     }
     setTimeline((current) => ["Host runtime settings received", ...current].slice(0, 80));
-  }, []);
+  }, [updateBaseUrl, updateToken]);
 
   useEffect(() => {
     const adapter = createBridgeAdapter((entry) => setBridgeLog((current) => [entry, ...current].slice(0, 20)));
@@ -255,7 +295,9 @@ export function App() {
     }));
   }, []);
 
-  const refreshRuntime = useCallback(async (targetSettings: RuntimeSettings, keepInFlight = false) => {
+  const isCurrentRefresh = useCallback((revision: number) => revision === settingsRevisionRef.current, []);
+
+  const refreshRuntime = useCallback(async (targetSettings: RuntimeSettings, revision: number, keepInFlight = false) => {
     const attempt = runtimeRefreshAttemptRef.current + 1;
     runtimeRefreshAttemptRef.current = attempt;
     const checkedAt = new Date().toLocaleTimeString();
@@ -271,6 +313,9 @@ export function App() {
         getCaps(targetSettings),
         getModels(targetSettings),
       ]);
+      if (!isCurrentRefresh(revision)) {
+        return;
+      }
       const warnings: string[] = [];
       let lastError: RuntimeError | null = null;
       if (nextPing.ok) {
@@ -303,6 +348,7 @@ export function App() {
         lastError = nextModels.error;
       }
       setIdentityWarnings(warnings);
+      setRuntimeDataRevision(revision);
       setRuntimeRefreshStatus({
         state: lastError ? "failed" : "connected",
         attempt,
@@ -314,12 +360,16 @@ export function App() {
         status: "network",
         message: error instanceof Error ? error.message : "Runtime refresh failed",
       };
+      if (!isCurrentRefresh(revision)) {
+        return;
+      }
       setPing(null);
       setCaps(null);
       setModels([]);
       setIdentityWarnings([]);
       setConnectionError(runtimeError);
       setModelError(runtimeError);
+      setRuntimeDataRevision(revision);
       setRuntimeRefreshStatus({
         state: "failed",
         attempt,
@@ -332,31 +382,41 @@ export function App() {
         setRuntimeRefreshInFlight(false);
       }
     }
-  }, []);
+  }, [isCurrentRefresh]);
 
-  const refreshProviders = useCallback(async (targetSettings = settingsRef.current) => {
+  const refreshProviders = useCallback(async (targetSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
     setProviderError(null);
     const result = await listProviders(targetSettings);
+    if (!isCurrentRefresh(revision)) {
+      return;
+    }
     if (result.ok) {
       setProviders(result.data.providers);
+      setProviderDataRevision(revision);
     } else {
       setProviders([]);
       setProviderError(result.error);
+      setProviderDataRevision(revision);
     }
-  }, []);
+  }, [isCurrentRefresh]);
 
-  const refreshProviderAuthStatus = useCallback(async (targetSettings = settingsRef.current) => {
+  const refreshProviderAuthStatus = useCallback(async (targetSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
     setProviderAuthError(null);
     setProviderAuthUrlWarning(null);
     setProviderAuthExchangeError(null);
     const result = await getProviderAuthStatus(targetSettings, "openai");
+    if (!isCurrentRefresh(revision)) {
+      return;
+    }
     if (result.ok) {
       setProviderAuthStatus(result.data);
+      setProviderAuthDataRevision(revision);
     } else {
       setProviderAuthStatus(null);
       setProviderAuthError(result.error);
+      setProviderAuthDataRevision(revision);
     }
-  }, []);
+  }, [isCurrentRefresh]);
 
   const connect = useCallback(async () => {
     if (runtimeRefreshInFlightRef.current) {
@@ -369,9 +429,10 @@ export function App() {
       do {
         runtimeRefreshQueuedRef.current = false;
         const targetSettings = settingsRef.current;
-        await refreshRuntime(targetSettings, true);
-        await refreshProviders(targetSettings);
-        await refreshProviderAuthStatus(targetSettings);
+        const targetRevision = settingsRevisionRef.current;
+        await refreshRuntime(targetSettings, targetRevision, true);
+        await refreshProviders(targetSettings, targetRevision);
+        await refreshProviderAuthStatus(targetSettings, targetRevision);
       } while (runtimeRefreshQueuedRef.current);
     } finally {
       runtimeRefreshInFlightRef.current = false;
@@ -415,8 +476,7 @@ export function App() {
     const result = await saveProvider(settings, selectedProviderId, request);
     setProviderForm((current) => ({ ...current, apiKey: "" }));
     if (result.ok) {
-      await refreshProviders();
-      await refreshRuntime(settingsRef.current);
+      await connect();
       setSelectedProviderId(result.data.id);
     } else {
       setProviderError(result.error);
@@ -464,6 +524,7 @@ export function App() {
       return;
     }
     setProviderAuthStatus(result.data);
+    setProviderAuthDataRevision(settingsRevisionRef.current);
     const authUrl = result.data.authorizationUrl ?? result.data.verificationUrl;
     if (authUrl) {
       openSafeAuthUrl(authUrl, setProviderAuthUrlWarning);
@@ -481,6 +542,7 @@ export function App() {
       return;
     }
     setProviderAuthStatus(result.data);
+    setProviderAuthDataRevision(settingsRevisionRef.current);
     const authUrl = result.data.authorizationUrl ?? result.data.verificationUrl;
     if (authUrl) {
       openSafeAuthUrl(authUrl, setProviderAuthUrlWarning);
@@ -495,8 +557,8 @@ export function App() {
     const result = await disconnectProviderAuth(settings, "openai");
     if (result.ok) {
       setProviderAuthStatus(result.data);
-      await refreshProviders();
-      await refreshRuntime(settingsRef.current);
+      setProviderAuthDataRevision(settingsRevisionRef.current);
+      await connect();
     } else {
       setProviderAuthError(result.error);
     }
@@ -504,7 +566,7 @@ export function App() {
 
   const exchangeOpenAiLoginCode = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const sessionId = providerAuthStatus?.sessionId;
+    const sessionId = activeProviderAuthStatus?.sessionId;
     const code = providerAuthExchangeCode.trim();
     if (!sessionId || !code || !providerAuthPendingState.state) {
       return;
@@ -515,10 +577,15 @@ export function App() {
     try {
       const result = await exchangeProviderAuth(settings, "openai", sessionId, code, providerAuthPendingState.state);
       if (result.ok) {
+        const exchangeRevision = settingsRevisionRef.current;
         setProviderAuthStatus(result.data);
+        setProviderAuthDataRevision(exchangeRevision);
         if (result.data.success) {
-          await refreshProviders();
-          await refreshRuntime(settingsRef.current);
+          await connect();
+          if (isCurrentRefresh(exchangeRevision)) {
+            setProviderAuthStatus(result.data);
+            setProviderAuthDataRevision(exchangeRevision);
+          }
         } else {
           setProviderAuthExchangeError(result.data.lastError ?? result.data.message ?? providerAuthStatusCopy[result.data.status]);
         }
@@ -586,6 +653,16 @@ export function App() {
       return;
     }
     setChatError(null);
+    if (!canSendChat) {
+      const runtimeError: RuntimeError = {
+        status: "configuration",
+        message: "Chat is not ready for the current runtime settings. Refresh runtime and configure a provider before sending.",
+      };
+      setChatError(runtimeError);
+      appendChatError(runtimeError.message);
+      addTimeline("Command blocked until current runtime settings are ready");
+      return;
+    }
     startSse(chatId);
     const result = await sendUserMessage(settings, chatId, content);
     if (result.ok) {
@@ -620,11 +697,11 @@ export function App() {
         <div className="form-grid">
           <label>
             Runtime base URL
-            <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
+            <input value={baseUrl} onChange={(event) => updateBaseUrl(event.target.value)} />
           </label>
           <label>
             Session token
-            <input type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="Bearer token for local runtime" />
+            <input type="password" value={token} onChange={(event) => updateToken(event.target.value)} placeholder="Bearer token for local runtime" />
           </label>
         </div>
         <p className="subtle">In VS Code or JetBrains, the local runtime session token is normally provided by the IDE host through host.ready. Paste a token only when connecting to a manually started runtime such as one launched with YET_AI_AUTH_TOKEN=.... This local runtime token is not an OpenAI key or provider API key.</p>
@@ -633,12 +710,12 @@ export function App() {
           <span className="subtle">Authorization header is sent only to validated loopback runtime URLs.</span>
         </div>
         {runtimeRefreshStatus && <div className={`refresh-status ${runtimeRefreshStatus.state}`} role="status"><strong>{runtimeRefreshStatus.detail}</strong><span>Attempt {runtimeRefreshStatus.attempt} at {runtimeRefreshStatus.checkedAt}</span></div>}
-        {connectionError && <ErrorBox error={connectionError} />}
-        {modelError && <div className="error">Models refresh failed: {modelError.status}: {sanitizeDisplayText(modelError.message)}</div>}
-        {identityWarnings.map((warning) => <div className="error" key={warning}>{warning}</div>)}
+        {activeConnectionError && <ErrorBox error={activeConnectionError} />}
+        {activeModelError && <div className="error">Models refresh failed: {activeModelError.status}: {sanitizeDisplayText(activeModelError.message)}</div>}
+        {activeIdentityWarnings.map((warning) => <div className="error" key={warning}>{warning}</div>)}
         <div className="grid">
-          <StatusBlock title="/v1/ping" value={ping} />
-          <StatusBlock title="/v1/caps" value={caps ? { protocolVersion: caps.protocolVersion, capabilities: caps.capabilities, runtime: caps.runtime, providers: caps.providers.length } : null} />
+          <StatusBlock title="/v1/ping" value={activePing} />
+          <StatusBlock title="/v1/caps" value={activeCaps ? { protocolVersion: activeCaps.protocolVersion, capabilities: activeCaps.capabilities, runtime: activeCaps.runtime, providers: activeCaps.providers.length } : null} />
         </div>
       </section>
 
@@ -651,7 +728,7 @@ export function App() {
         <div className="provider-item stack">
           <div className="row">
             <h3>OpenAI account login</h3>
-            <span className={providerAuthStatus?.configured ? "badge ok" : "badge warn"}>{providerAuthStatus?.status ?? "not checked"}</span>
+            <span className={activeProviderAuthStatus?.configured ? "badge ok" : "badge warn"}>{activeProviderAuthStatus?.status ?? "not checked"}</span>
           </div>
           <p className="subtle">Login-first setup is handled only by the local runtime. The GUI shows sanitized status and never stores provider auth state in browser storage.</p>
           <div className="risk-card stack">
@@ -660,11 +737,11 @@ export function App() {
           </div>
           {providerAuthError && <ErrorBox error={providerAuthError} />}
           {providerAuthUrlWarning && <div className="error">{providerAuthUrlWarning}</div>}
-          {providerAuthStatus && <ProviderAuthSummary status={providerAuthStatus.status} />}
-          {providerAuthStatus?.supportsLogin === false && <p>OpenAI account login is planned/not available yet; use API key fallback.</p>}
-          {providerAuthStatus?.message && <span>{sanitizeDisplayText(providerAuthStatus.message)}</span>}
-          {providerAuthStatus && <ProviderAuthDetails status={providerAuthStatus} />}
-          {providerAuthStatus?.status === "pending" && providerAuthStatus.authSource === "oauth" && providerAuthStatus.sessionId && (
+          {activeProviderAuthStatus && <ProviderAuthSummary status={activeProviderAuthStatus.status} />}
+          {activeProviderAuthStatus?.supportsLogin === false && <p>OpenAI account login is planned/not available yet; use API key fallback.</p>}
+          {activeProviderAuthStatus?.message && <span>{sanitizeDisplayText(activeProviderAuthStatus.message)}</span>}
+          {activeProviderAuthStatus && <ProviderAuthDetails status={activeProviderAuthStatus} />}
+          {activeProviderAuthStatus?.status === "pending" && activeProviderAuthStatus.authSource === "oauth" && activeProviderAuthStatus.sessionId && (
             <form className="manual-exchange-card stack" onSubmit={(event) => void exchangeOpenAiLoginCode(event)}>
               <strong>Manual authorization-code exchange</strong>
               <span className="subtle">After approving the experimental login in the browser, paste only the authorization code here. The code is sent once to the local runtime, then cleared from the form.</span>
@@ -683,9 +760,9 @@ export function App() {
           )}
           <div className="row">
             <button type="button" onClick={() => void refreshProviderAuthStatus()}>Refresh login status</button>
-            <button type="button" onClick={() => void startOpenAiLogin()} disabled={providerAuthStatus?.supportsLogin === false}>Login with OpenAI</button>
+            <button type="button" onClick={() => void startOpenAiLogin()} disabled={activeProviderAuthStatus?.supportsLogin === false}>Login with OpenAI</button>
             <button type="button" className="danger-button" onClick={() => void startExperimentalOpenAiLogin()}>Experimental Login with OpenAI account</button>
-            <button type="button" onClick={() => void disconnectOpenAiLogin()} disabled={!providerAuthStatus?.configured || providerAuthStatus.authSource === "api_key"}>Disconnect login</button>
+            <button type="button" onClick={() => void disconnectOpenAiLogin()} disabled={!activeProviderAuthStatus?.configured || activeProviderAuthStatus.authSource === "api_key"}>Disconnect login</button>
             <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>
           </div>
         </div>
@@ -754,7 +831,7 @@ export function App() {
           </form>
           <div className="stack">
             <h3>Providers</h3>
-            {providers.length === 0 ? <p className="subtle">No providers returned.</p> : providers.map((provider) => (
+            {activeProviders.length === 0 ? <p className="subtle">No providers returned.</p> : activeProviders.map((provider) => (
               <div className="provider-item stack" key={provider.id}>
                 <div className="row">
                   <strong>{provider.displayName}</strong>
