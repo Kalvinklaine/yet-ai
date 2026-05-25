@@ -2,33 +2,88 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.yet-ai.example/contracts/bridge/host-message.schema.json",
   "title": "IDE Host to GUI Message",
+  "description": "Current non-privileged host bootstrap messages only. Tool results, workspace context, file actions, shell-like actions, and IDE tool execution remain disabled until strict schemas, policy, request correlation, and confirmation are implemented.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "type"],
   "properties": {
     "version": {
       "type": "string",
-      "minLength": 1
+      "const": "2026-05-15"
     },
     "type": {
       "type": "string",
-      "enum": [
-        "host.ready",
-        "host.themeChanged",
-        "host.activeFileChanged",
-        "host.selectionChanged",
-        "host.workspaceChanged",
-        "host.toolResult",
-        "host.openedFromCommand"
-      ]
+      "enum": ["host.ready", "host.openedFromCommand"]
     },
     "requestId": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "maxLength": 128
     },
     "payload": {
-      "type": "object",
-      "additionalProperties": true
+      "type": "object"
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "host.ready"
+          }
+        },
+        "required": ["type"]
+      },
+      "then": {
+        "required": ["payload"],
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "runtimeUrl": {
+                "type": "string",
+                "format": "uri",
+                "pattern": "^https?://"
+              },
+              "sessionToken": {
+                "type": "string"
+              },
+              "productId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "displayName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "cloudRequired": {
+                "type": "boolean",
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "host.openedFromCommand"
+          }
+        },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "maxProperties": 0
+          }
+        }
+      }
+    }
+  ]
 }

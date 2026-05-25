@@ -9,14 +9,7 @@ export type GuiMessage = {
 
 export type HostMessage = {
   version: string;
-  type:
-    | "host.ready"
-    | "host.themeChanged"
-    | "host.activeFileChanged"
-    | "host.selectionChanged"
-    | "host.workspaceChanged"
-    | "host.toolResult"
-    | "host.openedFromCommand";
+  type: "host.ready" | "host.openedFromCommand";
   requestId?: string;
   payload?: Record<string, unknown>;
 };
@@ -53,11 +46,6 @@ declare global {
 const bridgeVersion = "2026-05-15";
 const hostMessageTypes = new Set<HostMessage["type"]>([
   "host.ready",
-  "host.themeChanged",
-  "host.activeFileChanged",
-  "host.selectionChanged",
-  "host.workspaceChanged",
-  "host.toolResult",
   "host.openedFromCommand",
 ]);
 
@@ -186,7 +174,10 @@ export function isHostMessage(value: unknown): value is HostMessage {
   ) {
     return false;
   }
-  return record.type !== "host.ready" || isHostReadyPayload(record.payload);
+  if (record.type === "host.ready") {
+    return isHostReadyPayload(record.payload);
+  }
+  return record.type !== "host.openedFromCommand" || isEmptyPayload(record.payload);
 }
 
 export function isHostReadyPayload(value: unknown): value is HostReadyPayload {
@@ -208,6 +199,10 @@ export function isHostReadyPayload(value: unknown): value is HostReadyPayload {
 
 function isObjectPayload(value: unknown): value is Record<string, unknown> | undefined {
   return value === undefined || (typeof value === "object" && value !== null && !Array.isArray(value));
+}
+
+function isEmptyPayload(value: unknown): boolean {
+  return value === undefined || (isObjectPayload(value) && Object.keys(value).length === 0);
 }
 
 function optionalString(value: unknown): boolean {
