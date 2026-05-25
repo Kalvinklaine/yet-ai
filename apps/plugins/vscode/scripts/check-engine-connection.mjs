@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import Module from "node:module";
 
+let configValues = {};
+const originalFetch = globalThis.fetch;
 const originalLoad = Module._load;
 Module._load = function load(request, parent, isMain) {
   if (request === "vscode") {
@@ -12,7 +17,11 @@ Module._load = function load(request, parent, isMain) {
       },
       workspace: {
         getConfiguration() {
-          throw new Error("workspace configuration is not used by this check");
+          return {
+            get(key, defaultValue) {
+              return Object.hasOwn(configValues, key) ? configValues[key] : defaultValue;
+            },
+          };
         },
       },
     };
@@ -22,6 +31,8 @@ Module._load = function load(request, parent, isMain) {
 
 try {
   const {
+    collectRuntimeDiagnostics,
+    findEngineBinary,
     redactRuntimeDiagnosticText,
     resolveSessionToken,
     safeRuntimeUrl,
@@ -41,6 +52,9 @@ try {
   const secretOperations = [];
   const fakeContext = {
     secrets: {
+      async get() {
+        return undefined;
+      },
       async store(key, value) {
         secretOperations.push({ type: "store", key, value });
       },
@@ -80,6 +94,46 @@ try {
   for (const forbidden of [fakeSessionToken, fakeApiKey, fakeBearer, "fake-bearer-session-sentinel"]) {
     assert.equal(diagnostic.includes(forbidden), false, `diagnostics leaked ${forbidden}`);
   }
+
+
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "yet-ai-vscode-engine-check-"));
+  try {
+    const privateDirectory = path.join(tempRoot, "private-user-path");
+    fs.mkdirSync(privateDirectory);
+    const nonExecutable = path.join(privateDirectory, "yet-lsp-non-executable");
+    const executable = path.join(privateDirectory, "yet-lsp-executable");
+    fs.writeFileSync(nonExecutable, "not launchable");
+    fs.writeFileSync(executable, "launchable");
+
+    if (process.platform !== "win32") {
+      fs.chmodSync(nonExecutable, 0o600);
+      fs.chmodSync(executable, 0o700);
+      assert.throws(
+        () => findEngineBinary(nonExecutable, tempRoot, "yet-lsp"),
+        /engineBinaryPath must point to an executable file/,
+      );
+      assert.equal(findEngineBinary(executable, tempRoot, "yet-lsp"), executable);
+    }
+
+    configValues = {
+      runtimeUrl: "http://127.0.0.1:8001",
+      launchMode: "auto",
+      engineBinaryPath: executable,
+    };
+    globalThis.fetch = async () => ({ ok: true, status: 200 });
+    const diagnostics = await collectRuntimeDiagnostics(
+      { ...fakeContext, extensionPath: tempRoot },
+      { engine: { binaryName: "yet-lsp" } },
+    );
+    assert.match(diagnostics.engineBinaryStatus, /found configured binary: yet-lsp-executable/);
+    assert.equal(diagnostics.engineBinaryStatus.includes(tempRoot), false, "diagnostics exposed a private temp path");
+    assert.equal(diagnostics.engineBinaryStatus.includes(privateDirectory), false, "diagnostics exposed a private directory path");
+  } finally {
+    configValues = {};
+    globalThis.fetch = originalFetch;
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 } finally {
+  globalThis.fetch = originalFetch;
   Module._load = originalLoad;
 }
