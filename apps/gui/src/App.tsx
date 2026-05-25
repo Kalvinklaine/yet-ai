@@ -203,6 +203,8 @@ export function App() {
   const runtimeRefreshQueuedRef = useRef(false);
   const settingsRevisionRef = useRef(0);
   const settingsRef = useRef<RuntimeSettings>({ baseUrl: defaultBaseUrl, token: "" });
+  const chatIdRef = useRef("chat-001");
+  const providerTestAttemptRef = useRef(0);
   const [runtimeDataRevision, setRuntimeDataRevision] = useState<number | null>(null);
   const [providerDataRevision, setProviderDataRevision] = useState<number | null>(null);
   const [providerAuthDataRevision, setProviderAuthDataRevision] = useState<number | null>(null);
@@ -210,6 +212,7 @@ export function App() {
 
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
   settingsRef.current = settings;
+  chatIdRef.current = chatId;
   const runtimeDataCurrent = runtimeDataRevision === settingsRevision;
   const providerDataCurrent = providerDataRevision === settingsRevision;
   const providerAuthDataCurrent = providerAuthDataRevision === settingsRevision;
@@ -277,6 +280,7 @@ export function App() {
   const markSettingsChanged = useCallback(() => {
     abortActiveStream("SSE stopped and abort requested for previous runtime settings");
     settingsRevisionRef.current += 1;
+    providerTestAttemptRef.current += 1;
     setSettingsRevision(settingsRevisionRef.current);
     setRuntimeDataRevision(null);
     setProviderDataRevision(null);
@@ -290,6 +294,7 @@ export function App() {
     setProviderAuthExchangeCode("");
     setProviderAuthExchangeWorking(false);
     setProviderAuthExchangeError(null);
+    setProviderTestState(null);
   }, [abortActiveStream]);
 
   const updateRuntimeSettings = useCallback((nextSettings: RuntimeSettings) => {
@@ -499,7 +504,9 @@ export function App() {
     event.preventDefault();
     const targetSettings = settingsRef.current;
     const targetRevision = settingsRevisionRef.current;
+    providerTestAttemptRef.current += 1;
     setProviderError(null);
+    setProviderTestState(null);
     setProviderDataRevision(null);
     const modelsToSave = providerForm.modelId.trim()
       ? [
@@ -573,9 +580,11 @@ export function App() {
   const runProviderTest = async (providerId: string) => {
     const targetSettings = settingsRef.current;
     const targetRevision = settingsRevisionRef.current;
+    const attempt = providerTestAttemptRef.current + 1;
+    providerTestAttemptRef.current = attempt;
     setProviderTestState({ providerId, state: "testing", detail: "Testing provider reachability…" });
     const result = await testProvider(targetSettings, providerId);
-    if (!isCurrentRefresh(targetRevision)) {
+    if (!isCurrentRefresh(targetRevision) || providerTestAttemptRef.current !== attempt) {
       return;
     }
     if (result.ok) {
@@ -766,6 +775,9 @@ export function App() {
     if (!content) {
       return;
     }
+    const targetSettings = settingsRef.current;
+    const targetRevision = settingsRevisionRef.current;
+    const targetChatId = chatIdRef.current;
     setChatError(null);
     if (!canSendChat) {
       const runtimeError: RuntimeError = {
@@ -777,8 +789,11 @@ export function App() {
       addTimeline("Command blocked until current runtime settings are ready");
       return;
     }
-    startSse(chatId);
-    const result = await sendUserMessage(settings, chatId, content);
+    startSse(targetChatId);
+    const result = await sendUserMessage(targetSettings, targetChatId, content);
+    if (!isCurrentRefresh(targetRevision) || chatIdRef.current !== targetChatId) {
+      return;
+    }
     if (result.ok) {
       addTimeline(`Command accepted ${result.data.requestId}`);
       setChatView((current) => addAcceptedUserMessage(current, content));

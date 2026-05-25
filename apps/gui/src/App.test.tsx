@@ -1010,6 +1010,119 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).not.toContain("session-secret");
     expect(browserStorageDump()).not.toContain(secret);
   });
+
+  it("clears and ignores stale provider test results after runtime settings change", async () => {
+    const providerTest = deferred<Response>();
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url === "http://127.0.0.1:8001/v1/providers/openai-api/test") {
+        return providerTest.promise;
+      }
+      if (url.endsWith("/v1/ping")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: "2026-05-24T00:00:00Z" }));
+      }
+      if (url.endsWith("/v1/caps")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
+      }
+      if (url.endsWith("/v1/models")) {
+        return Promise.resolve(jsonResponse({ models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }] }));
+      }
+      if (url.endsWith("/v1/providers")) {
+        return Promise.resolve(jsonResponse({ providers: [enabledProvider()], cloudRequired: false, providerAccess: "direct" }));
+      }
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    await act(async () => {
+      findButton("Test provider").click();
+      await Promise.resolve();
+    });
+    expect(container?.textContent).toContain("Provider test running");
+
+    await act(async () => {
+      setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
+      await Promise.resolve();
+    });
+    expect(container?.textContent).not.toContain("Provider test running");
+
+    providerTest.resolve(jsonResponse({
+      ok: true,
+      providerId: "openai-api",
+      status: "reachable",
+      message: "stale provider test success",
+      cloudRequired: false,
+    }));
+    await flushAsync();
+
+    expect(container?.textContent).not.toContain("Provider test succeeded");
+    expect(container?.textContent).not.toContain("stale provider test success");
+  });
+
+  it("clears and ignores stale provider test results when provider mutation starts", async () => {
+    const providerTest = deferred<Response>();
+    const providerSave = deferred<Response>();
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url === "http://127.0.0.1:8001/v1/providers/openai-api/test") {
+        return providerTest.promise;
+      }
+      if (init?.method === "POST" && url === "http://127.0.0.1:8001/v1/providers") {
+        return providerSave.promise;
+      }
+      if (url.endsWith("/v1/ping")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: "2026-05-24T00:00:00Z" }));
+      }
+      if (url.endsWith("/v1/caps")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
+      }
+      if (url.endsWith("/v1/models")) {
+        return Promise.resolve(jsonResponse({ models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }] }));
+      }
+      if (url.endsWith("/v1/providers")) {
+        return Promise.resolve(jsonResponse({ providers: [enabledProvider()], cloudRequired: false, providerAccess: "direct" }));
+      }
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    await act(async () => {
+      findButton("Test provider").click();
+      await Promise.resolve();
+    });
+    expect(container?.textContent).toContain("Provider test running");
+
+    await act(async () => {
+      findButton("Create provider").click();
+      await Promise.resolve();
+    });
+    expect(container?.textContent).not.toContain("Provider test running");
+
+    providerTest.resolve(jsonResponse({
+      ok: true,
+      providerId: "openai-api",
+      status: "reachable",
+      message: "stale provider mutation test success",
+      cloudRequired: false,
+    }));
+    await flushAsync();
+
+    expect(container?.textContent).not.toContain("Provider test succeeded");
+    expect(container?.textContent).not.toContain("stale provider mutation test success");
+    providerSave.resolve(jsonResponse(enabledProvider()));
+  });
 });
 
 describe("runtime debug redaction", () => {
@@ -1315,6 +1428,114 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("You");
     expect(container?.textContent).toContain("Hello Yet AI");
     expect(chatInput().value).toBe("");
+  });
+
+  it("ignores stale chat command success after runtime settings change", async () => {
+    const oldCommand = deferred<Response>();
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url === "http://127.0.0.1:8001/v1/chats/chat-001/commands") {
+        return oldCommand.promise;
+      }
+      if (url.includes("/v1/chats/subscribe?chat_id=")) {
+        return Promise.resolve(sseResponse([]));
+      }
+      if (url.endsWith("/v1/ping")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: "2026-05-24T00:00:00Z" }));
+      }
+      if (url.endsWith("/v1/caps")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
+      }
+      if (url.endsWith("/v1/models")) {
+        return Promise.resolve(jsonResponse({ models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }] }));
+      }
+      if (url.endsWith("/v1/providers")) {
+        return Promise.resolve(jsonResponse({ providers: [enabledProvider()], cloudRequired: false, providerAccess: "direct" }));
+      }
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "old runtime question");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
+      await Promise.resolve();
+    });
+    await act(async () => {
+      setTextareaValue(chatInput(), "new runtime draft");
+    });
+
+    oldCommand.resolve(jsonResponse({ accepted: true, chatId: "chat-001", requestId: "old-request", type: "user_message" }));
+    await flushAsync();
+
+    expect(container?.textContent).not.toContain("old runtime question");
+    expect(container?.textContent).not.toContain("Command accepted old-request");
+    expect(chatInput().value).toBe("new runtime draft");
+  });
+
+  it("ignores stale chat command failure after chat id change", async () => {
+    const oldCommand = deferred<Response>();
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url === "http://127.0.0.1:8001/v1/chats/chat-001/commands") {
+        return oldCommand.promise;
+      }
+      if (url.includes("/v1/chats/subscribe?chat_id=")) {
+        return Promise.resolve(sseResponse([]));
+      }
+      if (url.endsWith("/v1/ping")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: "2026-05-24T00:00:00Z" }));
+      }
+      if (url.endsWith("/v1/caps")) {
+        return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
+      }
+      if (url.endsWith("/v1/models")) {
+        return Promise.resolve(jsonResponse({ models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }] }));
+      }
+      if (url.endsWith("/v1/providers")) {
+        return Promise.resolve(jsonResponse({ providers: [enabledProvider()], cloudRequired: false, providerAccess: "direct" }));
+      }
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "old chat question");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      setInputValue(findInputValue("chat-001")!, "chat-002");
+      await Promise.resolve();
+    });
+
+    oldCommand.resolve(jsonResponse({ error: "old chat failed Authorization: Bearer old-secret" }, 500));
+    await flushAsync();
+
+    expect(container?.textContent).not.toContain("old chat failed");
+    expect(container?.textContent).not.toContain("Command error");
+    expect(container?.textContent).not.toContain("old-secret");
+    expect(container?.textContent).toContain("Ask a question to start this local chat.");
   });
 
   it("blocks programmatic submit while Send is disabled without opening SSE or posting a command", async () => {
