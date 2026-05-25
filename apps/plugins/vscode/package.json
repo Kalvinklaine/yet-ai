@@ -44,7 +44,7 @@
         "yetai.runtimeUrl": {
           "type": "string",
           "default": "http://127.0.0.1:8001",
-          "description": "Local Yet AI runtime URL used by the webview shell. Only loopback URLs should be used."
+          "description": "Local Yet AI runtime URL used by the webview shell. Use a loopback URL without userinfo, query, or fragment. auto/launch starts the local engine over http; connect may use an externally managed loopback https runtime."
         },
         "yetai.sessionToken": {
           "type": "string",
@@ -54,7 +54,7 @@
         "yetai.guiDevUrl": {
           "type": "string",
           "default": "",
-          "description": "Optional loopback GUI dev server URL for extension development. Leave empty to use packaged GUI assets or the built-in shell placeholder."
+          "description": "Optional loopback http or https GUI dev server URL without userinfo, query, or fragment. Leave empty to use packaged GUI assets or the built-in shell placeholder."
         },
         "yetai.launchMode": {
           "type": "string",

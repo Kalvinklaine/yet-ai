@@ -86,7 +86,7 @@ This is the nearest hands-on path for trying the local-first VS Code dev preview
 
    - `yetai.launchMode`: `auto` for normal dev-preview, `launch` to require starting a local binary, or `connect` to use an already running loopback runtime.
    - `yetai.engineBinaryPath`: optional absolute path to the built `yet-lsp`.
-   - `yetai.runtimeUrl`: keep a loopback URL such as `http://127.0.0.1:8001`. The port is passed to the launched engine as `YET_AI_HTTP_PORT`.
+   - `yetai.runtimeUrl`: keep a loopback URL without userinfo, query, or fragment, such as `http://127.0.0.1:8001`. The port is passed to the launched engine as `YET_AI_HTTP_PORT`. Use `http` for `auto` or `launch`; `https` is only for `connect` mode with an externally managed loopback runtime.
    - Manual local runtime session token: use `Yet AI: Set Local Runtime Session Token` for `connect` mode when an already running engine requires a known local bearer token. The token is stored in VS Code SecretStorage. In `auto` or `launch`, the extension generates a per-session token and does not persist it.
    - `yetai.sessionToken`: deprecated dev-preview fallback only. Prefer the SecretStorage command.
 
@@ -244,10 +244,10 @@ Use `Yet AI: Show Runtime Status` to write sanitized local runtime diagnostics t
 - Provider `429` errors: the upstream provider reported rate, quota, or billing limits. Wait, reduce test traffic, or check the provider account outside Yet AI.
 - Model errors: the selected model is unavailable for the key or endpoint. Update the provider model field to a chat model enabled for that account.
 - OpenAI API fallback vs account login: the `OpenAI API` preset is the safe/default real-provider path. The experimental Codex-like OpenAI account action is separate, explicit-risk, private-endpoint-style, covered automatically only by loopback mocks, and not official public OpenAI OAuth support or production-ready. Any real account testing is manual, risky, account-specific, and outside CI. Browser session reuse, cookie import, browser profile import/reuse, direct reading of `~/.codex/auth.json`, and importing other tools' credential files are not allowed.
-- Runtime port conflict: `yetai.runtimeUrl` defaults to `http://127.0.0.1:8001`. If another process owns that port, set `yetai.runtimeUrl` to another loopback port such as `http://127.0.0.1:8011` before opening chat. In launch mode the extension passes that port through `YET_AI_HTTP_PORT`.
+- Runtime port conflict: `yetai.runtimeUrl` defaults to `http://127.0.0.1:8001`. If another process owns that port, set `yetai.runtimeUrl` to another loopback `http` URL without query or fragment, such as `http://127.0.0.1:8011`, before opening chat. In launch mode the extension passes that port through `YET_AI_HTTP_PORT`; loopback `https` runtime URLs are accepted only in `connect` mode for externally managed runtimes.
 - Missing `yet-lsp` binary: run `export PATH="$HOME/.cargo/bin:$PATH"; npm run prepare:vscode-preview` from the repository root. If discovery still fails, set `yetai.engineBinaryPath` to the absolute binary path and use `yetai.launchMode` `launch`.
 - Packaged GUI not copied or stale preview artifacts: run `npm run prepare:vscode-preview` from the repository root, or `npm run prepare:preview` from `apps/plugins/vscode` after building `apps/gui`. If the webview still shows the placeholder, check that `apps/plugins/vscode/media/gui/index.html` exists and reopen the command.
-- GUI dev server URL blocked or blank: `yetai.guiDevUrl` must be a loopback `http` or `https` URL, such as `https://127.0.0.1:5173`. HTTPS loopback GUI dev URLs are supported by the webview CSP; non-loopback dev URLs are rejected.
+- GUI dev server URL blocked or blank: `yetai.guiDevUrl` must be a loopback `http` or `https` URL without userinfo, query, or fragment, such as `https://127.0.0.1:5173`. HTTPS loopback GUI dev URLs are supported by the webview CSP; non-loopback dev URLs are rejected.
 - Provider base URL normalization: for OpenAI-compatible providers, `http://host/v1`, `http://host/v1/`, and an explicit `http://host/v1/chat/completions` are accepted. The engine appends `/chat/completions` when needed. Use absolute `http` or `https` URLs with a host and no `user:pass@host` userinfo.
 
 ## Extension surfaces
@@ -265,7 +265,7 @@ Use `Yet AI: Show Runtime Status` to write sanitized local runtime diagnostics t
   - `yetai.launchMode`, one of `auto`, `connect`, or `launch`.
   - `yetai.engineBinaryPath`, optional absolute path to `yet-lsp`.
 
-`runtimeUrl` and `guiDevUrl` are restricted to loopback `http` or `https` URLs before the webview opens. The manual local runtime `sessionToken` is a sensitive local runtime credential, not a provider secret. It is stored in VS Code SecretStorage through the command palette, passed only in the bootstrap/`host.ready` path needed by the trusted GUI runtime client, is not logged, and is not rendered in the placeholder UI. The legacy `yetai.sessionToken` setting remains a deprecated dev-preview fallback only when SecretStorage has no token; raw provider secrets must never be stored in extension settings or SecretStorage by this plugin.
+`runtimeUrl` and `guiDevUrl` are restricted to loopback `http` or `https` URLs without userinfo, query, or fragment before the webview opens. `runtimeUrl` must use `http` when `auto` or `launch` starts the bundled local engine; `connect` may use `https` only for an externally managed loopback runtime. The manual local runtime `sessionToken` is a sensitive local runtime credential, not a provider secret. It is stored in VS Code SecretStorage through the command palette, passed only in the bootstrap/`host.ready` path needed by the trusted GUI runtime client, is not logged, and is not rendered in the placeholder UI. The legacy `yetai.sessionToken` setting remains a deprecated dev-preview fallback only when SecretStorage has no token; raw provider secrets must never be stored in extension settings or SecretStorage by this plugin.
 
 ## Runtime connection and launch
 
