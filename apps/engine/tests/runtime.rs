@@ -1082,7 +1082,8 @@ async fn provider_auth_openai_experimental_exchange_failure_keeps_pending_for_re
     .await;
     assert_eq!(status, StatusCode::OK);
     let session_id = start["sessionId"].as_str().unwrap().to_string();
-    let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap()).to_string();
+    let state =
+        state_from_authorization_url(start["authorizationUrl"].as_str().unwrap()).to_string();
     let exchange = json!({
         "sessionId": session_id,
         "state": state,
@@ -1893,6 +1894,150 @@ async fn create_existing_provider_returns_conflict_without_overwrite_or_temp_lef
 }
 
 #[tokio::test]
+async fn duplicate_create_does_not_overwrite_existing_api_key_secret() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let old_key = "sk-duplicate-old-secret-abcd";
+    let new_key = "sk-duplicate-new-secret-wxyz";
+    let provider = json!({
+        "id": "duplicate-secret-provider",
+        "kind": "custom",
+        "displayName": "Duplicate Secret Provider",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:9200",
+        "auth": { "type": "api_key", "apiKey": old_key }
+    });
+    let duplicate = json!({
+        "id": "duplicate-secret-provider",
+        "kind": "custom",
+        "displayName": "Duplicate Replacement Provider",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:9201",
+        "auth": { "type": "api_key", "apiKey": new_key }
+    });
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(duplicate.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let text = body.to_string();
+    assert!(!text.contains(old_key));
+    assert!(!text.contains(new_key));
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/providers/duplicate-secret-provider",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["displayName"], "Duplicate Secret Provider");
+    assert_eq!(body["auth"]["configured"], true);
+    assert_eq!(body["auth"]["redacted"], "sk--...abcd");
+    assert!(!body.to_string().contains(old_key));
+    assert!(!body.to_string().contains(new_key));
+
+    let secret = FileSecretStore::new(&paths.config_dir)
+        .get_secret("duplicate-secret-provider", SecretKind::ApiKey)
+        .await
+        .unwrap();
+    assert_eq!(secret.as_deref(), Some(old_key));
+}
+
+#[tokio::test]
+async fn duplicate_create_does_not_plant_orphan_secret_for_none_auth_provider() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let orphan_key = "sk-duplicate-orphan-secret-abcd";
+    let provider = json!({
+        "id": "duplicate-none-provider",
+        "kind": "custom",
+        "displayName": "Duplicate None Provider",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:9300",
+        "auth": { "type": "none" }
+    });
+    let duplicate = json!({
+        "id": "duplicate-none-provider",
+        "kind": "custom",
+        "displayName": "Duplicate None Replacement Provider",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:9301",
+        "auth": { "type": "api_key", "apiKey": orphan_key }
+    });
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(duplicate.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(!body.to_string().contains(orphan_key));
+    let secret = FileSecretStore::new(&paths.config_dir)
+        .get_secret("duplicate-none-provider", SecretKind::ApiKey)
+        .await
+        .unwrap();
+    assert_eq!(secret, None);
+
+    let update = json!({ "auth": { "type": "api_key" } });
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::PATCH,
+            "/v1/providers/duplicate-none-provider",
+            Body::from(update.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["auth"]["type"], "api_key");
+    assert_eq!(body["auth"]["configured"], false);
+    assert!(body["auth"].get("redacted").is_none());
+    assert!(!body.to_string().contains(orphan_key));
+}
+
+#[tokio::test]
 async fn update_with_mismatched_id_is_rejected_without_mutation() {
     let app = test_app();
     let api_key = "sk-mismatch-secret-abcd";
@@ -2242,6 +2387,44 @@ async fn provider_test_openai_compatible_success_uses_loopback_models_and_auth()
 }
 
 #[tokio::test]
+async fn provider_test_openai_compatible_chat_completions_base_url_uses_models_endpoint() {
+    let api_key = "sk-provider-test-chat-url-abcd";
+    let (base_url, auth_receiver) = start_mock_models_provider(
+        StatusCode::OK,
+        r#"{"data":[{"id":"gpt-test"}]}"#,
+        Some("Bearer sk-provider-test-chat-url-abcd"),
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider(
+        app.clone(),
+        format!("{base_url}/v1/chat/completions"),
+        api_key,
+    )
+    .await;
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/providers/openai-stream/test",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["status"], "reachable");
+    assert_eq!(body["modelId"], "gpt-test");
+    assert!(!body.to_string().contains(api_key));
+    let auth = auth_receiver.await.unwrap();
+    assert_eq!(
+        auth.as_deref(),
+        Some("Bearer sk-provider-test-chat-url-abcd")
+    );
+}
+
+#[tokio::test]
 async fn provider_test_openai_compatible_unauthorized_is_sanitized() {
     let api_key = "sk-provider-test-unauthorized-abcd";
     let (base_url, _) = start_mock_models_provider(
@@ -2255,7 +2438,11 @@ async fn provider_test_openai_compatible_unauthorized_is_sanitized() {
 
     let (status, body) = json_response_from(
         app,
-        authed_request(Method::POST, "/v1/providers/openai-stream/test", Body::empty()),
+        authed_request(
+            Method::POST,
+            "/v1/providers/openai-stream/test",
+            Body::empty(),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -2275,7 +2462,11 @@ async fn provider_test_openai_compatible_down_is_sanitized() {
 
     let (status, body) = json_response_from(
         app,
-        authed_request(Method::POST, "/v1/providers/openai-stream/test", Body::empty()),
+        authed_request(
+            Method::POST,
+            "/v1/providers/openai-stream/test",
+            Body::empty(),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -2294,7 +2485,11 @@ async fn provider_test_openai_compatible_timeout_is_sanitized() {
 
     let (status, body) = json_response_from(
         app,
-        authed_request(Method::POST, "/v1/providers/openai-stream/test", Body::empty()),
+        authed_request(
+            Method::POST,
+            "/v1/providers/openai-stream/test",
+            Body::empty(),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -2304,7 +2499,10 @@ async fn provider_test_openai_compatible_timeout_is_sanitized() {
     assert!(!text.contains(api_key));
     assert!(!text.contains("provider-test-timeout"));
     let auth = auth_receiver.await.unwrap();
-    assert_eq!(auth.as_deref(), Some("Bearer sk-provider-test-timeout-abcd"));
+    assert_eq!(
+        auth.as_deref(),
+        Some("Bearer sk-provider-test-timeout-abcd")
+    );
 }
 
 #[tokio::test]
@@ -2312,7 +2510,11 @@ async fn provider_test_missing_provider_and_missing_secret_are_stable() {
     let app = test_app();
     let (status, body) = json_response_from(
         app.clone(),
-        authed_request(Method::POST, "/v1/providers/missing-provider/test", Body::empty()),
+        authed_request(
+            Method::POST,
+            "/v1/providers/missing-provider/test",
+            Body::empty(),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -2330,7 +2532,11 @@ async fn provider_test_missing_provider_and_missing_secret_are_stable() {
     });
     let (status, _) = json_response_from(
         app.clone(),
-        authed_request(Method::POST, "/v1/providers", Body::from(provider.to_string())),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -2378,7 +2584,11 @@ async fn provider_test_missing_model_and_upstream_error_are_sanitized() {
     configure_openai_provider(app.clone(), base_url, api_key).await;
     let (status, body) = json_response_from(
         app,
-        authed_request(Method::POST, "/v1/providers/openai-stream/test", Body::empty()),
+        authed_request(
+            Method::POST,
+            "/v1/providers/openai-stream/test",
+            Body::empty(),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
