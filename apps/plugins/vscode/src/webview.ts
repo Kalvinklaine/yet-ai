@@ -84,7 +84,6 @@ function renderWebviewHtml(
     productId: identity.product.id,
     displayName: identity.product.displayName,
     runtimeUrl: connection.runtimeUrl,
-    sessionToken: connection.sessionToken,
     cloudRequired: false,
     guiDevOrigin,
   });
