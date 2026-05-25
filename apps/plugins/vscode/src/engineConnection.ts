@@ -317,7 +317,7 @@ async function launchOrReuseEngine(runtimeUrl: string, binaryPath: string, outpu
     }
   });
   child.on("error", (error) => {
-    output.appendLine(`Yet AI local runtime process error: ${error.message}`);
+    output.appendLine(`Yet AI local runtime process error: ${redactRuntimeDiagnosticText(error.message, token)}`);
   });
   return {
     runtimeUrl,
@@ -352,14 +352,30 @@ function redactLogText(value: string, token: string): string {
 }
 
 export function redactRuntimeDiagnosticText(value: string, token?: string): string {
-  let redacted = value.replace(/Bearer\s+[^\s"']+/gi, "Bearer [redacted]");
-  redacted = redacted.replace(/\b(?:sk|sess|token)-[A-Za-z0-9_-]{8,}\b/g, "[redacted]");
-  redacted = redacted.replace(/\b[A-Za-z0-9_-]{24,}\b/g, "[redacted]");
+  let redacted = value;
   if (token && token.length > 0) {
     redacted = redacted.replaceAll(token, "[redacted]");
   }
+  redacted = runtimeRedactionPatterns.reduce((current, [pattern, replacement]) => current.replace(pattern, replacement), redacted);
   return redacted;
 }
+
+const secretDiagnosticKeyPattern = String.raw`(?:access[_-]?token|refresh[_-]?token|session[_-]?token|session|auth[_-]?token|api[_-]?key|apikey|client[_-]?secret|authorization|proxy[_-]?authorization|bearer|cookie|set[_-]?cookie|setCookie|secret|token|oauth[_-]?code|code[_-]?verifier|pkce[_-]?verifier|github[_-]?token|oauth[_-]?refresh[_-]?token|provider[_-]?client[_-]?secret|openai[_-]?api[_-]?key|anthropic[_-]?api[_-]?key|yet[_-]?ai[_-]?auth[_-]?token)`;
+
+const runtimeRedactionPatterns: Array<[RegExp, string]> = [
+  [/\b(?:Authorization|Proxy-Authorization|Cookie|Set-Cookie)\s*:\s*[^\r\n]*/gi, "[redacted]"],
+  [new RegExp(String.raw`\b(?:cookie|set[_-]?cookie|setCookie)\b\s*[:=]\s*[^\r\n]*`, "gi"), "[redacted]"],
+  [new RegExp(String.raw`\b(?:authorization|proxy[_-]?authorization)\b\s*[:=]\s*(?:[A-Za-z][A-Za-z0-9._~-]*\s+)?[^\s,;)}\]]+`, "gi"), "[redacted]"],
+  [new RegExp(String.raw`([?&;])${secretDiagnosticKeyPattern}\s*=\s*[^\s&#;]+`, "gi"), "$1[redacted]"],
+  [new RegExp(String.raw`(["'])${secretDiagnosticKeyPattern}\1\s*:\s*(["'])(?:\\.|(?!\2).)*\2`, "gi"), "[redacted]"],
+  [new RegExp(String.raw`(["'])${secretDiagnosticKeyPattern}\1\s*:\s*(?:-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)\b`, "gi"), "[redacted]"],
+  [new RegExp(String.raw`\b${secretDiagnosticKeyPattern}\b\s*[:=]\s*[^\s,;)}\]]+`, "gi"), "[redacted]"],
+  [/\bBearer\s+[A-Za-z0-9._~+/=-]{4,}/gi, "[redacted]"],
+  [/\blocal-dev-token\b/g, "[redacted]"],
+  [/\b(?:sk|sess|token)-[A-Za-z0-9_-]{8,}\b/g, "[redacted]"],
+  [/\b[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/g, "[redacted]"],
+  [/\b[A-Za-z0-9+/=_-]{24,}\b/g, "[redacted]"],
+];
 
 export function safeRuntimeUrl(runtimeUrl: string): string {
   try {

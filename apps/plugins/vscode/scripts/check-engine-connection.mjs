@@ -112,11 +112,81 @@ try {
   const fakeSessionToken = "fake-session-token-diagnostics-sentinel";
   const fakeApiKey = "sk-diagnostics-provider-key-sentinel";
   const fakeBearer = "Bearer fake-bearer-session-sentinel";
+  const fakeBasic = "Authorization: Basic ZmFrZS1iYXNpYy1zZWNyZXQ=";
+  const fakeApiKeyHeader = "Authorization: ApiKey fake-header-api-key-sentinel";
+  const fakeCookie = "Cookie: session=fake-cookie-session; refresh=fake-cookie-refresh";
+  const fakeSetCookie = "Set-Cookie: sid=fake-set-cookie-session; refresh=fake-set-cookie-refresh";
+  const fakeSetCookieValue = "setCookie=fake-camel-cookie-session; refresh=fake-camel-cookie-refresh";
+  const fakeQueryApiKey = "fake-query-api-key-sentinel";
+  const fakeQueryAccessToken = "fake-query-access-token-sentinel";
+  const fakeQueryRefreshToken = "fake-query-refresh-token-sentinel";
+  const fakeQueryToken = "fake-query-token-sentinel";
+  const fakeQuerySession = "fake-query-session-sentinel";
+  const fakeQuerySecret = "fake-query-secret-sentinel";
+  const fakeOauthCode = "fake-oauth-code-sentinel";
+  const fakeCodeVerifier = "fake-code-verifier-sentinel";
+  const fakeJsonApiKey = "fake-json-api-key-sentinel";
+  const fakeJsonApiKeySnake = "fake-json-api-key-snake-sentinel";
+  const fakeJsonAccessToken = "fake-json-access-token-sentinel";
+  const fakeJsonRefreshToken = "fake-json-refresh-token-sentinel";
+  const fakeJsonSessionToken = "fake-json-session-token-sentinel";
+  const fakeJsonAuthorization = "Basic fake-json-authorization-sentinel";
+  const fakeJsonCookie = "fake-json-cookie-sentinel";
+  const fakeJsonSetCookie = "fake-json-set-cookie-sentinel";
+  const fakeJsonClientSecret = "fake-json-client-secret-sentinel";
+  const fakeLongOpaque = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  const fakeJwt = "abcdefghijklmnop.abcdefghijklmnop.abcdefghijklmnop";
   const diagnostic = redactRuntimeDiagnosticText(
-    `ping failed with ${fakeBearer} and ${fakeSessionToken} and ${fakeApiKey}`,
+    [
+      `ping failed with ${fakeBearer} and ${fakeSessionToken} and ${fakeApiKey}`,
+      fakeBasic,
+      fakeApiKeyHeader,
+      fakeCookie,
+      fakeSetCookie,
+      fakeSetCookieValue,
+      `http://127.0.0.1:8001/v1/ping?api_key=${fakeQueryApiKey}&access_token=${fakeQueryAccessToken}&refresh_token=${fakeQueryRefreshToken}&token=${fakeQueryToken}&session=${fakeQuerySession}&secret=${fakeQuerySecret}&oauth_code=${fakeOauthCode}&code_verifier=${fakeCodeVerifier}`,
+      `{"apiKey":"${fakeJsonApiKey}","api_key":"${fakeJsonApiKeySnake}","access_token":"${fakeJsonAccessToken}","refresh_token":"${fakeJsonRefreshToken}","sessionToken":"${fakeJsonSessionToken}","authorization":"${fakeJsonAuthorization}","cookie":"${fakeJsonCookie}","setCookie":"${fakeJsonSetCookie}","client_secret":"${fakeJsonClientSecret}"}`,
+      "local-dev-token",
+      fakeLongOpaque,
+      fakeJwt,
+    ].join("\n"),
     fakeSessionToken,
   );
-  for (const forbidden of [fakeSessionToken, fakeApiKey, fakeBearer, "fake-bearer-session-sentinel"]) {
+  const forbiddenValues = [
+    fakeSessionToken,
+    fakeApiKey,
+    fakeBearer,
+    "fake-bearer-session-sentinel",
+    "ZmFrZS1iYXNpYy1zZWNyZXQ=",
+    "fake-header-api-key-sentinel",
+    "fake-cookie-session",
+    "fake-cookie-refresh",
+    "fake-set-cookie-session",
+    "fake-set-cookie-refresh",
+    "fake-camel-cookie-session",
+    "fake-camel-cookie-refresh",
+    fakeQueryApiKey,
+    fakeQueryAccessToken,
+    fakeQueryRefreshToken,
+    fakeQueryToken,
+    fakeQuerySession,
+    fakeQuerySecret,
+    fakeOauthCode,
+    fakeCodeVerifier,
+    fakeJsonApiKey,
+    fakeJsonApiKeySnake,
+    fakeJsonAccessToken,
+    fakeJsonRefreshToken,
+    fakeJsonSessionToken,
+    "fake-json-authorization-sentinel",
+    fakeJsonCookie,
+    fakeJsonSetCookie,
+    fakeJsonClientSecret,
+    "local-dev-token",
+    fakeLongOpaque,
+    fakeJwt,
+  ];
+  for (const forbidden of forbiddenValues) {
     assert.equal(diagnostic.includes(forbidden), false, `diagnostics leaked ${forbidden}`);
   }
 } finally {
