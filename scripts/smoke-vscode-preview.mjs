@@ -33,6 +33,16 @@ await checkFile(
   `Engine binary is missing. Run \`npm run prepare:vscode-preview\` from the repository root to build and copy ${binaryFileName}.`,
 );
 
+const bundledIdentityPath = path.join(vscodeRoot, "out", "product", "identity.json");
+const bundledIdentity = await readJsonFile(
+  bundledIdentityPath,
+  "Bundled VS Code product identity is missing. Run `npm run prepare:vscode-preview` so product/identity.json is copied into apps/plugins/vscode/out/product/.",
+);
+if (bundledIdentity !== undefined) {
+  checkBundledIdentity(bundledIdentity);
+}
+await checkFreshness(bundledIdentityPath, [path.join(root, "product", "identity.json")], "Bundled VS Code product identity is older than root product/identity.json.");
+
 const main = typeof vscodePackage.main === "string" ? vscodePackage.main : "";
 if (main !== "./out/extension.js") {
   failures.push("apps/plugins/vscode/package.json must keep main set to ./out/extension.js for the compiled dev-preview extension.");
@@ -81,7 +91,7 @@ if (failures.length > 0) {
 }
 
 console.log("VS Code dev-preview smoke passed.");
-console.log("Checked copied engine binary, packaged GUI assets, compiled extension entry, manifest commands, activation events, configuration surfaces, and obvious stale generated artifacts.");
+console.log("Checked copied engine binary, bundled product identity, packaged GUI assets, compiled extension entry, manifest commands, activation events, configuration surfaces, and obvious stale generated artifacts.");
 console.log("No VS Code UI, provider credentials, or hosted services were used.");
 
 function checkManifestSurfaces(manifest) {
@@ -161,6 +171,26 @@ async function readTextFile(filePath, message) {
   } catch {
     failures.push(`${message} Expected file: ${relative(filePath)}.`);
     return undefined;
+  }
+}
+
+async function readJsonFile(filePath, message) {
+  const raw = await readTextFile(filePath, message);
+  if (raw === undefined) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    failures.push(`${message} Expected valid JSON at ${relative(filePath)}: ${detail}`);
+    return undefined;
+  }
+}
+
+function checkBundledIdentity(bundledIdentity) {
+  if (JSON.stringify(bundledIdentity) !== JSON.stringify(identity)) {
+    failures.push("Bundled VS Code product identity must match root product/identity.json. Run `npm run prepare:vscode-preview` to refresh generated artifacts.");
   }
 }
 

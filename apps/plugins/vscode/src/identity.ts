@@ -33,7 +33,9 @@ export const bridgeVersion = "2026-05-15";
 export const sessionTokenSecretKey = "yetai.localRuntimeSessionToken";
 
 export function loadProductIdentity(extensionPath: string): ProductIdentity {
-  const identityPath = path.resolve(extensionPath, "..", "..", "..", "product", "identity.json");
+  const bundledIdentityPath = path.resolve(extensionPath, "out", "product", "identity.json");
+  const repoIdentityPath = path.resolve(extensionPath, "..", "..", "..", "product", "identity.json");
+  const identityPath = fs.existsSync(bundledIdentityPath) ? bundledIdentityPath : repoIdentityPath;
   const raw = fs.readFileSync(identityPath, "utf8");
   return JSON.parse(raw) as ProductIdentity;
 }
