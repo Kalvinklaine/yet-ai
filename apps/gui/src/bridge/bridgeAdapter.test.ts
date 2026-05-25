@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createBridgeAdapter, isHostMessage } from "./bridgeAdapter";
+import { createBridgeAdapter, isGuiMessage, isHostMessage } from "./bridgeAdapter";
 
 const bridgeVersion = "2026-05-15";
 const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
@@ -256,20 +256,39 @@ describe("bridgeAdapter", () => {
   });
 
   it("accepts current non-privileged host messages", () => {
-    expect(isHostMessage({ version: bridgeVersion, type: "host.ready" })).toBe(true);
+    expect(isHostMessage(hostReady())).toBe(true);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.openedFromCommand" })).toBe(true);
     expect(isHostMessage({ version: bridgeVersion, type: "host.openedFromCommand", payload: {} })).toBe(true);
+  });
+
+  it("validates gui.ready against the strict current schema", () => {
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready" })).toBe(true);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "r1", payload: { supportedBridgeVersion: bridgeVersion } })).toBe(true);
+    expect(isGuiMessage({ version: "", type: "gui.ready" })).toBe(false);
+    expect(isGuiMessage({ version: "1", type: "gui.ready" })).toBe(false);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "" })).toBe(false);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "a".repeat(129) })).toBe(false);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", payload: { supportedBridgeVersion: "1" } })).toBe(false);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", payload: { supportedBridgeVersion: bridgeVersion, extra: true } })).toBe(false);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", extra: true })).toBe(false);
   });
 
   it("rejects unknown, disabled, or invalid host messages", () => {
     expect(isHostMessage({ version: bridgeVersion, type: "host.themeChanged", requestId: "r1", payload: { theme: "dark" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.openedFromCommand", payload: { action: "edit" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.unknown" })).toBe(false);
-    expect(isHostMessage({ version: "", type: "host.ready" })).toBe(false);
-    expect(isHostMessage({ version: "1", type: "host.ready" })).toBe(false);
-    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", requestId: "" })).toBe(false);
+    expect(isHostMessage({ version: "", type: "host.ready", payload: {} })).toBe(false);
+    expect(isHostMessage({ version: "1", type: "host.ready", payload: {} })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", requestId: "", payload: {} })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", requestId: "a".repeat(129), payload: {} })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: [] })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { sessionToken: 123 } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { cloudRequired: "false" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { cloudRequired: true } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { unknown: true } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: {}, extra: true })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { runtimeUrl: "ftp://127.0.0.1:8765" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { productId: "" } })).toBe(false);
   });
 
   it("logs rejected host messages", () => {
