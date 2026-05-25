@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "providerId": "_bad",
+  "status": "unreachable",
+  "message": "Provider is unreachable.",
+  "cloudRequired": false
+}

@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "providerId": "openai-local",
+  "status": "timeout",
+  "message": "Provider request timed out.",
+  "cloudRequired": false
+}
