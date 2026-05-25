@@ -1,6 +1,7 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
@@ -141,8 +142,25 @@ pub struct AuthWriteRequest {
 pub struct ProviderTestResponse {
     pub ok: bool,
     pub provider_id: String,
-    pub cloud_required: bool,
+    pub status: ProviderTestStatus,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    pub cloud_required: bool,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderTestStatus {
+    Reachable,
+    UnsupportedKind,
+    MissingSecret,
+    MissingModel,
+    BadUrl,
+    Unauthorized,
+    Timeout,
+    Unreachable,
+    UpstreamError,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -454,6 +472,84 @@ pub async fn models(config_dir: &Path) -> Result<ModelListResponse, ProviderErro
         })
         .collect();
     Ok(ModelListResponse { models })
+}
+
+pub async fn test_provider(config_dir: &Path, id: &str) -> Result<ProviderTestResponse, ProviderError> {
+    let provider = get_provider_config_with_secrets(config_dir, id).await?;
+    Ok(match provider.kind {
+        ProviderKind::OpenAiCompatible => test_openai_compatible_provider(&provider).await,
+        ProviderKind::Ollama | ProviderKind::Custom => ProviderTestResponse {
+            ok: false,
+            provider_id: provider.id,
+            status: ProviderTestStatus::UnsupportedKind,
+            message: "Provider reachability test is currently available for OpenAI-compatible providers.".to_string(),
+            model_id: None,
+            cloud_required: false,
+        },
+    })
+}
+
+async fn test_openai_compatible_provider(provider: &StoredProviderConfig) -> ProviderTestResponse {
+    let Some(model) = provider.models.first() else {
+        return provider_test_response(provider, false, ProviderTestStatus::MissingModel, "Provider has no configured model.", None);
+    };
+    if provider.auth.auth_type == AuthType::ApiKey
+        && provider.auth.api_key.as_deref().is_none_or(|value| value.is_empty())
+    {
+        return provider_test_response(provider, false, ProviderTestStatus::MissingSecret, "Provider API key is not configured.", Some(model.id.clone()));
+    }
+    let Ok(url) = models_url(&provider.base_url) else {
+        return provider_test_response(provider, false, ProviderTestStatus::BadUrl, "Provider base URL is invalid.", Some(model.id.clone()));
+    };
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => return provider_test_response(provider, false, ProviderTestStatus::Unreachable, "Provider test client could not be initialized.", Some(model.id.clone())),
+    };
+    let mut request = client.get(url);
+    if provider.auth.auth_type == AuthType::ApiKey {
+        if let Some(api_key) = provider.auth.api_key.as_deref() {
+            request = request.bearer_auth(api_key);
+        }
+    }
+    match request.send().await {
+        Ok(response) if response.status().is_success() => provider_test_response(provider, true, ProviderTestStatus::Reachable, "Provider is reachable and accepted the configured credentials.", Some(model.id.clone())),
+        Ok(response) if response.status() == reqwest::StatusCode::UNAUTHORIZED || response.status() == reqwest::StatusCode::FORBIDDEN => provider_test_response(provider, false, ProviderTestStatus::Unauthorized, "Provider authentication failed. Check the configured credentials.", Some(model.id.clone())),
+        Ok(_) => provider_test_response(provider, false, ProviderTestStatus::UpstreamError, "Provider returned an error during the reachability check.", Some(model.id.clone())),
+        Err(error) if error.is_timeout() => provider_test_response(provider, false, ProviderTestStatus::Timeout, "Provider reachability check timed out.", Some(model.id.clone())),
+        Err(_) => provider_test_response(provider, false, ProviderTestStatus::Unreachable, "Provider could not be reached.", Some(model.id.clone())),
+    }
+}
+
+fn provider_test_response(
+    provider: &StoredProviderConfig,
+    ok: bool,
+    status: ProviderTestStatus,
+    message: &str,
+    model_id: Option<String>,
+) -> ProviderTestResponse {
+    ProviderTestResponse {
+        ok,
+        provider_id: provider.id.clone(),
+        status,
+        message: message.to_string(),
+        model_id,
+        cloud_required: false,
+    }
+}
+
+fn models_url(base_url: &str) -> Result<String, ProviderError> {
+    validate_provider_base_url(base_url)?;
+    let mut url = reqwest::Url::parse(base_url).map_err(|_| ProviderError::InvalidBaseUrl)?;
+    let normalized_path = url.path().trim_end_matches('/').to_string();
+    if normalized_path.ends_with("/models") {
+        url.set_path(&normalized_path);
+    } else {
+        url.set_path(&format!("{normalized_path}/models"));
+    }
+    Ok(url.to_string())
 }
 
 async fn summary_for_config(

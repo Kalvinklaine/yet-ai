@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { createBridgeAdapter, type BridgeHost, type HostReadyPayload } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
-import { listProviders, saveProvider, type ProviderSummary, type ProviderWriteRequest } from "./services/providersClient";
+import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
 import { getCaps, getModels, getPing, isLoopbackRuntimeUrl, productIdentity, productIdentityWarning, sendAbort, type CapsResponse, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
@@ -60,6 +60,13 @@ type AbortActiveStreamOptions = {
   finalizeStreaming?: boolean;
   addTimelineEntry?: boolean;
   reportAbortErrors?: boolean;
+};
+
+type ProviderTestState = {
+  providerId: string;
+  state: "testing" | "success" | "failed";
+  detail: string;
+  status?: ProviderTestResponse["status"] | RuntimeError["status"];
 };
 
 const emptyProviderForm: ProviderForm = {
@@ -172,6 +179,7 @@ export function App() {
   const [modelError, setModelError] = useState<RuntimeError | null>(null);
   const [identityWarnings, setIdentityWarnings] = useState<string[]>([]);
   const [providerError, setProviderError] = useState<RuntimeError | null>(null);
+  const [providerTestState, setProviderTestState] = useState<ProviderTestState | null>(null);
   const [providerAuthError, setProviderAuthError] = useState<RuntimeError | null>(null);
   const [providerAuthStatus, setProviderAuthStatus] = useState<ProviderAuthResponse | null>(null);
   const [providerAuthUrlWarning, setProviderAuthUrlWarning] = useState<string | null>(null);
@@ -562,6 +570,32 @@ export function App() {
     }
   };
 
+  const runProviderTest = async (providerId: string) => {
+    const targetSettings = settingsRef.current;
+    const targetRevision = settingsRevisionRef.current;
+    setProviderTestState({ providerId, state: "testing", detail: "Testing provider reachability…" });
+    const result = await testProvider(targetSettings, providerId);
+    if (!isCurrentRefresh(targetRevision)) {
+      return;
+    }
+    if (result.ok) {
+      const model = result.data.modelId ? ` Model: ${sanitizeDisplayText(result.data.modelId)}.` : "";
+      setProviderTestState({
+        providerId,
+        state: result.data.ok ? "success" : "failed",
+        status: result.data.status,
+        detail: `${sanitizeDisplayText(result.data.message)}${model}`,
+      });
+    } else {
+      setProviderTestState({
+        providerId,
+        state: "failed",
+        status: result.error.status,
+        detail: sanitizeDisplayText(result.error.message),
+      });
+    }
+  };
+
   const startOpenAiLogin = async () => {
     const targetSettings = settingsRef.current;
     const targetRevision = settingsRevisionRef.current;
@@ -920,7 +954,11 @@ export function App() {
                 <span className="subtle">{sanitizeDisplayText(provider.id)} · {sanitizeDisplayText(provider.kind)} · {sanitizeDisplayText(provider.baseUrl)}</span>
                 <span>Secret configured: {String(provider.auth.configured)} {provider.auth.redacted ? `(${sanitizeDisplayText(provider.auth.redacted)})` : ""}</span>
                 <span>Models: {provider.models.map((model) => sanitizeDisplayText(model.displayName)).join(", ") || "none"}</span>
-                <button type="button" onClick={() => editProvider(provider)}>Edit</button>
+                {providerTestState?.providerId === provider.id && <div className={`provider-test-status ${providerTestState.state}`} role="status"><strong>{providerTestState.state === "testing" ? "Provider test running" : providerTestState.state === "success" ? "Provider test succeeded" : "Provider test failed"}</strong><span>{providerTestState.status}: {providerTestState.detail}</span></div>}
+                <div className="row">
+                  <button type="button" onClick={() => editProvider(provider)}>Edit</button>
+                  <button type="button" onClick={() => void runProviderTest(provider.id)} disabled={providerTestState?.providerId === provider.id && providerTestState.state === "testing"}>{providerTestState?.providerId === provider.id && providerTestState.state === "testing" ? "Testing provider…" : "Test provider"}</button>
+                </div>
               </div>
             ))}
           </div>

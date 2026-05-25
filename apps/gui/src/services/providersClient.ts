@@ -46,6 +46,15 @@ export type ProviderWriteRequest = {
   };
 };
 
+export type ProviderTestResponse = {
+  ok: boolean;
+  providerId: string;
+  status: "reachable" | "unsupported_kind" | "missing_secret" | "missing_model" | "bad_url" | "unauthorized" | "timeout" | "unreachable" | "upstream_error";
+  message: string;
+  modelId?: string;
+  cloudRequired: false;
+};
+
 export function listProviders(settings: RuntimeSettings): Promise<RuntimeResult<ProvidersResponse>> {
   return runtimeFetch<ProvidersResponse>(settings, "/v1/providers");
 }
@@ -59,5 +68,11 @@ export function saveProvider(
   return runtimeFetch<ProviderSummary>(settings, path, {
     method: providerId ? "PATCH" : "POST",
     body: JSON.stringify(request),
+  });
+}
+
+export function testProvider(settings: RuntimeSettings, providerId: string): Promise<RuntimeResult<ProviderTestResponse>> {
+  return runtimeFetch<ProviderTestResponse>(settings, `/v1/providers/${encodeURIComponent(providerId)}/test`, {
+    method: "POST",
   });
 }
