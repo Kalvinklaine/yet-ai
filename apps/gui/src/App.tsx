@@ -181,10 +181,19 @@ export function App() {
   const connectionStatus = connectionError ? "error" : ping?.ready ? "connected" : "not checked";
   const enabledProviders = useMemo(() => providers.filter((provider) => provider.enabled), [providers]);
   const selectedModel = useMemo(() => models[0] ?? enabledProviders.flatMap((provider) => provider.models.map((model) => ({ ...model, providerId: model.providerId ?? provider.id })))[0], [enabledProviders, models]);
-  const canSendChat = enabledProviders.length > 0 && Boolean(selectedModel);
-  const chatReadinessMessage = canSendChat
+  const apiKeyChatReady = enabledProviders.length > 0 && Boolean(selectedModel);
+  const experimentalOauthChatReady = !apiKeyChatReady && providerAuthStatus?.configured === true && providerAuthStatus.authSource === "oauth" && providerAuthStatus.status === "connected";
+  const canSendChat = apiKeyChatReady || experimentalOauthChatReady;
+  const chatReadinessLabel = apiKeyChatReady
+    ? `${selectedModel?.displayName ?? "the default model"}${selectedModel?.providerId ? ` (${selectedModel.providerId})` : ""}`
+    : experimentalOauthChatReady
+      ? "Experimental OpenAI account / gpt-5-codex"
+      : "No model available";
+  const chatReadinessMessage = apiKeyChatReady
     ? `Ready to send using ${selectedModel?.displayName ?? "the default model"}.`
-    : "Configure an enabled OpenAI API key fallback provider with a model before sending the first GPT message.";
+    : experimentalOauthChatReady
+      ? "Experimental Codex-like OpenAI account chat is connected through the local runtime. This private-endpoint path is high-risk, not official public OAuth support, and not production-ready."
+      : "Configure an enabled OpenAI API key fallback provider with a model before sending the first GPT message.";
 
   const applyHostReady = useCallback((payload: HostReadyPayload | undefined) => {
     if (!payload?.runtimeUrl || !payload.sessionToken || !isLoopbackRuntimeUrl(payload.runtimeUrl)) {
@@ -623,8 +632,9 @@ export function App() {
             <span className={enabledProviders.length > 0 ? "badge ok" : "badge warn"}>{enabledProviders.length} enabled provider{enabledProviders.length === 1 ? "" : "s"}</span>
           </div>
           <div className="stack">
-            <span>Model: {selectedModel ? `${selectedModel.displayName}${selectedModel.providerId ? ` (${selectedModel.providerId})` : ""}` : "No model available"}</span>
+            <span>Model: {chatReadinessLabel}</span>
             <span>{chatReadinessMessage}</span>
+            {experimentalOauthChatReady && <span className="subtle">OpenAI API-key fallback remains the safe/default setup and will be preferred when configured.</span>}
             {!canSendChat && <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>}
           </div>
         </div>

@@ -336,6 +336,52 @@ describe("chat panel", () => {
     expect(findButton("Send").disabled).toBe(true);
   });
 
+  it("enables chat readiness from connected experimental OpenAI OAuth when no provider model is ready", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses({ authResponse: providerAuthResponse("connected") });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("0 enabled providers");
+    expect(container?.textContent).toContain("Model: Experimental OpenAI account / gpt-5-codex");
+    expect(container?.textContent).toContain("Experimental Codex-like OpenAI account chat is connected through the local runtime.");
+    expect(container?.textContent).toContain("private-endpoint path is high-risk");
+    expect(container?.textContent).toContain("OpenAI API-key fallback remains the safe/default setup");
+    expect(findButton("Send").disabled).toBe(false);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(JSON.stringify(localStorage)).not.toContain("oauth");
+    expect(JSON.stringify(sessionStorage)).not.toContain("oauth");
+  });
+
+  it("keeps API-key provider readiness preferred over connected experimental OAuth", async () => {
+    mockRuntimeResponses({
+      authResponse: providerAuthResponse("connected"),
+      providers: [enabledProvider()],
+      models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("1 enabled provider");
+    expect(container?.textContent).toContain("Model: GPT-4o mini (openai-api)");
+    expect(container?.textContent).toContain("Ready to send using GPT-4o mini.");
+    expect(container?.textContent).not.toContain("Model: Experimental OpenAI account / gpt-5-codex");
+    expect(findButton("Send").disabled).toBe(false);
+  });
+
+  it.each(["pending", "expired", "revoked", "error"] satisfies ProviderAuthStatus[])("does not enable Send for %s OAuth status", async (status) => {
+    mockRuntimeResponses({ authResponse: providerAuthResponse(status) });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Model: No model available");
+    expect(container?.textContent).toContain("Configure an enabled OpenAI API key fallback provider with a model before sending the first GPT message.");
+    expect(findButton("Send").disabled).toBe(true);
+  });
+
   it("shows configured provider and first runtime model readiness", async () => {
     mockRuntimeResponses({
       providers: [enabledProvider()],
