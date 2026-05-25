@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBridgeAdapter, isGuiMessage, isHostMessage } from "./bridgeAdapter";
+import guiReadyMessage from "../../../../packages/contracts/examples/bridge/gui-ready-message.json";
+import hostOpenedFromCommandMessage from "../../../../packages/contracts/examples/bridge/host-opened-from-command-message.json";
+import hostReadyMessage from "../../../../packages/contracts/examples/bridge/host-ready-message.json";
+import guiReadyExtraPayloadMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-ready-extra-payload.json";
+import hostOpenedFromCommandPayloadMessage from "../../../../packages/contracts/examples-invalid/bridge/host-opened-from-command-payload.json";
 
 const bridgeVersion = "2026-05-15";
 const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
@@ -253,6 +258,40 @@ describe("bridgeAdapter", () => {
     adapter.subscribe((message) => messages.push(message));
 
     expect(messages).toHaveLength(0);
+  });
+
+  it("accepts positive bridge contract fixtures through runtime validation", () => {
+    expect(isGuiMessage(guiReadyMessage)).toBe(true);
+    expect(isHostMessage(hostReadyMessage)).toBe(true);
+    expect(isHostMessage(hostOpenedFromCommandMessage)).toBe(true);
+
+    const logs: string[] = [];
+    const messages: unknown[] = [];
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    adapter.subscribe((message) => messages.push(message));
+    window.dispatchEvent(new MessageEvent("message", { data: hostReadyMessage }));
+    window.dispatchEvent(new MessageEvent("message", { data: hostOpenedFromCommandMessage }));
+
+    expect(messages).toEqual([hostReadyMessage, hostOpenedFromCommandMessage]);
+    expect(logs).toContain("Host runtime settings received");
+    expect(logs.join("\n")).not.toContain(hostReadyMessage.payload.sessionToken);
+    adapter.dispose();
+  });
+
+  it("rejects invalid bridge contract fixtures through runtime validation", () => {
+    expect(isGuiMessage(guiReadyExtraPayloadMessage)).toBe(false);
+    expect(isHostMessage(hostOpenedFromCommandPayloadMessage)).toBe(false);
+
+    const logs: string[] = [];
+    const messages: unknown[] = [];
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    adapter.subscribe((message) => messages.push(message));
+    window.dispatchEvent(new MessageEvent("message", { data: hostOpenedFromCommandPayloadMessage }));
+
+    expect(messages).toHaveLength(0);
+    expect(logs).toContain("Rejected invalid host bridge message");
+    expect(logs.join("\n")).not.toContain("README.md");
+    adapter.dispose();
   });
 
   it("accepts current non-privileged host messages", () => {

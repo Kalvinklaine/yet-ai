@@ -2639,33 +2639,64 @@ async fn provider_operations_do_not_require_cloud_url_or_account() {
 }
 
 #[tokio::test]
-async fn user_message_command_is_accepted() {
-    let command =
-        include_str!("../../../packages/contracts/examples/engine/user-message-command.json");
-    let (status, body) = json_response(authed_request(
-        Method::POST,
-        "/v1/chats/chat-001/commands",
-        Body::from(command),
-    ))
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["accepted"], true);
-    assert_eq!(body["chatId"], "chat-001");
+async fn positive_chat_command_contract_fixtures_are_accepted() {
+    for (chat_id, command, expected_type) in [
+        (
+            "chat-user-message-contract",
+            include_str!("../../../packages/contracts/examples/engine/user-message-command.json"),
+            "user_message",
+        ),
+        (
+            "chat-abort-contract",
+            include_str!("../../../packages/contracts/examples/engine/abort-command.json"),
+            "abort",
+        ),
+    ] {
+        let (status, body) = json_response(authed_request(
+            Method::POST,
+            &format!("/v1/chats/{chat_id}/commands"),
+            Body::from(command),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["accepted"], true);
+        assert_eq!(body["type"], expected_type);
+        assert_eq!(body["chatId"], chat_id);
+    }
 }
 
 #[tokio::test]
-async fn abort_command_example_is_accepted() {
-    let command = include_str!("../../../packages/contracts/examples/engine/abort-command.json");
-    let (status, body) = json_response(authed_request(
-        Method::POST,
-        "/v1/chats/chat-001/commands",
-        Body::from(command),
-    ))
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["accepted"], true);
-    assert_eq!(body["type"], "abort");
-    assert_eq!(body["chatId"], "chat-001");
+async fn invalid_chat_command_contract_fixtures_are_rejected_safely() {
+    for (command, expected_status, forbidden) in [
+        (
+            include_str!("../../../packages/contracts/examples-invalid/engine/chat-command-tool-call.json"),
+            StatusCode::NOT_IMPLEMENTED,
+            ["tool_call", "read_file", "arguments", "name"].as_slice(),
+        ),
+        (
+            include_str!("../../../packages/contracts/examples-invalid/engine/chat-command-abort-payload.json"),
+            StatusCode::BAD_REQUEST,
+            ["stop current work", "reason"].as_slice(),
+        ),
+    ] {
+        let (status, text) = text_response_from(
+            test_app(),
+            authed_request(
+                Method::POST,
+                "/v1/chats/chat-invalid-contract/commands",
+                Body::from(command),
+            ),
+        )
+        .await;
+        assert_eq!(status, expected_status);
+        for value in forbidden {
+            assert!(!text.contains(value));
+        }
+        let lower = text.to_lowercase();
+        assert!(!lower.contains("api_key"));
+        assert!(!lower.contains("token"));
+        assert!(!lower.contains("secret"));
+    }
 }
 
 #[tokio::test]
