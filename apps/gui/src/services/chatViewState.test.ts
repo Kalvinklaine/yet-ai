@@ -4,6 +4,7 @@ import {
   applyChatViewEvent,
   createInitialChatViewState,
   resetChatViewState,
+  stopStreamingAssistant,
   type ChatViewState,
 } from "./chatViewState";
 import type { SseEvent } from "./sseClient";
@@ -81,18 +82,26 @@ describe("chatViewState", () => {
       event("error", {
         code: "provider_request_failed",
         message:
-          "Failed Bearer abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 api_key=sk-secret access_token=access-secret refresh_token=refresh-secret raw abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789tail",
+          "Failed Authorization: Bearer abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 OPENAI_API_KEY=short Cookie: session=secret; refresh=also-secret /Users/alice/.codex/auth.json ?api_key=short-secret raw abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789tail",
       }),
     );
 
     expect(state.messages[0].role).toBe("error");
     expect(state.messages[0].status).toBe("error");
-    expect(state.messages[0].content).toContain("Bearer [redacted]");
-    expect(state.messages[0].content).toContain("api_key=[redacted]");
-    expect(state.messages[0].content).toContain("access_token=[redacted]");
-    expect(state.messages[0].content).toContain("refresh_token=[redacted]");
-    expect(state.messages[0].content).not.toContain("sk-secret");
+    expect(state.messages[0].content).toContain("Failed [redacted]");
+    expect(state.messages[0].content).not.toContain("Bearer");
+    expect(state.messages[0].content).not.toContain("OPENAI_API_KEY");
+    expect(state.messages[0].content).not.toContain("session=secret");
+    expect(state.messages[0].content).not.toContain("auth.json");
+    expect(state.messages[0].content).not.toContain("api_key");
     expect(state.messages[0].content).not.toContain("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
+  });
+
+  it("clears streaming status with local stop helper", () => {
+    const started = applyChatViewEvent(createInitialChatViewState("chat-1"), event("stream_delta", { delta: { content: "Partial" } }));
+    const stopped = stopStreamingAssistant(started);
+
+    expect(stopped.messages[0]).toMatchObject({ role: "assistant", content: "Partial", status: "complete" });
   });
 
   it("ignores events for other chats", () => {

@@ -1,9 +1,10 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBridgeAdapter, type BridgeHost, type HostReadyPayload } from "./bridge/bridgeAdapter";
-import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, resetChatViewState, type ChatViewMessage } from "./services/chatViewState";
+import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { listProviders, saveProvider, type ProviderSummary, type ProviderWriteRequest } from "./services/providersClient";
 import { getCaps, getModels, getPing, isLoopbackRuntimeUrl, productIdentity, productIdentityWarning, sendAbort, type CapsResponse, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
+import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
@@ -20,43 +21,6 @@ const providerAuthStatusCopy: Record<ProviderAuthStatus, string> = {
   revoked: "OpenAI account login was revoked. Disconnect it or use the API key fallback.",
   error: "OpenAI account login reported an error. Review the sanitized details or use the API key fallback.",
 };
-
-const secretLikePatterns = [
-  /\b(access_token|refresh_token|api_key|authorization|bearer)\b\s*[:=]\s*[^\s,;]+/gi,
-  /\b(pkce_verifier|code_verifier|verifier|cookie)\b\s*[:=]?\s*[^\s,;]*/gi,
-  /(?:^|[\s/])(?:\.codex\/auth\.json|auth\.json)(?=$|[\s,;])/gi,
-  /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi,
-  /\b(sk-[A-Za-z0-9_-]{8,})\b/g,
-  /\b[A-Za-z0-9_-]{32,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/g,
-  /\b[A-Za-z0-9+/=_-]{48,}\b/g,
-];
-
-function sanitizeDisplayText(value: string): string {
-  const sanitized = secretLikePatterns.reduce((current, pattern) => current.replace(pattern, "[redacted]"), value).trim();
-  return sanitized.length > 240 ? `${sanitized.slice(0, 240)}…` : sanitized;
-}
-
-function sanitizeTimelineText(value: string): string {
-  const sanitized = secretLikePatterns.reduce((current, pattern) => current.replace(pattern, "[redacted]"), value);
-  return sanitized.length > 2000 ? `${sanitized.slice(0, 2000)}…` : sanitized;
-}
-
-function sanitizeDisplayValue(value: unknown): unknown {
-  if (typeof value === "string") {
-    return sanitizeTimelineText(value);
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => sanitizeDisplayValue(item));
-  }
-  if (typeof value === "object" && value !== null) {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => isSecretLikeKey(key) ? ["[redacted]", "[redacted]"] : [key, sanitizeDisplayValue(item)]));
-  }
-  return value;
-}
-
-function isSecretLikeKey(key: string): boolean {
-  return /access[_-]?token|refresh[_-]?token|session[_-]?token|api[_-]?key|client[_-]?secret|authorization|bearer|cookie|code[_-]?verifier|pkce[_-]?verifier/i.test(key);
-}
 
 function sanitizeSseEvent(event: SseEvent): SseEvent {
   return {
@@ -270,7 +234,31 @@ export function App() {
           : "Configure an enabled OpenAI API key fallback provider with a model before sending the first GPT message.";
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
 
+  const addTimeline = useCallback((entry: string) => {
+    setTimeline((current) => [entry, ...current].slice(0, 80));
+  }, []);
+
+  const abortActiveStream = useCallback((timelineMessage: string, finalizeStreaming: boolean) => {
+    const activeStream = activeStreamRef.current;
+    if (!activeStream) {
+      return null;
+    }
+    activeStream.controller.abort();
+    activeStreamRef.current = null;
+    if (finalizeStreaming) {
+      setChatView((current) => stopStreamingAssistant(current));
+    }
+    void sendAbort(activeStream.settings, activeStream.chatId).then((result) => {
+      if (!result.ok) {
+        addTimeline(`Abort command error: ${sanitizeDisplayText(result.error.message)}`);
+      }
+    });
+    addTimeline(timelineMessage);
+    return activeStream;
+  }, [addTimeline]);
+
   const markSettingsChanged = useCallback(() => {
+    abortActiveStream("SSE stopped and abort requested for previous runtime settings", true);
     settingsRevisionRef.current += 1;
     setSettingsRevision(settingsRevisionRef.current);
     setRuntimeDataRevision(null);
@@ -282,12 +270,10 @@ export function App() {
       checkedAt: new Date().toLocaleTimeString(),
       detail: "Runtime settings changed; checking current runtime…",
     });
-    activeStreamRef.current?.controller.abort();
-    activeStreamRef.current = null;
     setProviderAuthExchangeCode("");
     setProviderAuthExchangeWorking(false);
     setProviderAuthExchangeError(null);
-  }, []);
+  }, [abortActiveStream]);
 
   const updateBaseUrl = useCallback((nextBaseUrl: string) => {
     if (settingsRef.current.baseUrl !== nextBaseUrl) {
@@ -330,10 +316,6 @@ export function App() {
     });
     return () => adapter.dispose();
   }, [applyHostReady]);
-
-  const addTimeline = useCallback((entry: string) => {
-    setTimeline((current) => [entry, ...current].slice(0, 80));
-  }, []);
 
   const appendChatError = useCallback((message: string) => {
     setChatView((current) => applyChatViewEvent(current, {
@@ -673,12 +655,15 @@ export function App() {
   };
 
   useEffect(() => {
-    activeStreamRef.current?.controller.abort();
-    activeStreamRef.current = null;
+    abortActiveStream("SSE stopped and abort requested for previous chat", true);
     setChatError(null);
     setChatView(resetChatViewState(chatId));
     setTimeline([]);
-  }, [chatId]);
+  }, [abortActiveStream, chatId]);
+
+  useEffect(() => () => {
+    abortActiveStream("SSE stopped and abort requested on cleanup", true);
+  }, [abortActiveStream]);
 
   const startSse = useCallback((targetChatId = chatId) => {
     if (activeStreamRef.current) {
@@ -725,21 +710,9 @@ export function App() {
   }, [addTimeline, appendChatError, chatId]);
 
   const stopSse = () => {
-    const activeStream = activeStreamRef.current;
-    if (!activeStream) {
+    if (!abortActiveStream("SSE stopped and abort requested", true)) {
       addTimeline("SSE stopped");
-      return;
     }
-    const abortSettings = activeStream.settings;
-    const abortChatId = activeStream.chatId;
-    activeStream.controller.abort();
-    activeStreamRef.current = null;
-    void sendAbort(abortSettings, abortChatId).then((result) => {
-      if (!result.ok) {
-        addTimeline(`Abort command error: ${sanitizeDisplayText(result.error.message)}`);
-      }
-    });
-    addTimeline("SSE stopped and abort requested");
   };
 
   const submitChat = async (event: FormEvent<HTMLFormElement>) => {

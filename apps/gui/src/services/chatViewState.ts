@@ -1,3 +1,4 @@
+import { sanitizeErrorText } from "./redaction";
 import type { SseEvent } from "./sseClient";
 
 export type ChatViewMessage = {
@@ -13,7 +14,6 @@ export type ChatViewState = {
   subscriptionReady: boolean;
 };
 
-const maxErrorTextLength = 500;
 
 export function createInitialChatViewState(chatId: string): ChatViewState {
   return resetChatViewState(chatId);
@@ -86,6 +86,10 @@ function applyStreamDelta(state: ChatViewState, payload: SseEvent["payload"]): C
 }
 
 function applyStreamFinished(state: ChatViewState): ChatViewState {
+  return stopStreamingAssistant(state);
+}
+
+export function stopStreamingAssistant(state: ChatViewState): ChatViewState {
   const streamingIndex = findStreamingAssistantIndex(state.messages);
   if (streamingIndex < 0) {
     return state;
@@ -95,6 +99,8 @@ function applyStreamFinished(state: ChatViewState): ChatViewState {
     status: "complete",
   });
 }
+
+export const finishStreamingAssistant = stopStreamingAssistant;
 
 function appendMessage(
   state: ChatViewState,
@@ -140,10 +146,3 @@ function readErrorMessage(payload: SseEvent["payload"]): string {
   return typeof payload?.message === "string" && payload.message.trim() !== "" ? payload.message : "Chat error";
 }
 
-function sanitizeErrorText(value: string): string {
-  const redacted = value
-    .replace(/Bearer\s+[^\s,;]+/gi, "Bearer [redacted]")
-    .replace(/\b(api_key|access_token|refresh_token)=([^\s&#,;]+)/gi, "$1=[redacted]")
-    .replace(/\b[A-Za-z0-9_-]{40,}\b/g, "[redacted]");
-  return redacted.length > maxErrorTextLength ? `${redacted.slice(0, maxErrorTextLength)}…` : redacted;
-}
