@@ -496,19 +496,25 @@ export function safeRuntimeUrl(runtimeUrl: string): string {
   }
 }
 
-async function pingEngineOnce(connection: EngineConnection): Promise<string> {
+const runtimePingTimeoutMs = 1500;
+
+export async function pingEngineOnce(connection: EngineConnection, timeoutMs = runtimePingTimeoutMs): Promise<string> {
   const pingUrl = new URL("/v1/ping", connection.runtimeUrl).toString();
   const headers: Record<string, string> = {};
   if (connection.sessionToken) {
     headers.Authorization = `Bearer ${connection.sessionToken}`;
   }
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(pingUrl, { headers });
+    const response = await fetch(pingUrl, { headers, signal: controller.signal });
     return response.ok ? "passed" : `failed: HTTP ${response.status}`;
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown ping error";
     return `failed: ${redactRuntimeDiagnosticText(message, connection.sessionToken)}`;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
