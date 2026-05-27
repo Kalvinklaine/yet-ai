@@ -35,6 +35,7 @@ try {
     createEngineLogRedactor,
     findEngineBinary,
     formatStartedRuntimeMessage,
+    pingEngineOnce,
     redactRuntimeDiagnosticText,
     resolveSessionToken,
     safeRuntimeUrl,
@@ -281,6 +282,39 @@ try {
   const oversizedSecret = "oversized-secret-sentinel";
   const oversizedLogs = assertEngineLogsDoNotLeak(["prefix-", oversizedSecret, "-suffix\nnext safe\n"], [oversizedSecret, "prefix-", "suffix"], { maxLineLength: 10 });
   assert.deepEqual(oversizedLogs, ["[engine] [redacted oversized engine log line]", "[engine] next safe"]);
+
+  globalThis.fetch = async () => ({ ok: true, status: 200 });
+  assert.equal(
+    await pingEngineOnce({ runtimeUrl: "http://127.0.0.1:8001", sessionToken: "success-session-token" }, 20),
+    "passed",
+  );
+
+  globalThis.fetch = async () => ({ ok: false, status: 503 });
+  assert.equal(
+    await pingEngineOnce({ runtimeUrl: "http://127.0.0.1:8001", sessionToken: "http-failure-session-token" }, 20),
+    "failed: HTTP 503",
+  );
+
+  const timeoutSessionToken = "timeout-session-token-sentinel";
+  const timeoutQuerySecret = "timeout-query-secret-sentinel";
+  let timeoutFetchAborted = false;
+  globalThis.fetch = async (_url, options = {}) => {
+    assert.ok(options.signal, "ping fetch did not receive an AbortSignal");
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => {
+        timeoutFetchAborted = true;
+        reject(new Error(`AbortError for ${timeoutSessionToken} at http://127.0.0.1:8001/v1/ping?token=${timeoutQuerySecret}`));
+      });
+    });
+  };
+  const timeoutPingStatus = await pingEngineOnce(
+    { runtimeUrl: "http://127.0.0.1:8001", sessionToken: timeoutSessionToken },
+    5,
+  );
+  assert.equal(timeoutFetchAborted, true);
+  assert.match(timeoutPingStatus, /^failed: /);
+  assert.equal(timeoutPingStatus.includes(timeoutSessionToken), false, "ping timeout leaked session token");
+  assert.equal(timeoutPingStatus.includes(timeoutQuerySecret), false, "ping timeout leaked URL secret");
 
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "yet-ai-vscode-engine-check-"));
   try {
