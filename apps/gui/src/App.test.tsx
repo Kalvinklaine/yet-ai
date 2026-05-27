@@ -107,7 +107,7 @@ describe("runtime refresh feedback", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("Model: GPT-4o mini (openai-api)");
+    expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
     expect(findButton("Send").disabled).toBe(false);
 
     fetchMock.mockClear();
@@ -119,7 +119,7 @@ describe("runtime refresh feedback", () => {
 
     expect(container?.textContent).toContain("Runtime check failed: 503 models unavailable");
     expect(container?.textContent).toContain("Models refresh failed: 503: models unavailable");
-    expect(container?.textContent).toContain("Model: No model available");
+    expect(container?.textContent).toContain("State: Provider required");
     expect(container?.textContent).toContain("Runtime model refresh failed. Refresh runtime again before sending the first GPT message.");
     expect(findButton("Send").disabled).toBe(true);
   });
@@ -132,9 +132,9 @@ describe("runtime refresh feedback", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("normally provided by the IDE host through host.ready");
+    expect(container?.textContent).toContain("normally supplied automatically by the IDE host through trusted host.ready");
     expect(container?.textContent).toContain("YET_AI_AUTH_TOKEN");
-    expect(container?.textContent).toContain("not an OpenAI key or provider API key");
+    expect(container?.textContent).toContain("This local runtime token authorizes the GUI to the loopback runtime; it is not an OpenAI key or provider API key");
 
     await act(async () => {
       setInputValue(sessionTokenInput(), runtimeToken);
@@ -282,7 +282,7 @@ describe("runtime refresh feedback", () => {
     });
     await flushAsync();
 
-    expect(container?.textContent).toContain("Model: Runtime unavailable");
+    expect(container?.textContent).toContain("State: Runtime unavailable");
     expect(findButton("Send").disabled).toBe(true);
 
     runtimeBPing.resolve(jsonResponse({
@@ -295,7 +295,7 @@ describe("runtime refresh feedback", () => {
     await flushAsync();
     await flushAsync();
 
-    expect(container?.textContent).toContain("Model: GPT B (runtime-b)");
+    expect(container?.textContent).toContain("State: GPT B (runtime-b)");
     expect(findButton("Send").disabled).toBe(false);
   });
 
@@ -356,8 +356,8 @@ describe("runtime refresh feedback", () => {
     await flushAsync();
     await flushAsync();
 
-    expect(container?.textContent).toContain("Model: New Model (new-runtime)");
-    expect(container?.textContent).not.toContain("Model: Old Model (old-runtime)");
+    expect(container?.textContent).toContain("State: New Model (new-runtime)");
+    expect(container?.textContent).not.toContain("State: Old Model (old-runtime)");
   });
 });
 
@@ -746,6 +746,18 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).toContain("native Ollama chat is future work");
   });
 
+  it("keeps Session token and provider API key guidance visibly distinct", async () => {
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("This local runtime token authorizes the GUI to the loopback runtime");
+    expect(container?.textContent).toContain("provider API key is sent to the local runtime only, cleared from this form after save, never written to browser storage, and is distinct from the runtime Session token");
+    expect(apiKeyInput().placeholder).toBe("Provider API key, not the runtime Session token");
+    expect(container?.textContent).toContain("This is your provider/OpenAI API key, not the runtime Session token.");
+  });
+
   it("submit clears preset API key input and keeps secrets out of browser storage", async () => {
     const secret = "sk-test-preset-secret";
     mockRuntimeResponses(readyRuntimeOptions());
@@ -766,6 +778,8 @@ describe("provider secret boundary", () => {
     expect(apiKeyInput().value).toBe("");
     expect(browserStorageDump()).not.toContain(secret);
     expect(fetchMock.mock.calls.every(([url]) => String(url).startsWith("http://127.0.0.1:8001/"))).toBe(true);
+    const providerSaveCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/providers") && init?.method === "POST");
+    expect(providerSaveCall?.[1]?.body).toContain(secret);
   });
 
   it("provider mutation invalidates readiness until provider refresh completes", async () => {
@@ -983,7 +997,7 @@ describe("provider secret boundary", () => {
     expect(fetchMock.mock.calls.every(([url]) => !String(url).includes("api.openai.com"))).toBe(true);
   });
 
-  it("renders sanitized provider test failures and keeps browser storage secret-free", async () => {
+  it("renders sanitized actionable provider test failures and keeps browser storage secret-free", async () => {
     const secret = "sk-provider-test-visible-secret";
     mockRuntimeResponses({
       ...readyRuntimeOptions(),
@@ -1006,9 +1020,43 @@ describe("provider secret boundary", () => {
 
     expect(container?.textContent).toContain("Provider test failed");
     expect(container?.textContent).toContain("unauthorized: Provider authentication failed [redacted]");
+    expect(container?.textContent).toContain("Check that the provider API key was saved in the local runtime");
+    expect(container?.textContent).toContain("do not paste the runtime Session token here");
     expect(container?.textContent).not.toContain(secret);
     expect(container?.textContent).not.toContain("session-secret");
     expect(browserStorageDump()).not.toContain(secret);
+  });
+
+  it.each([
+    [429, "Provider rate limit or quota reached."],
+    [404, "Model unavailable. Check the saved model id"],
+    ["missing_model", "Model unavailable. Check the saved model id"],
+    ["unreachable", "Provider could not be reached through the local runtime."],
+  ] as Array<[number | string, string]>)("renders actionable provider test failure copy for %s", async (status, actionCopy) => {
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      providerTestResponse: {
+        ok: false,
+        providerId: "openai-api",
+        status: typeof status === "string" ? status : "upstream_error",
+        message: `Provider test failed with HTTP ${status} api_key=sk-common-secret`,
+        cloudRequired: false,
+      },
+      providerTestStatus: typeof status === "number" ? status : 200,
+    });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Test provider").click();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("Provider test failed");
+    expect(container?.textContent).toContain(actionCopy);
+    expect(container?.textContent).not.toContain("sk-common-secret");
+    expect(container?.textContent).not.toContain("api_key");
+    expect(container?.textContent).not.toContain("hosted Yet AI is required");
   });
 
   it("clears and ignores stale provider test results after runtime settings change", async () => {
@@ -1309,7 +1357,7 @@ describe("host.ready runtime bootstrap", () => {
 });
 
 describe("chat panel", () => {
-  it("shows provider/model CTA and disables send when no model is ready", async () => {
+  it("shows guided OpenAI API fallback CTA when runtime is connected with no provider", async () => {
     mockRuntimeResponses();
     renderApp();
 
@@ -1317,8 +1365,12 @@ describe("chat panel", () => {
 
     expect(container?.textContent).toContain("Chat readiness");
     expect(container?.textContent).toContain("0 enabled providers");
-    expect(container?.textContent).toContain("Model: No model available");
-    expect(container?.textContent).toContain("Configure an enabled OpenAI API key fallback provider with a model before sending the first GPT message.");
+    expect(container?.textContent).toContain("Runtime connected — provider required for your first GPT message");
+    expect(container?.textContent).toContain("Choose OpenAI API to paste an API key once, or configure a local OpenAI-compatible /v1 provider");
+    expect(container?.textContent).toContain("No hosted Yet AI account, cloud workspace, or credit balance is required.");
+    expect(container?.textContent).toContain("State: Provider required");
+    expect(container?.textContent).toContain("Provider required: choose OpenAI API for the API-key fallback or configure a local OpenAI-compatible /v1 provider with a model before sending the first GPT message.");
+    expect(container?.textContent).toContain("choose OpenAI API, paste a provider API key once, save, optionally test the provider");
     expect(findButton("Send").disabled).toBe(true);
   });
 
@@ -1330,7 +1382,7 @@ describe("chat panel", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("0 enabled providers");
-    expect(container?.textContent).toContain("Model: Experimental OpenAI account / gpt-5-codex");
+    expect(container?.textContent).toContain("State: Experimental OpenAI account / gpt-5-codex");
     expect(container?.textContent).toContain("Experimental Codex-like OpenAI account chat is connected through the local runtime.");
     expect(container?.textContent).toContain("private-endpoint path is high-risk");
     expect(container?.textContent).toContain("OpenAI API-key fallback remains the safe/default setup");
@@ -1350,9 +1402,9 @@ describe("chat panel", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("1 enabled provider");
-    expect(container?.textContent).toContain("Model: GPT-4o mini (openai-api)");
+    expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
     expect(container?.textContent).toContain("Ready to send using GPT-4o mini.");
-    expect(container?.textContent).not.toContain("Model: Experimental OpenAI account / gpt-5-codex");
+    expect(container?.textContent).not.toContain("State: Experimental OpenAI account / gpt-5-codex");
     expect(findButton("Send").disabled).toBe(false);
   });
 
@@ -1362,9 +1414,40 @@ describe("chat panel", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("Model: No model available");
-    expect(container?.textContent).toContain("Configure an enabled OpenAI API key fallback provider with a model before sending the first GPT message.");
+    expect(container?.textContent).toContain("State: Provider required");
+    expect(container?.textContent).toContain("Provider required: choose OpenAI API for the API-key fallback or configure a local OpenAI-compatible /v1 provider with a model before sending the first GPT message.");
     expect(findButton("Send").disabled).toBe(true);
+  });
+
+  it("transitions chat readiness from runtime unavailable to provider required to ready", async () => {
+    mockRuntimeResponses({ runtimeFailure: true });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("State: Runtime unavailable");
+    expect(findButton("Send").disabled).toBe(true);
+
+    mockRuntimeResponses();
+    await act(async () => {
+      findButton("Refresh runtime").click();
+    });
+
+    expect(container?.textContent).toContain("State: Provider required");
+    expect(findButton("Send").disabled).toBe(true);
+
+    mockRuntimeResponses({
+      providers: [enabledProvider()],
+      models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }],
+    });
+    await act(async () => {
+      findButton("Refresh runtime").click();
+    });
+
+    expect(container?.textContent).toContain("1 enabled provider");
+    expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
+    expect(container?.textContent).toContain("Ready to send using GPT-4o mini.");
+    expect(findButton("Send").disabled).toBe(false);
   });
 
   it("shows configured provider and first runtime model readiness", async () => {
@@ -1377,7 +1460,7 @@ describe("chat panel", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("1 enabled provider");
-    expect(container?.textContent).toContain("Model: GPT-4o mini (openai-api)");
+    expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
     expect(container?.textContent).toContain("Ready to send using GPT-4o mini.");
     expect(findButton("Send").disabled).toBe(false);
   });
@@ -1395,7 +1478,7 @@ describe("chat panel", () => {
 
     expect(container?.textContent).toContain("runtime error");
     expect(container?.textContent).toContain("1 enabled provider");
-    expect(container?.textContent).toContain("Model: Runtime unavailable");
+    expect(container?.textContent).toContain("State: Runtime unavailable");
     expect(container?.textContent).toContain("Runtime is not connected. Refresh runtime and fix the local runtime problem before sending the first GPT message.");
     expect(findButton("Send").disabled).toBe(true);
   });
@@ -1406,7 +1489,7 @@ describe("chat panel", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("Model: Runtime unavailable");
+    expect(container?.textContent).toContain("State: Runtime unavailable");
     expect(container?.textContent).toContain("Runtime is not connected. Refresh runtime and fix the local runtime problem before sending the first GPT message.");
     expect(findButton("Send").disabled).toBe(true);
   });
