@@ -32,6 +32,7 @@ Module._load = function load(request, parent, isMain) {
 try {
   const {
     collectRuntimeDiagnostics,
+    createEngineLogRedactor,
     findEngineBinary,
     formatStartedRuntimeMessage,
     redactRuntimeDiagnosticText,
@@ -214,6 +215,72 @@ try {
   for (const forbidden of forbiddenValues) {
     assert.equal(diagnostic.includes(forbidden), false, `diagnostics leaked ${forbidden}`);
   }
+
+  function collectEngineLogs(chunks, options = {}) {
+    const lines = [];
+    const redactor = createEngineLogRedactor(options.token ?? fakeSessionToken, { appendLine: (line) => lines.push(line) }, options.maxLineLength);
+    for (const chunk of chunks) {
+      redactor.append(chunk);
+    }
+    redactor.flush();
+    return lines;
+  }
+
+  function assertEngineLogsDoNotLeak(chunks, sentinels, options = {}) {
+    const lines = collectEngineLogs(chunks, options);
+    const rendered = lines.join("\n");
+    for (const line of lines) {
+      assert.match(line, /^\[engine\] /);
+    }
+    for (const sentinel of sentinels) {
+      assert.equal(rendered.includes(sentinel), false, `engine logs leaked ${sentinel}`);
+    }
+    return lines;
+  }
+
+  const splitBearerSecret = "split-bearer-secret-sentinel";
+  const splitBearerLogs = assertEngineLogsDoNotLeak(
+    ["safe before\nAuthorization: Bear", `er ${splitBearerSecret}`, "\nsafe after\n"],
+    [splitBearerSecret, `Bearer ${splitBearerSecret}`],
+  );
+  assert.deepEqual(splitBearerLogs, ["[engine] safe before", "[engine] [redacted]", "[engine] safe after"]);
+
+  const splitApiKeySecret = "sk-split-provider-key-sentinel";
+  const splitApiKeyLogs = assertEngineLogsDoNotLeak(["provider key sk-split", "-provider-key-sentinel\n"], [splitApiKeySecret]);
+  assert.deepEqual(splitApiKeyLogs, ["[engine] provider key [redacted]"]);
+
+  const splitCookieSession = "split-cookie-session-sentinel";
+  const splitCookieRefresh = "split-cookie-refresh-sentinel";
+  const splitCookieLogs = assertEngineLogsDoNotLeak(
+    ["Cookie: session=split-cookie", `-session-sentinel; refresh=${splitCookieRefresh}\n`],
+    [splitCookieSession, splitCookieRefresh],
+  );
+  assert.deepEqual(splitCookieLogs, ["[engine] [redacted]"]);
+
+  const splitSetCookieSession = "split-set-cookie-session-sentinel";
+  const splitSetCookieRefresh = "split-set-cookie-refresh-sentinel";
+  const splitSetCookieLogs = assertEngineLogsDoNotLeak(
+    ["Set-Cookie: sid=split-set-cookie-session-sentinel; refresh=split-set-cookie", "-refresh-sentinel\n"],
+    [splitSetCookieSession, splitSetCookieRefresh],
+  );
+  assert.deepEqual(splitSetCookieLogs, ["[engine] [redacted]"]);
+
+  const splitJwt = "abcdefghijklmnop.abcdefghijklmnop.abcdefghijklmnop";
+  const splitOpaque = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  const splitTokenLogs = assertEngineLogsDoNotLeak(["jwt abcdefghijklmnop.abcdefgh", "ijklmnop.abcdefghijklmnop opaque abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\n"], [splitJwt, splitOpaque]);
+  assert.deepEqual(splitTokenLogs, ["[engine] jwt [redacted] opaque [redacted]"]);
+
+  const tailSecret = "tail-token-secret-sentinel";
+  const tailLogs = assertEngineLogsDoNotLeak(["tail Authorization: Bear", `er ${tailSecret}`], [tailSecret, `Bearer ${tailSecret}`]);
+  assert.deepEqual(tailLogs, ["[engine] tail [redacted]"]);
+
+  const crlfSecret = "crlf-cookie-secret-sentinel";
+  const crlfLogs = assertEngineLogsDoNotLeak([`first safe\r\nsetCookie=${crlfSecret}\r\nthird safe\n`], [crlfSecret]);
+  assert.deepEqual(crlfLogs, ["[engine] first safe", "[engine] [redacted]", "[engine] third safe"]);
+
+  const oversizedSecret = "oversized-secret-sentinel";
+  const oversizedLogs = assertEngineLogsDoNotLeak(["prefix-", oversizedSecret, "-suffix\nnext safe\n"], [oversizedSecret, "prefix-", "suffix"], { maxLineLength: 10 });
+  assert.deepEqual(oversizedLogs, ["[engine] [redacted oversized engine log line]", "[engine] next safe"]);
 
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "yet-ai-vscode-engine-check-"));
   try {
