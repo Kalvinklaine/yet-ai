@@ -34,6 +34,7 @@ try {
     collectRuntimeDiagnostics,
     createEngineLogRedactor,
     findEngineBinary,
+    prepareEngineConnection,
     formatStartedRuntimeMessage,
     pingEngineOnce,
     redactRuntimeDiagnosticText,
@@ -295,6 +296,20 @@ try {
     "failed: HTTP 503",
   );
 
+  async function withPingStub(callback) {
+    let pinged = false;
+    globalThis.fetch = async () => {
+      pinged = true;
+      return { ok: true, status: 200 };
+    };
+    const result = await callback();
+    return { pinged, result };
+  }
+
+  function fakeOutputChannel() {
+    return { appendLine() {} };
+  }
+
   const timeoutSessionToken = "timeout-session-token-sentinel";
   const timeoutQuerySecret = "timeout-query-secret-sentinel";
   let timeoutFetchAborted = false;
@@ -372,6 +387,16 @@ try {
     assert.equal(connectDiagnostics.pingStatus, "passed");
     assert.equal(pingedConnectHttps, true);
 
+    const { pinged: preparedConnectPinged, result: preparedConnectConnection } = await withPingStub(() =>
+      prepareEngineConnection(
+        { ...fakeContext, extensionPath: tempRoot },
+        { engine: { binaryName: "yet-lsp" } },
+        fakeOutputChannel(),
+      ),
+    );
+    assert.equal(preparedConnectConnection.runtimeUrl, "https://127.0.0.1:8001");
+    assert.equal(preparedConnectPinged, true);
+
     configValues = {
       runtimeUrl: "https://127.0.0.1:8001",
       launchMode: "launch",
@@ -407,6 +432,79 @@ try {
     assert.match(autoHttpsDiagnostics.engineBinaryStatus, /found configured binary: yet-lsp-executable/);
     assert.match(autoHttpsDiagnostics.pingStatus, /^skipped: yetai\.runtimeUrl must use http/);
     assert.equal(autoHttpsPinged, false);
+
+    if (process.platform !== "win32") {
+      configValues = {
+        runtimeUrl: "http://127.0.0.1:8001",
+        launchMode: "launch",
+        engineBinaryPath: nonExecutable,
+      };
+      const { pinged: launchInvalidBinaryPinged, result: launchInvalidBinaryDiagnostics } = await withPingStub(() =>
+        collectRuntimeDiagnostics(
+          { ...fakeContext, extensionPath: tempRoot },
+          { engine: { binaryName: "yet-lsp" } },
+        ),
+      );
+      assert.match(launchInvalidBinaryDiagnostics.engineBinaryStatus, /^not usable: /);
+      assert.equal(launchInvalidBinaryDiagnostics.engineBinaryStatus.includes(privateDirectory), false);
+      assert.equal(launchInvalidBinaryDiagnostics.pingStatus, "skipped: engine binary not usable");
+      assert.equal(launchInvalidBinaryPinged, false);
+
+      configValues = {
+        runtimeUrl: "http://127.0.0.1:8001",
+        launchMode: "auto",
+        engineBinaryPath: nonExecutable,
+      };
+      const { pinged: autoInvalidBinaryPinged, result: autoInvalidBinaryDiagnostics } = await withPingStub(() =>
+        collectRuntimeDiagnostics(
+          { ...fakeContext, extensionPath: tempRoot },
+          { engine: { binaryName: "yet-lsp" } },
+        ),
+      );
+      assert.match(autoInvalidBinaryDiagnostics.engineBinaryStatus, /^not usable: /);
+      assert.equal(autoInvalidBinaryDiagnostics.pingStatus, "skipped: engine binary not usable");
+      assert.equal(autoInvalidBinaryPinged, false);
+    }
+
+    configValues = {
+      runtimeUrl: "http://127.0.0.1:8001?token=fake-runtime-url-secret",
+      launchMode: "auto",
+      engineBinaryPath: executable,
+    };
+    const { pinged: invalidRuntimeUrlPinged, result: invalidRuntimeUrlDiagnostics } = await withPingStub(() =>
+      collectRuntimeDiagnostics(
+        { ...fakeContext, extensionPath: tempRoot },
+        { engine: { binaryName: "yet-lsp" } },
+      ),
+    );
+    assert.equal(invalidRuntimeUrlDiagnostics.engineBinaryStatus, "not checked: runtime settings invalid");
+    assert.doesNotMatch(invalidRuntimeUrlDiagnostics.engineBinaryStatus, /invalid configured path/);
+    assert.match(invalidRuntimeUrlDiagnostics.pingStatus, /^skipped: yetai\.runtimeUrl must not include query parameters or fragments\./);
+    assert.equal(invalidRuntimeUrlDiagnostics.pingStatus.includes("fake-runtime-url-secret"), false);
+    assert.equal(invalidRuntimeUrlPinged, false);
+
+    const emptyPath = path.join(tempRoot, "empty-path");
+    fs.mkdirSync(emptyPath);
+    configValues = {
+      runtimeUrl: "http://127.0.0.1:8001",
+      launchMode: "auto",
+      engineBinaryPath: "",
+    };
+    const previousPath = process.env.PATH;
+    process.env.PATH = emptyPath;
+    try {
+      const { pinged: autoFallbackPinged, result: autoFallbackDiagnostics } = await withPingStub(() =>
+        collectRuntimeDiagnostics(
+          { ...fakeContext, extensionPath: tempRoot },
+          { engine: { binaryName: "yet-lsp" } },
+        ),
+      );
+      assert.equal(autoFallbackDiagnostics.engineBinaryStatus, "not found");
+      assert.equal(autoFallbackDiagnostics.pingStatus, "passed");
+      assert.equal(autoFallbackPinged, true);
+    } finally {
+      process.env.PATH = previousPath;
+    }
   } finally {
     configValues = {};
     globalThis.fetch = originalFetch;
