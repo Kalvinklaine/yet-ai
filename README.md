@@ -90,7 +90,7 @@ There are two separate secret categories in the dev preview:
 - Local runtime Session token: authorizes GUI-to-`yet-lsp` loopback HTTP/SSE requests only.
 - Provider API key: authorizes model-provider calls made by the local runtime, for example an OpenAI API key saved through Provider setup.
 
-For IDE-launched runtimes, do not paste `local-dev-token` into the GUI. In VS Code and JetBrains `auto` or `launch` mode, the plugin generates a local runtime token, starts `yet-lsp` with `YET_AI_AUTH_TOKEN`, and provides the token to the packaged GUI through trusted `host.ready` bootstrap. In JetBrains normal dev-preview testing, keep `Launch mode = auto` or `launch` and set `Engine binary path = /absolute/path/to/target/debug/yet-lsp` only when discovery from `PATH` is insufficient.
+For IDE-launched runtimes, do not paste `local-dev-token` into the GUI. In VS Code and JetBrains `auto` or `launch` mode, the plugin generates a local runtime token, starts `yet-lsp` with `YET_AI_AUTH_TOKEN`, and provides the token to the packaged GUI through trusted `host.ready` bootstrap. In the normal VS Code dev-preview path, run `npm run prepare:vscode-preview`, keep `yetai.launchMode = auto`, open the Extension Development Host, and run `Yet AI: Open Chat`; do not manually run `yet-lsp` or copy a runtime token. In JetBrains normal dev-preview testing, keep `Launch mode = auto` or `launch` and set `Engine binary path = /absolute/path/to/target/debug/yet-lsp` only when discovery from `PATH` is insufficient.
 
 Use `local-dev-token` only for a manually started runtime:
 
@@ -102,14 +102,17 @@ Then set GUI runtime settings to `Runtime base URL = http://127.0.0.1:8001` and 
 
 ### First-message IDE smoke
 
-Use this concise smoke after preparing either IDE dev preview:
+Use this concise smoke after preparing either IDE dev preview. For VS Code, the default path is no manual runtime launch and no runtime-token copying:
 
-1. Open the Yet AI chat/tool window.
-2. Use the plugin-launched runtime path (`auto` or `launch`) or the manual runtime path above.
-3. Click `Refresh runtime`. It checks `/v1/ping`, `/v1/caps`, `/v1/models`, provider summaries, and OpenAI provider-auth status through the local runtime.
-4. Interpret runtime feedback: connected means the loopback runtime and model/provider metadata are reachable; network/configuration errors mean URL, port, binary, or runtime startup problems; runtime `401` means the local Session token does not match `YET_AI_AUTH_TOKEN`; provider `401` means the provider API key was rejected by the upstream provider.
-5. Configure the safe/default `OpenAI API` API-key fallback or a local OpenAI-compatible mock/provider. The key belongs only in Provider setup, is sent to the local runtime, and is cleared after save.
-6. Send `Say hello in one sentence.` Expected behavior: the user message is accepted, SSE opens, the assistant streams snapshot/start/delta/finish updates, and no Yet AI hosted backend or account is required.
+1. Run `npm run prepare:vscode-preview` from the repository root for VS Code, or the matching prepare command for another IDE preview.
+2. In the VS Code Extension Development Host, keep `yetai.launchMode = auto` and run `Yet AI: Open Chat`. The extension discovers or uses the copied engine, starts it with `YET_AI_AUTH_TOKEN`, and sends the local runtime Session token to the GUI only through trusted `host.ready`.
+3. Do not manually run `yet-lsp` or paste `local-dev-token` for the normal VS Code preview. Use the manual runtime command only for deliberate `connect`-mode debugging.
+4. Click `Refresh runtime`. It checks `/v1/ping`, `/v1/caps`, `/v1/models`, provider summaries, and OpenAI provider-auth status through the local runtime.
+5. Interpret runtime feedback: connected means the loopback runtime and model/provider metadata are reachable; network/configuration errors mean URL, port, binary, or runtime startup problems; runtime `401` means the local Session token does not match `YET_AI_AUTH_TOKEN`; provider `401` means the provider API key was rejected by the upstream provider.
+6. Configure the safe/default `OpenAI API` API-key fallback or a local OpenAI-compatible mock/provider. The provider key belongs only in Provider setup, is sent to the local runtime, clears after save, and must not be stored in VS Code settings or the Session token field.
+7. Use provider test/status as sanitized feedback, then send `Say hello in one sentence.` Expected behavior: the user message is accepted, SSE opens, the assistant streams snapshot/start/delta/finish updates, and no Yet AI hosted backend or account is required.
+
+A login/account-based GPT first-message UX remains a mandatory future milestone. The current experimental Codex-like account path is separate, explicit-risk, mock-only in automation, and not the default first-message path.
 
 For JetBrains runtime failures, use Tools → `Yet AI: Show Runtime Status` for sanitized launch/binary/ping diagnostics and Tools → `Yet AI: Restart Runtime` to restart only the plugin-owned local runtime.
 
@@ -147,15 +150,15 @@ The current real-provider milestone is a manual VS Code dev-preview smoke path f
 
 Use `apps/plugins/vscode/README.md#openai-api-key-fallback-milestone-smoke` for the detailed checklist:
 
-1. Prepare the local VS Code dev preview with the packaged GUI and local `yet-lsp` launcher.
-2. Open `Yet AI: Open Chat` in the Extension Development Host.
-3. Choose the GUI `OpenAI API` preset, paste an API key once, save, and confirm the key field clears.
-4. Confirm the GUI and runtime show only configured/redacted provider status, never the raw key.
-5. Send `Say hello in one sentence.` and verify snapshot plus streaming response behavior.
+1. Run `npm run prepare:vscode-preview` from the repository root.
+2. Open the Extension Development Host, keep `yetai.launchMode = auto`, and run `Yet AI: Open Chat`; do not manually start `yet-lsp` or paste `local-dev-token` for this normal preview path.
+3. Choose the GUI `OpenAI API` preset, paste an API key once in Provider setup, save, and confirm the key field clears.
+4. Confirm the GUI and runtime show only configured/redacted provider status, never the raw key, and never ask for the provider key in VS Code settings or the Session token field.
+5. Use provider test/status as sanitized feedback, then send `Say hello in one sentence.` and verify snapshot plus streaming response behavior.
 
 Current real-provider testing should use an OpenAI API-key or project-key fallback through the local runtime. This remains the safe/default path.
 
-The user approved a T-49 experimental Codex-like login task chain even though no public third-party OpenAI OAuth program has been identified. That approval allows engine-owned PKCE/session state, authorization/token exchange, refresh, revoke/disconnect, sanitized GUI status, and local secret storage modeled after Codex-like behavior. The local smoke test covers this path only with loopback token and chat mocks; CI must not call OpenAI, ChatGPT, private Codex endpoints, or use real account credentials for this flow. Any real provider testing of the experimental path is manual, risky, account-specific, and outside CI. It does not approve cookie scraping, browser profile import, browser cookie reuse, direct import or reading of `~/.codex/auth.json` or other tools' credential files, or any required Yet AI hosted backend, account, managed gateway, product credit balance, or cloud workspace. This approval does not imply production readiness, official OpenAI partnership, or general public OAuth support; private endpoint and client-identity risk must stay visible in implementation and docs.
+A login/account-based GPT first-message UX is still a mandatory future milestone, but it is not the default current VS Code first-message path. The user approved a T-49 experimental Codex-like login task chain even though no public third-party OpenAI OAuth program has been identified. That approval allows engine-owned PKCE/session state, authorization/token exchange, refresh, revoke/disconnect, sanitized GUI status, and local secret storage modeled after Codex-like behavior. The local smoke test covers this path only with loopback token and chat mocks; CI must not call OpenAI, ChatGPT, private Codex endpoints, or use real account credentials for this flow. Any real provider testing of the experimental path is manual, risky, account-specific, and outside CI. It does not approve cookie scraping, browser profile import, browser cookie reuse, direct import or reading of `~/.codex/auth.json` or other tools' credential files, or any required Yet AI hosted backend, account, managed gateway, product credit balance, or cloud workspace. This approval does not imply production readiness, official OpenAI partnership, or general public OAuth support; private endpoint and client-identity risk must stay visible in implementation and docs.
 
 Run these when changing the corresponding subsystem. The required verification for documentation-only status updates remains `npm run check`.
 
