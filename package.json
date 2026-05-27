@@ -7,6 +7,7 @@
     "smoke:gui-browser": "node scripts/smoke-gui-browser.mjs",
     "smoke:gui-runtime-e2e": "node scripts/smoke-gui-runtime-e2e.mjs",
     "smoke:vscode-preview": "node scripts/smoke-vscode-preview.mjs",
+    "smoke:vscode-first-message": "node scripts/smoke-vscode-first-message.mjs",
     "smoke:jetbrains-preview": "node scripts/smoke-jetbrains-preview.mjs",
     "smoke:jetbrains-installable": "node scripts/smoke-jetbrains-installable.mjs",
     "smoke:jetbrains-gui-browser": "node scripts/smoke-jetbrains-gui-browser.mjs",
