@@ -239,7 +239,7 @@ export function App() {
       ? `${selectedModelDisplayName ?? "the default model"}${selectedModelProviderId ? ` (${selectedModelProviderId})` : ""}`
       : experimentalOauthChatReady
         ? "Experimental OpenAI account / gpt-5-codex"
-        : "No model available";
+        : "Provider required";
   const chatReadinessMessage = !runtimeConnected
     ? "Runtime is not connected. Refresh runtime and fix the local runtime problem before sending the first GPT message."
     : apiKeyChatReady
@@ -248,7 +248,7 @@ export function App() {
         ? "Experimental Codex-like OpenAI account chat is connected through the local runtime. This private-endpoint path is high-risk, not official public OAuth support, and not production-ready."
         : activeModelError
           ? "Runtime model refresh failed. Refresh runtime again before sending the first GPT message."
-          : "Configure an enabled OpenAI API key fallback provider with a model before sending the first GPT message.";
+          : "Provider required: choose OpenAI API for the API-key fallback or configure a local OpenAI-compatible /v1 provider with a model before sending the first GPT message.";
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
 
   const addTimeline = useCallback((entry: string) => {
@@ -833,7 +833,7 @@ export function App() {
             <input type="password" value={token} onChange={(event) => updateToken(event.target.value)} placeholder="Bearer token for local runtime" autoComplete="off" />
           </label>
         </div>
-        <p className="subtle">In VS Code or JetBrains, the local runtime session token is normally provided by the IDE host through host.ready. Paste a token only when connecting to a manually started runtime such as one launched with YET_AI_AUTH_TOKEN=.... This local runtime token is not an OpenAI key or provider API key.</p>
+        <p className="subtle">In VS Code or JetBrains, the local runtime Session token is normally supplied automatically by the IDE host through trusted host.ready. Paste a token only when connecting to a manually started runtime such as one launched with YET_AI_AUTH_TOKEN=.... This local runtime token authorizes the GUI to the loopback runtime; it is not an OpenAI key or provider API key.</p>
         <div className="row">
           <button onClick={() => void connect()} disabled={runtimeRefreshInFlight}>{runtimeRefreshInFlight ? "Checking runtime…" : "Refresh runtime"}</button>
           <span className="subtle">Authorization header is sent only to validated loopback runtime URLs.</span>
@@ -850,7 +850,14 @@ export function App() {
 
       <section className="card stack">
         <h2>Provider setup</h2>
-        <p className="subtle">Provider requests go to the local runtime. API key input is cleared after submit and is not written to browser storage.</p>
+        {runtimeConnected && !apiKeyChatReady && !experimentalOauthChatReady && (
+          <div className="guided-setup-card stack" role="status">
+            <strong>Runtime connected — provider required for your first GPT message</strong>
+            <span>Choose OpenAI API to paste an API key once, or configure a local OpenAI-compatible /v1 provider such as LM Studio, LocalAI, or Ollama. No hosted Yet AI account, cloud workspace, or credit balance is required.</span>
+            <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>
+          </div>
+        )}
+        <p className="subtle">Provider requests go to the local runtime. A provider API key is sent to the local runtime only, cleared from this form after save, never written to browser storage, and is distinct from the runtime Session token.</p>
         <p className="subtle">ChatGPT/OpenAI account login is planned where officially supported. OpenAI API-key setup is the current safe fallback.</p>
         <p className="subtle">Current chat uses OpenAI-compatible providers only. Ollama is available here through its OpenAI-compatible /v1 endpoint; native Ollama chat is future work.</p>
         {providerError && <ErrorBox error={providerError} />}
@@ -938,7 +945,8 @@ export function App() {
               </label>
               <label>
                 API key
-                <input type="password" value={providerForm.apiKey} onChange={(event) => setProviderForm({ ...providerForm, apiKey: event.target.value })} autoComplete="off" />
+                <input type="password" value={providerForm.apiKey} onChange={(event) => setProviderForm({ ...providerForm, apiKey: event.target.value })} placeholder="Provider API key, not the runtime Session token" autoComplete="off" />
+                <span className="field-help">Sent only to the local runtime on save, then cleared. This is your provider/OpenAI API key, not the runtime Session token.</span>
               </label>
               <label>
                 Model id
@@ -969,7 +977,7 @@ export function App() {
                 <span className="subtle">{sanitizeDisplayText(provider.id)} · {sanitizeDisplayText(provider.kind)} · {sanitizeDisplayText(provider.baseUrl)}</span>
                 <span>Secret configured: {String(provider.auth.configured)} {provider.auth.redacted ? `(${sanitizeDisplayText(provider.auth.redacted)})` : ""}</span>
                 <span>Models: {provider.models.map((model) => sanitizeDisplayText(model.displayName)).join(", ") || "none"}</span>
-                {providerTestState?.providerId === provider.id && <div className={`provider-test-status ${providerTestState.state}`} role="status"><strong>{providerTestState.state === "testing" ? "Provider test running" : providerTestState.state === "success" ? "Provider test succeeded" : "Provider test failed"}</strong><span>{providerTestState.status}: {providerTestState.detail}</span></div>}
+                {providerTestState?.providerId === provider.id && <div className={`provider-test-status ${providerTestState.state}`} role="status"><strong>{providerTestState.state === "testing" ? "Provider test running" : providerTestState.state === "success" ? "Provider test succeeded" : "Provider test failed"}</strong><span>{providerTestState.status}: {providerTestState.detail}</span>{providerTestState.state === "failed" && <span>{providerTestAction(providerTestState.status)}</span>}</div>}
                 <div className="row">
                   <button type="button" onClick={() => editProvider(provider)}>Edit</button>
                   <button type="button" onClick={() => void runProviderTest(provider.id)} disabled={providerTestState?.providerId === provider.id && providerTestState.state === "testing"}>{providerTestState?.providerId === provider.id && providerTestState.state === "testing" ? "Testing provider…" : "Test provider"}</button>
@@ -989,8 +997,9 @@ export function App() {
             <span className={enabledProviders.length > 0 ? "badge ok" : "badge warn"}>{enabledProviders.length} enabled provider{enabledProviders.length === 1 ? "" : "s"}</span>
           </div>
           <div className="stack">
-            <span>Model: {chatReadinessLabel}</span>
+            <span>State: {chatReadinessLabel}</span>
             <span>{chatReadinessMessage}</span>
+            {runtimeConnected && !canSendChat && <span className="subtle">For the quickest path, choose OpenAI API, paste a provider API key once, save, optionally test the provider, then send your first message. For local models, choose an OpenAI-compatible /v1 preset.</span>}
             {experimentalOauthChatReady && <span className="subtle">OpenAI API-key fallback remains the safe/default setup and will be preferred when configured.</span>}
             {!canSendChat && <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>}
           </div>
@@ -1108,6 +1117,29 @@ function normalizeRuntimeUrl(value: string): string {
     return url.href.replace(/\/+$/, "");
   } catch {
     return value.trim().replace(/\/+$/, "");
+  }
+}
+
+function providerTestAction(status: ProviderTestState["status"]): string {
+  switch (status) {
+    case "unauthorized":
+    case 401:
+      return "Check that the provider API key was saved in the local runtime and belongs to this provider; do not paste the runtime Session token here.";
+    case 429:
+      return "Provider rate limit or quota reached. Wait, check provider billing/quota, or try another configured model.";
+    case "missing_model":
+    case 404:
+      return "Model unavailable. Check the saved model id or choose a model returned by your OpenAI-compatible provider.";
+    case "missing_secret":
+      return "Provider API key is missing in the local runtime. Paste the provider key once and save again.";
+    case "timeout":
+    case "unreachable":
+    case "bad_url":
+    case "upstream_error":
+    case "network":
+      return "Provider could not be reached through the local runtime. Check the provider base URL, local server, network, or runtime connection.";
+    default:
+      return "Review the saved provider settings and try Refresh runtime. Hosted Yet AI is not required for this check.";
   }
 }
 
