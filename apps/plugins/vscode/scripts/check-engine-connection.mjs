@@ -218,6 +218,15 @@ try {
     assert.equal(diagnostic.includes(forbidden), false, `diagnostics leaked ${forbidden}`);
   }
 
+  const shortFragmentDiagnostic = redactRuntimeDiagnosticText(
+    "http://127.0.0.1:8001/callback#access_token=a1b2&refresh_token=r1b2&oauth_code=o1b2&code_verifier=c1b2",
+  );
+  for (const forbidden of ["a1b2", "r1b2", "o1b2", "c1b2"]) {
+    assert.equal(shortFragmentDiagnostic.includes(forbidden), false, `short fragment diagnostics leaked ${forbidden}`);
+  }
+  assert.equal(shortFragmentDiagnostic.includes("#[redacted]"), true);
+  assert.equal((shortFragmentDiagnostic.match(/&\[redacted\]/g) ?? []).length, 3);
+
   function collectEngineLogs(chunks, options = {}) {
     const lines = [];
     const redactor = createEngineLogRedactor(options.token ?? fakeSessionToken, { appendLine: (line) => lines.push(line) }, options.maxLineLength);
