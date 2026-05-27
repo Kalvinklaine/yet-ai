@@ -49,7 +49,7 @@ export function openYetAiWebview(
   });
 }
 
-function createHostReady(
+export function createHostReady(
   identity: ProductIdentity,
   connection: EngineConnection,
   requestId: string | undefined,

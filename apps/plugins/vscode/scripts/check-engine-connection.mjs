@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import childProcess from "node:child_process";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +9,7 @@ import Module from "node:module";
 let configValues = {};
 const originalFetch = globalThis.fetch;
 const originalLoad = Module._load;
+const originalSpawn = childProcess.spawn;
 Module._load = function load(request, parent, isMain) {
   if (request === "vscode") {
     return {
@@ -514,12 +517,123 @@ try {
     } finally {
       process.env.PATH = previousPath;
     }
+    const spawnedProcesses = [];
+    childProcess.spawn = (command, args, options) => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.killed = false;
+      child.kill = () => {
+        child.killed = true;
+        child.emit("exit", null, "SIGTERM");
+        return true;
+      };
+      spawnedProcesses.push({ command, args, options, child });
+      return child;
+    };
+
+    async function prepareWithLaunchMode(launchMode, runtimeUrl) {
+      configValues = {
+        runtimeUrl,
+        launchMode,
+        engineBinaryPath: executable,
+        sessionToken: "legacy-token-must-not-be-used-for-launched-runtime",
+      };
+      const pingAuthorizations = [];
+      globalThis.fetch = async (_url, options = {}) => {
+        pingAuthorizations.push(options.headers?.Authorization);
+        return { ok: true, status: 200 };
+      };
+      const connection = await prepareEngineConnection(
+        { ...fakeContext, extensionPath: tempRoot },
+        { engine: { binaryName: "yet-lsp" } },
+        fakeOutputChannel(),
+      );
+      return { connection, pingAuthorizations };
+    }
+
+    const autoLaunch = await prepareWithLaunchMode("auto", "http://127.0.0.1:8765");
+    assert.equal(spawnedProcesses.length, 1);
+    assert.equal(spawnedProcesses[0].command, executable);
+    assert.deepEqual(spawnedProcesses[0].args, []);
+    assert.equal(spawnedProcesses[0].options.env.YET_AI_HTTP_PORT, "8765");
+    assert.equal(typeof spawnedProcesses[0].options.env.YET_AI_AUTH_TOKEN, "string");
+    assert.ok(spawnedProcesses[0].options.env.YET_AI_AUTH_TOKEN.length >= 32);
+    assert.notEqual(spawnedProcesses[0].options.env.YET_AI_AUTH_TOKEN, "legacy-token-must-not-be-used-for-launched-runtime");
+    assert.equal(autoLaunch.connection.runtimeUrl, "http://127.0.0.1:8765");
+    assert.equal(autoLaunch.connection.sessionToken, spawnedProcesses[0].options.env.YET_AI_AUTH_TOKEN);
+    assert.deepEqual(autoLaunch.pingAuthorizations, [`Bearer ${autoLaunch.connection.sessionToken}`]);
+
+    const reusedAutoLaunch = await prepareWithLaunchMode("auto", "http://127.0.0.1:8765");
+    assert.equal(spawnedProcesses.length, 1);
+    assert.equal(reusedAutoLaunch.connection.sessionToken, autoLaunch.connection.sessionToken);
+    assert.deepEqual(reusedAutoLaunch.pingAuthorizations, [`Bearer ${autoLaunch.connection.sessionToken}`]);
+
+    const explicitLaunch = await prepareWithLaunchMode("launch", "http://127.0.0.1:9876");
+    assert.equal(spawnedProcesses.length, 2);
+    assert.equal(spawnedProcesses[0].child.killed, true);
+    assert.equal(spawnedProcesses[1].command, executable);
+    assert.equal(spawnedProcesses[1].options.env.YET_AI_HTTP_PORT, "9876");
+    assert.equal(explicitLaunch.connection.sessionToken, spawnedProcesses[1].options.env.YET_AI_AUTH_TOKEN);
+    assert.notEqual(explicitLaunch.connection.sessionToken, autoLaunch.connection.sessionToken);
+    assert.deepEqual(explicitLaunch.pingAuthorizations, [`Bearer ${explicitLaunch.connection.sessionToken}`]);
+
+    configValues = {
+      runtimeUrl: "http://127.0.0.1:8001",
+      launchMode: "connect",
+      sessionToken: "legacy-connect-session-token",
+    };
+    let secretStorageReads = 0;
+    const secretStorageContext = {
+      ...fakeContext,
+      extensionPath: tempRoot,
+      secrets: {
+        async get(key) {
+          secretStorageReads += 1;
+          assert.equal(key, "yetai.localRuntimeSessionToken");
+          return "secret-storage-connect-session-token";
+        },
+      },
+    };
+    globalThis.fetch = async (_url, options = {}) => {
+      assert.equal(options.headers?.Authorization, "Bearer secret-storage-connect-session-token");
+      return { ok: true, status: 200 };
+    };
+    const secretStorageConnect = await prepareEngineConnection(
+      secretStorageContext,
+      { engine: { binaryName: "yet-lsp" } },
+      fakeOutputChannel(),
+    );
+    assert.equal(secretStorageConnect.sessionToken, "secret-storage-connect-session-token");
+    assert.equal(secretStorageReads, 1);
+    assert.equal(spawnedProcesses.length, 2);
+
+    configValues = {
+      runtimeUrl: "http://127.0.0.1:8001",
+      launchMode: "connect",
+      sessionToken: "legacy-connect-session-token",
+    };
+    const outputLines = [];
+    globalThis.fetch = async (_url, options = {}) => {
+      assert.equal(options.headers?.Authorization, "Bearer legacy-connect-session-token");
+      return { ok: true, status: 200 };
+    };
+    const legacyConnect = await prepareEngineConnection(
+      { ...fakeContext, extensionPath: tempRoot },
+      { engine: { binaryName: "yet-lsp" } },
+      { appendLine(line) { outputLines.push(line); } },
+    );
+    assert.equal(legacyConnect.sessionToken, "legacy-connect-session-token");
+    assert.equal(spawnedProcesses.length, 2);
+    assert.ok(outputLines.some((line) => line.includes("sessionToken is deprecated")));
   } finally {
     configValues = {};
+    childProcess.spawn = originalSpawn;
     globalThis.fetch = originalFetch;
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 } finally {
   globalThis.fetch = originalFetch;
+  childProcess.spawn = originalSpawn;
   Module._load = originalLoad;
 }
