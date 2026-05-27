@@ -36,7 +36,19 @@ type LaunchedEngine = {
   sessionToken: string;
 };
 
+type EngineLogOutput = {
+  appendLine(value: string): void;
+};
+
+export type EngineLogRedactor = {
+  append(chunk: Buffer | string): void;
+  flush(): void;
+};
+
 let launchedEngine: LaunchedEngine | undefined;
+
+const engineLogLineLimit = 8192;
+const oversizedEngineLogLineMarker = "[redacted oversized engine log line]";
 
 export async function readEngineConnection(context: vscode.ExtensionContext): Promise<EngineConnection> {
   const settings = await readEngineConnectionSettings(context);
@@ -366,17 +378,73 @@ function parseRuntimePort(runtimeUrl: string): number {
 }
 
 function attachProcessLogs(processHandle: childProcess.ChildProcess, token: string, output: vscode.OutputChannel): void {
-  processHandle.stdout?.on("data", (chunk: Buffer) => appendEngineLog(output, token, chunk));
-  processHandle.stderr?.on("data", (chunk: Buffer) => appendEngineLog(output, token, chunk));
+  const stdoutRedactor = createEngineLogRedactor(token, output);
+  const stderrRedactor = createEngineLogRedactor(token, output);
+  processHandle.stdout?.on("data", (chunk: Buffer) => stdoutRedactor.append(chunk));
+  processHandle.stderr?.on("data", (chunk: Buffer) => stderrRedactor.append(chunk));
+  processHandle.stdout?.on("end", () => stdoutRedactor.flush());
+  processHandle.stderr?.on("end", () => stderrRedactor.flush());
+  processHandle.stdout?.on("close", () => stdoutRedactor.flush());
+  processHandle.stderr?.on("close", () => stderrRedactor.flush());
+  processHandle.on("exit", () => {
+    stdoutRedactor.flush();
+    stderrRedactor.flush();
+  });
+  processHandle.on("error", () => {
+    stdoutRedactor.flush();
+    stderrRedactor.flush();
+  });
 }
 
-function appendEngineLog(output: vscode.OutputChannel, token: string, chunk: Buffer): void {
-  const text = redactLogText(chunk.toString("utf8"), token);
-  for (const line of text.split(/\r?\n/)) {
-    if (line.length > 0) {
-      output.appendLine(`[engine] ${line}`);
+export function createEngineLogRedactor(token: string, output: EngineLogOutput, maxLineLength = engineLogLineLimit): EngineLogRedactor {
+  let bufferedLine = "";
+  let oversizedLine = false;
+
+  function append(chunk: Buffer | string): void {
+    const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    let offset = 0;
+    while (offset < text.length) {
+      const newlineIndex = text.indexOf("\n", offset);
+      if (newlineIndex === -1) {
+        appendLinePart(text.slice(offset));
+        return;
+      }
+      const linePart = text.slice(offset, newlineIndex).replace(/\r$/, "");
+      appendLinePart(linePart);
+      flushCompleteLine();
+      offset = newlineIndex + 1;
     }
   }
+
+  function appendLinePart(value: string): void {
+    if (oversizedLine) {
+      return;
+    }
+    if (bufferedLine.length + value.length > maxLineLength) {
+      bufferedLine = "";
+      oversizedLine = true;
+      return;
+    }
+    bufferedLine += value;
+  }
+
+  function flushCompleteLine(): void {
+    if (oversizedLine) {
+      output.appendLine(`[engine] ${oversizedEngineLogLineMarker}`);
+    } else if (bufferedLine.length > 0) {
+      output.appendLine(`[engine] ${redactLogText(bufferedLine, token)}`);
+    }
+    bufferedLine = "";
+    oversizedLine = false;
+  }
+
+  function flush(): void {
+    if (bufferedLine.length > 0 || oversizedLine) {
+      flushCompleteLine();
+    }
+  }
+
+  return { append, flush };
 }
 
 function redactLogText(value: string, token: string): string {
