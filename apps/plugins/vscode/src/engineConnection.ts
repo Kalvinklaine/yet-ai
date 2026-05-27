@@ -75,9 +75,9 @@ export async function collectRuntimeDiagnostics(
   try {
     validateEngineConnectionSettings(settings);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "invalid runtime settings";
+    const message = error instanceof Error ? redactRuntimeDiagnosticText(error.message, settings.sessionToken) : "invalid runtime settings";
     diagnostics.pingStatus = `skipped: ${message}`;
-    diagnostics.engineBinaryStatus = settings.engineBinaryPath ? `invalid configured path: ${message}` : "not configured";
+    diagnostics.engineBinaryStatus = settings.launchMode === "connect" ? "not checked in connect mode" : "not checked: runtime settings invalid";
     return diagnostics;
   }
 
@@ -90,7 +90,16 @@ export async function collectRuntimeDiagnostics(
       diagnostics.engineBinaryStatus = describeEngineBinaryStatus(binaryPath, settings.engineBinaryPath !== undefined);
     } catch (error) {
       diagnostics.engineBinaryStatus = error instanceof Error ? `not usable: ${redactRuntimeDiagnosticText(error.message, settings.sessionToken)}` : "not usable";
+      if (settings.launchMode === "launch" || (settings.launchMode === "auto" && settings.engineBinaryPath !== undefined)) {
+        diagnostics.pingStatus = "skipped: engine binary not usable";
+        return diagnostics;
+      }
     }
+  }
+
+  if (settings.launchMode === "launch" && binaryPath === undefined) {
+    diagnostics.pingStatus = "skipped: engine binary not usable";
+    return diagnostics;
   }
 
   const shouldLaunch = settings.launchMode === "launch" || (settings.launchMode === "auto" && binaryPath !== undefined);
