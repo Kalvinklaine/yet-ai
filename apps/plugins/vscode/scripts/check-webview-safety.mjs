@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import Module from "node:module";
 import os from "node:os";
@@ -63,6 +64,7 @@ if (!/Object\.keys\(message\)\.every\(\(key\) => key === "version" \|\| key === 
 }
 
 const originalLoad = Module._load;
+let createHostReady;
 let renderWebviewHtml;
 try {
   Module._load = function load(request, parent, isMain) {
@@ -80,7 +82,7 @@ try {
     }
     return originalLoad.call(this, request, parent, isMain);
   };
-  ({ renderWebviewHtml } = await import("../out/webview.js"));
+  ({ createHostReady, renderWebviewHtml } = await import("../out/webview.js"));
 } finally {
   Module._load = originalLoad;
 }
@@ -135,6 +137,14 @@ const connection = {
 };
 
 const html = renderWebviewHtml(webview, extensionUri, identity, connection);
+const hostReady = createHostReady(identity, connection, "valid-gui-ready-request");
+
+assert.equal(hostReady.version, "2026-05-15");
+assert.equal(hostReady.type, "host.ready");
+assert.equal(hostReady.requestId, "valid-gui-ready-request");
+assert.equal(hostReady.payload.runtimeUrl, connection.runtimeUrl);
+assert.equal(hostReady.payload.sessionToken, connection.sessionToken);
+assert.equal(hostReady.payload.cloudRequired, false);
 
 assertNoSecretSentinels(html, fakeSecretValues, "VS Code behavioral webview render");
 assertRequiredSafetyStructure(html, "VS Code behavioral webview render");
