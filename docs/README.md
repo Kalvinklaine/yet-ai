@@ -24,6 +24,7 @@ docs/
 - `architecture/003-target-architecture.md` — target Yet AI subsystem boundaries, HTTP/SSE/LSP/postMessage contracts, storage isolation, and roadmap.
 - `architecture/004-implementation-strategy.md` — implementation strategy comparison and recommendation: architecture-inspired scaffold first, selective reuse later.
 - `architecture/005-publication-hygiene.md` — rules for keeping public tracked files clean before publication.
+- `architecture/006-login-based-gpt-first-message.md` — future mandatory login-based GPT first-message milestone, official/experimental path split, and required gates.
 
 ## Verification
 
