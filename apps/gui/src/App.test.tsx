@@ -1394,6 +1394,113 @@ describe("host.ready runtime bootstrap", () => {
   });
 });
 
+describe("active editor attached context", () => {
+  it("renders valid host.contextSnapshot preview with default include toggle", async () => {
+    mockRuntimeResponses();
+    renderApp();
+
+    await dispatchHostContextSnapshot({
+      file: { displayPath: "src/main.ts", workspaceRelativePath: "src/main.ts", languageId: "typescript" },
+      selection: { startLine: 10, startCharacter: 2, endLine: 12, endCharacter: 8, text: "function greet() {\n  return \"hello\";\n}" },
+    });
+
+    expect(container?.textContent).toContain("Attached context");
+    expect(container?.textContent).toContain("File: src/main.ts");
+    expect(container?.textContent).toContain("Language: typescript");
+    expect(container?.textContent).toContain("Selection: 10:2-12:8");
+    expect(container?.textContent).toContain("Preview: function greet()");
+    expect(container?.textContent).toContain("Selection size: 38 characters");
+    expect(attachedContextToggle().checked).toBe(true);
+  });
+
+  it("lets the user turn off attached context inclusion", async () => {
+    mockRuntimeResponses();
+    renderApp();
+
+    await dispatchHostContextSnapshot({ selection: { text: "selected safe text" } });
+
+    expect(attachedContextToggle().checked).toBe(true);
+    await act(async () => {
+      attachedContextToggle().click();
+    });
+
+    expect(attachedContextToggle().checked).toBe(false);
+  });
+
+  it("shows safe no-context status for missing or invalid context", async () => {
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("No valid active editor context is attached. Nothing will be included with the next message.");
+    expect(attachedContextToggleOptional()).toBeUndefined();
+
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: {
+          version: bridgeVersion,
+          type: "host.contextSnapshot",
+          payload: {
+            kind: "active_editor",
+            source: "vscode",
+            file: { workspaceRelativePath: "/Users/alice/project/src/secret.ts" },
+            edit: { replaceRange: true },
+          },
+        },
+      }));
+    });
+
+    expect(container?.textContent).toContain("No valid active editor context is attached. Nothing will be included with the next message.");
+    expect(container?.textContent).toContain("Rejected invalid host bridge message");
+    expect(container?.textContent).not.toContain("replaceRange");
+    expect(container?.textContent).not.toContain("/Users/alice");
+    expect(attachedContextToggleOptional()).toBeUndefined();
+  });
+
+  it("redacts secret-like context preview and bridge logs", async () => {
+    const rawSecret = "access_token=" + "s".repeat(64);
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses();
+    renderApp();
+
+    await dispatchHostContextSnapshot({
+      file: { displayPath: "src/secret.ts", languageId: "typescript" },
+      selection: { startLine: 1, startCharacter: 0, endLine: 1, endCharacter: 10, text: `const token = "${rawSecret}"; Cookie: session=context-secret` },
+    });
+
+    expect(container?.textContent).toContain("Preview: const token = \"[redacted]");
+    expect(container?.textContent).toContain("Host message host.contextSnapshot");
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("s".repeat(64));
+    expect(container?.textContent).not.toContain("context-secret");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(rawSecret);
+  });
+
+  it("does not send attached context before context sending is enabled", async () => {
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    await dispatchHostContextSnapshot({ selection: { text: "attached text not sent yet" } });
+    fetchMock.mockClear();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "hello with context preview");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    const commandCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST");
+    const body = JSON.parse(String(commandCall?.[1]?.body)) as { type?: string; payload?: Record<string, unknown> };
+    expect(body.type).toBe("user_message");
+    expect(body.payload).toEqual({ content: "hello with context preview" });
+  });
+});
+
 describe("chat panel", () => {
   it("shows guided OpenAI API fallback CTA when runtime is connected with no provider", async () => {
     mockRuntimeResponses();
@@ -2470,6 +2577,23 @@ async function dispatchHostReady(payload: { runtimeUrl: string; sessionToken?: s
   });
 }
 
+async function dispatchHostContextSnapshot(payload: Record<string, unknown>) {
+  await act(async () => {
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version: bridgeVersion,
+        type: "host.contextSnapshot",
+        requestId: "context-001",
+        payload: {
+          kind: "active_editor",
+          source: "vscode",
+          ...payload,
+        },
+      },
+    }));
+  });
+}
+
 function renderApp() {
   container = document.createElement("div");
   document.body.append(container);
@@ -2827,6 +2951,18 @@ function chatInput() {
     throw new Error("Chat textarea not found");
   }
   return textarea;
+}
+
+function attachedContextToggle() {
+  const input = attachedContextToggleOptional();
+  if (!input) {
+    throw new Error("Attached context toggle not found");
+  }
+  return input;
+}
+
+function attachedContextToggleOptional() {
+  return Array.from(container?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]') ?? []).find((item) => item.parentElement?.textContent?.includes("Include attached context in next message"));
 }
 
 function setInputValue(input: HTMLInputElement, value: string) {
