@@ -1,0 +1,17 @@
+{
+  "requestId": "req-context-tool-001",
+  "type": "user_message",
+  "payload": {
+    "content": "Apply this change.",
+    "context": {
+      "kind": "active_editor",
+      "source": "vscode",
+      "file": {
+        "workspaceRelativePath": "src/main.ts"
+      },
+      "toolCall": {
+        "name": "workspace.edit"
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "requestId": "req-context-path-001",
+  "type": "user_message",
+  "payload": {
+    "content": "Explain this file.",
+    "context": {
+      "kind": "active_editor",
+      "source": "vscode",
+      "file": {
+        "displayPath": "~/private/project/src/main.ts",
+        "workspaceRelativePath": "../src/main.ts"
+      }
+    }
+  }
+}

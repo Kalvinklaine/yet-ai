@@ -1,0 +1,23 @@
+{
+  "requestId": "req-context-001",
+  "type": "user_message",
+  "payload": {
+    "content": "Explain the selected code.",
+    "context": {
+      "kind": "active_editor",
+      "source": "vscode",
+      "file": {
+        "displayPath": "src/main.ts",
+        "workspaceRelativePath": "src/main.ts",
+        "languageId": "typescript"
+      },
+      "selection": {
+        "startLine": 10,
+        "startCharacter": 2,
+        "endLine": 12,
+        "endCharacter": 8,
+        "text": "function greet() {\n  return \"hello\";\n}"
+      }
+    }
+  }
+}

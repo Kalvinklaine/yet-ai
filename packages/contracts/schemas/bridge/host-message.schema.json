@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.yet-ai.example/contracts/bridge/host-message.schema.json",
   "title": "IDE Host to GUI Message",
-  "description": "Current non-privileged host bootstrap messages only. Tool results, workspace context, file actions, shell-like actions, and IDE tool execution remain disabled until strict schemas, policy, request correlation, and confirmation are implemented.",
+  "description": "Current non-privileged host bootstrap and active editor context messages only. Tool results, file actions, shell-like actions, workspace mutation, and IDE tool execution remain disabled until strict schemas, policy, request correlation, and confirmation are implemented.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "type"],
@@ -13,7 +13,7 @@
     },
     "type": {
       "type": "string",
-      "enum": ["host.ready", "host.openedFromCommand"]
+      "enum": ["host.ready", "host.openedFromCommand", "host.contextSnapshot"]
     },
     "requestId": {
       "type": "string",
@@ -22,6 +22,85 @@
     },
     "payload": {
       "type": "object"
+    }
+  },
+  "$defs": {
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?!~)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)\\.\\.?(?:/|$))[^\\u0000-\\u001f]+$"
+    },
+    "safeDisplayPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^(?!/)(?!~)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)\\.\\.?(?:/|$))[^\\u0000-\\u001f]+$"
+    },
+    "activeEditorContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "active_editor"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["vscode", "jetbrains", "browser"]
+        },
+        "file": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "displayPath": {
+              "$ref": "#/$defs/safeDisplayPath"
+            },
+            "workspaceRelativePath": {
+              "$ref": "#/$defs/safeRelativePath"
+            },
+            "languageId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9_.+-]+$"
+            }
+          }
+        },
+        "selection": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "startLine": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "startCharacter": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "endLine": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "endCharacter": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 8000
+            }
+          }
+        }
+      }
     }
   },
   "allOf": [
@@ -81,6 +160,24 @@
             "type": "object",
             "additionalProperties": false,
             "maxProperties": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "host.contextSnapshot"
+          }
+        },
+        "required": ["type"]
+      },
+      "then": {
+        "required": ["payload"],
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/activeEditorContext"
           }
         }
       }
