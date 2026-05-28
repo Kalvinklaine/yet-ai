@@ -1,0 +1,13 @@
+{
+  "provider": "openai",
+  "configured": false,
+  "status": "expired",
+  "authSource": "oauth",
+  "supportsLogin": true,
+  "supportsApiKey": true,
+  "accountLabel": "user@example.com",
+  "expiresAt": "2026-05-15T12:30:00Z",
+  "scopes": ["model.read", "chat.write"],
+  "cloudRequired": false,
+  "message": "OpenAI login expired. Sign in again or use the API-key fallback."
+}

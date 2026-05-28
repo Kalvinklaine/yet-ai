@@ -1,0 +1,13 @@
+{
+  "provider": "openai",
+  "configured": false,
+  "status": "error",
+  "authSource": "none",
+  "supportsLogin": true,
+  "supportsApiKey": true,
+  "sessionId": "provider-login-session-001",
+  "cloudRequired": false,
+  "success": false,
+  "lastError": "Login exchange failed before credentials were stored.",
+  "message": "Provider login failed. No raw tokens or authorization codes are available in this response."
+}
