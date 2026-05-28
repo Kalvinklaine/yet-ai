@@ -256,6 +256,36 @@ async fn start_mock_provider(
     (format!("http://{address}"), auth_receiver)
 }
 
+async fn start_mock_provider_with_request_body(
+    status: StatusCode,
+    stream_body: &'static str,
+) -> (String, mpsc::Receiver<Value>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (body_sender, body_receiver) = mpsc::channel(4);
+    tokio::spawn(async move {
+        let handler = move |request: axum::http::Request<Body>| {
+            let body_sender = body_sender.clone();
+            async move {
+                let bytes = to_bytes(request.into_body(), usize::MAX).await.unwrap();
+                let body: Value = serde_json::from_slice(&bytes).unwrap();
+                let _ = body_sender.send(body).await;
+                (
+                    status,
+                    [(header::CONTENT_TYPE, "text/event-stream")],
+                    stream_body,
+                )
+                    .into_response()
+            }
+        };
+        let app = axum::Router::new()
+            .route("/chat/completions", axum::routing::post(handler.clone()))
+            .route("/v1/chat/completions", axum::routing::post(handler));
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{address}"), body_receiver)
+}
+
 async fn start_mock_models_provider(
     status: StatusCode,
     body: &'static str,
@@ -661,6 +691,34 @@ async fn send_user_message(app: axum::Router, chat_id: &str) {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["accepted"], true);
+}
+
+fn assert_text_contains_in_order(text: &str, values: &[&str]) {
+    let mut offset = 0;
+    for value in values {
+        let Some(index) = text[offset..].find(value) else {
+            panic!("expected text to contain marker in order");
+        };
+        offset += index + value.len();
+    }
+}
+
+fn assert_chat_context_prompt_has_expected_shape(prompt: &str) {
+    assert_text_contains_in_order(
+        prompt,
+        &[
+            "IDE context",
+            "Source: vscode",
+            "File: src/main.ts",
+            "Workspace-relative path: src/main.ts",
+            "Language: typescript",
+            "Range: 10:2-12:8",
+            "Selection:",
+            "function greet()",
+            "User request",
+            "Explain the selected code.",
+        ],
+    );
 }
 
 async fn send_abort(app: axum::Router, chat_id: &str, request_id: &str) {
@@ -3714,6 +3772,11 @@ async fn positive_chat_command_contract_fixtures_are_accepted() {
             "user_message",
         ),
         (
+            "chat-user-message-context-contract",
+            include_str!("../../../packages/contracts/examples/engine/user-message-command-with-context.json"),
+            "user_message",
+        ),
+        (
             "chat-abort-contract",
             include_str!("../../../packages/contracts/examples/engine/abort-command.json"),
             "abort",
@@ -3744,6 +3807,26 @@ async fn invalid_chat_command_contract_fixtures_are_rejected_safely() {
             include_str!("../../../packages/contracts/examples-invalid/engine/chat-command-abort-payload.json"),
             StatusCode::BAD_REQUEST,
             ["stop current work", "reason"].as_slice(),
+        ),
+        (
+            include_str!("../../../packages/contracts/examples-invalid/engine/chat-command-context-unsafe-path.json"),
+            StatusCode::BAD_REQUEST,
+            ["~/private", "../src/main.ts"].as_slice(),
+        ),
+        (
+            include_str!("../../../packages/contracts/examples-invalid/engine/chat-command-context-tool-smuggling.json"),
+            StatusCode::BAD_REQUEST,
+            ["workspace.edit", "toolCall"].as_slice(),
+        ),
+        (
+            include_str!("../../../packages/contracts/examples-invalid/engine/chat-command-context-secret-metadata.json"),
+            StatusCode::BAD_REQUEST,
+            ["example-secret-placeholder", "metadata"].as_slice(),
+        ),
+        (
+            include_str!("../../../packages/contracts/examples-invalid/engine/chat-command-context-oversized-selection-text.json"),
+            StatusCode::BAD_REQUEST,
+            ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"].as_slice(),
         ),
     ] {
         let (status, text) = text_response_from(
@@ -3896,6 +3979,54 @@ async fn user_message_command_rejects_too_long_content() {
 }
 
 #[tokio::test]
+async fn chat_context_invalid_shapes_are_rejected_safely() {
+    for context in [
+        json!({
+            "kind": "active_editor",
+            "source": "vscode",
+            "file": { "displayPath": "/Users/example/private.rs" }
+        }),
+        json!({
+            "kind": "active_editor",
+            "source": "vscode",
+            "file": { "displayPath": "src/main.rs", "languageId": "rust token" }
+        }),
+        json!({
+            "kind": "active_editor",
+            "source": "vscode",
+            "selection": { "text": "context-secret-marker".repeat(500) }
+        }),
+        json!({
+            "kind": "active_editor",
+            "source": "vscode",
+            "selection": { "text": "selected", "toolResult": "context-secret-marker" }
+        }),
+    ] {
+        let command = json!({
+            "requestId": "req-invalid-context",
+            "type": "user_message",
+            "payload": {
+                "content": "hello",
+                "context": context
+            }
+        });
+        let (status, text) = text_response_from(
+            test_app(),
+            authed_request(
+                Method::POST,
+                "/v1/chats/chat-context-invalid/commands",
+                Body::from(command.to_string()),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(!text.contains("context-secret-marker"));
+        assert!(!text.contains("/Users/example"));
+        assert!(!text.contains("toolResult"));
+    }
+}
+
+#[tokio::test]
 async fn unsupported_privileged_commands_remain_rejected() {
     for command_type in [
         "tool_decision",
@@ -3981,6 +4112,45 @@ async fn openai_compatible_streaming_maps_chunks_to_sse_events() {
     )
     .await;
     assert!(!text.contains(api_key));
+}
+
+#[tokio::test]
+async fn chat_context_is_included_before_user_request_in_provider_prompt() {
+    let api_key = "sk-context-stream-secret-abcd";
+    let (base_url, mut body_receiver) = start_mock_provider_with_request_body(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"context-ok\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    let command = include_str!(
+        "../../../packages/contracts/examples/engine/user-message-command-with-context.json"
+    );
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-context-prompt/commands",
+            Body::from(command),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accepted"], true);
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-context-prompt").await;
+    assert!(text.contains("context-ok"));
+    assert!(!text.contains(api_key));
+    let provider_body =
+        tokio::time::timeout(std::time::Duration::from_secs(2), body_receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+    let prompt = provider_body["messages"][0]["content"].as_str().unwrap();
+    assert_chat_context_prompt_has_expected_shape(prompt);
+    assert!(!prompt.contains(api_key));
 }
 
 #[tokio::test]

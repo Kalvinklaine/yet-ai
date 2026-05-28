@@ -8,6 +8,7 @@ use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::chat::ChatContext;
 use crate::provider_auth;
 use crate::providers;
 use crate::security::Authenticated;
@@ -331,7 +332,7 @@ async fn chat_command(
             .into_response()
         }
         "user_message" => {
-            let Some(content) = user_message_content(command.payload.as_ref()) else {
+            let Some((content, context)) = user_message_payload(command.payload.as_ref()) else {
                 return StatusCode::BAD_REQUEST.into_response();
             };
             state
@@ -340,6 +341,7 @@ async fn chat_command(
                     state.storage_paths.config_dir.clone(),
                     chat_id.clone(),
                     content.to_string(),
+                    context,
                 )
                 .await;
 
@@ -371,13 +373,27 @@ fn valid_abort_payload(payload: Option<&serde_json::Value>) -> bool {
     }
 }
 
-fn user_message_content(payload: Option<&serde_json::Value>) -> Option<&str> {
+fn user_message_payload(
+    payload: Option<&serde_json::Value>,
+) -> Option<(&str, Option<ChatContext>)> {
     let object = payload?.as_object()?;
-    if object.len() != 1 {
+    if object.len() > 2
+        || !object.contains_key("content")
+        || object
+            .keys()
+            .any(|key| key != "content" && key != "context")
+    {
         return None;
     }
     let content = object.get("content")?.as_str()?;
-    valid_bounded_string(content, CHAT_COMMAND_CONTENT_MAX_LENGTH).then_some(content)
+    if !valid_bounded_string(content, CHAT_COMMAND_CONTENT_MAX_LENGTH) {
+        return None;
+    }
+    let context = match object.get("context") {
+        Some(value) => Some(ChatContext::from_value(value.clone())?),
+        None => None,
+    };
+    Some((content, context))
 }
 
 #[derive(Debug, Deserialize)]
