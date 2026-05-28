@@ -452,6 +452,39 @@ async fn start_hanging_codex_token_endpoint() -> (String, oneshot::Receiver<Valu
     (format!("http://{address}/oauth/token"), body_receiver)
 }
 
+async fn start_delayed_codex_token_endpoint() -> (String, mpsc::Receiver<Value>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (body_sender, body_receiver) = mpsc::channel(4);
+    tokio::spawn(async move {
+        let handler = move |request: axum::http::Request<Body>| {
+            let body_sender = body_sender.clone();
+            async move {
+                let bytes = to_bytes(request.into_body(), usize::MAX).await.unwrap();
+                let body: Value = serde_json::from_slice(&bytes).unwrap();
+                let _ = body_sender.send(body).await;
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "application/json")],
+                    json!({
+                        "access_token": "codex-access-token-secret-abcd",
+                        "refresh_token": "codex-refresh-token-secret-wxyz",
+                        "expires_in": 1800,
+                        "scope": "openid profile email offline_access",
+                        "account_label": "mock-user@example.test"
+                    })
+                    .to_string(),
+                )
+                    .into_response()
+            }
+        };
+        let app = axum::Router::new().route("/oauth/token", axum::routing::post(handler));
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{address}/oauth/token"), body_receiver)
+}
+
 async fn start_flaky_codex_token_endpoint() -> (String, mpsc::Receiver<Value>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -1675,6 +1708,106 @@ async fn provider_auth_openai_experimental_exchange_failure_keeps_pending_for_re
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(duplicate["error"], "provider auth session was not found");
     assert_provider_auth_response_has_no_codex_secrets(&duplicate);
+}
+
+#[tokio::test]
+async fn provider_auth_openai_experimental_concurrent_exchange_is_single_flight() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let (token_endpoint_url, mut token_body_receiver) = start_delayed_codex_token_endpoint().await;
+    let (status, start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(
+                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                    .to_string(),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let session_id = start["sessionId"].as_str().unwrap().to_string();
+    let state =
+        state_from_authorization_url(start["authorizationUrl"].as_str().unwrap()).to_string();
+    let exchange = json!({
+        "sessionId": session_id,
+        "state": state,
+        "code": "codex-code-concurrent-secret"
+    });
+    let first_request = authed_request(
+        Method::POST,
+        "/v1/provider-auth/openai/exchange",
+        Body::from(exchange.to_string()),
+    );
+    let second_request = authed_request(
+        Method::POST,
+        "/v1/provider-auth/openai/exchange",
+        Body::from(exchange.to_string()),
+    );
+
+    let (first, second) = tokio::join!(
+        json_response_from(app.clone(), first_request),
+        json_response_from(app.clone(), second_request)
+    );
+    let responses = [first, second];
+    let successes: Vec<_> = responses
+        .iter()
+        .filter(|(status, body)| *status == StatusCode::OK && body["status"] == "connected")
+        .collect();
+    let failures: Vec<_> = responses
+        .iter()
+        .filter(|(status, _)| *status != StatusCode::OK)
+        .collect();
+    assert_eq!(successes.len(), 1, "{responses:?}");
+    assert_eq!(failures.len(), 1, "{responses:?}");
+    assert_eq!(failures[0].0, StatusCode::NOT_FOUND);
+    assert_eq!(failures[0].1["error"], "provider auth session was not found");
+    for (_, body) in responses.iter() {
+        assert_provider_auth_response_has_no_codex_secrets(body);
+        assert!(!body.to_string().contains("codex-code-concurrent-secret"));
+    }
+
+    let token_body = token_body_receiver.recv().await.unwrap();
+    assert_eq!(token_body["code"], "codex-code-concurrent-secret");
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            token_body_receiver.recv()
+        )
+        .await
+        .is_err()
+    );
+
+    let (status, status_body) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/provider-auth/openai/status",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status_body["status"], "connected");
+    assert!(status_body.get("authorizationUrl").is_none());
+    assert!(status_body.get("sessionId").is_none());
+    assert_provider_auth_response_has_no_codex_secrets(&status_body);
+
+    let store = FileSecretStore::new(&paths.config_dir);
+    assert_eq!(
+        store
+            .get_secret("openai", SecretKind::OAuthAccessToken)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("codex-access-token-secret-abcd")
+    );
 }
 
 #[tokio::test]

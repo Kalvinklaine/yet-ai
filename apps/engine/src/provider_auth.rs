@@ -1,5 +1,7 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{LazyLock, Mutex};
 
 use base64::Engine;
 use chrono::{Duration, Utc};
@@ -35,6 +37,20 @@ const CODEX_SCOPE: &str = "openid profile email offline_access";
 const CODEX_CONNECTED_MESSAGE: &str = "Experimental Codex-like OpenAI login is connected in local engine storage. This remains experimental/high-risk and is not official public third-party OpenAI OAuth support.";
 const CODEX_EXPIRED_MESSAGE: &str = "Experimental Codex-like OpenAI login expired. Reconnect the account or use the OpenAI API-key fallback.";
 static MOCK_COUNTER: AtomicU64 = AtomicU64::new(1);
+static CODEX_EXCHANGE_IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+struct CodexExchangeGuard {
+    key: String,
+}
+
+impl Drop for CodexExchangeGuard {
+    fn drop(&mut self) {
+        if let Ok(mut keys) = CODEX_EXCHANGE_IN_FLIGHT.lock() {
+            keys.remove(&self.key);
+        }
+    }
+}
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -680,6 +696,20 @@ fn is_allowed_loopback_host(url: &reqwest::Url) -> bool {
     )
 }
 
+fn try_acquire_codex_exchange_guard(
+    config_dir: &Path,
+    provider: &str,
+) -> Result<CodexExchangeGuard, ProviderAuthError> {
+    let key = format!("{}\0{provider}", config_dir.display());
+    let mut keys = CODEX_EXCHANGE_IN_FLIGHT
+        .lock()
+        .map_err(|_| ProviderAuthError::Storage)?;
+    if !keys.insert(key.clone()) {
+        return Err(ProviderAuthError::SessionNotFound);
+    }
+    Ok(CodexExchangeGuard { key })
+}
+
 async fn codex_exchange(
     config_dir: &Path,
     provider: &str,
@@ -687,6 +717,7 @@ async fn codex_exchange(
     state_value: String,
     code: String,
 ) -> Result<ProviderAuthResponse, ProviderAuthError> {
+    let _guard = try_acquire_codex_exchange_guard(config_dir, provider)?;
     let mut codex = read_codex_state(config_dir, provider).await?;
     let Some(session) = codex.pending.take() else {
         return Err(ProviderAuthError::SessionNotFound);
