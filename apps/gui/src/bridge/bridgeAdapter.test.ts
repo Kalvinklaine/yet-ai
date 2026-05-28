@@ -314,6 +314,29 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage(contextSnapshot())).toBe(true);
   });
 
+  it("accepts JetBrains active editor context snapshots", () => {
+    const message = contextSnapshot({
+      payload: {
+        kind: "active_editor",
+        source: "jetbrains",
+        file: {
+          displayPath: "src/App.kt",
+          workspaceRelativePath: "src/App.kt",
+          languageId: "kotlin",
+        },
+        selection: {
+          startLine: 4,
+          startCharacter: 2,
+          endLine: 4,
+          endCharacter: 20,
+          text: "val answer = 42",
+        },
+      },
+    });
+
+    expect(isHostMessage(message)).toBe(true);
+  });
+
   it("validates gui.ready against the strict current schema", () => {
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready" })).toBe(true);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "r1", payload: { supportedBridgeVersion: bridgeVersion } })).toBe(true);
@@ -347,6 +370,14 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", selection: { text: "x".repeat(8001) } } }))).toBe(false);
     expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", selection: { startLine: -1 } } }))).toBe(false);
     expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", tool: { name: "edit" } } }))).toBe(false);
+  });
+
+  it("rejects unsafe or privileged JetBrains context snapshots", () => {
+    expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "jetbrains", file: { workspaceRelativePath: "../secret.kt" } } }))).toBe(false);
+    expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "jetbrains", file: { displayPath: "C:\\Users\\alice\\secret.kt" } } }))).toBe(false);
+    expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "jetbrains", selection: { text: "x".repeat(8001) } } }))).toBe(false);
+    expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "jetbrains", tool: { name: "edit" } } }))).toBe(false);
+    expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "jetbrains", edit: { replaceRange: true } } }))).toBe(false);
   });
 
   it("logs rejected host messages", () => {

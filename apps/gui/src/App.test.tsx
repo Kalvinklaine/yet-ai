@@ -1514,6 +1514,110 @@ describe("active editor attached context", () => {
     expect(body.payload).not.toHaveProperty("modelId");
   });
 
+  it("renders and sends valid JetBrains attached context once when included", async () => {
+    const contextText = "val greeting = \"hello\"";
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    await dispatchHostContextSnapshot({
+      source: "jetbrains",
+      file: { displayPath: "src/Main.kt", workspaceRelativePath: "src/Main.kt", languageId: "kotlin" },
+      selection: { startLine: 7, startCharacter: 4, endLine: 7, endCharacter: 26, text: contextText },
+    });
+
+    expect(container?.textContent).toContain("Attached context");
+    expect(container?.textContent).toContain("jetbrains");
+    expect(container?.textContent).toContain("File: src/Main.kt");
+    expect(container?.textContent).toContain("Language: kotlin");
+    expect(container?.textContent).toContain("Selection: 7:4-7:26");
+    expect(container?.textContent).toContain("Preview: val greeting");
+    expect(attachedContextToggle().checked).toBe(true);
+    fetchMock.mockClear();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "hello with JetBrains context");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    expect(lastUserMessageBody().payload).toEqual({
+      content: "hello with JetBrains context",
+      context: {
+        kind: "active_editor",
+        source: "jetbrains",
+        file: { displayPath: "src/Main.kt", workspaceRelativePath: "src/Main.kt", languageId: "kotlin" },
+        selection: { startLine: 7, startCharacter: 4, endLine: 7, endCharacter: 26, text: contextText },
+      },
+    });
+    expect(container?.textContent).toContain("No valid active editor context is attached. Nothing will be included with the next message.");
+    expect(attachedContextToggleOptional()).toBeUndefined();
+
+    fetchMock.mockClear();
+    await act(async () => {
+      setTextareaValue(chatInput(), "second JetBrains message without old context");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    expect(lastUserMessageBody().payload).toEqual({ content: "second JetBrains message without old context" });
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(contextText);
+  });
+
+  it("does not send JetBrains attached context when the include toggle is disabled", async () => {
+    const contextText = "disabled JetBrains context";
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    await dispatchHostContextSnapshot({ source: "jetbrains", selection: { text: contextText } });
+    await act(async () => {
+      attachedContextToggle().click();
+    });
+    fetchMock.mockClear();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "send without JetBrains context");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    expect(lastUserMessageBody().payload).toEqual({ content: "send without JetBrains context" });
+    expect(container?.textContent).toContain("No valid active editor context is attached. Nothing will be included with the next message.");
+    expect(attachedContextToggleOptional()).toBeUndefined();
+    expect(browserStorageDump()).not.toContain(contextText);
+  });
+
+  it("redacts secret-like JetBrains selection text from preview logs and storage", async () => {
+    const rawSecret = "access_token=" + "j".repeat(64);
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses();
+    renderApp();
+
+    await dispatchHostContextSnapshot({
+      source: "jetbrains",
+      file: { displayPath: "src/Auth.kt", languageId: "kotlin" },
+      selection: { startLine: 2, startCharacter: 0, endLine: 2, endCharacter: 12, text: `val token = "${rawSecret}" Cookie: session=jetbrains-secret` },
+    });
+
+    expect(container?.textContent).toContain("jetbrains");
+    expect(container?.textContent).toContain("Preview: val token = \"[redacted]");
+    expect(container?.textContent).toContain("Host message host.contextSnapshot");
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("j".repeat(64));
+    expect(container?.textContent).not.toContain("jetbrains-secret");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(rawSecret);
+  });
+
   it("sends valid attached context once and clears preview for the next message", async () => {
     const contextText = "one shot selected context";
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
