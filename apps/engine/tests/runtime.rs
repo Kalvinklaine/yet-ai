@@ -140,6 +140,65 @@ async fn configure_openai_provider_without_models(
     assert!(!body.to_string().contains(api_key));
 }
 
+async fn configure_openai_provider_with_id(
+    app: axum::Router,
+    id: &str,
+    base_url: String,
+    api_key: &str,
+    model_id: &str,
+) {
+    let provider = json!({
+        "id": id,
+        "kind": "openai-compatible",
+        "displayName": id,
+        "enabled": true,
+        "baseUrl": base_url,
+        "auth": { "type": "api_key", "apiKey": api_key },
+        "models": [{ "id": model_id, "displayName": model_id }],
+        "capabilities": { "chat": true, "completion": false, "embeddings": false }
+    });
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert!(!body.to_string().contains(api_key));
+}
+
+async fn configure_openai_provider_without_models_with_id(
+    app: axum::Router,
+    id: &str,
+    base_url: String,
+    api_key: &str,
+) {
+    let provider = json!({
+        "id": id,
+        "kind": "openai-compatible",
+        "displayName": id,
+        "enabled": true,
+        "baseUrl": base_url,
+        "auth": { "type": "api_key", "apiKey": api_key },
+        "models": [],
+        "capabilities": { "chat": true, "completion": false, "embeddings": false }
+    });
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert!(!body.to_string().contains(api_key));
+}
+
 async fn configure_openai_api_provider(app: axum::Router, api_key: &str) {
     let provider = json!({
         "id": "openai-api",
@@ -4178,6 +4237,157 @@ async fn no_enabled_provider_replays_provider_not_configured_error_event() {
     let error = find_error_event(&events);
     assert_eq!(error["payload"]["code"], "provider_not_configured");
     assert_sanitized_sse_error(&text);
+}
+
+#[tokio::test]
+async fn provider_without_model_first_skips_to_later_usable_provider() {
+    let no_model_key = "sk-skip-no-model-secret-abcd";
+    let usable_key = "sk-skip-usable-secret-wxyz";
+    let (no_model_base_url, no_model_auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"unused\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let (usable_base_url, usable_auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"usable-provider\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider_without_models_with_id(
+        app.clone(),
+        "aaa-no-model",
+        no_model_base_url,
+        no_model_key,
+    )
+    .await;
+    configure_openai_provider_with_id(
+        app.clone(),
+        "zzz-usable-model",
+        usable_base_url,
+        usable_key,
+        "gpt-usable",
+    )
+    .await;
+    send_user_message(app.clone(), "chat-skip-no-model").await;
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-skip-no-model").await;
+    assert!(text.contains("usable-provider"));
+    assert!(!text.contains(no_model_key));
+    assert!(!text.contains(usable_key));
+    assert_sanitized_sse_error(&text);
+    assert_no_observed_auth(no_model_auth_receiver).await;
+    assert_first_auth_and_no_immediate_extra_auth(
+        usable_auth_receiver,
+        "Bearer sk-skip-usable-secret-wxyz",
+        "skip no-model first provider",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn chat_provider_selection_is_deterministic_by_provider_id() {
+    let first_key = "sk-deterministic-first-secret-abcd";
+    let second_key = "sk-deterministic-second-secret-wxyz";
+    let (first_base_url, first_auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"first-by-id\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let (second_base_url, second_auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"second-by-id\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider_with_id(
+        app.clone(),
+        "zzz-later-by-id",
+        second_base_url,
+        second_key,
+        "gpt-second",
+    )
+    .await;
+    configure_openai_provider_with_id(
+        app.clone(),
+        "aaa-first-by-id",
+        first_base_url,
+        first_key,
+        "gpt-first",
+    )
+    .await;
+    send_user_message(app.clone(), "chat-deterministic-selection").await;
+
+    let text = sse_text_from(
+        app,
+        "/v1/chats/subscribe?chat_id=chat-deterministic-selection",
+    )
+    .await;
+    assert!(text.contains("first-by-id"));
+    assert!(!text.contains("second-by-id"));
+    assert!(!text.contains(first_key));
+    assert!(!text.contains(second_key));
+    assert_first_auth_and_no_immediate_extra_auth(
+        first_auth_receiver,
+        "Bearer sk-deterministic-first-secret-abcd",
+        "deterministic provider id selection",
+    )
+    .await;
+    assert_no_observed_auth(second_auth_receiver).await;
+}
+
+#[tokio::test]
+async fn chat_selection_matches_first_model_summary_entry() {
+    let no_model_key = "sk-summary-no-model-secret-abcd";
+    let usable_key = "sk-summary-usable-secret-wxyz";
+    let (no_model_base_url, no_model_auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"unused\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let (usable_base_url, usable_auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"summary-selected\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider_without_models_with_id(
+        app.clone(),
+        "aaa-summary-no-model",
+        no_model_base_url,
+        no_model_key,
+    )
+    .await;
+    configure_openai_provider_with_id(
+        app.clone(),
+        "bbb-summary-usable",
+        usable_base_url,
+        usable_key,
+        "gpt-summary",
+    )
+    .await;
+
+    let (status, models) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/models", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(models["models"][0]["providerId"], "bbb-summary-usable");
+    assert_eq!(models["models"][0]["id"], "gpt-summary");
+
+    send_user_message(app.clone(), "chat-summary-parity").await;
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-summary-parity").await;
+    assert!(text.contains("summary-selected"));
+    assert!(!text.contains(no_model_key));
+    assert!(!text.contains(usable_key));
+    assert_no_observed_auth(no_model_auth_receiver).await;
+    assert_first_auth_and_no_immediate_extra_auth(
+        usable_auth_receiver,
+        "Bearer sk-summary-usable-secret-wxyz",
+        "summary parity provider selection",
+    )
+    .await;
 }
 
 #[tokio::test]
