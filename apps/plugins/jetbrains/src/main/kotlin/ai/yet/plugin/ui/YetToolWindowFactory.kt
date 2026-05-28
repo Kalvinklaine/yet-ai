@@ -1,6 +1,7 @@
 package ai.yet.plugin.ui
 
 import ai.yet.plugin.bridge.BridgeMessages
+import ai.yet.plugin.bridge.ActiveEditorContext
 import ai.yet.plugin.identity.ProductIdentity
 import ai.yet.plugin.runtime.RuntimeConnectionManager
 import ai.yet.plugin.runtime.RuntimeConnectionResult
@@ -10,6 +11,8 @@ import com.google.gson.JsonPrimitive
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.wm.ToolWindow
@@ -19,6 +22,7 @@ import com.intellij.ui.jcef.JBCefApp
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefJSQuery
 import java.awt.BorderLayout
+import java.nio.file.Path
 import javax.swing.JLabel
 import javax.swing.JPanel
 
@@ -55,7 +59,7 @@ class YetToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val contentFactory = ContentFactory.getInstance()
         val component = if (JBCefApp.isSupported()) {
-            YetBrowserPanel()
+            YetBrowserPanel(project)
         } else {
             JPanel(BorderLayout()).apply {
                 add(JLabel("Yet AI requires JCEF support to host the GUI shell."), BorderLayout.CENTER)
@@ -69,7 +73,7 @@ class YetToolWindowFactory : ToolWindowFactory {
     }
 }
 
-class YetBrowserPanel : JPanel(BorderLayout()), Disposable {
+class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
     private val logger = Logger.getInstance(YetBrowserPanel::class.java)
     private val browser = JBCefBrowser()
     private val query = JBCefJSQuery.create(browser as JBCefBrowser)
@@ -88,8 +92,7 @@ class YetBrowserPanel : JPanel(BorderLayout()), Disposable {
                 return@addHandler null
             }
             logger.info("Yet AI received gui.ready")
-            sendToGui(BridgeMessages.hostReady(latestConnection.settings, guiReady.requestId))
-            sendToGui(BridgeMessages.openedFromCommand())
+            deliverReadyMessages(latestConnection.settings, guiReady.requestId)
             null
         }
         val initialSettings = initialSettings()
@@ -102,12 +105,21 @@ class YetBrowserPanel : JPanel(BorderLayout()), Disposable {
             latestConnection = connection
             ApplicationManager.getApplication().invokeLater {
                 if (!disposed) {
-                    sendToGui(BridgeMessages.hostReady(connection.settings, "jb-runtime-ready"))
-                    sendToGui(BridgeMessages.openedFromCommand())
+                    deliverReadyMessages(connection.settings, "jb-runtime-ready")
                     connection.error?.let { error -> sendDiagnostic(error) }
                 }
             }
         }
+    }
+
+    private fun deliverReadyMessages(settings: RuntimeSettings, requestId: String?) {
+        JetBrainsReadyMessageDelivery.deliver(
+            settings = settings,
+            requestId = requestId,
+            send = ::sendToGui,
+            contextSupplier = { ActiveEditorContextCollector.snapshot(project) },
+            logContextStatus = { logger.info(it) },
+        )
     }
 
     private fun sendToGui(message: String) {
@@ -130,6 +142,69 @@ class YetBrowserPanel : JPanel(BorderLayout()), Disposable {
         RuntimeSettings.current()
     } catch (_: Exception) {
         RuntimeSettings.safeFallback()
+    }
+}
+
+object JetBrainsReadyMessageDelivery {
+    fun deliver(
+        settings: RuntimeSettings,
+        requestId: String?,
+        send: (String) -> Unit,
+        contextSupplier: () -> ActiveEditorContext.Snapshot?,
+        logContextStatus: (String) -> Unit,
+    ) {
+        send(BridgeMessages.hostReady(settings, requestId))
+        send(BridgeMessages.openedFromCommand())
+        val snapshot = try {
+            contextSupplier()
+        } catch (_: Exception) {
+            logContextStatus("Yet AI active editor context collection failed")
+            null
+        }
+        if (snapshot != null) {
+            send(BridgeMessages.contextSnapshot(snapshot, requestId))
+        }
+    }
+}
+
+object ActiveEditorContextCollector {
+    fun snapshot(project: Project): ActiveEditorContext.Snapshot? = ApplicationManager.getApplication().runReadAction<ActiveEditorContext.Snapshot?> {
+        val editor = FileEditorManager.getInstance(project).selectedTextEditor ?: return@runReadAction null
+        val virtualFile = FileDocumentManager.getInstance().getFile(editor.document)
+        val workspaceRelativePath = virtualFile?.let { workspaceRelativePath(project, it.path) }
+        val displayPath = workspaceRelativePath ?: virtualFile?.path
+        val languageId = virtualFile?.fileType?.name
+        val selection = editor.selectionModel
+        val hasSelection = selection.hasSelection()
+        val startOffset = selection.selectionStart.takeIf { hasSelection }
+        val endOffset = selection.selectionEnd.takeIf { hasSelection }
+        val startLine = startOffset?.let { editor.document.getLineNumber(it) }
+        val endLine = endOffset?.let { editor.document.getLineNumber(it) }
+        val startCharacter = startOffset?.let { it - editor.document.getLineStartOffset(editor.document.getLineNumber(it)) }
+        val endCharacter = endOffset?.let { it - editor.document.getLineStartOffset(editor.document.getLineNumber(it)) }
+        ActiveEditorContext.snapshot(
+            displayPath = displayPath,
+            workspaceRelativePath = workspaceRelativePath,
+            languageId = languageId,
+            selectionStartLine = startLine,
+            selectionStartCharacter = startCharacter,
+            selectionEndLine = endLine,
+            selectionEndCharacter = endCharacter,
+            selectionText = selection.selectedText.takeIf { hasSelection },
+        )
+    }
+
+    private fun workspaceRelativePath(project: Project, filePath: String): String? = try {
+        val basePath = project.basePath ?: return null
+        val base = Path.of(basePath).normalize()
+        val file = Path.of(filePath).normalize()
+        if (!file.startsWith(base)) {
+            null
+        } else {
+            base.relativize(file).joinToString("/") { it.toString() }
+        }
+    } catch (_: Exception) {
+        null
     }
 }
 
@@ -220,7 +295,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           }
           postToFrame(message);
         };
-        const isHostMessage = (message) => message && message.version === bridgeVersion && (message.type === "host.ready" || message.type === "host.openedFromCommand") && (message.payload === undefined || (typeof message.payload === "object" && message.payload !== null && !Array.isArray(message.payload)));
+        const isHostMessage = (message) => message && message.version === bridgeVersion && (message.type === "host.ready" || message.type === "host.openedFromCommand" || message.type === "host.contextSnapshot") && (message.payload === undefined || (typeof message.payload === "object" && message.payload !== null && !Array.isArray(message.payload)));
         const isGuiMessage = (message) => message && message.version === bridgeVersion && message.type === "gui.ready";
         window.__yetAiSendHostMessageToFrame = sendToFrame;
         window.addEventListener("message", (event) => {

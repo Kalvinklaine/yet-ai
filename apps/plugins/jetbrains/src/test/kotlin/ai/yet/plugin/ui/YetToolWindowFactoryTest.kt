@@ -1,5 +1,7 @@
 package ai.yet.plugin.ui
 
+import ai.yet.plugin.bridge.ActiveEditorContext
+import com.google.gson.JsonParser
 import ai.yet.plugin.runtime.RuntimeConnectionResult
 import ai.yet.plugin.runtime.RuntimeSettings
 import kotlin.test.Test
@@ -33,6 +35,7 @@ class YetToolWindowFactoryTest {
         assertContains(html, "if (!frameReady) {")
         assertContains(html, "pendingHostMessages.push(message)")
         assertContains(html, "flushPending()")
+        assertContains(html, "message.type === \"host.contextSnapshot\"")
         assertFalse(html.contains("isHostMessage(event.data)"))
         assertFalse(html.contains("window.postIntellijMessage({ version: bridgeVersion, type: \"gui.ready\""))
         assertFalse(html.contains("Yet AI host message"))
@@ -70,6 +73,70 @@ class YetToolWindowFactoryTest {
         gate.dispose()
         assertFalse(gate.deliver("second"))
         assertEquals(listOf("first"), executed)
+    }
+
+    @Test
+    fun readyDeliverySendsContextAfterReadyMessagesWhenSupplierReturnsSnapshot() {
+        val sent = mutableListOf<String>()
+        val logs = mutableListOf<String>()
+        val snapshot = ActiveEditorContext.snapshot(
+            displayPath = "src/App.kt",
+            workspaceRelativePath = "src/App.kt",
+            languageId = "kotlin",
+            selectionStartLine = 1,
+            selectionStartCharacter = 2,
+            selectionEndLine = 1,
+            selectionEndCharacter = 6,
+            selectionText = "safe text",
+        )
+
+        JetBrainsReadyMessageDelivery.deliver(
+            settings = RuntimeSettings("http://127.0.0.1:8001", null, "session-token"),
+            requestId = "ready-1",
+            send = { sent.add(it) },
+            contextSupplier = { snapshot },
+            logContextStatus = { logs.add(it) },
+        )
+
+        assertEquals(listOf("host.ready", "host.openedFromCommand", "host.contextSnapshot"), sent.map(::messageType))
+        assertContains(sent[0], "\"sessionToken\":\"session-token\"")
+        assertContains(sent[2], "\"source\":\"jetbrains\"")
+        assertContains(sent[2], "safe text")
+        assertEquals(emptyList(), logs)
+    }
+
+    @Test
+    fun readyDeliverySkipsContextWhenSupplierReturnsNull() {
+        val sent = mutableListOf<String>()
+
+        JetBrainsReadyMessageDelivery.deliver(
+            settings = RuntimeSettings("http://127.0.0.1:8001", null, null),
+            requestId = "ready-2",
+            send = { sent.add(it) },
+            contextSupplier = { null },
+            logContextStatus = {},
+        )
+
+        assertEquals(listOf("host.ready", "host.openedFromCommand"), sent.map(::messageType))
+    }
+
+    @Test
+    fun readyDeliveryKeepsReadyMessagesWhenSupplierThrowsAndLogsNoRawContext() {
+        val sent = mutableListOf<String>()
+        val logs = mutableListOf<String>()
+
+        JetBrainsReadyMessageDelivery.deliver(
+            settings = RuntimeSettings("http://127.0.0.1:8001", null, null),
+            requestId = "ready-3",
+            send = { sent.add(it) },
+            contextSupplier = { throw IllegalStateException("raw-selected-text /Users/person/private/File.kt") },
+            logContextStatus = { logs.add(it) },
+        )
+
+        assertEquals(listOf("host.ready", "host.openedFromCommand"), sent.map(::messageType))
+        assertEquals(listOf("Yet AI active editor context collection failed"), logs)
+        assertFalse(logs.joinToString("\n").contains("raw-selected-text"))
+        assertFalse(logs.joinToString("\n").contains("/Users/person/private/File.kt"))
     }
 
     @Test
@@ -127,6 +194,8 @@ class YetToolWindowFactoryTest {
         assertFalse(html.contains("<iframe title=\"Yet AI GUI\""))
     }
 }
+
+private fun messageType(message: String): String = JsonParser.parseString(message).asJsonObject.get("type").asString
 
 private class TestDeliveryGate(private val execute: (String) -> Unit) {
     private var disposed = false
