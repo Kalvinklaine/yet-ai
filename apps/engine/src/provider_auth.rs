@@ -23,6 +23,8 @@ const MOCK_TTL_SECONDS: i64 = 600;
 const CODEX_TTL_SECONDS: i64 = 600;
 const MAX_PROVIDER_AUTH_TTL_SECONDS: i64 = 3600;
 const CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS: u64 = 2;
+const CODEX_TOKEN_DEFAULT_EXPIRES_IN_SECONDS: i64 = 3600;
+const MAX_CODEX_TOKEN_EXPIRES_IN_SECONDS: i64 = 86400;
 const CODEX_AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
 const CODEX_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 const CODEX_CHAT_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
@@ -720,8 +722,8 @@ async fn codex_exchange(
         .as_deref()
         .map(|value| value.split_whitespace().map(str::to_string).collect())
         .unwrap_or_else(|| session.scopes.clone());
-    let expires_at =
-        (Utc::now() + Duration::seconds(token.expires_in.unwrap_or(3600))).to_rfc3339();
+    let expires_in = validate_codex_token_expires_in(token.expires_in)?;
+    let expires_at = (Utc::now() + Duration::seconds(expires_in)).to_rfc3339();
     let metadata = CodexAuthMetadata {
         provider: provider.to_string(),
         account_label: sanitized_account_label(token.account_label.as_deref()),
@@ -747,10 +749,16 @@ async fn exchange_codex_token(
         "client_id": CODEX_CLIENT_ID,
         "code_verifier": session.verifier,
     });
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(
-            CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS,
-        ))
+    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(
+        CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS,
+    ));
+    if reqwest::Url::parse(&session.token_endpoint_url)
+        .ok()
+        .is_some_and(|url| is_allowed_loopback_host(&url))
+    {
+        builder = builder.no_proxy();
+    }
+    let client = builder
         .build()
         .map_err(|_| ProviderAuthError::TokenExchange)?;
     let response = client
@@ -768,12 +776,78 @@ async fn exchange_codex_token(
         .map_err(|_| ProviderAuthError::TokenExchange)
 }
 
+fn validate_codex_token_expires_in(value: Option<i64>) -> Result<i64, ProviderAuthError> {
+    let value = value.unwrap_or(CODEX_TOKEN_DEFAULT_EXPIRES_IN_SECONDS);
+    if value <= 0 || value > MAX_CODEX_TOKEN_EXPIRES_IN_SECONDS {
+        return Err(ProviderAuthError::TokenExchange);
+    }
+    Ok(value)
+}
+
 fn sanitized_account_label(value: Option<&str>) -> String {
-    let label = value.unwrap_or("OpenAI account").trim();
-    if label.is_empty() {
+    let label = value
+        .unwrap_or("OpenAI account")
+        .trim()
+        .chars()
+        .map(|value| if value.is_control() { ' ' } else { value })
+        .collect::<String>();
+    let label = redact_account_label_secrets(&label)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let label = label.trim();
+    if label.is_empty() || label == "..." || label.contains("...") {
         return "OpenAI account".to_string();
     }
     label.chars().take(120).collect()
+}
+
+fn redact_account_label_secrets(value: &str) -> String {
+    value
+        .split_whitespace()
+        .map(|part| {
+            let lower = part.to_lowercase();
+            if lower.contains("bearer")
+                || lower.contains("api_key")
+                || lower.contains("apikey")
+                || lower.contains("access_token")
+                || lower.contains("refresh_token")
+                || lower.contains("oauth_code")
+                || lower.contains("code_verifier")
+                || lower.contains("client_secret")
+                || lower.contains("cookie")
+                || lower.contains("auth.json")
+                || lower.contains(".codex/")
+                || lower.starts_with("sk-")
+                || lower.starts_with("codex-")
+                || looks_like_jwt(part)
+                || looks_like_path(part)
+            {
+                "...".to_string()
+            } else {
+                part.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn looks_like_jwt(value: &str) -> bool {
+    let parts: Vec<_> = value.split('.').collect();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|part| part.len() >= 8 && is_url_safe_token(part))
+}
+
+fn looks_like_path(value: &str) -> bool {
+    value.starts_with('/') || value.starts_with('~') || value.contains("\\")
+}
+
+fn is_url_safe_token(value: &str) -> bool {
+    value
+        .chars()
+        .all(|value| value.is_ascii_alphanumeric() || value == '-' || value == '_')
 }
 
 async fn store_codex_connection(

@@ -370,6 +370,13 @@ async fn start_mock_codex_token_endpoint() -> (String, oneshot::Receiver<Value>)
 async fn start_mock_codex_token_endpoint_with(
     expires_in: i64,
 ) -> (String, oneshot::Receiver<Value>) {
+    start_mock_codex_token_endpoint_response(Some(expires_in), Some("mock-user@example.test")).await
+}
+
+async fn start_mock_codex_token_endpoint_response(
+    expires_in: Option<i64>,
+    account_label: Option<&'static str>,
+) -> (String, oneshot::Receiver<Value>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (body_sender, body_receiver) = oneshot::channel();
@@ -383,17 +390,29 @@ async fn start_mock_codex_token_endpoint_with(
                 if let Some(sender) = body_sender.lock().unwrap().take() {
                     let _ = sender.send(body);
                 }
+                let mut response = serde_json::Map::new();
+                response.insert(
+                    "access_token".to_string(),
+                    json!("codex-access-token-secret-abcd"),
+                );
+                response.insert(
+                    "refresh_token".to_string(),
+                    json!("codex-refresh-token-secret-wxyz"),
+                );
+                response.insert(
+                    "scope".to_string(),
+                    json!("openid profile email offline_access"),
+                );
+                if let Some(expires_in) = expires_in {
+                    response.insert("expires_in".to_string(), json!(expires_in));
+                }
+                if let Some(account_label) = account_label {
+                    response.insert("account_label".to_string(), json!(account_label));
+                }
                 (
                     StatusCode::OK,
                     [(header::CONTENT_TYPE, "application/json")],
-                    json!({
-                        "access_token": "codex-access-token-secret-abcd",
-                        "refresh_token": "codex-refresh-token-secret-wxyz",
-                        "expires_in": expires_in,
-                        "scope": "openid profile email offline_access",
-                        "account_label": "mock-user@example.test"
-                    })
-                    .to_string(),
+                    Value::Object(response).to_string(),
                 )
                     .into_response()
             }
@@ -1113,7 +1132,7 @@ async fn provider_auth_openai_experimental_exchange_stores_tokens_and_returns_co
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["configured"], true);
     assert_eq!(body["status"], "connected");
     assert_eq!(body["authSource"], "oauth");
@@ -1161,6 +1180,199 @@ async fn provider_auth_openai_experimental_exchange_stores_tokens_and_returns_co
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "connected");
     assert_provider_auth_response_has_no_codex_secrets(&body);
+}
+
+#[tokio::test]
+async fn provider_auth_openai_experimental_token_expires_in_missing_uses_bounded_default() {
+    let app = test_app();
+    let (token_endpoint_url, token_body_receiver) =
+        start_mock_codex_token_endpoint_response(None, Some("mock-user@example.test")).await;
+    let (status, start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(
+                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                    .to_string(),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap());
+    let exchange = json!({
+        "sessionId": start["sessionId"],
+        "state": state,
+        "code": "codex-code-default-ttl"
+    });
+    let before = chrono::Utc::now() + chrono::Duration::seconds(3500);
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from(exchange.to_string()),
+        ),
+    )
+    .await;
+    let after = chrono::Utc::now() + chrono::Duration::seconds(3700);
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "connected");
+    let expires_at = chrono::DateTime::parse_from_rfc3339(body["expiresAt"].as_str().unwrap())
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert!(expires_at >= before);
+    assert!(expires_at <= after);
+    assert_provider_auth_response_has_no_codex_secrets(&body);
+    let token_body = token_body_receiver.await.unwrap();
+    assert_eq!(token_body["code"], "codex-code-default-ttl");
+}
+
+#[tokio::test]
+async fn provider_auth_openai_experimental_token_expires_in_invalid_values_are_rejected() {
+    for (expires_in, code) in [
+        (0, "codex-code-zero-ttl-secret"),
+        (-1, "codex-code-negative-ttl-secret"),
+        (86401, "codex-code-huge-ttl-secret"),
+    ] {
+        let paths = test_storage_paths();
+        let app = app(AppState::with_storage_paths(
+            ProductIdentity::load().unwrap(),
+            AuthToken::new(TEST_TOKEN).unwrap(),
+            paths.clone(),
+        ));
+        let (token_endpoint_url, token_body_receiver) =
+            start_mock_codex_token_endpoint_with(expires_in).await;
+        let (status, start) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::POST,
+                "/v1/provider-auth/openai/start",
+                Body::from(
+                    json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                        .to_string(),
+                ),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap());
+        let exchange = json!({
+            "sessionId": start["sessionId"],
+            "state": state,
+            "code": code
+        });
+
+        let (status, body) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::POST,
+                "/v1/provider-auth/openai/exchange",
+                Body::from(exchange.to_string()),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body["error"], "provider auth token exchange failed");
+        assert_provider_auth_response_has_no_codex_secrets(&body);
+        assert!(!body.to_string().contains(code));
+        let token_body = token_body_receiver.await.unwrap();
+        assert_eq!(token_body["code"], code);
+        let store = FileSecretStore::new(&paths.config_dir);
+        assert_eq!(
+            store
+                .get_secret("openai", SecretKind::OAuthAccessToken)
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            store
+                .get_secret("openai", SecretKind::OAuthRefreshToken)
+                .await
+                .unwrap(),
+            None
+        );
+
+        let (status, pending) = json_response_from(
+            app,
+            authed_request(
+                Method::GET,
+                "/v1/provider-auth/openai/status",
+                Body::empty(),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(pending["status"], "pending");
+        assert_provider_auth_response_has_no_codex_secrets(&pending);
+    }
+}
+
+#[tokio::test]
+async fn provider_auth_openai_experimental_account_label_is_sanitized() {
+    let app = test_app();
+    let raw_label =
+        "  Bearer codex-label-secret access_token=secret\n/Users/example/.codex/auth.json  ";
+    let (token_endpoint_url, _) =
+        start_mock_codex_token_endpoint_response(Some(1800), Some(raw_label)).await;
+    let (status, start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(
+                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                    .to_string(),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap());
+    let exchange = json!({
+        "sessionId": start["sessionId"],
+        "state": state,
+        "code": "codex-code-label-secret"
+    });
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from(exchange.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accountLabel"], "OpenAI account");
+    let text = body.to_string().to_lowercase();
+    assert!(!text.contains("bearer"));
+    assert!(!text.contains("access_token"));
+    assert!(!text.contains("codex-label-secret"));
+    assert!(!text.contains("auth.json"));
+    assert!(!text.contains("/users/example"));
+    assert_provider_auth_response_has_no_codex_secrets(&body);
+
+    let (status, status_body) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/provider-auth/openai/status",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status_body["accountLabel"], "OpenAI account");
+    let text = status_body.to_string().to_lowercase();
+    assert!(!text.contains("bearer"));
+    assert!(!text.contains("access_token"));
+    assert!(!text.contains("codex-label-secret"));
+    assert!(!text.contains("auth.json"));
+    assert!(!text.contains("/users/example"));
+    assert_provider_auth_response_has_no_codex_secrets(&status_body);
 }
 
 #[tokio::test]
@@ -1789,7 +2001,10 @@ async fn provider_auth_openai_experimental_disconnect_clears_oauth_not_api_key_p
     assert_eq!(body["authSource"], "api_key");
     assert_eq!(body["configured"], true);
     assert_eq!(body["redacted"], "sk--...abcd");
-    assert!(body["message"].as_str().unwrap().contains("API-key provider configuration was left unchanged"));
+    assert!(body["message"]
+        .as_str()
+        .unwrap()
+        .contains("API-key provider configuration was left unchanged"));
     let text = body.to_string().to_lowercase();
     assert!(!text.contains("verifier"));
     assert!(!text.contains("access_token"));
@@ -3697,9 +3912,10 @@ async fn expired_experimental_openai_oauth_falls_back_to_provider_not_configured
         "data: {\"choices\":[{\"delta\":{\"content\":\"unused\"}}]}\n\ndata: [DONE]\n\n",
     )
     .await;
-    let (token_endpoint_url, _) = start_mock_codex_token_endpoint_with(0).await;
+    let (token_endpoint_url, _) = start_mock_codex_token_endpoint_with(1).await;
     let app = test_app();
     connect_experimental_openai_oauth(app.clone(), token_endpoint_url, chat_base_url).await;
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
 
     let (status, auth_status) = json_response_from(
         app.clone(),
