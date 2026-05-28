@@ -55,11 +55,29 @@ export type ModelsResponse = {
   models: ModelSummary[];
 };
 
+export type ChatContext = {
+  kind: "active_editor";
+  source: "browser" | "vscode" | "jetbrains";
+  file?: {
+    displayPath?: string;
+    workspaceRelativePath?: string;
+    languageId?: string;
+  };
+  selection?: {
+    startLine?: number;
+    startCharacter?: number;
+    endLine?: number;
+    endCharacter?: number;
+    text?: string;
+  };
+};
+
 export type ChatCommand = {
   requestId: string;
   type: "user_message" | "abort";
   payload?: {
     content: string;
+    context?: ChatContext;
   };
 };
 
@@ -169,11 +187,12 @@ export function sendUserMessage(
   settings: RuntimeSettings,
   chatId: string,
   content: string,
+  context?: ChatContext,
 ): Promise<RuntimeResult<ChatCommandResponse>> {
   const command: ChatCommand = {
     requestId: crypto.randomUUID(),
     type: "user_message",
-    payload: { content },
+    payload: context ? { content, context } : { content },
   };
   return runtimeFetch<ChatCommandResponse>(settings, `/v1/chats/${encodeURIComponent(chatId)}/commands`, {
     method: "POST",
