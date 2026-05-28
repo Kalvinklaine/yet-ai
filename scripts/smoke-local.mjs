@@ -12,6 +12,11 @@ const fakeNoModelApiKey = `sk-smoke-no-model-secret-${crypto.randomUUID()}`;
 const chatId = `smoke-chat-${crypto.randomUUID()}`;
 const providerId = `zzz-smoke-provider-${Date.now()}`;
 const noModelProviderId = `aaa-smoke-no-model-${Date.now()}`;
+const activeContextDisplayPath = "src/smoke-active-context.ts";
+const activeContextWorkspacePath = "packages/smoke/src/smoke-active-context.ts";
+const activeContextLanguage = "typescript";
+const activeContextSelection = `const smokeContextMarker = "ctx-${crypto.randomUUID()}";`;
+const activeContextUserRequest = "Explain the selected smoke context.";
 const timeoutMs = 120_000;
 
 let engine;
@@ -231,7 +236,25 @@ try {
     body: JSON.stringify({
       requestId: `smoke-command-${crypto.randomUUID()}`,
       type: "user_message",
-      payload: { content: "Say hello from local smoke test." }
+      payload: {
+        content: activeContextUserRequest,
+        context: {
+          kind: "active_editor",
+          source: "vscode",
+          file: {
+            displayPath: activeContextDisplayPath,
+            workspaceRelativePath: activeContextWorkspacePath,
+            languageId: activeContextLanguage
+          },
+          selection: {
+            startLine: 4,
+            startCharacter: 2,
+            endLine: 4,
+            endCharacter: 58,
+            text: activeContextSelection
+          }
+        }
+      }
     })
   });
   assert(commandResponse.accepted === true, "chat command was not accepted");
@@ -249,6 +272,16 @@ try {
   const parsedProviderBody = JSON.parse(providerRequestBody);
   assert(parsedProviderBody.stream === true, "provider request was not streaming");
   assert(parsedProviderBody.model === "smoke-model", "provider request used unexpected model");
+  const providerPrompt = parsedProviderBody.messages?.[0]?.content;
+  assert(parsedProviderBody.messages?.[0]?.role === "user", "provider request did not send user role");
+  assert(typeof providerPrompt === "string", "provider request did not include user message content");
+  assert(providerPrompt.includes("IDE context"), "provider request did not include IDE context marker");
+  assert(providerPrompt.includes(`File: ${activeContextDisplayPath}`), "provider request did not include safe file display path");
+  assert(providerPrompt.includes(`Workspace-relative path: ${activeContextWorkspacePath}`), "provider request did not include safe workspace-relative path");
+  assert(providerPrompt.includes(`Language: ${activeContextLanguage}`), "provider request did not include language id");
+  assert(providerPrompt.includes(activeContextSelection), "provider request did not include selected text");
+  assert(providerPrompt.includes("User request"), "provider request did not include user request marker");
+  assert(providerPrompt.includes(activeContextUserRequest), "provider request did not include original user request");
 
   const codexDisconnect = await requestJson(baseUrl, "/v1/provider-auth/openai/disconnect", {
     method: "POST",
@@ -305,6 +338,7 @@ try {
     { label: "Codex-like PKCE verifier", value: parsedCodexTokenBody.code_verifier },
     { label: "authorization header marker", value: "authorization: bearer" },
     { label: "Codex-like bearer marker", value: "bearer codex-smoke-access-token-secret" },
+    { label: "active editor selection context", value: activeContextSelection },
     { label: "cookie marker", value: "cookie" },
     { label: "auth file marker", value: "auth.json" },
     { label: "Codex auth file marker", value: ".codex/auth.json" },
