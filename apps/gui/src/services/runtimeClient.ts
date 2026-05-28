@@ -233,6 +233,16 @@ export function validateRuntimeBaseUrl(baseUrl: string): RuntimeResult<URL> {
     };
   }
 
+  if (parsed.pathname !== "/") {
+    return {
+      ok: false,
+      error: {
+        status: "configuration",
+        message: "Runtime base URL must not include a path.",
+      },
+    };
+  }
+
   return { ok: true, data: parsed };
 }
 
