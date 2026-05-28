@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use axum::response::sse::Event;
 use futures_util::StreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::{broadcast, oneshot, Mutex};
 use tokio::task::JoinHandle;
@@ -45,6 +45,40 @@ pub struct ChatEvent {
     pub payload: serde_json::Value,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChatContext {
+    kind: String,
+    source: String,
+    file: Option<ChatContextFile>,
+    selection: Option<ChatContextSelection>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ChatContextFile {
+    display_path: Option<String>,
+    workspace_relative_path: Option<String>,
+    language_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ChatContextSelection {
+    start_line: Option<u64>,
+    start_character: Option<u64>,
+    end_line: Option<u64>,
+    end_character: Option<u64>,
+    text: Option<String>,
+}
+
+const CHAT_CONTEXT_SELECTION_TEXT_MAX_CHARS: usize = 8_000;
+const CHAT_CONTEXT_TOTAL_MAX_CHARS: usize = 12_000;
+const CHAT_CONTEXT_DISPLAY_PATH_MAX_CHARS: usize = 256;
+const CHAT_CONTEXT_WORKSPACE_PATH_MAX_CHARS: usize = 512;
+const CHAT_CONTEXT_LANGUAGE_MAX_CHARS: usize = 64;
+const CHAT_CONTEXT_MAX_POSITION: u64 = 1_000_000;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ChatError {
     #[error("no enabled openai-compatible provider is configured")]
@@ -82,6 +116,7 @@ impl ChatRuntime {
         config_dir: std::path::PathBuf,
         chat_id: String,
         content: String,
+        context: Option<ChatContext>,
     ) {
         let runtime = self.clone();
         let stream_id = {
@@ -101,7 +136,7 @@ impl ChatRuntime {
         let handle = tokio::spawn(async move {
             if start_receiver.await.is_ok() {
                 runtime
-                    .run_stream(config_dir, task_chat_id, stream_id, content)
+                    .run_stream(config_dir, task_chat_id, stream_id, content, context)
                     .await;
             }
         });
@@ -187,10 +222,12 @@ impl ChatRuntime {
         chat_id: String,
         stream_id: u64,
         content: String,
+        context: Option<ChatContext>,
     ) {
         self.push_event(&chat_id, "stream_started", json!({ "role": "assistant" }))
             .await;
-        match self.stream_provider(&config_dir, &chat_id, &content).await {
+        let prompt = assemble_provider_prompt(&content, context.as_ref());
+        match self.stream_provider(&config_dir, &chat_id, &prompt).await {
             Ok(()) => {
                 self.push_event(
                     &chat_id,
@@ -254,6 +291,167 @@ impl ChatRuntime {
             }
         }
     }
+}
+
+impl ChatContext {
+    pub fn from_value(value: serde_json::Value) -> Option<Self> {
+        let context: Self = serde_json::from_value(value).ok()?;
+        context.is_valid().then_some(context)
+    }
+
+    fn is_valid(&self) -> bool {
+        if self.kind != "active_editor" {
+            return false;
+        }
+        if !matches!(self.source.as_str(), "vscode" | "jetbrains" | "browser") {
+            return false;
+        }
+        let file_valid = self.file.as_ref().is_none_or(ChatContextFile::is_valid);
+        let selection_valid = self
+            .selection
+            .as_ref()
+            .is_none_or(ChatContextSelection::is_valid);
+        file_valid && selection_valid && self.prompt_chars() <= CHAT_CONTEXT_TOTAL_MAX_CHARS
+    }
+
+    fn prompt_chars(&self) -> usize {
+        self.source.chars().count()
+            + self.file.as_ref().map_or(0, ChatContextFile::prompt_chars)
+            + self
+                .selection
+                .as_ref()
+                .map_or(0, ChatContextSelection::prompt_chars)
+    }
+}
+
+impl ChatContextFile {
+    fn is_valid(&self) -> bool {
+        let has_field = self.display_path.is_some()
+            || self.workspace_relative_path.is_some()
+            || self.language_id.is_some();
+        has_field
+            && self
+                .display_path
+                .as_ref()
+                .is_none_or(|value| valid_context_path(value, CHAT_CONTEXT_DISPLAY_PATH_MAX_CHARS))
+            && self.workspace_relative_path.as_ref().is_none_or(|value| {
+                valid_context_path(value, CHAT_CONTEXT_WORKSPACE_PATH_MAX_CHARS)
+            })
+            && self
+                .language_id
+                .as_ref()
+                .is_none_or(|value| valid_context_language(value))
+    }
+
+    fn prompt_chars(&self) -> usize {
+        self.display_path
+            .as_ref()
+            .map_or(0, |value| value.chars().count())
+            + self
+                .workspace_relative_path
+                .as_ref()
+                .map_or(0, |value| value.chars().count())
+            + self
+                .language_id
+                .as_ref()
+                .map_or(0, |value| value.chars().count())
+    }
+}
+
+impl ChatContextSelection {
+    fn is_valid(&self) -> bool {
+        let has_field = self.start_line.is_some()
+            || self.start_character.is_some()
+            || self.end_line.is_some()
+            || self.end_character.is_some()
+            || self.text.is_some();
+        has_field
+            && self
+                .start_line
+                .is_none_or(|value| value <= CHAT_CONTEXT_MAX_POSITION)
+            && self
+                .start_character
+                .is_none_or(|value| value <= CHAT_CONTEXT_MAX_POSITION)
+            && self
+                .end_line
+                .is_none_or(|value| value <= CHAT_CONTEXT_MAX_POSITION)
+            && self
+                .end_character
+                .is_none_or(|value| value <= CHAT_CONTEXT_MAX_POSITION)
+            && self
+                .text
+                .as_ref()
+                .is_none_or(|value| value.chars().count() <= CHAT_CONTEXT_SELECTION_TEXT_MAX_CHARS)
+    }
+
+    fn prompt_chars(&self) -> usize {
+        self.text.as_ref().map_or(0, |value| value.chars().count())
+    }
+}
+
+fn valid_context_path(value: &str, max_chars: usize) -> bool {
+    !value.is_empty()
+        && value.chars().count() <= max_chars
+        && !value.starts_with('/')
+        && !value.starts_with('~')
+        && !value.contains('\\')
+        && !value.contains(':')
+        && !value.chars().any(|value| value.is_control())
+        && value
+            .split('/')
+            .all(|part| !matches!(part, "" | "." | ".."))
+}
+
+fn valid_context_language(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().count() <= CHAT_CONTEXT_LANGUAGE_MAX_CHARS
+        && value
+            .chars()
+            .all(|value| value.is_ascii_alphanumeric() || matches!(value, '_' | '.' | '+' | '-'))
+}
+
+fn assemble_provider_prompt(content: &str, context: Option<&ChatContext>) -> String {
+    let Some(context) = context else {
+        return content.to_string();
+    };
+    let mut lines = vec![
+        "IDE context".to_string(),
+        format!("Source: {}", context.source),
+    ];
+    if let Some(file) = &context.file {
+        if let Some(value) = &file.display_path {
+            lines.push(format!("File: {value}"));
+        }
+        if let Some(value) = &file.workspace_relative_path {
+            lines.push(format!("Workspace-relative path: {value}"));
+        }
+        if let Some(value) = &file.language_id {
+            lines.push(format!("Language: {value}"));
+        }
+    }
+    if let Some(selection) = &context.selection {
+        if selection.start_line.is_some()
+            || selection.start_character.is_some()
+            || selection.end_line.is_some()
+            || selection.end_character.is_some()
+        {
+            lines.push(format!(
+                "Range: {}:{}-{}:{}",
+                selection.start_line.unwrap_or(0),
+                selection.start_character.unwrap_or(0),
+                selection.end_line.unwrap_or(0),
+                selection.end_character.unwrap_or(0)
+            ));
+        }
+        if let Some(value) = &selection.text {
+            lines.push("Selection:".to_string());
+            lines.push(value.clone());
+        }
+    }
+    lines.push(String::new());
+    lines.push("User request".to_string());
+    lines.push(content.to_string());
+    lines.join("\n")
 }
 
 async fn select_chat_provider(config_dir: &std::path::Path) -> Result<ChatProvider, ChatError> {
