@@ -167,6 +167,17 @@ try {
   <main data-yet-ai-packaged-gui-marker="behavioral-safety-check">Fake packaged GUI marker</main>
   <link rel="stylesheet" href="./assets/app.css">
   <script type="module" src="/assets/app.js"></script>
+  <script src="../escape.js"></script>
+  <script src="/%2e%2e/escape.js"></script>
+  <script src="/assets\\escape.js"></script>
+  <script src="/assets//empty.js"></script>
+  <script src="/assets/app.js?token=secret"></script>
+  <script src="/assets/app.js#fragment"></script>
+  <script src="//example.invalid/remote.js"></script>
+  <script src="/http://example.invalid/remote.js"></script>
+  <script src="https://example.invalid/remote.js"></script>
+  <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+  <a href="#local-anchor">anchor</a>
 </body>
 </html>`,
   );
@@ -204,6 +215,43 @@ try {
   for (const expectedAssetUri of expectedAssetUris) {
     if (!packagedHtml.includes(expectedAssetUri)) {
       throw new Error(`VS Code behavioral webview render did not rewrite packaged asset URI: ${expectedAssetUri}`);
+    }
+  }
+
+  const forbiddenAssetUriFragments = [
+    "vscode-resource://yet-ai-test/media/escape.js",
+    "vscode-resource://yet-ai-test/escape.js",
+    "vscode-resource://yet-ai-test/media/gui/../escape.js",
+    "vscode-resource://yet-ai-test/media/gui/%2e%2e/escape.js",
+    "vscode-resource://yet-ai-test/media/gui/assets\\escape.js",
+    "vscode-resource://yet-ai-test/media/gui/assets//empty.js",
+    "vscode-resource://yet-ai-test/media/gui/assets/app.js?token=secret",
+    "vscode-resource://yet-ai-test/media/gui/assets/app.js#fragment",
+    "vscode-resource://yet-ai-test/media/gui/http://example.invalid/remote.js",
+    "vscode-resource://yet-ai-test/media/gui/example.invalid/remote.js",
+  ];
+  for (const forbiddenAssetUriFragment of forbiddenAssetUriFragments) {
+    if (packagedHtml.includes(forbiddenAssetUriFragment)) {
+      throw new Error(`VS Code behavioral webview render rewrote unsafe packaged asset URI: ${forbiddenAssetUriFragment}`);
+    }
+  }
+
+  const preservedUnsafeReferences = [
+    'src="../escape.js"',
+    'src="/%2e%2e/escape.js"',
+    'src="/assets\\escape.js"',
+    'src="/assets//empty.js"',
+    'src="/assets/app.js?token=secret"',
+    'src="/assets/app.js#fragment"',
+    'src="//example.invalid/remote.js"',
+    'src="/http://example.invalid/remote.js"',
+    'src="https://example.invalid/remote.js"',
+    'src="data:image/gif;base64,R0lGODlhAQABAAAAACw="',
+    'href="#local-anchor"',
+  ];
+  for (const preservedUnsafeReference of preservedUnsafeReferences) {
+    if (!packagedHtml.includes(preservedUnsafeReference)) {
+      throw new Error(`VS Code behavioral webview render unexpectedly changed unsafe packaged reference: ${preservedUnsafeReference}`);
     }
   }
 } finally {

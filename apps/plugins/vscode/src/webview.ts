@@ -192,13 +192,43 @@ function findPackagedGui(extensionUri: vscode.Uri): PackagedGui | undefined {
 function rewritePackagedGuiHtml(html: string, root: vscode.Uri, webview: vscode.Webview): string {
   const body = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? "";
   return body.replace(/\b(src|href)=("|')(.+?)\2/g, (_match: string, attribute: string, quote: string, value: string) => {
-    if (!value.startsWith("./") && !value.startsWith("/")) {
-      return `${attribute}=${quote}${value}${quote}`;
-    }
-    const relativePath = value.replace(/^\.\//, "").replace(/^\//, "");
-    const uri = webview.asWebviewUri(vscode.Uri.joinPath(root, ...relativePath.split("/")));
-    return `${attribute}=${quote}${uri.toString()}${quote}`;
+    const uri = resolvePackagedAssetUri(value, root, webview);
+    return `${attribute}=${quote}${uri ?? value}${quote}`;
   });
+}
+
+function resolvePackagedAssetUri(value: string, root: vscode.Uri, webview: vscode.Webview): string | undefined {
+  if (!value.startsWith("./") && !value.startsWith("/")) {
+    return undefined;
+  }
+  if (value.length === 0 || value.startsWith("//") || value.includes("\\") || value.includes("?") || value.includes("#")) {
+    return undefined;
+  }
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)) {
+    return undefined;
+  }
+
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    return undefined;
+  }
+  if (decoded.includes("\\") || decoded.includes("?") || decoded.includes("#")) {
+    return undefined;
+  }
+
+  const relativePath = decoded.replace(/^\.\//, "").replace(/^\//, "");
+  if (relativePath.length === 0 || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(relativePath)) {
+    return undefined;
+  }
+
+  const segments = relativePath.split("/");
+  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) {
+    return undefined;
+  }
+
+  return webview.asWebviewUri(vscode.Uri.joinPath(root, ...segments)).toString();
 }
 
 function isMissingFileError(error: unknown): boolean {
