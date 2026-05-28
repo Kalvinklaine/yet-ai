@@ -230,32 +230,13 @@ impl ChatRuntime {
         chat_id: &str,
         content: &str,
     ) -> Result<(), ChatError> {
-        let selected = providers::list_provider_configs(config_dir)
-            .await
-            .map_err(|_| ChatError::ProviderConfig)?
-            .into_iter()
-            .find(|provider| provider.enabled && provider.kind == ProviderKind::OpenAiCompatible)
-            .map(ChatProvider::OpenAiCompatible);
-        let selected = match selected {
-            Some(provider) => provider,
-            None => provider_auth::experimental_codex_chat_auth(config_dir)
-                .await
-                .map_err(|_| ChatError::ProviderConfig)?
-                .map(ChatProvider::ExperimentalCodex)
-                .ok_or(ChatError::NoProvider)?,
-        };
+        let selected = select_chat_provider(config_dir).await?;
         match selected {
-            ChatProvider::OpenAiCompatible(provider) => {
+            ChatProvider::OpenAiCompatible { provider_id, model } => {
                 let provider =
-                    providers::get_provider_config_with_secrets(config_dir, &provider.id)
+                    providers::get_provider_config_with_secrets(config_dir, &provider_id)
                         .await
                         .map_err(|_| ChatError::ProviderConfig)?;
-                let model = provider
-                    .models
-                    .first()
-                    .ok_or(ChatError::NoModel)?
-                    .id
-                    .clone();
                 openai_compatible_stream(self, &self.client, &provider, &model, chat_id, content)
                     .await
             }
@@ -275,8 +256,38 @@ impl ChatRuntime {
     }
 }
 
+async fn select_chat_provider(config_dir: &std::path::Path) -> Result<ChatProvider, ChatError> {
+    let providers = providers::list_provider_configs(config_dir)
+        .await
+        .map_err(|_| ChatError::ProviderConfig)?;
+    let mut saw_enabled_openai_compatible = false;
+    for provider in providers
+        .into_iter()
+        .filter(|provider| provider.enabled && provider.kind == ProviderKind::OpenAiCompatible)
+    {
+        saw_enabled_openai_compatible = true;
+        if let Some(model) = provider.models.first() {
+            return Ok(ChatProvider::OpenAiCompatible {
+                provider_id: provider.id,
+                model: model.id.clone(),
+            });
+        }
+    }
+    if let Some(auth) = provider_auth::experimental_codex_chat_auth(config_dir)
+        .await
+        .map_err(|_| ChatError::ProviderConfig)?
+    {
+        return Ok(ChatProvider::ExperimentalCodex(auth));
+    }
+    if saw_enabled_openai_compatible {
+        Err(ChatError::NoModel)
+    } else {
+        Err(ChatError::NoProvider)
+    }
+}
+
 enum ChatProvider {
-    OpenAiCompatible(StoredProviderConfig),
+    OpenAiCompatible { provider_id: String, model: String },
     ExperimentalCodex(ExperimentalCodexChatAuth),
 }
 
