@@ -612,6 +612,24 @@ fn assert_provider_auth_response_has_no_codex_secrets(body: &Value) {
     assert!(!text.contains("codex-code"));
 }
 
+fn assert_no_codex_oauth_secret_files(paths: &StoragePaths) {
+    let store = FileSecretStore::new(&paths.config_dir);
+    for kind in [
+        SecretKind::OAuthAccessToken,
+        SecretKind::OAuthRefreshToken,
+        SecretKind::AuthMetadata,
+    ] {
+        let path = store.secret_path("openai", kind).unwrap();
+        if path.is_file() {
+            let content = std::fs::read_to_string(&path).unwrap();
+            assert!(!content.contains("codex-access-token-secret"));
+            assert!(!content.contains("codex-refresh-token-secret"));
+            assert!(!content.contains("codex-code"));
+            panic!("unexpected OAuth secret file at {}", path.display());
+        }
+    }
+}
+
 async fn empty_response_from(app: axum::Router, request: Request<Body>) -> StatusCode {
     app.oneshot(request).await.unwrap().status()
 }
@@ -1137,6 +1155,136 @@ async fn provider_auth_openai_experimental_exchange_stores_tokens_and_returns_co
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "connected");
     assert_provider_auth_response_has_no_codex_secrets(&body);
+}
+
+#[tokio::test]
+async fn provider_auth_openai_experimental_access_write_failure_leaves_no_oauth_secrets() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let store = FileSecretStore::new(&paths.config_dir);
+    let access_path = store
+        .secret_path("openai", SecretKind::OAuthAccessToken)
+        .unwrap();
+    std::fs::create_dir_all(&access_path).unwrap();
+    let (token_endpoint_url, token_body_receiver) = start_mock_codex_token_endpoint().await;
+    let (status, start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(
+                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                    .to_string(),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap());
+    let exchange = json!({
+        "sessionId": start["sessionId"],
+        "state": state,
+        "code": "codex-code-access-storage-failure"
+    });
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from(exchange.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["error"], "provider auth storage error");
+    assert_provider_auth_response_has_no_codex_secrets(&body);
+    let token_body = token_body_receiver.await.unwrap();
+    assert_eq!(token_body["code"], "codex-code-access-storage-failure");
+    assert_eq!(
+        store
+            .get_secret("openai", SecretKind::OAuthRefreshToken)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        store
+            .get_secret("openai", SecretKind::AuthMetadata)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_no_codex_oauth_secret_files(&paths);
+}
+
+#[tokio::test]
+async fn provider_auth_openai_experimental_refresh_write_failure_removes_access_secret() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let store = FileSecretStore::new(&paths.config_dir);
+    let refresh_path = store
+        .secret_path("openai", SecretKind::OAuthRefreshToken)
+        .unwrap();
+    std::fs::create_dir_all(&refresh_path).unwrap();
+    let (token_endpoint_url, token_body_receiver) = start_mock_codex_token_endpoint().await;
+    let (status, start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(
+                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                    .to_string(),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap());
+    let exchange = json!({
+        "sessionId": start["sessionId"],
+        "state": state,
+        "code": "codex-code-refresh-storage-failure"
+    });
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from(exchange.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["error"], "provider auth storage error");
+    assert_provider_auth_response_has_no_codex_secrets(&body);
+    let token_body = token_body_receiver.await.unwrap();
+    assert_eq!(token_body["code"], "codex-code-refresh-storage-failure");
+    assert_eq!(
+        store
+            .get_secret("openai", SecretKind::OAuthAccessToken)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        store
+            .get_secret("openai", SecretKind::AuthMetadata)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_no_codex_oauth_secret_files(&paths);
 }
 
 #[tokio::test]
