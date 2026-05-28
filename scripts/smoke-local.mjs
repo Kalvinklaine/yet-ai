@@ -8,8 +8,10 @@ import { mkdir, rm } from "node:fs/promises";
 const rootDir = process.cwd();
 const token = `smoke-token-${crypto.randomUUID()}`;
 const fakeApiKey = `sk-smoke-secret-${crypto.randomUUID()}`;
+const fakeNoModelApiKey = `sk-smoke-no-model-secret-${crypto.randomUUID()}`;
 const chatId = `smoke-chat-${crypto.randomUUID()}`;
-const providerId = `smoke-provider-${Date.now()}`;
+const providerId = `zzz-smoke-provider-${Date.now()}`;
+const noModelProviderId = `aaa-smoke-no-model-${Date.now()}`;
 const timeoutMs = 120_000;
 
 let engine;
@@ -183,21 +185,21 @@ try {
   assert(parsedCodexChatBody.messages?.[0]?.role === "user", "experimental Codex-like chat request did not send user role");
   assert(parsedCodexChatBody.messages?.[0]?.content === "Say hello through experimental mock OAuth.", "experimental Codex-like chat request did not send first message content");
 
-  const codexDisconnect = await requestJson(baseUrl, "/v1/provider-auth/openai/disconnect", {
+  const noModelProviderResponse = await requestJson(baseUrl, "/v1/providers", {
     method: "POST",
-    body: JSON.stringify({})
+    body: JSON.stringify({
+      id: noModelProviderId,
+      kind: "openai-compatible",
+      displayName: "Smoke No Model Provider",
+      enabled: true,
+      baseUrl: `${mockProvider.baseUrl}/v1`,
+      auth: { type: "api_key", apiKey: fakeNoModelApiKey },
+      models: [],
+      capabilities: { chat: true, completion: false, embeddings: false }
+    })
   });
-  assert(codexDisconnect.success === true, "experimental Codex-like disconnect did not report success");
-  assert(codexDisconnect.status === "revoked", "experimental Codex-like disconnect did not return revoked status");
-  assert(codexDisconnect.authSource === "none", "experimental Codex-like disconnect did not return sanitized auth source");
-  assert(codexDisconnect.sessionId === undefined, "experimental Codex-like disconnect exposed session id");
-  assert(codexDisconnect.authorizationUrl === undefined, "experimental Codex-like disconnect exposed authorization URL");
-  assert(codexDisconnect.redacted === undefined, "experimental Codex-like disconnect exposed redacted credential hint");
-
-  const codexClearedStatus = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
-  assert(codexClearedStatus.configured === false, "experimental Codex-like cleared status was unexpectedly configured");
-  assert(codexClearedStatus.status === "login_unavailable", "experimental Codex-like cleared status was not login_unavailable");
-  assert(codexClearedStatus.authSource === "none", "experimental Codex-like cleared status did not return sanitized auth source");
+  assert(noModelProviderResponse.id === noModelProviderId, "no-model provider create returned unexpected provider id");
+  assert(noModelProviderResponse.auth?.configured === true, "no-model provider create did not report configured auth");
 
   const providerResponse = await requestJson(baseUrl, "/v1/providers", {
     method: "POST",
@@ -214,6 +216,14 @@ try {
   });
   assert(providerResponse.id === providerId, "provider create returned unexpected provider id");
   assert(providerResponse.auth?.configured === true, "provider create did not report configured auth");
+
+  const modelsAfterProviders = await requestJson(baseUrl, "/v1/models");
+  assert(modelsAfterProviders.models?.[0]?.providerId === providerId, "models summary did not select the first usable provider after no-model provider");
+  assert(modelsAfterProviders.models?.[0]?.id === "smoke-model", "models summary did not expose the configured smoke model");
+
+  const providerAuthWithApiKey = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
+  assert(providerAuthWithApiKey.configured === true, "provider-auth status with API-key provider was not configured");
+  assert(providerAuthWithApiKey.supportsApiKey === true, "provider-auth status with API-key provider did not support API-key fallback");
 
   const subscription = subscribe(baseUrl, chatId);
   const commandResponse = await requestJson(baseUrl, `/v1/chats/${encodeURIComponent(chatId)}/commands`, {
@@ -235,9 +245,26 @@ try {
   assertMonotonicSequence(events);
 
   assert(providerAuth === `Bearer ${fakeApiKey}`, "mock provider did not receive bearer API key");
+  assert(codexChatRequestCount === 1, "API-key provider path did not take precedence over connected experimental OAuth fallback");
   const parsedProviderBody = JSON.parse(providerRequestBody);
   assert(parsedProviderBody.stream === true, "provider request was not streaming");
   assert(parsedProviderBody.model === "smoke-model", "provider request used unexpected model");
+
+  const codexDisconnect = await requestJson(baseUrl, "/v1/provider-auth/openai/disconnect", {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+  assert(codexDisconnect.success === true, "experimental Codex-like disconnect did not report success");
+  assert(codexDisconnect.status === "revoked", "experimental Codex-like disconnect did not return revoked status");
+  assert(codexDisconnect.authSource === "none", "experimental Codex-like disconnect did not return sanitized auth source");
+  assert(codexDisconnect.sessionId === undefined, "experimental Codex-like disconnect exposed session id");
+  assert(codexDisconnect.authorizationUrl === undefined, "experimental Codex-like disconnect exposed authorization URL");
+  assert(codexDisconnect.redacted === undefined, "experimental Codex-like disconnect exposed redacted credential hint");
+
+  const codexClearedStatus = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
+  assert(codexClearedStatus.configured === false, "experimental Codex-like cleared status was unexpectedly configured");
+  assert(codexClearedStatus.status === "login_unavailable", "experimental Codex-like cleared status was not login_unavailable");
+  assert(codexClearedStatus.authSource === "none", "experimental Codex-like cleared status did not return sanitized auth source");
 
   const clientVisible = JSON.stringify({
     ping,
@@ -256,7 +283,10 @@ try {
     codexRaw,
     codexDisconnect,
     codexClearedStatus,
+    noModelProviderResponse,
     providerResponse,
+    modelsAfterProviders,
+    providerAuthWithApiKey,
     commandResponse,
     events,
     raw
@@ -264,6 +294,7 @@ try {
   const secretMarkers = [
     { label: "runtime token", value: token },
     { label: "provider API key", value: fakeApiKey },
+    { label: "no-model provider API key", value: fakeNoModelApiKey },
     { label: "mock access token", value: "fake-access-token" },
     { label: "mock refresh token", value: "fake-refresh-token" },
     { label: "mock verifier", value: "mock-verifier" },
