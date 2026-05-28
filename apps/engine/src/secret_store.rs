@@ -254,13 +254,15 @@ async fn write_secret_record(path: &Path, record: &SecretRecord) -> Result<(), S
         set_private_permissions(&temp_path).await?;
         tokio::fs::rename(&temp_path, path)
             .await
-            .map_err(|_| SecretStoreError::Storage)?;
-        set_private_permissions(path).await?;
-        sync_parent_directory(path).await
+            .map_err(|_| SecretStoreError::Storage)
     }
     .await;
     match result {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            let _ = set_private_permissions(path).await;
+            let _ = sync_parent_directory(path).await;
+            Ok(())
+        }
         Err(error) => {
             cleanup_temp_secret_file(&temp_path).await?;
             Err(error)
@@ -292,19 +294,22 @@ async fn sync_parent_directory(path: &Path) -> Result<(), SecretStoreError> {
     tokio::task::spawn_blocking(move || {
         match std::fs::File::open(dir).and_then(|directory| directory.sync_all()) {
             Ok(()) => Ok(()),
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported
-                ) =>
-            {
-                Ok(())
-            }
+            Err(error) if is_unsupported_directory_sync_error(&error) => Ok(()),
             Err(_) => Err(SecretStoreError::Storage),
         }
     })
     .await
     .map_err(|_| SecretStoreError::Storage)?
+}
+
+#[cfg(unix)]
+fn is_unsupported_directory_sync_error(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::PermissionDenied
+            | std::io::ErrorKind::Unsupported
+            | std::io::ErrorKind::InvalidInput
+    ) || error.raw_os_error() == Some(22)
 }
 #[cfg(not(unix))]
 async fn sync_parent_directory(_path: &Path) -> Result<(), SecretStoreError> {
@@ -526,6 +531,21 @@ mod tests {
             .expect("valid path");
 
         super::sync_parent_directory(&secret_path).await.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_sync_unsupported_errors_are_tolerated() {
+        for kind in [
+            std::io::ErrorKind::PermissionDenied,
+            std::io::ErrorKind::Unsupported,
+            std::io::ErrorKind::InvalidInput,
+        ] {
+            let error = std::io::Error::from(kind);
+            assert!(super::is_unsupported_directory_sync_error(&error));
+        }
+        let error = std::io::Error::from_raw_os_error(22);
+        assert!(super::is_unsupported_directory_sync_error(&error));
     }
 
     #[tokio::test]
