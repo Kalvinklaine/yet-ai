@@ -19,6 +19,8 @@ const requiredSnippets = [
   "event.origin !== frameTargetOrigin",
   "isFrameGuiMessage(event.data)",
   "latestHostReady = event.data",
+  "host.contextSnapshot",
+  "createHostContextSnapshot(message.requestId)",
   "replayHostReady();",
   "crypto.randomBytes(24).toString(\"base64url\")",
   ".replace(/</g, \"\\\\u003c\")",
@@ -64,25 +66,38 @@ if (!/Object\.keys\(message\)\.every\(\(key\) => key === "version" \|\| key === 
 }
 
 const originalLoad = Module._load;
+const fakeVscode = {
+  Uri: {
+    joinPath(base, ...segments) {
+      return { fsPath: path.join(base.fsPath, ...segments), scheme: base.scheme ?? "file", path: path.posix.join(base.path ?? base.fsPath, ...segments) };
+    },
+    parse(value) {
+      return { fsPath: value, scheme: "file", path: value };
+    },
+  },
+  window: {
+    activeTextEditor: undefined,
+  },
+  workspace: {
+    getWorkspaceFolder() {
+      return undefined;
+    },
+    asRelativePath(uri) {
+      return uri.fsPath;
+    },
+  },
+};
 let createHostReady;
+let createHostContextSnapshot;
 let renderWebviewHtml;
 try {
   Module._load = function load(request, parent, isMain) {
     if (request === "vscode") {
-      return {
-        Uri: {
-          joinPath(base, ...segments) {
-            return { fsPath: path.join(base.fsPath, ...segments) };
-          },
-          parse(value) {
-            return { fsPath: value };
-          },
-        },
-      };
+      return fakeVscode;
     }
     return originalLoad.call(this, request, parent, isMain);
   };
-  ({ createHostReady, renderWebviewHtml } = await import("../out/webview.js"));
+  ({ createHostReady, createHostContextSnapshot, renderWebviewHtml } = await import("../out/webview.js"));
 } finally {
   Module._load = originalLoad;
 }
@@ -138,6 +153,31 @@ const connection = {
 
 const html = renderWebviewHtml(webview, extensionUri, identity, connection);
 const hostReady = createHostReady(identity, connection, "valid-gui-ready-request");
+const workspaceRoot = path.join(os.tmpdir(), "yet-ai-safe-workspace");
+fakeVscode.workspace.getWorkspaceFolder = (uri) => uri.fsPath.startsWith(workspaceRoot) ? { uri: { fsPath: workspaceRoot } } : undefined;
+fakeVscode.workspace.asRelativePath = (uri) => path.relative(workspaceRoot, uri.fsPath).replaceAll(path.sep, "/");
+fakeVscode.window.activeTextEditor = createFakeActiveTextEditor({
+  fsPath: path.join(workspaceRoot, "src", "main.ts"),
+  languageId: "typescript",
+  selectionText: "function greet() {\n  return \"hello\";\n}",
+  selection: createFakeSelection(10, 2, 12, 1),
+});
+const contextSnapshot = createHostContextSnapshot("valid-gui-ready-request");
+fakeVscode.window.activeTextEditor = createFakeActiveTextEditor({
+  fsPath: path.join(workspaceRoot, "private", "sk-webview-behavioral-provider-key-sentinel.ts"),
+  languageId: "typescript",
+  selectionText: "Authorization: Bearer fake-session-token-webview-behavioral-sentinel",
+  selection: createFakeSelection(1, 0, 1, 64),
+});
+const secretContextSnapshot = createHostContextSnapshot("valid-gui-ready-request");
+fakeVscode.window.activeTextEditor = createFakeActiveTextEditor({
+  fsPath: "/Users/example/private/outside.ts",
+  languageId: "typescript",
+  selectionText: "const outside = true;",
+  selection: createFakeSelection(0, 0, 0, 21),
+});
+const outsideContextSnapshot = createHostContextSnapshot("valid-gui-ready-request");
+fakeVscode.window.activeTextEditor = undefined;
 
 assert.equal(hostReady.version, "2026-05-15");
 assert.equal(hostReady.type, "host.ready");
@@ -145,6 +185,36 @@ assert.equal(hostReady.requestId, "valid-gui-ready-request");
 assert.equal(hostReady.payload.runtimeUrl, connection.runtimeUrl);
 assert.equal(hostReady.payload.sessionToken, connection.sessionToken);
 assert.equal(hostReady.payload.cloudRequired, false);
+
+assert.equal(contextSnapshot.version, "2026-05-15");
+assert.equal(contextSnapshot.type, "host.contextSnapshot");
+assert.equal(contextSnapshot.requestId, "valid-gui-ready-request");
+assert.deepEqual(contextSnapshot.payload, {
+  kind: "active_editor",
+  source: "vscode",
+  file: {
+    displayPath: "src/main.ts",
+    workspaceRelativePath: "src/main.ts",
+    languageId: "typescript",
+  },
+  selection: {
+    startLine: 10,
+    startCharacter: 2,
+    endLine: 12,
+    endCharacter: 1,
+    text: "function greet() {\n  return \"hello\";\n}",
+  },
+});
+assertNoSecretSentinels(JSON.stringify(contextSnapshot), fakeSecretValues, "VS Code active context snapshot");
+assertNoAbsolutePath(JSON.stringify(contextSnapshot), "VS Code active context snapshot");
+assert.equal(secretContextSnapshot.payload.file.languageId, "typescript");
+assert.equal(secretContextSnapshot.payload.file.displayPath, undefined);
+assert.equal(secretContextSnapshot.payload.file.workspaceRelativePath, undefined);
+assert.equal(secretContextSnapshot.payload.selection.text, undefined);
+assertNoSecretSentinels(JSON.stringify(secretContextSnapshot), fakeSecretValues, "VS Code secret-like active context snapshot");
+assert.equal(outsideContextSnapshot.payload.file.displayPath, "outside.ts");
+assert.equal(outsideContextSnapshot.payload.file.workspaceRelativePath, undefined);
+assertNoAbsolutePath(JSON.stringify(outsideContextSnapshot), "VS Code outside-workspace active context snapshot");
 
 assertNoSecretSentinels(html, fakeSecretValues, "VS Code behavioral webview render");
 assertRequiredSafetyStructure(html, "VS Code behavioral webview render");
@@ -286,6 +356,35 @@ for (const guiDevUrl of httpsLoopbackGuiDevUrls) {
   }
 
   assertNoInlineSessionToken(httpsGuiDevHtml, label);
+}
+
+function createFakeActiveTextEditor({ fsPath, languageId, selectionText, selection }) {
+  return {
+    document: {
+      uri: { fsPath, scheme: "file", path: fsPath },
+      languageId,
+      isUntitled: false,
+      getText(range) {
+        assert.equal(range, selection);
+        return selectionText;
+      },
+    },
+    selection,
+  };
+}
+
+function createFakeSelection(startLine, startCharacter, endLine, endCharacter) {
+  return {
+    isEmpty: startLine === endLine && startCharacter === endCharacter,
+    start: { line: startLine, character: startCharacter },
+    end: { line: endLine, character: endCharacter },
+  };
+}
+
+function assertNoAbsolutePath(value, label) {
+  if (value.includes(os.tmpdir()) || value.includes("/Users/") || value.includes(workspaceRoot)) {
+    throw new Error(`${label} leaked absolute path data.`);
+  }
 }
 
 function assertNoSecretSentinels(html, values, label) {
