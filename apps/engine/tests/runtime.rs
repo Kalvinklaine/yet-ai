@@ -1460,6 +1460,81 @@ async fn provider_auth_openai_experimental_exchange_failure_keeps_pending_for_re
 }
 
 #[tokio::test]
+async fn provider_auth_openai_experimental_invalid_exchange_keeps_pending_until_retry() {
+    let app = test_app();
+    let (token_endpoint_url, token_body_receiver) = start_mock_codex_token_endpoint().await;
+    let (status, start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(
+                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                    .to_string(),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let session_id = start["sessionId"].as_str().unwrap().to_string();
+    let state =
+        state_from_authorization_url(start["authorizationUrl"].as_str().unwrap()).to_string();
+
+    let mismatch = json!({
+        "sessionId": format!("{session_id}-wrong"),
+        "state": state.clone(),
+        "code": "codex-code-invalid-session"
+    });
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from(mismatch.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "provider auth session mismatch");
+    assert_provider_auth_response_has_no_codex_secrets(&body);
+
+    let (status, pending) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::GET,
+            "/v1/provider-auth/openai/status",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(pending["status"], "pending");
+    assert_eq!(pending["sessionId"], session_id);
+    assert_provider_auth_response_has_no_codex_secrets(&pending);
+
+    let exchange = json!({
+        "sessionId": session_id,
+        "state": state,
+        "code": "codex-code-after-invalid-session"
+    });
+    let (status, connected) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from(exchange.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(connected["status"], "connected");
+    assert_provider_auth_response_has_no_codex_secrets(&connected);
+
+    let token_body = token_body_receiver.await.unwrap();
+    assert_eq!(token_body["code"], "codex-code-after-invalid-session");
+}
+
+#[tokio::test]
 async fn provider_auth_openai_experimental_token_exchange_timeout_is_bounded_and_sanitized() {
     let paths = test_storage_paths();
     let app = app(AppState::with_storage_paths(
@@ -1740,6 +1815,121 @@ async fn provider_auth_openai_experimental_disconnect_clears_oauth_not_api_key_p
     assert_eq!(status, StatusCode::OK);
     assert_eq!(provider_body["auth"]["configured"], true);
     assert!(!provider_body.to_string().contains(api_key));
+}
+
+#[tokio::test]
+async fn provider_auth_openai_experimental_disconnect_pending_then_relogin_uses_fresh_session() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let (first_token_endpoint_url, _) = start_mock_codex_token_endpoint().await;
+    let (status, first_start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(
+                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": first_token_endpoint_url })
+                    .to_string(),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let first_session_id = first_start["sessionId"].as_str().unwrap().to_string();
+
+    let (status, revoked) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/disconnect",
+            Body::from("{}"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(revoked["success"], true);
+    assert_eq!(revoked["status"], "revoked");
+    assert_eq!(revoked["configured"], false);
+    assert_provider_auth_response_has_no_codex_secrets(&revoked);
+
+    let (status, status_body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::GET,
+            "/v1/provider-auth/openai/status",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status_body["status"], "login_unavailable");
+    assert!(status_body.get("sessionId").is_none());
+    assert_provider_auth_response_has_no_codex_secrets(&status_body);
+
+    let store = FileSecretStore::new(&paths.config_dir);
+    assert_eq!(
+        store
+            .get_secret("openai", SecretKind::OAuthAccessToken)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        store
+            .get_secret("openai", SecretKind::OAuthRefreshToken)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        store
+            .get_secret("openai", SecretKind::AuthMetadata)
+            .await
+            .unwrap(),
+        None
+    );
+
+    let (second_token_endpoint_url, second_token_body_receiver) =
+        start_mock_codex_token_endpoint().await;
+    let (status, second_start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(
+                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": second_token_endpoint_url })
+                    .to_string(),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let second_session_id = second_start["sessionId"].as_str().unwrap().to_string();
+    assert_ne!(second_session_id, first_session_id);
+    let state = state_from_authorization_url(second_start["authorizationUrl"].as_str().unwrap());
+    let exchange = json!({
+        "sessionId": second_session_id,
+        "state": state,
+        "code": "codex-code-relogin"
+    });
+    let (status, connected) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from(exchange.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(connected["status"], "connected");
+    assert_provider_auth_response_has_no_codex_secrets(&connected);
+    let token_body = second_token_body_receiver.await.unwrap();
+    assert_eq!(token_body["code"], "codex-code-relogin");
 }
 
 #[tokio::test]
