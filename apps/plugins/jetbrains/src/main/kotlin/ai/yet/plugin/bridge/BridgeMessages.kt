@@ -61,6 +61,35 @@ object BridgeMessages {
         add("payload", JsonObject())
     }.toString()
 
+    fun contextSnapshot(snapshot: ActiveEditorContext.Snapshot, requestId: String?): String {
+        val message = JsonObject().apply {
+            addProperty("version", ProductIdentity.bridgeVersion)
+            addProperty("type", "host.contextSnapshot")
+            requestId?.takeIf(::isValidRequestId)?.let { addProperty("requestId", it) }
+            add("payload", JsonObject().apply {
+                addProperty("kind", "active_editor")
+                addProperty("source", "jetbrains")
+                snapshot.file?.let { fileContext ->
+                    add("file", JsonObject().apply {
+                        fileContext.displayPath?.let { addProperty("displayPath", it) }
+                        fileContext.workspaceRelativePath?.let { addProperty("workspaceRelativePath", it) }
+                        fileContext.languageId?.let { addProperty("languageId", it) }
+                    })
+                }
+                snapshot.selection?.let { selectionContext ->
+                    add("selection", JsonObject().apply {
+                        selectionContext.startLine?.let { addProperty("startLine", it) }
+                        selectionContext.startCharacter?.let { addProperty("startCharacter", it) }
+                        selectionContext.endLine?.let { addProperty("endLine", it) }
+                        selectionContext.endCharacter?.let { addProperty("endCharacter", it) }
+                        selectionContext.text?.let { addProperty("text", it) }
+                    })
+                }
+            })
+        }
+        return message.toString()
+    }
+
     fun escapeScriptJson(value: String): String = value
         .replace("<", "\\u003c")
         .replace("\u2028", "\\u2028")
