@@ -213,10 +213,12 @@ export function App() {
   const [providerDataRevision, setProviderDataRevision] = useState<number | null>(null);
   const [providerAuthDataRevision, setProviderAuthDataRevision] = useState<number | null>(null);
   const activeStreamRef = useRef<ActiveStream | null>(null);
+  const attachedContextRef = useRef<typeof attachedContext>(null);
 
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
   settingsRef.current = settings;
   chatIdRef.current = chatId;
+  attachedContextRef.current = attachedContext;
   const runtimeDataCurrent = runtimeDataRevision === settingsRevision;
   const providerDataCurrent = providerDataRevision === settingsRevision;
   const providerAuthDataCurrent = providerAuthDataRevision === settingsRevision;
@@ -371,6 +373,17 @@ export function App() {
       chatId: current.chatId,
       payload: { message },
     }));
+  }, []);
+
+  const clearSubmittedAttachedContext = useCallback((submittedContext: typeof attachedContext) => {
+    if (!submittedContext) {
+      return;
+    }
+    const current = attachedContextRef.current;
+    if (current?.settingsRevision === submittedContext.settingsRevision && current.chatId === submittedContext.chatId && current.payload === submittedContext.payload) {
+      setAttachedContext(null);
+      setIncludeAttachedContext(false);
+    }
   }, []);
 
   const isCurrentRefresh = useCallback((revision: number) => revision === settingsRevisionRef.current, []);
@@ -846,6 +859,7 @@ export function App() {
     const targetSettings = settingsRef.current;
     const targetRevision = settingsRevisionRef.current;
     const targetChatId = chatIdRef.current;
+    const submittedAttachedContext = attachedContextRef.current?.settingsRevision === targetRevision && attachedContextRef.current.chatId === targetChatId ? attachedContextRef.current : null;
     setChatError(null);
     if (!canSendChat) {
       const runtimeError: RuntimeError = {
@@ -867,6 +881,7 @@ export function App() {
       addTimeline(`Command accepted ${result.data.requestId}`);
       setChatView((current) => addAcceptedUserMessage(current, content));
       setChatInput("");
+      clearSubmittedAttachedContext(submittedAttachedContext);
     } else {
       setChatError(result.error);
       appendChatError(result.error.message);
@@ -1211,7 +1226,7 @@ function AttachedContextPreview({ context, include, onIncludeChange }: { context
         <span>Language: {language}</span>
         <span>Selection: {range}</span>
         <span>Preview: {preview}</span>
-        <span className="subtle">Selection size: {text.length} character{text.length === 1 ? "" : "s"}. Context stays in React state only and is not sent until context sending is enabled.</span>
+        <span className="subtle">Selection size: {text.length} character{text.length === 1 ? "" : "s"}. Context stays in React state only and is sent only when this toggle is enabled for the next accepted message.</span>
         <label className="row">
           <input style={{ width: "auto" }} type="checkbox" checked={include} onChange={(event) => onIncludeChange(event.target.checked)} />
           Include attached context in next message
