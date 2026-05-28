@@ -21,6 +21,8 @@ const MOCK_DISCONNECTED_MESSAGE: &str =
 const CODEX_PENDING_MESSAGE: &str = "Experimental Codex-like OpenAI login is pending. This uses a private-endpoint-style OAuth contract and is not official public third-party OpenAI OAuth support.";
 const MOCK_TTL_SECONDS: i64 = 600;
 const CODEX_TTL_SECONDS: i64 = 600;
+const MAX_PROVIDER_AUTH_TTL_SECONDS: i64 = 3600;
+const CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS: u64 = 2;
 const CODEX_AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
 const CODEX_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 const CODEX_CHAT_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
@@ -256,7 +258,8 @@ pub async fn start(
 ) -> Result<ProviderAuthResponse, ProviderAuthError> {
     let provider = normalize_supported_provider(provider)?;
     if request.mock {
-        let session = new_mock_session(provider, request.ttl_seconds.unwrap_or(MOCK_TTL_SECONDS));
+        let ttl_seconds = validate_ttl_seconds(request.ttl_seconds.unwrap_or(MOCK_TTL_SECONDS))?;
+        let session = new_mock_session(provider, ttl_seconds);
         let mut state = read_mock_state(config_dir, provider).await?;
         state.pending = Some(session.clone());
         write_mock_state(config_dir, provider, &state).await?;
@@ -608,6 +611,7 @@ fn new_codex_session(
     token_endpoint_url: Option<&str>,
     chat_endpoint_url: Option<&str>,
 ) -> Result<CodexOAuthSession, ProviderAuthError> {
+    let ttl_seconds = validate_ttl_seconds(ttl_seconds)?;
     let token_endpoint_url = experimental_endpoint_url(token_endpoint_url, CODEX_TOKEN_URL)?;
     let chat_base_url = experimental_endpoint_url(chat_endpoint_url, CODEX_CHAT_BASE_URL)?;
     let verifier = random_url_safe(64)?;
@@ -624,6 +628,13 @@ fn new_codex_session(
         chat_base_url: chat_base_url.trim_end_matches('/').to_string(),
         chat_model: CODEX_CHAT_MODEL.to_string(),
     })
+}
+
+fn validate_ttl_seconds(ttl_seconds: i64) -> Result<i64, ProviderAuthError> {
+    if ttl_seconds <= 0 || ttl_seconds > MAX_PROVIDER_AUTH_TTL_SECONDS {
+        return Err(ProviderAuthError::InvalidRequest);
+    }
+    Ok(ttl_seconds)
 }
 
 fn experimental_endpoint_url(
@@ -648,6 +659,9 @@ fn validate_experimental_endpoint_url(
     if !parsed.username().is_empty() || parsed.password().is_some() {
         return Err(ProviderAuthError::InvalidRequest);
     }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err(ProviderAuthError::InvalidRequest);
+    }
     if require_loopback && !is_allowed_loopback_host(&parsed) {
         return Err(ProviderAuthError::InvalidRequest);
     }
@@ -655,7 +669,10 @@ fn validate_experimental_endpoint_url(
 }
 
 fn is_allowed_loopback_host(url: &reqwest::Url) -> bool {
-    matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "::1" | "[::1]"))
+    matches!(
+        url.host_str(),
+        Some("127.0.0.1" | "localhost" | "::1" | "[::1]")
+    )
 }
 
 async fn codex_exchange(
@@ -700,7 +717,8 @@ async fn codex_exchange(
         .as_deref()
         .map(|value| value.split_whitespace().map(str::to_string).collect())
         .unwrap_or_else(|| session.scopes.clone());
-    let expires_at = (Utc::now() + Duration::seconds(token.expires_in.unwrap_or(3600))).to_rfc3339();
+    let expires_at =
+        (Utc::now() + Duration::seconds(token.expires_in.unwrap_or(3600))).to_rfc3339();
     let metadata = CodexAuthMetadata {
         provider: provider.to_string(),
         account_label: sanitized_account_label(token.account_label.as_deref()),
@@ -726,7 +744,13 @@ async fn exchange_codex_token(
         "client_id": CODEX_CLIENT_ID,
         "code_verifier": session.verifier,
     });
-    let response = reqwest::Client::new()
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(
+            CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS,
+        ))
+        .build()
+        .map_err(|_| ProviderAuthError::TokenExchange)?;
+    let response = client
         .post(&session.token_endpoint_url)
         .json(&body)
         .send()
@@ -756,16 +780,55 @@ async fn store_codex_connection(
     metadata: &CodexAuthMetadata,
 ) -> Result<(), ProviderAuthError> {
     let store = FileSecretStore::new(config_dir);
-    store
-        .put_secret(provider, SecretKind::OAuthAccessToken, &token.access_token)
+    let prior_access = store
+        .get_secret(provider, SecretKind::OAuthAccessToken)
         .await?;
-    store
-        .put_secret(provider, SecretKind::OAuthRefreshToken, &token.refresh_token)
+    let prior_refresh = store
+        .get_secret(provider, SecretKind::OAuthRefreshToken)
         .await?;
+    let prior_metadata = store.get_secret(provider, SecretKind::AuthMetadata).await?;
     let metadata = serde_json::to_string(metadata).map_err(|_| ProviderAuthError::Storage)?;
-    store
-        .put_secret(provider, SecretKind::AuthMetadata, &metadata)
+    let result = async {
+        store
+            .put_secret(provider, SecretKind::OAuthAccessToken, &token.access_token)
+            .await?;
+        store
+            .put_secret(
+                provider,
+                SecretKind::OAuthRefreshToken,
+                &token.refresh_token,
+            )
+            .await?;
+        store
+            .put_secret(provider, SecretKind::AuthMetadata, &metadata)
+            .await?;
+        Ok::<(), ProviderAuthError>(())
+    }
+    .await;
+    if result.is_err() {
+        restore_codex_secret(&store, provider, SecretKind::OAuthAccessToken, prior_access).await?;
+        restore_codex_secret(
+            &store,
+            provider,
+            SecretKind::OAuthRefreshToken,
+            prior_refresh,
+        )
         .await?;
+        restore_codex_secret(&store, provider, SecretKind::AuthMetadata, prior_metadata).await?;
+    }
+    result
+}
+
+async fn restore_codex_secret(
+    store: &FileSecretStore,
+    provider: &str,
+    kind: SecretKind,
+    value: Option<String>,
+) -> Result<(), ProviderAuthError> {
+    match value {
+        Some(value) => store.put_secret(provider, kind, &value).await?,
+        None => store.delete_secret(provider, kind).await?,
+    }
     Ok(())
 }
 
@@ -779,9 +842,7 @@ async fn codex_connected_status(
     };
     let metadata: CodexAuthMetadata =
         serde_json::from_str(&metadata).map_err(|_| ProviderAuthError::Storage)?;
-    if metadata.provider != provider {
-        return Err(ProviderAuthError::Storage);
-    }
+    validate_codex_metadata(provider, &metadata)?;
     if parse_time(&metadata.expires_at)? <= Utc::now() {
         return Ok(Some(codex_expired_response(provider, metadata)));
     }
@@ -798,7 +859,9 @@ pub async fn experimental_codex_chat_auth(
     };
     let metadata: CodexAuthMetadata =
         serde_json::from_str(&metadata).map_err(|_| ProviderAuthError::Storage)?;
-    if metadata.provider != provider || parse_time(&metadata.expires_at)? <= Utc::now() {
+    if validate_codex_metadata(provider, &metadata).is_err()
+        || parse_time(&metadata.expires_at)? <= Utc::now()
+    {
         return Ok(None);
     }
     let Some(access_token) = store
@@ -813,6 +876,19 @@ pub async fn experimental_codex_chat_auth(
         base_url: metadata.chat_base_url,
         model: metadata.chat_model,
     }))
+}
+
+fn validate_codex_metadata(
+    provider: &str,
+    metadata: &CodexAuthMetadata,
+) -> Result<(), ProviderAuthError> {
+    if metadata.provider != provider {
+        return Err(ProviderAuthError::Storage);
+    }
+    if metadata.chat_base_url.trim_end_matches('/') == CODEX_CHAT_BASE_URL {
+        return Ok(());
+    }
+    validate_experimental_endpoint_url(&metadata.chat_base_url, true).map(|_| ())
 }
 
 fn default_codex_chat_base_url() -> String {

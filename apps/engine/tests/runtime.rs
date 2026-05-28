@@ -279,9 +279,11 @@ async fn assert_first_auth_and_no_immediate_extra_auth(
 }
 
 async fn assert_no_observed_auth(mut auth_receiver: mpsc::Receiver<Option<String>>) {
-    assert!(tokio::time::timeout(std::time::Duration::from_millis(50), auth_receiver.recv())
-        .await
-        .is_err());
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), auth_receiver.recv())
+            .await
+            .is_err()
+    );
 }
 
 async fn start_accept_and_drop_loopback_base_url() -> String {
@@ -392,6 +394,35 @@ async fn start_mock_codex_token_endpoint_with(
                         "account_label": "mock-user@example.test"
                     })
                     .to_string(),
+                )
+                    .into_response()
+            }
+        };
+        let app = axum::Router::new().route("/oauth/token", axum::routing::post(handler));
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{address}/oauth/token"), body_receiver)
+}
+
+async fn start_hanging_codex_token_endpoint() -> (String, oneshot::Receiver<Value>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (body_sender, body_receiver) = oneshot::channel();
+    let body_sender = std::sync::Arc::new(std::sync::Mutex::new(Some(body_sender)));
+    tokio::spawn(async move {
+        let handler = move |request: axum::http::Request<Body>| {
+            let body_sender = body_sender.clone();
+            async move {
+                let bytes = to_bytes(request.into_body(), usize::MAX).await.unwrap();
+                let body: Value = serde_json::from_slice(&bytes).unwrap();
+                if let Some(sender) = body_sender.lock().unwrap().take() {
+                    let _ = sender.send(body);
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "application/json")],
+                    "{}",
                 )
                     .into_response()
             }
@@ -973,6 +1004,54 @@ async fn provider_auth_openai_experimental_overrides_must_be_loopback_and_safe()
 }
 
 #[tokio::test]
+async fn provider_auth_openai_experimental_overrides_reject_query_and_fragment_safely() {
+    for request in [
+        json!({ "experimentalCodexLike": true, "tokenEndpointUrl": "http://127.0.0.1:1455/oauth/token?access_token=secret-query" }),
+        json!({ "experimentalCodexLike": true, "tokenEndpointUrl": "http://127.0.0.1:1455/oauth/token#refresh_token=secret-fragment" }),
+        json!({ "experimentalCodexLike": true, "chatEndpointUrl": "http://127.0.0.1:1456/backend-api/codex?api_key=secret-query" }),
+        json!({ "experimentalCodexLike": true, "chatEndpointUrl": "http://127.0.0.1:1456/backend-api/codex#access_token=secret-fragment" }),
+    ] {
+        let (status, body) = json_response(authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(request.to_string()),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "invalid provider auth request");
+        let text = body.to_string();
+        assert!(!text.contains("access_token"));
+        assert!(!text.contains("refresh_token"));
+        assert!(!text.contains("api_key"));
+        assert!(!text.contains("secret-query"));
+        assert!(!text.contains("secret-fragment"));
+        assert_provider_auth_response_has_no_codex_secrets(&body);
+    }
+}
+
+#[tokio::test]
+async fn provider_auth_start_rejects_unsafe_ttl_values_safely() {
+    for request in [
+        json!({ "mock": true, "ttlSeconds": 0 }),
+        json!({ "mock": true, "ttlSeconds": -1 }),
+        json!({ "mock": true, "ttlSeconds": 3601 }),
+        json!({ "experimentalCodexLike": true, "ttlSeconds": 0 }),
+        json!({ "experimentalCodexLike": true, "ttlSeconds": -1 }),
+        json!({ "experimentalCodexLike": true, "ttlSeconds": 3601 }),
+    ] {
+        let (status, body) = json_response(authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(request.to_string()),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "invalid provider auth request");
+        assert_provider_auth_response_has_no_codex_secrets(&body);
+    }
+}
+
+#[tokio::test]
 async fn provider_auth_openai_experimental_exchange_stores_tokens_and_returns_connected() {
     let paths = test_storage_paths();
     let app = app(AppState::with_storage_paths(
@@ -1058,6 +1137,70 @@ async fn provider_auth_openai_experimental_exchange_stores_tokens_and_returns_co
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "connected");
     assert_provider_auth_response_has_no_codex_secrets(&body);
+}
+
+#[tokio::test]
+async fn provider_auth_openai_experimental_secret_write_failure_rolls_back_partial_writes() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let store = FileSecretStore::new(&paths.config_dir);
+    let metadata_path = store
+        .secret_path("openai", SecretKind::AuthMetadata)
+        .unwrap();
+    std::fs::create_dir_all(&metadata_path).unwrap();
+    let (token_endpoint_url, token_body_receiver) = start_mock_codex_token_endpoint().await;
+    let (status, start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(
+                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                    .to_string(),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap());
+    let exchange = json!({
+        "sessionId": start["sessionId"],
+        "state": state,
+        "code": "codex-code-storage-failure"
+    });
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from(exchange.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["error"], "provider auth storage error");
+    assert_provider_auth_response_has_no_codex_secrets(&body);
+    let token_body = token_body_receiver.await.unwrap();
+    assert_eq!(token_body["code"], "codex-code-storage-failure");
+    assert_eq!(
+        store
+            .get_secret("openai", SecretKind::OAuthAccessToken)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        store
+            .get_secret("openai", SecretKind::OAuthRefreshToken)
+            .await
+            .unwrap(),
+        None
+    );
 }
 
 #[tokio::test]
@@ -1169,6 +1312,85 @@ async fn provider_auth_openai_experimental_exchange_failure_keeps_pending_for_re
 }
 
 #[tokio::test]
+async fn provider_auth_openai_experimental_token_exchange_timeout_is_bounded_and_sanitized() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let (token_endpoint_url, token_body_receiver) = start_hanging_codex_token_endpoint().await;
+    let (status, start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(
+                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                    .to_string(),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap());
+    let exchange = json!({
+        "sessionId": start["sessionId"],
+        "state": state,
+        "code": "codex-code-timeout-secret"
+    });
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(4),
+        json_response_from(
+            app.clone(),
+            authed_request(
+                Method::POST,
+                "/v1/provider-auth/openai/exchange",
+                Body::from(exchange.to_string()),
+            ),
+        ),
+    )
+    .await;
+    let (status, failure) = result.expect("token exchange should be bounded");
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert_eq!(failure["error"], "provider auth token exchange failed");
+    assert_provider_auth_response_has_no_codex_secrets(&failure);
+    assert!(!failure.to_string().contains("codex-code-timeout-secret"));
+
+    let token_body = token_body_receiver.await.unwrap();
+    assert_eq!(token_body["code"], "codex-code-timeout-secret");
+    let store = FileSecretStore::new(&paths.config_dir);
+    assert_eq!(
+        store
+            .get_secret("openai", SecretKind::OAuthAccessToken)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        store
+            .get_secret("openai", SecretKind::OAuthRefreshToken)
+            .await
+            .unwrap(),
+        None
+    );
+
+    let (status, pending) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/provider-auth/openai/status",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(pending["status"], "pending");
+    assert_provider_auth_response_has_no_codex_secrets(&pending);
+}
+
+#[tokio::test]
 async fn provider_auth_openai_experimental_exchange_mismatch_expired_and_duplicate_are_safe() {
     let app = test_app();
     let (token_endpoint_url, _) = start_mock_codex_token_endpoint().await;
@@ -1210,13 +1432,14 @@ async fn provider_auth_openai_experimental_exchange_mismatch_expired_and_duplica
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url, "ttlSeconds": -1 })
+                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url, "ttlSeconds": 1 })
                     .to_string(),
             ),
         ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     let state = state_from_authorization_url(expired["authorizationUrl"].as_str().unwrap());
     let exchange = json!({
         "sessionId": expired["sessionId"],
@@ -1531,11 +1754,12 @@ async fn provider_auth_mock_oauth_expired_session_is_rejected() {
         authed_request(
             Method::POST,
             "/v1/provider-auth/openai/start",
-            Body::from(json!({ "mock": true, "ttlSeconds": -1 }).to_string()),
+            Body::from(json!({ "mock": true, "ttlSeconds": 1 }).to_string()),
         ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     let session_id = start["sessionId"].as_str().unwrap();
     let state = start["authorizationUrl"]
         .as_str()
@@ -2358,11 +2582,8 @@ async fn provider_storage_path_uses_yet_ai_config_dir_not_project_state() {
 #[tokio::test]
 async fn provider_test_openai_compatible_success_uses_loopback_models_and_auth() {
     let api_key = "sk-provider-test-secret-abcd";
-    let (base_url, auth_receiver) = start_mock_models_provider(
-        StatusCode::OK,
-        r#"{"data":[{"id":"gpt-test"}]}"#,
-    )
-    .await;
+    let (base_url, auth_receiver) =
+        start_mock_models_provider(StatusCode::OK, r#"{"data":[{"id":"gpt-test"}]}"#).await;
     let app = test_app();
     configure_openai_provider(app.clone(), base_url, api_key).await;
 
@@ -2393,11 +2614,8 @@ async fn provider_test_openai_compatible_success_uses_loopback_models_and_auth()
 #[tokio::test]
 async fn provider_test_openai_compatible_chat_completions_base_url_uses_models_endpoint() {
     let api_key = "sk-provider-test-chat-url-abcd";
-    let (base_url, auth_receiver) = start_mock_models_provider(
-        StatusCode::OK,
-        r#"{"data":[{"id":"gpt-test"}]}"#,
-    )
-    .await;
+    let (base_url, auth_receiver) =
+        start_mock_models_provider(StatusCode::OK, r#"{"data":[{"id":"gpt-test"}]}"#).await;
     let app = test_app();
     configure_openai_provider(
         app.clone(),
@@ -3023,6 +3241,67 @@ async fn experimental_openai_oauth_token_streams_chat_via_mock_endpoint() {
     .await;
     assert!(!text.contains("codex-access-token-secret"));
     assert!(!text.contains("codex-refresh-token-secret"));
+}
+
+#[tokio::test]
+async fn tampered_experimental_openai_oauth_metadata_does_not_route_to_unsafe_url() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let (safe_chat_base_url, safe_auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"safe\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let (unsafe_chat_base_url, unsafe_auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"unsafe\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let (token_endpoint_url, _) = start_mock_codex_token_endpoint().await;
+    connect_experimental_openai_oauth(app.clone(), token_endpoint_url, safe_chat_base_url).await;
+
+    let store = FileSecretStore::new(&paths.config_dir);
+    let metadata = store
+        .get_secret("openai", SecretKind::AuthMetadata)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut metadata: Value = serde_json::from_str(&metadata).unwrap();
+    metadata["chatBaseUrl"] = json!(format!("{unsafe_chat_base_url}?access_token=secret-query"));
+    store
+        .put_secret("openai", SecretKind::AuthMetadata, &metadata.to_string())
+        .await
+        .unwrap();
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::GET,
+            "/v1/provider-auth/openai/status",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "invalid provider auth request");
+    assert_provider_auth_response_has_no_codex_secrets(&body);
+
+    send_user_message(app.clone(), "chat-codex-tampered-metadata").await;
+    let text = sse_text_from(
+        app,
+        "/v1/chats/subscribe?chat_id=chat-codex-tampered-metadata",
+    )
+    .await;
+    let events = sse_json_events(&text);
+    let error = find_error_event(&events);
+    assert_eq!(error["payload"]["code"], "provider_not_configured");
+    assert_sanitized_sse_error(&text);
+    assert_no_observed_auth(safe_auth_receiver).await;
+    assert_no_observed_auth(unsafe_auth_receiver).await;
 }
 
 #[tokio::test]
