@@ -21,6 +21,23 @@ const oauthSentinels = {
   cookie: `jb-cookie-secret-${randomUUID()}`,
   apiKey: `sk-jb-wrapper-${randomUUID()}`,
 };
+const activeContextSelectionMarker = `context marker ${randomUUID()}`;
+const jetbrainsContextSnapshot = {
+  kind: "active_editor",
+  source: "jetbrains",
+  file: {
+    displayPath: "src/main/kotlin/ContextSmoke.kt",
+    workspaceRelativePath: "src/main/kotlin/ContextSmoke.kt",
+    languageId: "kotlin",
+  },
+  selection: {
+    startLine: 12,
+    startCharacter: 4,
+    endLine: 12,
+    endCharacter: 42,
+    text: activeContextSelectionMarker,
+  },
+};
 const consoleMessages = [];
 let observedRuntimeAuthorization = false;
 let chatCommandRequest;
@@ -126,7 +143,7 @@ try {
   if (!iframeGuiReady) {
     failures.push("GUI iframe did not send gui.ready to the parent wrapper.");
   }
-  const bridgeMessageCountBeforeHostileGui = await page.evaluate(() => window.__yetAiBridgeMessages.length);
+  const bridgeMessageCountBeforeHostileGui = await page.evaluate(() => window.__yetAiBridgeMessages?.length ?? 0);
   await frameLocator.locator("body").evaluate((body, version) => {
     window.parent.postMessage({
       version,
@@ -147,7 +164,7 @@ try {
     }, document.referrer ? new URL(document.referrer).origin : "*");
   }, bridgeVersion);
   await page.waitForTimeout(100);
-  const bridgeMessageCountAfterHostileGui = await page.evaluate(() => window.__yetAiBridgeMessages.length);
+  const bridgeMessageCountAfterHostileGui = await page.evaluate(() => window.__yetAiBridgeMessages?.length ?? 0);
   if (bridgeMessageCountAfterHostileGui !== bridgeMessageCountBeforeHostileGui) {
     failures.push("Wrapper forwarded schema-invalid or wrong-version gui.ready from the iframe.");
   }
@@ -168,6 +185,11 @@ try {
   }
   if (queueStateAfterReady.bootstrapHostReadySentCount !== 1) {
     failures.push(`Wrapper sent ${String(queueStateAfterReady.bootstrapHostReadySentCount)} bootstrap host.ready messages instead of exactly one.`);
+  }
+
+  await page.waitForFunction(() => typeof window.__yetAiSendHostMessageToFrame === "function", undefined, { timeout: 5000 }).catch(() => failures.push("Wrapper host-message sender helper was not installed."));
+  if (failures.length > 0) {
+    reportFailures();
   }
 
   await page.evaluate(({ version, runtimeUrl, token }) => {
@@ -282,18 +304,62 @@ try {
   }
   await frameLocator.getByRole("button", { name: "Send" }).waitFor({ state: "visible", timeout: 5000 });
 
-  await frameLocator.getByPlaceholder("Ask Yet AI...").fill("Say hello through JetBrains login-shaped smoke.");
+  await page.evaluate(({ version, payload }) => {
+    window.__yetAiSendHostMessageToFrame({
+      version,
+      type: "host.contextSnapshot",
+      requestId: "jetbrains-active-context-smoke",
+      payload,
+    });
+  }, { version: bridgeVersion, payload: jetbrainsContextSnapshot });
+  await frameLocator.getByText("Attached context", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show attached context preview for JetBrains context."));
+  await frameLocator.getByText("jetbrains", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context source label."));
+  await frameLocator.getByText("File: src/main/kotlin/ContextSmoke.kt", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show safe JetBrains context file label."));
+  await frameLocator.getByText("Language: kotlin", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context language id."));
+  await frameLocator.getByText(`Preview: ${activeContextSelectionMarker}`, { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context selected text preview."));
+  const includeContextToggle = frameLocator.getByLabel("Include attached context in next message");
+  if (!await includeContextToggle.isChecked({ timeout: 5000 }).catch(() => false)) {
+    failures.push("JetBrains attached context include toggle was not enabled by default.");
+  }
+  await includeContextToggle.uncheck();
+  await frameLocator.getByPlaceholder("Ask Yet AI...").fill("Send without JetBrains context.");
   await frameLocator.getByRole("button", { name: "Send" }).click();
   await frameLocator.getByText("JetBrains login smoke", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not render the assistant response from mock SSE."));
   if (chatCommandRequestCount !== 1) {
-    failures.push(`Mock runtime received ${chatCommandRequestCount} chat command requests instead of exactly one.`);
+    failures.push(`Mock runtime received ${chatCommandRequestCount} chat command requests after disabled-toggle send instead of exactly one.`);
   }
-  if (chatSubscriptionCount !== 1) {
-    failures.push(`Mock runtime received ${chatSubscriptionCount} chat subscriptions instead of exactly one.`);
+  if (chatCommandRequest?.payload?.content !== "Send without JetBrains context.") {
+    failures.push("Mock runtime did not receive the expected disabled-toggle chat message content.");
+  }
+  if (chatCommandRequest?.payload && Object.prototype.hasOwnProperty.call(chatCommandRequest.payload, "context")) {
+    failures.push("Mock runtime received active context even though the include toggle was disabled.");
+  }
+
+  await page.evaluate(({ version, payload }) => {
+    window.__yetAiSendHostMessageToFrame({
+      version,
+      type: "host.contextSnapshot",
+      requestId: "jetbrains-active-context-smoke-resend",
+      payload,
+    });
+  }, { version: bridgeVersion, payload: jetbrainsContextSnapshot });
+  await includeContextToggle.waitFor({ state: "visible", timeout: 5000 });
+  if (!await includeContextToggle.isChecked({ timeout: 5000 }).catch(() => false)) {
+    failures.push("JetBrains attached context include toggle was not re-enabled for the next context snapshot.");
+  }
+  await frameLocator.getByPlaceholder("Ask Yet AI...").fill("Say hello through JetBrains login-shaped smoke.");
+  await frameLocator.getByRole("button", { name: "Send" }).click();
+  await frameLocator.getByText("JetBrains login smoke", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not render the assistant response from mock SSE after context send."));
+  if (chatCommandRequestCount !== 2) {
+    failures.push(`Mock runtime received ${chatCommandRequestCount} chat command requests instead of exactly two.`);
+  }
+  if (chatSubscriptionCount < 1 || chatSubscriptionCount > 2) {
+    failures.push(`Mock runtime received ${chatSubscriptionCount} chat subscriptions instead of one or two expected local subscriptions.`);
   }
   if (chatCommandRequest?.payload?.content !== "Say hello through JetBrains login-shaped smoke.") {
     failures.push("Mock runtime did not receive the expected GUI chat message content.");
   }
+  assertJetBrainsContext(chatCommandRequest?.payload?.context);
 
   await page.waitForTimeout(250);
   const browserVisibleState = await collectBrowserVisibleState(page);
@@ -305,6 +371,7 @@ try {
     { label: "OAuth verifier", value: oauthSentinels.verifier },
     { label: "cookie secret", value: oauthSentinels.cookie },
     { label: "API key", value: oauthSentinels.apiKey },
+    { label: "active context selection marker", value: activeContextSelectionMarker },
     { label: "authorization header marker", value: "authorization: bearer" },
     { label: "set-cookie marker", value: "set-cookie" },
     { label: "client secret marker", value: "client_secret" },
@@ -315,13 +382,38 @@ try {
   }
 
   console.log("JetBrains wrapper browser smoke passed.");
-  console.log("Checked JetBrains-like wrapper iframe rendering, exact loopback target origin, real gui.ready to host.ready wrapper bridge delivery, Refresh runtime click feedback, bridge collector, login-shaped first-message chat through mock runtime/SSE, JavaScript execution, and local JS/CSS asset responses.");
+  console.log("Checked JetBrains-like wrapper iframe rendering, exact loopback target origin, real gui.ready to host.ready/contextSnapshot wrapper bridge delivery, attached-context preview/default include/disabled-toggle behavior, Refresh runtime click feedback, bridge collector, login-shaped first-message chat through mock runtime/SSE, JavaScript execution, and local JS/CSS asset responses.");
   console.log("No engine, provider credentials, OpenAI/ChatGPT, hosted Yet AI services, JetBrains IDE, or JCEF automation were used.");
 } finally {
   await browser?.close().catch(() => undefined);
   await wrapperServer.close();
   await runtimeServer.close();
   await guiServer.close();
+}
+
+function assertJetBrainsContext(context) {
+  if (!context || typeof context !== "object") {
+    failures.push("Mock runtime did not receive active context on the enabled-toggle chat command.");
+    return;
+  }
+  if (context.kind !== "active_editor") {
+    failures.push("Mock runtime active context kind was not active_editor.");
+  }
+  if (context.source !== "jetbrains") {
+    failures.push("Mock runtime active context source was not jetbrains.");
+  }
+  if (context.file?.displayPath !== jetbrainsContextSnapshot.file.displayPath) {
+    failures.push("Mock runtime active context did not include the expected safe display path.");
+  }
+  if (context.file?.workspaceRelativePath !== jetbrainsContextSnapshot.file.workspaceRelativePath) {
+    failures.push("Mock runtime active context did not include the expected safe workspace-relative path.");
+  }
+  if (context.file?.languageId !== jetbrainsContextSnapshot.file.languageId) {
+    failures.push("Mock runtime active context did not include the expected language id.");
+  }
+  if (context.selection?.text !== activeContextSelectionMarker) {
+    failures.push("Mock runtime active context did not include the expected selected text marker.");
+  }
 }
 
 async function requireBuiltGui() {
@@ -485,10 +577,16 @@ const isPlainObject = (value) => typeof value === "object" && value !== null && 
 const hasOnlyKeys = (record, keys) => Object.keys(record).every((key) => keys.includes(key));
 const isRequestId = (value) => value === undefined || (typeof value === "string" && value.length >= 1 && value.length <= 128);
 const optionalString = (value) => value === undefined || typeof value === "string";
+const optionalNumber = (value) => value === undefined || (Number.isInteger(value) && value >= 0 && value <= 1000000);
+const safePath = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength && !value.startsWith("/") && !value.startsWith("~") && !value.includes("\\\\") && !value.includes(":") && value.split("").every((char) => char >= " ") && value.split("/").every((part) => part !== "." && part !== ".."));
+const isContextFile = (file) => file === undefined || (isPlainObject(file) && hasOnlyKeys(file, ["displayPath", "workspaceRelativePath", "languageId"]) && Object.keys(file).length > 0 && safePath(file.displayPath, 256) && safePath(file.workspaceRelativePath, 512) && (file.languageId === undefined || (typeof file.languageId === "string" && file.languageId.length > 0 && file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(file.languageId))));
+const isContextSelection = (selection) => selection === undefined || (isPlainObject(selection) && hasOnlyKeys(selection, ["startLine", "startCharacter", "endLine", "endCharacter", "text"]) && Object.keys(selection).length > 0 && optionalNumber(selection.startLine) && optionalNumber(selection.startCharacter) && optionalNumber(selection.endLine) && optionalNumber(selection.endCharacter) && optionalString(selection.text));
+const isContextSnapshotPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["kind", "source", "file", "selection"]) && payload.kind === "active_editor" && (payload.source === "vscode" || payload.source === "jetbrains" || payload.source === "browser") && isContextFile(payload.file) && isContextSelection(payload.selection);
 const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && optionalString(payload.runtimeUrl) && optionalString(payload.sessionToken) && optionalString(payload.productId) && optionalString(payload.displayName) && payload.cloudRequired === false;
 const isHostMessage = (message) => {
   if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || !isRequestId(message.requestId)) return false;
   if (message.type === "host.ready") return isHostReadyPayload(message.payload);
+  if (message.type === "host.contextSnapshot") return isContextSnapshotPayload(message.payload);
   if (message.type === "host.openedFromCommand") return message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0);
   return false;
 };
