@@ -12,7 +12,7 @@ Implemented surfaces:
 
 - `apps/engine`: Rust `yet-lsp` runtime with authenticated loopback HTTP/SSE endpoints, identity-aware storage names, local provider registry/config files, redacted provider responses, model summaries, chat command submission, and the first OpenAI-compatible direct streaming path through configured provider data.
 - `apps/gui`: React/Vite browser shell with loopback-only runtime client, provider setup/status UI, chat command submission, fetch-streaming SSE parser, runtime error reporting, and browser/VS Code/JetBrains logical bridge detection.
-- `apps/plugins/vscode`: VS Code extension shell with identity-checked manifest and bundled package-route identity, loopback runtime/dev URL validation, SecretStorage-backed manual runtime tokens, packaged GUI asset loading with placeholder fallback, MVP `connect`/`launch`/`auto` runtime modes, webview host, bootstrap/`host.ready` bridge, redacted runtime diagnostics, and guarded message handling.
+- `apps/plugins/vscode`: VS Code extension shell with identity-checked manifest and bundled package-route identity, loopback runtime/dev URL validation, SecretStorage-backed manual runtime tokens, packaged GUI asset loading with placeholder fallback, MVP `connect`/`launch`/`auto` runtime modes, webview host, bootstrap/`host.ready` bridge, bounded active editor/selection context snapshot delivery, redacted runtime diagnostics, and guarded message handling.
 - `apps/plugins/jetbrains`: JetBrains plugin shell with identity checks, Gradle build/tests, loopback runtime/dev URL validation, packaged GUI resource loading with placeholder fallback, MVP `connect`/`launch`/`auto` runtime modes, PasswordSafe-backed local session token, JCEF host boundary, and structural JSON bridge validation.
 - `packages/contracts`: shared JSON Schemas and examples for current engine and bridge boundaries.
 
@@ -20,7 +20,7 @@ Known limitations:
 
 - No marketplace packaging, signed/notarized engine bundle, production installer, or release flow is complete.
 - IDE plugins support dev-preview packaged GUI assets and MVP local runtime connect/launch/auto modes, but they do not yet provide production-grade lifecycle management, bundled signed engine distribution, or installer integration.
-- LSP completion/code-lens, full agent autonomy, indexing, tasks/knowledge, tool registry execution, shell/file mutation, file edits, and integration workflows are not implemented as production features.
+- LSP completion/code-lens, full agent autonomy, autonomous file reads/indexing, tasks/knowledge, tool registry execution, shell/tool execution, shell/file mutation, file edits/apply patch, background agent autonomy, and integration workflows are not implemented as production features.
 - The provider/chat baseline is a local MVP only: configured local BYOK provider data plus OpenAI-compatible chat streaming.
 - Privileged IDE actions remain disabled until strict schemas, request correlation, origin/source checks, engine policy checks, and user confirmation flows are in place.
 - The provider baseline is intentionally narrow: local BYOK configuration plus OpenAI-compatible chat streaming. The engine and GUI now include sanitized provider-auth skeleton endpoints, a login-first status card, an API-key fallback, a local mock OAuth/PKCE contract harness, and a protected-file secret-store fallback. Real OpenAI/ChatGPT account login is not implemented in this baseline. The user approved a future experimental, high-risk Codex-like login task chain despite the lack of a public third-party OpenAI OAuth program; production OAuth, OS keychain storage, broader provider quirks, and advanced model capability handling remain follow-ups.
@@ -53,6 +53,14 @@ Reference inspection found a useful pattern in the external implementation: prov
 Future GUI-facing auth status should stay sanitized. Candidate state fields are non-secret values such as `type`, `configured`, `status`, `authSource`, `expiresAt`, `accountLabel`, `scopes`, `supportsRefresh`, `lastError`, and `redacted`. Raw access tokens, refresh tokens, API keys, cookies, session IDs, browser profile paths, and provider authorization codes must never be returned by provider status, capability, or model endpoints and must never appear in logs.
 
 Secret storage is an engine boundary. The initial `FileSecretStore` fallback centralizes put/get/delete by provider id and secret kind for API keys, OAuth access tokens, OAuth refresh tokens, and auth metadata. It is intentionally narrower than the external reference implementation's provider config patching and OAuth refresh machinery: Yet AI keeps the abstraction separate before real provider login, avoids credential import from other tools, and treats OS keychain support as the next backend behind the same trait. A future migration should move any legacy `providers.d/{id}.json` raw API keys into the active secret backend, then rewrite provider configs without raw secret fields.
+
+## Active context first-message boundary
+
+The current first-message context capability is intentionally narrow and non-privileged. The VS Code host may send a bounded active editor/selection snapshot to the GUI. The GUI stores it in React state only, shows a sanitized preview, and includes it in the first chat command only when the user leaves the include toggle enabled. The engine validates the shape again and prepends an `IDE context` prompt section before the user request when context is present.
+
+Included active context is sent to the configured provider as prompt text. It may contain source code or selected text, so users should attach only content they are comfortable sending to that provider and should not include secrets, credentials, private paths, or sensitive data. The context contract is limited to safe labels, bounded relative/display paths, language id, selection range, and bounded selection text.
+
+This does not grant agent authority. Yet AI still does not perform autonomous file reads, workspace indexing, file edits/apply patch, shell/tool execution, or background agent autonomy from this feature. Future privileged context gathering, tools, edits, and indexing require separate schemas, policy checks, request correlation, and user confirmation.
 
 ## Architecture principles
 
@@ -405,12 +413,12 @@ The approved near-term implementation sequence is local-first and incremental. F
 
 ### 4. GUI local provider setup and runtime client — MVP baseline complete
 
-- Implemented a React/Vite shell with loopback runtime URL validation, token-in-memory handling, provider setup/status, secret-field clearing, chat submission, fetch-streaming SSE, and bridge diagnostics.
+- Implemented a React/Vite shell with loopback runtime URL validation, token-in-memory handling, provider setup/status, secret-field clearing, active context preview/opt-in, chat submission, fetch-streaming SSE, and bridge diagnostics.
 - Remaining work: production UI/design system, packaged build consumption by IDE hosts, richer chat state, reconnect UX, accessibility pass, and no-secret regression coverage as surfaces expand.
 
 ### 5. VS Code local runtime host — MVP baseline complete
 
-- Implemented identity-checked extension metadata, bundled identity loading for local package routes, strict loopback runtime/dev URL validation, packaged GUI asset loading, webview shell, safe bootstrap serialization, exact-origin dev iframe forwarding, MVP local runtime `connect`/`launch`/`auto` modes, SecretStorage for manual connect-mode runtime tokens, ephemeral launch-mode tokens delivered through `host.ready`, `/v1/ping` health check, redacted runtime diagnostics/logs, cleanup on deactivate, and narrow `gui.ready`/`host.ready` bridge handling.
+- Implemented identity-checked extension metadata, bundled identity loading for local package routes, strict loopback runtime/dev URL validation, packaged GUI asset loading, webview shell, safe bootstrap serialization, exact-origin dev iframe forwarding, MVP local runtime `connect`/`launch`/`auto` modes, SecretStorage for manual connect-mode runtime tokens, ephemeral launch-mode tokens delivered through `host.ready`, bounded active editor/selection context snapshots, `/v1/ping` health check, redacted runtime diagnostics/logs, cleanup on deactivate, and narrow `gui.ready`/`host.ready` bridge handling.
 - Remaining work: marketplace packaging, signed/notarized engine bundles, production installer, deeper extension-host lifecycle tests, LSP wiring, and privileged IDE action policies.
 
 ### 6. JetBrains local runtime host — MVP baseline complete

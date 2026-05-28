@@ -102,7 +102,9 @@ This is the nearest hands-on path for trying the local-first VS Code dev preview
 
 7. Configure a local or OpenAI-compatible provider in the GUI. For the current real GPT first message, choose the `OpenAI API` preset, paste your own API key once in the provider API key field, save the provider, confirm that the form clears the raw key, and use the provider test action for sanitized status. Provider settings and credentials are stored by the local engine, not by the VS Code extension. Never put provider keys in VS Code settings, SecretStorage, or the GUI Session token field.
 
-8. Send a simple chat message, such as `Say hello in one sentence.` Confirm that the response streams in the GUI.
+8. If the GUI shows an attached active editor/selection context preview, include it only when the selected text is safe to send to the configured provider.
+
+9. Send a simple chat message, such as `Say hello in one sentence.` Confirm that the optional included context is used as prompt context and the response streams in the GUI.
 
 For IDE-launched `auto` or `launch` mode, do not paste `local-dev-token` into the GUI. The extension generates a per-session local runtime token, starts `yet-lsp` with `YET_AI_AUTH_TOKEN`, and provides the token to the GUI through the trusted `host.ready` postMessage path. The token is not serialized into the inline webview bootstrap HTML. Enter `local-dev-token` only when you deliberately use `connect` mode with a runtime started manually:
 
@@ -243,7 +245,10 @@ First-message smoke:
 2. Do not manually run `yet-lsp`, copy `local-dev-token`, or paste a Session token for the normal preview. Use manual `connect` mode only for deliberate runtime debugging.
 3. Click `Refresh runtime` and wait for connected feedback or a clear sanitized error.
 4. Configure the `OpenAI API` API-key fallback or a local OpenAI-compatible mock/provider. Provider keys belong only in the GUI Provider setup API key field, are sent to the local runtime, and clear after save.
-5. Use provider test/status as sanitized feedback, then send `Say hello in one sentence.` Expected behavior: the chat receives snapshot/start/delta/finish SSE updates and renders a short assistant response without any Yet AI hosted backend.
+5. Use provider test/status as sanitized feedback. If active editor/selection context is previewed in the GUI, include it only when it is safe for the configured provider to receive.
+6. Send `Say hello in one sentence.` Expected behavior: the chat receives snapshot/start/delta/finish SSE updates and renders a short assistant response without any Yet AI hosted backend.
+
+Active context is a bounded first-message prompt attachment only. It does not enable autonomous file reads, workspace indexing, file edits/apply patch, shell/tool execution, or background agent autonomy.
 
 Use `Yet AI: Show Runtime Status` to write sanitized local runtime diagnostics to the `Yet AI Runtime` output channel when GUI feedback is not enough.
 
@@ -299,11 +304,11 @@ Manual local preview:
 
 The command opens a minimal Yet AI webview shell. If `yetai.guiDevUrl` is set, the shell embeds the loopback GUI dev server in an iframe. Otherwise it first looks for packaged GUI assets at `media/gui/index.html`; when those generated assets are absent, it displays a local placeholder with the configured runtime URL.
 
-The wrapper sends strict `gui.ready` with a bounded request id and `supportedBridgeVersion` payload. The extension accepts only exact-version `gui.ready` messages with no unknown top-level or payload fields, rejects unknown or invalid messages without logging payloads, and replies with `host.ready` echoing the request id when present. It also sends `host.openedFromCommand` with an empty payload. Bootstrap data is serialized for script context with `<`, U+2028, and U+2029 escaped to avoid script breakout, and local runtime Session tokens are delivered only through the trusted `host.ready` message path rather than inline HTML.
+The wrapper sends strict `gui.ready` with a bounded request id and `supportedBridgeVersion` payload. The extension accepts only exact-version `gui.ready` messages with no unknown top-level or payload fields, rejects unknown or invalid messages without logging payloads, and replies with `host.ready` echoing the request id when present. It also sends `host.openedFromCommand` with an empty payload and may send a non-privileged `host.contextSnapshot` for bounded active editor/selection context. Bootstrap data is serialized for script context with `<`, U+2028, and U+2029 escaped to avoid script breakout, and local runtime Session tokens are delivered only through the trusted `host.ready` message path rather than inline HTML.
 
 In GUI dev mode the wrapper embeds only loopback GUI URLs, computes the exact dev origin, forwards iframe messages only after checking `event.origin`, and sends iframe `postMessage` calls with that exact `targetOrigin` rather than `*`.
 
-No privileged workspace edits, IDE tools, or provider actions are implemented in this shell.
+No privileged workspace edits, IDE tools, shell actions, autonomous file reads/indexing, or provider actions are implemented in this shell. Active editor/selection context is sent only as a bounded prompt attachment after GUI preview/opt-in.
 
 ## Current limitations
 
