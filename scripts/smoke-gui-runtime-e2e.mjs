@@ -101,7 +101,7 @@ try {
   await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
 
   await page.getByLabel("Runtime base URL").fill(runtimeBaseUrl);
-  await page.getByLabel("Session token").fill(token);
+  await page.getByRole("textbox", { name: "Session token", exact: true }).fill(token);
   const refreshButton = page.getByRole("button", { name: "Refresh runtime" });
   await refreshButton.waitFor({ state: "visible", timeout: 20_000 });
   await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Refresh runtime" && !button.disabled), undefined, { timeout: 20_000 });
