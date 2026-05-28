@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { authHeaders, productIdentityWarning, runtimeFetch, validateRuntimeBaseUrl } from "./runtimeClient";
+import { authHeaders, productIdentityWarning, runtimeFetch, sendUserMessage, validateRuntimeBaseUrl } from "./runtimeClient";
 
 const fetchMock = vi.fn();
 
@@ -254,6 +254,38 @@ describe("runtimeClient", () => {
     const parsed = await runtimeFetch({ baseUrl: "http://127.0.0.1:8001", token: "runtime-token" }, "/v1/ping");
     expect(parsed.ok).toBe(false);
     expect(parsed.ok ? undefined : parsed.error.status).toBe("parse");
+  });
+
+  it("sends user message commands without context by default", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ accepted: true, chatId: "chat-001", requestId: "request-001", type: "user_message" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("00000000-0000-4000-8000-000000000001");
+
+    await sendUserMessage({ baseUrl: "http://127.0.0.1:8001", token: "runtime-token" }, "chat-001", "hello");
+
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8001/v1/chats/chat-001/commands", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ requestId: "00000000-0000-4000-8000-000000000001", type: "user_message", payload: { content: "hello" } }),
+    }));
+  });
+
+  it("sends user message commands with optional active editor context", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ accepted: true, chatId: "chat-001", requestId: "request-001", type: "user_message" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("00000000-0000-4000-8000-000000000002");
+    const context = {
+      kind: "active_editor" as const,
+      source: "vscode" as const,
+      file: { displayPath: "src/main.ts", workspaceRelativePath: "src/main.ts", languageId: "typescript" },
+      selection: { startLine: 2, startCharacter: 1, endLine: 3, endCharacter: 4, text: "selected code" },
+    };
+
+    await sendUserMessage({ baseUrl: "http://127.0.0.1:8001", token: "runtime-token" }, "chat-001", "hello", context);
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body)) as Record<string, unknown>;
+    expect(body).toEqual({ requestId: "00000000-0000-4000-8000-000000000002", type: "user_message", payload: { content: "hello", context } });
+    expect(body).not.toHaveProperty("providerId");
+    expect(body).not.toHaveProperty("modelId");
   });
 
   it("does not let caller headers override runtime Authorization", async () => {

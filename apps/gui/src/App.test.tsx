@@ -1478,26 +1478,120 @@ describe("active editor attached context", () => {
     expect(browserStorageDump()).not.toContain(rawSecret);
   });
 
-  it("does not send attached context before context sending is enabled", async () => {
+  it("sends attached context when valid and included", async () => {
+    const contextText = "selected safe context";
     mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
 
     await flushAsync();
-    await dispatchHostContextSnapshot({ selection: { text: "attached text not sent yet" } });
+    await dispatchHostContextSnapshot({
+      file: { displayPath: "src/main.ts", workspaceRelativePath: "src/main.ts", languageId: "typescript" },
+      selection: { startLine: 1, startCharacter: 0, endLine: 1, endCharacter: 21, text: contextText },
+    });
     fetchMock.mockClear();
 
     await act(async () => {
-      setTextareaValue(chatInput(), "hello with context preview");
+      setTextareaValue(chatInput(), "hello with included context");
     });
     await act(async () => {
       findButton("Send").click();
       await Promise.resolve();
     });
 
-    const commandCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST");
-    const body = JSON.parse(String(commandCall?.[1]?.body)) as { type?: string; payload?: Record<string, unknown> };
+    const body = lastUserMessageBody();
     expect(body.type).toBe("user_message");
-    expect(body.payload).toEqual({ content: "hello with context preview" });
+    expect(body.payload).toEqual({
+      content: "hello with included context",
+      context: {
+        kind: "active_editor",
+        source: "vscode",
+        file: { displayPath: "src/main.ts", workspaceRelativePath: "src/main.ts", languageId: "typescript" },
+        selection: { startLine: 1, startCharacter: 0, endLine: 1, endCharacter: 21, text: contextText },
+      },
+    });
+    expect(body.payload).not.toHaveProperty("providerId");
+    expect(body.payload).not.toHaveProperty("modelId");
+  });
+
+  it("does not send attached context when the include toggle is disabled", async () => {
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    await dispatchHostContextSnapshot({ selection: { text: "attached text disabled" } });
+    await act(async () => {
+      attachedContextToggle().click();
+    });
+    fetchMock.mockClear();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "hello without context");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    const body = lastUserMessageBody();
+    expect(body.type).toBe("user_message");
+    expect(body.payload).toEqual({ content: "hello without context" });
+  });
+
+  it("clears attached context on runtime settings changes so stale context is not sent", async () => {
+    const contextText = "old runtime selected context";
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    await dispatchHostContextSnapshot({ selection: { text: contextText } });
+    expect(attachedContextToggleOptional()).toBeDefined();
+
+    await act(async () => {
+      setInputValue(sessionTokenInput(), "new-runtime-token");
+    });
+    await flushAsync();
+
+    expect(container?.textContent).toContain("No valid active editor context is attached. Nothing will be included with the next message.");
+    expect(attachedContextToggleOptional()).toBeUndefined();
+    fetchMock.mockClear();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "hello after settings change");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    const body = lastUserMessageBody();
+    expect(body.payload).toEqual({ content: "hello after settings change" });
+    expect(browserStorageDump()).not.toContain(contextText);
+  });
+
+  it("clears attached context on chat changes so stale context is not sent", async () => {
+    const contextText = "old chat selected context";
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    await dispatchHostContextSnapshot({ selection: { text: contextText } });
+    await act(async () => {
+      setInputValue(findInputValue("chat-001")!, "chat-002");
+    });
+
+    expect(attachedContextToggleOptional()).toBeUndefined();
+    fetchMock.mockClear();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "hello in new chat");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    const body = lastUserMessageBody();
+    expect(body.payload).toEqual({ content: "hello in new chat" });
   });
 });
 
@@ -2734,6 +2828,18 @@ function abortCommandCalls() {
     }
     return (JSON.parse(String(init.body)) as { type?: string }).type === "abort";
   });
+}
+
+function lastUserMessageBody() {
+  const commandCalls = fetchMock.mock.calls.filter(([url, init]) => (String(url).endsWith("/v1/chats/chat-001/commands") || String(url).endsWith("/v1/chats/chat-002/commands")) && init?.method === "POST");
+  for (let index = commandCalls.length - 1; index >= 0; index -= 1) {
+    const commandCall = commandCalls[index];
+    const body = JSON.parse(String(commandCall[1]?.body)) as { type?: string; payload?: Record<string, unknown> };
+    if (body.type === "user_message") {
+      return body;
+    }
+  }
+  throw new Error("User message command not found");
 }
 
 function mockRuntimeResponse(input: RequestInfo | URL, init: RequestInit | undefined, options: MockRuntimeOptions = {}) {

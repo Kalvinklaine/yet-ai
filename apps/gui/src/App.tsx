@@ -195,7 +195,7 @@ export function App() {
   const [timeline, setTimeline] = useState<string[]>([]);
   const [bridgeLog, setBridgeLog] = useState<string[]>([]);
   const [bridgeHost, setBridgeHost] = useState<BridgeHost>("browser");
-  const [attachedContext, setAttachedContext] = useState<HostContextSnapshotPayload | null>(null);
+  const [attachedContext, setAttachedContext] = useState<{ payload: HostContextSnapshotPayload; settingsRevision: number; chatId: string } | null>(null);
   const [includeAttachedContext, setIncludeAttachedContext] = useState(false);
   const [runtimeRefreshStatus, setRuntimeRefreshStatus] = useState<{ state: "checking" | "connected" | "failed"; attempt: number; checkedAt: string; detail: string } | null>(null);
   const [runtimeRefreshInFlight, setRuntimeRefreshInFlight] = useState(false);
@@ -264,6 +264,7 @@ export function App() {
               ? "Runtime model refresh failed. Refresh runtime again before sending the first GPT message."
               : "Provider required: choose OpenAI API for the API-key fallback or configure a local OpenAI-compatible /v1 provider with a model before sending the first GPT message.";
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
+  const currentAttachedContext = attachedContext?.settingsRevision === settingsRevision && attachedContext.chatId === chatId ? attachedContext.payload : null;
 
   const addTimeline = useCallback((entry: string) => {
     setTimeline((current) => [entry, ...current].slice(0, 80));
@@ -311,6 +312,8 @@ export function App() {
     setProviderAuthExchangeWorking(false);
     setProviderAuthExchangeError(null);
     setProviderTestState(null);
+    setAttachedContext(null);
+    setIncludeAttachedContext(false);
   }, [abortActiveStream]);
 
   const updateRuntimeSettings = useCallback((nextSettings: RuntimeSettings) => {
@@ -354,7 +357,7 @@ export function App() {
         applyHostReady(message.payload as HostReadyPayload | undefined);
       } else if (message.type === "host.contextSnapshot") {
         const nextContext = message.payload as HostContextSnapshotPayload;
-        setAttachedContext(nextContext);
+        setAttachedContext({ payload: nextContext, settingsRevision: settingsRevisionRef.current, chatId: chatIdRef.current });
         setIncludeAttachedContext(hasUsableAttachedContext(nextContext));
       }
     });
@@ -776,6 +779,8 @@ export function App() {
     setChatError(null);
     setChatView(resetChatViewState(chatId));
     setTimeline([]);
+    setAttachedContext(null);
+    setIncludeAttachedContext(false);
   }, [abortActiveStream, chatId]);
 
   useEffect(() => () => {
@@ -852,8 +857,9 @@ export function App() {
       addTimeline("Command blocked until current runtime settings are ready");
       return;
     }
+    const context = includeAttachedContext && currentAttachedContext && hasUsableAttachedContext(currentAttachedContext) ? currentAttachedContext : undefined;
     startSse(targetChatId);
-    const result = await sendUserMessage(targetSettings, targetChatId, content);
+    const result = await sendUserMessage(targetSettings, targetChatId, content, context);
     if (!isCurrentRefresh(targetRevision) || chatIdRef.current !== targetChatId) {
       return;
     }
@@ -1076,7 +1082,7 @@ export function App() {
           {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
         </div>
         <form className="stack" onSubmit={(event) => void submitChat(event)}>
-          <AttachedContextPreview context={attachedContext} include={includeAttachedContext} onIncludeChange={setIncludeAttachedContext} />
+          <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} onIncludeChange={setIncludeAttachedContext} />
           <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder="Ask Yet AI..." />
           <div className="row">
             <button type="submit" disabled={!canSendChat}>Send</button>
