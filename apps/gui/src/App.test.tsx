@@ -1429,6 +1429,160 @@ describe("chat panel", () => {
     expect(browserStorageDump()).not.toContain("oauth");
   });
 
+  it("disables Send during OAuth exchange when no API-key provider is ready", async () => {
+    const exchange = deferred<Response>();
+    mockRuntimeResponses({ authResponse: pendingExperimentalAuthResponse() });
+    renderApp();
+
+    await flushAsync();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url.endsWith("/v1/provider-auth/openai/exchange")) {
+        return exchange.promise;
+      }
+      return mockRuntimeResponse(input, init, { authResponse: pendingExperimentalAuthResponse() });
+    });
+
+    await act(async () => {
+      setInputValue(authCodeInput(), "manual-code-mutating");
+    });
+    await act(async () => {
+      findButton("Exchange authorization code").click();
+      await Promise.resolve();
+    });
+
+    expect(findButton("Exchanging…").disabled).toBe(true);
+    expect(container?.textContent).toContain("State: OpenAI account login changing");
+    expect(findButton("Send").disabled).toBe(true);
+
+    exchange.resolve(jsonResponse(connectedExperimentalAuthResponse()));
+    await flushAsync();
+  });
+
+  it("disables Send immediately during OAuth disconnect without API-key provider readiness", async () => {
+    const disconnect = deferred<Response>();
+    mockRuntimeResponses({ authResponse: providerAuthResponse("connected") });
+    renderApp();
+
+    await flushAsync();
+    expect(findButton("Send").disabled).toBe(false);
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url.endsWith("/v1/provider-auth/openai/disconnect")) {
+        return disconnect.promise;
+      }
+      return mockRuntimeResponse(input, init, { authResponse: providerAuthResponse("connected") });
+    });
+
+    await act(async () => {
+      findButton("Disconnect login").click();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("State: OpenAI account login changing");
+    expect(container?.textContent).not.toContain("State: Experimental OpenAI account / gpt-5-codex");
+    expect(findButton("Send").disabled).toBe(true);
+
+    disconnect.resolve(jsonResponse({ ...providerAuthResponse("not_configured"), success: true }));
+    await flushAsync();
+  });
+
+  it("keeps Send enabled through API-key provider readiness while OAuth disconnects", async () => {
+    const disconnect = deferred<Response>();
+    mockRuntimeResponses({
+      authResponse: providerAuthResponse("connected"),
+      providers: [enabledProvider()],
+      models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }],
+    });
+    renderApp();
+
+    await flushAsync();
+    expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url.endsWith("/v1/provider-auth/openai/disconnect")) {
+        return disconnect.promise;
+      }
+      return mockRuntimeResponse(input, init, {
+        authResponse: providerAuthResponse("connected"),
+        providers: [enabledProvider()],
+        models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }],
+      });
+    });
+
+    await act(async () => {
+      findButton("Disconnect login").click();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
+    expect(findButton("Send").disabled).toBe(false);
+
+    disconnect.resolve(jsonResponse({ ...providerAuthResponse("api_key_configured"), success: true }));
+    await flushAsync();
+  });
+
+  it("ignores stale disconnect responses after runtime settings change", async () => {
+    const disconnect = deferred<Response>();
+    mockRuntimeResponses({ authResponse: providerAuthResponse("connected") });
+    renderApp();
+
+    await flushAsync();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url === "http://127.0.0.1:8001/v1/provider-auth/openai/disconnect") {
+        return disconnect.promise;
+      }
+      return mockRuntimeResponse(input, init, { authResponse: providerAuthResponse("login_unavailable") });
+    });
+
+    await act(async () => {
+      findButton("Disconnect login").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
+    });
+    disconnect.resolve(jsonResponse({ ...providerAuthResponse("connected"), success: true, message: "stale disconnect token response" }));
+    await flushAsync();
+
+    expect(container?.textContent).not.toContain("stale disconnect token response");
+    expect(container?.textContent).not.toContain("State: Experimental OpenAI account / gpt-5-codex");
+  });
+
+  it("renders sanitized provider-auth mutation failures without raw code session token or cookie text", async () => {
+    const rawCode = "manual-code-visible-secret";
+    const rawToken = "access_token=" + "t".repeat(64);
+    mockRuntimeResponses({ authResponse: pendingExperimentalAuthResponse() });
+    renderApp();
+
+    await flushAsync();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url.endsWith("/v1/provider-auth/openai/exchange")) {
+        return Promise.resolve(jsonResponse({ error: `exchange failed ${rawToken} session_token=provider-login-session-001 Cookie: login-cookie-secret code=${rawCode}` }, 500));
+      }
+      return mockRuntimeResponse(input, init, { authResponse: pendingExperimentalAuthResponse() });
+    });
+
+    await act(async () => {
+      setInputValue(authCodeInput(), rawCode);
+    });
+    await act(async () => {
+      findButton("Exchange authorization code").click();
+      await Promise.resolve();
+    });
+
+    expect(authCodeInputOptional()?.value ?? "").toBe("");
+    expect(container?.textContent).toContain("exchange failed [redacted]");
+    expect(container?.textContent).not.toContain(rawCode);
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("provider-login-session-001");
+    expect(container?.textContent).not.toContain("login-cookie-secret");
+    expect(container?.textContent).not.toContain("t".repeat(64));
+    expect(browserStorageDump()).not.toContain(rawCode);
+  });
+
   it("keeps API-key provider readiness preferred over connected experimental OAuth", async () => {
     mockRuntimeResponses({
       authResponse: providerAuthResponse("connected"),
@@ -2458,117 +2612,122 @@ function abortCommandCalls() {
   });
 }
 
+function mockRuntimeResponse(input: RequestInfo | URL, init: RequestInit | undefined, options: MockRuntimeOptions = {}) {
+  const url = String(input);
+  if (url.endsWith("/v1/provider-auth/openai/status")) {
+    if (options.authStatusCode) {
+      return Promise.resolve(jsonResponse({ error: "raw-secret should not appear" }, options.authStatusCode));
+    }
+    return Promise.resolve(jsonResponse(options.authResponse ?? {
+      provider: "openai",
+      configured: false,
+      status: options.authSupportsLogin ? "login_available" : "login_unavailable",
+      authSource: "none",
+      supportsLogin: options.authSupportsLogin ?? false,
+      supportsApiKey: true,
+      cloudRequired: false,
+      message: options.authMessage ?? "OpenAI account login is not available for this local provider path. Create an API key in the provider console and paste it once into Yet AI.",
+    }));
+  }
+  if (init?.method === "POST" && url.endsWith("/v1/provider-auth/openai/start")) {
+    return Promise.resolve(jsonResponse({
+      provider: "openai",
+      configured: false,
+      status: "pending",
+      authSource: "oauth",
+      supportsLogin: true,
+      supportsApiKey: true,
+      authorizationUrl: options.startAuthUrl ?? "https://auth.openai.com/oauth/authorize?state=test",
+      sessionId: "provider-login-session-001",
+      expiresAt: "2026-05-24T01:00:00Z",
+      scopes: ["openid", "profile", "email", "offline_access"],
+      cloudRequired: false,
+      success: true,
+      message: options.startAuthMessage ?? "Open the authorization URL to continue signing in.",
+    }));
+  }
+  if (init?.method === "POST" && url.endsWith("/v1/provider-auth/openai/exchange")) {
+    return Promise.resolve(jsonResponse(options.exchangeResponse ?? connectedExperimentalAuthResponse()));
+  }
+  if (init?.method === "POST" && url.endsWith("/v1/provider-auth/openai/disconnect")) {
+    return Promise.resolve(jsonResponse({ ...providerAuthResponse("not_configured"), success: true }));
+  }
+  if (init?.method === "POST" && url.endsWith("/v1/providers")) {
+    return Promise.resolve(jsonResponse({
+      id: "openai-compatible-custom",
+      kind: "openai-compatible",
+      displayName: "OpenAI-Compatible Provider",
+      enabled: true,
+      baseUrl: "https://api.openai.com/v1",
+      auth: { type: "api_key", configured: true, redacted: "sk-...test" },
+      models: [{ id: "gpt-4o-mini", displayName: "gpt-4o-mini" }],
+      capabilities: { chat: true, completion: false, embeddings: false },
+    }));
+  }
+  if (init?.method === "POST" && url.includes("/v1/providers/") && url.endsWith("/test")) {
+    return Promise.resolve(jsonResponse(options.providerTestResponse ?? {
+      ok: true,
+      providerId: "openai-api",
+      status: "reachable",
+      message: "Provider is reachable and accepted the configured credentials.",
+      modelId: "gpt-4o-mini",
+      cloudRequired: false,
+    }, options.providerTestStatus ?? 200));
+  }
+  if (url.includes("/v1/chats/subscribe?chat_id=")) {
+    return Promise.resolve(sseResponse(options.sseEvents ?? []));
+  }
+  if (init?.method === "POST" && url.includes("/v1/chats/") && url.endsWith("/commands")) {
+    if (options.commandStatus) {
+      return Promise.resolve(jsonResponse({ error: options.commandError ?? "command failed" }, options.commandStatus));
+    }
+    return Promise.resolve(jsonResponse({
+      accepted: true,
+      chatId: "chat-001",
+      requestId: "request-001",
+      type: "user_message",
+    }));
+  }
+  if (url.endsWith("/v1/ping")) {
+    if (options.runtimeFailure) {
+      return Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1:8001"));
+    }
+    return Promise.resolve(jsonResponse(options.pingResponse ?? {
+      productId: "yet-ai",
+      displayName: "Yet AI",
+      version: "0.0.0",
+      ready: true,
+      serverTime: "2026-05-24T00:00:00Z",
+    }));
+  }
+  if (url.endsWith("/v1/caps")) {
+    if (options.runtimeFailure) {
+      return Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1:8001"));
+    }
+    return Promise.resolve(jsonResponse(options.capsResponse ?? {
+      productId: "yet-ai",
+      protocolVersion: "2026-05-15",
+      runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" },
+      capabilities: [],
+      features: {},
+      providers: [],
+      ide: { bridge: true, lsp: false },
+    }));
+  }
+  if (url.endsWith("/v1/models")) {
+    if (options.modelsFailure) {
+      return Promise.resolve(jsonResponse({ error: "models unavailable" }, 503));
+    }
+    return Promise.resolve(jsonResponse({ models: options.models ?? [] }));
+  }
+  if (url.endsWith("/v1/providers")) {
+    return Promise.resolve(jsonResponse({ providers: options.providers ?? [], cloudRequired: false, providerAccess: "direct" }));
+  }
+  return Promise.resolve(jsonResponse({}));
+}
+
 function mockRuntimeResponses(options: MockRuntimeOptions = {}) {
-  fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    if (url.endsWith("/v1/provider-auth/openai/status")) {
-      if (options.authStatusCode) {
-        return Promise.resolve(jsonResponse({ error: "raw-secret should not appear" }, options.authStatusCode));
-      }
-      return Promise.resolve(jsonResponse(options.authResponse ?? {
-        provider: "openai",
-        configured: false,
-        status: options.authSupportsLogin ? "login_available" : "login_unavailable",
-        authSource: "none",
-        supportsLogin: options.authSupportsLogin ?? false,
-        supportsApiKey: true,
-        cloudRequired: false,
-        message: options.authMessage ?? "OpenAI account login is not available for this local provider path. Create an API key in the provider console and paste it once into Yet AI.",
-      }));
-    }
-    if (init?.method === "POST" && url.endsWith("/v1/provider-auth/openai/start")) {
-      return Promise.resolve(jsonResponse({
-        provider: "openai",
-        configured: false,
-        status: "pending",
-        authSource: "oauth",
-        supportsLogin: true,
-        supportsApiKey: true,
-        authorizationUrl: options.startAuthUrl ?? "https://auth.openai.com/oauth/authorize?state=test",
-        sessionId: "provider-login-session-001",
-        expiresAt: "2026-05-24T01:00:00Z",
-        scopes: ["openid", "profile", "email", "offline_access"],
-        cloudRequired: false,
-        success: true,
-        message: options.startAuthMessage ?? "Open the authorization URL to continue signing in.",
-      }));
-    }
-    if (init?.method === "POST" && url.endsWith("/v1/provider-auth/openai/exchange")) {
-      return Promise.resolve(jsonResponse(options.exchangeResponse ?? connectedExperimentalAuthResponse()));
-    }
-    if (init?.method === "POST" && url.endsWith("/v1/providers")) {
-      return Promise.resolve(jsonResponse({
-        id: "openai-compatible-custom",
-        kind: "openai-compatible",
-        displayName: "OpenAI-Compatible Provider",
-        enabled: true,
-        baseUrl: "https://api.openai.com/v1",
-        auth: { type: "api_key", configured: true, redacted: "sk-...test" },
-        models: [{ id: "gpt-4o-mini", displayName: "gpt-4o-mini" }],
-        capabilities: { chat: true, completion: false, embeddings: false },
-      }));
-    }
-    if (init?.method === "POST" && url.includes("/v1/providers/") && url.endsWith("/test")) {
-      return Promise.resolve(jsonResponse(options.providerTestResponse ?? {
-        ok: true,
-        providerId: "openai-api",
-        status: "reachable",
-        message: "Provider is reachable and accepted the configured credentials.",
-        modelId: "gpt-4o-mini",
-        cloudRequired: false,
-      }, options.providerTestStatus ?? 200));
-    }
-    if (url.includes("/v1/chats/subscribe?chat_id=")) {
-      return Promise.resolve(sseResponse(options.sseEvents ?? []));
-    }
-    if (init?.method === "POST" && url.includes("/v1/chats/") && url.endsWith("/commands")) {
-      if (options.commandStatus) {
-        return Promise.resolve(jsonResponse({ error: options.commandError ?? "command failed" }, options.commandStatus));
-      }
-      return Promise.resolve(jsonResponse({
-        accepted: true,
-        chatId: "chat-001",
-        requestId: "request-001",
-        type: "user_message",
-      }));
-    }
-    if (url.endsWith("/v1/ping")) {
-      if (options.runtimeFailure) {
-        return Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1:8001"));
-      }
-      return Promise.resolve(jsonResponse(options.pingResponse ?? {
-        productId: "yet-ai",
-        displayName: "Yet AI",
-        version: "0.0.0",
-        ready: true,
-        serverTime: "2026-05-24T00:00:00Z",
-      }));
-    }
-    if (url.endsWith("/v1/caps")) {
-      if (options.runtimeFailure) {
-        return Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1:8001"));
-      }
-      return Promise.resolve(jsonResponse(options.capsResponse ?? {
-        productId: "yet-ai",
-        protocolVersion: "2026-05-15",
-        runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" },
-        capabilities: [],
-        features: {},
-        providers: [],
-        ide: { bridge: true, lsp: false },
-      }));
-    }
-    if (url.endsWith("/v1/models")) {
-      if (options.modelsFailure) {
-        return Promise.resolve(jsonResponse({ error: "models unavailable" }, 503));
-      }
-      return Promise.resolve(jsonResponse({ models: options.models ?? [] }));
-    }
-    if (url.endsWith("/v1/providers")) {
-      return Promise.resolve(jsonResponse({ providers: options.providers ?? [], cloudRequired: false, providerAccess: "direct" }));
-    }
-    return Promise.resolve(jsonResponse({}));
-  });
+  fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => mockRuntimeResponse(input, init, options));
   vi.stubGlobal("fetch", fetchMock);
 }
 
