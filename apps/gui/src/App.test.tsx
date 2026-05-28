@@ -1410,6 +1410,7 @@ describe("active editor attached context", () => {
     expect(container?.textContent).toContain("Selection: 10:2-12:8");
     expect(container?.textContent).toContain("Preview: function greet()");
     expect(container?.textContent).toContain("Selection size: 38 characters");
+    expect(container?.textContent).toContain("sent only when this toggle is enabled for the next accepted message");
     expect(attachedContextToggle().checked).toBe(true);
   });
 
@@ -1513,12 +1514,57 @@ describe("active editor attached context", () => {
     expect(body.payload).not.toHaveProperty("modelId");
   });
 
-  it("does not send attached context when the include toggle is disabled", async () => {
+  it("sends valid attached context once and clears preview for the next message", async () => {
+    const contextText = "one shot selected context";
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
 
     await flushAsync();
-    await dispatchHostContextSnapshot({ selection: { text: "attached text disabled" } });
+    await dispatchHostContextSnapshot({ selection: { text: contextText } });
+    fetchMock.mockClear();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "first message with context");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    const firstBody = lastUserMessageBody();
+    expect(firstBody.payload).toEqual({
+      content: "first message with context",
+      context: {
+        kind: "active_editor",
+        source: "vscode",
+        selection: { text: contextText },
+      },
+    });
+    expect(container?.textContent).toContain("No valid active editor context is attached. Nothing will be included with the next message.");
+    expect(attachedContextToggleOptional()).toBeUndefined();
+
+    fetchMock.mockClear();
+    await act(async () => {
+      setTextareaValue(chatInput(), "second message without old context");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    expect(lastUserMessageBody().payload).toEqual({ content: "second message without old context" });
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(contextText);
+  });
+
+  it("does not send attached context when the include toggle is disabled", async () => {
+    const contextText = "attached text disabled";
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    await dispatchHostContextSnapshot({ selection: { text: contextText } });
     await act(async () => {
       attachedContextToggle().click();
     });
@@ -1535,6 +1581,82 @@ describe("active editor attached context", () => {
     const body = lastUserMessageBody();
     expect(body.type).toBe("user_message");
     expect(body.payload).toEqual({ content: "hello without context" });
+    expect(container?.textContent).toContain("No valid active editor context is attached. Nothing will be included with the next message.");
+    expect(attachedContextToggleOptional()).toBeUndefined();
+    expect(browserStorageDump()).not.toContain(contextText);
+  });
+
+  it("keeps attached context and include toggle after a failed command for retry", async () => {
+    const contextText = "retry selected context";
+    mockRuntimeResponses({ ...readyRuntimeOptions(), commandStatus: 500, commandError: "command failed safely" });
+    renderApp();
+
+    await flushAsync();
+    await dispatchHostContextSnapshot({ selection: { text: contextText } });
+    fetchMock.mockClear();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "message that fails");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("Preview: retry selected context");
+    expect(attachedContextToggle().checked).toBe(true);
+
+    mockRuntimeResponses(readyRuntimeOptions());
+    fetchMock.mockClear();
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    expect(lastUserMessageBody().payload).toEqual({
+      content: "message that fails",
+      context: {
+        kind: "active_editor",
+        source: "vscode",
+        selection: { text: contextText },
+      },
+    });
+  });
+
+  it("does not let stale chat command success clear newer attached context after chat change", async () => {
+    const oldCommand = deferred<Response>();
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    await dispatchHostContextSnapshot({ selection: { text: "old in-flight context" } });
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url === "http://127.0.0.1:8001/v1/chats/chat-001/commands") {
+        return oldCommand.promise;
+      }
+      return mockRuntimeResponse(input, init, readyRuntimeOptions());
+    });
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "old in-flight message");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      setInputValue(findInputValue("chat-001")!, "chat-002");
+      await Promise.resolve();
+    });
+    await dispatchHostContextSnapshot({ selection: { text: "new chat context" } });
+
+    oldCommand.resolve(jsonResponse({ accepted: true, chatId: "chat-001", requestId: "old-request", type: "user_message" }));
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Preview: new chat context");
+    expect(attachedContextToggle().checked).toBe(true);
+    expect(container?.textContent).not.toContain("Command accepted old-request");
   });
 
   it("clears attached context on runtime settings changes so stale context is not sent", async () => {
