@@ -227,28 +227,33 @@ export function App() {
   const runtimeConnected = activePing?.ready === true && !activeConnectionError;
   const connectionStatus = activeConnectionError ? "error" : activePing?.ready ? "connected" : "not checked";
   const enabledProviders = useMemo(() => activeProviders.filter((provider) => provider.enabled), [activeProviders]);
-  const selectedModel = useMemo(() => activeModels[0] ?? enabledProviders.flatMap((provider) => provider.models.map((model) => ({ ...model, providerId: model.providerId ?? provider.id })))[0], [enabledProviders, activeModels]);
-  const apiKeyChatReady = runtimeConnected && !activeModelError && enabledProviders.length > 0 && Boolean(selectedModel);
-  const experimentalOauthChatReady = runtimeConnected && !apiKeyChatReady && activeProviderAuthStatus?.configured === true && activeProviderAuthStatus.authSource === "oauth" && activeProviderAuthStatus.status === "connected";
+  const apiKeyReadiness = useMemo(() => resolveProviderModelReadiness(activeModels, enabledProviders, activeModelError), [activeModels, activeModelError, enabledProviders]);
+  const selectedModel = apiKeyReadiness.model;
+  const apiKeyChatReady = runtimeConnected && apiKeyReadiness.ready;
+  const experimentalOauthChatReady = runtimeConnected && !apiKeyChatReady && !apiKeyReadiness.mismatch && activeProviderAuthStatus?.configured === true && activeProviderAuthStatus.authSource === "oauth" && activeProviderAuthStatus.status === "connected";
   const canSendChat = apiKeyChatReady || experimentalOauthChatReady;
-  const selectedModelDisplayName = selectedModel ? sanitizeDisplayText(selectedModel.displayName) : undefined;
-  const selectedModelProviderId = selectedModel?.providerId ? sanitizeDisplayText(selectedModel.providerId) : undefined;
+  const selectedModelDisplayName = selectedModel ? sanitizeDisplayText(selectedModel.displayName || selectedModel.id) : undefined;
+  const selectedModelProviderId = apiKeyReadiness.provider?.id ? sanitizeDisplayText(apiKeyReadiness.provider.id) : selectedModel?.providerId ? sanitizeDisplayText(selectedModel.providerId) : undefined;
   const chatReadinessLabel = !runtimeConnected
     ? "Runtime unavailable"
     : apiKeyChatReady
       ? `${selectedModelDisplayName ?? "the default model"}${selectedModelProviderId ? ` (${selectedModelProviderId})` : ""}`
-      : experimentalOauthChatReady
-        ? "Experimental OpenAI account / gpt-5-codex"
-        : "Provider required";
+      : apiKeyReadiness.mismatch
+        ? "Runtime model/provider mismatch"
+        : experimentalOauthChatReady
+          ? "Experimental OpenAI account / gpt-5-codex"
+          : "Provider required";
   const chatReadinessMessage = !runtimeConnected
     ? "Runtime is not connected. Refresh runtime and fix the local runtime problem before sending the first GPT message."
     : apiKeyChatReady
       ? `Ready to send using ${selectedModelDisplayName ?? "the default model"}.`
-      : experimentalOauthChatReady
-        ? "Experimental Codex-like OpenAI account chat is connected through the local runtime. This private-endpoint path is high-risk, not official public OAuth support, and not production-ready."
-        : activeModelError
-          ? "Runtime model refresh failed. Refresh runtime again before sending the first GPT message."
-          : "Provider required: choose OpenAI API for the API-key fallback or configure a local OpenAI-compatible /v1 provider with a model before sending the first GPT message.";
+      : apiKeyReadiness.mismatch
+        ? apiKeyReadiness.message
+        : experimentalOauthChatReady
+          ? "Experimental Codex-like OpenAI account chat is connected through the local runtime. This private-endpoint path is high-risk, not official public OAuth support, and not production-ready."
+          : activeModelError
+            ? "Runtime model refresh failed. Refresh runtime again before sending the first GPT message."
+            : "Provider required: choose OpenAI API for the API-key fallback or configure a local OpenAI-compatible /v1 provider with a model before sending the first GPT message.";
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
 
   const addTimeline = useCallback((entry: string) => {
@@ -1036,6 +1041,54 @@ export function App() {
       </section>
     </main>
   );
+}
+
+type ProviderModelReadiness = {
+  ready: boolean;
+  mismatch: boolean;
+  model?: ModelSummary;
+  provider?: ProviderSummary;
+  message?: string;
+};
+
+function resolveProviderModelReadiness(models: ModelSummary[], enabledProviders: ProviderSummary[], modelError: RuntimeError | null): ProviderModelReadiness {
+  if (modelError) {
+    return { ready: false, mismatch: false };
+  }
+  const firstRuntimeModel = models[0];
+  if (firstRuntimeModel) {
+    const modelId = firstRuntimeModel.id.trim();
+    if (!modelId) {
+      return { ready: false, mismatch: true, model: firstRuntimeModel, message: modelProviderMismatchMessage(firstRuntimeModel) };
+    }
+    const provider = resolveRuntimeModelProvider(firstRuntimeModel, enabledProviders);
+    if (!provider || !provider.models.some((model) => model.id.trim() === modelId)) {
+      return { ready: false, mismatch: true, model: firstRuntimeModel, provider, message: modelProviderMismatchMessage(firstRuntimeModel, provider) };
+    }
+    return { ready: true, mismatch: false, model: firstRuntimeModel, provider };
+  }
+  const provider = enabledProviders.find((item) => item.models.some((model) => model.id.trim()));
+  const model = provider?.models.find((item) => item.id.trim());
+  if (!provider || !model) {
+    return { ready: false, mismatch: false };
+  }
+  return { ready: true, mismatch: false, model: { ...model, providerId: model.providerId ?? provider.id }, provider };
+}
+
+function resolveRuntimeModelProvider(model: ModelSummary, enabledProviders: ProviderSummary[]): ProviderSummary | undefined {
+  const providerId = model.providerId?.trim();
+  if (providerId) {
+    return enabledProviders.find((provider) => provider.id === providerId);
+  }
+  const matchingProviders = enabledProviders.filter((provider) => provider.models.some((providerModel) => providerModel.id.trim() === model.id.trim()));
+  return matchingProviders.length === 1 ? matchingProviders[0] : undefined;
+}
+
+function modelProviderMismatchMessage(model: ModelSummary, provider?: ProviderSummary): string {
+  const modelName = sanitizeDisplayText(model.displayName || model.id || "selected model");
+  const providerName = provider ? sanitizeDisplayText(provider.displayName || provider.id) : model.providerId ? sanitizeDisplayText(model.providerId) : undefined;
+  const detail = providerName ? ` Model ${modelName} is not available on enabled provider ${providerName}.` : ` Model ${modelName} does not map to exactly one enabled provider.`;
+  return `Runtime model/provider mismatch. Refresh runtime or test/save provider before sending.${detail}`;
 }
 
 function ChatBubble({ message }: { message: ChatViewMessage }) {

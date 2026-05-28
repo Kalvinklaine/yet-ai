@@ -1446,6 +1446,85 @@ describe("chat panel", () => {
     expect(findButton("Send").disabled).toBe(false);
   });
 
+  it("disables Send when runtime model references a missing provider", async () => {
+    mockRuntimeResponses({
+      providers: [enabledProvider()],
+      models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "missing-provider" }],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("State: Runtime model/provider mismatch");
+    expect(container?.textContent).toContain("Runtime model/provider mismatch. Refresh runtime or test/save provider before sending.");
+    expect(findButton("Send").disabled).toBe(true);
+  });
+
+  it("disables Send when runtime model references a disabled provider", async () => {
+    mockRuntimeResponses({
+      providers: [{ ...enabledProvider(), enabled: false }],
+      models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("0 enabled providers");
+    expect(container?.textContent).toContain("State: Runtime model/provider mismatch");
+    expect(container?.textContent).toContain("Runtime model/provider mismatch. Refresh runtime or test/save provider before sending.");
+    expect(findButton("Send").disabled).toBe(true);
+  });
+
+  it("resolves a runtime model without provider id only when the enabled provider mapping is unambiguous", async () => {
+    mockRuntimeResponses({
+      providers: [enabledProvider()],
+      models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini" }],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
+    expect(container?.textContent).toContain("Ready to send using GPT-4o mini.");
+    expect(findButton("Send").disabled).toBe(false);
+  });
+
+  it("disables Send when a runtime model without provider id maps to multiple enabled providers", async () => {
+    mockRuntimeResponses({
+      providers: [enabledProvider(), { ...enabledProvider(), id: "other-openai", displayName: "Other OpenAI" }],
+      models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini" }],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("2 enabled providers");
+    expect(container?.textContent).toContain("State: Runtime model/provider mismatch");
+    expect(container?.textContent).toContain("Runtime model/provider mismatch. Refresh runtime or test/save provider before sending.");
+    expect(findButton("Send").disabled).toBe(true);
+  });
+
+  it("sanitizes secret-like provider and model labels in mismatch copy", async () => {
+    const longModelSecret = "access_token=" + "m".repeat(64);
+    const longProviderSecret = "refresh_token=" + "p".repeat(64);
+    mockRuntimeResponses({
+      providers: [enabledProvider()],
+      models: [{ id: longModelSecret, displayName: `Model ${longModelSecret}`, providerId: `provider-${longProviderSecret}` }],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("State: Runtime model/provider mismatch");
+    expect(container?.textContent).toContain("Runtime model/provider mismatch. Refresh runtime or test/save provider before sending.");
+    expect(container?.textContent).toContain("Model Model [redacted] is not available on enabled provider provider-[redacted].");
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("refresh_token");
+    expect(container?.textContent).not.toContain("m".repeat(64));
+    expect(container?.textContent).not.toContain("p".repeat(64));
+    expect(findButton("Send").disabled).toBe(true);
+  });
+
   it.each(["pending", "expired", "revoked", "error"] satisfies ProviderAuthStatus[])("does not enable Send for %s OAuth status", async (status) => {
     mockRuntimeResponses({ authResponse: providerAuthResponse(status) });
     renderApp();
