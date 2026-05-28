@@ -132,7 +132,7 @@ The local package route includes a generated `out/product/identity.json` copied 
 
 Use this manual smoke only when you intentionally want to test a real OpenAI API-key fallback through the local VS Code dev preview. This is not a production release flow and is not an automated test. Never commit real keys, add them to fixtures, paste them into logs or issue text, or capture screenshots that show secrets.
 
-This path does not use a Yet AI account, hosted workspace, managed model gateway, or product credit balance. It sends model requests from the local `yet-lsp` runtime directly to the configured OpenAI-compatible endpoint. The `OpenAI API` preset remains the safe/default real-provider path. A login/account-based GPT first-message UX is a mandatory future milestone, but the experimental Codex-like OpenAI account path is separate, explicit-risk, high-risk, private-endpoint-style, not official public OpenAI OAuth support, and not production-ready: automated coverage is limited to `npm run smoke:local` with loopback token/chat mocks, while real account testing is manual, risky, account-specific, and outside CI. The provider-auth card may show the separate experimental action, but this milestone smoke should use the API-key fallback.
+This path does not use a Yet AI account, hosted workspace, managed model gateway, or product credit balance. It sends model requests from the local `yet-lsp` runtime directly to the configured OpenAI-compatible endpoint. The `OpenAI API` preset remains the safe/default real-provider path. The GUI may show a more prominent productized OpenAI account-login card with unavailable, pending, connected, expired/revoked, sanitized-error, retry, reconnect, disconnect, and API-key fallback states, but the experimental Codex-like OpenAI account path is separate, explicit-risk, high-risk, private-endpoint-style, not official public OpenAI OAuth support, not an OpenAI partnership claim, and not production-ready. Automated coverage is limited to `npm run smoke:local` with loopback token/chat mocks; no CI or smoke uses real OpenAI/ChatGPT credentials. Real account testing is manual, risky, account-specific, outside CI, and must capture only sanitized evidence. The provider-auth card may show the separate experimental action, but this milestone smoke should use the API-key fallback.
 
 1. Prepare the VS Code dev preview from the repository root:
 
@@ -189,6 +189,17 @@ Use this checklist after the steps above. The normal VS Code first-message previ
 - Provider status after save is configured/redacted; the raw key is not rendered back into the form.
 - A simple chat message produces `snapshot`, stream start/delta, and finish behavior in the GUI.
 - For the real OpenAI API-key fallback smoke, the preset uses `https://api.openai.com/v1`, the API key field clears after save, and no automated test or committed file contains the real key.
+
+### Experimental account-login manual checklist
+
+Use this only for an explicitly accepted manual run of the experimental Codex-like account path. Keep the normal VS Code path unchanged: `npm run prepare:vscode-preview`, Extension Development Host, `yetai.launchMode = auto`, `Yet AI: Open Chat`, no manual `yet-lsp`, and no copied `local-dev-token`.
+
+- Preflight: run `npm run prepare:vscode-preview` and `npm run smoke:vscode-preview`; optionally run `npm run smoke:local` to verify the mock-only account-shaped automation. These commands must not use real OpenAI/ChatGPT credentials.
+- Consent/scopes: before approving any provider page, read the visible consent and scopes. Record only non-secret scope names or consent summaries; do not record authorization URLs containing codes, cookies, or account-private query data.
+- Connect: start the account action only from the GUI account-login card. Verify pending and connected states show sanitized labels, scopes, expiry, and redacted hints only.
+- First message: after connected status, send `Say hello in one sentence.` and record only whether snapshot/start/delta/finish streaming succeeded or a sanitized failure appeared.
+- Failure states: when feasible, test denied consent, expired/revoked session, unavailable model/provider outage, retry/reconnect, disconnect, and reconnect. Keep the API-key fallback visible and usable.
+- Evidence: reports may include IDE version, OS, launch mode, sanitized status labels, redacted account hints, non-secret scopes, and concise sanitized error text. Never include provider API keys, local runtime session tokens, bearer headers, auth codes, access tokens, refresh tokens, cookies, PKCE verifiers, raw provider responses, private paths, or screenshots that show secrets.
 
 ## Manual preview report template
 

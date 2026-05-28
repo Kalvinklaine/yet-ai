@@ -1,6 +1,6 @@
 # 006 Login-Based GPT First Message Milestone
 
-This document plans a mandatory future milestone for a login-based GPT first-message UX. It is separate from the current VS Code no-manual-runtime milestone and from the current API-key fallback baseline. It is a plan only; it does not claim that production login is implemented or officially supported.
+This document tracks the login-based GPT first-message milestone. The GUI now has a more productized account-login card for the experimental Codex-like path, but production login is not implemented, not officially supported, and not enabled as the default real-provider path. The milestone remains separate from the current VS Code no-manual-runtime path and from the API-key fallback baseline.
 
 ## User goal
 
@@ -21,7 +21,7 @@ The milestone is successful only when a fresh IDE user can reach the first GPT r
 
 The current near-term milestone is VS Code first GPT message without manual runtime setup. That milestone should make runtime startup, `host.ready` token delivery, provider readiness, and API-key fallback reliable and obvious.
 
-The login-based milestone comes after that. Until the login milestone passes its contracts, tests, and reviews, the safe/default real-provider path remains the local API-key or project-key fallback through the engine. The GUI may present login as planned, unavailable, experimental, or explicitly high risk, but it must not make login the default production path until this milestone is complete.
+The login-based milestone comes after that. Until the login milestone passes its official-provider contracts, tests, manual review, and privacy/security review, the safe/default real-provider path remains the local API-key or project-key fallback through the engine. The GUI may present the current account-login card more prominently with unavailable, pending, connected, expired/revoked, sanitized-error, retry, reconnect, disconnect, and API-key fallback states, but the Codex-like path must remain experimental, explicitly high risk, private-endpoint-style, and non-default for production use.
 
 ## Supported official path criteria
 
@@ -56,12 +56,13 @@ The current Codex-like path is high-risk and private-endpoint-style. It is not p
 
 Allowed status for the experimental path:
 
+- productized GUI state presentation with explicit risk copy, sanitized pending/connected/expired/revoked/error states, retry/reconnect/disconnect controls, and API-key fallback guidance;
 - loopback/mock-only automation;
 - contract and smoke tests with fake credentials, fake tokens, fake sessions, and local mock endpoints;
 - manual real-account testing only when explicitly accepted for a specific task;
-- clear documentation that it is experimental, account-specific, high risk, and not official public OpenAI OAuth support.
+- clear documentation that it is experimental, account-specific, high risk, private-endpoint-style, not official public OpenAI OAuth support, not an OpenAI partnership claim, and not production-ready.
 
-The experimental path must not become the default login UX, must not run in CI against real accounts, and must not be described as production OpenAI login support.
+The experimental path must not become the default production login UX, must not run in CI against real accounts, and must not be described as production OpenAI login support. No smoke or CI command may use real OpenAI/ChatGPT credentials; `npm run smoke:local` covers only loopback token/chat mocks.
 
 ## Engine, GUI, and IDE boundaries
 
@@ -120,17 +121,20 @@ Before login can become the default first-message path, the following gates are 
 
 ### Manual real-provider checklist
 
-Manual real-provider testing must be explicit and outside CI. The checklist should record:
+Manual real-provider testing must be explicit, outside CI, and safe to share only after sanitization. The checklist should record:
 
 - provider auth mechanism and documentation reviewed;
-- account type and model access assumptions;
-- redirect/device flow behavior;
-- scopes and consent copy;
-- token refresh and revoke behavior;
-- disconnect and re-login behavior;
-- first GPT message success;
-- sanitized status/errors screenshots or logs with no secrets;
-- failure cases for denied consent, expired session, unavailable model, and provider outage.
+- whether the run targets an official provider-supported mechanism or the current explicit-risk experimental Codex-like path;
+- account type and model access assumptions, without account-private identifiers unless redacted;
+- IDE launch behavior, including that the normal VS Code path used `npm run prepare:vscode-preview`, Extension Development Host, `yetai.launchMode = auto`, `Yet AI: Open Chat`, no manual `yet-lsp`, and no copied `local-dev-token`;
+- redirect/device/manual exchange behavior, without copying authorization URLs that contain codes, cookies, or account-private query data;
+- scopes and consent copy, limited to non-secret visible scope names and consent summaries;
+- connect status and first GPT message success after sanitized connected status;
+- expired, denied, unavailable-model, provider-outage, retry, disconnect, and reconnect behavior when feasible;
+- token refresh and revoke behavior when supported by the flow;
+- sanitized status/errors screenshots or logs with no secrets.
+
+Manual reports must not include raw provider API keys, local runtime session tokens, bearer or Authorization headers, auth codes, access tokens, refresh tokens, cookies, PKCE verifiers, raw provider responses, private credential-file paths, bridge payloads, or screenshots showing secrets.
 
 ### Privacy and security review
 
