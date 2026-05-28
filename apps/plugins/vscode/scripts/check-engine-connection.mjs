@@ -47,6 +47,7 @@ try {
     validateEngineConnectionSettings,
     validateLoopbackUrl,
     validateRuntimeLaunchProtocol,
+    validateRuntimeUrl,
   } = await import("../out/engineConnection.js");
 
   assert.deepEqual(resolveSessionToken(" secret-token ", " legacy-token "), {
@@ -60,6 +61,19 @@ try {
   assert.deepEqual(resolveSessionToken("", "  "), { source: "none" });
 
   assert.doesNotThrow(() => validateLoopbackUrl("https://127.0.0.1:5173", "yetai.guiDevUrl"));
+  assert.doesNotThrow(() => validateRuntimeUrl("http://127.0.0.1:8001", "yetai.runtimeUrl"));
+  assert.doesNotThrow(() => validateRuntimeUrl("http://127.0.0.1:8001/", "yetai.runtimeUrl"));
+  assert.doesNotThrow(() => validateLoopbackUrl("https://127.0.0.1:5173/gui", "yetai.guiDevUrl"));
+  for (const runtimeUrl of [
+    "http://127.0.0.1:8001/foo",
+    "http://127.0.0.1:8001/foo/../bar",
+    "http://127.0.0.1:8001/%2e%2e/foo",
+  ]) {
+    assert.throws(
+      () => validateRuntimeUrl(runtimeUrl, "yetai.runtimeUrl"),
+      /yetai\.runtimeUrl must not include a path\./,
+    );
+  }
   assert.throws(
     () => validateLoopbackUrl("http://127.0.0.1:8001/?token=fake-secret", "yetai.runtimeUrl"),
     /yetai\.runtimeUrl must not include query parameters or fragments\./,
@@ -494,6 +508,35 @@ try {
     assert.match(invalidRuntimeUrlDiagnostics.pingStatus, /^skipped: yetai\.runtimeUrl must not include query parameters or fragments\./);
     assert.equal(invalidRuntimeUrlDiagnostics.pingStatus.includes("fake-runtime-url-secret"), false);
     assert.equal(invalidRuntimeUrlPinged, false);
+
+    configValues = {
+      runtimeUrl: "http://127.0.0.1:8001/foo?token=fake-runtime-url-secret",
+      launchMode: "connect",
+    };
+    const { pinged: invalidRuntimePathPinged, result: invalidRuntimePathDiagnostics } = await withPingStub(() =>
+      collectRuntimeDiagnostics(
+        { ...fakeContext, extensionPath: tempRoot },
+        { engine: { binaryName: "yet-lsp" } },
+      ),
+    );
+    assert.equal(invalidRuntimePathDiagnostics.engineBinaryStatus, "not checked in connect mode");
+    assert.match(invalidRuntimePathDiagnostics.pingStatus, /^skipped: yetai\.runtimeUrl must not include query parameters or fragments\./);
+    assert.equal(invalidRuntimePathDiagnostics.pingStatus.includes("fake-runtime-url-secret"), false);
+    assert.equal(invalidRuntimePathPinged, false);
+
+    configValues = {
+      runtimeUrl: "http://127.0.0.1:8001/foo",
+      launchMode: "connect",
+    };
+    const { pinged: invalidRuntimeCleanPathPinged, result: invalidRuntimeCleanPathDiagnostics } = await withPingStub(() =>
+      collectRuntimeDiagnostics(
+        { ...fakeContext, extensionPath: tempRoot },
+        { engine: { binaryName: "yet-lsp" } },
+      ),
+    );
+    assert.equal(invalidRuntimeCleanPathDiagnostics.engineBinaryStatus, "not checked in connect mode");
+    assert.match(invalidRuntimeCleanPathDiagnostics.pingStatus, /^skipped: yetai\.runtimeUrl must not include a path\./);
+    assert.equal(invalidRuntimeCleanPathPinged, false);
 
     const emptyPath = path.join(tempRoot, "empty-path");
     fs.mkdirSync(emptyPath);

@@ -237,16 +237,29 @@ export function validateLoopbackUrl(value: string, settingName: string): vscode.
   return vscode.Uri.parse(parsed.href, true);
 }
 
+export function validateRuntimeUrl(value: string, settingName: string): vscode.Uri {
+  const uri = validateLoopbackUrl(value, settingName);
+  if (!hasRootUrlPath(value)) {
+    throw new Error(`${settingName} must not include a path.`);
+  }
+  return uri;
+}
+
 export function getLoopbackOrigin(value: string, settingName: string): string {
   validateLoopbackUrl(value, settingName);
   return new URL(value).origin;
 }
 
 export function validateEngineConnection(connection: EngineConnection): void {
-  validateLoopbackUrl(connection.runtimeUrl, `${configurationPrefix}.runtimeUrl`);
+  validateRuntimeUrl(connection.runtimeUrl, `${configurationPrefix}.runtimeUrl`);
   if (connection.guiDevUrl) {
     validateLoopbackUrl(connection.guiDevUrl, `${configurationPrefix}.guiDevUrl`);
   }
+}
+
+function hasRootUrlPath(value: string): boolean {
+  const parsed = new URL(value);
+  return parsed.pathname === "/";
 }
 
 export function validateEngineConnectionSettings(settings: EngineConnectionSettings): void {

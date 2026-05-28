@@ -24,6 +24,31 @@ describe("runtimeClient", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("rejects non-root runtime URL paths before fetch", async () => {
+    vi.stubGlobal("fetch", fetchMock);
+    for (const baseUrl of [
+      "http://127.0.0.1:8001/foo",
+      "http://127.0.0.1:8001/foo/../bar",
+      "http://127.0.0.1:8001/%2e%2e/foo",
+    ]) {
+      const result = await runtimeFetch({ baseUrl, token: "runtime-token" }, "/v1/ping");
+      expect(result.ok).toBe(false);
+      expect(result.ok ? undefined : result.error.status).toBe("configuration");
+      expect(result.ok ? "" : result.error.message).toContain("must not include a path");
+      expect(result.ok ? "" : result.error.message).not.toContain("runtime-token");
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts root runtime URL paths before fetch", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runtimeFetch({ baseUrl: "http://127.0.0.1:8001/", token: "runtime-token" }, "/v1/ping");
+
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8001/v1/ping", expect.any(Object));
+  });
+
   it("maps 401 to an unauthorized local runtime error", async () => {
     fetchMock.mockResolvedValue(new Response("", { status: 401 }));
     vi.stubGlobal("fetch", fetchMock);
@@ -33,12 +58,22 @@ describe("runtimeClient", () => {
     expect(result.ok ? undefined : result.error.message).toContain("Unauthorized local runtime request");
   });
 
-  it("validates loopback hosts", () => {
+  it("validates loopback hosts and root paths", () => {
     expect(validateRuntimeBaseUrl("http://127.0.0.1:8001").ok).toBe(true);
+    expect(validateRuntimeBaseUrl("http://127.0.0.1:8001/").ok).toBe(true);
     expect(validateRuntimeBaseUrl("http://localhost:8001").ok).toBe(true);
     expect(validateRuntimeBaseUrl("http://[::1]:8001").ok).toBe(true);
     expect(validateRuntimeBaseUrl("ftp://127.0.0.1:8001").ok).toBe(false);
     expect(validateRuntimeBaseUrl("http://192.168.0.2:8001").ok).toBe(false);
+    for (const baseUrl of [
+      "http://127.0.0.1:8001/foo",
+      "http://127.0.0.1:8001/foo/../bar",
+      "http://127.0.0.1:8001/%2e%2e/foo",
+    ]) {
+      const result = validateRuntimeBaseUrl(baseUrl);
+      expect(result.ok).toBe(false);
+      expect(result.ok ? "" : result.error.message).toContain("must not include a path");
+    }
   });
 
   it("rejects runtime URLs with userinfo query or hash without echoing secrets", async () => {
