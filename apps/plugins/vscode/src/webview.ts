@@ -1,14 +1,32 @@
 import * as vscode from "vscode";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { EngineConnection, getLoopbackOrigin } from "./engineConnection";
 import { ProductIdentity, bridgeVersion, configurationPrefix } from "./identity";
 
 export type HostMessage = {
   version: string;
-  type: "host.ready" | "host.openedFromCommand";
+  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot";
   requestId?: string;
   payload?: Record<string, unknown>;
+};
+
+type HostContextPayload = {
+  kind: "active_editor";
+  source: "vscode";
+  file?: {
+    displayPath?: string;
+    workspaceRelativePath?: string;
+    languageId?: string;
+  };
+  selection?: {
+    startLine?: number;
+    startCharacter?: number;
+    endLine?: number;
+    endCharacter?: number;
+    text?: string;
+  };
 };
 
 type GuiMessage = {
@@ -46,6 +64,7 @@ export function openYetAiWebview(
       type: "host.openedFromCommand",
       payload: {},
     } satisfies HostMessage);
+    void panel.webview.postMessage(createHostContextSnapshot(message.requestId));
   });
 }
 
@@ -66,6 +85,83 @@ export function createHostReady(
       cloudRequired: false,
     },
   };
+}
+
+export function createHostContextSnapshot(requestId: string | undefined): HostMessage {
+  return {
+    version: bridgeVersion,
+    type: "host.contextSnapshot",
+    requestId,
+    payload: createActiveEditorContextPayload(),
+  };
+}
+
+function createActiveEditorContextPayload(): HostContextPayload {
+  const payload: HostContextPayload = {
+    kind: "active_editor",
+    source: "vscode",
+  };
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    return payload;
+  }
+
+  const file = createActiveEditorFileContext(editor.document);
+  if (file) {
+    payload.file = file;
+  }
+
+  const selection = createActiveEditorSelectionContext(editor.document, editor.selection);
+  if (selection) {
+    payload.selection = selection;
+  }
+
+  return payload;
+}
+
+function createActiveEditorFileContext(document: vscode.TextDocument): HostContextPayload["file"] | undefined {
+  const file: NonNullable<HostContextPayload["file"]> = {};
+  const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+  const workspaceRelativePath = workspaceFolder ? sanitizeRelativePath(vscode.workspace.asRelativePath(document.uri, false), 512) : undefined;
+  const displayPath = workspaceRelativePath ?? sanitizeDisplayPath(getDocumentDisplayLabel(document));
+  const languageId = sanitizeLanguageId(document.languageId);
+
+  if (displayPath) {
+    file.displayPath = displayPath;
+  }
+  if (workspaceRelativePath) {
+    file.workspaceRelativePath = workspaceRelativePath;
+  }
+  if (languageId) {
+    file.languageId = languageId;
+  }
+
+  return Object.keys(file).length > 0 ? file : undefined;
+}
+
+function createActiveEditorSelectionContext(document: vscode.TextDocument, selection: vscode.Selection): HostContextPayload["selection"] | undefined {
+  if (selection.isEmpty) {
+    return undefined;
+  }
+  const startLine = sanitizePositionNumber(selection.start.line);
+  const startCharacter = sanitizePositionNumber(selection.start.character);
+  const endLine = sanitizePositionNumber(selection.end.line);
+  const endCharacter = sanitizePositionNumber(selection.end.character);
+  if (startLine === undefined || startCharacter === undefined || endLine === undefined || endCharacter === undefined) {
+    return undefined;
+  }
+
+  const text = sanitizeSelectionText(document.getText(selection));
+  const result: NonNullable<HostContextPayload["selection"]> = {
+    startLine,
+    startCharacter,
+    endLine,
+    endCharacter,
+  };
+  if (text !== undefined) {
+    result.text = text;
+  }
+  return result;
 }
 
 export function renderWebviewHtml(
@@ -126,7 +222,7 @@ const isStrictGuiReadyPayload = (payload) => {
   return isPlainObject(payload) && Object.keys(payload).every((key) => key === "supportedBridgeVersion") && (payload.supportedBridgeVersion === undefined || payload.supportedBridgeVersion === bootstrap.bridgeVersion);
 };
 const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload);
-const isHostMessage = (message) => isPlainObject(message) && message.version === bootstrap.bridgeVersion && (message.type === "host.ready" || message.type === "host.openedFromCommand");
+const isHostMessage = (message) => isPlainObject(message) && message.version === bootstrap.bridgeVersion && (message.type === "host.ready" || message.type === "host.openedFromCommand" || message.type === "host.contextSnapshot");
 const sendToFrame = (message) => {
   if (frame && frame.contentWindow && frameTargetOrigin) {
     frame.contentWindow.postMessage(message, frameTargetOrigin);
@@ -263,6 +359,74 @@ function resolvePackagedAssetUri(value: string, root: vscode.Uri, webview: vscod
 
 function isMissingFileError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ENOENT";
+}
+
+function getDocumentDisplayLabel(document: vscode.TextDocument): string | undefined {
+  if (document.isUntitled) {
+    return sanitizeDisplayPath(path.posix.basename(document.uri.path)) ?? "untitled";
+  }
+  if (document.uri.scheme === "file") {
+    return path.basename(document.uri.fsPath);
+  }
+  return path.posix.basename(document.uri.path);
+}
+
+function sanitizeLanguageId(value: string): string | undefined {
+  if (/^[A-Za-z0-9_.+-]{1,64}$/.test(value)) {
+    return value;
+  }
+  return undefined;
+}
+
+function sanitizePositionNumber(value: number): number | undefined {
+  if (Number.isInteger(value) && value >= 0 && value <= 1000000) {
+    return value;
+  }
+  return undefined;
+}
+
+function sanitizeSelectionText(value: string): string | undefined {
+  if (value.length === 0 || value.length > 8000 || hasSecretLikeText(value) || hasBinaryLikeText(value)) {
+    return undefined;
+  }
+  return value;
+}
+
+function sanitizeDisplayPath(value: string | undefined): string | undefined {
+  return sanitizeSafePath(value, 256);
+}
+
+function sanitizeRelativePath(value: string | undefined, maxLength: number): string | undefined {
+  return sanitizeSafePath(value, maxLength);
+}
+
+function sanitizeSafePath(value: string | undefined, maxLength: number): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const normalized = value.replaceAll(path.sep, "/");
+  if (
+    normalized.length === 0 ||
+    normalized.length > maxLength ||
+    normalized.startsWith("/") ||
+    normalized.startsWith("~") ||
+    normalized.includes("\\") ||
+    normalized.includes(":") ||
+    /[\u0000-\u001f]/.test(normalized) ||
+    /(?:^|\/)\.\.?(?:\/|$)/.test(normalized) ||
+    hasSecretLikeText(normalized)
+  ) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function hasSecretLikeText(value: string): boolean {
+  return /(?:authorization|bearer\s+|sessiontoken|session[_-]?token|api[_-]?key|secret|sk-[A-Za-z0-9_-]+)/i.test(value);
+}
+
+function hasBinaryLikeText(value: string): boolean {
+  return value.includes("\u0000") || /[\u0001-\u0008\u000b\u000c\u000e-\u001f]/.test(value);
 }
 
 export function serializeScriptJson(value: unknown): string {
