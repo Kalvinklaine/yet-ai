@@ -5,6 +5,31 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["provider", "configured", "status", "authSource", "supportsLogin", "supportsApiKey", "cloudRequired", "success"],
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "const": "api_key_configured" } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "configured": { "const": true },
+          "authSource": { "const": "api_key" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "enum": ["pending", "connected", "expired"] } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "authSource": { "enum": ["oauth", "device", "browser"] }
+        }
+      }
+    }
+  ],
   "properties": {
     "provider": {
       "$ref": "#/$defs/providerId"
@@ -26,11 +51,13 @@
     },
     "authorizationUrl": {
       "type": "string",
-      "format": "uri"
+      "format": "uri",
+      "pattern": "^https://"
     },
     "verificationUrl": {
       "type": "string",
-      "format": "uri"
+      "format": "uri",
+      "pattern": "^https://"
     },
     "sessionId": {
       "type": "string",
