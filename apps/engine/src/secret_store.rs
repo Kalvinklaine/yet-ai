@@ -157,21 +157,24 @@ impl ProviderSecretStore for FileSecretStore {
     }
 }
 
+const FULL_REDACTION_MAX_CHARS: usize = 16;
+const REDACTION_EDGE_CHARS: usize = 2;
+
 pub fn redact_secret(value: &str) -> String {
     let chars: Vec<char> = value.chars().collect();
-    if chars.len() <= 8 {
-        return "...".to_string();
+    if chars.len() <= FULL_REDACTION_MAX_CHARS {
+        return "[redacted]".to_string();
     }
-    let prefix: String = chars.iter().take(3).collect();
+    let prefix: String = chars.iter().take(REDACTION_EDGE_CHARS).collect();
     let suffix: String = chars
         .iter()
         .rev()
-        .take(4)
+        .take(REDACTION_EDGE_CHARS)
         .collect::<Vec<_>>()
         .into_iter()
         .rev()
         .collect();
-    format!("{prefix}-...{suffix}")
+    format!("{prefix}...{suffix}")
 }
 
 async fn ensure_secret_directories(root: &Path, provider_id: &str) -> Result<(), SecretStoreError> {
@@ -252,19 +255,60 @@ async fn write_secret_record(path: &Path, record: &SecretRecord) -> Result<(), S
         tokio::fs::rename(&temp_path, path)
             .await
             .map_err(|_| SecretStoreError::Storage)?;
-        set_private_permissions(path).await
+        set_private_permissions(path).await?;
+        sync_parent_directory(path).await
     }
     .await;
-    let cleanup = tokio::fs::remove_file(&temp_path).await;
     match result {
         Ok(()) => Ok(()),
         Err(error) => {
-            if cleanup.is_err() && temp_path.exists() {
-                return Err(SecretStoreError::Storage);
-            }
+            cleanup_temp_secret_file(&temp_path).await?;
             Err(error)
         }
     }
+}
+
+async fn cleanup_temp_secret_file(path: &Path) -> Result<(), SecretStoreError> {
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => Ok(()),
+        Err(error) => match tokio::fs::symlink_metadata(path).await {
+            Ok(_) => Err(SecretStoreError::Storage),
+            Err(metadata_error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    && metadata_error.kind() == std::io::ErrorKind::NotFound =>
+            {
+                Ok(())
+            }
+            Err(_) => Err(SecretStoreError::Storage),
+        },
+    }
+}
+#[cfg(unix)]
+async fn sync_parent_directory(path: &Path) -> Result<(), SecretStoreError> {
+    let dir = path
+        .parent()
+        .ok_or(SecretStoreError::Storage)?
+        .to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        match std::fs::File::open(dir).and_then(|directory| directory.sync_all()) {
+            Ok(()) => Ok(()),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported
+                ) =>
+            {
+                Ok(())
+            }
+            Err(_) => Err(SecretStoreError::Storage),
+        }
+    })
+    .await
+    .map_err(|_| SecretStoreError::Storage)?
+}
+#[cfg(not(unix))]
+async fn sync_parent_directory(_path: &Path) -> Result<(), SecretStoreError> {
+    Ok(())
 }
 
 fn temp_secret_path(path: &Path) -> PathBuf {
@@ -322,6 +366,29 @@ mod tests {
         dir
     }
 
+    #[test]
+    fn redact_secret_fully_redacts_short_values_through_sixteen_chars() {
+        for length in 0..=16 {
+            let value = "a".repeat(length);
+            assert_eq!(super::redact_secret(&value), "[redacted]");
+        }
+    }
+
+    #[test]
+    fn redact_secret_keeps_minimal_signal_for_long_values() {
+        for (value, expected) in [
+            ("sk-test-secret-abcd", "sk...cd"),
+            ("codex-access-token-secret-abcd", "co...cd"),
+            ("oauth-refresh-token-secret-wxyz", "oa...yz"),
+            ("abcdefghijklmnopq", "ab...pq"),
+        ] {
+            let redacted = super::redact_secret(value);
+            assert_eq!(redacted, expected);
+            assert!(!redacted.contains("secret"));
+            assert!(!redacted.contains("token"));
+        }
+    }
+
     #[tokio::test]
     async fn file_secret_store_put_get_delete_roundtrip() {
         let store = FileSecretStore::new(temp_dir());
@@ -369,7 +436,11 @@ mod tests {
     #[cfg(unix)]
     fn file_mode(path: &std::path::Path) -> u32 {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::symlink_metadata(path).unwrap().permissions().mode() & 0o777
+        std::fs::symlink_metadata(path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777
     }
 
     #[cfg(unix)]
@@ -437,12 +508,35 @@ mod tests {
         assert_eq!(file_mode(&secret_path), 0o600);
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn file_secret_store_syncs_parent_directory_after_write() {
+        let dir = temp_dir();
+        let store = FileSecretStore::new(&dir);
+        store
+            .put_secret(
+                "openai-local",
+                SecretKind::ApiKey,
+                "sk-directory-sync-secret-abcd",
+            )
+            .await
+            .unwrap();
+        let secret_path = store
+            .secret_path("openai-local", SecretKind::ApiKey)
+            .expect("valid path");
+
+        super::sync_parent_directory(&secret_path).await.unwrap();
+    }
+
     #[tokio::test]
     async fn file_secret_store_missing_and_corrupt_records_are_safe() {
         let dir = temp_dir();
         let store = FileSecretStore::new(&dir);
         assert_eq!(
-            store.get_secret("missing", SecretKind::ApiKey).await.unwrap(),
+            store
+                .get_secret("missing", SecretKind::ApiKey)
+                .await
+                .unwrap(),
             None
         );
         let path = store

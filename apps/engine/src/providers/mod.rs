@@ -981,7 +981,7 @@ mod tests {
     fn redaction_keeps_only_small_signal() {
         assert_eq!(
             crate::secret_store::redact_secret("sk-test-secret-abcd"),
-            "sk--...abcd"
+            "sk...cd"
         );
     }
 }
