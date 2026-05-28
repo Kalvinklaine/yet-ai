@@ -1,0 +1,9 @@
+{
+  "requestId": "req-smuggled-selection-001",
+  "type": "user_message",
+  "payload": {
+    "content": "Use the configured provider for this message.",
+    "providerId": "openai-local",
+    "modelId": "gpt-local"
+  }
+}

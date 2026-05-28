@@ -47,6 +47,14 @@ const invalidMappings = [
     "packages/contracts/schemas/engine/chat-command.schema.json"
   ],
   [
+    "packages/contracts/examples-invalid/engine/chat-command-user-message-smuggled-selection.json",
+    "packages/contracts/schemas/engine/chat-command.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/chat-command-user-message-smuggled-secret.json",
+    "packages/contracts/schemas/engine/chat-command.schema.json"
+  ],
+  [
     "packages/contracts/examples-invalid/bridge/gui-ready-extra-payload.json",
     "packages/contracts/schemas/bridge/gui-message.schema.json"
   ],
