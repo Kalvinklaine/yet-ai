@@ -162,10 +162,10 @@ try {
   <meta charset="UTF-8">
   <title>Fake Packaged GUI</title>
   <link rel="stylesheet" href="./assets/app.css">
+  <script type="module" src="/assets/head.js"></script>
 </head>
 <body>
   <main data-yet-ai-packaged-gui-marker="behavioral-safety-check">Fake packaged GUI marker</main>
-  <link rel="stylesheet" href="./assets/app.css">
   <script type="module" src="/assets/app.js"></script>
   <script src="../escape.js"></script>
   <script src="/%2e%2e/escape.js"></script>
@@ -182,6 +182,7 @@ try {
 </html>`,
   );
   fs.writeFileSync(path.join(fakeGuiRoot, "assets", "app.js"), "window.fakeYetAiPackagedGui = true;\n");
+  fs.writeFileSync(path.join(fakeGuiRoot, "assets", "head.js"), "window.fakeYetAiPackagedGuiHead = true;\n");
   fs.writeFileSync(path.join(fakeGuiRoot, "assets", "app.css"), "body { color: var(--vscode-foreground); }\n");
 
   const packagedWebview = {
@@ -210,6 +211,7 @@ try {
 
   const expectedAssetUris = [
     'href="vscode-resource://yet-ai-test/media/gui/assets/app.css"',
+    'src="vscode-resource://yet-ai-test/media/gui/assets/head.js"',
     'src="vscode-resource://yet-ai-test/media/gui/assets/app.js"',
   ];
   for (const expectedAssetUri of expectedAssetUris) {

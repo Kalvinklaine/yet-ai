@@ -190,11 +190,41 @@ function findPackagedGui(extensionUri: vscode.Uri): PackagedGui | undefined {
 }
 
 function rewritePackagedGuiHtml(html: string, root: vscode.Uri, webview: vscode.Webview): string {
+  const head = html.match(/<head[^>]*>([\s\S]*?)<\/head>/i)?.[1] ?? "";
   const body = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? "";
-  return body.replace(/\b(src|href)=("|')(.+?)\2/g, (_match: string, attribute: string, quote: string, value: string) => {
+  return `${rewritePackagedGuiHeadAssets(head, root, webview)}${rewritePackagedGuiAssetReferences(body, root, webview)}`;
+}
+
+function rewritePackagedGuiHeadAssets(head: string, root: vscode.Uri, webview: vscode.Webview): string {
+  const assets: string[] = [];
+  for (const match of head.matchAll(/<link\b[^>]*>/gi)) {
+    const tag = match[0];
+    const rel = getHtmlAttribute(tag, "rel");
+    const href = getHtmlAttribute(tag, "href");
+    if (rel?.toLowerCase() === "stylesheet" && href && resolvePackagedAssetUri(href, root, webview)) {
+      assets.push(rewritePackagedGuiAssetReferences(tag, root, webview));
+    }
+  }
+  for (const match of head.matchAll(/<script\b[^>]*\bsrc=("|').+?\1[^>]*><\/script>/gi)) {
+    const tag = match[0];
+    const src = getHtmlAttribute(tag, "src");
+    if (src && resolvePackagedAssetUri(src, root, webview)) {
+      assets.push(rewritePackagedGuiAssetReferences(tag, root, webview));
+    }
+  }
+  return assets.join("\n");
+}
+
+function rewritePackagedGuiAssetReferences(html: string, root: vscode.Uri, webview: vscode.Webview): string {
+  return html.replace(/\b(src|href)=("|')(.+?)\2/g, (_match: string, attribute: string, quote: string, value: string) => {
     const uri = resolvePackagedAssetUri(value, root, webview);
     return `${attribute}=${quote}${uri ?? value}${quote}`;
   });
+}
+
+function getHtmlAttribute(tag: string, name: string): string | undefined {
+  const match = tag.match(new RegExp(`\\b${name}=("|')(.+?)\\1`, "i"));
+  return match?.[2];
 }
 
 function resolvePackagedAssetUri(value: string, root: vscode.Uri, webview: vscode.Webview): string | undefined {
