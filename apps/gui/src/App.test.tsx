@@ -424,10 +424,11 @@ describe("provider secret boundary", () => {
     const startCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/provider-auth/openai/start") && init?.method === "POST");
     expect(startCall?.[1]?.body).toBe(JSON.stringify({ experimentalCodexLike: true }));
     expect(openMock).toHaveBeenCalledWith("https://auth.openai.com/oauth/authorize?state=codex-test", "_blank", "noopener,noreferrer");
-    expect(container?.textContent).toContain("experimental and high-risk");
-    expect(container?.textContent).toContain("Session: provider-login-session-001");
+    expect(container?.textContent).toContain("high-risk and private-endpoint-style");
+    expect(container?.textContent).toContain("Session is tracked locally by the runtime and hidden here");
+    expect(container?.textContent).not.toContain("Session: provider-login-session-001");
     expect(container?.textContent).toContain("Expires: 2026-05-24T01:00:00Z");
-    expect(container?.textContent).toContain("Scopes: openid, profile, email, offline_access");
+    expect(container?.textContent).toContain("Requested scopes: openid, profile, email, offline_access");
     expect(container?.textContent).toContain("Use OpenAI API key fallback");
   });
 
@@ -536,6 +537,22 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).toContain("Account: user@example.test");
     expect(container?.textContent).not.toContain("manual-code-789");
     expect(container?.textContent).not.toContain("access_token");
+  });
+
+  it("renders connected account login as a guided path without raw sessions", async () => {
+    mockRuntimeResponses({ authResponse: providerAuthResponse("connected") });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("OpenAI account connected");
+    expect(container?.textContent).toContain("Ready for chat through the local runtime");
+    expect(container?.textContent).toContain("Account: user@example.test");
+    expect(container?.textContent).toContain("Token hint: oauth-...test");
+    expect(container?.textContent).toContain("Raw tokens, cookies, auth codes, and runtime Session token values are not shown here.");
+    expect(container?.textContent).toContain("Use OpenAI API key fallback");
+    expect(container?.textContent).not.toContain("provider-login-session");
+    expect(browserStorageDump()).not.toContain("oauth");
   });
 
   it("renders sanitized manual exchange failures and clears code", async () => {
@@ -660,11 +677,32 @@ describe("provider secret boundary", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("Last error: provider failed [redacted]");
+    expect(container?.textContent).toContain("Sanitized login error: provider failed [redacted]");
     expect(container?.textContent).not.toContain("Bearer");
     expect(container?.textContent).not.toContain("access_token");
     expect(container?.textContent).not.toContain("refresh_token");
     expect(container?.textContent).not.toContain("api_key");
+    expect(container?.textContent).not.toContain(longValue);
+  });
+
+  it("renders error account login with sanitized retry guidance and API-key fallback", async () => {
+    const longValue = "q".repeat(64);
+    mockRuntimeResponses({
+      authResponse: {
+        ...providerAuthResponse("error"),
+        lastError: `callback failed access_token=${longValue} Cookie: session=secret`,
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("OpenAI login needs attention");
+    expect(container?.textContent).toContain("Sanitized login error: callback failed [redacted]");
+    expect(container?.textContent).toContain("Retry login");
+    expect(container?.textContent).toContain("Use OpenAI API key fallback");
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("session=secret");
     expect(container?.textContent).not.toContain(longValue);
   });
 
@@ -2242,7 +2280,7 @@ function providerAuthResponse(status: ProviderAuthStatus): ProviderAuthResponse 
     message: `Mock status ${status}`,
     accountLabel: status === "connected" ? "user@example.test" : undefined,
     expiresAt: status === "connected" || status === "expired" ? "2026-05-24T01:00:00Z" : undefined,
-    redacted: status === "api_key_configured" ? "sk-...test" : undefined,
+    redacted: status === "api_key_configured" ? "sk-...test" : status === "connected" ? "oauth-...test" : undefined,
     pollIntervalSeconds: status === "pending" ? 5 : undefined,
   };
 }

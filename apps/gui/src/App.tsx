@@ -861,46 +861,43 @@ export function App() {
         <p className="subtle">ChatGPT/OpenAI account login is planned where officially supported. OpenAI API-key setup is the current safe fallback.</p>
         <p className="subtle">Current chat uses OpenAI-compatible providers only. Ollama is available here through its OpenAI-compatible /v1 endpoint; native Ollama chat is future work.</p>
         {providerError && <ErrorBox error={providerError} />}
-        <div className="provider-item stack">
+        <div className="provider-item account-login-card stack">
           <div className="row">
             <h3>OpenAI account login</h3>
             <span className={activeProviderAuthStatus?.configured ? "badge ok" : "badge warn"}>{activeProviderAuthStatus?.status ?? "not checked"}</span>
           </div>
-          <p className="subtle">Login-first setup is handled only by the local runtime. The GUI shows sanitized status and never stores provider auth state in browser storage.</p>
+          <p className="subtle">Account login is guided by the local runtime only. The GUI opens safe authorization URLs, renders sanitized account status, and does not store provider auth state in browser storage.</p>
           <div className="risk-card stack">
-            <strong>Experimental OpenAI account login</strong>
-            <span>This Codex-like path is experimental and high-risk. It may rely on private OpenAI/Codex behavior, is not official public third-party OAuth support, and is not production-ready. Use it only if you explicitly accept that risk.</span>
+            <strong>Experimental Codex-like account login risk</strong>
+            <span>This OpenAI account path is high-risk and private-endpoint-style. It is not official public OpenAI OAuth support, not production-ready, and must not replace the safe API-key fallback.</span>
           </div>
           {providerAuthError && <ErrorBox error={providerAuthError} />}
           {providerAuthUrlWarning && <div className="error">{providerAuthUrlWarning}</div>}
-          {activeProviderAuthStatus && <ProviderAuthSummary status={activeProviderAuthStatus.status} />}
-          {activeProviderAuthStatus?.supportsLogin === false && <p>OpenAI account login is planned/not available yet; use API key fallback.</p>}
-          {activeProviderAuthStatus?.message && <span>{sanitizeDisplayText(activeProviderAuthStatus.message)}</span>}
-          {activeProviderAuthStatus && <ProviderAuthDetails status={activeProviderAuthStatus} />}
-          {activeProviderAuthStatus?.status === "pending" && activeProviderAuthStatus.authSource === "oauth" && activeProviderAuthStatus.sessionId && (
-            <form className="manual-exchange-card stack" onSubmit={(event) => void exchangeOpenAiLoginCode(event)}>
-              <strong>Manual authorization-code exchange</strong>
-              <span className="subtle">After approving the experimental login in the browser, paste only the authorization code here. The code is sent once to the local runtime, then cleared from the form.</span>
-              {providerAuthPendingState.error && <div className="error">{providerAuthPendingState.error}</div>}
-              {providerAuthExchangeError && <div className="error">{sanitizeDisplayText(providerAuthExchangeError)}</div>}
-              <div className="row auth-code-row">
-                <label>
-                  Authorization code
-                  <input type="password" value={providerAuthExchangeCode} onChange={(event) => setProviderAuthExchangeCode(event.target.value)} placeholder="Paste authorization code" autoComplete="off" />
-                </label>
-                <button type="submit" disabled={providerAuthExchangeWorking || !providerAuthExchangeCode.trim() || !providerAuthPendingState.state}>
-                  {providerAuthExchangeWorking ? "Exchanging…" : "Exchange authorization code"}
-                </button>
+          {activeProviderAuthStatus ? (
+            <ProviderAuthJourney
+              status={activeProviderAuthStatus}
+              pendingState={providerAuthPendingState}
+              exchangeCode={providerAuthExchangeCode}
+              exchangeError={providerAuthExchangeError}
+              exchangeWorking={providerAuthExchangeWorking}
+              onExchangeCodeChange={setProviderAuthExchangeCode}
+              onExchange={(event) => void exchangeOpenAiLoginCode(event)}
+              onRefresh={() => void refreshProviderAuthStatus()}
+              onLogin={() => void startOpenAiLogin()}
+              onExperimentalLogin={() => void startExperimentalOpenAiLogin()}
+              onDisconnect={() => void disconnectOpenAiLogin()}
+              onApiKeyFallback={applyOpenAiApiPreset}
+            />
+          ) : (
+            <div className="login-state-panel stack">
+              <strong>Checking account login status…</strong>
+              <span className="subtle">Refresh the local runtime status or continue with the API-key fallback.</span>
+              <div className="row">
+                <button type="button" onClick={() => void refreshProviderAuthStatus()}>Refresh login status</button>
+                <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>
               </div>
-            </form>
+            </div>
           )}
-          <div className="row">
-            <button type="button" onClick={() => void refreshProviderAuthStatus()}>Refresh login status</button>
-            <button type="button" onClick={() => void startOpenAiLogin()} disabled={activeProviderAuthStatus?.supportsLogin === false}>Login with OpenAI</button>
-            <button type="button" className="danger-button" onClick={() => void startExperimentalOpenAiLogin()}>Experimental Login with OpenAI account</button>
-            <button type="button" onClick={() => void disconnectOpenAiLogin()} disabled={!activeProviderAuthStatus?.configured || activeProviderAuthStatus.authSource === "api_key"}>Disconnect login</button>
-            <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>
-          </div>
         </div>
         <div className="grid">
           <form className="stack" onSubmit={(event) => void submitProvider(event)}>
@@ -1050,26 +1047,131 @@ function ChatBubble({ message }: { message: ChatViewMessage }) {
   );
 }
 
-function ProviderAuthSummary({ status }: { status: ProviderAuthStatus }) {
-  return <p>{providerAuthStatusCopy[status]}</p>;
-}
 
-function ProviderAuthDetails({ status }: { status: ProviderAuthResponse }) {
+type ProviderAuthJourneyProps = {
+  status: ProviderAuthResponse;
+  pendingState: { state?: string; error?: string };
+  exchangeCode: string;
+  exchangeError: string | null;
+  exchangeWorking: boolean;
+  onExchangeCodeChange: (code: string) => void;
+  onExchange: (event: FormEvent<HTMLFormElement>) => void;
+  onRefresh: () => void;
+  onLogin: () => void;
+  onExperimentalLogin: () => void;
+  onDisconnect: () => void;
+  onApiKeyFallback: () => void;
+};
+
+function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError, exchangeWorking, onExchangeCodeChange, onExchange, onRefresh, onLogin, onExperimentalLogin, onDisconnect, onApiKeyFallback }: ProviderAuthJourneyProps) {
+  const canLogin = status.supportsLogin !== false;
+  const canDisconnect = status.configured && status.authSource !== "api_key";
+  const reconnectLabel = status.status === "pending" ? "Reconnect login" : status.status === "error" ? "Retry login" : "Reconnect OpenAI account";
   return (
-    <div className="stack">
-      <span>Configured: {String(status.configured)}</span>
-      <span>Auth source: {status.authSource}</span>
-      <span>Login supported: {String(status.supportsLogin)}</span>
-      <span>API key fallback supported: {String(status.supportsApiKey)}</span>
-      {status.accountLabel && <span>Account: {sanitizeDisplayText(status.accountLabel)}</span>}
-      {status.sessionId && <span>Session: {sanitizeDisplayText(status.sessionId)}</span>}
-      {status.expiresAt && <span>Expires: {sanitizeDisplayText(status.expiresAt)}</span>}
-      {status.scopes && status.scopes.length > 0 && <span>Scopes: {sanitizeDisplayText(status.scopes.join(", "))}</span>}
-      {status.redacted && <span>Secret configured: {sanitizeDisplayText(status.redacted)}</span>}
-      {status.lastError && <span>Last error: {sanitizeDisplayText(status.lastError)}</span>}
-      {status.pollIntervalSeconds && <span>Poll interval: {status.pollIntervalSeconds} seconds</span>}
+    <div className={`login-state-panel stack ${status.status}`}>
+      <div className="stack">
+        <strong>{providerAuthStateTitle(status.status)}</strong>
+        <span>{providerAuthStatusCopy[status.status]}</span>
+        {status.message && <span>{sanitizeDisplayText(status.message)}</span>}
+      </div>
+      <ProviderAuthStateBody status={status} />
+      {status.status === "pending" && status.authSource === "oauth" && status.sessionId && (
+        <form className="manual-exchange-card stack" onSubmit={onExchange}>
+          <strong>Manual authorization-code exchange</strong>
+          <span className="subtle">Finish the browser step before the pending session expires. If the browser redirect is not captured, paste only the authorization code here. The code is sent once to the local runtime and then cleared.</span>
+          <span className="subtle">Session is tracked locally by the runtime and hidden here; refresh status, reconnect, cancel, or disconnect if the browser step stalls.</span>
+          {pendingState.error && <div className="error">{pendingState.error}</div>}
+          {exchangeError && <div className="error">{sanitizeDisplayText(exchangeError)}</div>}
+          <div className="row auth-code-row">
+            <label>
+              Authorization code
+              <input type="password" value={exchangeCode} onChange={(event) => onExchangeCodeChange(event.target.value)} placeholder="Paste authorization code" autoComplete="off" />
+            </label>
+            <button type="submit" disabled={exchangeWorking || !exchangeCode.trim() || !pendingState.state}>
+              {exchangeWorking ? "Exchanging…" : "Exchange authorization code"}
+            </button>
+          </div>
+        </form>
+      )}
+      <div className="row">
+        <button type="button" onClick={onRefresh}>Refresh login status</button>
+        {(status.status === "login_available" || status.status === "not_configured") && <button type="button" onClick={onLogin} disabled={!canLogin}>Login with OpenAI</button>}
+        {status.status === "login_unavailable" && <button type="button" onClick={onLogin} disabled>Login with OpenAI</button>}
+        {(status.status === "pending" || status.status === "expired" || status.status === "revoked" || status.status === "error") && <button type="button" onClick={onLogin} disabled={!canLogin}>{reconnectLabel}</button>}
+        {status.status !== "connected" && <button type="button" className="danger-button" onClick={onExperimentalLogin}>Experimental Login with OpenAI account</button>}
+        {status.status === "connected" && <button type="button" className="danger-button" onClick={onExperimentalLogin}>Reconnect experimental account</button>}
+        <button type="button" onClick={onDisconnect} disabled={!canDisconnect}>{status.status === "pending" ? "Cancel or disconnect login" : "Disconnect login"}</button>
+        <button type="button" onClick={onApiKeyFallback}>Use OpenAI API key fallback</button>
+      </div>
     </div>
   );
+}
+
+function ProviderAuthStateBody({ status }: { status: ProviderAuthResponse }) {
+  if (status.status === "login_unavailable") {
+    return <span className="subtle">Account login is unavailable in this runtime. Use the OpenAI API-key fallback: create an API key in the provider console, paste it once below, save, and the GUI clears it from the form.</span>;
+  }
+  if (status.status === "pending") {
+    return (
+      <div className="stack">
+        <span>Browser or device verification is pending.</span>
+        {status.expiresAt && <span>Expires: {sanitizeDisplayText(status.expiresAt)}</span>}
+        {status.pollIntervalSeconds && <span>Suggested refresh interval: {status.pollIntervalSeconds} seconds</span>}
+        {status.scopes && status.scopes.length > 0 && <span>Requested scopes: {sanitizeDisplayText(status.scopes.join(", "))}</span>}
+      </div>
+    );
+  }
+  if (status.status === "connected") {
+    return (
+      <div className="stack">
+        <span>Ready for chat through the local runtime when the experimental account path is selected and no API-key provider is configured.</span>
+        {status.accountLabel && <span>Account: {sanitizeDisplayText(status.accountLabel)}</span>}
+        {status.scopes && status.scopes.length > 0 && <span>Scopes: {sanitizeDisplayText(status.scopes.join(", "))}</span>}
+        {status.expiresAt && <span>Expires: {sanitizeDisplayText(status.expiresAt)}</span>}
+        {status.redacted && <span>Token hint: {sanitizeDisplayText(status.redacted)}</span>}
+        <span className="subtle">Raw tokens, cookies, auth codes, and runtime Session token values are not shown here.</span>
+      </div>
+    );
+  }
+  if (status.status === "expired" || status.status === "revoked") {
+    return (
+      <div className="stack">
+        <span>{status.status === "expired" ? "The account session expired." : "The account session was revoked."} Reconnect or use the API-key fallback.</span>
+        {status.expiresAt && <span>Expired at: {sanitizeDisplayText(status.expiresAt)}</span>}
+        {status.lastError && <span>Last status detail: {sanitizeDisplayText(status.lastError)}</span>}
+      </div>
+    );
+  }
+  if (status.status === "error") {
+    return <div className="error">Sanitized login error: {sanitizeDisplayText(status.lastError ?? status.message ?? "Unknown provider-auth error")}</div>;
+  }
+  if (status.status === "api_key_configured") {
+    return <span className="subtle">The safe API-key fallback is already configured locally. You can keep using it or set up account login later.</span>;
+  }
+  return <span className="subtle">Start account login when supported, or use the API-key fallback now.</span>;
+}
+
+function providerAuthStateTitle(status: ProviderAuthStatus): string {
+  switch (status) {
+    case "login_unavailable":
+      return "Account login unavailable";
+    case "pending":
+      return "Finish browser verification";
+    case "connected":
+      return "OpenAI account connected";
+    case "expired":
+      return "OpenAI account expired";
+    case "revoked":
+      return "OpenAI account revoked";
+    case "error":
+      return "OpenAI login needs attention";
+    case "api_key_configured":
+      return "API-key fallback configured";
+    case "login_available":
+      return "Account login available";
+    default:
+      return "Choose a provider auth path";
+  }
 }
 
 function parseProviderAuthState(status: ProviderAuthResponse | null): { state?: string; error?: string } {

@@ -180,6 +180,31 @@ textarea {
   padding: 14px;
 }
 
+.account-login-card {
+  border-color: #cdd8ff;
+  background: #fbfcff;
+}
+
+.login-state-panel {
+  border: 1px solid #cdd8ff;
+  border-radius: 14px;
+  background: #f6f8ff;
+  padding: 14px;
+}
+
+.login-state-panel.connected {
+  border-color: #bce8cc;
+  background: #f4fbf7;
+}
+
+.login-state-panel.expired,
+.login-state-panel.revoked,
+.login-state-panel.error,
+.login-state-panel.login_unavailable {
+  border-color: #ffe2a3;
+  background: #fffaf0;
+}
+
 .refresh-status {
   display: grid;
   gap: 4px;
