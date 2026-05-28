@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readFile, realpath, stat } from "node:fs/promises";
 import http from "node:http";
@@ -11,14 +12,14 @@ const indexPath = path.join(distRoot, "index.html");
 const requiredVisibleText = ["Yet AI", "Local runtime connection", "Provider setup", "Chat", "Bridge debug"];
 const bridgeVersion = "2026-05-15";
 const failures = [];
-const runtimeToken = `jb-wrapper-runtime-token-${crypto.randomUUID()}`;
+const runtimeToken = `jb-wrapper-runtime-token-${randomUUID()}`;
 const oauthSentinels = {
-  accessToken: `jb-oauth-access-${crypto.randomUUID()}`,
-  refreshToken: `jb-oauth-refresh-${crypto.randomUUID()}`,
-  authCode: `jb-oauth-code-${crypto.randomUUID()}`,
-  verifier: `jb-oauth-verifier-${crypto.randomUUID()}`,
-  cookie: `jb-cookie-secret-${crypto.randomUUID()}`,
-  apiKey: `sk-jb-wrapper-${crypto.randomUUID()}`,
+  accessToken: `jb-oauth-access-${randomUUID()}`,
+  refreshToken: `jb-oauth-refresh-${randomUUID()}`,
+  authCode: `jb-oauth-code-${randomUUID()}`,
+  verifier: `jb-oauth-verifier-${randomUUID()}`,
+  cookie: `jb-cookie-secret-${randomUUID()}`,
+  apiKey: `sk-jb-wrapper-${randomUUID()}`,
 };
 const consoleMessages = [];
 let observedRuntimeAuthorization = false;
@@ -297,16 +298,16 @@ try {
   await page.waitForTimeout(250);
   const browserVisibleState = await collectBrowserVisibleState(page);
   assertNoSecretLeak(browserVisibleState, [
-    runtimeToken,
-    oauthSentinels.accessToken,
-    oauthSentinels.refreshToken,
-    oauthSentinels.authCode,
-    oauthSentinels.verifier,
-    oauthSentinels.cookie,
-    oauthSentinels.apiKey,
-    "authorization: bearer",
-    "set-cookie",
-    "client_secret",
+    { label: "runtime token", value: runtimeToken },
+    { label: "OAuth access token", value: oauthSentinels.accessToken },
+    { label: "OAuth refresh token", value: oauthSentinels.refreshToken },
+    { label: "OAuth auth code", value: oauthSentinels.authCode },
+    { label: "OAuth verifier", value: oauthSentinels.verifier },
+    { label: "cookie secret", value: oauthSentinels.cookie },
+    { label: "API key", value: oauthSentinels.apiKey },
+    { label: "authorization header marker", value: "authorization: bearer" },
+    { label: "set-cookie marker", value: "set-cookie" },
+    { label: "client secret marker", value: "client_secret" },
   ]);
 
   if (failures.length > 0) {
@@ -694,14 +695,14 @@ async function collectBrowserVisibleState(page) {
   return JSON.stringify({ pageState, frameState, consoleMessages });
 }
 
-function assertNoSecretLeak(text, values) {
+function assertNoSecretLeak(text, markers) {
   const lower = text.toLowerCase();
-  for (const value of values) {
-    if (!value) {
+  for (const marker of markers) {
+    if (!marker?.value) {
       continue;
     }
-    if (lower.includes(String(value).toLowerCase())) {
-      failures.push(`Secret marker leaked to browser-visible state: ${value}`);
+    if (lower.includes(String(marker.value).toLowerCase())) {
+      failures.push(`Secret marker leaked to browser-visible state: ${marker.label}`);
     }
   }
 }

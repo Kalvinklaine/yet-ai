@@ -292,6 +292,7 @@ async function checkDocs() {
   requireDoc(combined, "npm run prepare:jetbrains-preview", "Docs must mention the one-command JetBrains preview preparation command.");
   requireDoc(combined, "npm run smoke:jetbrains-installable", "Docs must mention the installable ZIP smoke command.");
   requireDoc(combined, "npm run smoke:jetbrains-gui-browser", "Docs must mention the packaged GUI browser smoke command.");
+  requireDoc(combined, "npm run smoke:jetbrains-wrapper-browser", "Docs must mention the JetBrains wrapper browser smoke command.");
   requireDoc(combined, "dist/plugins/jetbrains/", "Docs must mention the stable root JetBrains dev-preview artifact directory.");
   requireDoc(combined, "yet-ai-jetbrains-<version>-dev-preview.zip", "Docs must mention the stable root JetBrains dev-preview ZIP naming pattern.");
   requireDoc(combined, "No provider credentials", "Docs must state provider credentials are not required for the installable smoke.");
