@@ -29,7 +29,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 npm run prepare:jetbrains-preview
 ```
 
-The helper reuses `prepare:ide-engine`, runs the GUI build, and invokes `gradle buildPlugin --console=plain` in `apps/plugins/jetbrains`. It prints every original Gradle ZIP found under `apps/plugins/jetbrains/build/distributions/`, then overwrites the current stable ignored root artifact at `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip` with a matching `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip.sha256` checksum. It also prints the local `Engine binary path` to use if the plugin does not discover `yet-lsp` from `PATH`. If `gradle` is not installed, install Gradle or add a reviewed project wrapper later; this repository does not vendor a Gradle wrapper for the preview path.
+The helper reuses `prepare:ide-engine`, runs the GUI build, and invokes `gradle buildPlugin --console=plain` in `apps/plugins/jetbrains`. It prints every original Gradle ZIP found under `apps/plugins/jetbrains/build/distributions/`, then overwrites the current stable ignored root artifact at `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip` with a matching `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip.sha256` checksum. It also prints the local `Engine binary path` to use if the plugin does not discover `yet-lsp` from `PATH`. If `gradle` is not installed, install Gradle or add a reviewed project wrapper later; this repository does not vendor a Gradle wrapper for the preview path. If Gradle fails while resolving JetBrains dependencies such as `java-compiler-ant-tasks` through JetBrains cache endpoints or during `instrumentCode`, treat it as an external Gradle dependency/network failure: retry with a stable network, verify Gradle can resolve JetBrains dependencies, and use cached/offline Gradle only after those dependencies are already present locally.
 
 Manual IntelliJ IDEA install-from-disk steps:
 
@@ -43,7 +43,7 @@ Manual IntelliJ IDEA install-from-disk steps:
 
 Installed IDEA login/account first-message checklist:
 
-1. Run the preflight commands from the repository root: `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, and `npm run smoke:jetbrains-wrapper-browser`.
+1. Run the preflight commands from the repository root: `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, `npm run smoke:jetbrains-gui-browser`, and `npm run smoke:jetbrains-wrapper-browser`.
 2. Install the stable root ZIP through Install Plugin from Disk, restart IntelliJ IDEA, and keep `Launch mode` as `auto` or `launch` for the normal plugin-launched runtime path.
 3. Do not manually start `yet-lsp` and do not paste `local-dev-token` for the normal path. Set `Engine binary path` only if discovery from `PATH` fails.
 4. Run `Yet AI: Open Chat`, verify the packaged GUI loads, click `Refresh runtime`, and confirm the GUI reports connected or shows only sanitized actionable errors.
@@ -61,9 +61,10 @@ YET_AI_AUTH_TOKEN=local-dev-token YET_AI_HTTP_PORT=8001 cargo run -p yet-lsp
 
 Then set JetBrains `Launch mode = connect`, `runtimeUrl = http://127.0.0.1:8001`, and the local session token to `local-dev-token`. This token is only the local runtime bearer token; it is not an OpenAI API key or provider key.
 
-Verify the installable artifact without launching IntelliJ IDEA:
+Verify the installable artifact without launching IntelliJ IDEA with the canonical preflight sequence:
 
 ```sh
+npm run prepare:jetbrains-preview
 npm run smoke:jetbrains-installable
 npm run smoke:jetbrains-gui-browser
 npm run smoke:jetbrains-wrapper-browser

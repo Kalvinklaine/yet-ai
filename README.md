@@ -125,7 +125,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 npm run prepare:jetbrains-preview
 ```
 
-The command builds/prepares `yet-lsp`, builds `apps/gui`, runs the JetBrains Gradle build, prints the original ZIP path under `apps/plugins/jetbrains/build/distributions/`, and copies the current dev-preview artifact plus checksum to the stable ignored root path `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip` and `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip.sha256`. It also prints the local `Engine binary path` to configure when the plugin cannot discover the engine from `PATH`.
+The command builds/prepares `yet-lsp`, builds `apps/gui`, runs the JetBrains Gradle build, prints the original ZIP path under `apps/plugins/jetbrains/build/distributions/`, and copies the current dev-preview artifact plus checksum to the stable ignored root path `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip` and `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip.sha256`. It also prints the local `Engine binary path` to configure when the plugin cannot discover the engine from `PATH`. Missing Gradle is a local prerequisite failure. Gradle failures while resolving JetBrains dependencies such as `java-compiler-ant-tasks`, JetBrains cache metadata, or `instrumentCode` are external Gradle dependency/network failures: retry with a stable network, verify Gradle can resolve JetBrains dependencies, and use cached/offline Gradle only after dependencies are already present locally.
 
 Manual IntelliJ IDEA smoke steps:
 
@@ -136,13 +136,16 @@ Manual IntelliJ IDEA smoke steps:
 5. Open the Yet AI tool window and verify the packaged UI/chat path.
 6. Optional safe provider smoke: use the OpenAI API-key fallback. The experimental account login remains explicit-risk; automated coverage is mock-only and real account testing is manual/high-risk/outside CI.
 
-Validate the local ZIP without launching an IDE:
+Validate the local ZIP without launching an IDE with the canonical preflight sequence:
 
 ```sh
+npm run prepare:jetbrains-preview
 npm run smoke:jetbrains-installable
+npm run smoke:jetbrains-gui-browser
+npm run smoke:jetbrains-wrapper-browser
 ```
 
-The smoke checks Gradle ZIP structure, the copied root `dist/plugins/jetbrains/` dev-preview artifact, checksum matching, packaged GUI contents, and docs only. No provider credentials, real OpenAI/ChatGPT calls, hosted Yet AI services, signing, marketplace publication, production installer, or bundled notarized engine are involved.
+The installable smoke checks Gradle ZIP structure, the copied root `dist/plugins/jetbrains/` dev-preview artifact, checksum matching, packaged GUI contents, and docs only. The GUI browser smoke verifies the packaged GUI resources from the installable ZIP render on loopback with working JavaScript and CSS assets. The wrapper browser smoke verifies the JetBrains-like wrapper and GUI bridge path on loopback with mock runtime/provider-auth only. No provider credentials, real OpenAI/ChatGPT calls, hosted Yet AI services, signing, marketplace publication, production installer, or bundled notarized engine are involved.
 
 ### Manual OpenAI API-key milestone smoke
 
