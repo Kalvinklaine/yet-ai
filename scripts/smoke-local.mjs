@@ -20,8 +20,10 @@ let tempHome;
 let providerAuth;
 let providerRequestBody = "";
 let codexTokenRequestBody = "";
+let codexTokenRequestCount = 0;
 let codexChatAuth;
 let codexChatRequestBody = "";
+let codexChatRequestCount = 0;
 
 try {
   tempHome = await makeTempHome();
@@ -110,8 +112,14 @@ try {
   assert(codexStart.authorizationUrl?.startsWith("https://auth.openai.com/oauth/authorize?"), "experimental Codex-like start returned unexpected authorization URL");
   assert(typeof codexStart.sessionId === "string" && codexStart.sessionId.startsWith("codex-"), "experimental Codex-like start did not return a Codex-like session id");
   assert(String(codexStart.message ?? "").includes("Experimental Codex-like"), "experimental Codex-like start did not return risk message");
-  const codexState = new URL(codexStart.authorizationUrl).searchParams.get("state");
+  const codexAuthorizeUrl = new URL(codexStart.authorizationUrl);
+  const codexState = codexAuthorizeUrl.searchParams.get("state");
+  const codexChallenge = codexAuthorizeUrl.searchParams.get("code_challenge");
   assert(typeof codexState === "string" && codexState.length > 20, "experimental Codex-like start did not return state");
+  assert(typeof codexChallenge === "string" && codexChallenge.length > 20, "experimental Codex-like start did not return PKCE challenge");
+  assert(codexStart.sessionId !== codexState, "experimental Codex-like session id and state were not distinct");
+  assert(codexStart.sessionId !== codexChallenge, "experimental Codex-like session id and challenge were not distinct");
+  assert(codexState !== codexChallenge, "experimental Codex-like state and challenge were not distinct");
 
   const codexExchange = await requestJson(baseUrl, "/v1/provider-auth/openai/exchange", {
     method: "POST",
@@ -127,15 +135,22 @@ try {
   assert(codexExchange.accountLabel === "smoke-user@example.test", "experimental Codex-like exchange returned unexpected account label");
   assert(codexExchange.cloudRequired === false, "experimental Codex-like exchange unexpectedly requires cloud");
 
+  assert(codexTokenRequestCount === 1, "experimental Codex-like exchange did not call mock token endpoint exactly once");
   const parsedCodexTokenBody = JSON.parse(codexTokenRequestBody);
   assert(parsedCodexTokenBody.grant_type === "authorization_code", "experimental Codex-like exchange used unexpected grant type");
   assert(parsedCodexTokenBody.code === "codex-code-smoke-secret", "experimental Codex-like exchange did not send auth code to mock token endpoint");
   assert(typeof parsedCodexTokenBody.code_verifier === "string" && parsedCodexTokenBody.code_verifier.length > 20, "experimental Codex-like exchange did not send PKCE verifier to mock token endpoint");
+  assert(parsedCodexTokenBody.code_verifier !== codexState, "experimental Codex-like verifier reused state");
+  assert(parsedCodexTokenBody.code_verifier !== codexChallenge, "experimental Codex-like verifier reused challenge");
 
   const codexStatus = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
   assert(codexStatus.configured === true, "experimental Codex-like status was not configured");
   assert(codexStatus.status === "connected", "experimental Codex-like status was not connected");
   assert(codexStatus.authSource === "oauth", "experimental Codex-like status did not use oauth auth source");
+  assert(codexStatus.sessionId === undefined, "experimental Codex-like connected status exposed session id");
+  assert(codexStatus.authorizationUrl === undefined, "experimental Codex-like connected status exposed authorization URL");
+  assert(codexStatus.redacted === "cod-...cret", "experimental Codex-like connected status returned unexpected redacted hint");
+  assert(codexStatus.accountLabel === "smoke-user@example.test", "experimental Codex-like connected status returned unexpected account label");
 
   const codexChatId = `smoke-codex-chat-${crypto.randomUUID()}`;
   const codexSubscription = subscribe(baseUrl, codexChatId);
@@ -151,16 +166,22 @@ try {
 
   const { events: codexEvents, raw: codexRaw } = await codexSubscription;
   assert(codexEvents[0]?.type === "snapshot" && codexEvents[0]?.seq === 0, "experimental Codex-like SSE did not start with snapshot");
-  assert(codexEvents.some((event) => event.type === "stream_started"), "experimental Codex-like SSE stream_started event was not received");
-  assert(codexEvents.some((event) => event.type === "stream_delta" && event.payload?.delta?.content === "OAuth"), "experimental Codex-like SSE OAuth delta was not received");
-  assert(codexEvents.some((event) => event.type === "stream_delta" && event.payload?.delta?.content === " smoke"), "experimental Codex-like SSE smoke delta was not received");
-  assert(codexEvents.some((event) => event.type === "stream_finished"), "experimental Codex-like SSE stream_finished event was not received");
+  assert(codexEvents[0]?.payload?.thread?.id === codexChatId, "experimental Codex-like SSE snapshot used unexpected chat id");
+  assert(codexEvents[0]?.payload?.runtime?.streaming === false, "experimental Codex-like SSE snapshot did not expose non-streaming initial state");
+  assert(codexEvents[1]?.type === "stream_started" && codexEvents[1]?.payload?.role === "assistant", "experimental Codex-like SSE stream_started event was not received");
+  assert(codexEvents[2]?.type === "stream_delta" && codexEvents[2]?.payload?.delta?.content === "OAuth", "experimental Codex-like SSE OAuth delta was not received");
+  assert(codexEvents[3]?.type === "stream_delta" && codexEvents[3]?.payload?.delta?.content === " smoke", "experimental Codex-like SSE smoke delta was not received");
+  assert(codexEvents[4]?.type === "stream_finished" && codexEvents[4]?.payload?.finishReason === "stop", "experimental Codex-like SSE stream_finished event was not received");
+  assert(codexEvents.length === 5, "experimental Codex-like SSE produced unexpected extra events");
   assertMonotonicSequence(codexEvents);
 
+  assert(codexChatRequestCount === 1, "experimental Codex-like mock chat endpoint was not called exactly once");
   assert(codexChatAuth === "Bearer codex-smoke-access-token-secret", "experimental Codex-like mock chat did not receive bearer OAuth token");
   const parsedCodexChatBody = JSON.parse(codexChatRequestBody);
   assert(parsedCodexChatBody.stream === true, "experimental Codex-like chat request was not streaming");
   assert(parsedCodexChatBody.model === "gpt-5-codex", "experimental Codex-like chat request used unexpected model");
+  assert(parsedCodexChatBody.messages?.[0]?.role === "user", "experimental Codex-like chat request did not send user role");
+  assert(parsedCodexChatBody.messages?.[0]?.content === "Say hello through experimental mock OAuth.", "experimental Codex-like chat request did not send first message content");
 
   const codexDisconnect = await requestJson(baseUrl, "/v1/provider-auth/openai/disconnect", {
     method: "POST",
@@ -168,6 +189,15 @@ try {
   });
   assert(codexDisconnect.success === true, "experimental Codex-like disconnect did not report success");
   assert(codexDisconnect.status === "revoked", "experimental Codex-like disconnect did not return revoked status");
+  assert(codexDisconnect.authSource === "none", "experimental Codex-like disconnect did not return sanitized auth source");
+  assert(codexDisconnect.sessionId === undefined, "experimental Codex-like disconnect exposed session id");
+  assert(codexDisconnect.authorizationUrl === undefined, "experimental Codex-like disconnect exposed authorization URL");
+  assert(codexDisconnect.redacted === undefined, "experimental Codex-like disconnect exposed redacted credential hint");
+
+  const codexClearedStatus = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
+  assert(codexClearedStatus.configured === false, "experimental Codex-like cleared status was unexpectedly configured");
+  assert(codexClearedStatus.status === "login_unavailable", "experimental Codex-like cleared status was not login_unavailable");
+  assert(codexClearedStatus.authSource === "none", "experimental Codex-like cleared status did not return sanitized auth source");
 
   const providerResponse = await requestJson(baseUrl, "/v1/providers", {
     method: "POST",
@@ -225,12 +255,14 @@ try {
     codexEvents,
     codexRaw,
     codexDisconnect,
+    codexClearedStatus,
     providerResponse,
     commandResponse,
     events,
     raw
   });
-  assertNoSecretLeak(clientVisible, [
+  const secretMarkers = [
+    token,
     fakeApiKey,
     "fake-access-token",
     "fake-refresh-token",
@@ -247,7 +279,15 @@ try {
     ".codex/auth.json",
     "client_secret",
     "authorization_code"
-  ]);
+  ];
+  const logSecretMarkers = [
+    ...secretMarkers,
+    codexStart.sessionId,
+    codexState,
+    codexChallenge
+  ];
+  assertNoSecretLeak(clientVisible, secretMarkers);
+  assertNoSecretLeak(engine.output(), logSecretMarkers);
 
   console.log("Local smoke test passed.");
 } finally {
@@ -360,6 +400,7 @@ async function startMockCodexTokenEndpoint() {
       response.writeHead(404).end();
       return;
     }
+    codexTokenRequestCount += 1;
     request.setEncoding("utf8");
     request.on("data", (chunk) => {
       codexTokenRequestBody += chunk;
@@ -386,6 +427,7 @@ async function startMockCodexChatEndpoint() {
       response.writeHead(404).end();
       return;
     }
+    codexChatRequestCount += 1;
     codexChatAuth = request.headers.authorization;
     request.setEncoding("utf8");
     request.on("data", (chunk) => {
