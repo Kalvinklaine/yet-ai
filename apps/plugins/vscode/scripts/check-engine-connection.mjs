@@ -66,6 +66,11 @@ try {
   assert.doesNotThrow(() => validateLoopbackUrl("https://127.0.0.1:5173/gui", "yetai.guiDevUrl"));
   for (const runtimeUrl of [
     "http://127.0.0.1:8001/foo",
+    "http://127.0.0.1:8001/foo/..",
+    "http://127.0.0.1:8001/foo/%2e%2e",
+    "http://127.0.0.1:8001/%2e",
+    "http://127.0.0.1:8001/%2e%2e",
+    "http://127.0.0.1:8001/a/b/../..",
     "http://127.0.0.1:8001/foo/../bar",
     "http://127.0.0.1:8001/%2e%2e/foo",
   ]) {
@@ -139,8 +144,9 @@ try {
 
   assert.equal(
     safeRuntimeUrl("http://user:pass@127.0.0.1:8001/path?token=fake-api-key#secret-fragment"),
-    "http://127.0.0.1:8001/path",
+    "http://127.0.0.1:8001/",
   );
+  assert.equal(safeRuntimeUrl("http://127.0.0.1:8001/fake-path-secret/..?token=fake-api-key"), "http://127.0.0.1:8001/");
   assert.equal(safeRuntimeUrl("https://localhost:5173/?Authorization=Bearer fake"), "https://localhost:5173/");
   assert.equal(safeRuntimeUrl("https://example.com:8001/?token=fake"), "invalid or non-loopback runtime URL");
   assert.equal(safeRuntimeUrl("not a url"), "invalid runtime URL");
@@ -525,7 +531,7 @@ try {
     assert.equal(invalidRuntimePathPinged, false);
 
     configValues = {
-      runtimeUrl: "http://127.0.0.1:8001/foo",
+      runtimeUrl: "http://127.0.0.1:8001/fake-path-secret/..",
       launchMode: "connect",
     };
     const { pinged: invalidRuntimeCleanPathPinged, result: invalidRuntimeCleanPathDiagnostics } = await withPingStub(() =>
@@ -536,6 +542,9 @@ try {
     );
     assert.equal(invalidRuntimeCleanPathDiagnostics.engineBinaryStatus, "not checked in connect mode");
     assert.match(invalidRuntimeCleanPathDiagnostics.pingStatus, /^skipped: yetai\.runtimeUrl must not include a path\./);
+    assert.equal(invalidRuntimeCleanPathDiagnostics.runtimeUrl, "http://127.0.0.1:8001/");
+    assert.equal(invalidRuntimeCleanPathDiagnostics.pingStatus.includes("fake-path-secret"), false);
+    assert.equal(invalidRuntimeCleanPathDiagnostics.runtimeUrl.includes("fake-path-secret"), false);
     assert.equal(invalidRuntimeCleanPathPinged, false);
 
     const emptyPath = path.join(tempRoot, "empty-path");

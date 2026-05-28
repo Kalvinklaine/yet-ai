@@ -233,7 +233,7 @@ export function validateRuntimeBaseUrl(baseUrl: string): RuntimeResult<URL> {
     };
   }
 
-  if (parsed.pathname !== "/") {
+  if (parsed.pathname !== "/" || !hasRootRawUrlPath(baseUrl)) {
     return {
       ok: false,
       error: {
@@ -262,6 +262,11 @@ export function productIdentityWarning(response: Pick<PingResponse, "productId" 
 function isLoopbackUrl(url: URL): boolean {
   const hostname = url.hostname.toLowerCase();
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+}
+
+function hasRootRawUrlPath(value: string): boolean {
+  const rawPath = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\/[^/?#]*([^?#]*)/.exec(value)?.[1];
+  return rawPath === "" || rawPath === "/";
 }
 
 async function errorMessage(response: Response): Promise<string> {

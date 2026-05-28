@@ -28,6 +28,11 @@ describe("runtimeClient", () => {
     vi.stubGlobal("fetch", fetchMock);
     for (const baseUrl of [
       "http://127.0.0.1:8001/foo",
+      "http://127.0.0.1:8001/foo/..",
+      "http://127.0.0.1:8001/foo/%2e%2e",
+      "http://127.0.0.1:8001/%2e",
+      "http://127.0.0.1:8001/%2e%2e",
+      "http://127.0.0.1:8001/a/b/../..",
       "http://127.0.0.1:8001/foo/../bar",
       "http://127.0.0.1:8001/%2e%2e/foo",
     ]) {
@@ -45,8 +50,10 @@ describe("runtimeClient", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await runtimeFetch({ baseUrl: "http://127.0.0.1:8001/", token: "runtime-token" }, "/v1/ping");
+    await runtimeFetch({ baseUrl: "http://127.0.0.1:8001", token: "runtime-token" }, "/v1/ping");
 
     expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8001/v1/ping", expect.any(Object));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("maps 401 to an unauthorized local runtime error", async () => {
@@ -67,6 +74,11 @@ describe("runtimeClient", () => {
     expect(validateRuntimeBaseUrl("http://192.168.0.2:8001").ok).toBe(false);
     for (const baseUrl of [
       "http://127.0.0.1:8001/foo",
+      "http://127.0.0.1:8001/foo/..",
+      "http://127.0.0.1:8001/foo/%2e%2e",
+      "http://127.0.0.1:8001/%2e",
+      "http://127.0.0.1:8001/%2e%2e",
+      "http://127.0.0.1:8001/a/b/../..",
       "http://127.0.0.1:8001/foo/../bar",
       "http://127.0.0.1:8001/%2e%2e/foo",
     ]) {
@@ -74,6 +86,18 @@ describe("runtimeClient", () => {
       expect(result.ok).toBe(false);
       expect(result.ok ? "" : result.error.message).toContain("must not include a path");
     }
+  });
+
+  it("does not echo invalid runtime path secret markers", async () => {
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await runtimeFetch({ baseUrl: "http://127.0.0.1:8001/path-secret-marker/..", token: "runtime-token" }, "/v1/ping");
+
+    expect(result.ok).toBe(false);
+    expect(result.ok ? undefined : result.error.status).toBe("configuration");
+    expect(result.ok ? "" : result.error.message).toContain("must not include a path");
+    expect(result.ok ? "" : result.error.message).not.toContain("path-secret-marker");
+    expect(result.ok ? "" : result.error.message).not.toContain("runtime-token");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("rejects runtime URLs with userinfo query or hash without echoing secrets", async () => {

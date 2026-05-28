@@ -259,7 +259,12 @@ export function validateEngineConnection(connection: EngineConnection): void {
 
 function hasRootUrlPath(value: string): boolean {
   const parsed = new URL(value);
-  return parsed.pathname === "/";
+  return parsed.pathname === "/" && hasRootRawUrlPath(value);
+}
+
+function hasRootRawUrlPath(value: string): boolean {
+  const rawPath = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\/[^/?#]*([^?#]*)/.exec(value)?.[1];
+  return rawPath === "" || rawPath === "/";
 }
 
 export function validateEngineConnectionSettings(settings: EngineConnectionSettings): void {
@@ -512,6 +517,10 @@ export function safeRuntimeUrl(runtimeUrl: string): string {
     parsed.password = "";
     parsed.search = "";
     parsed.hash = "";
+    if (!hasRootUrlPath(runtimeUrl)) {
+      parsed.pathname = "/";
+      return parsed.toString();
+    }
     return parsed.toString();
   } catch {
     return "invalid runtime URL";
