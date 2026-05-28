@@ -26,6 +26,7 @@ const mappings = [
   ["packages/contracts/examples/engine/provider-auth-disconnect-api-key-fallback.json", "packages/contracts/schemas/engine/provider-auth-disconnect-response.schema.json"],
   ["packages/contracts/examples/engine/models-response.json", "packages/contracts/schemas/engine/models.schema.json"],
   ["packages/contracts/examples/engine/user-message-command.json", "packages/contracts/schemas/engine/chat-command.schema.json"],
+  ["packages/contracts/examples/engine/user-message-command-with-context.json", "packages/contracts/schemas/engine/chat-command.schema.json"],
   ["packages/contracts/examples/engine/abort-command.json", "packages/contracts/schemas/engine/chat-command.schema.json"],
   ["packages/contracts/examples/engine/snapshot-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
   ["packages/contracts/examples/engine/stream-started-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
@@ -34,6 +35,7 @@ const mappings = [
   ["packages/contracts/examples/engine/error-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
   ["packages/contracts/examples/bridge/host-ready-message.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-opened-from-command-message.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
+  ["packages/contracts/examples/bridge/host-context-snapshot-message.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-ready-message.json", "packages/contracts/schemas/bridge/gui-message.schema.json"]
 ].map(([examplePath, schemaPath]) => [normalizeContractPath(examplePath), normalizeContractPath(schemaPath)]);
 
@@ -55,11 +57,39 @@ const invalidMappings = [
     "packages/contracts/schemas/engine/chat-command.schema.json"
   ],
   [
+    "packages/contracts/examples-invalid/engine/chat-command-context-secret-metadata.json",
+    "packages/contracts/schemas/engine/chat-command.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/chat-command-context-tool-smuggling.json",
+    "packages/contracts/schemas/engine/chat-command.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/chat-command-context-unsafe-path.json",
+    "packages/contracts/schemas/engine/chat-command.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/chat-command-context-oversized-selection-text.json",
+    "packages/contracts/schemas/engine/chat-command.schema.json"
+  ],
+  [
     "packages/contracts/examples-invalid/bridge/gui-ready-extra-payload.json",
     "packages/contracts/schemas/bridge/gui-message.schema.json"
   ],
   [
     "packages/contracts/examples-invalid/bridge/host-opened-from-command-payload.json",
+    "packages/contracts/schemas/bridge/host-message.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/bridge/host-context-snapshot-unknown-field.json",
+    "packages/contracts/schemas/bridge/host-message.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/bridge/host-context-snapshot-absolute-path.json",
+    "packages/contracts/schemas/bridge/host-message.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/bridge/host-context-snapshot-privileged-command.json",
     "packages/contracts/schemas/bridge/host-message.schema.json"
   ],
   [

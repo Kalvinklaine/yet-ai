@@ -1,0 +1,21 @@
+{
+  "version": "2026-05-15",
+  "type": "host.contextSnapshot",
+  "requestId": "bridge-context-001",
+  "payload": {
+    "kind": "active_editor",
+    "source": "vscode",
+    "file": {
+      "displayPath": "src/main.ts",
+      "workspaceRelativePath": "src/main.ts",
+      "languageId": "typescript"
+    },
+    "selection": {
+      "startLine": 10,
+      "startCharacter": 2,
+      "endLine": 12,
+      "endCharacter": 8,
+      "text": "function greet() {\n  return \"hello\";\n}"
+    }
+  }
+}

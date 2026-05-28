@@ -1,0 +1,14 @@
+{
+  "requestId": "req-context-oversized-001",
+  "type": "user_message",
+  "payload": {
+    "content": "Explain this selection.",
+    "context": {
+      "kind": "active_editor",
+      "source": "vscode",
+      "file": {
+        "displayPath": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.ts"
+      }
+    }
+  }
+}
