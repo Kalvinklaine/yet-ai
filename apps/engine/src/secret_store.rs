@@ -104,6 +104,8 @@ impl ProviderSecretStore for FileSecretStore {
             return self.delete_secret(provider_id, kind).await;
         }
         let path = self.secret_path(provider_id, kind)?;
+        ensure_secret_directories(&self.root, provider_id).await?;
+        reject_secret_file_symlink(&path).await?;
         write_secret_record(
             &path,
             &SecretRecord {
@@ -120,6 +122,10 @@ impl ProviderSecretStore for FileSecretStore {
         kind: SecretKind,
     ) -> Result<Option<String>, SecretStoreError> {
         let path = self.secret_path(provider_id, kind)?;
+        if !ensure_existing_secret_directories(&self.root, provider_id).await? {
+            return Ok(None);
+        }
+        reject_secret_file_symlink(&path).await?;
         let bytes = match tokio::fs::read(path).await {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -139,6 +145,10 @@ impl ProviderSecretStore for FileSecretStore {
         kind: SecretKind,
     ) -> Result<(), SecretStoreError> {
         let path = self.secret_path(provider_id, kind)?;
+        if !ensure_existing_secret_directories(&self.root, provider_id).await? {
+            return Ok(());
+        }
+        reject_secret_file_symlink(&path).await?;
         match tokio::fs::remove_file(path).await {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -164,11 +174,60 @@ pub fn redact_secret(value: &str) -> String {
     format!("{prefix}-...{suffix}")
 }
 
-async fn write_secret_record(path: &Path, record: &SecretRecord) -> Result<(), SecretStoreError> {
-    let dir = path.parent().ok_or(SecretStoreError::Storage)?;
-    tokio::fs::create_dir_all(dir)
+async fn ensure_secret_directories(root: &Path, provider_id: &str) -> Result<(), SecretStoreError> {
+    let parent = root.parent().ok_or(SecretStoreError::Storage)?;
+    tokio::fs::create_dir_all(parent)
         .await
         .map_err(|_| SecretStoreError::Storage)?;
+    ensure_secret_directory(root, true).await?;
+    ensure_secret_directory(&root.join(provider_id), true).await?;
+    Ok(())
+}
+
+async fn ensure_existing_secret_directories(
+    root: &Path,
+    provider_id: &str,
+) -> Result<bool, SecretStoreError> {
+    if !ensure_secret_directory(root, false).await? {
+        return Ok(false);
+    }
+    ensure_secret_directory(&root.join(provider_id), false).await
+}
+
+async fn ensure_secret_directory(path: &Path, create: bool) -> Result<bool, SecretStoreError> {
+    match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) => {
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(SecretStoreError::Storage);
+            }
+            set_private_directory_permissions(path).await?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !create => Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            tokio::fs::create_dir(path)
+                .await
+                .map_err(|_| SecretStoreError::Storage)?;
+            set_private_directory_permissions(path).await?;
+            Ok(true)
+        }
+        Err(_) => Err(SecretStoreError::Storage),
+    }
+}
+
+async fn reject_secret_file_symlink(path: &Path) -> Result<(), SecretStoreError> {
+    match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(SecretStoreError::Storage),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(SecretStoreError::Storage),
+    }
+}
+
+async fn write_secret_record(path: &Path, record: &SecretRecord) -> Result<(), SecretStoreError> {
+    let dir = path.parent().ok_or(SecretStoreError::Storage)?;
+    ensure_secret_directory(dir, false).await?;
+    reject_secret_file_symlink(path).await?;
     let content = serde_json::to_vec_pretty(record).map_err(|_| SecretStoreError::Storage)?;
     let temp_path = temp_secret_path(path);
     let mut options = tokio::fs::OpenOptions::new();
@@ -234,18 +293,30 @@ async fn set_private_permissions(_path: &Path) -> Result<(), SecretStoreError> {
     Ok(())
 }
 
+#[cfg(unix)]
+async fn set_private_directory_permissions(path: &Path) -> Result<(), SecretStoreError> {
+    use std::os::unix::fs::PermissionsExt;
+    tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+        .await
+        .map_err(|_| SecretStoreError::Storage)
+}
+
+#[cfg(not(unix))]
+async fn set_private_directory_permissions(_path: &Path) -> Result<(), SecretStoreError> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{FileSecretStore, ProviderSecretStore, SecretKind, SecretStoreError};
+
+    static TEST_DIR_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
     fn temp_dir() -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "yet-ai-secret-store-test-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            TEST_DIR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         let _ = std::fs::remove_dir_all(&dir);
         dir
@@ -293,6 +364,77 @@ mod tests {
                 Some(value)
             );
         }
+    }
+
+    #[cfg(unix)]
+    fn file_mode(path: &std::path::Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::symlink_metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn file_secret_store_rejects_provider_directory_symlink_escape() {
+        let dir = temp_dir();
+        let outside = temp_dir();
+        let store = FileSecretStore::new(&dir);
+        std::fs::create_dir_all(&outside).unwrap();
+        let root = dir.join("provider-secrets");
+        std::fs::create_dir_all(&root).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("openai-local")).unwrap();
+
+        assert!(matches!(
+            store
+                .put_secret("openai-local", SecretKind::ApiKey, "sk-symlink-secret-abcd")
+                .await,
+            Err(SecretStoreError::Storage)
+        ));
+        assert!(!outside.join("api-key.json").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn file_secret_store_rejects_secret_file_symlink_read() {
+        let dir = temp_dir();
+        let outside = temp_dir();
+        let store = FileSecretStore::new(&dir);
+        let path = store
+            .secret_path("openai-local", SecretKind::ApiKey)
+            .expect("valid path");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let outside_secret = outside.join("outside-secret.json");
+        std::fs::write(
+            &outside_secret,
+            r#"{"kind":"api_key","value":"sk-outside-secret-abcd"}"#,
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&outside_secret, &path).unwrap();
+
+        assert!(matches!(
+            store.get_secret("openai-local", SecretKind::ApiKey).await,
+            Err(SecretStoreError::Storage)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn file_secret_store_writes_private_directory_and_file_modes() {
+        let dir = temp_dir();
+        let store = FileSecretStore::new(&dir);
+        store
+            .put_secret("openai-local", SecretKind::ApiKey, "sk-mode-secret-abcd")
+            .await
+            .unwrap();
+        let root = dir.join("provider-secrets");
+        let provider_dir = root.join("openai-local");
+        let secret_path = store
+            .secret_path("openai-local", SecretKind::ApiKey)
+            .expect("valid path");
+
+        assert_eq!(file_mode(&root), 0o700);
+        assert_eq!(file_mode(&provider_dir), 0o700);
+        assert_eq!(file_mode(&secret_path), 0o600);
     }
 
     #[tokio::test]
