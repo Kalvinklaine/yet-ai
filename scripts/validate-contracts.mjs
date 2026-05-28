@@ -16,12 +16,14 @@ const mappings = [
   ["packages/contracts/examples/engine/provider-test-failure-response.json", "packages/contracts/schemas/engine/provider-test-response.schema.json"],
   ["packages/contracts/examples/engine/provider-auth-start-pending.json", "packages/contracts/schemas/engine/provider-auth-start-response.schema.json"],
   ["packages/contracts/examples/engine/provider-auth-status-api-key-configured.json", "packages/contracts/schemas/engine/provider-auth-status-response.schema.json"],
+  ["packages/contracts/examples/engine/provider-auth-status-pending.json", "packages/contracts/schemas/engine/provider-auth-status-response.schema.json"],
   ["packages/contracts/examples/engine/provider-auth-status-connected.json", "packages/contracts/schemas/engine/provider-auth-status-response.schema.json"],
   ["packages/contracts/examples/engine/provider-auth-status-expired.json", "packages/contracts/schemas/engine/provider-auth-status-response.schema.json"],
   ["packages/contracts/examples/engine/provider-auth-status-login-unavailable.json", "packages/contracts/schemas/engine/provider-auth-status-response.schema.json"],
   ["packages/contracts/examples/engine/provider-auth-exchange-connected.json", "packages/contracts/schemas/engine/provider-auth-exchange-response.schema.json"],
   ["packages/contracts/examples/engine/provider-auth-exchange-sanitized-error.json", "packages/contracts/schemas/engine/provider-auth-exchange-response.schema.json"],
   ["packages/contracts/examples/engine/provider-auth-disconnect-success.json", "packages/contracts/schemas/engine/provider-auth-disconnect-response.schema.json"],
+  ["packages/contracts/examples/engine/provider-auth-disconnect-api-key-fallback.json", "packages/contracts/schemas/engine/provider-auth-disconnect-response.schema.json"],
   ["packages/contracts/examples/engine/models-response.json", "packages/contracts/schemas/engine/models.schema.json"],
   ["packages/contracts/examples/engine/user-message-command.json", "packages/contracts/schemas/engine/chat-command.schema.json"],
   ["packages/contracts/examples/engine/abort-command.json", "packages/contracts/schemas/engine/chat-command.schema.json"],
@@ -81,8 +83,20 @@ const invalidMappings = [
     "packages/contracts/schemas/engine/provider-auth-start-response.schema.json"
   ],
   [
+    "packages/contracts/examples-invalid/engine/provider-auth-start-non-loopback-http-authorization-url.json",
+    "packages/contracts/schemas/engine/provider-auth-start-response.schema.json"
+  ],
+  [
     "packages/contracts/examples-invalid/engine/provider-auth-status-invalid-auth-source.json",
     "packages/contracts/schemas/engine/provider-auth-status-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/provider-auth-status-pending-missing-session.json",
+    "packages/contracts/schemas/engine/provider-auth-status-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/provider-auth-disconnect-revoked-api-key-configured.json",
+    "packages/contracts/schemas/engine/provider-auth-disconnect-response.schema.json"
   ],
   [
     "packages/contracts/examples-invalid/engine/provider-auth-exchange-cloud-required.json",
