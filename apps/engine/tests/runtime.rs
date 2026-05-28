@@ -265,11 +265,7 @@ async fn assert_first_auth_and_no_immediate_extra_auth(
         .await
         .unwrap_or_else(|_| panic!("{scenario}: expected one auth observation"))
         .unwrap_or_else(|| panic!("{scenario}: auth observation channel closed"));
-    assert_eq!(
-        auth.as_deref(),
-        Some(expected_auth),
-        "{scenario}: first auth observation did not match"
-    );
+    assert_stored_secret(auth.as_deref(), expected_auth);
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(50), auth_receiver.recv())
             .await
@@ -680,6 +676,44 @@ fn assert_no_codex_oauth_secret_files(paths: &StoragePaths) {
             panic!("unexpected OAuth secret file at {}", path.display());
         }
     }
+}
+
+fn test_secret_digest(value: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn assert_stored_secret(actual: Option<&str>, expected: &str) {
+    let Some(actual) = actual else {
+        panic!("expected stored secret to be present");
+    };
+    assert_eq!(
+        actual.len(),
+        expected.len(),
+        "stored secret length mismatch"
+    );
+    assert_eq!(
+        test_secret_digest(actual),
+        test_secret_digest(expected),
+        "stored secret digest mismatch"
+    );
+    assert!(actual == expected, "stored secret value mismatch");
+}
+
+fn assert_json_string_value(actual: &Value, expected: &str, label: &str) {
+    let Some(actual) = actual.as_str() else {
+        panic!("{label}: expected string value");
+    };
+    assert_eq!(actual.len(), expected.len(), "{label}: length mismatch");
+    assert_eq!(
+        test_secret_digest(actual),
+        test_secret_digest(expected),
+        "{label}: digest mismatch"
+    );
+    assert!(actual == expected, "{label}: value mismatch");
 }
 
 async fn empty_response_from(app: axum::Router, request: Request<Body>) -> StatusCode {
@@ -1179,27 +1213,25 @@ async fn provider_auth_openai_experimental_exchange_stores_tokens_and_returns_co
 
     let token_body = token_body_receiver.await.unwrap();
     assert_eq!(token_body["grant_type"], "authorization_code");
-    assert_eq!(token_body["code"], "codex-code-success");
+    assert_json_string_value(
+        &token_body["code"],
+        "codex-code-success",
+        "token request code",
+    );
     assert_eq!(token_body["client_id"], "yet-ai-local-experimental");
     assert!(token_body["code_verifier"].as_str().unwrap().len() > 20);
 
     let store = FileSecretStore::new(&paths.config_dir);
-    assert_eq!(
-        store
-            .get_secret("openai", SecretKind::OAuthAccessToken)
-            .await
-            .unwrap()
-            .as_deref(),
-        Some("codex-access-token-secret-abcd")
-    );
-    assert_eq!(
-        store
-            .get_secret("openai", SecretKind::OAuthRefreshToken)
-            .await
-            .unwrap()
-            .as_deref(),
-        Some("codex-refresh-token-secret-wxyz")
-    );
+    let access_secret = store
+        .get_secret("openai", SecretKind::OAuthAccessToken)
+        .await
+        .unwrap();
+    assert_stored_secret(access_secret.as_deref(), "codex-access-token-secret-abcd");
+    let refresh_secret = store
+        .get_secret("openai", SecretKind::OAuthRefreshToken)
+        .await
+        .unwrap();
+    assert_stored_secret(refresh_secret.as_deref(), "codex-refresh-token-secret-wxyz");
 
     let (status, body) = json_response_from(
         app,
@@ -1259,7 +1291,11 @@ async fn provider_auth_openai_experimental_token_expires_in_missing_uses_bounded
     assert!(expires_at <= after);
     assert_provider_auth_response_has_no_codex_secrets(&body);
     let token_body = token_body_receiver.await.unwrap();
-    assert_eq!(token_body["code"], "codex-code-default-ttl");
+    assert_json_string_value(
+        &token_body["code"],
+        "codex-code-default-ttl",
+        "token request code",
+    );
 }
 
 #[tokio::test]
@@ -1455,7 +1491,11 @@ async fn provider_auth_openai_experimental_access_write_failure_leaves_no_oauth_
     assert_eq!(body["error"], "provider auth storage error");
     assert_provider_auth_response_has_no_codex_secrets(&body);
     let token_body = token_body_receiver.await.unwrap();
-    assert_eq!(token_body["code"], "codex-code-access-storage-failure");
+    assert_json_string_value(
+        &token_body["code"],
+        "codex-code-access-storage-failure",
+        "token request code",
+    );
     assert_eq!(
         store
             .get_secret("openai", SecretKind::OAuthRefreshToken)
@@ -1520,7 +1560,11 @@ async fn provider_auth_openai_experimental_refresh_write_failure_removes_access_
     assert_eq!(body["error"], "provider auth storage error");
     assert_provider_auth_response_has_no_codex_secrets(&body);
     let token_body = token_body_receiver.await.unwrap();
-    assert_eq!(token_body["code"], "codex-code-refresh-storage-failure");
+    assert_json_string_value(
+        &token_body["code"],
+        "codex-code-refresh-storage-failure",
+        "token request code",
+    );
     assert_eq!(
         store
             .get_secret("openai", SecretKind::OAuthAccessToken)
@@ -1585,7 +1629,11 @@ async fn provider_auth_openai_experimental_secret_write_failure_rolls_back_parti
     assert_eq!(body["error"], "provider auth storage error");
     assert_provider_auth_response_has_no_codex_secrets(&body);
     let token_body = token_body_receiver.await.unwrap();
-    assert_eq!(token_body["code"], "codex-code-storage-failure");
+    assert_json_string_value(
+        &token_body["code"],
+        "codex-code-storage-failure",
+        "token request code",
+    );
     assert_eq!(
         store
             .get_secret("openai", SecretKind::OAuthAccessToken)
@@ -1647,7 +1695,11 @@ async fn provider_auth_openai_experimental_exchange_failure_keeps_pending_for_re
     assert_provider_auth_response_has_no_codex_secrets(&failure);
 
     let first_token_body = token_body_receiver.recv().await.unwrap();
-    assert_eq!(first_token_body["code"], "codex-code-retry");
+    assert_json_string_value(
+        &first_token_body["code"],
+        "codex-code-retry",
+        "token request code",
+    );
     assert!(first_token_body["code_verifier"].as_str().unwrap().len() > 20);
 
     let (status, pending) = json_response_from(
@@ -1694,7 +1746,11 @@ async fn provider_auth_openai_experimental_exchange_failure_keeps_pending_for_re
     assert_provider_auth_response_has_no_codex_secrets(&connected);
 
     let second_token_body = token_body_receiver.recv().await.unwrap();
-    assert_eq!(second_token_body["code"], "codex-code-retry");
+    assert_json_string_value(
+        &second_token_body["code"],
+        "codex-code-retry",
+        "token request code",
+    );
 
     let (status, duplicate) = json_response_from(
         app,
@@ -1777,7 +1833,11 @@ async fn provider_auth_openai_experimental_concurrent_exchange_is_single_flight(
     }
 
     let token_body = token_body_receiver.recv().await.unwrap();
-    assert_eq!(token_body["code"], "codex-code-concurrent-secret");
+    assert_json_string_value(
+        &token_body["code"],
+        "codex-code-concurrent-secret",
+        "token request code",
+    );
     assert!(tokio::time::timeout(
         std::time::Duration::from_millis(100),
         token_body_receiver.recv()
@@ -1801,14 +1861,11 @@ async fn provider_auth_openai_experimental_concurrent_exchange_is_single_flight(
     assert_provider_auth_response_has_no_codex_secrets(&status_body);
 
     let store = FileSecretStore::new(&paths.config_dir);
-    assert_eq!(
-        store
-            .get_secret("openai", SecretKind::OAuthAccessToken)
-            .await
-            .unwrap()
-            .as_deref(),
-        Some("codex-access-token-secret-abcd")
-    );
+    let access_secret = store
+        .get_secret("openai", SecretKind::OAuthAccessToken)
+        .await
+        .unwrap();
+    assert_stored_secret(access_secret.as_deref(), "codex-access-token-secret-abcd");
 }
 
 #[tokio::test]
@@ -1883,7 +1940,11 @@ async fn provider_auth_openai_experimental_invalid_exchange_keeps_pending_until_
     assert_provider_auth_response_has_no_codex_secrets(&connected);
 
     let token_body = token_body_receiver.await.unwrap();
-    assert_eq!(token_body["code"], "codex-code-after-invalid-session");
+    assert_json_string_value(
+        &token_body["code"],
+        "codex-code-after-invalid-session",
+        "token request code",
+    );
 }
 
 #[tokio::test]
@@ -1934,7 +1995,11 @@ async fn provider_auth_openai_experimental_token_exchange_timeout_is_bounded_and
     assert!(!failure.to_string().contains("codex-code-timeout-secret"));
 
     let token_body = token_body_receiver.await.unwrap();
-    assert_eq!(token_body["code"], "codex-code-timeout-secret");
+    assert_json_string_value(
+        &token_body["code"],
+        "codex-code-timeout-secret",
+        "token request code",
+    );
     let store = FileSecretStore::new(&paths.config_dir);
     assert_eq!(
         store
@@ -2293,7 +2358,11 @@ async fn provider_auth_openai_experimental_disconnect_pending_then_relogin_uses_
     assert_eq!(connected["status"], "connected");
     assert_provider_auth_response_has_no_codex_secrets(&connected);
     let token_body = second_token_body_receiver.await.unwrap();
-    assert_eq!(token_body["code"], "codex-code-relogin");
+    assert_json_string_value(
+        &token_body["code"],
+        "codex-code-relogin",
+        "token request code",
+    );
 }
 
 #[tokio::test]
@@ -2891,7 +2960,7 @@ async fn duplicate_create_does_not_overwrite_existing_api_key_secret() {
         .get_secret("duplicate-secret-provider", SecretKind::ApiKey)
         .await
         .unwrap();
-    assert_eq!(secret.as_deref(), Some(old_key));
+    assert_stored_secret(secret.as_deref(), old_key);
 }
 
 #[tokio::test]
@@ -3278,7 +3347,7 @@ async fn provider_storage_path_uses_yet_ai_config_dir_not_project_state() {
         .get_secret("storage-provider", SecretKind::ApiKey)
         .await
         .unwrap();
-    assert_eq!(secret.as_deref(), Some(api_key));
+    assert_stored_secret(secret.as_deref(), api_key);
 }
 
 #[tokio::test]

@@ -452,6 +452,31 @@ mod tests {
         dir
     }
 
+    fn test_secret_digest(value: &str) -> u64 {
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn assert_stored_secret(actual: Option<&str>, expected: &str) {
+        let Some(actual) = actual else {
+            panic!("expected stored secret to be present");
+        };
+        assert_eq!(
+            actual.len(),
+            expected.len(),
+            "stored secret length mismatch"
+        );
+        assert_eq!(
+            test_secret_digest(actual),
+            test_secret_digest(expected),
+            "stored secret digest mismatch"
+        );
+        assert!(actual == expected, "stored secret value mismatch");
+    }
+
     #[test]
     fn redact_secret_fully_redacts_short_values_through_sixteen_chars() {
         for length in 0..=16 {
@@ -482,14 +507,11 @@ mod tests {
             .put_secret("openai-local", SecretKind::ApiKey, "sk-test-secret-abcd")
             .await
             .unwrap();
-        assert_eq!(
-            store
-                .get_secret("openai-local", SecretKind::ApiKey)
-                .await
-                .unwrap()
-                .as_deref(),
-            Some("sk-test-secret-abcd")
-        );
+        let secret = store
+            .get_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap();
+        assert_stored_secret(secret.as_deref(), "sk-test-secret-abcd");
         store
             .delete_secret("openai-local", SecretKind::ApiKey)
             .await
@@ -512,10 +534,8 @@ mod tests {
             (SecretKind::AuthMetadata, r#"{"account":"local"}"#),
         ] {
             store.put_secret("openai", kind, value).await.unwrap();
-            assert_eq!(
-                store.get_secret("openai", kind).await.unwrap().as_deref(),
-                Some(value)
-            );
+            let secret = store.get_secret("openai", kind).await.unwrap();
+            assert_stored_secret(secret.as_deref(), value);
         }
     }
 
