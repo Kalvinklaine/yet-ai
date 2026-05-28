@@ -149,7 +149,7 @@ try {
   assert(codexStatus.authSource === "oauth", "experimental Codex-like status did not use oauth auth source");
   assert(codexStatus.sessionId === undefined, "experimental Codex-like connected status exposed session id");
   assert(codexStatus.authorizationUrl === undefined, "experimental Codex-like connected status exposed authorization URL");
-  assert(codexStatus.redacted === "cod-...cret", "experimental Codex-like connected status returned unexpected redacted hint");
+  assert(codexStatus.redacted === "co...et", "experimental Codex-like connected status returned unexpected redacted hint");
   assert(codexStatus.accountLabel === "smoke-user@example.test", "experimental Codex-like connected status returned unexpected account label");
 
   const codexChatId = `smoke-codex-chat-${crypto.randomUUID()}`;

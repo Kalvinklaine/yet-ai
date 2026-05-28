@@ -866,7 +866,7 @@ async fn provider_auth_openai_status_redacts_configured_api_key() {
     assert_eq!(body["supportsLogin"], false);
     assert_eq!(body["supportsApiKey"], true);
     assert_eq!(body["cloudRequired"], false);
-    assert_eq!(body["redacted"], "sk--...abcd");
+    assert_eq!(body["redacted"], "sk...cd");
     let text = body.to_string();
     assert!(!text.contains(api_key));
     assert!(!text.contains("provider-auth-secret"));
@@ -1767,7 +1767,10 @@ async fn provider_auth_openai_experimental_concurrent_exchange_is_single_flight(
     assert_eq!(successes.len(), 1, "{responses:?}");
     assert_eq!(failures.len(), 1, "{responses:?}");
     assert_eq!(failures[0].0, StatusCode::NOT_FOUND);
-    assert_eq!(failures[0].1["error"], "provider auth session was not found");
+    assert_eq!(
+        failures[0].1["error"],
+        "provider auth session was not found"
+    );
     for (_, body) in responses.iter() {
         assert_provider_auth_response_has_no_codex_secrets(body);
         assert!(!body.to_string().contains("codex-code-concurrent-secret"));
@@ -1775,14 +1778,12 @@ async fn provider_auth_openai_experimental_concurrent_exchange_is_single_flight(
 
     let token_body = token_body_receiver.recv().await.unwrap();
     assert_eq!(token_body["code"], "codex-code-concurrent-secret");
-    assert!(
-        tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            token_body_receiver.recv()
-        )
-        .await
-        .is_err()
-    );
+    assert!(tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        token_body_receiver.recv()
+    )
+    .await
+    .is_err());
 
     let (status, status_body) = json_response_from(
         app,
@@ -2133,7 +2134,7 @@ async fn provider_auth_openai_experimental_disconnect_clears_oauth_not_api_key_p
     assert_eq!(body["status"], "api_key_configured");
     assert_eq!(body["authSource"], "api_key");
     assert_eq!(body["configured"], true);
-    assert_eq!(body["redacted"], "sk--...abcd");
+    assert_eq!(body["redacted"], "sk...cd");
     assert!(body["message"]
         .as_str()
         .unwrap()
@@ -2571,7 +2572,7 @@ async fn provider_auth_disconnect_does_not_delete_api_key_provider_config() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["auth"]["configured"], true);
-    assert_eq!(body["auth"]["redacted"], "sk--...abcd");
+    assert_eq!(body["auth"]["redacted"], "sk...cd");
     assert!(!body.to_string().contains(api_key));
 }
 
@@ -2623,7 +2624,7 @@ async fn create_provider_with_api_key_returns_redacted_response() {
     assert_eq!(body["auth"]["configured"], true);
     let text = body.to_string();
     assert!(!text.contains(api_key));
-    assert!(text.contains("...abcd"));
+    assert!(text.contains("sk...cd"));
 }
 
 #[tokio::test]
@@ -2882,7 +2883,7 @@ async fn duplicate_create_does_not_overwrite_existing_api_key_secret() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["displayName"], "Duplicate Secret Provider");
     assert_eq!(body["auth"]["configured"], true);
-    assert_eq!(body["auth"]["redacted"], "sk--...abcd");
+    assert_eq!(body["auth"]["redacted"], "sk...cd");
     assert!(!body.to_string().contains(old_key));
     assert!(!body.to_string().contains(new_key));
 
@@ -3174,7 +3175,7 @@ async fn update_secret_redacts_old_and_new_secrets() {
     let text = body.to_string();
     assert!(!text.contains(old_key));
     assert!(!text.contains(new_key));
-    assert!(text.contains("...wxyz"));
+    assert!(text.contains("sk...yz"));
 }
 
 #[tokio::test]
