@@ -17,17 +17,68 @@ function run(command, commandArgs, options = {}) {
   console.log(`\n> ${printable}`);
   const result = spawnSync(platformCommand(command), commandArgs, {
     cwd: options.cwd ?? root,
-    stdio: "inherit",
+    encoding: "utf8",
+    stdio: ["inherit", "pipe", "pipe"],
     env: process.env,
   });
+  if (result.stdout) {
+    process.stdout.write(result.stdout);
+  }
+  if (result.stderr) {
+    process.stderr.write(result.stderr);
+  }
   if (result.error?.code === "ENOENT") {
     console.error(`Required command \`${command}\` was not found on PATH.`);
     console.error("Install Gradle/Cargo/Node prerequisites, or use an existing reviewed project wrapper if one is added later.");
     process.exit(1);
   }
   if (result.status !== 0) {
+    if (options.diagnoseGradleFailure) {
+      printGradleFailureDiagnostic(`${result.stdout ?? ""}\n${result.stderr ?? ""}`);
+    }
     process.exit(result.status ?? 1);
   }
+}
+
+function printGradleFailureDiagnostic(output) {
+  if (!isExternalGradleDependencyFailure(output)) {
+    return;
+  }
+  console.error("\nJetBrains Gradle build appears blocked by external Gradle dependency or network resolution.");
+  console.error("Suggestions:");
+  console.error("- Retry with a stable network connection.");
+  console.error("- Verify Gradle can resolve JetBrains dependencies for apps/plugins/jetbrains.");
+  console.error("- Cached/offline Gradle may work only after these dependencies are already present locally.");
+}
+
+function isExternalGradleDependencyFailure(output) {
+  const value = output.toLowerCase();
+  const jetbrainsDependencyMarkers = [
+    "cache-redirector.jetbrains.com",
+    "java-compiler-ant-tasks",
+  ];
+  if (jetbrainsDependencyMarkers.some((marker) => value.includes(marker))) {
+    return true;
+  }
+  const resolutionMarkers = [
+    "instrumentcode",
+    "dependency metadata",
+    "could not resolve",
+    "could not get resource",
+    "could not download",
+    "could not list versions",
+    "failed to resolve",
+  ];
+  const networkMarkers = [
+    "timeout",
+    "timed out",
+    "connect timed out",
+    "read timed out",
+    "connection reset",
+    "connection refused",
+    "temporary failure",
+  ];
+  return resolutionMarkers.some((marker) => value.includes(marker)) && networkMarkers.some((marker) => value.includes(marker));
 }
 
 function platformCommand(command) {
@@ -42,7 +93,7 @@ function platformCommand(command) {
 
 run("npm", ["run", "prepare:ide-engine", "--", ...args]);
 run("npm", ["run", "build"], { cwd: path.join(root, "apps", "gui") });
-run("gradle", ["buildPlugin", "--console=plain"], { cwd: jetbrainsRoot });
+run("gradle", ["buildPlugin", "--console=plain"], { cwd: jetbrainsRoot, diagnoseGradleFailure: true });
 
 const zips = await findDistributionZips();
 if (zips.length === 0) {
