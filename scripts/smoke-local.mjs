@@ -262,29 +262,29 @@ try {
     raw
   });
   const secretMarkers = [
-    token,
-    fakeApiKey,
-    "fake-access-token",
-    "fake-refresh-token",
-    "mock-verifier",
-    "mock-code-smoke",
-    "codex-smoke-access-token-secret",
-    "codex-smoke-refresh-token-secret",
-    "codex-code-smoke-secret",
-    parsedCodexTokenBody.code_verifier,
-    "authorization: bearer",
-    "bearer codex-smoke-access-token-secret",
-    "cookie",
-    "auth.json",
-    ".codex/auth.json",
-    "client_secret",
-    "authorization_code"
+    { label: "runtime token", value: token },
+    { label: "provider API key", value: fakeApiKey },
+    { label: "mock access token", value: "fake-access-token" },
+    { label: "mock refresh token", value: "fake-refresh-token" },
+    { label: "mock verifier", value: "mock-verifier" },
+    { label: "mock auth code", value: "mock-code-smoke" },
+    { label: "Codex-like access token", value: "codex-smoke-access-token-secret" },
+    { label: "Codex-like refresh token", value: "codex-smoke-refresh-token-secret" },
+    { label: "Codex-like auth code", value: "codex-code-smoke-secret" },
+    { label: "Codex-like PKCE verifier", value: parsedCodexTokenBody.code_verifier },
+    { label: "authorization header marker", value: "authorization: bearer" },
+    { label: "Codex-like bearer marker", value: "bearer codex-smoke-access-token-secret" },
+    { label: "cookie marker", value: "cookie" },
+    { label: "auth file marker", value: "auth.json" },
+    { label: "Codex auth file marker", value: ".codex/auth.json" },
+    { label: "client secret marker", value: "client_secret" },
+    { label: "authorization code marker", value: "authorization_code" }
   ];
   const logSecretMarkers = [
     ...secretMarkers,
-    codexStart.sessionId,
-    codexState,
-    codexChallenge
+    { label: "Codex-like session id", value: codexStart.sessionId },
+    { label: "Codex-like state", value: codexState },
+    { label: "Codex-like challenge", value: codexChallenge }
   ];
   assertNoSecretLeak(clientVisible, secretMarkers);
   assertNoSecretLeak(engine.output(), logSecretMarkers);
@@ -549,13 +549,13 @@ function authHeaders() {
   return { Authorization: `Bearer ${token}` };
 }
 
-function assertNoSecretLeak(text, values) {
+function assertNoSecretLeak(text, markers) {
   const lower = text.toLowerCase();
-  for (const value of values) {
-    if (!value) {
+  for (const marker of markers) {
+    if (!marker?.value) {
       continue;
     }
-    assert(!lower.includes(String(value).toLowerCase()), `secret marker leaked to client-visible output: ${value}`);
+    assert(!lower.includes(String(marker.value).toLowerCase()), `secret marker leaked to client-visible output: ${marker.label}`);
   }
 }
 
