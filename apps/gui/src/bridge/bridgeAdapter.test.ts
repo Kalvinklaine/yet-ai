@@ -2,8 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBridgeAdapter, isGuiMessage, isHostMessage } from "./bridgeAdapter";
 import guiReadyMessage from "../../../../packages/contracts/examples/bridge/gui-ready-message.json";
 import hostOpenedFromCommandMessage from "../../../../packages/contracts/examples/bridge/host-opened-from-command-message.json";
+import hostContextSnapshotMessage from "../../../../packages/contracts/examples/bridge/host-context-snapshot-message.json";
 import hostReadyMessage from "../../../../packages/contracts/examples/bridge/host-ready-message.json";
 import guiReadyExtraPayloadMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-ready-extra-payload.json";
+import hostContextSnapshotAbsolutePathMessage from "../../../../packages/contracts/examples-invalid/bridge/host-context-snapshot-absolute-path.json";
+import hostContextSnapshotPrivilegedCommandMessage from "../../../../packages/contracts/examples-invalid/bridge/host-context-snapshot-privileged-command.json";
+import hostContextSnapshotUnknownFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-context-snapshot-unknown-field.json";
 import hostOpenedFromCommandPayloadMessage from "../../../../packages/contracts/examples-invalid/bridge/host-opened-from-command-payload.json";
 
 const bridgeVersion = "2026-05-15";
@@ -264,6 +268,7 @@ describe("bridgeAdapter", () => {
     expect(isGuiMessage(guiReadyMessage)).toBe(true);
     expect(isHostMessage(hostReadyMessage)).toBe(true);
     expect(isHostMessage(hostOpenedFromCommandMessage)).toBe(true);
+    expect(isHostMessage(hostContextSnapshotMessage)).toBe(true);
 
     const logs: string[] = [];
     const messages: unknown[] = [];
@@ -271,26 +276,34 @@ describe("bridgeAdapter", () => {
     adapter.subscribe((message) => messages.push(message));
     window.dispatchEvent(new MessageEvent("message", { data: hostReadyMessage }));
     window.dispatchEvent(new MessageEvent("message", { data: hostOpenedFromCommandMessage }));
+    window.dispatchEvent(new MessageEvent("message", { data: hostContextSnapshotMessage }));
 
-    expect(messages).toEqual([hostReadyMessage, hostOpenedFromCommandMessage]);
+    expect(messages).toEqual([hostReadyMessage, hostOpenedFromCommandMessage, hostContextSnapshotMessage]);
     expect(logs).toContain("Host runtime settings received");
+    expect(logs).toContain("Host message host.contextSnapshot");
     expect(logs.join("\n")).not.toContain(hostReadyMessage.payload.sessionToken);
+    expect(logs.join("\n")).not.toContain(hostContextSnapshotMessage.payload.selection.text);
     adapter.dispose();
   });
 
   it("rejects invalid bridge contract fixtures through runtime validation", () => {
     expect(isGuiMessage(guiReadyExtraPayloadMessage)).toBe(false);
     expect(isHostMessage(hostOpenedFromCommandPayloadMessage)).toBe(false);
+    expect(isHostMessage(hostContextSnapshotAbsolutePathMessage)).toBe(false);
+    expect(isHostMessage(hostContextSnapshotPrivilegedCommandMessage)).toBe(false);
+    expect(isHostMessage(hostContextSnapshotUnknownFieldMessage)).toBe(false);
 
     const logs: string[] = [];
     const messages: unknown[] = [];
     const adapter = createBridgeAdapter((entry) => logs.push(entry));
     adapter.subscribe((message) => messages.push(message));
     window.dispatchEvent(new MessageEvent("message", { data: hostOpenedFromCommandPayloadMessage }));
+    window.dispatchEvent(new MessageEvent("message", { data: hostContextSnapshotPrivilegedCommandMessage }));
 
     expect(messages).toHaveLength(0);
     expect(logs).toContain("Rejected invalid host bridge message");
     expect(logs.join("\n")).not.toContain("README.md");
+    expect(logs.join("\n")).not.toContain("replaceRange");
     adapter.dispose();
   });
 
@@ -298,6 +311,7 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage(hostReady())).toBe(true);
     expect(isHostMessage({ version: bridgeVersion, type: "host.openedFromCommand" })).toBe(true);
     expect(isHostMessage({ version: bridgeVersion, type: "host.openedFromCommand", payload: {} })).toBe(true);
+    expect(isHostMessage(contextSnapshot())).toBe(true);
   });
 
   it("validates gui.ready against the strict current schema", () => {
@@ -328,6 +342,11 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: {}, extra: true })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { runtimeUrl: "ftp://127.0.0.1:8765" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { productId: "" } })).toBe(false);
+    expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", file: { workspaceRelativePath: "../secret.ts" } } }))).toBe(false);
+    expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", file: { displayPath: "/Users/alice/secret.ts" } } }))).toBe(false);
+    expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", selection: { text: "x".repeat(8001) } } }))).toBe(false);
+    expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", selection: { startLine: -1 } } }))).toBe(false);
+    expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", tool: { name: "edit" } } }))).toBe(false);
   });
 
   it("logs rejected host messages", () => {
@@ -368,6 +387,30 @@ function hostReady(payload: Record<string, unknown> = {}) {
       displayName: "Yet AI",
       cloudRequired: false,
       ...payload,
+    },
+  };
+}
+
+function contextSnapshot(options: { payload?: Record<string, unknown> } = {}) {
+  return {
+    version: bridgeVersion,
+    type: "host.contextSnapshot",
+    requestId: "context-1",
+    payload: options.payload ?? {
+      kind: "active_editor",
+      source: "vscode",
+      file: {
+        displayPath: "src/main.ts",
+        workspaceRelativePath: "src/main.ts",
+        languageId: "typescript",
+      },
+      selection: {
+        startLine: 1,
+        startCharacter: 2,
+        endLine: 3,
+        endCharacter: 4,
+        text: "const value = 1;",
+      },
     },
   };
 }

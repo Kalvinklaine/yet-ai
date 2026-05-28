@@ -9,7 +9,7 @@ export type GuiMessage = {
 
 export type HostMessage = {
   version: string;
-  type: "host.ready" | "host.openedFromCommand";
+  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot";
   requestId?: string;
   payload?: Record<string, unknown>;
 };
@@ -20,6 +20,23 @@ export type HostReadyPayload = {
   productId?: string;
   displayName?: string;
   cloudRequired?: boolean;
+};
+
+export type HostContextSnapshotPayload = {
+  kind: "active_editor";
+  source: BridgeHost;
+  file?: {
+    displayPath?: string;
+    workspaceRelativePath?: string;
+    languageId?: string;
+  };
+  selection?: {
+    startLine?: number;
+    startCharacter?: number;
+    endLine?: number;
+    endCharacter?: number;
+    text?: string;
+  };
 };
 
 export type HostMessageHandler = (message: HostMessage) => void;
@@ -47,6 +64,7 @@ const bridgeVersion = "2026-05-15";
 const hostMessageTypes = new Set<HostMessage["type"]>([
   "host.ready",
   "host.openedFromCommand",
+  "host.contextSnapshot",
 ]);
 
 function expectedParentOrigin(): string | undefined {
@@ -173,6 +191,9 @@ export function isHostMessage(value: unknown): value is HostMessage {
   if (value.type === "host.ready") {
     return isHostReadyPayload(value.payload);
   }
+  if (value.type === "host.contextSnapshot") {
+    return isHostContextSnapshotPayload(value.payload);
+  }
   return value.type !== "host.openedFromCommand" || isEmptyPayload(value.payload);
 }
 
@@ -186,6 +207,18 @@ export function isHostReadyPayload(value: unknown): value is HostReadyPayload {
     optionalNonEmptyString(value.productId, 256) &&
     optionalNonEmptyString(value.displayName, 256) &&
     (value.cloudRequired === undefined || value.cloudRequired === false)
+  );
+}
+
+export function isHostContextSnapshotPayload(value: unknown): value is HostContextSnapshotPayload {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["kind", "source", "file", "selection"])) {
+    return false;
+  }
+  return (
+    value.kind === "active_editor" &&
+    (value.source === "vscode" || value.source === "jetbrains" || value.source === "browser") &&
+    isContextFile(value.file) &&
+    isContextSelection(value.selection)
   );
 }
 
@@ -233,4 +266,56 @@ function optionalHttpUrl(value: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+function isContextFile(value: unknown): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["displayPath", "workspaceRelativePath", "languageId"]) || Object.keys(value).length === 0) {
+    return false;
+  }
+  return safeDisplayPath(value.displayPath) && safeRelativePath(value.workspaceRelativePath) && optionalLanguageId(value.languageId);
+}
+
+function isContextSelection(value: unknown): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["startLine", "startCharacter", "endLine", "endCharacter", "text"]) || Object.keys(value).length === 0) {
+    return false;
+  }
+  return (
+    optionalBoundedInteger(value.startLine, 0, 1000000) &&
+    optionalBoundedInteger(value.startCharacter, 0, 1000000) &&
+    optionalBoundedInteger(value.endLine, 0, 1000000) &&
+    optionalBoundedInteger(value.endCharacter, 0, 1000000) &&
+    optionalString(value.text, 8000)
+  );
+}
+
+function safeDisplayPath(value: unknown): boolean {
+  return value === undefined || safePath(value, 256);
+}
+
+function safeRelativePath(value: unknown): boolean {
+  return value === undefined || safePath(value, 512);
+}
+
+function safePath(value: unknown, maxLength: number): boolean {
+  if (typeof value !== "string" || value.length === 0 || value.length > maxLength || value.startsWith("/") || value.startsWith("~") || value.includes("\\") || value.includes(":")) {
+    return false;
+  }
+  if (/^[^\u0000-\u001f]+$/.test(value) === false) {
+    return false;
+  }
+  return value.split("/").every((part) => part !== "." && part !== "..");
+}
+
+function optionalLanguageId(value: unknown): boolean {
+  return value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(value));
+}
+
+function optionalBoundedInteger(value: unknown, min: number, max: number): boolean {
+  return value === undefined || (Number.isInteger(value) && (value as number) >= min && (value as number) <= max);
 }

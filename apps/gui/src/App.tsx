@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createBridgeAdapter, type BridgeHost, type HostReadyPayload } from "./bridge/bridgeAdapter";
+import { createBridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
@@ -195,6 +195,8 @@ export function App() {
   const [timeline, setTimeline] = useState<string[]>([]);
   const [bridgeLog, setBridgeLog] = useState<string[]>([]);
   const [bridgeHost, setBridgeHost] = useState<BridgeHost>("browser");
+  const [attachedContext, setAttachedContext] = useState<HostContextSnapshotPayload | null>(null);
+  const [includeAttachedContext, setIncludeAttachedContext] = useState(false);
   const [runtimeRefreshStatus, setRuntimeRefreshStatus] = useState<{ state: "checking" | "connected" | "failed"; attempt: number; checkedAt: string; detail: string } | null>(null);
   const [runtimeRefreshInFlight, setRuntimeRefreshInFlight] = useState(false);
   const [settingsRevision, setSettingsRevision] = useState(0);
@@ -350,6 +352,10 @@ export function App() {
     adapter.subscribe((message) => {
       if (message.type === "host.ready") {
         applyHostReady(message.payload as HostReadyPayload | undefined);
+      } else if (message.type === "host.contextSnapshot") {
+        const nextContext = message.payload as HostContextSnapshotPayload;
+        setAttachedContext(nextContext);
+        setIncludeAttachedContext(hasUsableAttachedContext(nextContext));
       }
     });
     return () => adapter.dispose();
@@ -1070,6 +1076,7 @@ export function App() {
           {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
         </div>
         <form className="stack" onSubmit={(event) => void submitChat(event)}>
+          <AttachedContextPreview context={attachedContext} include={includeAttachedContext} onIncludeChange={setIncludeAttachedContext} />
           <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder="Ask Yet AI..." />
           <div className="row">
             <button type="submit" disabled={!canSendChat}>Send</button>
@@ -1143,11 +1150,67 @@ function modelProviderMismatchMessage(model: ModelSummary, provider?: ProviderSu
   return `Runtime model/provider mismatch. Refresh runtime or test/save provider before sending.${detail}`;
 }
 
+function hasUsableAttachedContext(context: HostContextSnapshotPayload): boolean {
+  return Boolean(context.file?.displayPath || context.file?.workspaceRelativePath || context.file?.languageId || context.selection?.text?.trim() || formatSelectionRange(context.selection) !== "unknown range");
+}
+
+function formatSelectionRange(selection: HostContextSnapshotPayload["selection"]): string {
+  if (!selection) {
+    return "unknown range";
+  }
+  const hasStart = selection.startLine !== undefined && selection.startCharacter !== undefined;
+  const hasEnd = selection.endLine !== undefined && selection.endCharacter !== undefined;
+  if (hasStart && hasEnd) {
+    return `${selection.startLine}:${selection.startCharacter}-${selection.endLine}:${selection.endCharacter}`;
+  }
+  if (hasStart) {
+    return `${selection.startLine}:${selection.startCharacter}`;
+  }
+  return "unknown range";
+}
+
 function ChatBubble({ message }: { message: ChatViewMessage }) {
   return (
     <div className={`chat-bubble ${message.role}`}>
       <strong>{message.role === "user" ? "You" : message.role === "assistant" ? "Yet AI" : "Error"}</strong>
       <span>{message.content || (message.status === "streaming" ? "…" : "")}</span>
+    </div>
+  );
+}
+
+function AttachedContextPreview({ context, include, onIncludeChange }: { context: HostContextSnapshotPayload | null; include: boolean; onIncludeChange: (include: boolean) => void }) {
+  if (!context || !hasUsableAttachedContext(context)) {
+    return (
+      <div className="readiness-card warn" role="status">
+        <div className="stack">
+          <strong>Attached context</strong>
+          <span className="subtle">No valid active editor context is attached. Nothing will be included with the next message.</span>
+        </div>
+      </div>
+    );
+  }
+  const fileLabel = sanitizeDisplayText(context.file?.displayPath ?? context.file?.workspaceRelativePath ?? "Untitled editor");
+  const language = context.file?.languageId ? sanitizeDisplayText(context.file.languageId) : "unknown language";
+  const range = formatSelectionRange(context.selection);
+  const text = context.selection?.text ?? "";
+  const preview = text.trim() ? sanitizeDisplayText(text) : "No selected text preview.";
+  return (
+    <div className="readiness-card ready" role="status">
+      <div className="stack">
+        <div className="row">
+          <strong>Attached context</strong>
+          <span className="badge ok">{sanitizeDisplayText(context.source)}</span>
+        </div>
+        <span>File: {fileLabel}</span>
+        <span>Language: {language}</span>
+        <span>Selection: {range}</span>
+        <span>Preview: {preview}</span>
+        <span className="subtle">Selection size: {text.length} character{text.length === 1 ? "" : "s"}. Context stays in React state only and is not sent until context sending is enabled.</span>
+        <label className="row">
+          <input style={{ width: "auto" }} type="checkbox" checked={include} onChange={(event) => onIncludeChange(event.target.checked)} />
+          Include attached context in next message
+        </label>
+      </div>
     </div>
   );
 }
