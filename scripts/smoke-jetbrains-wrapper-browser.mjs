@@ -11,6 +11,20 @@ const indexPath = path.join(distRoot, "index.html");
 const requiredVisibleText = ["Yet AI", "Local runtime connection", "Provider setup", "Chat", "Bridge debug"];
 const bridgeVersion = "2026-05-15";
 const failures = [];
+const runtimeToken = `jb-wrapper-runtime-token-${crypto.randomUUID()}`;
+const oauthSentinels = {
+  accessToken: `jb-oauth-access-${crypto.randomUUID()}`,
+  refreshToken: `jb-oauth-refresh-${crypto.randomUUID()}`,
+  authCode: `jb-oauth-code-${crypto.randomUUID()}`,
+  verifier: `jb-oauth-verifier-${crypto.randomUUID()}`,
+  cookie: `jb-cookie-secret-${crypto.randomUUID()}`,
+  apiKey: `sk-jb-wrapper-${crypto.randomUUID()}`,
+};
+const consoleMessages = [];
+let observedRuntimeAuthorization = false;
+let chatCommandRequest;
+let chatCommandRequestCount = 0;
+let chatSubscriptionCount = 0;
 
 await requireBuiltGui();
 
@@ -26,7 +40,9 @@ try {
 
 const guiServer = await startStaticServer(distRoot);
 const guiBaseUrl = `http://127.0.0.1:${guiServer.port}`;
-const wrapperServer = await startWrapperServer(guiBaseUrl);
+const runtimeServer = await startMockRuntimeServer();
+const runtimeBaseUrl = `http://127.0.0.1:${runtimeServer.port}`;
+const wrapperServer = await startWrapperServer(guiBaseUrl, runtimeBaseUrl);
 const wrapperBaseUrl = `http://127.0.0.1:${wrapperServer.port}`;
 let browser;
 
@@ -41,8 +57,12 @@ try {
   }
 
   const page = await browser.newPage();
+
   page.on("pageerror", (error) => {
     failures.push(`Page JavaScript error: ${error.message}`);
+  });
+  page.on("console", (message) => {
+    consoleMessages.push(message.text());
   });
   page.on("requestfailed", (request) => {
     if (isJsOrCssAssetRequest(request.url(), request.resourceType())) {
@@ -149,11 +169,28 @@ try {
     failures.push(`Wrapper sent ${String(queueStateAfterReady.bootstrapHostReadySentCount)} bootstrap host.ready messages instead of exactly one.`);
   }
 
+  await page.evaluate(({ version, runtimeUrl, token }) => {
+    window.__yetAiSendHostMessageToFrame({
+      version,
+      type: "host.ready",
+      requestId: "login-shaped-runtime-ready",
+      payload: {
+        runtimeUrl,
+        sessionToken: token,
+        productId: "yet-ai",
+        displayName: "Yet AI",
+        cloudRequired: false,
+      },
+    });
+  }, { version: bridgeVersion, runtimeUrl: runtimeBaseUrl, token: runtimeToken });
+
   const runtimeInput = frameLocator.getByLabel("Runtime base URL");
+  await page.waitForTimeout(250);
   const runtimeInputValue = await runtimeInput.inputValue({ timeout: 5000 }).catch(() => "");
-  if (runtimeInputValue !== "http://127.0.0.1:8001") {
-    failures.push("Iframe GUI did not naturally apply wrapper host.ready runtime settings.");
+  if (runtimeInputValue !== runtimeBaseUrl) {
+    failures.push("Iframe GUI did not apply wrapper host.ready runtime settings.");
   }
+  await frameLocator.getByRole("textbox", { name: "Session token", exact: true }).fill(runtimeToken);
 
   const hostMessagesPostedBeforeInvalidOpened = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
   await page.evaluate((version) => {
@@ -208,12 +245,14 @@ try {
   }, bridgeVersion);
   await page.waitForTimeout(250);
   const runtimeInputValueAfterHostileMessage = await runtimeInput.inputValue({ timeout: 5000 }).catch(() => "");
-  if (runtimeInputValueAfterHostileMessage !== "http://127.0.0.1:8001") {
+  if (runtimeInputValueAfterHostileMessage !== runtimeBaseUrl) {
     failures.push("Wrapper relayed an arbitrary wrapper-origin host.ready postMessage into the iframe.");
   }
 
   const refreshButton = frameLocator.getByRole("button", { name: "Refresh runtime" });
   await refreshButton.click();
+  await refreshButton.click();
+  await page.waitForTimeout(500);
   const refreshFeedbackVisible = await frameLocator.getByText(/Runtime (connected|check failed)|Checking runtime…/).first().isVisible({ timeout: 5000 }).catch(() => false);
   if (!refreshFeedbackVisible) {
     failures.push("Refresh runtime click did not produce visible iframe feedback.");
@@ -228,18 +267,59 @@ try {
     failures.push(`Wrapper iframe target origin mismatch: expected ${guiBaseUrl}, got ${String(targetOrigin)}.`);
   }
 
+  if (!observedRuntimeAuthorization) {
+    failures.push("Mock runtime did not observe the wrapper-supplied runtime session token.");
+  }
+
+  await frameLocator.getByText("OpenAI account connected", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show connected OpenAI account login state."));
+  await frameLocator.locator("body").evaluate(() => document.documentElement.innerText).then((text) => {
+    if (!text.includes("Experimental OpenAI account / gpt-5-codex")) failures.push(`GUI did not show experimental account chat readiness. Body: ${text}`);
+  });
+  await frameLocator.getByText(/Ready to send using|Experimental Codex-like OpenAI account chat is connected/).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show chat readiness for the experimental account path."));
+  if (failures.length > 0) {
+    reportFailures();
+  }
+  await frameLocator.getByRole("button", { name: "Send" }).waitFor({ state: "visible", timeout: 5000 });
+
+  await frameLocator.getByPlaceholder("Ask Yet AI...").fill("Say hello through JetBrains login-shaped smoke.");
+  await frameLocator.getByRole("button", { name: "Send" }).click();
+  await frameLocator.getByText("JetBrains login smoke", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not render the assistant response from mock SSE."));
+  if (chatCommandRequestCount !== 1) {
+    failures.push(`Mock runtime received ${chatCommandRequestCount} chat command requests instead of exactly one.`);
+  }
+  if (chatSubscriptionCount !== 1) {
+    failures.push(`Mock runtime received ${chatSubscriptionCount} chat subscriptions instead of exactly one.`);
+  }
+  if (chatCommandRequest?.payload?.content !== "Say hello through JetBrains login-shaped smoke.") {
+    failures.push("Mock runtime did not receive the expected GUI chat message content.");
+  }
+
   await page.waitForTimeout(250);
+  const browserVisibleState = await collectBrowserVisibleState(page);
+  assertNoSecretLeak(browserVisibleState, [
+    runtimeToken,
+    oauthSentinels.accessToken,
+    oauthSentinels.refreshToken,
+    oauthSentinels.authCode,
+    oauthSentinels.verifier,
+    oauthSentinels.cookie,
+    oauthSentinels.apiKey,
+    "authorization: bearer",
+    "set-cookie",
+    "client_secret",
+  ]);
 
   if (failures.length > 0) {
     reportFailures();
   }
 
   console.log("JetBrains wrapper browser smoke passed.");
-  console.log("Checked JetBrains-like wrapper iframe rendering, exact loopback target origin, real gui.ready to host.ready wrapper bridge delivery, Refresh runtime click feedback, bridge collector, JavaScript execution, and local JS/CSS asset responses.");
+  console.log("Checked JetBrains-like wrapper iframe rendering, exact loopback target origin, real gui.ready to host.ready wrapper bridge delivery, Refresh runtime click feedback, bridge collector, login-shaped first-message chat through mock runtime/SSE, JavaScript execution, and local JS/CSS asset responses.");
   console.log("No engine, provider credentials, OpenAI/ChatGPT, hosted Yet AI services, JetBrains IDE, or JCEF automation were used.");
 } finally {
   await browser?.close().catch(() => undefined);
   await wrapperServer.close();
+  await runtimeServer.close();
   await guiServer.close();
 }
 
@@ -261,8 +341,8 @@ async function requireBuiltGui() {
   }
 }
 
-async function startWrapperServer(guiBaseUrl) {
-  const wrapperHtml = renderWrapperHtml(guiBaseUrl);
+async function startWrapperServer(guiBaseUrl, runtimeBaseUrl) {
+  const wrapperHtml = renderWrapperHtml(guiBaseUrl, runtimeBaseUrl);
   const server = http.createServer((request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
     if (request.method !== "GET" || (requestUrl.pathname !== "/" && requestUrl.pathname !== "/wrapper.html")) {
@@ -276,14 +356,15 @@ async function startWrapperServer(guiBaseUrl) {
   return listen(server);
 }
 
-function renderWrapperHtml(guiBaseUrl) {
+function renderWrapperHtml(guiBaseUrl, runtimeBaseUrl) {
   const indexUrl = `${guiBaseUrl}/index.html`;
   const bootstrapHostReady = JSON.stringify({
     version: bridgeVersion,
     type: "host.ready",
     requestId: "browser-smoke",
     payload: {
-      runtimeUrl: "http://127.0.0.1:8001",
+      runtimeUrl: runtimeBaseUrl,
+      sessionToken: runtimeToken,
       productId: "yet-ai",
       displayName: "Yet AI",
       cloudRequired: false,
@@ -313,7 +394,8 @@ window.__yetAiPendingHostMessages = [{
   type: "host.ready",
   requestId: "pre-init-smoke",
   payload: {
-    runtimeUrl: "http://127.0.0.1:8001",
+    runtimeUrl: ${JSON.stringify(runtimeBaseUrl)},
+    sessionToken: ${JSON.stringify(runtimeToken)},
     productId: "yet-ai",
     displayName: "Yet AI",
     cloudRequired: false,
@@ -444,6 +526,184 @@ if (frame) {
 </script>
 </body>
 </html>`;
+}
+
+async function startMockRuntimeServer() {
+  const server = http.createServer(async (request, response) => {
+    const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (request.method === "OPTIONS") {
+      response.writeHead(204, corsHeaders());
+      response.end();
+      return;
+    }
+    if (request.headers.authorization === `Bearer ${runtimeToken}`) {
+      observedRuntimeAuthorization = true;
+    }
+    if (!isAuthorizedRuntimeRequest(request)) {
+      json(response, 401, { error: "Unauthorized local runtime request. Check the session token." });
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === "/v1/ping") {
+      json(response, 200, {
+        productId: "yet-ai",
+        displayName: "Yet AI",
+        version: "0.0.0-smoke",
+        ready: true,
+        serverTime: new Date(0).toISOString(),
+      });
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === "/v1/caps") {
+      json(response, 200, {
+        productId: "yet-ai",
+        protocolVersion: "2026-05-15",
+        runtime: {
+          mode: "local",
+          cloudRequired: false,
+          providerAccess: "direct",
+        },
+        capabilities: ["chat"],
+        features: {},
+        providers: [],
+        ide: {
+          bridge: true,
+          lsp: false,
+          host: "jetbrains-wrapper-smoke",
+        },
+      });
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === "/v1/models") {
+      json(response, 200, { models: [] });
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === "/v1/providers") {
+      json(response, 200, { providers: [], cloudRequired: false, providerAccess: "direct" });
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === "/v1/provider-auth/openai/status") {
+      json(response, 200, connectedProviderAuthStatus());
+      return;
+    }
+    const commandMatch = /^\/v1\/chats\/([^/]+)\/commands$/.exec(requestUrl.pathname);
+    if (request.method === "POST" && commandMatch) {
+      const body = await readRequestBody(request);
+      chatCommandRequestCount += 1;
+      chatCommandRequest = JSON.parse(body);
+      json(response, 200, {
+        accepted: true,
+        chatId: decodeURIComponent(commandMatch[1]),
+        requestId: chatCommandRequest.requestId,
+        type: chatCommandRequest.type,
+      });
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === "/v1/chats/subscribe") {
+      chatSubscriptionCount += 1;
+      const chatId = requestUrl.searchParams.get("chat_id") ?? "chat-001";
+      response.writeHead(200, {
+        ...corsHeaders(),
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      });
+      response.write(`data: ${JSON.stringify({
+        seq: 0,
+        type: "snapshot",
+        chatId,
+        payload: {
+          thread: { id: chatId, messages: [] },
+          runtime: { streaming: false },
+        },
+      })}\n\n`);
+      setTimeout(() => {
+        response.write(`data: ${JSON.stringify({ seq: 1, type: "stream_started", chatId, payload: { role: "assistant" } })}\n\n`);
+        response.write(`data: ${JSON.stringify({ seq: 2, type: "stream_delta", chatId, payload: { delta: { content: "JetBrains" } } })}\n\n`);
+        response.write(`data: ${JSON.stringify({ seq: 3, type: "stream_delta", chatId, payload: { delta: { content: " login smoke" } } })}\n\n`);
+        response.write(`data: ${JSON.stringify({ seq: 4, type: "stream_finished", chatId, payload: { finishReason: "stop" } })}\n\n`);
+        response.end();
+      }, 100);
+      return;
+    }
+    json(response, 404, { error: "Not found" });
+  });
+  return listen(server);
+}
+
+function connectedProviderAuthStatus() {
+  return {
+    provider: "openai",
+    configured: true,
+    status: "connected",
+    authSource: "oauth",
+    supportsLogin: true,
+    supportsApiKey: true,
+    cloudRequired: false,
+    accountLabel: "jetbrains-smoke@example.test",
+    scopes: ["openid", "profile", "email"],
+    redacted: "cod-...safe",
+    expiresAt: "2030-01-01T00:00:00Z",
+    message: "Experimental Codex-like account path connected by mock runtime.",
+  };
+}
+
+function isAuthorizedRuntimeRequest(request) {
+  return request.headers.authorization === `Bearer ${runtimeToken}`;
+}
+
+function json(response, status, body) {
+  response.writeHead(status, {
+    ...corsHeaders(),
+    "content-type": "application/json; charset=utf-8",
+  });
+  response.end(JSON.stringify(body));
+}
+
+function corsHeaders() {
+  return {
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-allow-headers": "authorization, content-type, accept",
+  };
+}
+
+function readRequestBody(request) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => {
+      body += chunk;
+    });
+    request.on("end", () => resolve(body));
+    request.on("error", reject);
+  });
+}
+
+async function collectBrowserVisibleState(page) {
+  const pageState = await page.evaluate(() => ({
+    dom: document.documentElement.innerText,
+    localStorage: { ...window.localStorage },
+    sessionStorage: { ...window.sessionStorage },
+    bridgeMessages: window.__yetAiBridgeMessages,
+  }));
+  const frameState = await page.frameLocator("iframe[title='Yet AI GUI']").locator("body").evaluate(() => ({
+    dom: document.documentElement.innerText,
+    localStorage: { ...window.localStorage },
+    sessionStorage: { ...window.sessionStorage },
+  }));
+  return JSON.stringify({ pageState, frameState, consoleMessages });
+}
+
+function assertNoSecretLeak(text, values) {
+  const lower = text.toLowerCase();
+  for (const value of values) {
+    if (!value) {
+      continue;
+    }
+    if (lower.includes(String(value).toLowerCase())) {
+      failures.push(`Secret marker leaked to browser-visible state: ${value}`);
+    }
+  }
 }
 
 async function startStaticServer(staticRoot) {
