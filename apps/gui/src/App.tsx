@@ -205,6 +205,8 @@ export function App() {
   const settingsRef = useRef<RuntimeSettings>({ baseUrl: defaultBaseUrl, token: "" });
   const chatIdRef = useRef("chat-001");
   const providerTestAttemptRef = useRef(0);
+  const providerAuthMutationAttemptRef = useRef(0);
+  const [providerAuthMutation, setProviderAuthMutation] = useState<"start" | "exchange" | "disconnect" | null>(null);
   const [runtimeDataRevision, setRuntimeDataRevision] = useState<number | null>(null);
   const [providerDataRevision, setProviderDataRevision] = useState<number | null>(null);
   const [providerAuthDataRevision, setProviderAuthDataRevision] = useState<number | null>(null);
@@ -230,7 +232,8 @@ export function App() {
   const apiKeyReadiness = useMemo(() => resolveProviderModelReadiness(activeModels, enabledProviders, activeModelError), [activeModels, activeModelError, enabledProviders]);
   const selectedModel = apiKeyReadiness.model;
   const apiKeyChatReady = runtimeConnected && apiKeyReadiness.ready;
-  const experimentalOauthChatReady = runtimeConnected && !apiKeyChatReady && !apiKeyReadiness.mismatch && activeProviderAuthStatus?.configured === true && activeProviderAuthStatus.authSource === "oauth" && activeProviderAuthStatus.status === "connected";
+  const providerAuthMutationInFlight = providerAuthMutation !== null;
+  const experimentalOauthChatReady = runtimeConnected && !apiKeyChatReady && !providerAuthMutationInFlight && !apiKeyReadiness.mismatch && activeProviderAuthStatus?.configured === true && activeProviderAuthStatus.authSource === "oauth" && activeProviderAuthStatus.status === "connected";
   const canSendChat = apiKeyChatReady || experimentalOauthChatReady;
   const selectedModelDisplayName = selectedModel ? sanitizeDisplayText(selectedModel.displayName || selectedModel.id) : undefined;
   const selectedModelProviderId = apiKeyReadiness.provider?.id ? sanitizeDisplayText(apiKeyReadiness.provider.id) : selectedModel?.providerId ? sanitizeDisplayText(selectedModel.providerId) : undefined;
@@ -240,20 +243,24 @@ export function App() {
       ? `${selectedModelDisplayName ?? "the default model"}${selectedModelProviderId ? ` (${selectedModelProviderId})` : ""}`
       : apiKeyReadiness.mismatch
         ? "Runtime model/provider mismatch"
-        : experimentalOauthChatReady
-          ? "Experimental OpenAI account / gpt-5-codex"
-          : "Provider required";
+        : providerAuthMutationInFlight && activeProviderAuthStatus?.authSource === "oauth" && !apiKeyChatReady
+          ? "OpenAI account login changing"
+          : experimentalOauthChatReady
+            ? "Experimental OpenAI account / gpt-5-codex"
+            : "Provider required";
   const chatReadinessMessage = !runtimeConnected
     ? "Runtime is not connected. Refresh runtime and fix the local runtime problem before sending the first GPT message."
     : apiKeyChatReady
       ? `Ready to send using ${selectedModelDisplayName ?? "the default model"}.`
       : apiKeyReadiness.mismatch
         ? apiKeyReadiness.message
-        : experimentalOauthChatReady
-          ? "Experimental Codex-like OpenAI account chat is connected through the local runtime. This private-endpoint path is high-risk, not official public OAuth support, and not production-ready."
-          : activeModelError
-            ? "Runtime model refresh failed. Refresh runtime again before sending the first GPT message."
-            : "Provider required: choose OpenAI API for the API-key fallback or configure a local OpenAI-compatible /v1 provider with a model before sending the first GPT message.";
+        : providerAuthMutationInFlight && activeProviderAuthStatus?.authSource === "oauth" && !apiKeyChatReady
+          ? "OpenAI account login state is changing. Wait for the local runtime to finish, refresh login status, or use the API-key fallback before sending."
+          : experimentalOauthChatReady
+            ? "Experimental Codex-like OpenAI account chat is connected through the local runtime. This private-endpoint path is high-risk, not official public OAuth support, and not production-ready."
+            : activeModelError
+              ? "Runtime model refresh failed. Refresh runtime again before sending the first GPT message."
+              : "Provider required: choose OpenAI API for the API-key fallback or configure a local OpenAI-compatible /v1 provider with a model before sending the first GPT message.";
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
 
   const addTimeline = useCallback((entry: string) => {
@@ -296,6 +303,8 @@ export function App() {
       checkedAt: new Date().toLocaleTimeString(),
       detail: "Runtime settings changed; checking current runtime…",
     });
+    providerAuthMutationAttemptRef.current += 1;
+    setProviderAuthMutation(null);
     setProviderAuthExchangeCode("");
     setProviderAuthExchangeWorking(false);
     setProviderAuthExchangeError(null);
@@ -610,68 +619,107 @@ export function App() {
     }
   };
 
+  const beginProviderAuthMutation = (mutation: "start" | "exchange" | "disconnect") => {
+    const attempt = providerAuthMutationAttemptRef.current + 1;
+    providerAuthMutationAttemptRef.current = attempt;
+    setProviderAuthMutation(mutation);
+    if (activeProviderAuthStatus?.authSource === "oauth" && activeProviderAuthStatus.status === "connected") {
+      setProviderAuthStatus({
+        ...activeProviderAuthStatus,
+        configured: false,
+        status: mutation === "disconnect" ? "not_configured" : "pending",
+        accountLabel: undefined,
+        redacted: undefined,
+        message: mutation === "disconnect" ? "Disconnecting OpenAI account login." : "Updating OpenAI account login.",
+      });
+      setProviderAuthDataRevision(settingsRevisionRef.current);
+    }
+    return attempt;
+  };
+
   const startOpenAiLogin = async () => {
     const targetSettings = settingsRef.current;
     const targetRevision = settingsRevisionRef.current;
+    const attempt = beginProviderAuthMutation("start");
     setProviderAuthError(null);
     setProviderAuthUrlWarning(null);
     setProviderAuthExchangeError(null);
-    const result = await startProviderAuth(targetSettings, "openai");
-    if (!isCurrentRefresh(targetRevision)) {
-      return;
-    }
-    if (!result.ok) {
-      setProviderAuthError(result.error);
-      return;
-    }
-    setProviderAuthStatus(result.data);
-    setProviderAuthDataRevision(targetRevision);
-    const authUrl = result.data.authorizationUrl ?? result.data.verificationUrl;
-    if (authUrl) {
-      openSafeAuthUrl(authUrl, setProviderAuthUrlWarning);
+    try {
+      const result = await startProviderAuth(targetSettings, "openai");
+      if (!isCurrentRefresh(targetRevision) || providerAuthMutationAttemptRef.current !== attempt) {
+        return;
+      }
+      if (!result.ok) {
+        setProviderAuthError(result.error);
+        return;
+      }
+      setProviderAuthStatus(result.data);
+      setProviderAuthDataRevision(targetRevision);
+      const authUrl = result.data.authorizationUrl ?? result.data.verificationUrl;
+      if (authUrl) {
+        openSafeAuthUrl(authUrl, setProviderAuthUrlWarning);
+      }
+    } finally {
+      if (isCurrentRefresh(targetRevision) && providerAuthMutationAttemptRef.current === attempt) {
+        setProviderAuthMutation(null);
+      }
     }
   };
 
   const startExperimentalOpenAiLogin = async () => {
     const targetSettings = settingsRef.current;
     const targetRevision = settingsRevisionRef.current;
+    const attempt = beginProviderAuthMutation("start");
     setProviderAuthError(null);
     setProviderAuthUrlWarning(null);
     setProviderAuthExchangeError(null);
     setProviderAuthExchangeCode("");
-    const result = await startProviderAuth(targetSettings, "openai", { experimentalCodexLike: true });
-    if (!isCurrentRefresh(targetRevision)) {
-      return;
-    }
-    if (!result.ok) {
-      setProviderAuthError(result.error);
-      return;
-    }
-    setProviderAuthStatus(result.data);
-    setProviderAuthDataRevision(targetRevision);
-    const authUrl = result.data.authorizationUrl ?? result.data.verificationUrl;
-    if (authUrl) {
-      openSafeAuthUrl(authUrl, setProviderAuthUrlWarning);
+    try {
+      const result = await startProviderAuth(targetSettings, "openai", { experimentalCodexLike: true });
+      if (!isCurrentRefresh(targetRevision) || providerAuthMutationAttemptRef.current !== attempt) {
+        return;
+      }
+      if (!result.ok) {
+        setProviderAuthError(result.error);
+        return;
+      }
+      setProviderAuthStatus(result.data);
+      setProviderAuthDataRevision(targetRevision);
+      const authUrl = result.data.authorizationUrl ?? result.data.verificationUrl;
+      if (authUrl) {
+        openSafeAuthUrl(authUrl, setProviderAuthUrlWarning);
+      }
+    } finally {
+      if (isCurrentRefresh(targetRevision) && providerAuthMutationAttemptRef.current === attempt) {
+        setProviderAuthMutation(null);
+      }
     }
   };
 
   const disconnectOpenAiLogin = async () => {
     const targetSettings = settingsRef.current;
     const targetRevision = settingsRevisionRef.current;
+    const attempt = beginProviderAuthMutation("disconnect");
     setProviderAuthError(null);
     setProviderAuthUrlWarning(null);
     setProviderAuthExchangeError(null);
     setProviderAuthExchangeCode("");
-    const result = await disconnectProviderAuth(targetSettings, "openai");
-    if (!isCurrentRefresh(targetRevision)) {
-      return;
-    }
-    if (result.ok) {
-      setProviderAuthStatus(result.data);
-      setProviderAuthDataRevision(targetRevision);
-      await connect();
-    } else {
-      setProviderAuthError(result.error);
+    try {
+      const result = await disconnectProviderAuth(targetSettings, "openai");
+      if (!isCurrentRefresh(targetRevision) || providerAuthMutationAttemptRef.current !== attempt) {
+        return;
+      }
+      if (result.ok) {
+        setProviderAuthStatus(result.data);
+        setProviderAuthDataRevision(targetRevision);
+        await connect();
+      } else {
+        setProviderAuthError(result.error);
+      }
+    } finally {
+      if (isCurrentRefresh(targetRevision) && providerAuthMutationAttemptRef.current === attempt) {
+        setProviderAuthMutation(null);
+      }
     }
   };
 
@@ -687,9 +735,10 @@ export function App() {
     setProviderAuthExchangeWorking(true);
     const targetSettings = settingsRef.current;
     const targetRevision = settingsRevisionRef.current;
+    const attempt = beginProviderAuthMutation("exchange");
     try {
       const result = await exchangeProviderAuth(targetSettings, "openai", sessionId, code, providerAuthPendingState.state);
-      if (!isCurrentRefresh(targetRevision)) {
+      if (!isCurrentRefresh(targetRevision) || providerAuthMutationAttemptRef.current !== attempt) {
         return;
       }
       if (result.ok) {
@@ -709,7 +758,10 @@ export function App() {
       }
     } finally {
       setProviderAuthExchangeCode("");
-      setProviderAuthExchangeWorking(false);
+      if (isCurrentRefresh(targetRevision) && providerAuthMutationAttemptRef.current === attempt) {
+        setProviderAuthExchangeWorking(false);
+        setProviderAuthMutation(null);
+      }
     }
   };
 
