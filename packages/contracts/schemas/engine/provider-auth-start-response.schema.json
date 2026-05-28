@@ -6,129 +6,97 @@
   "additionalProperties": false,
   "required": ["provider", "configured", "status", "authSource", "supportsLogin", "supportsApiKey", "cloudRequired", "success"],
   "allOf": [
-    {
-      "if": {
-        "properties": { "status": { "const": "api_key_configured" } },
-        "required": ["status"]
-      },
-      "then": {
-        "properties": {
-          "configured": { "const": true },
-          "authSource": { "const": "api_key" }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": { "status": { "enum": ["pending", "connected", "expired"] } },
-        "required": ["status"]
-      },
-      "then": {
-        "properties": {
-          "authSource": { "enum": ["oauth", "device", "browser"] }
-        }
-      }
-    }
+    { "$ref": "#/$defs/stateConsistency" }
   ],
   "properties": {
-    "provider": {
-      "$ref": "#/$defs/providerId"
-    },
-    "configured": {
-      "type": "boolean"
-    },
-    "status": {
-      "$ref": "#/$defs/authStatus"
-    },
-    "authSource": {
-      "$ref": "#/$defs/authSource"
-    },
-    "supportsLogin": {
-      "type": "boolean"
-    },
-    "supportsApiKey": {
-      "type": "boolean"
-    },
-    "authorizationUrl": {
-      "type": "string",
-      "format": "uri",
-      "pattern": "^https://"
-    },
-    "verificationUrl": {
-      "type": "string",
-      "format": "uri",
-      "pattern": "^https://"
-    },
-    "sessionId": {
-      "type": "string",
-      "minLength": 1
-    },
-    "accountLabel": {
-      "type": "string",
-      "minLength": 1
-    },
-    "expiresAt": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "scopes": {
-      "$ref": "#/$defs/scopes"
-    },
-    "redacted": {
-      "type": "string",
-      "minLength": 1
-    },
-    "lastError": {
-      "type": "string",
-      "minLength": 1
-    },
-    "cloudRequired": {
-      "type": "boolean",
-      "const": false
-    },
-    "message": {
-      "type": "string",
-      "minLength": 1
-    },
-    "success": {
-      "type": "boolean"
-    },
-    "pollIntervalSeconds": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 3600
-    }
+    "provider": { "$ref": "#/$defs/providerId" },
+    "configured": { "type": "boolean" },
+    "status": { "$ref": "#/$defs/authStatus" },
+    "authSource": { "$ref": "#/$defs/authSource" },
+    "supportsLogin": { "type": "boolean" },
+    "supportsApiKey": { "type": "boolean" },
+    "authorizationUrl": { "$ref": "#/$defs/authUrl" },
+    "verificationUrl": { "$ref": "#/$defs/authUrl" },
+    "sessionId": { "type": "string", "minLength": 1 },
+    "accountLabel": { "type": "string", "minLength": 1 },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "scopes": { "$ref": "#/$defs/scopes" },
+    "redacted": { "type": "string", "minLength": 1 },
+    "lastError": { "type": "string", "minLength": 1 },
+    "cloudRequired": { "type": "boolean", "const": false },
+    "message": { "type": "string", "minLength": 1 },
+    "success": { "type": "boolean" },
+    "pollIntervalSeconds": { "type": "integer", "minimum": 1, "maximum": 3600 }
   },
   "$defs": {
-    "providerId": {
-      "type": "string",
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
-    },
+    "providerId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" },
     "authStatus": {
       "type": "string",
-      "enum": [
-        "not_configured",
-        "api_key_configured",
-        "login_available",
-        "login_unavailable",
-        "pending",
-        "connected",
-        "expired",
-        "revoked",
-        "error"
-      ]
+      "enum": ["not_configured", "api_key_configured", "login_available", "login_unavailable", "pending", "connected", "expired", "revoked", "error"]
     },
-    "authSource": {
+    "authSource": { "type": "string", "enum": ["none", "api_key", "oauth", "device", "browser"] },
+    "authFlowSource": { "type": "string", "enum": ["oauth", "device", "browser"] },
+    "authUrl": {
       "type": "string",
-      "enum": ["none", "api_key", "oauth", "device", "browser"]
+      "format": "uri",
+      "anyOf": [
+        { "pattern": "^https://" },
+        { "pattern": "^http://(127\\.0\\.0\\.1|localhost|\\[::1\\])(?::[0-9]{1,5})?(?:/|$)" }
+      ]
     },
     "scopes": {
       "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      },
+      "items": { "type": "string", "minLength": 1 },
       "uniqueItems": true
+    },
+    "stateConsistency": {
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "status": { "const": "api_key_configured" } }, "required": ["status"] },
+          "then": {
+            "type": "object",
+            "required": ["redacted"],
+            "properties": { "configured": { "const": true }, "authSource": { "const": "api_key" }, "redacted": { "type": "string", "minLength": 1 } }
+          }
+        },
+        {
+          "if": { "type": "object", "properties": { "status": { "const": "pending" } }, "required": ["status"] },
+          "then": {
+            "type": "object",
+            "required": ["sessionId", "expiresAt"],
+            "properties": { "configured": { "const": false }, "authSource": { "$ref": "#/$defs/authFlowSource" }, "sessionId": { "type": "string", "minLength": 1 }, "expiresAt": { "type": "string", "format": "date-time" } }
+          }
+        },
+        {
+          "if": { "type": "object", "properties": { "status": { "const": "connected" } }, "required": ["status"] },
+          "then": {
+            "type": "object",
+            "properties": { "configured": { "const": true }, "authSource": { "$ref": "#/$defs/authFlowSource" } }
+          }
+        },
+        {
+          "if": { "type": "object", "properties": { "status": { "const": "expired" } }, "required": ["status"] },
+          "then": {
+            "type": "object",
+            "properties": { "configured": { "const": false }, "authSource": { "$ref": "#/$defs/authFlowSource" } }
+          }
+        },
+        {
+          "if": { "type": "object", "properties": { "status": { "const": "revoked" } }, "required": ["status"] },
+          "then": {
+            "type": "object",
+            "not": { "type": "object", "required": ["redacted"] },
+            "properties": { "configured": { "const": false }, "authSource": { "const": "none" } }
+          }
+        },
+        {
+          "if": { "type": "object", "properties": { "status": { "const": "login_unavailable" } }, "required": ["status"] },
+          "then": {
+            "type": "object",
+            "properties": { "configured": { "const": false }, "authSource": { "const": "none" }, "supportsLogin": { "const": false } }
+          }
+        }
+      ]
     }
   }
 }

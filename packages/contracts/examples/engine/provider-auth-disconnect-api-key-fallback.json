@@ -1,0 +1,12 @@
+{
+  "provider": "openai",
+  "configured": true,
+  "status": "api_key_configured",
+  "authSource": "api_key",
+  "supportsLogin": false,
+  "supportsApiKey": true,
+  "redacted": "sk-...abcd",
+  "cloudRequired": false,
+  "success": true,
+  "message": "Provider login credentials were disconnected and removed from local engine storage. API-key provider configuration was left unchanged."
+}

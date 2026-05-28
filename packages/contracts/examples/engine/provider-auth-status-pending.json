@@ -9,9 +9,8 @@
   "verificationUrl": "http://127.0.0.1/mock-oauth/verify",
   "sessionId": "provider-login-session-001",
   "expiresAt": "2026-05-15T12:30:00Z",
-  "scopes": ["model.read", "chat.write"],
+  "scopes": ["mock:chat", "mock:profile"],
   "cloudRequired": false,
-  "success": true,
-  "pollIntervalSeconds": 3,
-  "message": "Open the authorization URL to continue signing in."
+  "pollIntervalSeconds": 1,
+  "message": "Mock OAuth login is pending in local test state."
 }

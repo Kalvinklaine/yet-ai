@@ -1,0 +1,10 @@
+{
+  "provider": "openai",
+  "configured": true,
+  "status": "revoked",
+  "authSource": "none",
+  "supportsLogin": true,
+  "supportsApiKey": true,
+  "cloudRequired": false,
+  "success": true
+}

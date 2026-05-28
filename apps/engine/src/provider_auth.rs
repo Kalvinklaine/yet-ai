@@ -363,9 +363,12 @@ pub async fn disconnect(
             delete_codex_secrets(config_dir, provider).await?;
             let configured = configured_api_key(config_dir, provider).await?;
             let mut response = status_response(provider, configured, Some(true));
-            response.status = "revoked";
-            response.auth_source = "none";
-            response.message = DISCONNECT_MESSAGE.to_string();
+            if response.configured {
+                response.message = DISCONNECT_MESSAGE.to_string();
+            } else {
+                response.status = "revoked";
+                response.message = DISCONNECT_MESSAGE.to_string();
+            }
             return Ok(response);
         }
     }

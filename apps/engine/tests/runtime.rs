@@ -945,8 +945,14 @@ async fn provider_auth_openai_experimental_status_returns_pending_without_verifi
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "pending");
     assert_eq!(body["authSource"], "oauth");
+    assert_eq!(body["configured"], false);
+    assert_eq!(body["supportsLogin"], true);
+    assert_eq!(body["supportsApiKey"], true);
+    assert_eq!(body["cloudRequired"], false);
     assert_eq!(body["sessionId"], session_id);
     assert_eq!(body["authorizationUrl"], start_url);
+    chrono::DateTime::parse_from_rfc3339(body["expiresAt"].as_str().unwrap()).unwrap();
+    assert_eq!(body["pollIntervalSeconds"], 3);
     assert_eq!(
         body["scopes"],
         json!(["openid", "profile", "email", "offline_access"])
@@ -1779,9 +1785,18 @@ async fn provider_auth_openai_experimental_disconnect_clears_oauth_not_api_key_p
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["success"], true);
-    assert_eq!(body["status"], "revoked");
+    assert_eq!(body["status"], "api_key_configured");
+    assert_eq!(body["authSource"], "api_key");
     assert_eq!(body["configured"], true);
-    assert_provider_auth_response_has_no_codex_secrets(&body);
+    assert_eq!(body["redacted"], "sk--...abcd");
+    assert!(body["message"].as_str().unwrap().contains("API-key provider configuration was left unchanged"));
+    let text = body.to_string().to_lowercase();
+    assert!(!text.contains("verifier"));
+    assert!(!text.contains("access_token"));
+    assert!(!text.contains("refresh_token"));
+    assert!(!text.contains("bearer"));
+    assert!(!text.contains("cookie"));
+    assert!(!text.contains("codex-code"));
     assert!(!body.to_string().contains(api_key));
 
     let store = FileSecretStore::new(&paths.config_dir);
