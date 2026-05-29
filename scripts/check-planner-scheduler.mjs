@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
@@ -375,8 +376,9 @@ async function runAssertions() {
   assertValid(schemas.pool, nextPoolDecision.poolStatus, "next-pool pool");
 }
 
-await runAssertions();
-
-console.log("Planner scheduler check passed.");
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await runAssertions();
+  console.log("Planner scheduler check passed.");
+}
 
 export { decideSchedulerAction };
