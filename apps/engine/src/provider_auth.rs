@@ -6,6 +6,7 @@ use std::sync::{LazyLock, Mutex};
 use base64::Engine;
 use chrono::{Duration, Utc};
 use http::StatusCode;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
@@ -37,6 +38,7 @@ const CODEX_SCOPE: &str = "openid profile email offline_access";
 const CODEX_CONNECTED_MESSAGE: &str = "Experimental Codex-like OpenAI login is connected in local engine storage. This remains experimental/high-risk and is not official public third-party OpenAI OAuth support.";
 const CODEX_EXPIRED_MESSAGE: &str = "Experimental Codex-like OpenAI login expired. Reconnect the account or use the OpenAI API-key fallback.";
 static MOCK_COUNTER: AtomicU64 = AtomicU64::new(1);
+static PROVIDER_AUTH_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 static CODEX_EXCHANGE_IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
@@ -1090,22 +1092,11 @@ fn parse_time(value: &str) -> Result<chrono::DateTime<Utc>, ProviderAuthError> {
         .map_err(|_| ProviderAuthError::Storage)
 }
 
-fn mock_state_path(config_dir: &Path, provider: &str) -> PathBuf {
-    config_dir
-        .join("provider-auth-mock")
-        .join(format!("{provider}.json"))
-}
-
 async fn read_mock_state(
     config_dir: &Path,
     provider: &str,
 ) -> Result<MockOAuthState, ProviderAuthError> {
-    let path = mock_state_path(config_dir, provider);
-    match tokio::fs::read(&path).await {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| ProviderAuthError::Storage),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(MockOAuthState::default()),
-        Err(_) => Err(ProviderAuthError::Storage),
-    }
+    read_provider_auth_state(config_dir, "provider-auth-mock", provider).await
 }
 
 async fn write_mock_state(
@@ -1113,35 +1104,14 @@ async fn write_mock_state(
     provider: &str,
     state: &MockOAuthState,
 ) -> Result<(), ProviderAuthError> {
-    let path = mock_state_path(config_dir, provider);
-    let parent = path.parent().ok_or(ProviderAuthError::Storage)?;
-    tokio::fs::create_dir_all(parent)
-        .await
-        .map_err(|_| ProviderAuthError::Storage)?;
-    let bytes = serde_json::to_vec_pretty(state).map_err(|_| ProviderAuthError::Storage)?;
-    tokio::fs::write(path, bytes)
-        .await
-        .map_err(|_| ProviderAuthError::Storage)
-}
-
-fn codex_state_path(config_dir: &Path, provider: &str) -> PathBuf {
-    config_dir
-        .join("provider-auth-openai")
-        .join(format!("{provider}.json"))
+    write_provider_auth_state(config_dir, "provider-auth-mock", provider, state).await
 }
 
 async fn read_codex_state(
     config_dir: &Path,
     provider: &str,
 ) -> Result<CodexOAuthState, ProviderAuthError> {
-    let path = codex_state_path(config_dir, provider);
-    match tokio::fs::read(&path).await {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| ProviderAuthError::Storage),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Ok(CodexOAuthState::default())
-        }
-        Err(_) => Err(ProviderAuthError::Storage),
-    }
+    read_provider_auth_state(config_dir, "provider-auth-openai", provider).await
 }
 
 async fn write_codex_state(
@@ -1149,41 +1119,405 @@ async fn write_codex_state(
     provider: &str,
     state: &CodexOAuthState,
 ) -> Result<(), ProviderAuthError> {
-    let path = codex_state_path(config_dir, provider);
-    let parent = path.parent().ok_or(ProviderAuthError::Storage)?;
+    write_provider_auth_state(config_dir, "provider-auth-openai", provider, state).await
+}
+
+async fn read_provider_auth_state<T>(
+    config_dir: &Path,
+    tree_name: &str,
+    provider: &str,
+) -> Result<T, ProviderAuthError>
+where
+    T: DeserializeOwned + Default,
+{
+    let path = provider_auth_state_path(config_dir, tree_name, provider)?;
+    ensure_existing_provider_auth_directory(&path).await?;
+    reject_provider_auth_file_symlink(&path).await?;
+    let Some(bytes) = read_provider_auth_file(&path).await? else {
+        return Ok(T::default());
+    };
+    serde_json::from_slice(&bytes).map_err(|_| ProviderAuthError::Storage)
+}
+
+async fn write_provider_auth_state<T>(
+    config_dir: &Path,
+    tree_name: &str,
+    provider: &str,
+    state: &T,
+) -> Result<(), ProviderAuthError>
+where
+    T: Serialize,
+{
+    let path = provider_auth_state_path(config_dir, tree_name, provider)?;
+    ensure_provider_auth_directory(&path).await?;
+    reject_provider_auth_file_symlink(&path).await?;
+    let bytes = serde_json::to_vec_pretty(state).map_err(|_| ProviderAuthError::Storage)?;
+    atomic_write_provider_auth_state(&path, &bytes).await
+}
+
+fn provider_auth_state_path(
+    config_dir: &Path,
+    tree_name: &str,
+    provider: &str,
+) -> Result<PathBuf, ProviderAuthError> {
+    providers::validate_provider_id(provider).map_err(|_| ProviderAuthError::InvalidProvider)?;
+    if !matches!(tree_name, "provider-auth-mock" | "provider-auth-openai") {
+        return Err(ProviderAuthError::Storage);
+    }
+    let root = config_dir.join(tree_name);
+    let path = root.join(format!("{provider}.json"));
+    if path.parent() != Some(root.as_path()) || path.file_name().is_none() {
+        return Err(ProviderAuthError::Storage);
+    }
+    Ok(path)
+}
+
+async fn ensure_provider_auth_directory(path: &Path) -> Result<(), ProviderAuthError> {
+    let root = path.parent().ok_or(ProviderAuthError::Storage)?;
+    let parent = root.parent().ok_or(ProviderAuthError::Storage)?;
     tokio::fs::create_dir_all(parent)
         .await
         .map_err(|_| ProviderAuthError::Storage)?;
-    let bytes = serde_json::to_vec_pretty(state).map_err(|_| ProviderAuthError::Storage)?;
+    ensure_provider_auth_root(root, true).await.map(|_| ())
+}
+
+async fn ensure_existing_provider_auth_directory(path: &Path) -> Result<(), ProviderAuthError> {
+    let root = path.parent().ok_or(ProviderAuthError::Storage)?;
+    ensure_provider_auth_root(root, false).await.map(|_| ())
+}
+
+async fn ensure_provider_auth_root(
+    root: &Path,
+    create: bool,
+) -> Result<bool, ProviderAuthError> {
+    match tokio::fs::symlink_metadata(root).await {
+        Ok(metadata) => {
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(ProviderAuthError::Storage);
+            }
+            set_private_directory_permissions(root).await?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !create => Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            tokio::fs::create_dir(root)
+                .await
+                .map_err(|_| ProviderAuthError::Storage)?;
+            set_private_directory_permissions(root).await?;
+            Ok(true)
+        }
+        Err(_) => Err(ProviderAuthError::Storage),
+    }
+}
+
+async fn reject_provider_auth_file_symlink(path: &Path) -> Result<(), ProviderAuthError> {
+    match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(ProviderAuthError::Storage),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(ProviderAuthError::Storage),
+    }
+}
+
+async fn atomic_write_provider_auth_state(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(), ProviderAuthError> {
+    let temp_path = temp_provider_auth_path(path);
     let mut options = tokio::fs::OpenOptions::new();
-    options.create(true).write(true).truncate(true);
+    options.create_new(true).write(true).truncate(true);
     #[cfg(unix)]
     {
         options.mode(0o600);
     }
-    let mut file = options
-        .open(&path)
-        .await
-        .map_err(|_| ProviderAuthError::Storage)?;
-    file.write_all(&bytes)
-        .await
-        .map_err(|_| ProviderAuthError::Storage)?;
-    file.sync_all()
-        .await
-        .map_err(|_| ProviderAuthError::Storage)?;
+    let result = async {
+        let mut file = options
+            .open(&temp_path)
+            .await
+            .map_err(|_| ProviderAuthError::Storage)?;
+        file.write_all(bytes)
+            .await
+            .map_err(|_| ProviderAuthError::Storage)?;
+        file.sync_all()
+            .await
+            .map_err(|_| ProviderAuthError::Storage)?;
+        set_private_permissions_for_open_file(file).await?;
+        reject_provider_auth_file_symlink(path).await?;
+        tokio::fs::rename(&temp_path, path)
+            .await
+            .map_err(|_| ProviderAuthError::Storage)?;
+        set_private_permissions(path).await?;
+        sync_parent_directory(path).await
+    }
+    .await;
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            cleanup_provider_auth_temp_file(&temp_path).await?;
+            Err(error)
+        }
+    }
+}
+
+fn temp_provider_auth_path(path: &Path) -> PathBuf {
+    let counter = PROVIDER_AUTH_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("state.json");
+    path.with_file_name(format!(
+        ".{file_name}.tmp.{}.{}",
+        std::process::id(),
+        counter
+    ))
+}
+
+async fn cleanup_provider_auth_temp_file(path: &Path) -> Result<(), ProviderAuthError> {
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(ProviderAuthError::Storage),
+    }
+}
+
+#[cfg(unix)]
+async fn read_provider_auth_file(path: &Path) -> Result<Option<Vec<u8>>, ProviderAuthError> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        use std::io::Read;
+
+        let mut file = match open_file_no_follow(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(ProviderAuthError::Storage),
+        };
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|_| ProviderAuthError::Storage)?;
+        Ok(Some(bytes))
+    })
+    .await
+    .map_err(|_| ProviderAuthError::Storage)?
+}
+
+#[cfg(not(unix))]
+async fn read_provider_auth_file(path: &Path) -> Result<Option<Vec<u8>>, ProviderAuthError> {
+    match tokio::fs::read(path).await {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(ProviderAuthError::Storage),
+    }
+}
+
+#[cfg(unix)]
+fn open_file_no_follow(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(unix)]
+fn open_directory_no_follow(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(unix)]
+async fn set_private_permissions_for_open_file(
+    file: tokio::fs::File,
+) -> Result<(), ProviderAuthError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let file = file.into_std().await;
+    tokio::task::spawn_blocking(move || {
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|_| ProviderAuthError::Storage)
+    })
+    .await
+    .map_err(|_| ProviderAuthError::Storage)?
+}
+
+#[cfg(not(unix))]
+async fn set_private_permissions_for_open_file(
+    file: tokio::fs::File,
+) -> Result<(), ProviderAuthError> {
     drop(file);
-    set_private_permissions(&path).await
+    Ok(())
 }
 
 #[cfg(unix)]
 async fn set_private_permissions(path: &Path) -> Result<(), ProviderAuthError> {
     use std::os::unix::fs::PermissionsExt;
-    tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-        .await
-        .map_err(|_| ProviderAuthError::Storage)
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let file = open_file_no_follow(&path).map_err(|_| ProviderAuthError::Storage)?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|_| ProviderAuthError::Storage)
+    })
+    .await
+    .map_err(|_| ProviderAuthError::Storage)?
 }
 
 #[cfg(not(unix))]
 async fn set_private_permissions(_path: &Path) -> Result<(), ProviderAuthError> {
     Ok(())
+}
+
+#[cfg(unix)]
+async fn set_private_directory_permissions(path: &Path) -> Result<(), ProviderAuthError> {
+    use std::os::unix::fs::PermissionsExt;
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let directory = open_directory_no_follow(&path).map_err(|_| ProviderAuthError::Storage)?;
+        directory
+            .set_permissions(std::fs::Permissions::from_mode(0o700))
+            .map_err(|_| ProviderAuthError::Storage)
+    })
+    .await
+    .map_err(|_| ProviderAuthError::Storage)?
+}
+
+#[cfg(not(unix))]
+async fn set_private_directory_permissions(_path: &Path) -> Result<(), ProviderAuthError> {
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn sync_parent_directory(path: &Path) -> Result<(), ProviderAuthError> {
+    let dir = path.parent().ok_or(ProviderAuthError::Storage)?.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        match open_directory_no_follow(&dir).and_then(|directory| directory.sync_all()) {
+            Ok(()) => Ok(()),
+            Err(error) if is_unsupported_directory_sync_error(&error) => Ok(()),
+            Err(_) => Err(ProviderAuthError::Storage),
+        }
+    })
+    .await
+    .map_err(|_| ProviderAuthError::Storage)?
+}
+
+#[cfg(unix)]
+fn is_unsupported_directory_sync_error(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::PermissionDenied
+            | std::io::ErrorKind::Unsupported
+            | std::io::ErrorKind::InvalidInput
+    ) || error.raw_os_error() == Some(22)
+}
+
+#[cfg(not(unix))]
+async fn sync_parent_directory(_path: &Path) -> Result<(), ProviderAuthError> {
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CodexOAuthState, ProviderAuthError};
+
+    static TEST_DIR_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    fn temp_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "yet-ai-provider-auth-state-test-{}-{}",
+            std::process::id(),
+            TEST_DIR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[cfg(unix)]
+    fn file_mode(path: &std::path::Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::symlink_metadata(path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777
+    }
+
+    #[tokio::test]
+    async fn provider_auth_state_missing_and_corrupt_are_safe() {
+        let dir = temp_dir();
+        let missing = super::read_codex_state(&dir, "openai").await.unwrap();
+        assert!(missing.pending.is_none());
+
+        let path = super::provider_auth_state_path(&dir, "provider-auth-openai", "openai")
+            .unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"pending":{"state":"codex-state-secret-abcd""#,
+        )
+        .unwrap();
+        assert!(matches!(
+            super::read_codex_state(&dir, "openai").await,
+            Err(ProviderAuthError::Storage)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn provider_auth_state_writes_private_directory_and_file_modes() {
+        let dir = temp_dir();
+        super::write_codex_state(&dir, "openai", &CodexOAuthState::default())
+            .await
+            .unwrap();
+        let root = dir.join("provider-auth-openai");
+        let path = super::provider_auth_state_path(&dir, "provider-auth-openai", "openai")
+            .unwrap();
+
+        assert_eq!(file_mode(&root), 0o700);
+        assert_eq!(file_mode(&path), 0o600);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn provider_auth_state_rejects_directory_symlink_escape() {
+        let dir = temp_dir();
+        let outside = temp_dir();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join("provider-auth-openai")).unwrap();
+
+        assert!(matches!(
+            super::write_codex_state(&dir, "openai", &CodexOAuthState::default()).await,
+            Err(ProviderAuthError::Storage)
+        ));
+        assert!(!outside.join("openai.json").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn provider_auth_state_rejects_final_file_symlink_and_cleans_temp() {
+        let dir = temp_dir();
+        let outside = temp_dir();
+        let path = super::provider_auth_state_path(&dir, "provider-auth-openai", "openai")
+            .unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let target = outside.join("outside.json");
+        std::fs::write(&target, "{}").unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+
+        assert!(matches!(
+            super::write_codex_state(&dir, "openai", &CodexOAuthState::default()).await,
+            Err(ProviderAuthError::Storage)
+        ));
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "{}");
+        let temp_files: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp."))
+            .collect();
+        assert!(temp_files.is_empty());
+    }
 }
