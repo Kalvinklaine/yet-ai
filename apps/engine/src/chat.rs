@@ -106,7 +106,10 @@ impl Default for ChatRuntime {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
             history_locks: Arc::new(Mutex::new(HashMap::new())),
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
         }
     }
 }
@@ -231,6 +234,9 @@ impl ChatRuntime {
         content: String,
         context: Option<ChatContext>,
     ) {
+        self.push_event(&chat_id, "stream_started", json!({ "role": "assistant" }))
+            .await;
+        let prompt = assemble_provider_prompt(&content, context.as_ref());
         let _ = self
             .append_history_message(
                 &config_dir,
@@ -240,9 +246,6 @@ impl ChatRuntime {
                 Some(ChatMessageStatus::Complete),
             )
             .await;
-        self.push_event(&chat_id, "stream_started", json!({ "role": "assistant" }))
-            .await;
-        let prompt = assemble_provider_prompt(&content, context.as_ref());
         match self.stream_provider(&config_dir, &chat_id, &prompt).await {
             Ok(assistant_content) => {
                 let _ = self
