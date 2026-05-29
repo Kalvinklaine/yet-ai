@@ -21,6 +21,7 @@ const requiredSnippets = [
   "latestHostReady = event.data",
   "host.contextSnapshot",
   "createHostContextSnapshot(message.requestId)",
+  "console.log(\"Yet AI rejected invalid GUI bridge message\")",
   "replayHostReady();",
   "crypto.randomBytes(24).toString(\"base64url\")",
   ".replace(/</g, \"\\\\u003c\")",
@@ -39,6 +40,8 @@ const forbiddenSnippets = [
   "postMessage(event.data, \"*\")",
   "console.log(\"Yet AI host ready\", event.data.payload)",
   "console.log(\"Yet AI host message\", event.data)",
+  "console.log(\"Yet AI rejected invalid GUI bridge message\", message)",
+  "console.log(\"Yet AI rejected invalid GUI bridge message\", event.data)",
   "Math.random()",
 ];
 
@@ -65,6 +68,41 @@ if (!/Object\.keys\(message\)\.every\(\(key\) => key === "version" \|\| key === 
   throw new Error("VS Code webview wrapper must reject gui.ready messages with extra top-level fields.");
 }
 
+const disabledGuiMessageTypes = [
+  "gui.openFile",
+  "gui.revealRange",
+  "gui.applyWorkspaceEditRequest",
+  "gui.executeIdeTool",
+  "gui.copyText",
+  "gui.showNotification",
+  "gui.getHostContext",
+];
+for (const type of disabledGuiMessageTypes) {
+  if (source.includes(`record.type === \"${type}\"`) || renderWebviewHtmlSource.includes(`message.type === \"${type}\"`)) {
+    throw new Error(`VS Code webview host must not allow disabled GUI bridge message: ${type}`);
+  }
+}
+
+const privilegedVscodeApiSnippets = [
+  "vscode.window.showTextDocument",
+  "vscode.workspace.applyEdit",
+  "vscode.commands.executeCommand",
+  "vscode.env.clipboard",
+  "vscode.window.showInformationMessage",
+  "vscode.window.showWarningMessage",
+  "vscode.window.showErrorMessage",
+  "vscode.window.createTerminal",
+  "vscode.workspace.fs.writeFile",
+  "vscode.workspace.fs.delete",
+  "vscode.workspace.fs.rename",
+];
+const webviewHostReceiveSource = extractSection("export function openYetAiWebview", "export function createHostReady");
+for (const snippet of privilegedVscodeApiSnippets) {
+  if (webviewHostReceiveSource.includes(snippet)) {
+    throw new Error(`VS Code webview host receive path must not call privileged API: ${snippet}`);
+  }
+}
+
 const originalLoad = Module._load;
 const fakeVscode = {
   Uri: {
@@ -89,6 +127,7 @@ const fakeVscode = {
 };
 let createHostReady;
 let createHostContextSnapshot;
+let isGuiMessage;
 let renderWebviewHtml;
 try {
   Module._load = function load(request, parent, isMain) {
@@ -97,7 +136,7 @@ try {
     }
     return originalLoad.call(this, request, parent, isMain);
   };
-  ({ createHostReady, createHostContextSnapshot, renderWebviewHtml } = await import("../out/webview.js"));
+  ({ createHostReady, createHostContextSnapshot, isGuiMessage, renderWebviewHtml } = await import("../out/webview.js"));
 } finally {
   Module._load = originalLoad;
 }
@@ -152,6 +191,87 @@ const connection = {
 };
 
 const html = renderWebviewHtml(webview, extensionUri, identity, connection);
+const acceptedGuiReadyMessage = {
+  version: "2026-05-15",
+  type: "gui.ready",
+  requestId: "valid-gui-ready-request",
+  payload: {
+    supportedBridgeVersion: "2026-05-15",
+  },
+};
+const rejectedPrivilegedGuiMessages = [
+  {
+    version: "2026-05-15",
+    type: "gui.openFile",
+    requestId: "req-gui-open-file-disabled-001",
+    payload: {
+      workspaceRelativePath: "src/example.ts",
+    },
+  },
+  {
+    version: "2026-05-15",
+    type: "gui.revealRange",
+    requestId: "req-gui-reveal-range-disabled-001",
+    payload: {
+      workspaceRelativePath: "src/example.ts",
+      range: {
+        startLine: 1,
+        startCharacter: 0,
+        endLine: 1,
+        endCharacter: 8,
+      },
+    },
+  },
+  {
+    version: "2026-05-15",
+    type: "gui.applyWorkspaceEditRequest",
+    requestId: "req-gui-edit-disabled-001",
+    payload: {
+      edits: [
+        {
+          workspaceRelativePath: "src/example.ts",
+          newText: "should-not-write",
+        },
+      ],
+    },
+  },
+  {
+    version: "2026-05-15",
+    type: "gui.executeIdeTool",
+    requestId: "req-gui-execute-tool-disabled-001",
+    payload: {
+      toolName: "example.disabledTool",
+      arguments: {},
+    },
+  },
+  {
+    version: "2026-05-15",
+    type: "gui.copyText",
+    requestId: "req-gui-copy-disabled-001",
+    payload: {
+      text: "should-not-copy",
+    },
+  },
+  {
+    version: "2026-05-15",
+    type: "gui.showNotification",
+    requestId: "req-gui-notification-disabled-001",
+    payload: {
+      message: "should-not-show",
+    },
+  },
+  {
+    version: "2026-05-15",
+    type: "gui.getHostContext",
+    requestId: "req-gui-host-context-disabled-001",
+    payload: {},
+  },
+];
+
+assert.equal(isGuiMessage(acceptedGuiReadyMessage), true);
+for (const message of rejectedPrivilegedGuiMessages) {
+  assert.equal(isGuiMessage(message), false, `VS Code host must reject disabled GUI bridge message: ${message.type}`);
+}
 const hostReady = createHostReady(identity, connection, "valid-gui-ready-request");
 const workspaceRoot = path.join(os.tmpdir(), "yet-ai-safe-workspace");
 fakeVscode.workspace.getWorkspaceFolder = (uri) => uri.fsPath.startsWith(workspaceRoot) ? { uri: { fsPath: workspaceRoot } } : undefined;
