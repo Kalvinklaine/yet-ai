@@ -2942,6 +2942,66 @@ async fn models_returns_empty_list() {
 }
 
 #[tokio::test]
+async fn agent_progress_returns_authenticated_empty_read_only_response() {
+    let (status, body) =
+        json_response(authed_request(Method::GET, "/v1/agent-progress", Body::empty())).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["cloudRequired"], false);
+    assert_eq!(body["providerAccess"], "direct");
+    assert_eq!(body["snapshots"], json!([]));
+    assert!(body.get("generatedAt").is_none());
+    assert_eq!(body.as_object().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn agent_progress_requires_bearer_token() {
+    let response = test_app()
+        .oneshot(
+            Request::get("/v1/agent-progress")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn agent_progress_shape_is_local_only_and_sanitized() {
+    let (status, body) =
+        json_response(authed_request(Method::GET, "/v1/agent-progress", Body::empty())).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({
+        "cloudRequired": false,
+        "providerAccess": "direct",
+        "snapshots": []
+    }));
+    let text = body.to_string().to_lowercase();
+    for forbidden in [
+        TEST_TOKEN,
+        "api_key",
+        "apikey",
+        "authorization",
+        "bearer",
+        "token",
+        "secret",
+        "password",
+        "cookie",
+        "credential",
+        "chain-of-thought",
+        "raw_prompt",
+        "provider_response",
+        "file_content",
+        "/users/",
+        "/home/",
+        "/private/",
+        "cloudrequired:true",
+    ] {
+        assert!(!text.contains(forbidden));
+    }
+}
+
+#[tokio::test]
 async fn provider_model_metadata_defaults_are_exposed_on_models_providers_and_caps() {
     let app = test_app();
     let api_key = "sk-model-metadata-secret-abcd";
