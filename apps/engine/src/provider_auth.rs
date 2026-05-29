@@ -953,6 +953,9 @@ async fn codex_connected_status(
     let metadata: CodexAuthMetadata =
         serde_json::from_str(&metadata).map_err(|_| ProviderAuthError::Storage)?;
     validate_codex_metadata(provider, &metadata)?;
+    if !codex_has_complete_secrets(&store, provider).await? {
+        return Ok(None);
+    }
     if parse_time(&metadata.expires_at)? <= Utc::now() {
         return Ok(Some(codex_expired_response(provider, metadata)));
     }
@@ -981,11 +984,33 @@ pub async fn experimental_codex_chat_auth(
     else {
         return Ok(None);
     };
+    let Some(_) = store
+        .get_secret(provider, SecretKind::OAuthRefreshToken)
+        .await?
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(None);
+    };
     Ok(Some(ExperimentalCodexChatAuth {
         access_token,
         base_url: metadata.chat_base_url,
         model: metadata.chat_model,
     }))
+}
+
+async fn codex_has_complete_secrets(
+    store: &FileSecretStore,
+    provider: &str,
+) -> Result<bool, ProviderAuthError> {
+    let has_access = store
+        .get_secret(provider, SecretKind::OAuthAccessToken)
+        .await?
+        .is_some_and(|value| !value.trim().is_empty());
+    let has_refresh = store
+        .get_secret(provider, SecretKind::OAuthRefreshToken)
+        .await?
+        .is_some_and(|value| !value.trim().is_empty());
+    Ok(has_access && has_refresh)
 }
 
 fn validate_codex_metadata(
@@ -1186,10 +1211,7 @@ async fn ensure_existing_provider_auth_directory(path: &Path) -> Result<(), Prov
     ensure_provider_auth_root(root, false).await.map(|_| ())
 }
 
-async fn ensure_provider_auth_root(
-    root: &Path,
-    create: bool,
-) -> Result<bool, ProviderAuthError> {
+async fn ensure_provider_auth_root(root: &Path, create: bool) -> Result<bool, ProviderAuthError> {
     match tokio::fs::symlink_metadata(root).await {
         Ok(metadata) => {
             if !metadata.is_dir() || metadata.file_type().is_symlink() {
@@ -1391,7 +1413,10 @@ async fn set_private_directory_permissions(_path: &Path) -> Result<(), ProviderA
 
 #[cfg(unix)]
 async fn sync_parent_directory(path: &Path) -> Result<(), ProviderAuthError> {
-    let dir = path.parent().ok_or(ProviderAuthError::Storage)?.to_path_buf();
+    let dir = path
+        .parent()
+        .ok_or(ProviderAuthError::Storage)?
+        .to_path_buf();
     tokio::task::spawn_blocking(move || {
         match open_directory_no_follow(&dir).and_then(|directory| directory.sync_all()) {
             Ok(()) => Ok(()),
@@ -1450,14 +1475,9 @@ mod tests {
         let missing = super::read_codex_state(&dir, "openai").await.unwrap();
         assert!(missing.pending.is_none());
 
-        let path = super::provider_auth_state_path(&dir, "provider-auth-openai", "openai")
-            .unwrap();
+        let path = super::provider_auth_state_path(&dir, "provider-auth-openai", "openai").unwrap();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(
-            &path,
-            r#"{"pending":{"state":"codex-state-secret-abcd""#,
-        )
-        .unwrap();
+        std::fs::write(&path, r#"{"pending":{"state":"codex-state-secret-abcd""#).unwrap();
         assert!(matches!(
             super::read_codex_state(&dir, "openai").await,
             Err(ProviderAuthError::Storage)
@@ -1472,8 +1492,7 @@ mod tests {
             .await
             .unwrap();
         let root = dir.join("provider-auth-openai");
-        let path = super::provider_auth_state_path(&dir, "provider-auth-openai", "openai")
-            .unwrap();
+        let path = super::provider_auth_state_path(&dir, "provider-auth-openai", "openai").unwrap();
 
         assert_eq!(file_mode(&root), 0o700);
         assert_eq!(file_mode(&path), 0o600);
@@ -1500,8 +1519,7 @@ mod tests {
     async fn provider_auth_state_rejects_final_file_symlink_and_cleans_temp() {
         let dir = temp_dir();
         let outside = temp_dir();
-        let path = super::provider_auth_state_path(&dir, "provider-auth-openai", "openai")
-            .unwrap();
+        let path = super::provider_auth_state_path(&dir, "provider-auth-openai", "openai").unwrap();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
         let target = outside.join("outside.json");
