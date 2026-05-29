@@ -12,7 +12,9 @@ use tokio::task::JoinHandle;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::provider_auth::{self, ExperimentalCodexChatAuth};
-use crate::providers::{self, AuthType, ProviderKind, StoredProviderConfig};
+use crate::providers::{
+    self, AuthType, ModelReadinessStatus, ProviderKind, StoredProviderConfig,
+};
 
 #[derive(Clone, Debug)]
 pub struct ChatRuntime {
@@ -455,7 +457,7 @@ fn assemble_provider_prompt(content: &str, context: Option<&ChatContext>) -> Str
 }
 
 async fn select_chat_provider(config_dir: &std::path::Path) -> Result<ChatProvider, ChatError> {
-    let providers = providers::list_provider_configs(config_dir)
+    let providers = providers::provider_summaries(config_dir)
         .await
         .map_err(|_| ChatError::ProviderConfig)?;
     let mut saw_enabled_openai_compatible = false;
@@ -464,10 +466,14 @@ async fn select_chat_provider(config_dir: &std::path::Path) -> Result<ChatProvid
         .filter(|provider| provider.enabled && provider.kind == ProviderKind::OpenAiCompatible)
     {
         saw_enabled_openai_compatible = true;
-        if let Some(model) = provider.models.first() {
+        if let Some(model) = provider.models.into_iter().find(|model| {
+            model.readiness.status == ModelReadinessStatus::Ready
+                && model.capabilities.chat
+                && model.capabilities.streaming
+        }) {
             return Ok(ChatProvider::OpenAiCompatible {
                 provider_id: provider.id,
-                model: model.id.clone(),
+                model: model.id,
             });
         }
     }
