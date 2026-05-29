@@ -96,6 +96,57 @@ pub struct ModelSummary {
     pub display_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<String>,
+    #[serde(default)]
+    pub capabilities: ModelCapabilities,
+    #[serde(default)]
+    pub readiness: ModelReadiness,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelCapabilities {
+    pub chat: bool,
+    pub streaming: bool,
+    pub tools: bool,
+    pub reasoning: bool,
+}
+
+impl Default for ModelCapabilities {
+    fn default() -> Self {
+        Self {
+            chat: false,
+            streaming: false,
+            tools: false,
+            reasoning: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelReadiness {
+    pub status: ModelReadinessStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl Default for ModelReadiness {
+    fn default() -> Self {
+        Self {
+            status: ModelReadinessStatus::Unsupported,
+            reason: Some("Provider is not supported for streaming chat.".to_string()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelReadinessStatus {
+    Ready,
+    Disabled,
+    MissingCredentials,
+    MissingModel,
+    Unsupported,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -228,37 +279,25 @@ impl fmt::Display for ProviderKind {
 
 impl StoredProviderConfig {
     pub fn summary(&self) -> ProviderSummary {
-        ProviderSummary {
-            id: self.id.clone(),
-            kind: self.kind.clone(),
-            display_name: self.display_name.clone(),
-            enabled: self.enabled,
-            base_url: self.base_url.clone(),
-            auth: self.auth.summary(),
-            models: self.models.clone(),
-            capabilities: self.capabilities.clone(),
-        }
+        self.summary_with_secret(self.auth.api_key.as_deref())
     }
 
     fn summary_with_secret(&self, api_key: Option<&str>) -> ProviderSummary {
+        let auth = self.auth.summary_with_secret(api_key);
         ProviderSummary {
             id: self.id.clone(),
             kind: self.kind.clone(),
             display_name: self.display_name.clone(),
             enabled: self.enabled,
             base_url: self.base_url.clone(),
-            auth: self.auth.summary_with_secret(api_key),
-            models: self.models.clone(),
+            models: model_summaries_for_provider(self, auth.configured),
+            auth,
             capabilities: self.capabilities.clone(),
         }
     }
 }
 
 impl StoredAuthConfig {
-    fn summary(&self) -> ProviderAuthSummary {
-        self.summary_with_secret(self.api_key.as_deref())
-    }
-
     fn summary_with_secret(&self, api_key: Option<&str>) -> ProviderAuthSummary {
         let configured =
             self.auth_type == AuthType::ApiKey && api_key.is_some_and(|value| !value.is_empty());
@@ -267,6 +306,65 @@ impl StoredAuthConfig {
             configured,
             redacted: api_key.filter(|_| configured).map(redact_secret),
         }
+    }
+}
+
+fn model_summaries_for_provider(
+    provider: &StoredProviderConfig,
+    auth_configured: bool,
+) -> Vec<ModelSummary> {
+    provider
+        .models
+        .iter()
+        .map(|model| normalized_model_summary(provider, model, auth_configured))
+        .collect()
+}
+
+fn normalized_model_summary(
+    provider: &StoredProviderConfig,
+    model: &ModelSummary,
+    auth_configured: bool,
+) -> ModelSummary {
+    let supports_streaming_chat = provider.kind == ProviderKind::OpenAiCompatible
+        && provider.capabilities.chat
+        && !model.id.trim().is_empty();
+    let readiness = if !provider.enabled {
+        ModelReadiness {
+            status: ModelReadinessStatus::Disabled,
+            reason: Some("Provider is disabled.".to_string()),
+        }
+    } else if model.id.trim().is_empty() {
+        ModelReadiness {
+            status: ModelReadinessStatus::MissingModel,
+            reason: Some("Model id is not configured.".to_string()),
+        }
+    } else if provider.auth.auth_type == AuthType::ApiKey && !auth_configured {
+        ModelReadiness {
+            status: ModelReadinessStatus::MissingCredentials,
+            reason: Some("Provider sign-in is incomplete.".to_string()),
+        }
+    } else if supports_streaming_chat {
+        ModelReadiness {
+            status: ModelReadinessStatus::Ready,
+            reason: None,
+        }
+    } else {
+        ModelReadiness {
+            status: ModelReadinessStatus::Unsupported,
+            reason: Some("Provider is not supported for streaming chat.".to_string()),
+        }
+    };
+    ModelSummary {
+        id: model.id.clone(),
+        display_name: model.display_name.clone(),
+        provider_id: model.provider_id.clone(),
+        capabilities: ModelCapabilities {
+            chat: supports_streaming_chat,
+            streaming: supports_streaming_chat,
+            tools: false,
+            reasoning: false,
+        },
+        readiness,
     }
 }
 
@@ -476,17 +574,14 @@ pub async fn provider_summaries(config_dir: &Path) -> Result<Vec<ProviderSummary
 }
 
 pub async fn models(config_dir: &Path) -> Result<ModelListResponse, ProviderError> {
-    let models = list_provider_configs(config_dir)
-        .await?
-        .into_iter()
-        .filter(|provider| provider.enabled)
-        .flat_map(|provider| {
-            provider.models.into_iter().map(move |mut model| {
-                model.provider_id = Some(provider.id.clone());
-                model
-            })
-        })
-        .collect();
+    let mut models = Vec::new();
+    for provider in list_provider_configs(config_dir).await? {
+        let auth_configured = provider_auth_configured(config_dir, &provider).await?;
+        for mut model in model_summaries_for_provider(&provider, auth_configured) {
+            model.provider_id = Some(provider.id.clone());
+            models.push(model);
+        }
+    }
     Ok(ModelListResponse { models })
 }
 
@@ -678,6 +773,18 @@ async fn configured_api_key(
         Err(SecretStoreError::InvalidRecord) => Ok(None),
         Err(error) => Err(error.into()),
     }
+}
+
+async fn provider_auth_configured(
+    config_dir: &Path,
+    config: &StoredProviderConfig,
+) -> Result<bool, ProviderError> {
+    if config.auth.auth_type == AuthType::None {
+        return Ok(false);
+    }
+    Ok(configured_api_key(config_dir, config)
+        .await?
+        .is_some_and(|value| !value.is_empty()))
 }
 
 enum SecretChange {
@@ -975,6 +1082,39 @@ mod tests {
             .unwrap(),
             "http://127.0.0.1:8080/v1"
         );
+    }
+
+    #[test]
+    fn provider_model_metadata_normalizes_legacy_defaults() {
+        let provider = super::StoredProviderConfig {
+            id: "openai-local".to_string(),
+            kind: ProviderKind::OpenAiCompatible,
+            display_name: "OpenAI Local".to_string(),
+            enabled: true,
+            base_url: "http://127.0.0.1:8080/v1".to_string(),
+            auth: super::StoredAuthConfig {
+                auth_type: super::AuthType::ApiKey,
+                api_key: None,
+            },
+            models: vec![super::ModelSummary {
+                id: "gpt-local".to_string(),
+                display_name: "GPT Local".to_string(),
+                provider_id: None,
+                capabilities: super::ModelCapabilities::default(),
+                readiness: super::ModelReadiness::default(),
+            }],
+            capabilities: super::ProviderCapabilities::default(),
+        };
+        let summary = super::model_summaries_for_provider(&provider, true);
+        assert_eq!(summary[0].capabilities.chat, true);
+        assert_eq!(summary[0].capabilities.streaming, true);
+        assert_eq!(summary[0].capabilities.tools, false);
+        assert_eq!(summary[0].capabilities.reasoning, false);
+        assert_eq!(
+            summary[0].readiness.status,
+            super::ModelReadinessStatus::Ready
+        );
+        assert_eq!(summary[0].readiness.reason, None);
     }
 
     #[test]

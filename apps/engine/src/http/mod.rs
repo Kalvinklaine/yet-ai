@@ -108,6 +108,8 @@ pub struct ProviderCaps {
 pub struct ProviderModelCaps {
     pub id: String,
     pub display_name: String,
+    pub capabilities: providers::ModelCapabilities,
+    pub readiness: providers::ModelReadiness,
 }
 
 #[derive(Debug, Serialize)]
@@ -154,6 +156,8 @@ async fn caps(_auth: Authenticated, State(state): State<AppState>) -> Response {
                     .map(|model| ProviderModelCaps {
                         id: model.id,
                         display_name: model.display_name,
+                        capabilities: model.capabilities,
+                        readiness: model.readiness,
                     })
                     .collect(),
             })
