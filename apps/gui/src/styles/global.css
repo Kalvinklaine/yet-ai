@@ -303,6 +303,51 @@ pre,
   background: #fffaf0;
 }
 
+.conversations-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) 1fr;
+  gap: 16px;
+}
+
+.conversations-panel,
+.chat-title-card {
+  border: 1px solid #e2e7f0;
+  border-radius: 16px;
+  background: #f8faff;
+  padding: 14px;
+}
+
+.conversation-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: stretch;
+  border: 1px solid #e2e7f0;
+  border-radius: 12px;
+  background: white;
+  padding: 8px;
+}
+
+.conversation-item.active {
+  border-color: #2f5bea;
+}
+
+.conversation-select {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #172033;
+  padding: 6px;
+  text-align: left;
+}
+
+.conversation-select span {
+  color: #65728a;
+  font-size: 13px;
+}
+
 .chat-panel {
   display: grid;
   gap: 12px;
@@ -341,6 +386,12 @@ pre,
   border: 1px solid #ffc9c9;
   background: #fff0f0;
   color: #a11212;
+}
+
+@media (max-width: 760px) {
+  .conversations-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 summary {

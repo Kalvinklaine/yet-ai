@@ -1,4 +1,5 @@
 import { sanitizeErrorText } from "./redaction";
+import type { ChatHistoryMessage, ChatThread } from "./runtimeClient";
 import type { SseEvent } from "./sseClient";
 
 export type ChatViewMessage = {
@@ -24,6 +25,9 @@ export function resetChatViewState(chatId: string): ChatViewState {
 }
 
 export function addAcceptedUserMessage(state: ChatViewState, content: string): ChatViewState {
+  if (state.messages.some((message) => message.role === "user" && message.content === content && message.status === "complete")) {
+    return state;
+  }
   return {
     ...state,
     messages: [
@@ -38,6 +42,27 @@ export function addAcceptedUserMessage(state: ChatViewState, content: string): C
   };
 }
 
+export function hydrateChatViewFromThread(state: ChatViewState, thread: ChatThread): ChatViewState {
+  if (thread.chatId !== state.chatId) {
+    return state;
+  }
+  return hydrateChatViewFromMessages(state, thread.messages);
+}
+
+export function hydrateChatViewFromMessages(state: ChatViewState, messages: ChatHistoryMessage[]): ChatViewState {
+  return {
+    ...state,
+    messages: messages
+      .filter((message) => message.chatId === state.chatId)
+      .map((message, index) => ({
+        id: message.id || `${state.chatId}-message-${index + 1}`,
+        role: message.role,
+        content: message.role === "error" ? sanitizeErrorText(message.content) : message.content,
+        status: message.status ?? (message.role === "error" ? "error" : "complete"),
+      })),
+  };
+}
+
 export function applyChatViewEvent(state: ChatViewState, event: SseEvent): ChatViewState {
   if (event.chatId !== state.chatId) {
     return state;
@@ -45,7 +70,7 @@ export function applyChatViewEvent(state: ChatViewState, event: SseEvent): ChatV
 
   switch (event.type) {
     case "snapshot":
-      return { ...state, subscriptionReady: true };
+      return applySnapshot(state, event.payload);
     case "stream_started":
       return applyStreamStarted(state);
     case "stream_delta":
@@ -61,6 +86,14 @@ export function applyChatViewEvent(state: ChatViewState, event: SseEvent): ChatV
     default:
       return state;
   }
+}
+
+function applySnapshot(state: ChatViewState, payload: SseEvent["payload"]): ChatViewState {
+  const messages = readSnapshotMessages(payload);
+  if (!messages) {
+    return { ...state, subscriptionReady: true };
+  }
+  return { ...hydrateChatViewFromMessages(state, messages), subscriptionReady: true };
 }
 
 function applyStreamStarted(state: ChatViewState): ChatViewState {
@@ -131,6 +164,38 @@ function findStreamingAssistantIndex(messages: ChatViewMessage[]): number {
 
 function nextMessageId(state: ChatViewState): string {
   return `${state.chatId}-message-${state.messages.length + 1}`;
+}
+
+function readSnapshotMessages(payload: SseEvent["payload"]): ChatHistoryMessage[] | null {
+  if (!payload) {
+    return null;
+  }
+  if (Array.isArray(payload.messages)) {
+    const messages = payload.messages.filter(isChatHistoryMessage);
+    return messages.length > 0 ? messages : null;
+  }
+  const thread = payload.thread;
+  if (typeof thread === "object" && thread !== null && !Array.isArray(thread)) {
+    const messages = (thread as Record<string, unknown>).messages;
+    if (Array.isArray(messages)) {
+      const historyMessages = messages.filter(isChatHistoryMessage);
+      return historyMessages.length > 0 ? historyMessages : null;
+    }
+  }
+  return null;
+}
+
+function isChatHistoryMessage(value: unknown): value is ChatHistoryMessage {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const message = value as Record<string, unknown>;
+  return typeof message.id === "string"
+    && typeof message.chatId === "string"
+    && (message.role === "user" || message.role === "assistant" || message.role === "error")
+    && typeof message.content === "string"
+    && typeof message.createdAt === "string"
+    && (message.status === undefined || message.status === "pending" || message.status === "streaming" || message.status === "complete" || message.status === "error");
 }
 
 function readDeltaContent(payload: SseEvent["payload"]): string | null {
