@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::chat::ChatContext;
+use crate::chat_history;
 use crate::provider_auth;
 use crate::providers;
 use crate::security::Authenticated;
@@ -40,6 +41,8 @@ pub fn router(state: AppState) -> Router {
                     post(provider_auth_disconnect),
                 )
                 .route("/models", get(models_list))
+                .route("/chats", get(chats_list).post(chats_create))
+                .route("/chats/:chat_id", get(chats_get).delete(chats_delete))
                 .route("/chats/:chat_id/commands", post(chat_command))
                 .route("/chats/subscribe", get(chats_subscribe)),
         )
@@ -290,6 +293,47 @@ async fn models_list(_auth: Authenticated, State(state): State<AppState>) -> Res
         Ok(models) => Json(models).into_response(),
         Err(error) => provider_error(error),
     }
+}
+
+async fn chats_list(_auth: Authenticated, State(state): State<AppState>) -> Response {
+    match chat_history::list_threads(&state.storage_paths.config_dir).await {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => chat_history_error(error),
+    }
+}
+
+async fn chats_create(_auth: Authenticated, State(state): State<AppState>) -> Response {
+    match chat_history::create_thread(&state.storage_paths.config_dir).await {
+        Ok(thread) => (StatusCode::CREATED, Json(thread)).into_response(),
+        Err(error) => chat_history_error(error),
+    }
+}
+
+async fn chats_get(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(chat_id): Path<String>,
+) -> Response {
+    match chat_history::get_thread(&state.storage_paths.config_dir, &chat_id).await {
+        Ok(thread) => Json(thread).into_response(),
+        Err(error) => chat_history_error(error),
+    }
+}
+
+async fn chats_delete(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(chat_id): Path<String>,
+) -> Response {
+    match chat_history::delete_thread(&state.storage_paths.config_dir, &chat_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => chat_history_error(error),
+    }
+}
+
+fn chat_history_error(error: chat_history::ChatHistoryError) -> Response {
+    let status = error.status();
+    (status, Json(json!({ "error": error.to_string() }))).into_response()
 }
 
 fn provider_error(error: providers::ProviderError) -> Response {
