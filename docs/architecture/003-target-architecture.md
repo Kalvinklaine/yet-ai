@@ -10,8 +10,8 @@ The repository now contains buildable MVP scaffolds for the main local-first sub
 
 Implemented surfaces:
 
-- `apps/engine`: Rust `yet-lsp` runtime with authenticated loopback HTTP/SSE endpoints, identity-aware storage names, local provider registry/config files, redacted provider responses, model summaries, chat command submission, and the first OpenAI-compatible direct streaming path through configured provider data.
-- `apps/gui`: React/Vite browser shell with loopback-only runtime client, provider setup/status UI, chat command submission, fetch-streaming SSE parser, runtime error reporting, and browser/VS Code/JetBrains logical bridge detection.
+- `apps/engine`: Rust `yet-lsp` runtime with authenticated loopback HTTP/SSE endpoints, identity-aware storage names, local provider registry/config files, redacted provider responses, normalized provider/model readiness metadata, chat command submission, and the first OpenAI-compatible direct streaming path through configured provider data.
+- `apps/gui`: React/Vite browser shell with loopback-only runtime client, provider setup/status UI, sanitized model readiness display, chat command submission, fetch-streaming SSE parser, runtime error reporting, and browser/VS Code/JetBrains logical bridge detection.
 - `apps/plugins/vscode`: VS Code extension shell with identity-checked manifest and bundled package-route identity, loopback runtime/dev URL validation, SecretStorage-backed manual runtime tokens, packaged GUI asset loading with placeholder fallback, MVP `connect`/`launch`/`auto` runtime modes, webview host, bootstrap/`host.ready` bridge, bounded active editor/selection context snapshot delivery, redacted runtime diagnostics, and guarded message handling.
 - `apps/plugins/jetbrains`: JetBrains plugin shell with identity checks, Gradle build/tests, loopback runtime/dev URL validation, packaged GUI resource loading with placeholder fallback, MVP `connect`/`launch`/`auto` runtime modes, PasswordSafe-backed local session token, JCEF host boundary, structural JSON bridge validation, and bounded active editor/selection context snapshot delivery through the same `host.contextSnapshot` contract as VS Code.
 - `packages/contracts`: shared JSON Schemas and examples for current engine and bridge boundaries, plus future/simulator-facing no-idle planner scheduler contracts.
@@ -22,7 +22,7 @@ Known limitations:
 - No marketplace packaging, signed/notarized engine bundle, production installer, or release flow is complete.
 - IDE plugins support dev-preview packaged GUI assets and MVP local runtime connect/launch/auto modes, but they do not yet provide production-grade lifecycle management, bundled signed engine distribution, or installer integration.
 - LSP completion/code-lens, full agent autonomy, autonomous file reads/indexing, tasks/knowledge, tool registry execution, shell/tool execution, shell/file mutation, file edits/apply patch, background agent autonomy, and integration workflows are not implemented as production features.
-- The provider/chat baseline is a local MVP only: configured local BYOK provider data plus OpenAI-compatible chat streaming.
+- The provider/chat baseline is a local MVP only: configured local BYOK provider data plus OpenAI-compatible chat streaming gated by sanitized local provider/model readiness metadata.
 - Privileged IDE actions remain disabled until strict schemas, request correlation, origin/source checks, engine policy checks, and user confirmation flows are in place.
 - The provider baseline is intentionally narrow: local BYOK configuration plus OpenAI-compatible chat streaming. The engine and GUI now include sanitized provider-auth skeleton endpoints, a login-first status card, an API-key fallback, a local mock OAuth/PKCE contract harness, and a protected-file secret-store fallback. Real OpenAI/ChatGPT account login is not implemented in this baseline. The user approved a future experimental, high-risk Codex-like login task chain despite the lack of a public third-party OpenAI OAuth program; production OAuth, OS keychain storage, broader provider quirks, and advanced model capability handling remain follow-ups.
 
@@ -246,6 +246,10 @@ The engine should expose a versioned local HTTP API. Initial target endpoints:
 - Future `GET /v1/provider-auth/{provider}/callback` may receive loopback browser callbacks for providers that support local redirects.
 - `GET /v1/models` returns normalized model summaries from configured providers and local capability metadata.
 - `GET /v1/tools` exposes tool metadata, confirmation requirements, and availability.
+Model summaries in `/v1/models`, `/v1/caps` provider entries, and provider summaries share the same sanitized readiness contract. Each model reports bounded boolean capabilities for `chat`, `streaming`, `tools`, and `reasoning`, plus a `readiness.status` of `ready`, `disabled`, `missing_credentials`, `missing_model`, or `unsupported` with at most a short sanitized reason. Chat selection is conservative: the engine and GUI treat a model as sendable only when it belongs to an enabled configured provider, readiness is `ready`, and both `chat` and `streaming` are true. Missing metadata, disabled providers, missing credentials, unsupported models, and non-chat or non-streaming models do not enable first-message send. Experimental OAuth fallback is considered only after no usable API-key OpenAI-compatible model exists.
+
+This metadata is not provider discovery or tool enablement. It is local sanitized state derived from configured providers and local defaults, and it must not expose raw provider secrets, provider responses, private paths, auth tokens, or hidden credential bags. `features.tools`, `features.tasks`, and `features.knowledge` remain separate runtime flags and remain disabled in the current baseline; model `tools` or `reasoning` metadata does not enable tool execution, reasoning orchestration, shell execution, file edits/apply patch, autonomous file reads/indexing, or production agent behavior.
+
 - `POST /v1/chats/{chat_id}/commands` accepts chat commands.
 - `GET /v1/chats/subscribe?chat_id={chat_id}` streams chat state over SSE.
 
@@ -395,7 +399,7 @@ Provider boundary:
 - GUI renders setup and status but does not call model providers directly.
 - GUI may start provider login and display sanitized login progress, but it must not receive or persist raw OAuth tokens, API keys, cookies, browser sessions, or refresh tokens.
 - GUI does not persist raw provider secrets. It may submit a secret once for save/test flows, then only render sanitized configured/authenticated state and replacement controls.
-- Engine stores credentials locally, resolves model capabilities, applies defaults, normalizes provider APIs, and calls configured hosted providers or local runtimes directly.
+- Engine stores credentials locally, resolves sanitized model capabilities/readiness from configured providers and local defaults, applies conservative chat+streaming gating, normalizes provider APIs, and calls configured hosted providers or local runtimes directly.
 - Plugins do not know provider-specific details except for native authentication flows if explicitly required, and they do not duplicate provider adapters.
 - A future Yet AI backend can appear only as an optional provider, integration, or control-plane extension; it is not part of the core provider path.
 
