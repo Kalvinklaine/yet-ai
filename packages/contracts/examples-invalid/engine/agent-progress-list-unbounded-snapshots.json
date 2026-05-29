@@ -1,0 +1,1842 @@
+{
+  "cloudRequired": false,
+  "providerAccess": "direct",
+  "snapshots": [
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-0",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-1",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-2",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-3",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-4",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-5",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-6",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-7",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-8",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-9",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-10",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-11",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-12",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-13",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-14",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-15",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-16",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-17",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-18",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-19",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-20",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-21",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-22",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-23",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-24",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-25",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-26",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-27",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-28",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-29",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-30",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-31",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-32",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-33",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-34",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-35",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-36",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-37",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-38",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-39",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-40",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-41",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-42",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-43",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-44",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-45",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-46",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-47",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-48",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-49",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    },
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T275-50",
+      "cardId": "T269",
+      "startedAt": "2026-05-29T12:38:00Z",
+      "updatedAt": "2026-05-29T12:40:00Z",
+      "phase": "running_command",
+      "status": "healthy_running",
+      "message": "Running contract validation with current tool output.",
+      "elapsedMs": 120000,
+      "ageMs": 2000,
+      "currentTool": {
+        "kind": "validation",
+        "label": "npm run validate:contracts",
+        "startedAt": "2026-05-29T12:39:30Z",
+        "elapsedMs": 30000
+      },
+      "outputTail": "Contract schemas compiled. Validating mapped examples.",
+      "stuckReason": "none",
+      "recentEvents": [
+        {
+          "eventId": "evt-T269-started-001",
+          "timestamp": "2026-05-29T12:38:00Z",
+          "phase": "started",
+          "status": "running",
+          "message": "Agent started the card."
+        },
+        {
+          "eventId": "evt-T269-command-001",
+          "timestamp": "2026-05-29T12:40:00Z",
+          "phase": "running_command",
+          "status": "healthy_running",
+          "message": "Running contract validation with recent output."
+        }
+      ]
+    }
+  ]
+}

@@ -33,6 +33,11 @@ const mappings = [
   ["packages/contracts/examples/engine/agent-progress-snapshot-stuck-heartbeat.json", "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-snapshot-failed-command.json", "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-snapshot-done.json", "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"],
+  ["packages/contracts/examples/engine/agent-progress-list-empty.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
+  ["packages/contracts/examples/engine/agent-progress-list-healthy-command.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
+  ["packages/contracts/examples/engine/agent-progress-list-stuck-heartbeat.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
+  ["packages/contracts/examples/engine/agent-progress-list-failed-command.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
+  ["packages/contracts/examples/engine/agent-progress-list-done.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
   ["packages/contracts/examples/engine/planner-scheduler-idle-blocked.json", "packages/contracts/schemas/engine/planner-scheduler-tick.schema.json"],
   ["packages/contracts/examples/engine/planner-pool-complete-next-pool.json", "packages/contracts/schemas/engine/planner-card-pool-status.schema.json"],
   ["packages/contracts/examples/engine/models-response.json", "packages/contracts/schemas/engine/models.schema.json"],
@@ -269,6 +274,50 @@ const invalidMappings = [
   [
     "packages/contracts/examples-invalid/engine/agent-progress-snapshot-secret-key.json",
     "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-list-raw-prompt-field.json",
+    "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-list-chain-of-thought-field.json",
+    "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-list-raw-provider-response.json",
+    "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-list-file-content-payload.json",
+    "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-list-secret-field.json",
+    "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-list-secret-value.json",
+    "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-list-private-path.json",
+    "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-list-cloud-required.json",
+    "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-list-managed-provider-access.json",
+    "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-list-oversized-output-tail.json",
+    "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-list-unbounded-snapshots.json",
+    "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
   ],
   [
     "packages/contracts/examples-invalid/engine/planner-card-verified-without-merge.json",
