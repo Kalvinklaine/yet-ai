@@ -12,7 +12,16 @@
   "models": [
     {
       "id": "gpt-local",
-      "displayName": "GPT Local"
+      "displayName": "GPT Local",
+      "capabilities": {
+        "chat": true,
+        "streaming": true,
+        "tools": false,
+        "reasoning": false
+      },
+      "readiness": {
+        "status": "ready"
+      }
     }
   ],
   "capabilities": {

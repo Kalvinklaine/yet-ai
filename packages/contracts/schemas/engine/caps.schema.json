@@ -68,25 +68,7 @@
           "models": {
             "type": "array",
             "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["id", "displayName"],
-              "properties": {
-                "id": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "displayName": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "supportsTools": {
-                  "type": "boolean"
-                },
-                "supportsReasoning": {
-                  "type": "boolean"
-                }
-              }
+              "$ref": "#/$defs/model"
             }
           }
         }
@@ -108,5 +90,71 @@
         }
       }
     }
+  },
+  "$defs": {
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "displayName", "capabilities", "readiness"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "providerId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/modelCapabilities"
+        },
+        "readiness": {
+          "$ref": "#/$defs/modelReadiness"
+        }
+      }
+    },
+    "modelCapabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chat", "streaming", "tools", "reasoning"],
+      "properties": {
+        "chat": {
+          "type": "boolean"
+        },
+        "streaming": {
+          "type": "boolean"
+        },
+        "tools": {
+          "type": "boolean"
+        },
+        "reasoning": {
+          "type": "boolean"
+        }
+      }
+    },
+    "modelReadiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["ready", "disabled", "missing_credentials", "missing_model", "unsupported"]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "not": {
+            "pattern": "[Aa][Pp][Ii][_ -]?[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Cc][Oo][Oo][Kk][Ii][Ee]"
+          }
+        }
+      }
+    }
+
   }
 }
