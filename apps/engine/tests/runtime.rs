@@ -1181,6 +1181,103 @@ async fn provider_auth_openai_experimental_status_returns_pending_without_verifi
 }
 
 #[tokio::test]
+async fn provider_auth_pending_state_corruption_fails_safely() {
+    for (start_body, state_dir, forbidden) in [
+        (
+            json!({ "mock": true }),
+            "provider-auth-mock",
+            "mock-state-corrupt-secret",
+        ),
+        (
+            json!({ "experimentalCodexLike": true }),
+            "provider-auth-openai",
+            "codex-state-corrupt-secret",
+        ),
+    ] {
+        let paths = test_storage_paths();
+        let app = app(AppState::with_storage_paths(
+            ProductIdentity::load().unwrap(),
+            AuthToken::new(TEST_TOKEN).unwrap(),
+            paths.clone(),
+        ));
+        let (status, start) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::POST,
+                "/v1/provider-auth/openai/start",
+                Body::from(start_body.to_string()),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(start["status"], "pending");
+        let state_path = paths.config_dir.join(state_dir).join("openai.json");
+        std::fs::write(
+            &state_path,
+            format!(r#"{{"pending":{{"state":"{forbidden}""#),
+        )
+        .unwrap();
+
+        let (status, body) = json_response_from(
+            app,
+            authed_request(
+                Method::GET,
+                "/v1/provider-auth/openai/status",
+                Body::empty(),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body["error"], "provider auth storage error");
+        let text = body.to_string().to_lowercase();
+        assert!(!text.contains(forbidden));
+        assert!(!text.contains("verifier"));
+        assert!(!text.contains("access_token"));
+        assert!(!text.contains("refresh_token"));
+        assert!(!text.contains("auth.json"));
+        assert!(!text.contains(&paths.config_dir.to_string_lossy().to_lowercase()));
+    }
+}
+
+#[tokio::test]
+async fn provider_auth_expired_pending_status_falls_back_without_session() {
+    for start_body in [
+        json!({ "mock": true, "ttlSeconds": 1 }),
+        json!({ "experimentalCodexLike": true, "ttlSeconds": 1 }),
+    ] {
+        let app = test_app();
+        let (status, start) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::POST,
+                "/v1/provider-auth/openai/start",
+                Body::from(start_body.to_string()),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(start["status"], "pending");
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+
+        let (status, body) = json_response_from(
+            app,
+            authed_request(
+                Method::GET,
+                "/v1/provider-auth/openai/status",
+                Body::empty(),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "login_unavailable");
+        assert_eq!(body["configured"], false);
+        assert!(body.get("sessionId").is_none());
+        assert!(body.get("authorizationUrl").is_none());
+        assert_provider_auth_response_has_no_codex_secrets(&body);
+    }
+}
+
+#[tokio::test]
 async fn provider_auth_openai_experimental_loopback_overrides_are_accepted() {
     let app = test_app();
     for (token_endpoint_url, chat_endpoint_url) in [
@@ -2870,14 +2967,20 @@ async fn provider_model_metadata_defaults_are_exposed_on_models_providers_and_ca
     assert_eq!(models["models"].as_array().unwrap().len(), 4);
     let ready = &models["models"][0];
     assert_eq!(ready["providerId"], "aaa-ready-models");
-    assert_eq!(ready["capabilities"], json!({
-        "chat": true,
-        "streaming": true,
-        "tools": false,
-        "reasoning": false
-    }));
+    assert_eq!(
+        ready["capabilities"],
+        json!({
+            "chat": true,
+            "streaming": true,
+            "tools": false,
+            "reasoning": false
+        })
+    );
     assert_eq!(ready["readiness"], json!({ "status": "ready" }));
-    assert_eq!(models["models"][1]["readiness"]["status"], "missing_credentials");
+    assert_eq!(
+        models["models"][1]["readiness"]["status"],
+        "missing_credentials"
+    );
     assert_eq!(models["models"][2]["readiness"]["status"], "disabled");
     assert_eq!(models["models"][3]["readiness"]["status"], "unsupported");
     let text = models.to_string().to_lowercase();
@@ -2892,7 +2995,10 @@ async fn provider_model_metadata_defaults_are_exposed_on_models_providers_and_ca
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(providers["providers"][0]["models"][0]["id"], models["models"][0]["id"]);
+    assert_eq!(
+        providers["providers"][0]["models"][0]["id"],
+        models["models"][0]["id"]
+    );
     assert_eq!(
         providers["providers"][0]["models"][0]["capabilities"],
         models["models"][0]["capabilities"]
@@ -2901,8 +3007,13 @@ async fn provider_model_metadata_defaults_are_exposed_on_models_providers_and_ca
         providers["providers"][0]["models"][0]["readiness"],
         models["models"][0]["readiness"]
     );
-    assert!(providers["providers"][0]["models"][0].get("providerId").is_none());
-    assert_eq!(providers["providers"][1]["models"][0]["readiness"]["status"], "missing_credentials");
+    assert!(providers["providers"][0]["models"][0]
+        .get("providerId")
+        .is_none());
+    assert_eq!(
+        providers["providers"][1]["models"][0]["readiness"]["status"],
+        "missing_credentials"
+    );
     assert!(!providers.to_string().contains(api_key));
 
     let (status, provider) = json_response_from(
@@ -2911,22 +3022,31 @@ async fn provider_model_metadata_defaults_are_exposed_on_models_providers_and_ca
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(provider["models"][0]["readiness"], json!({ "status": "ready" }));
+    assert_eq!(
+        provider["models"][0]["readiness"],
+        json!({ "status": "ready" })
+    );
     assert!(!provider.to_string().contains(api_key));
 
-    let (status, caps) = json_response_from(
-        app,
-        authed_request(Method::GET, "/v1/caps", Body::empty()),
-    )
-    .await;
+    let (status, caps) =
+        json_response_from(app, authed_request(Method::GET, "/v1/caps", Body::empty())).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(caps["features"], json!({
-        "tools": false,
-        "tasks": false,
-        "knowledge": false
-    }));
-    assert_eq!(caps["providers"][0]["models"][0]["readiness"], json!({ "status": "ready" }));
-    assert_eq!(caps["providers"][0]["models"][0]["capabilities"], ready["capabilities"]);
+    assert_eq!(
+        caps["features"],
+        json!({
+            "tools": false,
+            "tasks": false,
+            "knowledge": false
+        })
+    );
+    assert_eq!(
+        caps["providers"][0]["models"][0]["readiness"],
+        json!({ "status": "ready" })
+    );
+    assert_eq!(
+        caps["providers"][0]["models"][0]["capabilities"],
+        ready["capabilities"]
+    );
     assert!(!caps.to_string().contains(api_key));
 }
 
@@ -4514,6 +4634,55 @@ async fn tampered_experimental_openai_oauth_metadata_does_not_route_to_unsafe_ur
 }
 
 #[tokio::test]
+async fn incomplete_experimental_openai_oauth_metadata_does_not_route_chat() {
+    for missing_kind in [SecretKind::OAuthAccessToken, SecretKind::OAuthRefreshToken] {
+        let paths = test_storage_paths();
+        let app = app(AppState::with_storage_paths(
+            ProductIdentity::load().unwrap(),
+            AuthToken::new(TEST_TOKEN).unwrap(),
+            paths.clone(),
+        ));
+        let (chat_base_url, auth_receiver) = start_mock_provider(
+            StatusCode::OK,
+            "data: {\"choices\":[{\"delta\":{\"content\":\"unsafe\"}}]}\n\ndata: [DONE]\n\n",
+        )
+        .await;
+        let (token_endpoint_url, _) = start_mock_codex_token_endpoint().await;
+        connect_experimental_openai_oauth(app.clone(), token_endpoint_url, chat_base_url).await;
+        FileSecretStore::new(&paths.config_dir)
+            .delete_secret("openai", missing_kind)
+            .await
+            .unwrap();
+
+        let (status, auth_status) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::GET,
+                "/v1/provider-auth/openai/status",
+                Body::empty(),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(auth_status["status"], "login_unavailable");
+        assert!(auth_status.get("sessionId").is_none());
+        assert_provider_auth_response_has_no_codex_secrets(&auth_status);
+
+        send_user_message(app.clone(), "chat-incomplete-oauth-metadata").await;
+        let text = sse_text_from(
+            app,
+            "/v1/chats/subscribe?chat_id=chat-incomplete-oauth-metadata",
+        )
+        .await;
+        let events = sse_json_events(&text);
+        let error = find_error_event(&events);
+        assert_eq!(error["payload"]["code"], "provider_not_configured");
+        assert_sanitized_sse_error(&text);
+        assert_no_observed_auth(auth_receiver).await;
+    }
+}
+
+#[tokio::test]
 async fn api_key_provider_is_preferred_over_experimental_openai_oauth() {
     let api_key = "sk-preferred-secret-abcd";
     let (oauth_chat_base_url, oauth_auth_receiver) = start_mock_provider(
@@ -4914,10 +5083,11 @@ async fn chat_selection_skips_disabled_provider_and_later_model_capabilities_win
     assert!(!text.contains(disabled_key));
     assert!(!text.contains(usable_key));
     assert_no_observed_auth(disabled_auth_receiver).await;
-    let provider_body = tokio::time::timeout(std::time::Duration::from_secs(2), body_receiver.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let provider_body =
+        tokio::time::timeout(std::time::Duration::from_secs(2), body_receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(provider_body["model"], "gpt-second");
 }
 
