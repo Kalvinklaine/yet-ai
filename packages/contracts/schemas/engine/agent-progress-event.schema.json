@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/agent-progress-event.schema.json",
+  "title": "Agent Progress Event",
+  "description": "Local planner/agent progress event with bounded sanitized operational status only. It excludes raw prompts, chain-of-thought, provider responses, secrets, private paths, credential paths, and workspace file contents.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocolVersion", "eventId", "runId", "cardId", "timestamp", "phase", "status", "message"],
+  "properties": {
+    "protocolVersion": {
+      "type": "string",
+      "const": "2026-05-29"
+    },
+    "eventId": {
+      "$ref": "#/$defs/id"
+    },
+    "runId": {
+      "$ref": "#/$defs/id"
+    },
+    "cardId": {
+      "$ref": "#/$defs/cardId"
+    },
+    "timestamp": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "phase": {
+      "$ref": "#/$defs/phase"
+    },
+    "status": {
+      "$ref": "#/$defs/status"
+    },
+    "message": {
+      "$ref": "#/$defs/safeMessage"
+    },
+    "tool": {
+      "$ref": "#/$defs/toolSummary"
+    },
+    "heartbeat": {
+      "$ref": "#/$defs/heartbeat"
+    },
+    "outputTail": {
+      "$ref": "#/$defs/outputTail"
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    },
+    "cardId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "minLength": 20,
+      "maxLength": 32
+    },
+    "phase": {
+      "type": "string",
+      "enum": ["queued", "started", "reading_context", "editing", "running_command", "waiting_for_tool", "verifying", "finishing", "done", "failed", "stuck"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "running", "healthy_running", "long_running", "stalled", "stuck", "done", "failed"]
+    },
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:api[_-]?key|authorization|bearer|token|secret|password|cookie|pkce|refresh|access[_-]?token|chain[-_ ]?of[-_ ]?thought|raw[_-]?prompt|provider[_-]?response|credential|/Users/|/home/|/private/|[A-Za-z]:\\\\|BEGIN [A-Z ]*PRIVATE KEY))[\\s\\S]*$"
+    },
+    "safeMessage": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 280
+        }
+      ]
+    },
+    "outputTail": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        {
+          "type": "string",
+          "maxLength": 2000
+        }
+      ]
+    },
+    "toolKind": {
+      "type": "string",
+      "enum": ["read", "edit", "command", "test", "validation", "network", "planner", "other"]
+    },
+    "toolSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "label"],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/toolKind"
+        },
+        "label": {
+          "allOf": [
+            { "$ref": "#/$defs/safeText" },
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            }
+          ]
+        },
+        "startedAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "elapsedMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 86400000
+        }
+      }
+    },
+    "heartbeat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lastHeartbeatAt"],
+      "properties": {
+        "lastHeartbeatAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "lastToolOutputAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    }
+  }
+}

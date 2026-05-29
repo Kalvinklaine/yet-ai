@@ -1,0 +1,30 @@
+{
+  "protocolVersion": "2026-05-29",
+  "runId": "run-T269-004",
+  "cardId": "T269",
+  "startedAt": "2026-05-29T13:10:00Z",
+  "updatedAt": "2026-05-29T13:20:00Z",
+  "completedAt": "2026-05-29T13:20:00Z",
+  "phase": "done",
+  "status": "done",
+  "message": "Agent completed the card and recorded verification results.",
+  "elapsedMs": 600000,
+  "ageMs": 0,
+  "stuckReason": "none",
+  "recentEvents": [
+    {
+      "eventId": "evt-T269-command-004",
+      "timestamp": "2026-05-29T13:18:00Z",
+      "phase": "verifying",
+      "status": "healthy_running",
+      "message": "Running final verification command."
+    },
+    {
+      "eventId": "evt-T269-done-001",
+      "timestamp": "2026-05-29T13:20:00Z",
+      "phase": "done",
+      "status": "done",
+      "message": "Agent completed the card and recorded verification results."
+    }
+  ]
+}

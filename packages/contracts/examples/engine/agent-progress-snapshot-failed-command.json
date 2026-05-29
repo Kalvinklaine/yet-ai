@@ -1,0 +1,30 @@
+{
+  "protocolVersion": "2026-05-29",
+  "runId": "run-T269-003",
+  "cardId": "T269",
+  "startedAt": "2026-05-29T13:00:00Z",
+  "updatedAt": "2026-05-29T13:05:00Z",
+  "completedAt": "2026-05-29T13:05:00Z",
+  "phase": "failed",
+  "status": "failed",
+  "message": "Verification command failed with sanitized contract errors.",
+  "elapsedMs": 300000,
+  "ageMs": 0,
+  "currentTool": {
+    "kind": "validation",
+    "label": "npm run validate:contracts",
+    "startedAt": "2026-05-29T13:04:00Z",
+    "elapsedMs": 60000
+  },
+  "outputTail": "Validation failed for one invalid fixture that unexpectedly passed.",
+  "stuckReason": "explicit_failure",
+  "recentEvents": [
+    {
+      "eventId": "evt-T269-failed-001",
+      "timestamp": "2026-05-29T13:05:00Z",
+      "phase": "failed",
+      "status": "failed",
+      "message": "Verification command failed with sanitized contract errors."
+    }
+  ]
+}
