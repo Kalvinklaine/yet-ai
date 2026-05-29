@@ -457,7 +457,10 @@ async fn chats_subscribe(
 ) -> Sse<
     impl futures_util::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
 > {
-    let stream = state.chat_runtime.subscribe(query.chat_id).await;
+    let stream = state
+        .chat_runtime
+        .subscribe(state.storage_paths.config_dir.clone(), query.chat_id)
+        .await;
     Sse::new(stream).keep_alive(
         KeepAlive::new()
             .interval(std::time::Duration::from_secs(30))
