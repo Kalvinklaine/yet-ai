@@ -170,6 +170,22 @@ async fn configure_openai_provider_with_id(
     assert!(!body.to_string().contains(api_key));
 }
 
+async fn configure_provider(app: axum::Router, provider: Value, forbidden_secret: Option<&str>) {
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    if let Some(secret) = forbidden_secret {
+        assert!(!body.to_string().contains(secret));
+    }
+}
+
 async fn configure_openai_provider_without_models_with_id(
     app: axum::Router,
     id: &str,
@@ -4685,6 +4701,209 @@ async fn chat_selection_matches_first_model_summary_entry() {
         usable_auth_receiver,
         "Bearer sk-summary-usable-secret-wxyz",
         "summary parity provider selection",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn chat_selection_skips_unready_non_chat_and_non_streaming_models() {
+    let missing_key = "sk-unready-missing-secret-abcd";
+    let non_chat_key = "sk-unready-non-chat-secret-abcd";
+    let usable_key = "sk-unready-usable-secret-wxyz";
+    let (missing_base_url, missing_auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"missing\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let (non_chat_base_url, non_chat_auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"non-chat\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let (usable_base_url, usable_auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"ready-chat-streaming\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let app = test_app();
+    configure_provider(
+        app.clone(),
+        json!({
+            "id": "aaa-missing-credentials",
+            "kind": "openai-compatible",
+            "displayName": "Missing Credentials",
+            "enabled": true,
+            "baseUrl": missing_base_url,
+            "auth": { "type": "api_key" },
+            "models": [{ "id": "gpt-missing", "displayName": "GPT Missing" }],
+            "capabilities": { "chat": true, "completion": false, "embeddings": false }
+        }),
+        Some(missing_key),
+    )
+    .await;
+    configure_provider(
+        app.clone(),
+        json!({
+            "id": "bbb-non-chat",
+            "kind": "openai-compatible",
+            "displayName": "Non Chat",
+            "enabled": true,
+            "baseUrl": non_chat_base_url,
+            "auth": { "type": "api_key", "apiKey": non_chat_key },
+            "models": [{ "id": "gpt-non-chat", "displayName": "GPT Non Chat" }],
+            "capabilities": { "chat": false, "completion": false, "embeddings": false }
+        }),
+        Some(non_chat_key),
+    )
+    .await;
+    configure_provider(
+        app.clone(),
+        json!({
+            "id": "ccc-usable",
+            "kind": "openai-compatible",
+            "displayName": "Usable",
+            "enabled": true,
+            "baseUrl": usable_base_url,
+            "auth": { "type": "api_key", "apiKey": usable_key },
+            "models": [{ "id": "gpt-usable", "displayName": "GPT Usable" }],
+            "capabilities": { "chat": true, "completion": false, "embeddings": false }
+        }),
+        Some(usable_key),
+    )
+    .await;
+    send_user_message(app.clone(), "chat-ready-capability-selection").await;
+
+    let text = sse_text_from(
+        app,
+        "/v1/chats/subscribe?chat_id=chat-ready-capability-selection",
+    )
+    .await;
+    assert!(text.contains("ready-chat-streaming"));
+    assert!(!text.contains("missing"));
+    assert!(!text.contains("non-chat"));
+    assert!(!text.contains(missing_key));
+    assert!(!text.contains(non_chat_key));
+    assert!(!text.contains(usable_key));
+    assert_no_observed_auth(missing_auth_receiver).await;
+    assert_no_observed_auth(non_chat_auth_receiver).await;
+    assert_first_auth_and_no_immediate_extra_auth(
+        usable_auth_receiver,
+        "Bearer sk-unready-usable-secret-wxyz",
+        "ready capability selection",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn chat_selection_skips_disabled_provider_and_later_model_capabilities_win() {
+    let disabled_key = "sk-disabled-chat-secret-abcd";
+    let usable_key = "sk-second-model-secret-wxyz";
+    let (disabled_base_url, disabled_auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"disabled\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let (usable_base_url, mut body_receiver) = start_mock_provider_with_request_body(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"second-model-ready\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let app = test_app();
+    configure_provider(
+        app.clone(),
+        json!({
+            "id": "aaa-disabled-provider",
+            "kind": "openai-compatible",
+            "displayName": "Disabled Provider",
+            "enabled": false,
+            "baseUrl": disabled_base_url,
+            "auth": { "type": "api_key", "apiKey": disabled_key },
+            "models": [{ "id": "gpt-disabled", "displayName": "GPT Disabled" }],
+            "capabilities": { "chat": true, "completion": false, "embeddings": false }
+        }),
+        Some(disabled_key),
+    )
+    .await;
+    configure_provider(
+        app.clone(),
+        json!({
+            "id": "bbb-second-model",
+            "kind": "openai-compatible",
+            "displayName": "Second Model",
+            "enabled": true,
+            "baseUrl": usable_base_url,
+            "auth": { "type": "api_key", "apiKey": usable_key },
+            "models": [
+                { "id": "", "displayName": "Missing Model" },
+                { "id": "gpt-second", "displayName": "GPT Second" }
+            ],
+            "capabilities": { "chat": true, "completion": false, "embeddings": false }
+        }),
+        Some(usable_key),
+    )
+    .await;
+    send_user_message(app.clone(), "chat-later-ready-model").await;
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-later-ready-model").await;
+    assert!(text.contains("second-model-ready"));
+    assert!(!text.contains("disabled"));
+    assert!(!text.contains(disabled_key));
+    assert!(!text.contains(usable_key));
+    assert_no_observed_auth(disabled_auth_receiver).await;
+    let provider_body = tokio::time::timeout(std::time::Duration::from_secs(2), body_receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(provider_body["model"], "gpt-second");
+}
+
+#[tokio::test]
+async fn experimental_oauth_fallback_waits_until_no_usable_api_key_model_exists() {
+    let api_key = "sk-oauth-fallback-unusable-secret-abcd";
+    let (oauth_chat_base_url, oauth_auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"oauth-fallback\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let (api_base_url, api_auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"api-unused\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let (token_endpoint_url, _) = start_mock_codex_token_endpoint().await;
+    let app = test_app();
+    connect_experimental_openai_oauth(app.clone(), token_endpoint_url, oauth_chat_base_url).await;
+    configure_provider(
+        app.clone(),
+        json!({
+            "id": "aaa-api-unusable",
+            "kind": "openai-compatible",
+            "displayName": "API Unusable",
+            "enabled": true,
+            "baseUrl": api_base_url,
+            "auth": { "type": "api_key", "apiKey": api_key },
+            "models": [{ "id": "gpt-unusable", "displayName": "GPT Unusable" }],
+            "capabilities": { "chat": false, "completion": false, "embeddings": false }
+        }),
+        Some(api_key),
+    )
+    .await;
+    send_user_message(app.clone(), "chat-oauth-fallback-after-unusable-api").await;
+
+    let text = sse_text_from(
+        app,
+        "/v1/chats/subscribe?chat_id=chat-oauth-fallback-after-unusable-api",
+    )
+    .await;
+    assert!(text.contains("oauth-fallback"));
+    assert!(!text.contains("api-unused"));
+    assert!(!text.contains(api_key));
+    assert!(!text.contains("codex-access-token-secret"));
+    assert_no_observed_auth(api_auth_receiver).await;
+    assert_first_auth_and_no_immediate_extra_auth(
+        oauth_auth_receiver,
+        "Bearer codex-access-token-secret-abcd",
+        "oauth fallback after unusable api provider",
     )
     .await;
 }
