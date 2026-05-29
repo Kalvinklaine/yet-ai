@@ -20,6 +20,9 @@ object BridgeMessages {
             return null
         }
         val record = element.asJsonObject
+        if (!record.keySet().all { it in setOf("version", "type", "requestId", "payload") }) {
+            return null
+        }
         if (record.stringValue("version") != ProductIdentity.bridgeVersion) {
             return null
         }

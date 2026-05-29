@@ -30,6 +30,28 @@ class BridgeMessagesTest {
     }
 
     @Test
+    fun privilegedGuiTypesRejected() {
+        val disabledTypes = listOf(
+            "gui.openFile",
+            "gui.revealRange",
+            "gui.applyWorkspaceEditRequest",
+            "gui.executeIdeTool",
+            "gui.copyText",
+            "gui.showNotification",
+            "gui.getHostContext",
+        )
+
+        disabledTypes.forEach { type ->
+            assertNull(BridgeMessages.parseGuiReady("""{"version":"${ProductIdentity.bridgeVersion}","type":"$type","requestId":"safe-request","payload":{"workspaceRelativePath":"src/example.kt","secret":"sk-test"}}"""))
+        }
+    }
+
+    @Test
+    fun extraFieldsRejected() {
+        assertNull(BridgeMessages.parseGuiReady("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.ready","requestId":"abc","payload":{},"workspaceRelativePath":"src/example.kt"}"""))
+    }
+
+    @Test
     fun invalidJsonShapesRejected() {
         assertNull(BridgeMessages.parseGuiReady("not-json"))
         assertNull(BridgeMessages.parseGuiReady("[]"))
@@ -45,8 +67,9 @@ class BridgeMessagesTest {
     }
 
     @Test
-    fun payloadArrayRejected() {
+    fun invalidPayloadShapesRejected() {
         assertNull(BridgeMessages.parseGuiReady("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.ready","payload":[]}"""))
+        assertNull(BridgeMessages.parseGuiReady("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.ready","payload":"ready"}"""))
     }
 
     @Test
