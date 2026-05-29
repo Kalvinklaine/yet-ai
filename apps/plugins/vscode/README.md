@@ -29,6 +29,7 @@ The helper orchestrates the existing safe local steps:
 1. `npm run prepare:ide-engine` builds the identity-defined `yet-lsp` crate and copies the generated binary into `apps/plugins/vscode/bin/`.
 2. `cd apps/gui && npm run build` builds the packaged GUI assets.
 3. `cd apps/plugins/vscode && npm run prepare:preview` copies GUI `dist` into `media/gui/`, copies `product/identity.json` into `out/product/identity.json` for local package routes, and compiles the extension.
+4. It publishes the stable ignored root dev-preview VSIX `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix` with a matching `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix.sha256` checksum.
 
 Pass engine-preparation flags after `--` when needed:
 
@@ -37,15 +38,16 @@ npm run prepare:vscode-preview -- --release
 npm run prepare:vscode-preview -- --no-build
 ```
 
-Generated outputs under `target/`, `apps/gui/dist/`, `apps/plugins/vscode/media/gui/`, `apps/plugins/vscode/bin/`, and extension `out/` are ignored and must not be committed.
+Generated outputs under `target/`, `apps/gui/dist/`, `apps/plugins/vscode/media/gui/`, `apps/plugins/vscode/bin/`, extension `out/`, and root `dist/plugins/vscode/` are ignored and must not be committed.
 
-After preparing the preview, run the local artifact smoke without launching VS Code or using provider credentials:
+After preparing the preview, run the local smokes without launching VS Code or using provider credentials:
 
 ```sh
+npm run smoke:vscode-installable
 npm run smoke:vscode-preview
 ```
 
-The smoke checks the copied `yet-lsp` binary, packaged GUI `media/gui/index.html`, bundled `out/product/identity.json`, compiled `out/extension.js`, manifest `main`, copied GUI asset references, and obvious stale-artifact mtimes against existing GUI dist and VS Code source files. If preparation has not been run or generated artifacts are stale, it fails with the artifact and the command to run.
+`npm run smoke:vscode-installable` checks that `dist/plugins/vscode/` contains exactly one current `yet-ai-vscode-<version>-dev-preview.vsix`, validates its `.sha256` checksum, safe archive paths, package metadata, command/activation/configuration surfaces, bundled product identity, packaged GUI local JS/CSS references, and copied engine binary. `npm run smoke:vscode-preview` checks the copied `yet-lsp` binary, packaged GUI `media/gui/index.html`, bundled `out/product/identity.json`, compiled `out/extension.js`, manifest `main`, copied GUI asset references, and obvious stale-artifact mtimes against existing GUI dist and VS Code source files. If preparation has not been run or generated artifacts are stale, the smokes fail with the artifact and the command to run.
 
 Repository-level validation is available from the root:
 
@@ -56,7 +58,7 @@ npm run check
 Required verification for this package:
 
 ```sh
-export PATH="$HOME/.cargo/bin:$PATH"; npm run prepare:vscode-preview && npm run smoke:vscode-preview && npm run check
+export PATH="$HOME/.cargo/bin:$PATH"; npm run prepare:vscode-preview && npm run smoke:vscode-installable && npm run smoke:vscode-preview && npm run check
 ```
 
 ## VS Code dev-preview run guide
@@ -68,6 +70,7 @@ This is the nearest hands-on path for trying the local-first VS Code dev preview
    ```sh
    export PATH="$HOME/.cargo/bin:$PATH"
    npm run prepare:vscode-preview
+   npm run smoke:vscode-installable
    npm run smoke:vscode-preview
    ```
 
@@ -114,19 +117,20 @@ YET_AI_AUTH_TOKEN=local-dev-token YET_AI_HTTP_PORT=8001 cargo run -p yet-lsp
 
 Then set `yetai.runtimeUrl` to `http://127.0.0.1:8001` and run `Yet AI: Set Local Runtime Session Token` with `local-dev-token`. This Session token is stored in VS Code SecretStorage and is not an OpenAI API key or provider key. The deprecated `yetai.sessionToken` setting remains a dev-preview fallback only when SecretStorage has no token.
 
-## Optional local install/package route
+## Optional local installable VSIX route
 
-The primary path is Extension Development Host. If you want a local `.vsix` dev-preview package, use the VS Code packaging tool without adding it as a repository dependency:
+The primary path is Extension Development Host. If you want a local install-from-file `.vsix` dev-preview package, use the root preparation command and install the generated ignored artifact:
 
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"
 npm run prepare:vscode-preview
-cd apps/plugins/vscode
-npx --yes @vscode/vsce package --no-dependencies
-code --install-extension yet-ai-0.0.1.vsix
+npm run smoke:vscode-installable
+code --install-extension dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix
 ```
 
-This package is for local dev-preview testing only. It is not a marketplace release, does not include a production installer, and does not change the local-first BYOK boundary. `.vsix` files are generated artifacts and should not be committed.
+The root artifact is written as `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix` with `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix.sha256`. The installable smoke validates the checksum and archive contents without launching VS Code. The VSIX, checksum, packaged GUI assets, compiled output, and copied engine binary are generated ignored artifacts and must not be committed.
+
+This package is for local dev-preview testing only. It is not marketplace publication, signing, notarization, a production installer, or a production release, and it does not change the local-first BYOK boundary. It requires no provider credentials, hosted Yet AI backend, real OpenAI/ChatGPT calls, or cloud workspace.
 
 The local package route includes a generated `out/product/identity.json` copied from the repository product identity. At runtime the extension loads that bundled identity first, then falls back to the repository `product/identity.json` only in development worktrees. This keeps local VSIX metadata checks self-contained without claiming marketplace readiness.
 
@@ -178,6 +182,7 @@ This path does not use a Yet AI account, hosted workspace, managed model gateway
 
 Use this checklist after the steps above. The normal VS Code first-message preview is `npm run prepare:vscode-preview` followed by Extension Development Host → `Yet AI: Open Chat` with `yetai.launchMode = auto`; it should not require a manually started engine or copied runtime token.
 
+- `npm run smoke:vscode-installable` passes after preparation and validates `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix` plus `.sha256` without launching VS Code or using provider credentials.
 - `npm run smoke:vscode-preview` passes after preparation without launching VS Code or using provider credentials.
 - Engine binary exists at `apps/plugins/vscode/bin/yet-lsp` or at the configured absolute `yetai.engineBinaryPath`.
 - `apps/gui/dist/index.html` exists after `npm run prepare:vscode-preview`.
@@ -196,7 +201,7 @@ Use this checklist after the steps above. The normal VS Code first-message previ
 
 Use this only for an explicitly accepted manual run of the experimental Codex-like account path. Keep the normal VS Code path unchanged: `npm run prepare:vscode-preview`, Extension Development Host, `yetai.launchMode = auto`, `Yet AI: Open Chat`, no manual `yet-lsp`, and no copied `local-dev-token`.
 
-- Preflight: run `npm run prepare:vscode-preview` and `npm run smoke:vscode-preview`; optionally run `npm run smoke:local` to verify the mock-only account-shaped automation. These commands must not use real OpenAI/ChatGPT credentials.
+- Preflight: run `npm run prepare:vscode-preview`, `npm run smoke:vscode-installable`, and `npm run smoke:vscode-preview`; optionally run `npm run smoke:local` to verify the mock-only account-shaped automation. These commands must not use real OpenAI/ChatGPT credentials.
 - Consent/scopes: before approving any provider page, read the visible consent and scopes. Record only non-secret scope names or consent summaries; do not record authorization URLs containing codes, cookies, or account-private query data.
 - Connect: start the account action only from the GUI account-login card. Verify pending and connected states show sanitized labels, scopes, expiry, and redacted hints only.
 - First message: after connected status, send `Say hello in one sentence.` and record only whether snapshot/start/delta/finish streaming succeeded or a sanitized failure appeared.
@@ -219,6 +224,7 @@ Environment:
 
 Commands run:
 - npm run prepare:vscode-preview: pass | fail
+- npm run smoke:vscode-installable: pass | fail | not run
 - npm run smoke:vscode-preview: pass | fail
 - Yet AI: Open Chat: pass | fail
 - Yet AI: Show Runtime Status: not run | pass | sanitized failure
@@ -262,13 +268,13 @@ Use `Yet AI: Show Runtime Status` to write sanitized local runtime diagnostics t
 - OpenAI API fallback vs account login: the `OpenAI API` preset is the safe/default real-provider path. The experimental Codex-like OpenAI account action is separate, explicit-risk, private-endpoint-style, covered automatically only by loopback mocks, and not official public OpenAI OAuth support or production-ready. Any real account testing is manual, risky, account-specific, and outside CI. Browser session reuse, cookie import, browser profile import/reuse, direct reading of `~/.codex/auth.json`, and importing other tools' credential files are not allowed.
 - Runtime port conflict: `yetai.runtimeUrl` defaults to `http://127.0.0.1:8001`. If another process owns that port, set `yetai.runtimeUrl` to another loopback `http` URL without query or fragment, such as `http://127.0.0.1:8011`, before opening chat. In launch mode the extension passes that port through `YET_AI_HTTP_PORT`; loopback `https` runtime URLs are accepted only in `connect` mode for externally managed runtimes.
 - Missing `yet-lsp` binary: run `export PATH="$HOME/.cargo/bin:$PATH"; npm run prepare:vscode-preview` from the repository root. If discovery still fails, set `yetai.engineBinaryPath` to the absolute binary path and use `yetai.launchMode` `launch`. On non-Windows systems the configured or discovered binary must have executable permission. Diagnostics report only binary basenames, not private absolute paths.
-- Packaged GUI not copied or stale preview artifacts: run `npm run prepare:vscode-preview` from the repository root, or `npm run prepare:preview` from `apps/plugins/vscode` after building `apps/gui`. If the webview still shows the placeholder, check that `apps/plugins/vscode/media/gui/index.html` exists and reopen the command.
+- Packaged GUI not copied, stale preview artifacts, or missing root VSIX: run `npm run prepare:vscode-preview` from the repository root, then `npm run smoke:vscode-installable` and `npm run smoke:vscode-preview`. For extension-workspace-only debugging, `npm run prepare:preview` from `apps/plugins/vscode` can refresh `media/gui/` after building `apps/gui`, but it does not publish the root `dist/plugins/vscode/` VSIX. If the webview still shows the placeholder, check that `apps/plugins/vscode/media/gui/index.html` exists and reopen the command.
 - GUI dev server URL blocked or blank: `yetai.guiDevUrl` must be a loopback `http` or `https` URL without userinfo, query, or fragment, such as `https://127.0.0.1:5173`. HTTPS loopback GUI dev URLs are supported by the webview CSP; non-loopback dev URLs are rejected.
 - Provider base URL normalization: for OpenAI-compatible providers, `http://host/v1`, `http://host/v1/`, and an explicit `http://host/v1/chat/completions` are accepted. The engine appends `/chat/completions` when needed. Use absolute `http` or `https` URLs with a host and no `user:pass@host` userinfo.
 
 ## Extension surfaces
 
-- Manifest identity is checked against `product/identity.json`; local package builds also carry generated `out/product/identity.json` so VSIX-style dev previews can load identity without repository fallback.
+- Manifest identity is checked against `product/identity.json`; local package builds also carry generated `out/product/identity.json` so the root `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix` can load identity without repository fallback.
 - Command: `yetaicmd.openChat` (`Yet AI: Open Chat`).
 - Command: `yetaicmd.showRuntimeStatus` (`Yet AI: Show Runtime Status`).
 - Command: `yetaicmd.setLocalRuntimeSessionToken` (`Yet AI: Set Local Runtime Session Token`).
@@ -315,9 +321,9 @@ Current GUI-to-host receive policy is deny-by-default. The extension accepts onl
 ## Current limitations
 
 - The extension shell is a dev-preview MVP, not production-ready.
-- No marketplace packaging, signed/notarized engine bundle, or production installer is complete.
+- A local ignored root VSIX dev-preview artifact is available through `npm run prepare:vscode-preview`, but no marketplace publication, signed/notarized engine bundle, or production installer is complete.
 - Runtime health recovery after a crashed launched process is limited to retrying the command.
-- Packaged GUI assets are supported through the documented `npm run prepare:vscode-preview` flow, but generated assets are not committed and this is not a final release packaging flow.
+- Packaged GUI assets and the root VSIX are supported through the documented `npm run prepare:vscode-preview` flow, but generated assets are not committed and this is not a final release packaging flow.
 - No LSP client, completions, tools, privileged workspace edits, IDE tools, file mutation, shell actions, or provider actions are implemented.
 - Current chat support is limited to the local provider/chat MVP exposed by the engine and GUI.
 - Legacy `yetai.sessionToken` remains only as a deprecated dev-preview fallback for existing local setups.
