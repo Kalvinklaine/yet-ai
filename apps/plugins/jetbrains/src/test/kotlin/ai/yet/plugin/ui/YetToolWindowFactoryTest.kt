@@ -65,6 +65,32 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
+    fun wrapperAcceptsOnlyStrictGuiReady() {
+        val html = renderHtml(
+            RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
+            "console.log('bridge')",
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+        )
+
+        assertContains(html, "const isValidRequestId = (requestId) => typeof requestId === \"string\" && requestId.length > 0 && requestId.length <= 128")
+        assertContains(html, "if (!message || typeof message !== \"object\" || Array.isArray(message)) return false")
+        assertContains(html, "if (!keys.every((key) => key === \"version\" || key === \"type\" || key === \"requestId\" || key === \"payload\")) return false")
+        assertContains(html, "if (message.version !== bridgeVersion || message.type !== \"gui.ready\") return false")
+        assertContains(html, "Object.prototype.hasOwnProperty.call(message, \"requestId\") && !isValidRequestId(message.requestId)")
+        assertContains(html, "Object.prototype.hasOwnProperty.call(message, \"payload\") && (typeof message.payload !== \"object\" || message.payload === null || Array.isArray(message.payload))")
+        assertFalse(html.contains("message.type === \"gui.openFile\""))
+        assertFalse(html.contains("message.type === \"gui.revealRange\""))
+        assertFalse(html.contains("message.type === \"gui.applyWorkspaceEditRequest\""))
+        assertFalse(html.contains("message.type === \"gui.executeIdeTool\""))
+        assertFalse(html.contains("message.type === \"gui.copyText\""))
+        assertFalse(html.contains("message.type === \"gui.showNotification\""))
+        assertFalse(html.contains("message.type === \"gui.getHostContext\""))
+        assertFalse(html.contains("workspaceRelativePath"))
+        assertFalse(html.contains("clipboard"))
+        assertFalse(html.contains("executeCommand"))
+    }
+
+    @Test
     fun deliveryGateSkipsJavaScriptAfterDispose() {
         val executed = mutableListOf<String>()
         val gate = TestDeliveryGate { executed.add(it) }

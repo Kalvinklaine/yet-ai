@@ -296,7 +296,16 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           postToFrame(message);
         };
         const isHostMessage = (message) => message && message.version === bridgeVersion && (message.type === "host.ready" || message.type === "host.openedFromCommand" || message.type === "host.contextSnapshot") && (message.payload === undefined || (typeof message.payload === "object" && message.payload !== null && !Array.isArray(message.payload)));
-        const isGuiMessage = (message) => message && message.version === bridgeVersion && message.type === "gui.ready";
+        const isValidRequestId = (requestId) => typeof requestId === "string" && requestId.length > 0 && requestId.length <= 128 && !/[\u0000-\u001f\u007f]/u.test(requestId);
+        const isGuiMessage = (message) => {
+          if (!message || typeof message !== "object" || Array.isArray(message)) return false;
+          const keys = Object.keys(message);
+          if (!keys.every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload")) return false;
+          if (message.version !== bridgeVersion || message.type !== "gui.ready") return false;
+          if (Object.prototype.hasOwnProperty.call(message, "requestId") && !isValidRequestId(message.requestId)) return false;
+          if (Object.prototype.hasOwnProperty.call(message, "payload") && (typeof message.payload !== "object" || message.payload === null || Array.isArray(message.payload))) return false;
+          return true;
+        };
         window.__yetAiSendHostMessageToFrame = sendToFrame;
         window.addEventListener("message", (event) => {
           if (event.source === frame?.contentWindow) {
