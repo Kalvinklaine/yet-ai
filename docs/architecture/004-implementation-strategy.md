@@ -161,13 +161,15 @@ Implementation should proceed in narrow, testable increments:
 
 1. Define scheduler state and event contracts for pools, cards, agents, merge attempts, verification attempts, blockers, and audit entries.
 2. Add positive and invalid fixtures for state transitions, including completed agents, serial merge queues, verification failures, stuck-agent recovery, blocked cards, pool closure, and autonomous next-pool planning.
-3. Implement a pure deterministic reducer or simulator that takes board snapshots and events and returns the next scheduler action without real agent execution, git operations, shell commands, network calls, or workspace mutation.
-4. Add a local smoke that proves the no-idle invariant: actionable completed, mergeable, verifiable, ready, failed, stuck, closeable, and next-pool states produce progress actions or explicit audited blockers.
-5. Only after contracts and simulator behavior are stable, connect the scheduler to real task execution and merge/verification orchestration behind policy gates.
+3. Implement a pure deterministic reducer or simulator that takes board snapshots and events and returns the next scheduler action without real agent execution, git operations, shell commands, network calls, or workspace mutation. The current repository has this as `npm run check:planner-scheduler`.
+4. Add a local smoke that proves the no-idle invariant: actionable completed, mergeable, verifiable, ready, failed, stuck, closeable, and next-pool states produce progress actions or explicit audited blockers. The current repository has this as `npm run smoke:planner-no-idle`.
+5. Only after contracts and simulator behavior are stable, connect the scheduler to real task execution and merge/verification orchestration behind policy gates. This production wiring is not implemented yet.
 
 The scheduler must treat idle as an explicit audited state, not as absence of activity. If it decides not to act, the state must say why, what condition would unblock progress, and whether a later watchdog check is scheduled. Silent waiting is not an acceptable terminal or long-lived state when autonomous execution is permitted.
 
 Future production wiring must preserve existing safety boundaries. The scheduler may coordinate approved cards and verification commands, but privileged file edits, apply-patch operations, shell/tool execution, autonomous workspace mutation, and broader agent authority remain unavailable until strict contracts, policy checks, request correlation, origin/source checks, and user confirmation flows are designed and verified. Local-first BYOK remains mandatory: scheduler state and progress must work through local runtime/project state and must not require a hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, or cloud workspace.
+
+The current no-idle commands are verification aids only. They are deterministic and local-only; they do not spawn real agents, modify files, run real verification commands, perform git operations, call providers, or mutate project state.
 
 ## Criteria for acceptable external module copying
 

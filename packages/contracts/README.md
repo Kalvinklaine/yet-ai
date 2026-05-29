@@ -56,6 +56,15 @@ Planner scheduler contracts are future/simulator-facing product contracts only. 
 
 Current planner schemas cover sanitized scheduler tick audits, delegated agent run status snapshots, and card/pool status summaries. They require explicit `autonomousMode`, a bounded `nextAction`, audited `idleReason` whenever `nextAction = "idle_blocked"`, explicit agent statuses such as `running`, `done`, `failed`, `stuck`, and `unknown`, and card statuses such as `done_unmerged`, `merge_pending`, `verification_pending`, `verified`, `blocked`, and `replan_required`. A card can be `verified` only when merge and verification states show `merged` and `passed`.
 
+The repository also includes local-only planner verification commands:
+
+```sh
+npm run check:planner-scheduler
+npm run smoke:planner-no-idle
+```
+
+These commands exercise the pure scheduler reducer and deterministic no-idle smoke against the planner contract vocabulary. They prove that actionable merge, verification, ready-card, stuck-recovery, pool-close, and approved next-pool states produce progress actions or explicit audited idle blockers. They do not implement production orchestration, spawn real agents, execute shell commands, run real merges, edit files, call providers, or mutate workspaces.
+
 Planner fixtures must stay small and sanitized. They may include non-secret IDs, timestamps, counts, bounded status enums, and safe summaries. They must not include raw prompts, provider responses, API keys, OAuth tokens, authorization codes, cookies, private paths, raw local logs, workspace file contents, hidden credential bags, privileged tool commands, shell commands, or apply-patch/edit payloads.
 
 ## Versioning
