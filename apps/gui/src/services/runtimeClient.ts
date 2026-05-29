@@ -102,6 +102,31 @@ export type ChatCommandResponse = {
   type: string;
 };
 
+export type ChatHistoryMessage = {
+  id: string;
+  chatId: string;
+  role: "user" | "assistant" | "error";
+  content: string;
+  createdAt: string;
+  status?: "pending" | "streaming" | "complete" | "error";
+};
+
+export type ChatThread = {
+  chatId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: ChatHistoryMessage[];
+};
+
+export type ChatSummary = Omit<ChatThread, "messages"> & {
+  messageCount: number;
+};
+
+export type ChatListResponse = {
+  chats: ChatSummary[];
+};
+
 export const productIdentity = {
   productId: "yet-ai",
   displayName: "Yet AI",
@@ -195,6 +220,27 @@ export function getCaps(settings: RuntimeSettings): Promise<RuntimeResult<CapsRe
 
 export function getModels(settings: RuntimeSettings): Promise<RuntimeResult<ModelsResponse>> {
   return runtimeFetch<ModelsResponse>(settings, "/v1/models");
+}
+
+export function listChats(settings: RuntimeSettings): Promise<RuntimeResult<ChatListResponse>> {
+  return runtimeFetch<ChatListResponse>(settings, "/v1/chats");
+}
+
+export function createChat(settings: RuntimeSettings): Promise<RuntimeResult<ChatThread>> {
+  return runtimeFetch<ChatThread>(settings, "/v1/chats", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export function getChat(settings: RuntimeSettings, chatId: string): Promise<RuntimeResult<ChatThread>> {
+  return runtimeFetch<ChatThread>(settings, `/v1/chats/${encodeURIComponent(chatId)}`);
+}
+
+export function deleteChat(settings: RuntimeSettings, chatId: string): Promise<RuntimeResult<{ deleted: boolean; chatId: string }>> {
+  return runtimeFetch<{ deleted: boolean; chatId: string }>(settings, `/v1/chats/${encodeURIComponent(chatId)}`, {
+    method: "DELETE",
+  });
 }
 
 export function sendUserMessage(

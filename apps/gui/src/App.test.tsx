@@ -1822,6 +1822,162 @@ describe("active editor attached context", () => {
 });
 
 describe("chat panel", () => {
+  it("loads conversation list after runtime refresh", async () => {
+    mockRuntimeResponses({
+      chats: [chatSummary("chat-alpha", "Alpha thread", 2), chatSummary("chat-beta", "Beta thread", 2)],
+      chatThreads: {
+        "chat-alpha": chatThread("chat-alpha", "Alpha thread", [chatMessage("chat-alpha", "msg-1", "user", "Persisted alpha")]),
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Conversations");
+    expect(container?.textContent).toContain("Alpha thread");
+    expect(container?.textContent).toContain("Beta thread");
+    expect(container?.textContent).toContain("2 messages");
+  });
+
+  it("creates a new chat and selects it", async () => {
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-old", "Old thread", 1)],
+      createChatThread: chatThread("chat-created", "Created thread", []),
+    });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("New chat").click();
+      await Promise.resolve();
+    });
+
+    expect(findInputValue("chat-created")).toBeDefined();
+    expect(container?.textContent).toContain("chat-created");
+    expect(container?.textContent).toContain("0 persisted messages");
+  });
+
+  it("switches chats and renders persisted messages", async () => {
+    mockRuntimeResponses({
+      chats: [chatSummary("chat-alpha", "Alpha thread", 1), chatSummary("chat-beta", "Beta thread", 2)],
+      chatThreads: {
+        "chat-alpha": chatThread("chat-alpha", "Alpha thread", [chatMessage("chat-alpha", "msg-a", "user", "Alpha persisted")]),
+        "chat-beta": chatThread("chat-beta", "Beta thread", [chatMessage("chat-beta", "msg-b1", "user", "Beta prompt"), chatMessage("chat-beta", "msg-b2", "assistant", "Beta answer")]),
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+    await flushAsync();
+    await act(async () => {
+      findButton("Beta thread2 messages · 2026-05-29T07:16:30Z").click();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("Beta prompt");
+    expect(container?.textContent).toContain("Beta answer");
+    expect(container?.textContent).not.toContain("Alpha persisted");
+  });
+
+  it("deletes a chat and safely selects a fallback", async () => {
+    mockRuntimeResponses({
+      chats: [chatSummary("chat-alpha", "Alpha thread", 1), chatSummary("chat-beta", "Beta thread", 1)],
+      chatThreads: {
+        "chat-alpha": chatThread("chat-alpha", "Alpha thread", [chatMessage("chat-alpha", "msg-a", "user", "Alpha persisted")]),
+        "chat-beta": chatThread("chat-beta", "Beta thread", [chatMessage("chat-beta", "msg-b", "user", "Beta persisted")]),
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+    await flushAsync();
+    await act(async () => {
+      Array.from(container?.querySelectorAll<HTMLButtonElement>("button") ?? []).find((button) => button.textContent === "Delete")?.click();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).not.toContain("Alpha thread");
+    expect(container?.textContent).toContain("Beta thread");
+    expect(findInputValue("chat-beta")).toBeDefined();
+  });
+
+  it("hydrates current chat from SSE snapshot without duplicate optimistic messages", async () => {
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      sseEvents: [
+        { seq: 0, type: "snapshot", chatId: "chat-001", payload: { messages: [chatMessage("chat-001", "msg-user", "user", "Snapshot prompt"), chatMessage("chat-001", "msg-assistant", "assistant", "Snapshot answer")] } },
+      ],
+    });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setTextareaValue(chatInput(), "Snapshot prompt");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container?.querySelectorAll(".chat-bubble")[0]?.textContent).toContain("Snapshot prompt");
+    expect((container?.querySelectorAll(".chat-bubble")[0]?.textContent?.match(/Snapshot prompt/g) ?? [])).toHaveLength(1);
+    expect(container?.textContent).toContain("Snapshot answer");
+  });
+
+  it("does not persist chat history content or secret-like messages to browser storage", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const secret = "sk-chat-history-secret";
+    mockRuntimeResponses({
+      chats: [chatSummary("chat-secret", "Secret thread", 1)],
+      chatThreads: {
+        "chat-secret": chatThread("chat-secret", "Secret thread", [chatMessage("chat-secret", "msg-secret", "user", `secret ${secret}`)]),
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.textContent).toContain(secret);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(secret);
+  });
+
+  it("ignores stale chat thread responses after chat selection changes", async () => {
+    const alphaThread = deferred<Response>();
+    mockRuntimeResponses({ chats: [chatSummary("chat-alpha", "Alpha thread", 1), chatSummary("chat-beta", "Beta thread", 1)] });
+    renderApp();
+
+    await flushAsync();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/chats/chat-alpha")) {
+        return alphaThread.promise;
+      }
+      if (url.endsWith("/v1/chats/chat-beta")) {
+        return Promise.resolve(jsonResponse(chatThread("chat-beta", "Beta thread", [chatMessage("chat-beta", "msg-b", "user", "Beta current")] )));
+      }
+      return mockRuntimeResponse(input, init, { chats: [chatSummary("chat-alpha", "Alpha thread", 1), chatSummary("chat-beta", "Beta thread", 1)] });
+    });
+
+    await act(async () => {
+      setInputValue(chatIdInput(), "chat-alpha");
+      await Promise.resolve();
+    });
+    await act(async () => {
+      setInputValue(chatIdInput(), "chat-beta");
+      await Promise.resolve();
+    });
+    alphaThread.resolve(jsonResponse(chatThread("chat-alpha", "Alpha thread", [chatMessage("chat-alpha", "msg-a", "user", "Alpha stale secret")] )));
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Beta current");
+    expect(container?.textContent).not.toContain("Alpha stale secret");
+  });
+
   it("shows guided OpenAI API fallback CTA when runtime is connected with no provider", async () => {
     mockRuntimeResponses();
     renderApp();
@@ -3011,6 +3167,9 @@ type MockRuntimeOptions = {
   capsResponse?: unknown;
   providerTestResponse?: unknown;
   providerTestStatus?: number;
+  chats?: unknown[];
+  chatThreads?: Record<string, unknown>;
+  createChatThread?: unknown;
 };
 
 function providerAuthResponse(status: ProviderAuthStatus): ProviderAuthResponse {
@@ -3083,6 +3242,37 @@ function readyRuntimeOptions(): Pick<MockRuntimeOptions, "providers" | "models">
   return {
     providers: [enabledProvider()],
     models: [readyModel({ providerId: "openai-api" })],
+  };
+}
+
+function chatSummary(chatId: string, title: string, messageCount: number) {
+  return {
+    chatId,
+    title,
+    createdAt: "2026-05-29T07:15:00Z",
+    updatedAt: "2026-05-29T07:16:30Z",
+    messageCount,
+  };
+}
+
+function chatMessage(chatId: string, id: string, role: "user" | "assistant" | "error", content: string, status: "complete" | "error" = "complete") {
+  return {
+    id,
+    chatId,
+    role,
+    content,
+    createdAt: "2026-05-29T07:15:00Z",
+    status,
+  };
+}
+
+function chatThread(chatId: string, title: string, messages: unknown[]) {
+  return {
+    chatId,
+    title,
+    createdAt: "2026-05-29T07:15:00Z",
+    updatedAt: "2026-05-29T07:16:30Z",
+    messages,
   };
 }
 
@@ -3208,6 +3398,20 @@ function mockRuntimeResponse(input: RequestInfo | URL, init: RequestInit | undef
       modelId: "gpt-4o-mini",
       cloudRequired: false,
     }, options.providerTestStatus ?? 200));
+  }
+  if (url.endsWith("/v1/chats") && init?.method === "POST") {
+    return Promise.resolve(jsonResponse(options.createChatThread ?? chatThread("chat-new", "New local chat", [])));
+  }
+  if (url.endsWith("/v1/chats")) {
+    return Promise.resolve(jsonResponse({ chats: options.chats ?? [] }));
+  }
+  const chatMatch = /\/v1\/chats\/([^/?]+)$/.exec(url);
+  if (chatMatch && init?.method === "DELETE") {
+    return Promise.resolve(jsonResponse({ deleted: true, chatId: decodeURIComponent(chatMatch[1]) }));
+  }
+  if (chatMatch) {
+    const requestedChatId = decodeURIComponent(chatMatch[1]);
+    return Promise.resolve(jsonResponse(options.chatThreads?.[requestedChatId] ?? chatThread(requestedChatId, requestedChatId, [])));
   }
   if (url.includes("/v1/chats/subscribe?chat_id=")) {
     return Promise.resolve(sseResponse(options.sseEvents ?? []));
@@ -3374,6 +3578,14 @@ function attachedContextToggle() {
 
 function attachedContextToggleOptional() {
   return Array.from(container?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]') ?? []).find((item) => item.parentElement?.textContent?.includes("Include attached context in next message"));
+}
+
+function chatIdInput() {
+  const input = Array.from(container?.querySelectorAll<HTMLInputElement>("input") ?? []).find((item) => item.parentElement?.textContent?.includes("Chat id"));
+  if (!input) {
+    throw new Error("Chat id input not found");
+  }
+  return input;
 }
 
 function setInputValue(input: HTMLInputElement, value: string) {

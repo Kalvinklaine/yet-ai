@@ -1,9 +1,9 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload } from "./bridge/bridgeAdapter";
-import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
+import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
-import { getCaps, getModels, getPing, isLoopbackRuntimeUrl, productIdentity, productIdentityWarning, sendAbort, type CapsResponse, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
+import { createChat, deleteChat, getCaps, getChat, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, type CapsResponse, type ChatSummary, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
 
@@ -190,6 +190,10 @@ export function App() {
   const [providerForm, setProviderForm] = useState<ProviderForm>(emptyProviderForm);
   const [selectedProviderId, setSelectedProviderId] = useState<string | undefined>();
   const [chatId, setChatId] = useState("chat-001");
+  const [chatSummaries, setChatSummaries] = useState<ChatSummary[]>([]);
+  const [chatHistoryError, setChatHistoryError] = useState<RuntimeError | null>(null);
+  const [chatHistoryRevision, setChatHistoryRevision] = useState<number | null>(null);
+  const [chatHistoryLoading, setChatHistoryLoading] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [chatView, setChatView] = useState(() => createInitialChatViewState("chat-001"));
   const [timeline, setTimeline] = useState<string[]>([]);
@@ -208,6 +212,7 @@ export function App() {
   const chatIdRef = useRef("chat-001");
   const providerTestAttemptRef = useRef(0);
   const providerAuthMutationAttemptRef = useRef(0);
+  const chatHistoryAttemptRef = useRef(0);
   const [providerAuthMutation, setProviderAuthMutation] = useState<"start" | "exchange" | "disconnect" | null>(null);
   const [runtimeDataRevision, setRuntimeDataRevision] = useState<number | null>(null);
   const [providerDataRevision, setProviderDataRevision] = useState<number | null>(null);
@@ -222,6 +227,7 @@ export function App() {
   const runtimeDataCurrent = runtimeDataRevision === settingsRevision;
   const providerDataCurrent = providerDataRevision === settingsRevision;
   const providerAuthDataCurrent = providerAuthDataRevision === settingsRevision;
+  const chatHistoryCurrent = chatHistoryRevision === settingsRevision;
   const activePing = runtimeDataCurrent ? ping : null;
   const activeCaps = runtimeDataCurrent ? caps : null;
   const activeModels = runtimeDataCurrent ? models : [];
@@ -230,6 +236,8 @@ export function App() {
   const activeIdentityWarnings = runtimeDataCurrent ? identityWarnings : [];
   const activeProviders = providerDataCurrent ? providers : [];
   const activeProviderAuthStatus = providerAuthDataCurrent ? providerAuthStatus : null;
+  const activeChatSummaries = chatHistoryCurrent ? chatSummaries : [];
+  const activeChatSummary = activeChatSummaries.find((item) => item.chatId === chatId);
   const runtimeConnected = activePing?.ready === true && !activeConnectionError;
   const connectionStatus = activeConnectionError ? "error" : activePing?.ready ? "connected" : "not checked";
   const enabledProviders = useMemo(() => activeProviders.filter((provider) => provider.enabled), [activeProviders]);
@@ -303,6 +311,9 @@ export function App() {
     setRuntimeDataRevision(null);
     setProviderDataRevision(null);
     setProviderAuthDataRevision(null);
+    setChatHistoryRevision(null);
+    setChatSummaries([]);
+    setChatHistoryError(null);
     setRuntimeRefreshStatus({
       state: "checking",
       attempt: runtimeRefreshAttemptRef.current + 1,
@@ -510,6 +521,112 @@ export function App() {
     }
   }, [isCurrentRefresh]);
 
+  const refreshChats = useCallback(async (targetSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
+    const attempt = chatHistoryAttemptRef.current + 1;
+    chatHistoryAttemptRef.current = attempt;
+    setChatHistoryLoading(true);
+    setChatHistoryError(null);
+    const result = await listChats(targetSettings);
+    if (!isCurrentRefresh(revision) || chatHistoryAttemptRef.current !== attempt) {
+      return;
+    }
+    if (result.ok) {
+      const summaries = result.data.chats ?? [];
+      setChatSummaries(summaries);
+      setChatHistoryRevision(revision);
+      const currentChat = chatIdRef.current;
+      if (summaries.length > 0 && !summaries.some((summary) => summary.chatId === currentChat)) {
+        setChatId(summaries[0].chatId);
+      }
+    } else {
+      setChatSummaries([]);
+      setChatHistoryError(result.error);
+      setChatHistoryRevision(revision);
+    }
+    setChatHistoryLoading(false);
+  }, [isCurrentRefresh]);
+
+  const loadChatThread = useCallback(async (targetChatId: string, targetSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
+    const attempt = chatHistoryAttemptRef.current + 1;
+    chatHistoryAttemptRef.current = attempt;
+    setChatHistoryLoading(true);
+    setChatHistoryError(null);
+    const result = await getChat(targetSettings, targetChatId);
+    if (!isCurrentRefresh(revision) || chatHistoryAttemptRef.current !== attempt || chatIdRef.current !== targetChatId) {
+      return;
+    }
+    if (result.ok) {
+      setChatView((current) => hydrateChatViewFromThread(current, result.data));
+      setChatSummaries((current) => upsertChatSummary(current, result.data));
+      setChatHistoryRevision(revision);
+    } else {
+      setChatHistoryError(result.error);
+      setChatHistoryRevision(revision);
+    }
+    setChatHistoryLoading(false);
+  }, [isCurrentRefresh]);
+
+  const createNewChat = useCallback(async () => {
+    const targetSettings = settingsRef.current;
+    const targetRevision = settingsRevisionRef.current;
+    const attempt = chatHistoryAttemptRef.current + 1;
+    chatHistoryAttemptRef.current = attempt;
+    setChatHistoryLoading(true);
+    setChatHistoryError(null);
+    const result = await createChat(targetSettings);
+    if (!isCurrentRefresh(targetRevision) || chatHistoryAttemptRef.current !== attempt) {
+      return;
+    }
+    if (result.ok) {
+      setChatSummaries((current) => upsertChatSummary(current, result.data));
+      setChatHistoryRevision(targetRevision);
+      setChatId(result.data.chatId);
+      setChatView(hydrateChatViewFromThread(resetChatViewState(result.data.chatId), result.data));
+      setTimeline([]);
+      setAttachedContext(null);
+      setIncludeAttachedContext(false);
+    } else {
+      setChatHistoryError(result.error);
+      setChatHistoryRevision(targetRevision);
+    }
+    setChatHistoryLoading(false);
+  }, [isCurrentRefresh]);
+
+  const selectChat = useCallback((nextChatId: string) => {
+    if (nextChatId === chatIdRef.current) {
+      return;
+    }
+    setChatId(nextChatId);
+    void loadChatThread(nextChatId);
+  }, [loadChatThread]);
+
+  const deleteCurrentChat = useCallback(async (targetChatId: string) => {
+    const targetSettings = settingsRef.current;
+    const targetRevision = settingsRevisionRef.current;
+    const attempt = chatHistoryAttemptRef.current + 1;
+    chatHistoryAttemptRef.current = attempt;
+    setChatHistoryLoading(true);
+    setChatHistoryError(null);
+    const result = await deleteChat(targetSettings, targetChatId);
+    if (!isCurrentRefresh(targetRevision) || chatHistoryAttemptRef.current !== attempt) {
+      return;
+    }
+    if (result.ok) {
+      const remaining = chatSummaries.filter((summary) => summary.chatId !== targetChatId);
+      setChatSummaries(remaining);
+      setChatHistoryRevision(targetRevision);
+      if (chatIdRef.current === targetChatId) {
+        const nextChatId = remaining[0]?.chatId ?? "chat-001";
+        setChatId(nextChatId);
+        setChatView(resetChatViewState(nextChatId));
+      }
+    } else {
+      setChatHistoryError(result.error);
+      setChatHistoryRevision(targetRevision);
+    }
+    setChatHistoryLoading(false);
+  }, [chatSummaries, isCurrentRefresh]);
+
   const connect = useCallback(async () => {
     if (runtimeRefreshInFlightRef.current) {
       runtimeRefreshQueuedRef.current = true;
@@ -525,13 +642,14 @@ export function App() {
         await refreshRuntime(targetSettings, targetRevision, true);
         await refreshProviders(targetSettings, targetRevision);
         await refreshProviderAuthStatus(targetSettings, targetRevision);
+        await refreshChats(targetSettings, targetRevision);
       } while (runtimeRefreshQueuedRef.current);
     } finally {
       runtimeRefreshInFlightRef.current = false;
       runtimeRefreshQueuedRef.current = false;
       setRuntimeRefreshInFlight(false);
     }
-  }, [refreshProviderAuthStatus, refreshProviders, refreshRuntime]);
+  }, [refreshChats, refreshProviderAuthStatus, refreshProviders, refreshRuntime]);
 
   useEffect(() => {
     void connect();
@@ -795,7 +913,10 @@ export function App() {
     setTimeline([]);
     setAttachedContext(null);
     setIncludeAttachedContext(false);
-  }, [abortActiveStream, chatId]);
+    if (activeChatSummary) {
+      void loadChatThread(chatId);
+    }
+  }, [abortActiveStream, activeChatSummary?.chatId, chatId, loadChatThread]);
 
   useEffect(() => () => {
     abortActiveStream("SSE stopped and abort requested on cleanup", { finalizeStreaming: false, addTimelineEntry: false, reportAbortErrors: false });
@@ -1089,12 +1210,38 @@ export function App() {
           </div>
         </div>
         {chatError && <ErrorBox error={chatError} />}
-        <div className="form-grid">
-          <label>
-            Chat id
-            <input value={chatId} onChange={(event) => setChatId(event.target.value)} />
-          </label>
-        </div>
+        {chatHistoryError && <ErrorBox error={chatHistoryError} />}
+        <div className="conversations-layout">
+          <aside className="conversations-panel stack" aria-label="Local conversations">
+            <div className="row">
+              <h3>Conversations</h3>
+              <button type="button" onClick={() => void createNewChat()} disabled={chatHistoryLoading}>{chatHistoryLoading ? "Loading…" : "New chat"}</button>
+            </div>
+            <span className="subtle">Engine-owned local history. Messages are not written to browser storage.</span>
+            {activeChatSummaries.length === 0 ? <p className="subtle">No saved conversations yet.</p> : activeChatSummaries.map((summary) => (
+              <div className={`conversation-item ${summary.chatId === chatId ? "active" : ""}`} key={summary.chatId}>
+                <button type="button" className="conversation-select" onClick={() => selectChat(summary.chatId)}>
+                  <strong>{sanitizeDisplayText(summary.title)}</strong>
+                  <span>{summary.messageCount} message{summary.messageCount === 1 ? "" : "s"} · {sanitizeDisplayText(summary.updatedAt)}</span>
+                </button>
+                <button type="button" className="danger-button" onClick={() => void deleteCurrentChat(summary.chatId)}>Delete</button>
+              </div>
+            ))}
+          </aside>
+          <div className="stack">
+            <div className="chat-title-card row">
+              <div className="stack">
+                <strong>{sanitizeDisplayText(activeChatSummary?.title ?? chatId)}</strong>
+                <span className="subtle">{chatView.messages.length} visible message{chatView.messages.length === 1 ? "" : "s"} · {chatView.subscriptionReady ? "snapshot loaded" : activeChatSummary ? `${activeChatSummary.messageCount} persisted message${activeChatSummary.messageCount === 1 ? "" : "s"}` : "empty local chat"}</span>
+              </div>
+              <span className="badge">{sanitizeDisplayText(chatId)}</span>
+            </div>
+            <div className="form-grid">
+              <label>
+                Chat id
+                <input value={chatId} onChange={(event) => setChatId(event.target.value)} />
+              </label>
+            </div>
         <div className="chat-panel" aria-label="Chat messages">
           {chatView.messages.length === 0 ? <p className="subtle">Ask a question to start this local chat.</p> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} />)}
           {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
@@ -1113,6 +1260,8 @@ export function App() {
             {timeline.length === 0 ? <span>No SSE events yet.</span> : timeline.map((entry, index) => <div className="timeline-entry" key={`${index}:${entry}`}>{entry}</div>)}
           </div>
         </details>
+          </div>
+        </div>
       </section>
 
       <section className="card stack">
@@ -1124,6 +1273,18 @@ export function App() {
       </section>
     </main>
   );
+}
+
+function upsertChatSummary(current: ChatSummary[], thread: { chatId: string; title: string; createdAt: string; updatedAt: string; messages: unknown[] }): ChatSummary[] {
+  const summary: ChatSummary = {
+    chatId: thread.chatId,
+    title: thread.title,
+    createdAt: thread.createdAt,
+    updatedAt: thread.updatedAt,
+    messageCount: thread.messages.length,
+  };
+  const withoutExisting = current.filter((item) => item.chatId !== summary.chatId);
+  return [summary, ...withoutExisting].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
 type ProviderModelReadiness = {

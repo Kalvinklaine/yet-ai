@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { authHeaders, productIdentityWarning, runtimeFetch, sendUserMessage, validateRuntimeBaseUrl } from "./runtimeClient";
+import { createChat, deleteChat, getChat, listChats, authHeaders, productIdentityWarning, runtimeFetch, sendUserMessage, validateRuntimeBaseUrl } from "./runtimeClient";
 
 const fetchMock = vi.fn();
 
@@ -254,6 +254,23 @@ describe("runtimeClient", () => {
     const parsed = await runtimeFetch({ baseUrl: "http://127.0.0.1:8001", token: "runtime-token" }, "/v1/ping");
     expect(parsed.ok).toBe(false);
     expect(parsed.ok ? undefined : parsed.error.status).toBe("parse");
+  });
+
+  it("calls engine-owned chat history endpoints", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ chats: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listChats({ baseUrl: "http://127.0.0.1:8001", token: "runtime-token" });
+    await createChat({ baseUrl: "http://127.0.0.1:8001", token: "runtime-token" });
+    await getChat({ baseUrl: "http://127.0.0.1:8001", token: "runtime-token" }, "chat-001");
+    await deleteChat({ baseUrl: "http://127.0.0.1:8001", token: "runtime-token" }, "chat-001");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("http://127.0.0.1:8001/v1/chats");
+    expect(fetchMock.mock.calls[0][1].method).toBeUndefined();
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "http://127.0.0.1:8001/v1/chats", expect.objectContaining({ method: "POST", body: JSON.stringify({}) }));
+    expect(fetchMock.mock.calls[2][0]).toBe("http://127.0.0.1:8001/v1/chats/chat-001");
+    expect(fetchMock.mock.calls[2][1].method).toBeUndefined();
+    expect(fetchMock).toHaveBeenNthCalledWith(4, "http://127.0.0.1:8001/v1/chats/chat-001", expect.objectContaining({ method: "DELETE" }));
   });
 
   it("sends user message commands without context by default", async () => {

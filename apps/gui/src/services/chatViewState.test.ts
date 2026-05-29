@@ -44,6 +44,35 @@ describe("chatViewState", () => {
     expect(next.messages).toEqual(state.messages);
   });
 
+  it("hydrates snapshot messages from persisted history", () => {
+    const next = applyChatViewEvent(createInitialChatViewState("chat-1"), event("snapshot", {
+      messages: [
+        { id: "msg-1", chatId: "chat-1", role: "user", content: "Persisted prompt", createdAt: "2026-05-29T07:15:00Z", status: "complete" },
+        { id: "msg-2", chatId: "chat-1", role: "assistant", content: "Persisted answer", createdAt: "2026-05-29T07:16:00Z", status: "complete" },
+      ],
+    }));
+
+    expect(next.subscriptionReady).toBe(true);
+    expect(next.messages).toEqual([
+      { id: "msg-1", role: "user", content: "Persisted prompt", status: "complete" },
+      { id: "msg-2", role: "assistant", content: "Persisted answer", status: "complete" },
+    ]);
+  });
+
+  it("hydrates nested thread snapshot messages", () => {
+    const next = applyChatViewEvent(createInitialChatViewState("chat-1"), event("snapshot", {
+      thread: {
+        messages: [
+          { id: "msg-1", chatId: "chat-1", role: "user", content: "Nested prompt", createdAt: "2026-05-29T07:15:00Z" },
+        ],
+      },
+    }));
+
+    expect(next.messages).toEqual([
+      { id: "msg-1", role: "user", content: "Nested prompt", status: "complete" },
+    ]);
+  });
+
   it("creates assistant streaming bubble on stream start", () => {
     const state = applyChatViewEvent(createInitialChatViewState("chat-1"), event("stream_started", { role: "assistant" }));
 
