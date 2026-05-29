@@ -4,7 +4,14 @@ import guiReadyMessage from "../../../../packages/contracts/examples/bridge/gui-
 import hostOpenedFromCommandMessage from "../../../../packages/contracts/examples/bridge/host-opened-from-command-message.json";
 import hostContextSnapshotMessage from "../../../../packages/contracts/examples/bridge/host-context-snapshot-message.json";
 import hostReadyMessage from "../../../../packages/contracts/examples/bridge/host-ready-message.json";
+import guiApplyWorkspaceEditRequestMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-apply-workspace-edit-request-message.json";
+import guiCopyTextMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-copy-text-message.json";
+import guiExecuteIdeToolMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-execute-ide-tool-message.json";
+import guiGetHostContextMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-get-host-context-message.json";
+import guiOpenFileMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-open-file-message.json";
 import guiReadyExtraPayloadMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-ready-extra-payload.json";
+import guiRevealRangeMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-reveal-range-message.json";
+import guiShowNotificationMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-show-notification-message.json";
 import hostContextSnapshotAbsolutePathMessage from "../../../../packages/contracts/examples-invalid/bridge/host-context-snapshot-absolute-path.json";
 import hostContextSnapshotPrivilegedCommandMessage from "../../../../packages/contracts/examples-invalid/bridge/host-context-snapshot-privileged-command.json";
 import hostContextSnapshotUnknownFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-context-snapshot-unknown-field.json";
@@ -163,6 +170,78 @@ describe("bridgeAdapter", () => {
       payload: { supportedBridgeVersion: bridgeVersion },
     });
     expect(messages).toHaveLength(1);
+    adapter.dispose();
+  });
+
+  it("posts only gui.ready to VS Code and drops disabled privileged GUI messages with generic logs", () => {
+    const logs: string[] = [];
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    postMessage.mockClear();
+
+    const disabledMessages = [
+      guiOpenFileMessage,
+      guiRevealRangeMessage,
+      guiApplyWorkspaceEditRequestMessage,
+      guiExecuteIdeToolMessage,
+      guiCopyTextMessage,
+      guiShowNotificationMessage,
+      guiGetHostContextMessage,
+    ];
+
+    for (const message of disabledMessages) {
+      expect(isGuiMessage(message)).toBe(false);
+      adapter.post(message as never);
+    }
+
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(logs.filter((entry) => entry === "Rejected invalid GUI bridge message")).toHaveLength(disabledMessages.length);
+    expect(logs.join("\n")).not.toContain("src/example.ts");
+    expect(logs.join("\n")).not.toContain("Example text");
+    expect(logs.join("\n")).not.toContain("example.disabledTool");
+    adapter.dispose();
+  });
+
+  it("posts accepted gui.ready through adapter.post", () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+
+    const adapter = createBridgeAdapter(() => undefined);
+    postMessage.mockClear();
+    adapter.post(guiReadyMessage as never);
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith(guiReadyMessage);
+    adapter.dispose();
+  });
+
+  it("rejects malformed outbound GUI messages before posting", () => {
+    const logs: string[] = [];
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    postMessage.mockClear();
+
+    const invalidMessages = [
+      { version: "1", type: "gui.ready", payload: { supportedBridgeVersion: bridgeVersion } },
+      { version: bridgeVersion, type: "gui.ready", payload: { supportedBridgeVersion: bridgeVersion, token: "secret-token-value" } },
+      { version: bridgeVersion, type: "gui.unknown", requestId: "unknown-secret-id", payload: { text: "secret payload" } },
+      { version: bridgeVersion, type: "gui.ready", requestId: "", payload: { supportedBridgeVersion: bridgeVersion } },
+      { version: bridgeVersion, type: "gui.ready", requestId: "a".repeat(129), payload: { supportedBridgeVersion: bridgeVersion } },
+    ];
+
+    for (const message of invalidMessages) {
+      adapter.post(message as never);
+    }
+
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(logs.filter((entry) => entry === "Rejected invalid GUI bridge message")).toHaveLength(invalidMessages.length);
+    expect(logs.join("\n")).not.toContain("secret-token-value");
+    expect(logs.join("\n")).not.toContain("unknown-secret-id");
+    expect(logs.join("\n")).not.toContain("secret payload");
     adapter.dispose();
   });
 
