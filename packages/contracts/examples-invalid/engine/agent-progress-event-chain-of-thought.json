@@ -1,0 +1,10 @@
+{
+  "protocolVersion": "2026-05-29",
+  "eventId": "evt-T269-invalid-cot",
+  "runId": "run-T269-invalid",
+  "cardId": "T269",
+  "timestamp": "2026-05-29T14:01:00Z",
+  "phase": "editing",
+  "status": "running",
+  "message": "The chain of thought says to inspect hidden reasoning."
+}

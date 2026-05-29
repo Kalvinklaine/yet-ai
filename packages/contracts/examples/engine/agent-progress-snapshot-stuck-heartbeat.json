@@ -1,0 +1,30 @@
+{
+  "protocolVersion": "2026-05-29",
+  "runId": "run-T269-002",
+  "cardId": "T269",
+  "startedAt": "2026-05-29T12:30:00Z",
+  "updatedAt": "2026-05-29T12:52:00Z",
+  "phase": "stuck",
+  "status": "stuck",
+  "message": "No heartbeat received within the local watchdog window.",
+  "elapsedMs": 1320000,
+  "ageMs": 720000,
+  "outputTail": "Last visible step was waiting for command completion.",
+  "stuckReason": "heartbeat_timeout",
+  "recentEvents": [
+    {
+      "eventId": "evt-T269-command-002",
+      "timestamp": "2026-05-29T12:39:45Z",
+      "phase": "running_command",
+      "status": "long_running",
+      "message": "Command continued without new output."
+    },
+    {
+      "eventId": "evt-T269-stuck-001",
+      "timestamp": "2026-05-29T12:52:00Z",
+      "phase": "stuck",
+      "status": "stuck",
+      "message": "No heartbeat received within the local watchdog window."
+    }
+  ]
+}

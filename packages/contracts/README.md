@@ -22,6 +22,7 @@ Current schemas:
 - `schemas/engine/provider-*.schema.json` for local provider summaries, writes, model lists, and sanitized provider test responses.
 - `schemas/engine/provider-auth-*-response.schema.json` for future sanitized provider login start, status, exchange, and disconnect responses.
 - `schemas/engine/planner-*.schema.json` for future/simulator-facing no-idle planner scheduler audits, agent run snapshots, and card/pool summaries.
+- `schemas/engine/agent-progress-*.schema.json` for local sanitized planner/agent progress events and snapshots.
 - `schemas/bridge/host-message.schema.json` for IDE host to GUI messages.
 - `schemas/bridge/gui-message.schema.json` for GUI to IDE host messages.
 
@@ -73,6 +74,16 @@ npm run planner:scheduler:tick -- --state path/to/scheduler-state.json
 These commands exercise the pure scheduler reducer, durable local simulator state, one-tick CLI runner, deterministic no-idle smoke, and restart/resume smoke against the planner contract vocabulary. They prove that actionable merge, verification, ready-card, stuck-recovery, pool-close, approved next-pool, and reloaded durable-state states produce progress actions or explicit audited idle blockers. The simulator state records sanitized audit timeline entries, one lease owner per tick, released leases after process-like ticks, and stale-heartbeat recovery after reload. They do not implement production orchestration, spawn real agents, execute shell commands, run real merges, edit files, call providers, or mutate workspaces.
 
 Planner fixtures must stay small and sanitized. They may include non-secret IDs, timestamps, counts, bounded status enums, and safe summaries. They must not include raw prompts, provider responses, API keys, OAuth tokens, authorization codes, cookies, private paths, raw local logs, workspace file contents, hidden credential bags, privileged tool commands, shell commands, or apply-patch/edit payloads.
+
+## Agent progress observability contracts
+
+Agent progress contracts are local contract foundations for transparent planner/agent status reporting. They do not implement a production agent runner, real task-board integration, tool execution, shell execution, git operations, merges, hosted services, cloud sync, or workspace mutation. The current engine-folder placement is temporary so existing contract validation can map examples consistently.
+
+`AgentProgressEvent` records one bounded operational event with `protocolVersion`, path-safe `eventId` and `runId`, bounded `cardId`, UTC `timestamp`, strict `phase` and `status` enums, and a short sanitized `message`. Optional fields are limited to a safe tool summary, heartbeat timestamps and attempt count, and a bounded sanitized `outputTail`.
+
+`AgentProgressSnapshot` records the current run/card ids, start/update/completion timestamps, current phase/status/message, bounded elapsed and age metrics, optional current tool summary, optional sanitized output tail, optional `stuckReason` (`heartbeat_timeout`, `tool_output_timeout`, `explicit_failure`, or `none`), and a bounded list of recent event summaries.
+
+These payloads are intended for user-visible progress such as queued, reading context, editing, running commands, waiting for tools, verifying, finishing, done, failed, or stuck. They may include only safe operational summaries, non-secret ids, UTC timestamps, bounded elapsed times, status enums, generic command labels, and short sanitized output tails. They must not include raw prompts, chain-of-thought, hidden reasoning, provider raw responses, API keys, OAuth tokens, authorization headers, cookies, PKCE verifiers, passwords, private local paths, credential paths, raw file contents, large logs, shell scripts, apply-patch payloads, workspace file bodies, or secret-like keys/values. Invalid fixtures cover forbidden extra fields, secret-like terms, private absolute paths, oversized output tails, raw provider responses, and file-content-like payloads.
 
 ## Versioning
 

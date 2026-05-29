@@ -1,0 +1,15 @@
+{
+  "protocolVersion": "2026-05-29",
+  "runId": "run-T269-invalid",
+  "cardId": "T269",
+  "startedAt": "2026-05-29T14:00:00Z",
+  "updatedAt": "2026-05-29T14:06:00Z",
+  "phase": "reading_context",
+  "status": "running",
+  "message": "File content payload was attached to progress.",
+  "elapsedMs": 360000,
+  "ageMs": 1000,
+  "stuckReason": "none",
+  "recentEvents": [],
+  "fileContents": "function example() { return 'workspace source belongs outside progress snapshots'; }"
+}

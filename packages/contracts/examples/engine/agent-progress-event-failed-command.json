@@ -1,0 +1,17 @@
+{
+  "protocolVersion": "2026-05-29",
+  "eventId": "evt-T269-failed-001",
+  "runId": "run-T269-003",
+  "cardId": "T269",
+  "timestamp": "2026-05-29T13:05:00Z",
+  "phase": "failed",
+  "status": "failed",
+  "message": "Verification command failed with sanitized contract errors.",
+  "tool": {
+    "kind": "validation",
+    "label": "npm run validate:contracts",
+    "startedAt": "2026-05-29T13:04:00Z",
+    "elapsedMs": 60000
+  },
+  "outputTail": "Validation failed for one invalid fixture that unexpectedly passed."
+}

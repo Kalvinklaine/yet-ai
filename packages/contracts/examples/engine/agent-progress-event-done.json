@@ -1,0 +1,10 @@
+{
+  "protocolVersion": "2026-05-29",
+  "eventId": "evt-T269-done-001",
+  "runId": "run-T269-004",
+  "cardId": "T269",
+  "timestamp": "2026-05-29T13:20:00Z",
+  "phase": "done",
+  "status": "done",
+  "message": "Agent completed the card and recorded verification results."
+}

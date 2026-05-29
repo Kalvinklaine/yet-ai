@@ -1,0 +1,16 @@
+{
+  "protocolVersion": "2026-05-29",
+  "eventId": "evt-T269-stuck-001",
+  "runId": "run-T269-002",
+  "cardId": "T269",
+  "timestamp": "2026-05-29T12:52:00Z",
+  "phase": "stuck",
+  "status": "stuck",
+  "message": "No heartbeat received within the local watchdog window.",
+  "heartbeat": {
+    "lastHeartbeatAt": "2026-05-29T12:40:00Z",
+    "lastToolOutputAt": "2026-05-29T12:39:45Z",
+    "attempt": 2
+  },
+  "outputTail": "Last visible step was waiting for command completion."
+}

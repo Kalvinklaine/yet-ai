@@ -1,0 +1,22 @@
+{
+  "protocolVersion": "2026-05-29",
+  "eventId": "evt-T269-command-001",
+  "runId": "run-T269-001",
+  "cardId": "T269",
+  "timestamp": "2026-05-29T12:40:00Z",
+  "phase": "running_command",
+  "status": "healthy_running",
+  "message": "Running contract validation with recent output.",
+  "tool": {
+    "kind": "validation",
+    "label": "npm run validate:contracts",
+    "startedAt": "2026-05-29T12:39:30Z",
+    "elapsedMs": 30000
+  },
+  "heartbeat": {
+    "lastHeartbeatAt": "2026-05-29T12:39:58Z",
+    "lastToolOutputAt": "2026-05-29T12:39:55Z",
+    "attempt": 1
+  },
+  "outputTail": "Contract schemas compiled. Validating mapped examples."
+}

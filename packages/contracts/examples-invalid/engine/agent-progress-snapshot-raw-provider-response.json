@@ -1,0 +1,18 @@
+{
+  "protocolVersion": "2026-05-29",
+  "runId": "run-T269-invalid",
+  "cardId": "T269",
+  "startedAt": "2026-05-29T14:00:00Z",
+  "updatedAt": "2026-05-29T14:05:00Z",
+  "phase": "failed",
+  "status": "failed",
+  "message": "Provider response was attached to the progress snapshot.",
+  "elapsedMs": 300000,
+  "ageMs": 0,
+  "stuckReason": "explicit_failure",
+  "recentEvents": [],
+  "providerResponse": {
+    "status": 500,
+    "body": "raw upstream body must not be exposed"
+  }
+}

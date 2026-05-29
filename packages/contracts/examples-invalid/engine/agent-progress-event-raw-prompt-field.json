@@ -1,0 +1,11 @@
+{
+  "protocolVersion": "2026-05-29",
+  "eventId": "evt-T269-invalid-prompt",
+  "runId": "run-T269-invalid",
+  "cardId": "T269",
+  "timestamp": "2026-05-29T14:00:00Z",
+  "phase": "reading_context",
+  "status": "running",
+  "message": "Reading bounded context.",
+  "rawPrompt": "Do not expose raw prompt text in progress events."
+}
