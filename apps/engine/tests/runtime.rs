@@ -710,6 +710,48 @@ async fn send_user_message(app: axum::Router, chat_id: &str) {
     assert_eq!(body["accepted"], true);
 }
 
+async fn send_user_message_with_content(app: axum::Router, chat_id: &str, content: &str) -> StatusCode {
+    let command = json!({
+        "requestId": format!("req-{chat_id}"),
+        "type": "user_message",
+        "payload": { "content": content }
+    });
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            &format!("/v1/chats/{chat_id}/commands"),
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    if status == StatusCode::OK {
+        assert_eq!(body["accepted"], true);
+    }
+    status
+}
+
+async fn wait_for_chat_messages(app: axum::Router, chat_id: &str, count: usize) -> Value {
+    for _ in 0..40 {
+        let (status, body) = json_response_from(
+            app.clone(),
+            authed_request(Method::GET, &format!("/v1/chats/{chat_id}"), Body::empty()),
+        )
+        .await;
+        if status == StatusCode::OK && body["messages"].as_array().unwrap().len() >= count {
+            return body;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let (status, body) = json_response_from(
+        app,
+        authed_request(Method::GET, &format!("/v1/chats/{chat_id}"), Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    body
+}
+
 fn assert_text_contains_in_order(text: &str, values: &[&str]) {
     let mut offset = 0;
     for value in values {
@@ -4581,6 +4623,161 @@ async fn unsupported_privileged_commands_remain_rejected() {
         assert!(!text.contains("sk-privileged-command-secret-abcd"));
         assert!(!text.contains("secret-file"));
     }
+}
+
+#[tokio::test]
+async fn chat_success_persists_user_and_assistant_messages_for_snapshot_and_restart() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-history-success-secret-abcd";
+    let (base_url, auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"persisted \"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"assistant\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    assert_eq!(
+        send_user_message_with_content(app.clone(), "chat-history-success", "persist me").await,
+        StatusCode::OK
+    );
+    let loaded = wait_for_chat_messages(app.clone(), "chat-history-success", 2).await;
+    assert_eq!(loaded["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(loaded["messages"][0]["role"], "user");
+    assert_eq!(loaded["messages"][0]["content"], "persist me");
+    assert_eq!(loaded["messages"][0]["status"], "complete");
+    assert_eq!(loaded["messages"][1]["role"], "assistant");
+    assert_eq!(loaded["messages"][1]["content"], "persisted assistant");
+    assert_eq!(loaded["messages"][1]["status"], "complete");
+
+    let snapshot_app = yet_lsp::app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let text = sse_text_from(snapshot_app, "/v1/chats/subscribe?chat_id=chat-history-success").await;
+    let events = sse_json_events(&text);
+    assert_eq!(events[0]["type"], "snapshot");
+    assert_eq!(events[0]["payload"]["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(events[0]["payload"]["messages"][1]["content"], "persisted assistant");
+    assert_eq!(events[0]["payload"]["thread"]["messages"][0]["content"], "persist me");
+    assert!(!text.contains(api_key));
+
+    let restarted = yet_lsp::app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths,
+    ));
+    let restart_text = sse_text_from(
+        restarted,
+        "/v1/chats/subscribe?chat_id=chat-history-success",
+    )
+    .await;
+    let restart_events = sse_json_events(&restart_text);
+    assert_eq!(restart_events[0]["payload"]["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(restart_events[0]["payload"]["messages"][1]["content"], "persisted assistant");
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer sk-history-success-secret-abcd",
+        "history success persistence",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn chat_provider_error_persists_sanitized_error_history_and_snapshot() {
+    let api_key = "sk-history-error-secret-abcd";
+    let (base_url, auth_receiver) = start_mock_provider(
+        StatusCode::UNAUTHORIZED,
+        "raw-provider-body access_token=secret-token Bearer should-not-leak",
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+    send_user_message_with_content(app.clone(), "chat-history-error", "hello error").await;
+
+    let loaded = wait_for_chat_messages(app.clone(), "chat-history-error", 2).await;
+    assert_eq!(loaded["messages"][0]["role"], "user");
+    assert_eq!(loaded["messages"][1]["role"], "error");
+    assert_eq!(loaded["messages"][1]["status"], "error");
+    assert_eq!(
+        loaded["messages"][1]["content"],
+        "Provider authentication failed. Check the configured credentials."
+    );
+    assert!(loaded.to_string().contains("Provider authentication failed"));
+    assert_sanitized_sse_error(&loaded.to_string());
+    assert!(!loaded.to_string().contains(api_key));
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer sk-history-error-secret-abcd",
+        "history error persistence",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn abort_does_not_leave_assistant_or_streaming_history_state() {
+    let api_key = "sk-history-abort-secret-abcd";
+    let (base_url, auth_receiver, first_receiver, continue_sender) = start_slow_mock_provider().await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+    send_user_message_with_content(app.clone(), "chat-history-abort", "abort history").await;
+    first_receiver.await.unwrap();
+    send_abort(app.clone(), "chat-history-abort", "req-history-abort").await;
+    let _ = continue_sender.send(());
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let loaded = wait_for_chat_messages(app.clone(), "chat-history-abort", 1).await;
+    assert_eq!(loaded["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(loaded["messages"][0]["role"], "user");
+    assert_eq!(loaded["messages"][0]["status"], "complete");
+    assert_ne!(loaded["messages"][0]["status"], "streaming");
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-history-abort").await;
+    let events = sse_json_events(&text);
+    assert_eq!(events[0]["payload"]["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(events[0]["payload"]["runtime"]["streaming"], false);
+    assert!(!text.contains(api_key));
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer sk-history-abort-secret-abcd",
+        "history abort safety",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn rejected_user_message_command_does_not_create_history() {
+    let app = test_app();
+    let command = json!({
+        "requestId": "req-history-reject",
+        "type": "user_message",
+        "payload": { "content": "" }
+    });
+    let status = empty_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-history-rejected/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/chats/chat-history-rejected", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["error"], "chat not found");
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-history-rejected").await;
+    let events = sse_json_events(&text);
+    assert_eq!(events[0]["payload"]["messages"], json!([]));
+    assert!(!events.iter().any(|event| event["type"] == "stream_started"));
 }
 
 #[tokio::test]

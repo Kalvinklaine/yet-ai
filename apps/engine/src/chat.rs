@@ -11,6 +11,7 @@ use tokio::sync::{broadcast, oneshot, Mutex};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::BroadcastStream;
 
+use crate::chat_history::{self, ChatMessageRole, ChatMessageStatus};
 use crate::provider_auth::{self, ExperimentalCodexChatAuth};
 use crate::providers::{
     self, AuthType, ModelReadinessStatus, ProviderKind, StoredProviderConfig,
@@ -19,6 +20,7 @@ use crate::providers::{
 #[derive(Clone, Debug)]
 pub struct ChatRuntime {
     inner: Arc<Mutex<HashMap<String, ChatState>>>,
+    history_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     client: reqwest::Client,
 }
 
@@ -103,6 +105,7 @@ impl Default for ChatRuntime {
     fn default() -> Self {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
+            history_locks: Arc::new(Mutex::new(HashMap::new())),
             client: reqwest::Client::new(),
         }
     }
@@ -174,15 +177,17 @@ impl ChatRuntime {
 
     pub async fn subscribe(
         &self,
+        config_dir: std::path::PathBuf,
         chat_id: String,
     ) -> impl futures_util::Stream<Item = Result<Event, Infallible>> {
         let (snapshot, replay, receiver) = {
+            let snapshot = self.snapshot_event(&config_dir, &chat_id).await;
             let mut guard = self.inner.lock().await;
             let state = guard
                 .entry(chat_id.clone())
                 .or_insert_with(|| ChatState::new(&chat_id));
             (
-                snapshot_event(&chat_id),
+                snapshot,
                 state.events.clone(),
                 state.sender.subscribe(),
             )
@@ -226,11 +231,29 @@ impl ChatRuntime {
         content: String,
         context: Option<ChatContext>,
     ) {
+        let _ = self
+            .append_history_message(
+                &config_dir,
+                &chat_id,
+                ChatMessageRole::User,
+                content.clone(),
+                Some(ChatMessageStatus::Complete),
+            )
+            .await;
         self.push_event(&chat_id, "stream_started", json!({ "role": "assistant" }))
             .await;
         let prompt = assemble_provider_prompt(&content, context.as_ref());
         match self.stream_provider(&config_dir, &chat_id, &prompt).await {
-            Ok(()) => {
+            Ok(assistant_content) => {
+                let _ = self
+                    .append_history_message(
+                        &config_dir,
+                        &chat_id,
+                        ChatMessageRole::Assistant,
+                        assistant_content,
+                        Some(ChatMessageStatus::Complete),
+                    )
+                    .await;
                 self.push_event(
                     &chat_id,
                     "stream_finished",
@@ -239,6 +262,15 @@ impl ChatRuntime {
                 .await;
             }
             Err(error) => {
+                let _ = self
+                    .append_history_message(
+                        &config_dir,
+                        &chat_id,
+                        ChatMessageRole::Error,
+                        error.client_message().to_string(),
+                        Some(ChatMessageStatus::Error),
+                    )
+                    .await;
                 self.push_event(
                     &chat_id,
                     "error",
@@ -248,6 +280,40 @@ impl ChatRuntime {
             }
         }
         self.clear_active_stream(&chat_id, stream_id).await;
+    }
+
+    async fn append_history_message(
+        &self,
+        config_dir: &std::path::Path,
+        chat_id: &str,
+        role: ChatMessageRole,
+        content: String,
+        status: Option<ChatMessageStatus>,
+    ) -> Result<(), chat_history::ChatHistoryError> {
+        let lock = self.history_lock(chat_id).await;
+        let _guard = lock.lock().await;
+        chat_history::append_message(config_dir, chat_id, role, content, status)
+            .await
+            .map(|_| ())
+    }
+
+    async fn snapshot_event(
+        &self,
+        config_dir: &std::path::Path,
+        chat_id: &str,
+    ) -> ChatEvent {
+        let lock = self.history_lock(chat_id).await;
+        let _guard = lock.lock().await;
+        let thread = chat_history::get_thread(config_dir, chat_id).await.ok();
+        snapshot_event(chat_id, thread)
+    }
+
+    async fn history_lock(&self, chat_id: &str) -> Arc<Mutex<()>> {
+        let mut guard = self.history_locks.lock().await;
+        guard
+            .entry(chat_id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 
     async fn clear_active_stream(&self, chat_id: &str, stream_id: u64) {
@@ -268,7 +334,7 @@ impl ChatRuntime {
         config_dir: &std::path::Path,
         chat_id: &str,
         content: &str,
-    ) -> Result<(), ChatError> {
+    ) -> Result<String, ChatError> {
         let selected = select_chat_provider(config_dir).await?;
         match selected {
             ChatProvider::OpenAiCompatible { provider_id, model } => {
@@ -536,7 +602,11 @@ impl ChatError {
     }
 }
 
-fn snapshot_event(chat_id: &str) -> ChatEvent {
+fn snapshot_event(chat_id: &str, thread: Option<chat_history::ChatThread>) -> ChatEvent {
+    let messages = thread
+        .as_ref()
+        .map(|thread| serde_json::to_value(&thread.messages).unwrap_or_else(|_| json!([])))
+        .unwrap_or_else(|| json!([]));
     ChatEvent {
         seq: 0,
         event_type: "snapshot".to_string(),
@@ -544,9 +614,10 @@ fn snapshot_event(chat_id: &str) -> ChatEvent {
         payload: json!({
             "thread": {
                 "id": chat_id,
-                "title": "New chat",
-                "messages": []
+                "title": thread.as_ref().map(|thread| thread.title.as_str()).unwrap_or("New chat"),
+                "messages": messages
             },
+            "messages": messages,
             "runtime": {
                 "streaming": false,
                 "waitingForResponse": false
@@ -568,7 +639,7 @@ async fn openai_compatible_stream(
     model: &str,
     chat_id: &str,
     content: &str,
-) -> Result<(), ChatError> {
+) -> Result<String, ChatError> {
     let url = chat_completions_url(&provider.base_url)?;
     let mut request = client
         .post(url)
@@ -599,7 +670,7 @@ async fn bearer_stream(
     access_token: &str,
     chat_id: &str,
     content: &str,
-) -> Result<(), ChatError> {
+) -> Result<String, ChatError> {
     let url = chat_completions_url(base_url)?;
     let request = client
         .post(url)
@@ -617,7 +688,7 @@ async fn collect_openai_compatible_stream(
     runtime: &ChatRuntime,
     chat_id: &str,
     request: reqwest::RequestBuilder,
-) -> Result<(), ChatError> {
+) -> Result<String, ChatError> {
     let response = request.send().await.map_err(|error| {
         if error.is_timeout() {
             ChatError::Timeout
@@ -633,6 +704,7 @@ async fn collect_openai_compatible_stream(
     }
     let mut stream = response.bytes_stream();
     let mut parser = OpenAiSseParser::default();
+    let mut assistant_content = String::new();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|error| {
             if error.is_timeout() {
@@ -644,6 +716,7 @@ async fn collect_openai_compatible_stream(
         let text = std::str::from_utf8(&chunk).map_err(|_| ChatError::MalformedStream)?;
         parser.push(text)?;
         for delta in parser.drain_deltas() {
+            assistant_content.push_str(&delta);
             runtime
                 .push_event(
                     chat_id,
@@ -654,6 +727,7 @@ async fn collect_openai_compatible_stream(
         }
     }
     for delta in parser.finish()? {
+        assistant_content.push_str(&delta);
         runtime
             .push_event(
                 chat_id,
@@ -662,7 +736,7 @@ async fn collect_openai_compatible_stream(
             )
             .await;
     }
-    Ok(())
+    Ok(assistant_content)
 }
 
 #[derive(Default)]

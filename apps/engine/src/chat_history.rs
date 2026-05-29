@@ -165,7 +165,9 @@ pub async fn create_thread(config_dir: &Path) -> Result<ChatThread, ChatHistoryE
 
 pub async fn get_thread(config_dir: &Path, chat_id: &str) -> Result<ChatThread, ChatHistoryError> {
     let path = chat_history_path(config_dir, chat_id)?;
-    ensure_existing_chat_history_root(&path).await?;
+    if !ensure_existing_chat_history_root(&path).await? {
+        return Err(ChatHistoryError::NotFound);
+    }
     reject_chat_history_file_symlink(&path).await?;
     match read_thread_path(&path).await {
         Ok(thread) => Ok(thread),
@@ -181,13 +183,50 @@ pub async fn get_thread(config_dir: &Path, chat_id: &str) -> Result<ChatThread, 
 
 pub async fn delete_thread(config_dir: &Path, chat_id: &str) -> Result<(), ChatHistoryError> {
     let path = chat_history_path(config_dir, chat_id)?;
-    ensure_existing_chat_history_root(&path).await?;
+    if !ensure_existing_chat_history_root(&path).await? {
+        return Err(ChatHistoryError::NotFound);
+    }
     reject_chat_history_file_symlink(&path).await?;
     match tokio::fs::remove_file(path).await {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(ChatHistoryError::NotFound),
         Err(_) => Err(ChatHistoryError::Storage),
     }
+}
+
+pub async fn append_message(
+    config_dir: &Path,
+    chat_id: &str,
+    role: ChatMessageRole,
+    content: String,
+    status: Option<ChatMessageStatus>,
+) -> Result<ChatMessage, ChatHistoryError> {
+    validate_chat_id(chat_id)?;
+    let path = chat_history_path(config_dir, chat_id)?;
+    let now = timestamp_now();
+    let mut thread = match get_thread(config_dir, chat_id).await {
+        Ok(thread) => thread,
+        Err(ChatHistoryError::NotFound) => ChatThread {
+            chat_id: chat_id.to_string(),
+            title: "New chat".to_string(),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            messages: Vec::new(),
+        },
+        Err(error) => return Err(error),
+    };
+    let message = ChatMessage {
+        id: new_message_id()?,
+        chat_id: chat_id.to_string(),
+        role,
+        content,
+        created_at: now.clone(),
+        status,
+    };
+    thread.updated_at = now;
+    thread.messages.push(message.clone());
+    write_thread_path(&path, &thread).await?;
+    Ok(message)
 }
 
 pub fn chat_history_path(config_dir: &Path, chat_id: &str) -> Result<PathBuf, ChatHistoryError> {
@@ -296,6 +335,15 @@ fn new_chat_id() -> Result<String, ChatHistoryError> {
     ))
 }
 
+fn new_message_id() -> Result<String, ChatHistoryError> {
+    let mut bytes = vec![0u8; CHAT_HISTORY_ID_RANDOM_BYTES];
+    getrandom::getrandom(&mut bytes).map_err(|_| ChatHistoryError::Storage)?;
+    Ok(format!(
+        "msg_{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    ))
+}
+
 async fn ensure_chat_history_directory(path: &Path) -> Result<(), ChatHistoryError> {
     let root = path.parent().ok_or(ChatHistoryError::Storage)?;
     let parent = root.parent().ok_or(ChatHistoryError::Storage)?;
@@ -305,9 +353,9 @@ async fn ensure_chat_history_directory(path: &Path) -> Result<(), ChatHistoryErr
     ensure_chat_history_root(root, true).await.map(|_| ())
 }
 
-async fn ensure_existing_chat_history_root(path: &Path) -> Result<(), ChatHistoryError> {
+async fn ensure_existing_chat_history_root(path: &Path) -> Result<bool, ChatHistoryError> {
     let root = path.parent().ok_or(ChatHistoryError::Storage)?;
-    ensure_chat_history_root(root, false).await.map(|_| ())
+    ensure_chat_history_root(root, false).await
 }
 
 async fn ensure_chat_history_root(root: &Path, create: bool) -> Result<bool, ChatHistoryError> {
