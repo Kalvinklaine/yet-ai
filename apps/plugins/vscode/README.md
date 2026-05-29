@@ -310,6 +310,8 @@ In GUI dev mode the wrapper embeds only loopback GUI URLs, computes the exact de
 
 No privileged workspace edits, IDE tools, shell actions, autonomous file reads/indexing, or provider actions are implemented in this shell. Active editor/selection context is sent only as a bounded prompt attachment after GUI preview/opt-in.
 
+Current GUI-to-host receive policy is deny-by-default. The extension accepts only strict `gui.ready` from the webview. Future GUI messages `gui.openFile`, `gui.revealRange`, `gui.applyWorkspaceEditRequest`, `gui.executeIdeTool`, `gui.copyText`, `gui.showNotification`, and `gui.getHostContext` are not allowlisted and must not call VS Code APIs. Enabling any privileged message later requires strict schemas, bounded request correlation, exact webview origin/source checks, user confirmation for risky operations, sanitized audit/logging, least-privilege allowlists, and no silent workspace mutation. Tools, tasks, knowledge, shell execution, file edits/apply patch, autonomous indexing, and background autonomy remain disabled in this milestone.
+
 ## Current limitations
 
 - The extension shell is a dev-preview MVP, not production-ready.

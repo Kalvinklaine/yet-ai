@@ -183,6 +183,8 @@ Manual local preview:
 
 No autonomous file reads/indexing, privileged workspace edits, IDE tools, shell/tool execution, provider adapters, or provider credential persistence are implemented in this shell.
 
+Current GUI-to-host receive policy is deny-by-default. The Kotlin/JCEF bridge accepts only strict `gui.ready` from the GUI. Future GUI messages `gui.openFile`, `gui.revealRange`, `gui.applyWorkspaceEditRequest`, `gui.executeIdeTool`, `gui.copyText`, `gui.showNotification`, and `gui.getHostContext` are not allowlisted and must not call IntelliJ platform APIs. Enabling any privileged message later requires strict schemas, request/response correlation, exact iframe origin/source checks where available, user confirmation for risky operations, sanitized audit/logging, least-privilege allowlists, and no silent workspace mutation. Tools, tasks, knowledge, shell execution, file edits/apply patch, autonomous indexing, and background autonomy remain disabled in this milestone.
+
 ## Runtime diagnostics and restart
 
 Use the GUI `Refresh runtime` button first for normal troubleshooting. It checks `/v1/ping`, `/v1/caps`, `/v1/models`, provider summaries, and OpenAI provider-auth status through the local runtime. Connected feedback means the local runtime and provider/model metadata are reachable enough for the current settings. Network/configuration failures usually point to URL, port, launch mode, binary path, or runtime startup issues. Runtime `401` means the local Session token does not match the runtime's `YET_AI_AUTH_TOKEN`; provider `401` after runtime connection means the upstream provider rejected the OpenAI/OpenAI-compatible API key.
