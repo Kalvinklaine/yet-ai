@@ -13,7 +13,7 @@ Implemented surfaces:
 - `apps/engine`: Rust `yet-lsp` runtime with authenticated loopback HTTP/SSE endpoints, identity-aware storage names, local provider registry/config files, redacted provider responses, model summaries, chat command submission, and the first OpenAI-compatible direct streaming path through configured provider data.
 - `apps/gui`: React/Vite browser shell with loopback-only runtime client, provider setup/status UI, chat command submission, fetch-streaming SSE parser, runtime error reporting, and browser/VS Code/JetBrains logical bridge detection.
 - `apps/plugins/vscode`: VS Code extension shell with identity-checked manifest and bundled package-route identity, loopback runtime/dev URL validation, SecretStorage-backed manual runtime tokens, packaged GUI asset loading with placeholder fallback, MVP `connect`/`launch`/`auto` runtime modes, webview host, bootstrap/`host.ready` bridge, bounded active editor/selection context snapshot delivery, redacted runtime diagnostics, and guarded message handling.
-- `apps/plugins/jetbrains`: JetBrains plugin shell with identity checks, Gradle build/tests, loopback runtime/dev URL validation, packaged GUI resource loading with placeholder fallback, MVP `connect`/`launch`/`auto` runtime modes, PasswordSafe-backed local session token, JCEF host boundary, and structural JSON bridge validation.
+- `apps/plugins/jetbrains`: JetBrains plugin shell with identity checks, Gradle build/tests, loopback runtime/dev URL validation, packaged GUI resource loading with placeholder fallback, MVP `connect`/`launch`/`auto` runtime modes, PasswordSafe-backed local session token, JCEF host boundary, structural JSON bridge validation, and bounded active editor/selection context snapshot delivery through the same `host.contextSnapshot` contract as VS Code.
 - `packages/contracts`: shared JSON Schemas and examples for current engine and bridge boundaries.
 
 Known limitations:
@@ -56,11 +56,11 @@ Secret storage is an engine boundary. The initial `FileSecretStore` fallback cen
 
 ## Active context first-message boundary
 
-The current first-message context capability is intentionally narrow and non-privileged. The VS Code host may send a bounded active editor/selection snapshot to the GUI. The GUI stores it in React state only, shows a sanitized preview, and includes it in the first chat command only when the user leaves the include toggle enabled. The engine validates the shape again and prepends an `IDE context` prompt section before the user request when context is present.
+The current first-message context capability is intentionally narrow and non-privileged. VS Code and JetBrains hosts may send a bounded active editor/selection snapshot to the GUI through the same strict `host.contextSnapshot` bridge contract. The GUI stores it in React state only, shows a sanitized preview, and includes it in the next accepted chat command only when the user leaves the include toggle enabled. Active context is one-shot: after an accepted send, the GUI clears the attached snapshot and disables the previous include state until the IDE host supplies a fresh snapshot. The engine validates the shape again and prepends an `IDE context` prompt section before the user request when context is present.
 
 Included active context is sent to the configured provider as prompt text. It may contain source code or selected text, so users should attach only content they are comfortable sending to that provider and should not include secrets, credentials, private paths, or sensitive data. The context contract is limited to safe labels, bounded relative/display paths, language id, selection range, and bounded selection text.
 
-This does not grant agent authority. Yet AI still does not perform autonomous file reads, workspace indexing, file edits/apply patch, shell/tool execution, or background agent autonomy from this feature. Future privileged context gathering, tools, edits, and indexing require separate schemas, policy checks, request correlation, and user confirmation.
+This does not grant agent authority. Yet AI still does not perform autonomous file reads, workspace indexing, file edits/apply patch, shell/tool execution, or background agent autonomy from this feature. Future privileged context gathering, tools, edits, and indexing require separate schemas, policy checks, request correlation, and user confirmation. Local deterministic smoke coverage includes the runtime prompt path and the JetBrains wrapper/browser bridge path; installable JetBrains preflight can still depend on external Gradle/JetBrains dependency resolution when building the ZIP.
 
 ## Architecture principles
 
@@ -423,7 +423,7 @@ The approved near-term implementation sequence is local-first and incremental. F
 
 ### 6. JetBrains local runtime host — MVP baseline complete
 
-- Implemented identity-checked Gradle/plugin metadata, loopback runtime/dev URL validation, packaged GUI resource loading, PasswordSafe local session token storage, JCEF shell, structured bridge parsing, MVP local runtime `connect`/`launch`/`auto` modes, `/v1/ping` health check, launched process cleanup, and bridge/runtime URL tests.
+- Implemented identity-checked Gradle/plugin metadata, loopback runtime/dev URL validation, packaged GUI resource loading, PasswordSafe local session token storage, JCEF shell, structured bridge parsing, MVP local runtime `connect`/`launch`/`auto` modes, bounded active editor/selection `host.contextSnapshot` delivery, `/v1/ping` health check, launched process cleanup, and bridge/runtime URL tests.
 - Remaining work: marketplace packaging, signed/notarized engine bundles, production installer, plugin verifier flow, optional LSP wiring, deeper lifecycle tests, and privileged IDE action policies.
 
 ### 7. Login-based GPT first message — mandatory future milestone planned
