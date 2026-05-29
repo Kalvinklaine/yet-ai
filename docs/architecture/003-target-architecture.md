@@ -14,7 +14,8 @@ Implemented surfaces:
 - `apps/gui`: React/Vite browser shell with loopback-only runtime client, provider setup/status UI, chat command submission, fetch-streaming SSE parser, runtime error reporting, and browser/VS Code/JetBrains logical bridge detection.
 - `apps/plugins/vscode`: VS Code extension shell with identity-checked manifest and bundled package-route identity, loopback runtime/dev URL validation, SecretStorage-backed manual runtime tokens, packaged GUI asset loading with placeholder fallback, MVP `connect`/`launch`/`auto` runtime modes, webview host, bootstrap/`host.ready` bridge, bounded active editor/selection context snapshot delivery, redacted runtime diagnostics, and guarded message handling.
 - `apps/plugins/jetbrains`: JetBrains plugin shell with identity checks, Gradle build/tests, loopback runtime/dev URL validation, packaged GUI resource loading with placeholder fallback, MVP `connect`/`launch`/`auto` runtime modes, PasswordSafe-backed local session token, JCEF host boundary, structural JSON bridge validation, and bounded active editor/selection context snapshot delivery through the same `host.contextSnapshot` contract as VS Code.
-- `packages/contracts`: shared JSON Schemas and examples for current engine and bridge boundaries.
+- `packages/contracts`: shared JSON Schemas and examples for current engine and bridge boundaries, plus future/simulator-facing no-idle planner scheduler contracts.
+- `scripts/check-planner-scheduler.mjs` and `scripts/smoke-planner-no-idle.mjs`: local-only pure scheduler reducer and deterministic smoke checks for the no-idle contract. They do not implement production autonomous orchestration.
 
 Known limitations:
 
@@ -93,6 +94,8 @@ Scheduler state vocabulary should stay explicit across docs, contracts, and futu
 Allowed idle states are narrow. The scheduler may idle only when there is no running agent to poll, no completed agent to merge, no verification to run, no ready card to launch, no failed or stuck recovery allowed by policy, no pool closure action pending, and no autonomous next-pool planning permitted. Every idle state must include an audit reason such as `waiting_for_user_decision`, `waiting_for_external_dependency`, `concurrency_limit_reached`, `blocked_by_failed_verification`, `blocked_by_policy`, `all_work_closed`, or `autonomy_not_permitted`. An idle reason must include enough non-secret context to explain why the scheduler stopped, what would unblock it, and when the next watchdog check should happen.
 
 This contract does not implement production background autonomy yet. It also does not grant privileged authority to edit files, apply patches, run shell commands, execute tools, mutate workspaces, read arbitrary project files, or launch background agents outside explicitly approved task execution. Future privileged automation requires strict schemas, policy checks, request correlation, origin/source checks, auditable state transitions, and user confirmation where appropriate. The local-first BYOK contract remains unchanged: planner scheduling, task state, credentials, and provider calls must not require a hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, or cloud workspace for core local workflows.
+
+Current repository coverage for this contract is limited to schemas, sanitized fixtures, a pure deterministic scheduler reducer check, and a deterministic local smoke. Use `npm run check:planner-scheduler` for reducer assertions and `npm run smoke:planner-no-idle` for the no-idle smoke. These checks prove contract behavior for merge, verification, ready-card launch, stuck recovery, pool closure, and autonomous next-pool planning, but they do not run real agents, perform git merges, execute verification commands, call providers, edit files, run tools, or mutate workspaces.
 
 ## Architecture principles
 
@@ -507,6 +510,7 @@ Each subsystem should be independently buildable and testable.
 ### Cross-subsystem contracts
 
 - `packages/contracts` owns the shared JSON Schemas and golden examples for engine HTTP payloads, chat SSE events, and IDE bridge messages.
+- Planner scheduler schemas and fixtures define future/simulator-facing no-idle audits and can be checked with `npm run check:planner-scheduler` and `npm run smoke:planner-no-idle`; they are not production orchestration.
 - JSON schema or generated TypeScript/Rust/Kotlin types for shared protocol messages where practical.
 - golden contract fixtures for chat commands, SSE events, bridge messages, and capability responses.
 - smoke tests that start engine, load GUI in development mode, and exercise `/v1/ping`, `/v1/caps`, one command, and one SSE event.
