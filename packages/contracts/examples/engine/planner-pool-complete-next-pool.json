@@ -1,0 +1,25 @@
+{
+  "protocolVersion": "2026-05-15",
+  "poolId": "planner_no_idle",
+  "autonomousMode": true,
+  "poolStatus": "closed",
+  "nextAction": "plan_next_pool",
+  "cards": [
+    {
+      "cardId": "T223",
+      "status": "verified",
+      "mergeState": "merged",
+      "verificationState": "passed",
+      "safeSummary": "Contract documentation card verified."
+    },
+    {
+      "cardId": "T224",
+      "status": "verified",
+      "mergeState": "merged",
+      "verificationState": "passed",
+      "safeSummary": "Scheduler contracts card verified."
+    }
+  ],
+  "nextPoolCandidate": "planner_scheduler_simulator",
+  "safeSummary": "Current pool is closed and autonomy permits planning the next pool."
+}

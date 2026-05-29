@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/planner-scheduler-tick.schema.json",
+  "title": "Planner Scheduler Tick Audit Summary",
+  "description": "Future/simulator-facing sanitized no-idle scheduler tick or audit summary. It records the next deterministic action and audited blockers without raw prompts, provider responses, tokens, auth codes, cookies, private paths, or workspace file contents.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocolVersion", "tickId", "poolId", "autonomousMode", "nextAction", "observedAt", "agentCounts", "cardCounts"],
+  "properties": {
+    "protocolVersion": {
+      "type": "string",
+      "const": "2026-05-15"
+    },
+    "tickId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    },
+    "poolId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$"
+    },
+    "autonomousMode": {
+      "type": "boolean"
+    },
+    "nextAction": {
+      "type": "string",
+      "enum": ["check_agents", "merge_completed", "verify_merge", "spawn_ready", "recover_failed", "plan_next_pool", "idle_blocked"]
+    },
+    "idleReason": {
+      "type": "string",
+      "enum": ["waiting_for_user_decision", "waiting_for_external_dependency", "concurrency_limit_reached", "blocked_by_failed_verification", "blocked_by_policy", "all_work_closed", "autonomy_not_permitted"]
+    },
+    "observedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "nextWatchdogCheckAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "agentCounts": {
+      "$ref": "#/$defs/agentCounts"
+    },
+    "cardCounts": {
+      "$ref": "#/$defs/cardCounts"
+    },
+    "safeSummary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    }
+  },
+  "$defs": {
+    "count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000
+    },
+    "agentCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["running", "done", "failed", "stuck", "unknown"],
+      "properties": {
+        "running": {
+          "$ref": "#/$defs/count"
+        },
+        "done": {
+          "$ref": "#/$defs/count"
+        },
+        "failed": {
+          "$ref": "#/$defs/count"
+        },
+        "stuck": {
+          "$ref": "#/$defs/count"
+        },
+        "unknown": {
+          "$ref": "#/$defs/count"
+        }
+      }
+    },
+    "cardCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["running", "done_unmerged", "merge_pending", "verification_pending", "verified", "blocked", "replan_required"],
+      "properties": {
+        "running": {
+          "$ref": "#/$defs/count"
+        },
+        "done_unmerged": {
+          "$ref": "#/$defs/count"
+        },
+        "merge_pending": {
+          "$ref": "#/$defs/count"
+        },
+        "verification_pending": {
+          "$ref": "#/$defs/count"
+        },
+        "verified": {
+          "$ref": "#/$defs/count"
+        },
+        "blocked": {
+          "$ref": "#/$defs/count"
+        },
+        "replan_required": {
+          "$ref": "#/$defs/count"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "nextAction": {
+            "const": "idle_blocked"
+          }
+        },
+        "required": ["nextAction"]
+      },
+      "then": {
+        "properties": {
+          "idleReason": true,
+          "nextWatchdogCheckAt": true
+        },
+        "required": ["idleReason", "nextWatchdogCheckAt"]
+      },
+      "else": {
+        "not": {
+          "required": ["idleReason"]
+        }
+      }
+    }
+  ]
+}
