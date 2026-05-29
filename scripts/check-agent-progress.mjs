@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { reduceAgentProgress } from "./planner-agent-progress.mjs";
+import { appendProgressEvent, createProgressState, readProgressState, snapshotProgressState, writeProgressState } from "./planner-agent-progress-state.mjs";
+import { formatProgressReport, main as reportMain } from "./planner-agent-progress-report.mjs";
 
 const NOW = "2026-05-29T13:00:00Z";
 
@@ -50,7 +55,7 @@ function assertNoSensitiveContent(value) {
   }
 }
 
-function runAssertions() {
+async function runAssertions() {
   const healthy = reduceAgentProgress(
     [
       event({
@@ -270,10 +275,125 @@ function runAssertions() {
   assert.equal(malicious.status, "healthy_running");
   assertNoSensitiveContent(malicious);
   assert.equal(serialized(malicious).length < 5000, true, "snapshot was not bounded");
+
+
+  const tmp = await mkdtemp(join(tmpdir(), "yet-agent-progress-"));
+  try {
+    const statePath = join(tmp, "progress-state.json");
+    const initialState = createProgressState(
+      [
+        event({
+          eventId: "evt-state-001",
+          timestamp: "2026-05-29T12:58:00Z",
+          phase: "started",
+          status: "running",
+          message: "State roundtrip started."
+        })
+      ],
+      { now: NOW }
+    );
+    const written = await writeProgressState(statePath, initialState, { now: NOW });
+    const readBack = await readProgressState(statePath);
+    assert.deepEqual(readBack, written);
+    assert.equal(snapshotProgressState(readBack, { now: NOW }).status, "healthy_running");
+
+    await appendProgressEvent(
+      statePath,
+      event({
+        eventId: "evt-state-002",
+        timestamp: "2026-05-29T12:59:45Z",
+        phase: "verifying",
+        status: "running",
+        message: "Append event with sensitive output.",
+        tool: {
+          kind: "test",
+          label: "npm test /Users/person/project secret=hidden"
+        },
+        heartbeat: {
+          lastHeartbeatAt: "2026-05-29T12:59:58Z",
+          lastToolOutputAt: "2026-05-29T12:59:57Z"
+        },
+        outputTail: "ok api_key=sk-live-secret-token /private/tmp/key"
+      }),
+      { now: NOW }
+    );
+    const appended = await readProgressState(statePath);
+    assert.equal(appended.events.length, 2);
+    assert.equal(snapshotProgressState(appended, { now: NOW }).status, "healthy_running");
+    assertNoSensitiveContent(appended);
+
+    const healthyReport = formatProgressReport(snapshotProgressState(appended, { now: NOW }));
+    assert.match(healthyReport, /status: healthy_running/);
+    assert.match(healthyReport, /tool: test npm test \[redacted/);
+    assertNoSensitiveContent(healthyReport);
+    assert.equal(healthyReport.length < 1200, true, "healthy report was not bounded");
+
+    const stuckReport = formatProgressReport(
+      reduceAgentProgress(
+        [
+          event({
+            eventId: "evt-report-stuck",
+            timestamp: "2026-05-29T12:30:00Z",
+            phase: "running_command",
+            status: "running",
+            heartbeat: {
+              lastHeartbeatAt: "2026-05-29T12:45:00Z"
+            }
+          })
+        ],
+        { now: NOW }
+      )
+    );
+    assert.match(stuckReport, /status: stuck/);
+    assert.match(stuckReport, /stuck_reason: heartbeat_timeout/);
+
+    const failedReport = formatProgressReport(failed);
+    assert.match(failedReport, /status: failed/);
+    assert.match(failedReport, /stuck_reason: explicit_failure/);
+    assertNoSensitiveContent(failedReport);
+
+    const doneReport = formatProgressReport(done);
+    assert.match(doneReport, /status: done/);
+    assert.match(doneReport, /phase: done/);
+
+    let stdout = "";
+    let stderr = "";
+    const reportExit = await reportMain(["--state", statePath, "--now", NOW], {
+      stdout: { write: (value) => { stdout += value; } },
+      stderr: { write: (value) => { stderr += value; } }
+    });
+    assert.equal(reportExit, 0);
+    assert.equal(stderr, "");
+    assert.match(stdout, /status: healthy_running/);
+    assertNoSensitiveContent(stdout);
+
+    const invalidPath = join(tmp, "invalid-state.json");
+    await writeFile(invalidPath, JSON.stringify({ protocolVersion: "2026-05-29", events: "api_key=sk-live-secret-token" }));
+    stdout = "";
+    stderr = "";
+    const invalidExit = await reportMain(["--state", invalidPath, "--now", NOW], {
+      stdout: { write: (value) => { stdout += value; } },
+      stderr: { write: (value) => { stderr += value; } }
+    });
+    assert.equal(invalidExit, 1);
+    assert.equal(stdout, "");
+    assert.match(stderr, /events must be an array/);
+    assertNoSensitiveContent(stderr);
+
+    stderr = "";
+    const missingExit = await reportMain(["--state", join(tmp, "missing.json"), "--now", NOW], {
+      stdout: { write: () => {} },
+      stderr: { write: (value) => { stderr += value; } }
+    });
+    assert.equal(missingExit, 1);
+    assert.match(stderr, /not found/);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runAssertions();
+  await runAssertions();
   console.log("Agent progress reducer check passed.");
 }
 
