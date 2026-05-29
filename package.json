@@ -3,6 +3,7 @@
   "type": "module",
   "scripts": {
     "check": "node scripts/check.mjs",
+    "check:agent-progress": "node scripts/check-agent-progress.mjs",
     "check:planner-scheduler": "node scripts/check-planner-scheduler.mjs",
     "planner:scheduler:tick": "node scripts/planner-scheduler-tick.mjs",
     "smoke:planner-resume": "node scripts/smoke-planner-resume.mjs",
