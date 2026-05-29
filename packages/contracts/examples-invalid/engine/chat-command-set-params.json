@@ -1,0 +1,8 @@
+{
+  "requestId": "req-set-params-disabled-001",
+  "type": "set_params",
+  "payload": {
+    "temperature": 0.2,
+    "maxOutputTokens": 512
+  }
+}

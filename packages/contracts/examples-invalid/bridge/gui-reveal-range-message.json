@@ -1,0 +1,10 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.revealRange",
+  "requestId": "req-gui-reveal-range-disabled-001",
+  "payload": {
+    "workspaceRelativePath": "src/example.ts",
+    "startLine": 3,
+    "endLine": 5
+  }
+}

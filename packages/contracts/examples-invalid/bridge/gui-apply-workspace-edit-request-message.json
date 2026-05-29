@@ -1,0 +1,9 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.applyWorkspaceEditRequest",
+  "requestId": "req-gui-apply-edit-disabled-001",
+  "payload": {
+    "label": "Example disabled edit request",
+    "edits": []
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.showNotification",
+  "requestId": "req-gui-notification-disabled-001",
+  "payload": {
+    "level": "info",
+    "message": "Example notification"
+  }
+}

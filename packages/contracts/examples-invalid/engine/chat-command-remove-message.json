@@ -1,0 +1,7 @@
+{
+  "requestId": "req-remove-message-disabled-001",
+  "type": "remove_message",
+  "payload": {
+    "messageId": "msg-example-001"
+  }
+}

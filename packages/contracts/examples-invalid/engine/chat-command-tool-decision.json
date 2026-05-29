@@ -1,0 +1,8 @@
+{
+  "requestId": "req-tool-decision-disabled-001",
+  "type": "tool_decision",
+  "payload": {
+    "toolCallId": "tool-example-001",
+    "decision": "deny"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "requestId": "req-update-message-disabled-001",
+  "type": "update_message",
+  "payload": {
+    "messageId": "msg-example-001",
+    "content": "Replace the previous example request."
+  }
+}
