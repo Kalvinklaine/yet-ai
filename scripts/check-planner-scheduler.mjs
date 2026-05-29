@@ -1,8 +1,18 @@
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
+import {
+  acquireSchedulerLease,
+  appendAuditEvent,
+  readSchedulerState,
+  releaseSchedulerLease,
+  sanitizeAuditEvent,
+  writeSchedulerState
+} from "./planner-scheduler-state.mjs";
 
 const PROTOCOL_VERSION = "2026-05-15";
 const HEARTBEAT_STALE_MS = 10 * 60 * 1000;
@@ -276,6 +286,109 @@ function baseState(overrides) {
   };
 }
 
+function durableState(overrides) {
+  return {
+    poolId: "planner_durable_state",
+    autonomousPolicy: {
+      autonomousMode: true,
+      safeSummary: "Local scheduler simulator may continue while deterministic work remains."
+    },
+    cards: [{ cardId: "T229", status: "running" }],
+    agents: [{ agentRunId: "agent-T229-001", cardId: "T229", status: "running" }],
+    auditTimeline: [],
+    lastTick: null,
+    activeSchedulerLease: null,
+    ...overrides
+  };
+}
+
+function assertNoSensitiveAuditFields(value) {
+  const serialized = JSON.stringify(value);
+  assert.equal(serialized.includes("rawPrompt"), false, "audit sanitizer kept raw prompt key");
+  assert.equal(serialized.includes("providerResponse"), false, "audit sanitizer kept provider response key");
+  assert.equal(serialized.includes("apiKey"), false, "audit sanitizer kept api key key");
+  assert.equal(serialized.includes("authCode"), false, "audit sanitizer kept auth code key");
+  assert.equal(serialized.includes("cookie"), false, "audit sanitizer kept cookie key");
+  assert.equal(serialized.includes("privatePath"), false, "audit sanitizer kept private path key");
+  assert.equal(serialized.includes("workspaceContent"), false, "audit sanitizer kept workspace content key");
+  assert.equal(serialized.includes("sk-test"), false, "audit sanitizer kept secret-like value");
+  assert.equal(serialized.includes("/Users/private/project/file.ts"), false, "audit sanitizer kept private path value");
+}
+
+async function runStateStoreAssertions() {
+  const tempDir = await mkdtemp(join(tmpdir(), "yet-planner-state-"));
+  try {
+    const statePath = join(tempDir, "scheduler-state.json");
+    const initialState = durableState({
+      auditTimeline: [
+        sanitizeAuditEvent({
+          tickId: "tick-T229-001",
+          poolId: "planner_durable_state",
+          observedAt: "2026-05-29T00:40:00Z",
+          nextAction: "check_agents",
+          safeSummary: "Initial sanitized scheduler state was recorded.",
+          rawPrompt: "do not persist",
+          apiKey: "sk-test-do-not-store"
+        })
+      ],
+      lastTick: {
+        tickId: "tick-T229-001",
+        observedAt: "2026-05-29T00:40:00Z",
+        nextAction: "check_agents"
+      }
+    });
+
+    await writeSchedulerState(statePath, initialState);
+    const roundtrip = await readSchedulerState(statePath);
+    assert.deepEqual(roundtrip, initialState, "state store roundtrip mismatch");
+
+    const leased = acquireSchedulerLease(roundtrip, "owner-T229-001", "2026-05-29T00:41:00Z");
+    assert.equal(leased.activeSchedulerLease.ownerId, "owner-T229-001", "lease owner was not recorded");
+    assert.throws(
+      () => acquireSchedulerLease(leased, "owner-T229-002", "2026-05-29T00:41:30Z"),
+      /scheduler lease: already active/,
+      "second scheduler lease was allowed"
+    );
+
+    const ticked = appendAuditEvent(leased, {
+      tickId: "tick-T229-002",
+      poolId: "planner_durable_state",
+      observedAt: "2026-05-29T00:42:00Z",
+      nextAction: "merge_completed",
+      leaseOwnerId: "owner-T229-001",
+      agentCounts: { running: 0, done: 1, failed: 0, stuck: 0, unknown: 0 },
+      cardCounts: { running: 0, done_unmerged: 1, merge_pending: 0, verification_pending: 0, verified: 0, blocked: 0, replan_required: 0 },
+      safeSummary: "Completed delegated agent output is ready for serialized merge review.",
+      rawPrompt: "please read /Users/private/project/file.ts",
+      providerResponse: "model output",
+      apiKey: "sk-test-secret",
+      authCode: "auth-secret",
+      cookie: "session=secret",
+      privatePath: "/Users/private/project/file.ts",
+      workspaceContent: "private source code"
+    });
+    assert.equal(ticked.auditTimeline.length, 2, "audit event was not appended");
+    assert.equal(ticked.lastTick.tickId, "tick-T229-002", "last tick was not updated");
+    assertNoSensitiveAuditFields(ticked.auditTimeline[1]);
+
+    assert.throws(
+      () => releaseSchedulerLease(ticked, "owner-T229-002", "2026-05-29T00:43:00Z"),
+      /scheduler lease: owner mismatch/,
+      "lease release accepted the wrong owner"
+    );
+    const released = releaseSchedulerLease(ticked, "owner-T229-001", "2026-05-29T00:43:00Z");
+    assert.equal(released.activeSchedulerLease, null, "lease was not released");
+
+    await writeSchedulerState(statePath, released);
+    const finalRoundtrip = await readSchedulerState(statePath);
+    assert.deepEqual(finalRoundtrip, released, "updated state store roundtrip mismatch");
+    const files = await readFile(statePath, "utf8");
+    assert.equal(files.endsWith("\n"), true, "state file is not newline terminated");
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
 async function runAssertions() {
   const schemas = await compileSchemas();
   const mergeState = baseState({
@@ -374,6 +487,8 @@ async function runAssertions() {
   assert.equal(nextPoolDecision.poolStatus.nextPoolCandidate, "planner_scheduler_smoke");
   assertValid(schemas.tick, nextPoolDecision.tick, "next-pool tick");
   assertValid(schemas.pool, nextPoolDecision.poolStatus, "next-pool pool");
+
+  await runStateStoreAssertions();
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
