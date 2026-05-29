@@ -10,8 +10,8 @@ The repository now contains buildable MVP scaffolds for the main local-first sub
 
 Implemented surfaces:
 
-- `apps/engine`: Rust `yet-lsp` runtime with authenticated loopback HTTP/SSE endpoints, identity-aware storage names, local provider registry/config files, redacted provider responses, normalized provider/model readiness metadata, chat command submission, and the first OpenAI-compatible direct streaming path through configured provider data.
-- `apps/gui`: React/Vite browser shell with loopback-only runtime client, provider setup/status UI, sanitized model readiness display, chat command submission, fetch-streaming SSE parser, runtime error reporting, and browser/VS Code/JetBrains logical bridge detection.
+- `apps/engine`: Rust `yet-lsp` runtime with authenticated loopback HTTP/SSE endpoints, identity-aware storage names, local provider registry/config files, engine-owned local chat history, redacted provider responses, normalized provider/model readiness metadata, chat command submission, and the first OpenAI-compatible direct streaming path through configured provider data.
+- `apps/gui`: React/Vite browser shell with loopback-only runtime client, provider setup/status UI, sanitized model readiness display, local conversation list/create/switch/delete UI backed by engine history endpoints, chat command submission, fetch-streaming SSE parser, runtime error reporting, and browser/VS Code/JetBrains logical bridge detection.
 - `apps/plugins/vscode`: VS Code extension shell with identity-checked manifest and bundled package-route identity, loopback runtime/dev URL validation, SecretStorage-backed manual runtime tokens, packaged GUI asset loading with placeholder fallback, MVP `connect`/`launch`/`auto` runtime modes, webview host, bootstrap/`host.ready` bridge, bounded active editor/selection context snapshot delivery, redacted runtime diagnostics, guarded message handling, and a local ignored root dev-preview VSIX artifact plus checksum published by `npm run prepare:vscode-preview` under `dist/plugins/vscode/`.
 - `apps/plugins/jetbrains`: JetBrains plugin shell with identity checks, Gradle build/tests, loopback runtime/dev URL validation, packaged GUI resource loading with placeholder fallback, MVP `connect`/`launch`/`auto` runtime modes, PasswordSafe-backed local session token, JCEF host boundary, structural JSON bridge validation, and bounded active editor/selection context snapshot delivery through the same `host.contextSnapshot` contract as VS Code.
 - `packages/contracts`: shared JSON Schemas and examples for current engine and bridge boundaries, plus future/simulator-facing no-idle planner scheduler contracts.
@@ -22,7 +22,7 @@ Known limitations:
 - VS Code can publish a local ignored dev-preview VSIX artifact at `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix` with a `.sha256` checksum for install-from-file smoke testing, and JetBrains has a comparable local ignored ZIP dev-preview artifact. No marketplace publication, signing, notarization, production installer, or production release flow is complete.
 - IDE plugins support dev-preview packaged GUI assets and MVP local runtime connect/launch/auto modes, but they do not yet provide production-grade lifecycle management, bundled signed engine distribution, or installer integration.
 - LSP completion/code-lens, full agent autonomy, autonomous file reads/indexing, tasks/knowledge, tool registry execution, shell/tool execution, shell/file mutation, file edits/apply patch, background agent autonomy, and integration workflows are not implemented as production features.
-- The provider/chat baseline is a local MVP only: configured local BYOK provider data plus OpenAI-compatible chat streaming gated by sanitized local provider/model readiness metadata.
+- The provider/chat baseline is a local MVP only: configured local BYOK provider data plus OpenAI-compatible chat streaming gated by sanitized local provider/model readiness metadata and engine-owned local chat history.
 - Privileged IDE actions remain disabled until strict schemas, request correlation, origin/source checks, engine policy checks, and user confirmation flows are in place.
 - The provider baseline is intentionally narrow: local BYOK configuration plus OpenAI-compatible chat streaming. The engine and GUI now include sanitized provider-auth skeleton endpoints, a login-first status card, an API-key fallback, a local mock OAuth/PKCE contract harness, and a protected-file secret-store fallback. Real OpenAI/ChatGPT account login is not implemented in this baseline. The user approved a future experimental, high-risk Codex-like login task chain despite the lack of a public third-party OpenAI OAuth program; production OAuth, OS keychain storage, broader provider quirks, and advanced model capability handling remain follow-ups.
 
@@ -54,6 +54,17 @@ Reference inspection found a useful pattern in the external implementation: prov
 Future GUI-facing auth status should stay sanitized. Candidate state fields are non-secret values such as `type`, `configured`, `status`, `authSource`, `expiresAt`, `accountLabel`, `scopes`, `supportsRefresh`, `lastError`, and `redacted`. Raw access tokens, refresh tokens, API keys, authorization codes, PKCE verifiers, cookies, browser profiles, credential file paths, and other provider secret material must never be GUI-owned, returned by provider status, capability, or model endpoints, or written to GUI/browser storage; logs must omit them as well.
 
 Secret storage is an engine boundary. The initial `FileSecretStore` fallback centralizes put/get/delete by provider id and secret kind for API keys, OAuth access tokens, OAuth refresh tokens, and auth metadata. It is intentionally narrower than the external reference implementation's provider config patching and OAuth refresh machinery: Yet AI keeps the abstraction separate before real provider login, avoids credential import from other tools, and treats OS keychain support as the next backend behind the same trait. A future migration should move any legacy `providers.d/{id}.json` raw API keys into the active secret backend, then rewrite provider configs without raw secret fields.
+
+## Local chat history MVP boundary
+
+The current conversations feature is a local dev-preview MVP. The engine owns chat history storage under Yet AI local storage resolved from `product/identity.json`, exposes authenticated loopback list/create/get/delete endpoints, appends accepted user messages and completed assistant/error messages, and includes persisted messages in SSE snapshots for the same chat. The GUI renders conversation list/create/switch/delete flows and hydrates visible messages from engine responses, but it must not persist chat messages, thread snapshots, provider metadata, or active conversations in browser `localStorage` or `sessionStorage`.
+
+Chat history may persist user-provided prompt content and assistant replies locally. Users should not paste secrets, credentials, private keys, tokens, or sensitive private data into prompts. Provider API keys, OAuth access tokens, OAuth refresh tokens, authorization codes, PKCE verifiers, cookies, local runtime bearer tokens, raw provider responses, provider credential paths, and private local paths are not chat metadata and must not appear in chat history payloads, examples, or GUI storage.
+
+Deleting a chat deletes local Yet AI history for that thread only. It does not delete provider-side records, upstream account data, external logs, backups, or any cloud service state. This boundary does not implement production encrypted sync, hosted history sync, enterprise retention policy, legal hold, or centralized audit governance. The local-first BYOK contract remains unchanged: chat history, provider configuration, and model calls do not require a hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, or cloud workspace.
+
+Verification for this area is local-only: use `npm run smoke:local` when changing history behavior and `npm run check` for docs/contracts validation.
+
 
 ## Active context first-message boundary
 
@@ -149,7 +160,7 @@ The engine is the local Yet AI runtime. It is not a required cloud backend and s
 - project, cache, and user config resolution based on `product/identity.json`.
 - local indexes, trajectories, tasks, knowledge, logs, and integration state.
 
-The current MVP implementation includes `/v1/ping`, `/v1/caps`, provider registry endpoints, model summaries, one chat command endpoint, one SSE stream, and a narrow OpenAI-compatible streaming path. It remains a foundation, not a full agent runtime.
+The current MVP implementation includes `/v1/ping`, `/v1/caps`, provider registry endpoints, model summaries, local chat history endpoints, one chat command endpoint, one SSE stream, and a narrow OpenAI-compatible streaming path. It remains a foundation, not a full agent runtime.
 
 Provider settings and credentials are local runtime state. The engine stores secrets through a central provider secret store abstraction. The current backend is protected user config file storage; OS credential storage/keychain support should replace or wrap it next. Raw secrets must not be returned to GUI-facing responses after save.
 
@@ -252,6 +263,7 @@ Model summaries in `/v1/models`, `/v1/caps` provider entries, and provider summa
 
 This metadata is not provider discovery or tool enablement. It is local sanitized state derived from configured providers and local defaults, and it must not expose raw provider secrets, provider responses, private paths, auth tokens, or hidden credential bags. `features.tools`, `features.tasks`, and `features.knowledge` remain separate runtime flags and remain disabled in the current baseline; model `tools` or `reasoning` metadata does not enable tool execution, reasoning orchestration, shell execution, file edits/apply patch, autonomous file reads/indexing, or production agent behavior.
 
+- `GET /v1/chats`, `POST /v1/chats`, `GET /v1/chats/{chat_id}`, and `DELETE /v1/chats/{chat_id}` manage engine-owned local chat history.
 - `POST /v1/chats/{chat_id}/commands` accepts chat commands.
 - `GET /v1/chats/subscribe?chat_id={chat_id}` streams chat state over SSE.
 
