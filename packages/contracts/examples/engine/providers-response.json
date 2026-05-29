@@ -11,7 +11,21 @@
         "configured": true,
         "redacted": "sk-...abcd"
       },
-      "models": [],
+      "models": [
+        {
+          "id": "gpt-local",
+          "displayName": "GPT Local",
+          "capabilities": {
+            "chat": true,
+            "streaming": true,
+            "tools": false,
+            "reasoning": false
+          },
+          "readiness": {
+            "status": "ready"
+          }
+        }
+      ],
       "capabilities": {
         "chat": true,
         "completion": false,

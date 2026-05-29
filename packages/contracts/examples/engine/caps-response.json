@@ -14,10 +14,24 @@
   },
   "providers": [
     {
-      "id": "placeholder",
-      "displayName": "Placeholder Provider",
-      "enabled": false,
-      "models": []
+      "id": "openai-local",
+      "displayName": "Local OpenAI-Compatible Provider",
+      "enabled": true,
+      "models": [
+        {
+          "id": "gpt-local",
+          "displayName": "GPT Local",
+          "capabilities": {
+            "chat": true,
+            "streaming": true,
+            "tools": false,
+            "reasoning": false
+          },
+          "readiness": {
+            "status": "ready"
+          }
+        }
+      ]
     }
   ],
   "ide": {

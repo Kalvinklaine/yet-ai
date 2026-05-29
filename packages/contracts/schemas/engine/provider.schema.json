@@ -62,6 +62,7 @@
       }
     },
     "models": {
+      "description": "Sanitized provider model summaries with normalized capability and readiness metadata.",
       "type": "array",
       "items": {
         "$ref": "./models.schema.json#/$defs/model"

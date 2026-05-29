@@ -154,6 +154,18 @@ const invalidMappings = [
   [
     "packages/contracts/examples-invalid/engine/planner-card-verified-without-merge.json",
     "packages/contracts/schemas/engine/planner-card-pool-status.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/model-unknown-capability-field.json",
+    "packages/contracts/schemas/engine/models.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/model-invalid-readiness-status.json",
+    "packages/contracts/schemas/engine/models.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/model-secret-provider-response-field.json",
+    "packages/contracts/schemas/engine/models.schema.json"
   ]
 ].map(([examplePath, schemaPath]) => [normalizeContractPath(examplePath), normalizeContractPath(schemaPath)]);
 

@@ -8,7 +8,8 @@
         "chat": true,
         "streaming": true,
         "tools": false,
-        "reasoning": false
+        "reasoning": false,
+        "vision": true
       },
       "readiness": {
         "status": "ready"
