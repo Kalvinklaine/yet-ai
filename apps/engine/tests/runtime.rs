@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 use tower::ServiceExt;
+use yet_lsp::chat_history;
 use yet_lsp::identity::ProductIdentity;
 use yet_lsp::secret_store::{FileSecretStore, ProviderSecretStore, SecretKind};
 use yet_lsp::storage::{resolve_storage_paths, StoragePaths};
@@ -4026,6 +4027,196 @@ async fn provider_operations_do_not_require_cloud_url_or_account() {
     assert_eq!(body["status"], "unsupported_kind");
     assert_eq!(body["cloudRequired"], false);
     assert!(!body.to_string().to_lowercase().contains("account"));
+}
+
+#[tokio::test]
+async fn chat_history_create_list_get_delete_endpoints_persist_locally() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+
+    let (status, created) = json_response_from(
+        app.clone(),
+        authed_request(Method::POST, "/v1/chats", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let chat_id = created["chatId"].as_str().unwrap().to_string();
+    assert!(chat_id.starts_with("chat_"));
+    assert_eq!(created["title"], "New chat");
+    assert_eq!(created["messages"], json!([]));
+    let created_text = created.to_string().to_lowercase();
+    assert!(!created_text.contains("api_key"));
+    assert!(!created_text.contains("access_token"));
+    assert!(!created_text.contains("refresh_token"));
+    assert!(!created_text.contains("cookie"));
+    assert!(!created_text.contains(&paths.config_dir.to_string_lossy().to_lowercase()));
+
+    let stored_path = chat_history::chat_history_path(&paths.config_dir, &chat_id).unwrap();
+    assert!(stored_path.exists());
+    assert!(stored_path.starts_with(paths.config_dir.join("chat-history")));
+    assert!(!paths.project_dir.join("chat-history").exists());
+
+    let (status, list) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/chats", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["chats"].as_array().unwrap().len(), 1);
+    assert_eq!(list["chats"][0]["chatId"], chat_id);
+    assert_eq!(list["chats"][0]["messageCount"], 0);
+    assert!(list["chats"][0].get("messages").is_none());
+
+    let app_after_restart = yet_lsp::app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let (status, loaded) = json_response_from(
+        app_after_restart.clone(),
+        authed_request(Method::GET, &format!("/v1/chats/{chat_id}"), Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(loaded, created);
+
+    let delete_status = empty_response_from(
+        app_after_restart.clone(),
+        authed_request(Method::DELETE, &format!("/v1/chats/{chat_id}"), Body::empty()),
+    )
+    .await;
+    assert_eq!(delete_status, StatusCode::NO_CONTENT);
+    let (status, body) = json_response_from(
+        app_after_restart,
+        authed_request(Method::GET, &format!("/v1/chats/{chat_id}"), Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["error"], "chat not found");
+}
+
+#[tokio::test]
+async fn chat_history_invalid_missing_and_corrupt_state_are_sanitized() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    for id in ["../secret", ".", "..", "bad:id", "bad%2Fid", "bad\\id"] {
+        let (status, text) = text_response_from(
+            app.clone(),
+            authed_request(Method::GET, &format!("/v1/chats/{id}"), Body::empty()),
+        )
+        .await;
+        assert!(matches!(status, StatusCode::BAD_REQUEST | StatusCode::NOT_FOUND));
+        assert!(!text.contains(id));
+        assert!(!text.contains(&paths.config_dir.to_string_lossy().to_string()));
+    }
+
+    let (status, missing) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/chats/chat_missing", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(missing["error"], "chat not found");
+
+    let path = chat_history::chat_history_path(&paths.config_dir, "chat_corrupt").unwrap();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        r#"{"chatId":"chat_corrupt","messages":[{"content":"sk-corrupt-chat-secret-abcd"}"#,
+    )
+    .unwrap();
+    let (status, body) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/chats/chat_corrupt", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["error"], "chat history storage error");
+    let text = body.to_string();
+    assert!(!text.contains("sk-corrupt-chat-secret-abcd"));
+    assert!(!text.contains(&paths.config_dir.to_string_lossy().to_string()));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn chat_history_private_permissions_and_symlink_rejection_are_enforced() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let (status, created) = json_response_from(
+        app.clone(),
+        authed_request(Method::POST, "/v1/chats", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let chat_id = created["chatId"].as_str().unwrap();
+    let root = paths.config_dir.join("chat-history");
+    let path = chat_history::chat_history_path(&paths.config_dir, chat_id).unwrap();
+    assert_eq!(
+        std::fs::symlink_metadata(&root).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    assert_eq!(
+        std::fs::symlink_metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    let outside = std::env::temp_dir().join(format!(
+        "yet-ai-chat-history-outside-{}",
+        TEST_STORAGE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&outside);
+    std::fs::create_dir_all(&outside).unwrap();
+    let target = outside.join("outside.json");
+    std::fs::write(&target, "{}").unwrap();
+    let link_path = root.join("chat_link.json");
+    std::os::unix::fs::symlink(&target, &link_path).unwrap();
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/chats/chat_link", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["error"], "chat history storage error");
+    assert!(!body.to_string().contains(&outside.to_string_lossy().to_string()));
+
+    let symlink_paths = test_storage_paths();
+    let symlink_app = yet_lsp::app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        symlink_paths.clone(),
+    ));
+    let outside_root = std::env::temp_dir().join(format!(
+        "yet-ai-chat-history-root-outside-{}",
+        TEST_STORAGE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&outside_root);
+    std::fs::create_dir_all(&outside_root).unwrap();
+    std::fs::create_dir_all(&symlink_paths.config_dir).unwrap();
+    std::os::unix::fs::symlink(&outside_root, symlink_paths.config_dir.join("chat-history"))
+        .unwrap();
+    let (status, body) = json_response_from(
+        symlink_app,
+        authed_request(Method::POST, "/v1/chats", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["error"], "chat history storage error");
+    assert!(std::fs::read_dir(outside_root).unwrap().next().is_none());
 }
 
 #[tokio::test]
