@@ -4,6 +4,7 @@
   "scripts": {
     "check": "node scripts/check.mjs",
     "check:planner-scheduler": "node scripts/check-planner-scheduler.mjs",
+    "planner:scheduler:tick": "node scripts/planner-scheduler-tick.mjs",
     "smoke:planner-no-idle": "node scripts/smoke-planner-no-idle.mjs",
     "smoke:local": "node scripts/smoke-local.mjs",
     "smoke:gui-browser": "node scripts/smoke-gui-browser.mjs",
