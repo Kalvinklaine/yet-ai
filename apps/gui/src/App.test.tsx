@@ -265,10 +265,10 @@ describe("runtime refresh feedback", () => {
           }));
         }
         if (url.endsWith("/v1/models")) {
-          return Promise.resolve(jsonResponse({ models: [{ id: "gpt-b", displayName: "GPT B", providerId: "runtime-b" }] }));
+          return Promise.resolve(jsonResponse({ models: [readyModel({ id: "gpt-b", displayName: "GPT B", providerId: "runtime-b" })] }));
         }
         if (url.endsWith("/v1/providers")) {
-          return Promise.resolve(jsonResponse({ providers: [{ ...enabledProvider(), id: "runtime-b", displayName: "Runtime B", models: [{ id: "gpt-b", displayName: "GPT B" }] }], cloudRequired: false, providerAccess: "direct" }));
+          return Promise.resolve(jsonResponse({ providers: [{ ...enabledProvider(), id: "runtime-b", displayName: "Runtime B", models: [readyModel({ id: "gpt-b", displayName: "GPT B" })] }], cloudRequired: false, providerAccess: "direct" }));
         }
         if (url.endsWith("/v1/provider-auth/openai/status")) {
           return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
@@ -318,11 +318,11 @@ describe("runtime refresh feedback", () => {
         }));
       }
       if (url.endsWith("/v1/models")) {
-        return Promise.resolve(jsonResponse({ models: url.startsWith("http://127.0.0.1:8001/") ? [{ id: "old-model", displayName: "Old Model", providerId: "old-runtime" }] : [{ id: "new-model", displayName: "New Model", providerId: "new-runtime" }] }));
+        return Promise.resolve(jsonResponse({ models: url.startsWith("http://127.0.0.1:8001/") ? [readyModel({ id: "old-model", displayName: "Old Model", providerId: "old-runtime" })] : [readyModel({ id: "new-model", displayName: "New Model", providerId: "new-runtime" })] }));
       }
       if (url.endsWith("/v1/providers")) {
         const isOld = url.startsWith("http://127.0.0.1:8001/");
-        return Promise.resolve(jsonResponse({ providers: [{ ...enabledProvider(), id: isOld ? "old-runtime" : "new-runtime", displayName: isOld ? "Old Runtime" : "New Runtime", models: [{ id: isOld ? "old-model" : "new-model", displayName: isOld ? "Old Model" : "New Model" }] }], cloudRequired: false, providerAccess: "direct" }));
+        return Promise.resolve(jsonResponse({ providers: [{ ...enabledProvider(), id: isOld ? "old-runtime" : "new-runtime", displayName: isOld ? "Old Runtime" : "New Runtime", models: [readyModel({ id: isOld ? "old-model" : "new-model", displayName: isOld ? "Old Model" : "New Model" })] }], cloudRequired: false, providerAccess: "direct" }));
       }
       if (url.endsWith("/v1/provider-auth/openai/status")) {
         return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
@@ -840,7 +840,7 @@ describe("provider secret boundary", () => {
         return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
       }
       if (url.endsWith("/v1/models")) {
-        return Promise.resolve(jsonResponse({ models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }] }));
+        return Promise.resolve(jsonResponse({ models: [readyModel({ providerId: "openai-api" })] }));
       }
       if (url.endsWith("/v1/provider-auth/openai/status")) {
         return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
@@ -975,7 +975,7 @@ describe("provider secret boundary", () => {
         id: `provider-${rawSecret}`,
         displayName: `Provider ${rawSecret}`,
         baseUrl: `http://127.0.0.1:9000/v1?api_key=short-secret`,
-        models: [{ id: "model-1", displayName: `Model refresh_token=${"r".repeat(64)}` }],
+        models: [readyModel({ id: "model-1", displayName: `Model refresh_token=${"r".repeat(64)}` })],
       }],
     });
     renderApp();
@@ -1115,7 +1115,7 @@ describe("provider secret boundary", () => {
         return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
       }
       if (url.endsWith("/v1/models")) {
-        return Promise.resolve(jsonResponse({ models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }] }));
+        return Promise.resolve(jsonResponse({ models: [readyModel({ providerId: "openai-api" })] }));
       }
       if (url.endsWith("/v1/providers")) {
         return Promise.resolve(jsonResponse({ providers: [enabledProvider()], cloudRequired: false, providerAccess: "direct" }));
@@ -1173,7 +1173,7 @@ describe("provider secret boundary", () => {
         return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
       }
       if (url.endsWith("/v1/models")) {
-        return Promise.resolve(jsonResponse({ models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }] }));
+        return Promise.resolve(jsonResponse({ models: [readyModel({ providerId: "openai-api" })] }));
       }
       if (url.endsWith("/v1/providers")) {
         return Promise.resolve(jsonResponse({ providers: [enabledProvider()], cloudRequired: false, providerAccess: "direct" }));
@@ -1919,7 +1919,7 @@ describe("chat panel", () => {
     mockRuntimeResponses({
       authResponse: providerAuthResponse("connected"),
       providers: [enabledProvider()],
-      models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }],
+      models: [readyModel({ providerId: "openai-api" })],
     });
     renderApp();
 
@@ -1933,7 +1933,7 @@ describe("chat panel", () => {
       return mockRuntimeResponse(input, init, {
         authResponse: providerAuthResponse("connected"),
         providers: [enabledProvider()],
-        models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }],
+        models: [readyModel({ providerId: "openai-api" })],
       });
     });
 
@@ -2014,7 +2014,7 @@ describe("chat panel", () => {
     mockRuntimeResponses({
       authResponse: providerAuthResponse("connected"),
       providers: [enabledProvider()],
-      models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }],
+      models: [readyModel({ providerId: "openai-api" })],
     });
     renderApp();
 
@@ -2030,7 +2030,7 @@ describe("chat panel", () => {
   it("disables Send when runtime model references a missing provider", async () => {
     mockRuntimeResponses({
       providers: [enabledProvider()],
-      models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "missing-provider" }],
+      models: [readyModel({ providerId: "missing-provider" })],
     });
     renderApp();
 
@@ -2044,7 +2044,7 @@ describe("chat panel", () => {
   it("disables Send when runtime model references a disabled provider", async () => {
     mockRuntimeResponses({
       providers: [{ ...enabledProvider(), enabled: false }],
-      models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }],
+      models: [readyModel({ providerId: "openai-api" })],
     });
     renderApp();
 
@@ -2059,7 +2059,7 @@ describe("chat panel", () => {
   it("resolves a runtime model without provider id only when the enabled provider mapping is unambiguous", async () => {
     mockRuntimeResponses({
       providers: [enabledProvider()],
-      models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini" }],
+      models: [readyModel()],
     });
     renderApp();
 
@@ -2073,7 +2073,7 @@ describe("chat panel", () => {
   it("disables Send when a runtime model without provider id maps to multiple enabled providers", async () => {
     mockRuntimeResponses({
       providers: [enabledProvider(), { ...enabledProvider(), id: "other-openai", displayName: "Other OpenAI" }],
-      models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini" }],
+      models: [readyModel()],
     });
     renderApp();
 
@@ -2090,7 +2090,7 @@ describe("chat panel", () => {
     const longProviderSecret = "refresh_token=" + "p".repeat(64);
     mockRuntimeResponses({
       providers: [enabledProvider()],
-      models: [{ id: longModelSecret, displayName: `Model ${longModelSecret}`, providerId: `provider-${longProviderSecret}` }],
+      models: [readyModel({ id: longModelSecret, displayName: `Model ${longModelSecret}`, providerId: `provider-${longProviderSecret}` })],
     });
     renderApp();
 
@@ -2136,7 +2136,7 @@ describe("chat panel", () => {
 
     mockRuntimeResponses({
       providers: [enabledProvider()],
-      models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }],
+      models: [readyModel({ providerId: "openai-api" })],
     });
     await act(async () => {
       findButton("Refresh runtime").click();
@@ -2151,7 +2151,7 @@ describe("chat panel", () => {
   it("shows configured provider and first runtime model readiness", async () => {
     mockRuntimeResponses({
       providers: [enabledProvider()],
-      models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }],
+      models: [readyModel({ providerId: "openai-api" })],
     });
     renderApp();
 
@@ -2163,12 +2163,81 @@ describe("chat panel", () => {
     expect(findButton("Send").disabled).toBe(false);
   });
 
+  it("requires ready chat streaming model metadata before enabling Send", async () => {
+    mockRuntimeResponses({
+      providers: [enabledProvider()],
+      models: [readyModel({ providerId: "openai-api" })],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Model status: GPT-4o mini (OpenAI API): ready; chat supported, streaming supported, tools unsupported, reasoning unsupported");
+    expect(container?.textContent).toContain("Model readiness: GPT-4o mini (OpenAI API): ready; chat supported, streaming supported, tools unsupported, reasoning unsupported");
+    expect(findButton("Send").disabled).toBe(false);
+  });
+
+  it("disables Send for unready models with sanitized visible status", async () => {
+    const rawSecret = "access_token=" + "u".repeat(64);
+    mockRuntimeResponses({
+      providers: [enabledProvider()],
+      models: [readyModel({ providerId: "openai-api", readiness: { status: "missing_credentials", reason: `Provider login failed ${rawSecret}` } })],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Model GPT-4o mini is not ready for chat streaming: missing credentials. Provider login failed [redacted]");
+    expect(container?.textContent).toContain("Model status: GPT-4o mini (OpenAI API): missing credentials, Provider login failed [redacted]");
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("u".repeat(64));
+    expect(findButton("Send").disabled).toBe(true);
+  });
+
+  it("disables Send for models without chat or streaming capabilities", async () => {
+    mockRuntimeResponses({
+      providers: [enabledProvider()],
+      models: [readyModel({ providerId: "openai-api", capabilities: { chat: false, streaming: true, tools: false, reasoning: false } })],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Model GPT-4o mini cannot send chat because required capabilities are unavailable: chat unsupported, streaming supported, tools unsupported, reasoning unsupported.");
+    expect(findButton("Send").disabled).toBe(true);
+
+    mockRuntimeResponses({
+      providers: [enabledProvider()],
+      models: [readyModel({ providerId: "openai-api", capabilities: { chat: true, streaming: false, tools: false, reasoning: false } })],
+    });
+    await act(async () => {
+      findButton("Refresh runtime").click();
+    });
+
+    expect(container?.textContent).toContain("Model GPT-4o mini cannot send chat because required capabilities are unavailable: chat supported, streaming unsupported, tools unsupported, reasoning unsupported.");
+    expect(findButton("Send").disabled).toBe(true);
+  });
+
+  it("does not treat older model responses without readiness metadata as send-ready", async () => {
+    mockRuntimeResponses({
+      providers: [{ ...enabledProvider(), models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini" }] }],
+      models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Model GPT-4o mini is missing readiness metadata from the runtime. Refresh the runtime after updating it before sending.");
+    expect(container?.textContent).toContain("Model status: GPT-4o mini (OpenAI API): readiness metadata missing");
+    expect(findButton("Send").disabled).toBe(true);
+  });
+
 
   it("disables Send when provider and model data exists but runtime connectivity fails", async () => {
     mockRuntimeResponses({
       runtimeFailure: true,
       providers: [enabledProvider()],
-      models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }],
+      models: [readyModel({ providerId: "openai-api" })],
     });
     renderApp();
 
@@ -2232,7 +2301,7 @@ describe("chat panel", () => {
         return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
       }
       if (url.endsWith("/v1/models")) {
-        return Promise.resolve(jsonResponse({ models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }] }));
+        return Promise.resolve(jsonResponse({ models: [readyModel({ providerId: "openai-api" })] }));
       }
       if (url.endsWith("/v1/providers")) {
         return Promise.resolve(jsonResponse({ providers: [enabledProvider()], cloudRequired: false, providerAccess: "direct" }));
@@ -2287,7 +2356,7 @@ describe("chat panel", () => {
         return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
       }
       if (url.endsWith("/v1/models")) {
-        return Promise.resolve(jsonResponse({ models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }] }));
+        return Promise.resolve(jsonResponse({ models: [readyModel({ providerId: "openai-api" })] }));
       }
       if (url.endsWith("/v1/providers")) {
         return Promise.resolve(jsonResponse({ providers: [enabledProvider()], cloudRequired: false, providerAccess: "direct" }));
@@ -2591,7 +2660,7 @@ describe("chat panel", () => {
         return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
       }
       if (url.endsWith("/v1/models")) {
-        return Promise.resolve(jsonResponse({ models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }] }));
+        return Promise.resolve(jsonResponse({ models: [readyModel({ providerId: "openai-api" })] }));
       }
       if (url.endsWith("/v1/providers")) {
         return Promise.resolve(jsonResponse({ providers: [enabledProvider()], cloudRequired: false, providerAccess: "direct" }));
@@ -2661,7 +2730,7 @@ describe("chat panel", () => {
         return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
       }
       if (url.endsWith("/v1/models")) {
-        return Promise.resolve(jsonResponse({ models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }] }));
+        return Promise.resolve(jsonResponse({ models: [readyModel({ providerId: "openai-api" })] }));
       }
       if (url.endsWith("/v1/providers")) {
         return Promise.resolve(jsonResponse({ providers: [enabledProvider()], cloudRequired: false, providerAccess: "direct" }));
@@ -2717,7 +2786,7 @@ describe("chat panel", () => {
         return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
       }
       if (url.endsWith("/v1/models")) {
-        return Promise.resolve(jsonResponse({ models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }] }));
+        return Promise.resolve(jsonResponse({ models: [readyModel({ providerId: "openai-api" })] }));
       }
       if (url.endsWith("/v1/providers")) {
         return Promise.resolve(jsonResponse({ providers: [enabledProvider()], cloudRequired: false, providerAccess: "direct" }));
@@ -2995,15 +3064,25 @@ function enabledProvider() {
     enabled: true,
     baseUrl: "https://api.openai.com/v1",
     auth: { type: "api_key", configured: true, redacted: "sk-...test" },
-    models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini" }],
+    models: [readyModel()],
     capabilities: { chat: true, completion: false, embeddings: false },
+  };
+}
+
+function readyModel(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "gpt-4o-mini",
+    displayName: "GPT-4o mini",
+    capabilities: { chat: true, streaming: true, tools: false, reasoning: false },
+    readiness: { status: "ready" },
+    ...overrides,
   };
 }
 
 function readyRuntimeOptions(): Pick<MockRuntimeOptions, "providers" | "models"> {
   return {
     providers: [enabledProvider()],
-    models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }],
+    models: [readyModel({ providerId: "openai-api" })],
   };
 }
 
@@ -3027,7 +3106,7 @@ function mockStreamingReadyRuntime(options: { abortResponse?: Promise<Response> 
       return Promise.resolve(jsonResponse({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } }));
     }
     if (url.endsWith("/v1/models")) {
-      return Promise.resolve(jsonResponse({ models: [{ id: "gpt-4o-mini", displayName: "GPT-4o mini", providerId: "openai-api" }] }));
+      return Promise.resolve(jsonResponse({ models: [readyModel({ providerId: "openai-api" })] }));
     }
     if (url.endsWith("/v1/providers")) {
       return Promise.resolve(jsonResponse({ providers: [enabledProvider()], cloudRequired: false, providerAccess: "direct" }));
@@ -3116,7 +3195,7 @@ function mockRuntimeResponse(input: RequestInfo | URL, init: RequestInit | undef
       enabled: true,
       baseUrl: "https://api.openai.com/v1",
       auth: { type: "api_key", configured: true, redacted: "sk-...test" },
-      models: [{ id: "gpt-4o-mini", displayName: "gpt-4o-mini" }],
+      models: [readyModel({ displayName: "gpt-4o-mini" })],
       capabilities: { chat: true, completion: false, embeddings: false },
     }));
   }

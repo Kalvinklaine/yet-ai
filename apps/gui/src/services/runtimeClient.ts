@@ -45,10 +45,24 @@ export type CapsResponse = {
   };
 };
 
+export type ModelCapabilities = {
+  chat: boolean;
+  streaming: boolean;
+  tools: boolean;
+  reasoning: boolean;
+};
+
+export type ModelReadiness = {
+  status: "ready" | "disabled" | "missing_credentials" | "missing_model" | "unsupported";
+  reason?: string;
+};
+
 export type ModelSummary = {
   id: string;
   displayName: string;
   providerId?: string;
+  capabilities?: ModelCapabilities;
+  readiness?: ModelReadiness;
 };
 
 export type ModelsResponse = {
