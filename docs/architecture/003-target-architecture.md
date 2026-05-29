@@ -62,6 +62,38 @@ Included active context is sent to the configured provider as prompt text. It ma
 
 This does not grant agent authority. Yet AI still does not perform autonomous file reads, workspace indexing, file edits/apply patch, shell/tool execution, or background agent autonomy from this feature. Future privileged context gathering, tools, edits, and indexing require separate schemas, policy checks, request correlation, and user confirmation. Local deterministic smoke coverage includes the runtime prompt path and the JetBrains wrapper/browser bridge path; installable JetBrains preflight can still depend on external Gradle/JetBrains dependency resolution when building the ZIP.
 
+## Autonomous planner no-idle reliability contract
+
+Future autonomous planning is a product reliability boundary, not only a convenience feature. When Yet AI is allowed to run a task pool autonomously, it must not silently idle while actionable work exists. The no-idle invariant is: if completed agents, mergeable work, verification work, ready cards, failed or stuck agents needing recovery, pool closure work, or approved next-pool planning exists, the scheduler must keep progressing or record an explicit audited blocker.
+
+The future scheduler/watchdog loop should be deterministic and observable:
+
+1. Refresh the task board, pool state, dependency graph, agent status, merge queue, and verification results.
+2. Check running agents and classify them as still running, done, failed, or stuck by policy-defined heartbeat and timeout rules.
+3. Move completed agent output to `done_unmerged`, then to `merge_pending` when it is safe to serialize review and merge work.
+4. Merge at most one work item at a time, run the card's required verification, and move the card through `verification_pending` to `verified` only after the verification command passes or a pre-existing blocker is audited.
+5. Launch newly unblocked ready cards within the configured concurrency and dependency policy.
+6. Detect failed or stuck work, mark it `failed`, `stuck`, or `replan_required`, and either launch an approved recovery card or stop only with a clear blocker.
+7. Close a pool only after all cards are verified, blocked with audited reason, or explicitly deferred by policy.
+8. When autonomy permits and no current-pool work remains, plan the next pool from the approved roadmap instead of waiting for a user message.
+
+Scheduler state vocabulary should stay explicit across docs, contracts, and future implementation:
+
+- `running`: an agent or card is currently executing and has not exceeded heartbeat or timeout policy.
+- `done_unmerged`: an agent completed and produced candidate work that has not yet been merged.
+- `merge_pending`: candidate work is next or queued for serialized merge/review.
+- `verification_pending`: merged or verification-only work is awaiting its required command.
+- `verified`: required verification passed and the card can be considered complete.
+- `failed`: an agent, merge, or verification failed and needs recovery or replanning.
+- `stuck`: running work exceeded heartbeat, timeout, or progress policy without a valid completion signal.
+- `replan_required`: the scheduler cannot safely continue the current plan without changing scope, splitting work, or creating recovery cards.
+- `blocked`: no safe automated action is currently allowed because a required dependency, user decision, external service, or policy condition is unavailable.
+- `closed`: a card or pool has reached its terminal audited state.
+
+Allowed idle states are narrow. The scheduler may idle only when there is no running agent to poll, no completed agent to merge, no verification to run, no ready card to launch, no failed or stuck recovery allowed by policy, no pool closure action pending, and no autonomous next-pool planning permitted. Every idle state must include an audit reason such as `waiting_for_user_decision`, `waiting_for_external_dependency`, `concurrency_limit_reached`, `blocked_by_failed_verification`, `blocked_by_policy`, `all_work_closed`, or `autonomy_not_permitted`. An idle reason must include enough non-secret context to explain why the scheduler stopped, what would unblock it, and when the next watchdog check should happen.
+
+This contract does not implement production background autonomy yet. It also does not grant privileged authority to edit files, apply patches, run shell commands, execute tools, mutate workspaces, read arbitrary project files, or launch background agents outside explicitly approved task execution. Future privileged automation requires strict schemas, policy checks, request correlation, origin/source checks, auditable state transitions, and user confirmation where appropriate. The local-first BYOK contract remains unchanged: planner scheduling, task state, credentials, and provider calls must not require a hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, or cloud workspace for core local workflows.
+
 ## Architecture principles
 
 - Keep a local engine process as the stable runtime boundary for chat, tools, providers, indexing, storage, and IDE-facing services.
