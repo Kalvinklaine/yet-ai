@@ -114,13 +114,15 @@ This path balances product differentiation and practical delivery:
 
 The clean scaffold path has produced buildable local MVP foundations for the first implementation sequence:
 
-1. `apps/engine` provides the Rust `yet-lsp` local runtime with authenticated loopback HTTP/SSE, identity-aware storage, local provider registry/config files, redacted provider responses, model summaries, and a narrow OpenAI-compatible direct streaming path.
-2. `apps/gui` provides the React/Vite shell with loopback-only runtime client, provider setup/status, chat command submission, fetch-streaming SSE, runtime errors, and logical browser/VS Code/JetBrains bridge handling.
+1. `apps/engine` provides the Rust `yet-lsp` local runtime with authenticated loopback HTTP/SSE, identity-aware storage, local provider registry/config files, redacted provider responses, sanitized provider/model capability readiness summaries, and a narrow OpenAI-compatible direct streaming path.
+2. `apps/gui` provides the React/Vite shell with loopback-only runtime client, provider setup/status, sanitized model readiness display, chat command submission, fetch-streaming SSE, runtime errors, and logical browser/VS Code/JetBrains bridge handling.
 3. `apps/plugins/vscode` provides a VS Code extension shell with identity validation, packaged GUI asset loading, local runtime settings, loopback webview/dev URL policy, MVP `connect`/`launch`/`auto` runtime modes, safe bootstrap, and narrow bridge handling.
 4. `apps/plugins/jetbrains` provides a JetBrains plugin shell with identity validation, Gradle tests/build, packaged GUI resource loading, loopback runtime/dev URL policy, MVP `connect`/`launch`/`auto` runtime modes, PasswordSafe local token storage, JCEF hosting, and structural bridge validation.
 5. `packages/contracts` remains the shared schema/example package for current boundaries.
 
 This is not a production assistant. The IDE shells now have packaged GUI asset flows and MVP local runtime connect/launch/auto modes, but marketplace packaging, signed or notarized engine bundles, a production installer, full agent autonomy, indexing, tool execution, integration workflows, LSP/completion features, file edits, broader provider support, and privileged IDE actions remain follow-up work. Current chat is a local provider/chat MVP only. The provider-auth baseline includes a GUI login-first status card, API-key fallback, sanitized engine skeleton endpoints, local mock OAuth/PKCE contract coverage, and engine-owned secret storage with a protected-file fallback. It does not include real OpenAI/ChatGPT account login. The local-first BYOK/no-required-cloud contract remains the controlling constraint.
+
+Provider/model capability readiness is now part of that MVP boundary. `/v1/models`, `/v1/caps`, and provider summaries expose sanitized model metadata with bounded `chat`, `streaming`, `tools`, and `reasoning` booleans plus readiness states `ready`, `disabled`, `missing_credentials`, `missing_model`, and `unsupported`. Runtime chat selection and GUI send readiness require an enabled configured provider with a `ready` model that supports both chat and streaming; missing metadata is intentionally not treated as ready. This is a conservative local selection contract, not dynamic provider discovery, production model catalog synchronization, tool execution, reasoning-agent support, or a hidden way to enable tasks/knowledge.
 
 ## OpenAI/ChatGPT auth implementation strategy
 
