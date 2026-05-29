@@ -256,7 +256,7 @@ export function App() {
     ? "Runtime is not connected. Refresh runtime and fix the local runtime problem before sending the first GPT message."
     : apiKeyChatReady
       ? `Ready to send using ${selectedModelDisplayName ?? "the default model"}.`
-      : apiKeyReadiness.mismatch
+      : apiKeyReadiness.message
         ? apiKeyReadiness.message
         : providerAuthMutationInFlight && activeProviderAuthStatus?.authSource === "oauth" && !apiKeyChatReady
           ? "OpenAI account login state is changing. Wait for the local runtime to finish, refresh login status, or use the API-key fallback before sending."
@@ -265,6 +265,7 @@ export function App() {
             : activeModelError
               ? "Runtime model refresh failed. Refresh runtime again before sending the first GPT message."
               : "Provider required: choose OpenAI API for the API-key fallback or configure a local OpenAI-compatible /v1 provider with a model before sending the first GPT message.";
+  const chatModelStatus = apiKeyReadiness.model ? modelStatusText(apiKeyReadiness.model, apiKeyReadiness.provider) : null;
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
   const currentAttachedContext = attachedContext?.settingsRevision === settingsRevision && attachedContext.chatId === chatId ? attachedContext.payload : null;
 
@@ -1058,6 +1059,7 @@ export function App() {
                 <span className="subtle">{sanitizeDisplayText(provider.id)} · {sanitizeDisplayText(provider.kind)} · {sanitizeDisplayText(provider.baseUrl)}</span>
                 <span>Secret configured: {String(provider.auth.configured)} {provider.auth.redacted ? `(${sanitizeDisplayText(provider.auth.redacted)})` : ""}</span>
                 <span>Models: {provider.models.map((model) => sanitizeDisplayText(model.displayName)).join(", ") || "none"}</span>
+                {provider.models.length > 0 && <span className="subtle">Model readiness: {provider.models.map((model) => modelStatusText(model, provider)).join("; ")}</span>}
                 {providerTestState?.providerId === provider.id && <div className={`provider-test-status ${providerTestState.state}`} role="status"><strong>{providerTestState.state === "testing" ? "Provider test running" : providerTestState.state === "success" ? "Provider test succeeded" : "Provider test failed"}</strong><span>{providerTestState.status}: {providerTestState.detail}</span>{providerTestState.state === "failed" && <span>{providerTestAction(providerTestState.status)}</span>}</div>}
                 <div className="row">
                   <button type="button" onClick={() => editProvider(provider)}>Edit</button>
@@ -1080,6 +1082,7 @@ export function App() {
           <div className="stack">
             <span>State: {chatReadinessLabel}</span>
             <span>{chatReadinessMessage}</span>
+            {chatModelStatus && <span className="subtle">Model status: {chatModelStatus}</span>}
             {runtimeConnected && !canSendChat && <span className="subtle">For the quickest path, choose OpenAI API, paste a provider API key once, save, optionally test the provider, then send your first message. For local models, choose an OpenAI-compatible /v1 preset.</span>}
             {experimentalOauthChatReady && <span className="subtle">OpenAI API-key fallback remains the safe/default setup and will be preferred when configured.</span>}
             {!canSendChat && <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>}
@@ -1145,14 +1148,48 @@ function resolveProviderModelReadiness(models: ModelSummary[], enabledProviders:
     if (!provider || !provider.models.some((model) => model.id.trim() === modelId)) {
       return { ready: false, mismatch: true, model: firstRuntimeModel, provider, message: modelProviderMismatchMessage(firstRuntimeModel, provider) };
     }
-    return { ready: true, mismatch: false, model: firstRuntimeModel, provider };
+    return modelReadinessResult(firstRuntimeModel, provider);
   }
   const provider = enabledProviders.find((item) => item.models.some((model) => model.id.trim()));
   const model = provider?.models.find((item) => item.id.trim());
   if (!provider || !model) {
     return { ready: false, mismatch: false };
   }
-  return { ready: true, mismatch: false, model: { ...model, providerId: model.providerId ?? provider.id }, provider };
+  return modelReadinessResult({ ...model, providerId: model.providerId ?? provider.id }, provider);
+}
+
+function modelReadinessResult(model: ModelSummary, provider: ProviderSummary): ProviderModelReadiness {
+  const missingMessage = missingModelMetadataMessage(model);
+  if (missingMessage) {
+    return { ready: false, mismatch: false, model, provider, message: missingMessage };
+  }
+  if (model.readiness?.status !== "ready") {
+    return { ready: false, mismatch: false, model, provider, message: modelUnreadyMessage(model) };
+  }
+  if (!model.capabilities?.chat || !model.capabilities.streaming) {
+    return { ready: false, mismatch: false, model, provider, message: modelUnsupportedMessage(model) };
+  }
+  return { ready: true, mismatch: false, model, provider };
+}
+
+function missingModelMetadataMessage(model: ModelSummary): string | undefined {
+  if (!model.capabilities || !model.readiness) {
+    return `Model ${sanitizeDisplayText(model.displayName || model.id || "selected model")} is missing readiness metadata from the runtime. Refresh the runtime after updating it before sending.`;
+  }
+  return undefined;
+}
+
+function modelUnreadyMessage(model: ModelSummary): string {
+  const modelName = sanitizeDisplayText(model.displayName || model.id || "selected model");
+  const status = sanitizeDisplayText(readinessStatusLabel(model.readiness?.status));
+  const reason = model.readiness?.reason ? ` ${sanitizeDisplayText(model.readiness.reason)}` : "";
+  return `Model ${modelName} is not ready for chat streaming: ${status}.${reason}`;
+}
+
+function modelUnsupportedMessage(model: ModelSummary): string {
+  const modelName = sanitizeDisplayText(model.displayName || model.id || "selected model");
+  const support = modelCapabilitySummary(model);
+  return `Model ${modelName} cannot send chat because required capabilities are unavailable: ${support}.`;
 }
 
 function resolveRuntimeModelProvider(model: ModelSummary, enabledProviders: ProviderSummary[]): ProviderSummary | undefined {
@@ -1162,6 +1199,45 @@ function resolveRuntimeModelProvider(model: ModelSummary, enabledProviders: Prov
   }
   const matchingProviders = enabledProviders.filter((provider) => provider.models.some((providerModel) => providerModel.id.trim() === model.id.trim()));
   return matchingProviders.length === 1 ? matchingProviders[0] : undefined;
+}
+
+function modelStatusText(model: ModelSummary, provider?: ProviderSummary): string {
+  const modelName = sanitizeDisplayText(model.displayName || model.id || "selected model");
+  const providerName = provider ? sanitizeDisplayText(provider.displayName || provider.id) : model.providerId ? sanitizeDisplayText(model.providerId) : undefined;
+  const providerText = providerName ? ` (${providerName})` : "";
+  if (!model.capabilities || !model.readiness) {
+    return `${modelName}${providerText}: readiness metadata missing`;
+  }
+  const reason = model.readiness.reason ? `, ${sanitizeDisplayText(model.readiness.reason)}` : "";
+  return `${modelName}${providerText}: ${sanitizeDisplayText(readinessStatusLabel(model.readiness.status))}${reason}; ${modelCapabilitySummary(model)}`;
+}
+
+function modelCapabilitySummary(model: ModelSummary): string {
+  if (!model.capabilities) {
+    return "capabilities missing";
+  }
+  return `chat ${capabilityLabel(model.capabilities.chat)}, streaming ${capabilityLabel(model.capabilities.streaming)}, tools ${capabilityLabel(model.capabilities.tools)}, reasoning ${capabilityLabel(model.capabilities.reasoning)}`;
+}
+
+function capabilityLabel(value: boolean): string {
+  return value ? "supported" : "unsupported";
+}
+
+function readinessStatusLabel(status: NonNullable<ModelSummary["readiness"]>["status"] | undefined): string {
+  switch (status) {
+    case "ready":
+      return "ready";
+    case "disabled":
+      return "disabled";
+    case "missing_credentials":
+      return "missing credentials";
+    case "missing_model":
+      return "missing model";
+    case "unsupported":
+      return "unsupported";
+    default:
+      return "unknown readiness";
+  }
 }
 
 function modelProviderMismatchMessage(model: ModelSummary, provider?: ProviderSummary): string {
