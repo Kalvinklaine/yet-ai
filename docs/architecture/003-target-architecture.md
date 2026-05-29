@@ -281,16 +281,21 @@ Commands are sent to:
 POST /v1/chats/{chat_id}/commands
 ```
 
-Initial command types:
+Current accepted command types:
 
-- `user_message`
-- `abort`
+- `user_message`: strict non-empty bounded content, optional bounded active editor context, and no provider/model/auth/tool/edit parameters.
+- `abort`: no payload or an empty payload object; it can cancel an active local stream but does not grant broader authority.
+
+Future command types remain explicitly disabled and rejected by the current runtime and contract fixtures:
+
 - `regenerate`
 - `update_message`
 - `remove_message`
+- `set_params`
 - `tool_decision`
 - `ide_tool_result`
-- `set_params`
+
+Those future commands must not trigger privileged behavior until each has a strict schema, request correlation where needed, engine policy checks, sanitized audit/logging, least-privilege allowlists, and user confirmation for risky effects. They must not smuggle file edits, shell commands, tool execution, provider secrets, hidden model parameters, workspace mutation, or autonomous indexing through `user_message` payloads.
 
 State is received from:
 
@@ -337,19 +342,20 @@ Chat, provider configuration, tool confirmations, and large structured UI state 
 
 The GUI should communicate with IDE hosts through a small typed bridge. The bridge must support browser development mode with no IDE present.
 
-Initial IDE to GUI messages:
+Current accepted host-to-GUI messages:
 
-- `host.ready`
-- `host.themeChanged`
-- `host.activeFileChanged`
-- `host.selectionChanged`
-- `host.workspaceChanged`
-- `host.toolResult`
-- `host.openedFromCommand`
+- `host.ready`: trusted runtime bootstrap/settings with local loopback runtime data and no cloud-required flag.
+- `host.openedFromCommand`: non-privileged UI signal.
+- `host.contextSnapshot`: bounded active editor/selection context for prompt attachment only.
 
-Initial GUI to IDE messages:
+Future or conceptual host messages such as theme, active file, selection, workspace, and tool-result updates require strict receiver schemas before they become active runtime authority. `host.toolResult` and any similar response must correlate to an outstanding request before it can influence engine state.
 
-- `gui.ready`
+Current accepted GUI-to-host message:
+
+- `gui.ready`: exact bridge version, bounded optional request id, object payload only, and no unknown top-level fields.
+
+Future GUI-to-host messages remain explicitly disabled and rejected by current contracts and host receive paths:
+
 - `gui.openFile`
 - `gui.revealRange`
 - `gui.applyWorkspaceEditRequest`
@@ -358,7 +364,7 @@ Initial GUI to IDE messages:
 - `gui.executeIdeTool`
 - `gui.getHostContext`
 
-VS Code should implement this with webview `postMessage`. JetBrains should implement the same logical contract through JCEF/browser messaging. The GUI should depend on the logical bridge, not on host-specific APIs.
+Before any disabled privileged action is enabled, Yet AI must add a strict schema, request/response correlation, host origin/source checks where the platform supports them, engine and host policy checks, user confirmation for risky effects, sanitized audit/logging, least-privilege allowlists, and explicit protection against silent workspace mutation. Browser development mode must remain non-privileged.
 
 Bridge security rules:
 
