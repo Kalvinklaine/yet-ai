@@ -3,6 +3,7 @@
   "type": "module",
   "scripts": {
     "check": "node scripts/check.mjs",
+    "check:planner-scheduler": "node scripts/check-planner-scheduler.mjs",
     "smoke:local": "node scripts/smoke-local.mjs",
     "smoke:gui-browser": "node scripts/smoke-gui-browser.mjs",
     "smoke:gui-runtime-e2e": "node scripts/smoke-gui-runtime-e2e.mjs",
