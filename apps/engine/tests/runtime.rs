@@ -2786,6 +2786,135 @@ async fn models_returns_empty_list() {
 }
 
 #[tokio::test]
+async fn provider_model_metadata_defaults_are_exposed_on_models_providers_and_caps() {
+    let app = test_app();
+    let api_key = "sk-model-metadata-secret-abcd";
+    let ready_provider = json!({
+        "id": "aaa-ready-models",
+        "kind": "openai-compatible",
+        "displayName": "Ready Models",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:8080/v1",
+        "auth": { "type": "api_key", "apiKey": api_key },
+        "models": [{ "id": "gpt-ready", "displayName": "GPT Ready" }]
+    });
+    let missing_provider = json!({
+        "id": "bbb-missing-auth-models",
+        "kind": "openai-compatible",
+        "displayName": "Missing Auth Models",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:8081/v1",
+        "auth": { "type": "api_key" },
+        "models": [{ "id": "gpt-missing-auth", "displayName": "GPT Missing Auth" }]
+    });
+    let disabled_provider = json!({
+        "id": "ccc-disabled-models",
+        "kind": "openai-compatible",
+        "displayName": "Disabled Models",
+        "enabled": false,
+        "baseUrl": "http://127.0.0.1:8082/v1",
+        "auth": { "type": "none" },
+        "models": [{ "id": "gpt-disabled", "displayName": "GPT Disabled" }]
+    });
+    let unsupported_provider = json!({
+        "id": "ddd-unsupported-models",
+        "kind": "custom",
+        "displayName": "Unsupported Models",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:8083/v1",
+        "auth": { "type": "none" },
+        "models": [{ "id": "custom-model", "displayName": "Custom Model" }]
+    });
+
+    for provider in [
+        ready_provider,
+        missing_provider,
+        disabled_provider,
+        unsupported_provider,
+    ] {
+        let (status, body) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::POST,
+                "/v1/providers",
+                Body::from(provider.to_string()),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert!(!body.to_string().contains(api_key));
+    }
+
+    let (status, models) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/models", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(models["models"].as_array().unwrap().len(), 4);
+    let ready = &models["models"][0];
+    assert_eq!(ready["providerId"], "aaa-ready-models");
+    assert_eq!(ready["capabilities"], json!({
+        "chat": true,
+        "streaming": true,
+        "tools": false,
+        "reasoning": false
+    }));
+    assert_eq!(ready["readiness"], json!({ "status": "ready" }));
+    assert_eq!(models["models"][1]["readiness"]["status"], "missing_credentials");
+    assert_eq!(models["models"][2]["readiness"]["status"], "disabled");
+    assert_eq!(models["models"][3]["readiness"]["status"], "unsupported");
+    let text = models.to_string().to_lowercase();
+    assert!(!text.contains(api_key));
+    assert!(!text.contains("api_key"));
+    assert!(!text.contains("secret"));
+    assert!(!text.contains("token"));
+
+    let (status, providers) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/providers", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(providers["providers"][0]["models"][0]["id"], models["models"][0]["id"]);
+    assert_eq!(
+        providers["providers"][0]["models"][0]["capabilities"],
+        models["models"][0]["capabilities"]
+    );
+    assert_eq!(
+        providers["providers"][0]["models"][0]["readiness"],
+        models["models"][0]["readiness"]
+    );
+    assert!(providers["providers"][0]["models"][0].get("providerId").is_none());
+    assert_eq!(providers["providers"][1]["models"][0]["readiness"]["status"], "missing_credentials");
+    assert!(!providers.to_string().contains(api_key));
+
+    let (status, provider) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/providers/aaa-ready-models", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(provider["models"][0]["readiness"], json!({ "status": "ready" }));
+    assert!(!provider.to_string().contains(api_key));
+
+    let (status, caps) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/caps", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(caps["features"], json!({
+        "tools": false,
+        "tasks": false,
+        "knowledge": false
+    }));
+    assert_eq!(caps["providers"][0]["models"][0]["readiness"], json!({ "status": "ready" }));
+    assert_eq!(caps["providers"][0]["models"][0]["capabilities"], ready["capabilities"]);
+    assert!(!caps.to_string().contains(api_key));
+}
+
+#[tokio::test]
 async fn create_provider_with_api_key_returns_redacted_response() {
     let api_key = "sk-test-provider-secret-abcd";
     let provider = json!({
