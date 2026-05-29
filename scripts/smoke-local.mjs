@@ -354,6 +354,60 @@ try {
   assert(providerPrompt.includes("User request"), "provider request did not include user request marker");
   assert(providerPrompt.includes(activeContextUserRequest), "provider request did not include original user request");
 
+  const historyThread = await requestJson(baseUrl, "/v1/chats", { method: "POST" });
+  assert(typeof historyThread.chatId === "string" && historyThread.chatId.startsWith("chat_"), "chat history create returned unexpected chat id");
+  assert(historyThread.title === "New chat", "chat history create returned unexpected title");
+  assert(Array.isArray(historyThread.messages) && historyThread.messages.length === 0, "chat history create returned unexpected messages");
+
+  const historyContent = "Persist this local smoke chat.";
+  const historySubscription = subscribe(baseUrl, historyThread.chatId);
+  const historyCommandResponse = await requestJson(baseUrl, `/v1/chats/${encodeURIComponent(historyThread.chatId)}/commands`, {
+    method: "POST",
+    body: JSON.stringify({
+      requestId: `smoke-history-command-${crypto.randomUUID()}`,
+      type: "user_message",
+      payload: { content: historyContent }
+    })
+  });
+  assert(historyCommandResponse.accepted === true, "chat history command was not accepted");
+  const { events: historyEvents, raw: historyRaw } = await historySubscription;
+  assert(historyEvents[0]?.type === "snapshot" && historyEvents[0]?.payload?.thread?.id === historyThread.chatId, "chat history SSE snapshot used unexpected thread");
+  assert(historyEvents.some((event) => event.type === "stream_finished"), "chat history SSE did not finish");
+  assertMonotonicSequence(historyEvents);
+
+  const persistedHistory = await requestJson(baseUrl, `/v1/chats/${encodeURIComponent(historyThread.chatId)}`);
+  assert(persistedHistory.chatId === historyThread.chatId, "persisted chat history returned unexpected chat id");
+  assert(persistedHistory.title === "New chat", "persisted chat history returned unexpected title");
+  assert(Array.isArray(persistedHistory.messages), "persisted chat history returned no messages array");
+  assert(persistedHistory.messages.length === 2, "persisted chat history did not include user and assistant messages");
+  assert(persistedHistory.messages[0]?.role === "user", "persisted chat history first message was not user");
+  assert(persistedHistory.messages[0]?.content === historyContent, "persisted chat history did not preserve user content");
+  assert(persistedHistory.messages[0]?.status === "complete", "persisted chat history user message was not complete");
+  assert(persistedHistory.messages[1]?.role === "assistant", "persisted chat history second message was not assistant");
+  assert(persistedHistory.messages[1]?.content === "Hello smoke", "persisted chat history did not preserve assistant content");
+  assert(persistedHistory.messages[1]?.status === "complete", "persisted chat history assistant message was not complete");
+
+  const historySnapshot = await readSnapshot(baseUrl, historyThread.chatId);
+  assert(historySnapshot.payload?.thread?.id === historyThread.chatId, "follow-up chat history snapshot returned unexpected thread");
+  assert(historySnapshot.payload?.thread?.messages?.length === 2, "follow-up chat history snapshot did not include persisted messages");
+  assert(historySnapshot.payload?.thread?.messages?.[0]?.content === historyContent, "follow-up chat history snapshot did not include persisted user message");
+  assert(historySnapshot.payload?.thread?.messages?.[1]?.content === "Hello smoke", "follow-up chat history snapshot did not include persisted assistant message");
+
+  const historyList = await requestJson(baseUrl, "/v1/chats");
+  const historySummary = historyList.chats?.find((chat) => chat.chatId === historyThread.chatId);
+  assert(historySummary, "chat history list did not include persisted chat");
+  assert(historySummary.title === "New chat", "chat history list summary returned unexpected title");
+  assert(historySummary.messageCount === 2, "chat history list summary returned unexpected message count");
+  assert(typeof historySummary.createdAt === "string" && typeof historySummary.updatedAt === "string", "chat history list summary omitted timestamps");
+
+  await requestEmpty(baseUrl, `/v1/chats/${encodeURIComponent(historyThread.chatId)}`, { method: "DELETE", expectedStatus: 204 });
+  const historyListAfterDelete = await requestJson(baseUrl, "/v1/chats");
+  assert(!historyListAfterDelete.chats?.some((chat) => chat.chatId === historyThread.chatId), "deleted chat history still appeared in list");
+  const missingHistory = await requestJson(baseUrl, `/v1/chats/${encodeURIComponent(historyThread.chatId)}`, { expectedStatus: 404 });
+  assert(missingHistory.error === "chat not found", "deleted chat history get returned unexpected error");
+  const deletedSnapshot = await readSnapshot(baseUrl, historyThread.chatId);
+  assert(deletedSnapshot.payload?.thread?.messages?.length === 0, "deleted chat history snapshot returned stale messages");
+
   const openAiFallbackResponse = await requestJson(baseUrl, "/v1/providers", {
     method: "POST",
     body: JSON.stringify({
@@ -420,7 +474,17 @@ try {
     providerAuthWithApiKey,
     commandResponse,
     events,
-    raw
+    raw,
+    historyThread,
+    historyCommandResponse,
+    historyEvents,
+    historyRaw,
+    persistedHistory,
+    historySnapshot,
+    historyList,
+    historyListAfterDelete,
+    missingHistory,
+    deletedSnapshot
   });
   const secretMarkers = [
     { label: "runtime token", value: token },
@@ -494,6 +558,8 @@ function startEngine(port, home) {
       XDG_CACHE_HOME: path.join(home, ".cache"),
       CARGO_HOME: process.env.CARGO_HOME ?? path.join(process.env.HOME ?? home, ".cargo"),
       RUSTUP_HOME: process.env.RUSTUP_HOME ?? path.join(process.env.HOME ?? home, ".rustup"),
+      NO_PROXY: appendNoProxy(process.env.NO_PROXY),
+      no_proxy: appendNoProxy(process.env.no_proxy),
       YET_AI_AUTH_TOKEN: token,
       YET_AI_HTTP_PORT: String(port)
     },
@@ -641,6 +707,68 @@ async function requestJson(baseUrl, route, init = {}) {
   return JSON.parse(text);
 }
 
+async function requestEmpty(baseUrl, route, init = {}) {
+  const { expectedStatus, ...fetchInit } = init;
+  const response = await fetch(`${baseUrl}${route}`, {
+    ...fetchInit,
+    headers: {
+      ...authHeaders(),
+      Accept: "application/json",
+      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...init.headers
+    }
+  });
+  if (response.status !== expectedStatus) {
+    throw new Error(`Request ${route} returned unexpected HTTP status ${response.status}`);
+  }
+  await response.arrayBuffer();
+}
+
+async function readSnapshot(baseUrl, id) {
+  const controller = new AbortController();
+  const response = await fetch(`${baseUrl}/v1/chats/subscribe?chat_id=${encodeURIComponent(id)}`, {
+    headers: { ...authHeaders(), Accept: "text/event-stream" },
+    signal: controller.signal
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(`SSE snapshot subscribe failed with HTTP ${response.status}`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let raw = "";
+  let buffer = "";
+  const started = Date.now();
+  try {
+    while (Date.now() - started < timeoutMs) {
+      const read = await Promise.race([
+        reader.read(),
+        delay(1_000).then(() => ({ timeout: true }))
+      ]);
+      if (read.timeout) {
+        continue;
+      }
+      if (read.done) {
+        break;
+      }
+      const chunk = decoder.decode(read.value, { stream: true });
+      raw += chunk;
+      buffer += chunk;
+      const drained = drainSseFrames(buffer);
+      buffer = drained.rest;
+      for (const frame of drained.frames) {
+        const event = parseSseFrame(frame);
+        if (event?.type === "snapshot") {
+          return event;
+        }
+      }
+    }
+  } finally {
+    controller.abort();
+    reader.releaseLock();
+  }
+  throw new Error(`SSE snapshot was not received within ${timeoutMs}ms. Raw: ${raw}`);
+}
+
 async function subscribe(baseUrl, id, options = {}) {
   const controller = new AbortController();
   const response = await fetch(`${baseUrl}/v1/chats/subscribe?chat_id=${encodeURIComponent(id)}`, {
@@ -723,6 +851,19 @@ function assertMonotonicSequence(events) {
 
 function authHeaders() {
   return { Authorization: `Bearer ${token}` };
+}
+
+function appendNoProxy(value) {
+  const entries = new Set(
+    String(value ?? "")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+  );
+  for (const entry of ["127.0.0.1", "localhost", "::1"]) {
+    entries.add(entry);
+  }
+  return [...entries].join(",");
 }
 
 function assertNoSecretLeak(text, markers) {
