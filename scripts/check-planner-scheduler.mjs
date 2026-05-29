@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import assert from "node:assert/strict";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
@@ -13,6 +15,8 @@ import {
   sanitizeAuditEvent,
   writeSchedulerState
 } from "./planner-scheduler-state.mjs";
+
+const execFileAsync = promisify(execFile);
 
 const PROTOCOL_VERSION = "2026-05-15";
 const HEARTBEAT_STALE_MS = 10 * 60 * 1000;
@@ -319,6 +323,7 @@ async function runStateStoreAssertions() {
   const tempDir = await mkdtemp(join(tmpdir(), "yet-planner-state-"));
   try {
     const statePath = join(tempDir, "scheduler-state.json");
+    const cliStatePath = join(tempDir, "scheduler-cli-state.json");
     const initialState = durableState({
       auditTimeline: [
         sanitizeAuditEvent({
@@ -384,6 +389,44 @@ async function runStateStoreAssertions() {
     assert.deepEqual(finalRoundtrip, released, "updated state store roundtrip mismatch");
     const files = await readFile(statePath, "utf8");
     assert.equal(files.endsWith("\n"), true, "state file is not newline terminated");
+
+    await writeSchedulerState(
+      cliStatePath,
+      durableState({
+        poolId: "planner_cli_state",
+        agents: [
+          {
+            agentRunId: "agent-T230-001",
+            cardId: "T230",
+            status: "done",
+            completedAt: "2026-05-29T00:44:00Z"
+          }
+        ],
+        cards: [{ cardId: "T230", status: "running" }]
+      })
+    );
+    const cliResult = await execFileAsync(process.execPath, [
+      "scripts/planner-scheduler-tick.mjs",
+      "--state",
+      cliStatePath,
+      "--owner",
+      "owner-T230-001",
+      "--tick-id",
+      "tick-T230-001",
+      "--observed-at",
+      "2026-05-29T00:45:00Z"
+    ]);
+    const cliSummary = JSON.parse(cliResult.stdout);
+    assert.equal(cliSummary.nextAction, "merge_completed", "CLI did not use scheduler decision helper");
+    assert.equal(cliSummary.selectedAgentRunId, "agent-T230-001", "CLI did not report selected agent");
+    assertNoSensitiveAuditFields(cliSummary);
+    const cliRoundtrip = await readSchedulerState(cliStatePath);
+    assert.equal(cliRoundtrip.activeSchedulerLease, null, "CLI did not release scheduler lease");
+    assert.equal(cliRoundtrip.auditTimeline.length, 1, "CLI did not append an audit tick");
+    assert.equal(cliRoundtrip.auditTimeline[0].nextAction, "merge_completed", "CLI persisted wrong next action");
+    assert.equal(cliRoundtrip.auditTimeline[0].leaseOwnerId, "owner-T230-001", "CLI did not persist sanitized lease owner");
+    assert.equal(cliRoundtrip.lastTick.tickId, "tick-T230-001", "CLI did not update last tick");
+    assertNoSensitiveAuditFields(cliRoundtrip.auditTimeline[0]);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
