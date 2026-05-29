@@ -640,6 +640,7 @@ async fn test_openai_compatible_provider(provider: &StoredProviderConfig) -> Pro
         );
     };
     let client = match reqwest::Client::builder()
+        .no_proxy()
         .timeout(Duration::from_secs(3))
         .build()
     {

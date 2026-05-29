@@ -4891,7 +4891,10 @@ async fn abort_cancels_active_provider_stream_without_later_deltas() {
     let app = test_app();
     configure_openai_provider(app.clone(), base_url, api_key).await;
     send_user_message(app.clone(), "chat-abort-stream").await;
-    first_receiver.await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), first_receiver)
+        .await
+        .expect("provider should stream first delta")
+        .expect("provider first-delta signal should be sent");
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     send_abort(app.clone(), "chat-abort-stream", "req-abort-stream-1").await;
     send_abort(app.clone(), "chat-abort-stream", "req-abort-stream-2").await;
