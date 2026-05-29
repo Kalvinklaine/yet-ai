@@ -1,0 +1,9 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.executeIdeTool",
+  "requestId": "req-gui-execute-tool-disabled-001",
+  "payload": {
+    "toolName": "example.disabledTool",
+    "arguments": {}
+  }
+}

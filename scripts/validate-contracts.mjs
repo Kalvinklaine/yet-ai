@@ -48,6 +48,30 @@ const invalidMappings = [
     "packages/contracts/schemas/engine/chat-command.schema.json"
   ],
   [
+    "packages/contracts/examples-invalid/engine/chat-command-regenerate.json",
+    "packages/contracts/schemas/engine/chat-command.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/chat-command-update-message.json",
+    "packages/contracts/schemas/engine/chat-command.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/chat-command-remove-message.json",
+    "packages/contracts/schemas/engine/chat-command.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/chat-command-set-params.json",
+    "packages/contracts/schemas/engine/chat-command.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/chat-command-tool-decision.json",
+    "packages/contracts/schemas/engine/chat-command.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/chat-command-ide-tool-result.json",
+    "packages/contracts/schemas/engine/chat-command.schema.json"
+  ],
+  [
     "packages/contracts/examples-invalid/engine/chat-command-abort-payload.json",
     "packages/contracts/schemas/engine/chat-command.schema.json"
   ],
@@ -77,6 +101,34 @@ const invalidMappings = [
   ],
   [
     "packages/contracts/examples-invalid/bridge/gui-ready-extra-payload.json",
+    "packages/contracts/schemas/bridge/gui-message.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/bridge/gui-open-file-message.json",
+    "packages/contracts/schemas/bridge/gui-message.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/bridge/gui-reveal-range-message.json",
+    "packages/contracts/schemas/bridge/gui-message.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/bridge/gui-apply-workspace-edit-request-message.json",
+    "packages/contracts/schemas/bridge/gui-message.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/bridge/gui-execute-ide-tool-message.json",
+    "packages/contracts/schemas/bridge/gui-message.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/bridge/gui-copy-text-message.json",
+    "packages/contracts/schemas/bridge/gui-message.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/bridge/gui-show-notification-message.json",
+    "packages/contracts/schemas/bridge/gui-message.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/bridge/gui-get-host-context-message.json",
     "packages/contracts/schemas/bridge/gui-message.schema.json"
   ],
   [

@@ -1,0 +1,8 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.openFile",
+  "requestId": "req-gui-open-file-disabled-001",
+  "payload": {
+    "workspaceRelativePath": "src/example.ts"
+  }
+}

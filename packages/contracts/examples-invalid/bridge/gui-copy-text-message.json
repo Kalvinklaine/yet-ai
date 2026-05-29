@@ -1,0 +1,8 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.copyText",
+  "requestId": "req-gui-copy-text-disabled-001",
+  "payload": {
+    "text": "Example text"
+  }
+}

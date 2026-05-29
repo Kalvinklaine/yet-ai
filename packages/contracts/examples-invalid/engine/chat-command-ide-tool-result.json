@@ -1,0 +1,8 @@
+{
+  "requestId": "req-ide-tool-result-disabled-001",
+  "type": "ide_tool_result",
+  "payload": {
+    "toolCallId": "tool-example-001",
+    "status": "cancelled"
+  }
+}

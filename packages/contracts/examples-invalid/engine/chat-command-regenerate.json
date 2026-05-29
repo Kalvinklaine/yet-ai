@@ -1,0 +1,7 @@
+{
+  "requestId": "req-regenerate-disabled-001",
+  "type": "regenerate",
+  "payload": {
+    "messageId": "msg-example-001"
+  }
+}

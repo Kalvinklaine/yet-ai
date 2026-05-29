@@ -1,0 +1,8 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.getHostContext",
+  "requestId": "req-gui-host-context-disabled-001",
+  "payload": {
+    "reason": "example-context-refresh"
+  }
+}
