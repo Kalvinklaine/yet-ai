@@ -28,6 +28,9 @@ const mappings = [
   ["packages/contracts/examples/engine/planner-scheduler-idle-blocked.json", "packages/contracts/schemas/engine/planner-scheduler-tick.schema.json"],
   ["packages/contracts/examples/engine/planner-pool-complete-next-pool.json", "packages/contracts/schemas/engine/planner-card-pool-status.schema.json"],
   ["packages/contracts/examples/engine/models-response.json", "packages/contracts/schemas/engine/models.schema.json"],
+  ["packages/contracts/examples/engine/chat-list-response.json", "packages/contracts/schemas/engine/chat-list-response.schema.json"],
+  ["packages/contracts/examples/engine/chat-thread-response.json", "packages/contracts/schemas/engine/chat-thread.schema.json"],
+  ["packages/contracts/examples/engine/chat-message.json", "packages/contracts/schemas/engine/chat-message.schema.json"],
   ["packages/contracts/examples/engine/user-message-command.json", "packages/contracts/schemas/engine/chat-command.schema.json"],
   ["packages/contracts/examples/engine/user-message-command-with-context.json", "packages/contracts/schemas/engine/chat-command.schema.json"],
   ["packages/contracts/examples/engine/abort-command.json", "packages/contracts/schemas/engine/chat-command.schema.json"],
@@ -43,6 +46,30 @@ const mappings = [
 ].map(([examplePath, schemaPath]) => [normalizeContractPath(examplePath), normalizeContractPath(schemaPath)]);
 
 const invalidMappings = [
+  [
+    "packages/contracts/examples-invalid/engine/chat-list-unsafe-chat-id.json",
+    "packages/contracts/schemas/engine/chat-list-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/chat-thread-extra-auth-field.json",
+    "packages/contracts/schemas/engine/chat-thread.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/chat-message-invalid-role.json",
+    "packages/contracts/schemas/engine/chat-message.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/chat-message-invalid-status.json",
+    "packages/contracts/schemas/engine/chat-message.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/chat-message-invalid-timestamp.json",
+    "packages/contracts/schemas/engine/chat-message.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/chat-message-oversized-content.json",
+    "packages/contracts/schemas/engine/chat-message.schema.json"
+  ],
   [
     "packages/contracts/examples-invalid/engine/chat-command-tool-call.json",
     "packages/contracts/schemas/engine/chat-command.schema.json"

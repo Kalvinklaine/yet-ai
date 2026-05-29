@@ -1,0 +1,8 @@
+{
+  "id": "msg_003",
+  "chatId": "chat_20260529_001",
+  "role": "error",
+  "content": "The local runtime stopped before completing this response.",
+  "createdAt": "2026-05-29T07:17:00Z",
+  "status": "error"
+}

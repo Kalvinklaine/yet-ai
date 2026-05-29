@@ -1,0 +1,24 @@
+{
+  "chatId": "chat_20260529_001",
+  "title": "Plan local chat history",
+  "createdAt": "2026-05-29T07:15:00Z",
+  "updatedAt": "2026-05-29T07:16:30Z",
+  "messages": [
+    {
+      "id": "msg_001",
+      "chatId": "chat_20260529_001",
+      "role": "user",
+      "content": "Please outline local chat history storage.",
+      "createdAt": "2026-05-29T07:15:00Z",
+      "status": "complete"
+    },
+    {
+      "id": "msg_002",
+      "chatId": "chat_20260529_001",
+      "role": "assistant",
+      "content": "Use engine-owned local storage with strict thread and message contracts.",
+      "createdAt": "2026-05-29T07:16:30Z",
+      "status": "complete"
+    }
+  ]
+}
