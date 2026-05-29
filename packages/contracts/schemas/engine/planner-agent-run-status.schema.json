@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/planner-agent-run-status.schema.json",
+  "title": "Planner Agent Run Status Snapshot",
+  "description": "Future/simulator-facing sanitized scheduler snapshot for one delegated agent run. It contains no prompts, provider responses, tokens, auth codes, cookies, private paths, or workspace file contents.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocolVersion", "agentRunId", "cardId", "poolId", "autonomousMode", "status", "nextAction", "observedAt"],
+  "properties": {
+    "protocolVersion": {
+      "type": "string",
+      "const": "2026-05-15"
+    },
+    "agentRunId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    },
+    "cardId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+    },
+    "poolId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$"
+    },
+    "autonomousMode": {
+      "type": "boolean"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["running", "done", "failed", "stuck", "unknown"]
+    },
+    "nextAction": {
+      "type": "string",
+      "enum": ["check_agents", "merge_completed", "verify_merge", "spawn_ready", "recover_failed", "plan_next_pool", "idle_blocked"]
+    },
+    "idleReason": {
+      "type": "string",
+      "enum": ["waiting_for_user_decision", "waiting_for_external_dependency", "concurrency_limit_reached", "blocked_by_failed_verification", "blocked_by_policy", "all_work_closed", "autonomy_not_permitted"]
+    },
+    "observedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "lastHeartbeatAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "completedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "failureKind": {
+      "type": "string",
+      "enum": ["agent_error", "verification_failed", "timeout", "heartbeat_expired", "unknown"]
+    },
+    "safeSummary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "nextAction": {
+            "const": "idle_blocked"
+          }
+        },
+        "required": ["nextAction"]
+      },
+      "then": {
+        "properties": {
+          "idleReason": true
+        },
+        "required": ["idleReason"]
+      },
+      "else": {
+        "not": {
+          "required": ["idleReason"]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": ["failed", "stuck"]
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "failureKind": true
+        },
+        "required": ["failureKind"]
+      }
+    }
+  ]
+}

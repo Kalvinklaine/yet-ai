@@ -1,0 +1,25 @@
+{
+  "protocolVersion": "2026-05-15",
+  "tickId": "tick-idle-invalid-001",
+  "poolId": "planner_no_idle",
+  "autonomousMode": true,
+  "nextAction": "idle_blocked",
+  "observedAt": "2026-05-29T00:05:00Z",
+  "nextWatchdogCheckAt": "2026-05-29T00:10:00Z",
+  "agentCounts": {
+    "running": 0,
+    "done": 0,
+    "failed": 0,
+    "stuck": 0,
+    "unknown": 0
+  },
+  "cardCounts": {
+    "running": 0,
+    "done_unmerged": 0,
+    "merge_pending": 0,
+    "verification_pending": 0,
+    "verified": 0,
+    "blocked": 1,
+    "replan_required": 0
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "protocolVersion": "2026-05-15",
+  "agentRunId": "agent-T224-001",
+  "cardId": "T224",
+  "poolId": "planner_no_idle",
+  "autonomousMode": true,
+  "status": "done",
+  "nextAction": "merge_completed",
+  "observedAt": "2026-05-29T00:00:00Z",
+  "completedAt": "2026-05-29T00:00:00Z",
+  "safeSummary": "Agent completed sanitized contract changes and is waiting for serialized merge review."
+}

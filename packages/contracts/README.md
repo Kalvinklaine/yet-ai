@@ -20,6 +20,7 @@ Current schemas:
 - `schemas/engine/sse-event.schema.json` for chat SSE event payloads.
 - `schemas/engine/provider-*.schema.json` for local provider summaries, writes, model lists, and sanitized provider test responses.
 - `schemas/engine/provider-auth-*-response.schema.json` for future sanitized provider login start, status, exchange, and disconnect responses.
+- `schemas/engine/planner-*.schema.json` for future/simulator-facing no-idle planner scheduler audits, agent run snapshots, and card/pool summaries.
 - `schemas/bridge/host-message.schema.json` for IDE host to GUI messages.
 - `schemas/bridge/gui-message.schema.json` for GUI to IDE host messages.
 
@@ -48,6 +49,14 @@ Future provider-auth schemas cover sanitized responses for `POST /v1/provider-au
 Provider-auth lifecycle fixtures should cover product UX states across pending login start, connected status/exchange, expired login, revoked disconnect success, login unavailable, API-key configured fallback, and sanitized failure responses when an endpoint can return an error-like status. Positive fixtures must stay free of raw credential material. Invalid provider-auth fixtures should cover rejected raw token-like or unknown fields, invalid provider IDs, non-HTTPS authorization URLs where the schema owns URL shape, invalid `status`/`authSource` combinations where practical, and `cloudRequired` values other than `false`.
 
 Provider response examples must not include API keys, OAuth refresh tokens, environment secrets, or private local paths. GUI clients may submit secrets for save/test actions but must not persist them after the request. In provider response `auth` objects, `redacted` is required only when `type = "api_key"` and `configured = true`; it is omitted for unconfigured API-key auth and non-secret auth types. Provider-auth responses must not include raw access tokens, refresh tokens, API keys, cookies, authorization codes, browser profile paths, browser cookie reuse data, `~/.codex/auth.json` content, other tools' credential file paths, or any imported provider credential file material.
+
+## Planner scheduler contracts
+
+Planner scheduler contracts are future/simulator-facing product contracts only. They do not implement production runtime orchestration, background agents, merges, verification execution, file edits, shell commands, tool execution, or workspace mutation. Their purpose is to keep the no-idle scheduler vocabulary strict before implementation.
+
+Current planner schemas cover sanitized scheduler tick audits, delegated agent run status snapshots, and card/pool status summaries. They require explicit `autonomousMode`, a bounded `nextAction`, audited `idleReason` whenever `nextAction = "idle_blocked"`, explicit agent statuses such as `running`, `done`, `failed`, `stuck`, and `unknown`, and card statuses such as `done_unmerged`, `merge_pending`, `verification_pending`, `verified`, `blocked`, and `replan_required`. A card can be `verified` only when merge and verification states show `merged` and `passed`.
+
+Planner fixtures must stay small and sanitized. They may include non-secret IDs, timestamps, counts, bounded status enums, and safe summaries. They must not include raw prompts, provider responses, API keys, OAuth tokens, authorization codes, cookies, private paths, raw local logs, workspace file contents, hidden credential bags, privileged tool commands, shell commands, or apply-patch/edit payloads.
 
 ## Versioning
 

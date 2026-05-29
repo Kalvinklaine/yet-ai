@@ -1,0 +1,15 @@
+{
+  "protocolVersion": "2026-05-15",
+  "poolId": "planner_no_idle",
+  "autonomousMode": true,
+  "poolStatus": "closed",
+  "nextAction": "plan_next_pool",
+  "cards": [
+    {
+      "cardId": "T224",
+      "status": "verified",
+      "verificationState": "passed",
+      "safeSummary": "This card cannot be verified without merged state."
+    }
+  ]
+}

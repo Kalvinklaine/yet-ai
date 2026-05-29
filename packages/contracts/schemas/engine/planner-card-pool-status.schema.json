@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/planner-card-pool-status.schema.json",
+  "title": "Planner Card and Pool Scheduler Status Summary",
+  "description": "Future/simulator-facing sanitized scheduler summary for cards and pools. It contains explicit no-idle actions without raw prompts, provider responses, tokens, auth codes, cookies, private paths, or workspace file contents.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocolVersion", "poolId", "autonomousMode", "poolStatus", "nextAction", "cards"],
+  "properties": {
+    "protocolVersion": {
+      "type": "string",
+      "const": "2026-05-15"
+    },
+    "poolId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$"
+    },
+    "autonomousMode": {
+      "type": "boolean"
+    },
+    "poolStatus": {
+      "type": "string",
+      "enum": ["running", "blocked", "replan_required", "closed"]
+    },
+    "nextAction": {
+      "type": "string",
+      "enum": ["check_agents", "merge_completed", "verify_merge", "spawn_ready", "recover_failed", "plan_next_pool", "idle_blocked"]
+    },
+    "idleReason": {
+      "type": "string",
+      "enum": ["waiting_for_user_decision", "waiting_for_external_dependency", "concurrency_limit_reached", "blocked_by_failed_verification", "blocked_by_policy", "all_work_closed", "autonomy_not_permitted"]
+    },
+    "cards": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "$ref": "#/$defs/cardStatus"
+      }
+    },
+    "nextPoolCandidate": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$"
+    },
+    "safeSummary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    }
+  },
+  "$defs": {
+    "cardStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cardId", "status"],
+      "properties": {
+        "cardId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["running", "done_unmerged", "merge_pending", "verification_pending", "verified", "blocked", "replan_required", "failed", "stuck", "closed"]
+        },
+        "agentRunId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+        },
+        "mergeState": {
+          "type": "string",
+          "enum": ["not_started", "pending", "merged", "failed"]
+        },
+        "verificationState": {
+          "type": "string",
+          "enum": ["not_started", "pending", "passed", "failed"]
+        },
+        "blocker": {
+          "type": "string",
+          "enum": ["waiting_for_user_decision", "waiting_for_external_dependency", "blocked_by_failed_verification", "blocked_by_policy", "autonomy_not_permitted"]
+        },
+        "safeSummary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "verified"
+              }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "required": ["mergeState", "verificationState"],
+            "properties": {
+              "mergeState": {
+                "const": "merged"
+              },
+              "verificationState": {
+                "const": "passed"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": ["blocked", "replan_required"]
+              }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "blocker": true
+            },
+            "required": ["blocker"]
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "nextAction": {
+            "const": "idle_blocked"
+          }
+        },
+        "required": ["nextAction"]
+      },
+      "then": {
+        "properties": {
+          "idleReason": true
+        },
+        "required": ["idleReason"]
+      },
+      "else": {
+        "not": {
+          "required": ["idleReason"]
+        }
+      }
+    }
+  ]
+}
