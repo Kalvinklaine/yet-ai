@@ -16,6 +16,7 @@ Yet AI is an architecture-inspired independent AI coding assistant for IDEs. The
 - Provider-auth status: the safe/default real-provider path is the OpenAI API-key or project-key fallback through the local runtime. The GUI now presents a more productized OpenAI account-login card with guided unavailable, pending, connected, expired/revoked, sanitized-error, API-key-configured, retry, reconnect, disconnect, and API-key fallback states. Provider-auth pending/session state is local engine-owned state: hardened pending files and the protected-file secret-store fallback live under the engine config boundary, while raw provider secrets, tokens, authorization codes, PKCE verifiers, cookies, browser profiles, and credential file paths are never GUI-owned or GUI-facing. That account path is still a separate explicit-risk experimental Codex-like flow backed by engine-owned PKCE/session state, sanitized provider-auth status, local secret storage, and chat fallback when no API-key provider is configured. It is private-endpoint-style, not official public OpenAI OAuth support, not an OpenAI partnership claim, and not production-ready. Automated coverage for that account path is loopback/mock-only; any real account testing is manual, high-risk, account-specific, outside CI, and must capture only sanitized evidence.
 - Planner reliability status: the no-idle autonomous planner/watchdog is documented as a future contract only. It must not silently wait when completed agents, mergeable work, verification, ready cards, failed/stuck recovery, pool closure, or approved next-pool planning can progress; any true idle state must carry an audited reason.
 - Planner scheduler checks are contract/simulator smoke coverage only: `npm run check:planner-scheduler`, `npm run smoke:planner-no-idle`, and `npm run smoke:planner-resume` validate the no-idle invariant, durable local simulator ticks, and restart/resume behavior locally without production autonomous orchestration, real agents, git operations, shell/tool execution, file edits, or workspace mutation.
+- Agent progress observability status: current coverage is contracts plus a pure reducer/classifier, durable local simulator state, a CLI reporter, and deterministic smoke scenarios. It does not implement production background agents, real runner hooks, real task-board integration, git merges, tool execution, shell authority, workspace mutation, cloud sync, or hosted services. Future runner wiring should emit sanitized progress events from lifecycle hooks only. Safe fields are phase/status, tool label, elapsed and heartbeat timing, and short sanitized output-tail summaries. Forbidden data includes prompts, chain-of-thought, raw file contents, raw provider responses, tokens, cookies, provider credentials, runtime session tokens, credential paths, and private absolute paths.
 - Bridge and chat command policy: current accepted chat commands are only `user_message` and no-op-safe `abort`; current accepted GUI-to-host bridge input is only strict `gui.ready`; current host-to-GUI messages are `host.ready`, `host.openedFromCommand`, and non-privileged `host.contextSnapshot`. Future privileged chat commands (`regenerate`, `update_message`, `remove_message`, `set_params`, `tool_decision`, `ide_tool_result`) and future GUI-to-host actions (`gui.openFile`, `gui.revealRange`, `gui.applyWorkspaceEditRequest`, `gui.executeIdeTool`, `gui.copyText`, `gui.showNotification`, `gui.getHostContext`) are intentionally rejected. Before any privileged action is enabled, Yet AI must add strict schemas, request correlation, host origin/source checks, user confirmation where risk exists, sanitized audit/logging, least-privilege allowlists, and a no-silent-workspace-mutation policy.
 - Limitations: the baseline is not production-ready; no marketplace packaging, signed or notarized engine bundles, production installer, autonomous file reads/indexing, LSP/completions/tools/file edits/apply patch, shell/tool execution, full agent autonomy, background agent autonomy, production no-idle scheduler, or integration workflows are complete. Tools, tasks, and knowledge remain disabled. Current chat is a local provider/chat MVP only.
 
@@ -89,6 +90,21 @@ npm run planner:scheduler:tick -- --state path/to/scheduler-state.json
 ```
 
 The tick runner loads the given simulator state, acquires a scheduler lease for one owner, applies the pure scheduler decision, appends a sanitized audit tick, releases the lease, persists the state unless `--dry-run` is used, and prints a compact next-action summary. It is a local simulator utility only, not a production task-board, agent, merge, verification, shell, tool, or workspace mutation runner.
+
+Run the agent progress reducer/state checks and deterministic smoke when changing progress contracts, reducer behavior, local progress state, reporter output, or observability docs:
+
+```sh
+npm run check:agent-progress
+npm run smoke:agent-progress
+```
+
+`npm run check:agent-progress` validates deterministic sanitization, reducer classification, stuck/healthy/done states, local state persistence, and compact CLI reports. `npm run smoke:agent-progress` exercises local simulator scenarios for healthy long-running work, heartbeat timeout, failed command redaction, explicit secret redaction, and terminal done state. The final agent-progress gate context is:
+
+```sh
+npm run check:agent-progress && npm run smoke:agent-progress && npm run check && git status --short
+```
+
+These commands do not run production agents, execute tools, perform git operations, mutate workspaces, call providers, or require a hosted Yet AI backend.
 
 Prepare and validate the local VS Code installable dev-preview artifact from the root when changing VS Code packaging, packaged GUI, or preview docs:
 
