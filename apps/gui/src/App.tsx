@@ -3,7 +3,7 @@ import { createBridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, 
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
-import { createChat, deleteChat, getCaps, getChat, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, type CapsResponse, type ChatSummary, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
+import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
 
@@ -67,6 +67,12 @@ type ProviderTestState = {
   state: "testing" | "success" | "failed";
   detail: string;
   status?: ProviderTestResponse["status"] | RuntimeError["status"];
+};
+
+type AgentProgressState = {
+  state: "not_checked" | "loading" | "ready" | "error";
+  response: AgentProgressListResponse | null;
+  error: RuntimeError | null;
 };
 
 const emptyProviderForm: ProviderForm = {
@@ -217,8 +223,10 @@ export function App() {
   const [runtimeDataRevision, setRuntimeDataRevision] = useState<number | null>(null);
   const [providerDataRevision, setProviderDataRevision] = useState<number | null>(null);
   const [providerAuthDataRevision, setProviderAuthDataRevision] = useState<number | null>(null);
+  const [agentProgress, setAgentProgress] = useState<AgentProgressState>({ state: "not_checked", response: null, error: null });
   const activeStreamRef = useRef<ActiveStream | null>(null);
   const attachedContextRef = useRef<typeof attachedContext>(null);
+  const agentProgressAttemptRef = useRef(0);
 
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
   settingsRef.current = settings;
@@ -326,6 +334,8 @@ export function App() {
     setProviderAuthExchangeWorking(false);
     setProviderAuthExchangeError(null);
     setProviderTestState(null);
+    agentProgressAttemptRef.current += 1;
+    setAgentProgress({ state: "not_checked", response: null, error: null });
     setAttachedContext(null);
     setIncludeAttachedContext(false);
   }, [abortActiveStream]);
@@ -650,6 +660,23 @@ export function App() {
       setRuntimeRefreshInFlight(false);
     }
   }, [refreshChats, refreshProviderAuthStatus, refreshProviders, refreshRuntime]);
+
+  const refreshAgentProgress = useCallback(async () => {
+    const targetSettings = settingsRef.current;
+    const targetRevision = settingsRevisionRef.current;
+    const attempt = agentProgressAttemptRef.current + 1;
+    agentProgressAttemptRef.current = attempt;
+    setAgentProgress({ state: "loading", response: null, error: null });
+    const result = await getAgentProgress(targetSettings);
+    if (!isCurrentRefresh(targetRevision) || agentProgressAttemptRef.current !== attempt) {
+      return;
+    }
+    if (result.ok) {
+      setAgentProgress({ state: "ready", response: result.data, error: null });
+    } else {
+      setAgentProgress({ state: "error", response: null, error: result.error });
+    }
+  }, [isCurrentRefresh]);
 
   useEffect(() => {
     void connect();
@@ -1052,6 +1079,15 @@ export function App() {
           <StatusBlock title="/v1/ping" value={activePing} />
           <StatusBlock title="/v1/caps" value={activeCaps ? { protocolVersion: activeCaps.protocolVersion, capabilities: activeCaps.capabilities, runtime: activeCaps.runtime, providers: activeCaps.providers.length } : null} />
         </div>
+      </section>
+
+      <section className="card stack agent-progress-card" aria-label="Agent progress">
+        <div className="row">
+          <h2>Agent progress</h2>
+          <button type="button" onClick={() => void refreshAgentProgress()} disabled={agentProgress.state === "loading"}>{agentProgress.state === "loading" ? "Loading agent progress…" : "Refresh agent progress"}</button>
+        </div>
+        <p className="subtle">Read-only local observability only. This panel does not start agents, run tools, merge git, edit files, execute shell, call providers, or mutate the workspace.</p>
+        <AgentProgressPanel progress={agentProgress} />
       </section>
 
       <section className="card stack">
@@ -1471,6 +1507,91 @@ function AttachedContextPreview({ context, include, onIncludeChange }: { context
       </div>
     </div>
   );
+}
+
+function AgentProgressPanel({ progress }: { progress: AgentProgressState }) {
+  if (progress.state === "not_checked") {
+    return <div className="agent-progress-empty" role="status">Agent progress has not been checked yet.</div>;
+  }
+  if (progress.state === "loading") {
+    return <div className="agent-progress-empty" role="status">Loading agent progress…</div>;
+  }
+  if (progress.state === "error" && progress.error) {
+    return <div className="error" role="status">Agent progress unavailable: {progress.error.status}: {sanitizeDisplayText(progress.error.message)}</div>;
+  }
+  const snapshots = progress.response?.snapshots ?? [];
+  if (snapshots.length === 0) {
+    return <div className="agent-progress-empty" role="status">No agent runs.</div>;
+  }
+  return (
+    <div className="agent-progress-list">
+      {snapshots.map((snapshot) => <AgentProgressSnapshotCard key={`${snapshot.cardId}:${snapshot.runId}`} snapshot={snapshot} />)}
+    </div>
+  );
+}
+
+function AgentProgressSnapshotCard({ snapshot }: { snapshot: AgentProgressSnapshot }) {
+  const state = agentProgressStateLabel(snapshot);
+  return (
+    <article className={`agent-progress-run ${snapshot.status}`}>
+      <div className="row">
+        <strong>{sanitizeDisplayText(snapshot.cardId)} / {sanitizeDisplayText(snapshot.runId)}</strong>
+        <span className={`badge ${snapshot.status === "failed" || snapshot.status === "stuck" || snapshot.status === "stalled" ? "warn" : snapshot.status === "done" || snapshot.status === "healthy_running" ? "ok" : ""}`}>{state}</span>
+      </div>
+      <div className="agent-progress-grid">
+        <span>Phase: {sanitizeDisplayText(snapshot.phase)}</span>
+        <span>Status: {sanitizeDisplayText(snapshot.status)}</span>
+        <span>Elapsed: {formatDuration(snapshot.elapsedMs)}</span>
+        <span>Heartbeat age: {formatDuration(snapshot.ageMs)}</span>
+        {snapshot.completedAt && <span>Completed: {sanitizeDisplayText(snapshot.completedAt)}</span>}
+        {snapshot.currentTool && <span>Tool: {sanitizeDisplayText(snapshot.currentTool.kind)} · {sanitizeDisplayText(snapshot.currentTool.label)}{snapshot.currentTool.elapsedMs !== undefined ? ` · ${formatDuration(snapshot.currentTool.elapsedMs)}` : ""}</span>}
+        {snapshot.stuckReason && snapshot.stuckReason !== "none" && <span>Stuck reason: {sanitizeDisplayText(snapshot.stuckReason)}</span>}
+      </div>
+      <span>{sanitizeDisplayText(snapshot.message)}</span>
+      {snapshot.outputTail && <pre className="agent-progress-output">{sanitizeTimelineText(snapshot.outputTail)}</pre>}
+      <div className="stack">
+        <strong>Recent summaries</strong>
+        {snapshot.recentEvents.length === 0 ? <span className="subtle">No recent summaries.</span> : snapshot.recentEvents.map((event) => (
+          <div className="agent-progress-event" key={event.eventId}>
+            <span>{sanitizeDisplayText(event.timestamp)} · {sanitizeDisplayText(event.phase)} · {sanitizeDisplayText(event.status)}</span>
+            <span>{sanitizeDisplayText(event.message)}</span>
+          </div>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function agentProgressStateLabel(snapshot: AgentProgressSnapshot): string {
+  if (snapshot.status === "stuck" || snapshot.status === "stalled" || snapshot.phase === "stuck") {
+    return `stuck${snapshot.stuckReason && snapshot.stuckReason !== "none" ? `: ${snapshot.stuckReason}` : ""}`;
+  }
+  if (snapshot.status === "failed" || snapshot.phase === "failed") {
+    return "failed";
+  }
+  if (snapshot.status === "done" || snapshot.phase === "done") {
+    return "done";
+  }
+  if (snapshot.status === "long_running") {
+    return "long-running, not stuck";
+  }
+  if (snapshot.status === "healthy_running") {
+    return "running healthy, not stuck";
+  }
+  if (snapshot.status === "running") {
+    return "running, not stuck";
+  }
+  return sanitizeDisplayText(snapshot.status);
+}
+
+function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms)) {
+    return "unknown";
+  }
+  if (ms < 1000) {
+    return `${Math.max(0, Math.round(ms))} ms`;
+  }
+  return `${Math.round(ms / 1000)} s`;
 }
 
 

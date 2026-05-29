@@ -127,6 +127,52 @@ export type ChatListResponse = {
   chats: ChatSummary[];
 };
 
+export type AgentProgressPhase = "queued" | "started" | "reading_context" | "editing" | "running_command" | "waiting_for_tool" | "verifying" | "finishing" | "done" | "failed" | "stuck";
+
+export type AgentProgressStatus = "pending" | "running" | "healthy_running" | "long_running" | "stalled" | "stuck" | "done" | "failed";
+
+export type AgentProgressToolKind = "read" | "edit" | "command" | "test" | "validation" | "network" | "planner" | "other";
+
+export type AgentProgressToolSummary = {
+  kind: AgentProgressToolKind;
+  label: string;
+  startedAt?: string;
+  elapsedMs?: number;
+};
+
+export type AgentProgressRecentEvent = {
+  eventId: string;
+  timestamp: string;
+  phase: AgentProgressPhase;
+  status: AgentProgressStatus;
+  message: string;
+};
+
+export type AgentProgressSnapshot = {
+  protocolVersion: "2026-05-29";
+  runId: string;
+  cardId: string;
+  startedAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  phase: AgentProgressPhase;
+  status: AgentProgressStatus;
+  message: string;
+  elapsedMs: number;
+  ageMs: number;
+  currentTool?: AgentProgressToolSummary;
+  outputTail?: string;
+  stuckReason?: "heartbeat_timeout" | "tool_output_timeout" | "explicit_failure" | "none";
+  recentEvents: AgentProgressRecentEvent[];
+};
+
+export type AgentProgressListResponse = {
+  cloudRequired: false;
+  providerAccess: "direct";
+  generatedAt?: string;
+  snapshots: AgentProgressSnapshot[];
+};
+
 export const productIdentity = {
   productId: "yet-ai",
   displayName: "Yet AI",
@@ -241,6 +287,10 @@ export function deleteChat(settings: RuntimeSettings, chatId: string): Promise<R
   return runtimeFetch<{ deleted: boolean; chatId: string }>(settings, `/v1/chats/${encodeURIComponent(chatId)}`, {
     method: "DELETE",
   });
+}
+
+export function getAgentProgress(settings: RuntimeSettings, signal?: AbortSignal): Promise<RuntimeResult<AgentProgressListResponse>> {
+  return runtimeFetch<AgentProgressListResponse>(settings, "/v1/agent-progress", { signal });
 }
 
 export function sendUserMessage(
