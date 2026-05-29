@@ -6,7 +6,7 @@ Yet AI is an architecture-inspired independent AI coding assistant for IDEs. The
 
 - Approach: independent architecture-inspired rebuild, not a fork or rename of any external project.
 - Baseline: buildable MVP scaffolds exist for the engine, GUI, VS Code plugin, and JetBrains plugin. They are suitable for local development and contract hardening, not production release.
-- IDE preview status: VS Code and JetBrains shells can use packaged GUI assets generated from `apps/gui/dist`, or a loopback GUI dev server, and both support MVP local runtime `connect`, `launch`, and `auto` workflows for `yet-lsp`.
+- IDE preview status: VS Code and JetBrains shells can use packaged GUI assets generated from `apps/gui/dist`, or a loopback GUI dev server, and both support MVP local runtime `connect`, `launch`, and `auto` workflows for `yet-lsp`. `npm run prepare:vscode-preview` also publishes a local ignored VS Code dev-preview artifact at `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix` with a matching `.sha256` checksum for install-from-file smoke testing.
 - Product-sensitive values should be centralized in `product/identity.json` where practical. Temporary identity placeholders remain until final product IDs, publishers, domains, and marketplace metadata are approved.
 - Runtime strategy: local-first BYOK. The IDE plugin starts or connects to the local Yet AI runtime on the user's machine; there is no required Yet AI account, hosted backend, managed model gateway, product credit balance, or cloud workspace for core workflows.
 - Model requests go directly from the local runtime to configured hosted providers or local runtimes. Provider settings and credentials remain local, and GUI-facing responses must not include raw secrets.
@@ -88,6 +88,17 @@ npm run planner:scheduler:tick -- --state path/to/scheduler-state.json
 ```
 
 The tick runner loads the given simulator state, acquires a scheduler lease for one owner, applies the pure scheduler decision, appends a sanitized audit tick, releases the lease, persists the state unless `--dry-run` is used, and prints a compact next-action summary. It is a local simulator utility only, not a production task-board, agent, merge, verification, shell, tool, or workspace mutation runner.
+
+Prepare and validate the local VS Code installable dev-preview artifact from the root when changing VS Code packaging, packaged GUI, or preview docs:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+npm run prepare:vscode-preview
+npm run smoke:vscode-installable
+npm run smoke:vscode-preview
+```
+
+`npm run prepare:vscode-preview` builds/prepares the local engine, builds `apps/gui`, prepares the VS Code extension output, and writes the stable ignored artifact `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix` plus `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix.sha256`. `npm run smoke:vscode-installable` validates the root VSIX name, checksum, archive paths, package metadata, bundled identity, packaged GUI assets, and copied engine binary without launching VS Code. `npm run smoke:vscode-preview` validates the generated extension workspace artifacts. The generated VSIX, checksum, GUI assets, extension output, engine binaries, and root `dist/` artifacts are ignored and must not be committed. This is a local dev-preview/install-from-file flow only: it is not marketplace publication, signing, notarization, a production installer, or a production release, and it requires no provider credentials, hosted Yet AI backend, real OpenAI/ChatGPT calls, or cloud workspace.
 
 Current baseline subsystem checks are:
 
