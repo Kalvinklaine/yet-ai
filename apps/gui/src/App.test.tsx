@@ -1263,6 +1263,156 @@ describe("runtime debug redaction", () => {
   });
 });
 
+describe("agent progress panel", () => {
+  it("empty list renders no agent runs", async () => {
+    mockRuntimeResponses({ agentProgress: agentProgressResponse() });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Refresh agent progress").click();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("Agent progress");
+    expect(container?.textContent).toContain("No agent runs.");
+  });
+
+  it("running long-running snapshot renders as not stuck", async () => {
+    mockRuntimeResponses({ agentProgress: agentProgressResponse([agentProgressSnapshot({ status: "long_running", message: "Verification is still running", elapsedMs: 900000 })]) });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Refresh agent progress").click();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("T-277 / run-001");
+    expect(container?.textContent).toContain("long-running, not stuck");
+    expect(container?.textContent).toContain("Tool: test · npm test");
+    expect(container?.textContent).not.toContain("Stuck reason");
+  });
+
+  it("stuck snapshot renders stuck reason", async () => {
+    mockRuntimeResponses({ agentProgress: agentProgressResponse([agentProgressSnapshot({ phase: "stuck", status: "stuck", stuckReason: "heartbeat_timeout", message: "No heartbeat observed" })]) });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Refresh agent progress").click();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("stuck: heartbeat_timeout");
+    expect(container?.textContent).toContain("Stuck reason: heartbeat_timeout");
+  });
+
+  it("failed snapshot with secret-like output is redacted", async () => {
+    const rawSecret = "access_token=" + "f".repeat(64);
+    mockRuntimeResponses({
+      agentProgress: agentProgressResponse([agentProgressSnapshot({
+        phase: "failed",
+        status: "failed",
+        message: `Failed ${rawSecret}`,
+        outputTail: `Command failed Authorization: Bearer agent-secret Cookie: session=progress-cookie /Users/Alice/.codex/auth.json ${rawSecret}`,
+        recentEvents: [{ eventId: "event-secret", timestamp: "2026-05-29T14:00:30Z", phase: "failed", status: "failed", message: `Failed event ${rawSecret}` }],
+      })]),
+    });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Refresh agent progress").click();
+      await Promise.resolve();
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("failed");
+    expect(text).toContain("[redacted]");
+    expect(text).not.toContain("access_token");
+    expect(text).not.toContain("agent-secret");
+    expect(text).not.toContain("progress-cookie");
+    expect(text).not.toContain("Alice");
+    expect(text).not.toContain("auth.json");
+    expect(text).not.toContain("f".repeat(64));
+  });
+
+  it("endpoint unavailable runtime error is sanitized and non-fatal", async () => {
+    mockRuntimeResponses({ agentProgressStatus: 404, agentProgressError: "missing endpoint Authorization: Bearer progress-secret" });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Refresh agent progress").click();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("Agent progress unavailable: 404: missing endpoint [redacted]");
+    expect(container?.textContent).toContain("Chat readiness");
+    expect(container?.textContent).not.toContain("progress-secret");
+  });
+
+  it("browser storage remains free of raw secret markers", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const rawSecret = "sk-agent-progress-secret";
+    mockRuntimeResponses({ agentProgress: agentProgressResponse([agentProgressSnapshot({ outputTail: `failed ${rawSecret}` })]) });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Refresh agent progress").click();
+      await Promise.resolve();
+    });
+
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(rawSecret);
+    expect(container?.textContent).not.toContain(rawSecret);
+  });
+
+  it("stale response after settings change is ignored", async () => {
+    const oldProgress = deferred<Response>();
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "http://127.0.0.1:8001/v1/agent-progress") {
+        return oldProgress.promise;
+      }
+      return mockRuntimeResponse(input, init);
+    });
+
+    await act(async () => {
+      findButton("Refresh agent progress").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
+      await Promise.resolve();
+    });
+    oldProgress.resolve(jsonResponse(agentProgressResponse([agentProgressSnapshot({ cardId: "T-OLD", message: "stale progress secret" })])));
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Agent progress has not been checked yet.");
+    expect(container?.textContent).not.toContain("T-OLD");
+    expect(container?.textContent).not.toContain("stale progress secret");
+  });
+
+  it("does not expose mutating agent controls", async () => {
+    mockRuntimeResponses({ agentProgress: agentProgressResponse([agentProgressSnapshot()]) });
+    renderApp();
+
+    await flushAsync();
+
+    expect(findButton("Refresh agent progress")).toBeDefined();
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Start agent");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Merge");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Apply");
+  });
+});
+
 describe("host.ready runtime bootstrap", () => {
   it("updates runtime settings from host.ready without persisting the token", async () => {
     const token = "host-session-token-secret";
@@ -3170,6 +3320,9 @@ type MockRuntimeOptions = {
   chats?: unknown[];
   chatThreads?: Record<string, unknown>;
   createChatThread?: unknown;
+  agentProgress?: unknown;
+  agentProgressStatus?: number;
+  agentProgressError?: string;
 };
 
 function providerAuthResponse(status: ProviderAuthStatus): ProviderAuthResponse {
@@ -3273,6 +3426,31 @@ function chatThread(chatId: string, title: string, messages: unknown[]) {
     createdAt: "2026-05-29T07:15:00Z",
     updatedAt: "2026-05-29T07:16:30Z",
     messages,
+  };
+}
+
+function agentProgressResponse(snapshots: unknown[] = []) {
+  return { cloudRequired: false, providerAccess: "direct", generatedAt: "2026-05-29T15:00:00Z", snapshots };
+}
+
+function agentProgressSnapshot(overrides: Record<string, unknown> = {}) {
+  return {
+    protocolVersion: "2026-05-29",
+    runId: "run-001",
+    cardId: "T-277",
+    startedAt: "2026-05-29T14:00:00Z",
+    updatedAt: "2026-05-29T14:01:00Z",
+    phase: "running_command",
+    status: "healthy_running",
+    message: "Running verification",
+    elapsedMs: 61000,
+    ageMs: 1000,
+    currentTool: { kind: "test", label: "npm test", startedAt: "2026-05-29T14:00:30Z", elapsedMs: 30000 },
+    stuckReason: "none",
+    recentEvents: [
+      { eventId: "event-001", timestamp: "2026-05-29T14:00:30Z", phase: "running_command", status: "healthy_running", message: "Started test command" },
+    ],
+    ...overrides,
   };
 }
 
@@ -3404,6 +3582,12 @@ function mockRuntimeResponse(input: RequestInfo | URL, init: RequestInit | undef
   }
   if (url.endsWith("/v1/chats")) {
     return Promise.resolve(jsonResponse({ chats: options.chats ?? [] }));
+  }
+  if (url.endsWith("/v1/agent-progress")) {
+    if (options.agentProgressStatus) {
+      return Promise.resolve(jsonResponse({ error: options.agentProgressError ?? "agent progress unavailable" }, options.agentProgressStatus));
+    }
+    return Promise.resolve(jsonResponse(options.agentProgress ?? agentProgressResponse()));
   }
   const chatMatch = /\/v1\/chats\/([^/?]+)$/.exec(url);
   if (chatMatch && init?.method === "DELETE") {

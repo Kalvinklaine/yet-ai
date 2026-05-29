@@ -303,6 +303,58 @@ pre,
   background: #fffaf0;
 }
 
+.agent-progress-card {
+  border-color: #cdd8ff;
+}
+
+.agent-progress-empty,
+.agent-progress-run {
+  border: 1px solid #e2e7f0;
+  border-radius: 16px;
+  background: #f8faff;
+  padding: 14px;
+}
+
+.agent-progress-list {
+  display: grid;
+  gap: 12px;
+}
+
+.agent-progress-run {
+  display: grid;
+  gap: 12px;
+}
+
+.agent-progress-run.done,
+.agent-progress-run.healthy_running {
+  border-color: #bce8cc;
+  background: #f4fbf7;
+}
+
+.agent-progress-run.failed,
+.agent-progress-run.stuck,
+.agent-progress-run.stalled {
+  border-color: #ffe2a3;
+  background: #fffaf0;
+}
+
+.agent-progress-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.agent-progress-output {
+  white-space: pre-wrap;
+}
+
+.agent-progress-event {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid #e2e7f0;
+  padding-top: 8px;
+}
+
 .conversations-layout {
   display: grid;
   grid-template-columns: minmax(220px, 300px) 1fr;
