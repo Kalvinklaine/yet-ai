@@ -61,9 +61,11 @@ The repository also includes local-only planner verification commands:
 ```sh
 npm run check:planner-scheduler
 npm run smoke:planner-no-idle
+npm run smoke:planner-resume
+npm run planner:scheduler:tick -- --state path/to/scheduler-state.json
 ```
 
-These commands exercise the pure scheduler reducer and deterministic no-idle smoke against the planner contract vocabulary. They prove that actionable merge, verification, ready-card, stuck-recovery, pool-close, and approved next-pool states produce progress actions or explicit audited idle blockers. They do not implement production orchestration, spawn real agents, execute shell commands, run real merges, edit files, call providers, or mutate workspaces.
+These commands exercise the pure scheduler reducer, durable local simulator state, one-tick CLI runner, deterministic no-idle smoke, and restart/resume smoke against the planner contract vocabulary. They prove that actionable merge, verification, ready-card, stuck-recovery, pool-close, approved next-pool, and reloaded durable-state states produce progress actions or explicit audited idle blockers. The simulator state records sanitized audit timeline entries, one lease owner per tick, released leases after process-like ticks, and stale-heartbeat recovery after reload. They do not implement production orchestration, spawn real agents, execute shell commands, run real merges, edit files, call providers, or mutate workspaces.
 
 Planner fixtures must stay small and sanitized. They may include non-secret IDs, timestamps, counts, bounded status enums, and safe summaries. They must not include raw prompts, provider responses, API keys, OAuth tokens, authorization codes, cookies, private paths, raw local logs, workspace file contents, hidden credential bags, privileged tool commands, shell commands, or apply-patch/edit payloads.
 

@@ -13,7 +13,7 @@ Yet AI is an architecture-inspired independent AI coding assistant for IDEs. The
 - First-message context status: VS Code and JetBrains can capture a bounded active editor/selection snapshot through the same strict `host.contextSnapshot` bridge contract, the GUI previews it with an opt-in include toggle, and the local runtime can prepend that context to the next accepted chat prompt sent to the configured provider. GUI active context is one-shot: after an accepted send, the attached snapshot is cleared and must be supplied again by the IDE host. Included context is visible to the provider, so users should not attach selections containing secrets or private data.
 - Provider-auth status: the safe/default real-provider path is the OpenAI API-key or project-key fallback through the local runtime. The GUI now presents a more productized OpenAI account-login card with guided unavailable, pending, connected, expired/revoked, sanitized-error, API-key-configured, retry, reconnect, disconnect, and API-key fallback states. That account path is still a separate explicit-risk experimental Codex-like flow backed by engine-owned PKCE/session state, sanitized provider-auth status, local secret storage, and chat fallback when no API-key provider is configured. It is private-endpoint-style, not official public OpenAI OAuth support, not an OpenAI partnership claim, and not production-ready. Automated coverage for that account path is loopback/mock-only; any real account testing is manual, high-risk, account-specific, outside CI, and must capture only sanitized evidence.
 - Planner reliability status: the no-idle autonomous planner/watchdog is documented as a future contract only. It must not silently wait when completed agents, mergeable work, verification, ready cards, failed/stuck recovery, pool closure, or approved next-pool planning can progress; any true idle state must carry an audited reason.
-- Planner scheduler checks are contract/simulator smoke coverage only: `npm run check:planner-scheduler` and `npm run smoke:planner-no-idle` validate the no-idle invariant locally without production autonomous orchestration, real agents, git operations, shell/tool execution, file edits, or workspace mutation.
+- Planner scheduler checks are contract/simulator smoke coverage only: `npm run check:planner-scheduler`, `npm run smoke:planner-no-idle`, and `npm run smoke:planner-resume` validate the no-idle invariant, durable local simulator ticks, and restart/resume behavior locally without production autonomous orchestration, real agents, git operations, shell/tool execution, file edits, or workspace mutation.
 - Limitations: the baseline is not production-ready; no marketplace packaging, signed or notarized engine bundles, production installer, autonomous file reads/indexing, LSP/completions/tools/file edits/apply patch, shell/tool execution, full agent autonomy, background agent autonomy, production no-idle scheduler, or integration workflows are complete. Current chat is a local provider/chat MVP only.
 
 ## Repository map
@@ -69,14 +69,23 @@ npm run validate:contracts
 
 `npm run validate:contracts` validates contract schemas/examples only, including mapped examples and product identity fields embedded in contract examples.
 
-Run the pure planner scheduler reducer check and deterministic no-idle smoke from the root when changing planner contracts, scheduler policy docs, or simulator behavior:
+Run the pure planner scheduler reducer check, deterministic no-idle smoke, and durable resume smoke from the root when changing planner contracts, scheduler policy docs, or simulator behavior:
 
 ```sh
 npm run check:planner-scheduler
 npm run smoke:planner-no-idle
+npm run smoke:planner-resume
 ```
 
-These commands are local-only contract/simulator checks. They verify that completed, mergeable, verifiable, ready, failed/stuck, closeable, and approved next-pool states produce progress actions or explicit audited idle blockers. They do not launch production agents, edit files, apply patches, run shell/tools, perform real merges, call providers, or mutate workspaces.
+These commands are local-only contract/simulator checks. They verify that completed, mergeable, verifiable, ready, failed/stuck, closeable, approved next-pool, and restarted durable-state states produce progress actions or explicit audited idle blockers. They also cover a simulator state file with sanitized audit timeline entries, a single active scheduler lease owner per tick, released leases after process-like ticks, and stale-heartbeat recovery after reload. They do not launch production agents, edit files, apply patches, run shell/tools, perform real merges, call providers, or mutate workspaces.
+
+The durable scheduler simulator tick CLI is available for explicit local state files:
+
+```sh
+npm run planner:scheduler:tick -- --state path/to/scheduler-state.json
+```
+
+The tick runner loads the given simulator state, acquires a scheduler lease for one owner, applies the pure scheduler decision, appends a sanitized audit tick, releases the lease, persists the state unless `--dry-run` is used, and prints a compact next-action summary. It is a local simulator utility only, not a production task-board, agent, merge, verification, shell, tool, or workspace mutation runner.
 
 Current baseline subsystem checks are:
 
