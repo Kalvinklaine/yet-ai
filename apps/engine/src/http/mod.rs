@@ -41,6 +41,7 @@ pub fn router(state: AppState) -> Router {
                     post(provider_auth_disconnect),
                 )
                 .route("/models", get(models_list))
+                .route("/agent-progress", get(agent_progress_list))
                 .route("/chats", get(chats_list).post(chats_create))
                 .route("/chats/:chat_id", get(chats_get).delete(chats_delete))
                 .route("/chats/:chat_id/commands", post(chat_command))
@@ -293,6 +294,22 @@ async fn models_list(_auth: Authenticated, State(state): State<AppState>) -> Res
         Ok(models) => Json(models).into_response(),
         Err(error) => provider_error(error),
     }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProgressListResponse {
+    pub cloud_required: bool,
+    pub provider_access: String,
+    pub snapshots: Vec<serde_json::Value>,
+}
+
+async fn agent_progress_list(_auth: Authenticated) -> Json<AgentProgressListResponse> {
+    Json(AgentProgressListResponse {
+        cloud_required: false,
+        provider_access: "direct".to_string(),
+        snapshots: Vec::new(),
+    })
 }
 
 async fn chats_list(_auth: Authenticated, State(state): State<AppState>) -> Response {
