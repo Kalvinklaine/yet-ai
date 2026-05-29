@@ -1,0 +1,10 @@
+{
+  "chatId": "chat_20260529_002",
+  "title": "Extra auth field",
+  "createdAt": "2026-05-29T07:15:00Z",
+  "updatedAt": "2026-05-29T07:16:30Z",
+  "auth": {
+    "configured": true
+  },
+  "messages": []
+}

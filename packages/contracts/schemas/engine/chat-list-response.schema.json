@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/chat-list-response.schema.json",
+  "title": "Engine Chat List Response",
+  "description": "A list of engine-owned local chat history thread summaries. Summaries expose bounded display metadata only and do not include message content, cloud sync state, provider/auth metadata, tokens, cookies, credential paths, or raw provider responses.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["chats"],
+  "properties": {
+    "chats": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "$ref": "#/$defs/chatThreadSummary"
+      }
+    }
+  },
+  "$defs": {
+    "historyId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 32,
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "chatThreadSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chatId", "title", "createdAt", "updatedAt", "messageCount"],
+      "properties": {
+        "chatId": {
+          "$ref": "#/$defs/historyId"
+        },
+        "title": {
+          "$ref": "#/$defs/title"
+        },
+        "createdAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "messageCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        }
+      }
+    }
+  }
+}

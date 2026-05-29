@@ -1,0 +1,11 @@
+{
+  "chats": [
+    {
+      "chatId": "chat_20260529_001",
+      "title": "Plan local chat history",
+      "createdAt": "2026-05-29T07:15:00Z",
+      "updatedAt": "2026-05-29T07:16:30Z",
+      "messageCount": 2
+    }
+  ]
+}

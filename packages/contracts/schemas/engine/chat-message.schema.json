@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/chat-message.schema.json",
+  "title": "Engine Chat Message",
+  "description": "A single engine-owned local chat history message. Messages contain user-visible content and sanitized status only; provider/auth metadata, tokens, cookies, credential paths, tool calls, and raw provider responses are not part of this contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "chatId", "role", "content", "createdAt"],
+  "properties": {
+    "id": {
+      "$ref": "#/$defs/historyId"
+    },
+    "chatId": {
+      "$ref": "#/$defs/historyId"
+    },
+    "role": {
+      "type": "string",
+      "enum": ["user", "assistant", "error"]
+    },
+    "content": {
+      "type": "string",
+      "maxLength": 20000
+    },
+    "createdAt": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "streaming", "complete", "error"]
+    }
+  },
+  "$defs": {
+    "historyId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 32,
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$"
+    }
+  }
+}
