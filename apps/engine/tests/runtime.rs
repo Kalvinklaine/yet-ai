@@ -3995,6 +3995,70 @@ async fn invalid_chat_command_contract_fixtures_are_rejected_safely() {
 }
 
 #[tokio::test]
+async fn disabled_chat_command_contract_fixtures_are_rejected_safely() {
+    let app = test_app();
+    for (command, forbidden) in [
+        (
+            include_str!("../../../packages/contracts/examples-invalid/engine/chat-command-regenerate.json"),
+            ["regenerate", "msg-example-001"].as_slice(),
+        ),
+        (
+            include_str!("../../../packages/contracts/examples-invalid/engine/chat-command-update-message.json"),
+            [
+                "update_message",
+                "msg-example-001",
+                "Replace the previous example request.",
+            ]
+            .as_slice(),
+        ),
+        (
+            include_str!("../../../packages/contracts/examples-invalid/engine/chat-command-remove-message.json"),
+            ["remove_message", "msg-example-001"].as_slice(),
+        ),
+        (
+            include_str!("../../../packages/contracts/examples-invalid/engine/chat-command-set-params.json"),
+            ["set_params", "temperature", "maxOutputTokens", "512"].as_slice(),
+        ),
+        (
+            include_str!("../../../packages/contracts/examples-invalid/engine/chat-command-tool-decision.json"),
+            ["tool_decision", "tool-example-001", "deny"].as_slice(),
+        ),
+        (
+            include_str!("../../../packages/contracts/examples-invalid/engine/chat-command-ide-tool-result.json"),
+            ["ide_tool_result", "tool-example-001", "cancelled"].as_slice(),
+        ),
+    ] {
+        let (status, text) = text_response_from(
+            app.clone(),
+            authed_request(
+                Method::POST,
+                "/v1/chats/chat-disabled-contract/commands",
+                Body::from(command),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(text, r#"{"error":"unsupported command type"}"#);
+        for value in forbidden {
+            assert!(!text.contains(value));
+        }
+        let lower = text.to_lowercase();
+        assert!(!lower.contains("api_key"));
+        assert!(!lower.contains("token"));
+        assert!(!lower.contains("secret"));
+        assert!(!lower.contains("/"));
+        assert!(!lower.contains("tool-example"));
+    }
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-disabled-contract").await;
+    let events = sse_json_events(&text);
+    assert_eq!(events[0]["type"], "snapshot");
+    assert!(!events.iter().any(|event| event["type"] == "stream_started"));
+    assert!(!text.contains("msg-example-001"));
+    assert!(!text.contains("tool-example-001"));
+}
+
+#[tokio::test]
 async fn abort_command_with_empty_payload_is_accepted() {
     let command = json!({
         "requestId": "req-abort-empty-payload",
