@@ -13,7 +13,10 @@ const RAW_MARKERS = [
   "cookie=session-agent-progress-secret",
   "token=agent-progress-secret-token",
   "/Users/agent/progress/.env",
-  "/private/tmp/agent-progress-secret"
+  "/private/tmp/agent-progress-secret",
+  "~/.codex/auth.json",
+  "raw prompt: summarize this private workspace",
+  "provider response raw dump"
 ];
 
 function progressEvent(overrides) {
@@ -169,6 +172,50 @@ async function runSmoke() {
     assert.equal(redacted.snapshot.outputTail.includes("[redacted"), true, "redaction output was not redacted");
     assert.equal(redacted.snapshot.currentTool.label.includes("[redacted"), true, "redaction tool label was not redacted");
     assertReportIncludes(redacted.report, /status: healthy_running/, "secret redaction");
+
+    const overflowDump = `${"task_board_get full task board output too large. ".repeat(120)} ${RAW_MARKERS.join(" ")}`;
+    const taskBoardOverflow = await loadScenario(tmp, "task-board-overflow", [
+      progressEvent({
+        eventId: "evt-overflow-board-001",
+        timestamp: "2026-05-29T12:58:00Z",
+        phase: "failed",
+        status: "failed",
+        message: "context_length_exceeded after broad task_board_get output.",
+        outputTail: overflowDump
+      })
+    ]);
+    assert.equal(taskBoardOverflow.snapshot.status, "failed");
+    assert.equal(taskBoardOverflow.snapshot.overflowRecovery?.kind, "task_board_output_too_large");
+    assert.equal(taskBoardOverflow.snapshot.overflowRecovery?.retryable, true);
+    assert.equal(JSON.stringify(taskBoardOverflow.snapshot).length < 5000, true, "task board overflow snapshot was not bounded");
+    assertReportIncludes(taskBoardOverflow.report, /overflow_recovery: task_board_output_too_large/, "task board overflow");
+    assertReportIncludes(taskBoardOverflow.report, /task_ready_cards/, "task board overflow");
+    assertReportIncludes(taskBoardOverflow.report, /task_board_get\(card_id\)/, "task board overflow");
+    assertReportIncludes(taskBoardOverflow.report, /output_tail: .*\[redacted/, "task board overflow");
+
+    const toolOverflow = await loadScenario(tmp, "tool-output-overflow", [
+      progressEvent({
+        eventId: "evt-overflow-tool-001",
+        timestamp: "2026-05-29T12:40:00Z",
+        phase: "running_command",
+        status: "running",
+        message: "Tool output too large while reading broad search output.",
+        tool: {
+          kind: "planner",
+          label: "broad search_pattern output"
+        },
+        heartbeat: {
+          lastHeartbeatAt: "2026-05-29T12:45:00Z",
+          lastToolOutputAt: "2026-05-29T12:45:00Z"
+        },
+        outputTail: `${"search output too large; raw file content. ".repeat(100)} ${RAW_MARKERS.join(" ")}`
+      })
+    ]);
+    assert.equal(toolOverflow.snapshot.status, "stuck");
+    assert.equal(toolOverflow.snapshot.overflowRecovery?.kind, "tool_output_too_large");
+    assertReportIncludes(toolOverflow.report, /overflow_recovery: tool_output_too_large/, "tool output overflow");
+    assertReportIncludes(toolOverflow.report, /targeted search\/cat commands/, "tool output overflow");
+    assert.equal(JSON.stringify(toolOverflow.snapshot).length < 5000, true, "tool overflow snapshot was not bounded");
 
     const done = await loadScenario(tmp, "done-run", [
       progressEvent({

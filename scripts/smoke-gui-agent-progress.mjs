@@ -17,6 +17,8 @@ const rawMarkers = [
   "Cookie: session=gui-agent-progress-cookie",
   "session_token=gui-agent-progress-token",
   "/Users/Gui Agent/.codex/auth.json",
+  "raw prompt: inspect the whole workspace",
+  "provider response raw dump",
 ];
 const failures = [];
 let agentProgressResponse = emptyAgentProgress();
@@ -118,6 +120,29 @@ try {
   await expectVisibleText(page, "failed", "failed status");
   await expectVisibleText(page, "[redacted]", "failed redaction marker");
 
+  agentProgressResponse = progressList([progressSnapshot({
+    cardId: "GUI-SMOKE-OVERFLOW",
+    phase: "failed",
+    status: "failed",
+    stuckReason: "explicit_failure",
+    message: "context_length_exceeded after full task_board_get output",
+    outputTail: `${"task board output too large. ".repeat(100)} ${rawMarkers.join(" ")}`,
+    overflowRecovery: {
+      kind: "task_board_output_too_large",
+      message: "Retry with scoped context: use task_ready_cards, specific task_board_get(card_id), targeted search_pattern, targeted cat, and summaries.",
+      retryable: true,
+    },
+    recentEvents: [{ eventId: "event-overflow", timestamp: "2026-05-29T15:00:40Z", phase: "failed", status: "failed", message: `Task board output too large ${rawMarkers.join(" ")}` }],
+  })]);
+  await refreshAgentProgress(page);
+  await expectVisibleText(page, "GUI-SMOKE-OVERFLOW / run-gui-smoke", "overflow run");
+  await expectVisibleText(page, "Task-board output was too large.", "overflow recovery title");
+  await expectVisibleText(page, "Use a specific card id, ready cards, or scoped search instead of a full task-board dump.", "overflow recovery action");
+  await expectVisibleText(page, "task_ready_cards", "overflow scoped ready cards guidance");
+  await expectVisibleText(page, "task_board_get(card_id)", "overflow scoped card guidance");
+  await expectVisibleText(page, "targeted search_pattern", "overflow targeted search guidance");
+  await assertNoMutatingAgentControls(page);
+
   const pageState = await page.evaluate(() => ({
     body: document.body.innerText,
     localStorage: Object.fromEntries(Array.from({ length: localStorage.length }, (_, index) => {
@@ -136,7 +161,7 @@ try {
   }
 
   console.log("GUI agent progress smoke passed.");
-  console.log("Verified built GUI rendering against deterministic loopback runtime mocks for no-runs, healthy long-running, stuck, and failed-redacted agent progress states.");
+  console.log("Verified built GUI rendering against deterministic loopback runtime mocks for no-runs, healthy long-running, stuck, failed-redacted, and overflow recovery agent progress states.");
   console.log("No provider calls, real agents, task-board calls, git operations, shell/tool execution, workspace mutation, non-loopback network, or cloud calls were used.");
 } catch (error) {
   console.error(redactSecrets(messageOf(error)));
