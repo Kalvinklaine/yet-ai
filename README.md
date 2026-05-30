@@ -147,6 +147,15 @@ npm run check:agent-progress && npm run smoke:agent-progress && npm run smoke:gu
 
 These commands do not run production agents, execute tools, perform git operations, mutate workspaces, call providers, or require a hosted Yet AI backend.
 
+Run the cross-boundary overflow/raw-content hardening gate when changing planner safe-text contracts, scheduler durable state sanitization, agent-progress reducer classification/redaction, or GUI fallback overflow rendering:
+
+```sh
+npm run validate:contracts && npm run check:planner-scheduler && npm run smoke:planner-no-idle && npm run smoke:planner-resume && npm run check:agent-progress && npm run smoke:agent-progress && npm run smoke:gui-agent-progress && npm run check && git status --short
+```
+
+This gate verifies that contracts reject unsafe public payloads, scheduler simulator state cannot persist unsafe active guidance, agent progress classifies from bounded raw head/tail while persisting sanitized output, and the GUI renders only sanitized bounded overflow guidance.
+
+
 Prepare and validate the local VS Code installable dev-preview artifact from the root when changing VS Code packaging, packaged GUI, or preview docs:
 
 ```sh
