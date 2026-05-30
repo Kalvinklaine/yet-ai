@@ -1046,7 +1046,7 @@ export function App() {
         <div>
           <span className="badge ok">local-first</span>
           <h1>{productName}</h1>
-          <p className="subtle">Browser development shell for the local runtime. Cloud backend required = false.</p>
+          <p className="subtle">Local-first coding chat for your IDE runtime. Cloud backend required = false.</p>
         </div>
         <div className="stack">
           <span className={`badge ${connectionStatus === "connected" ? "ok" : connectionStatus === "error" ? "warn" : ""}`}>
@@ -1056,7 +1056,90 @@ export function App() {
         </div>
       </section>
 
-      <section className="card stack">
+      <section className="card stack chat-primary-card">
+        <div className="chat-hero-row">
+          <div className="stack">
+            <span className="badge ok">primary chat</span>
+            <h2>Chat with {productName}</h2>
+            <p className="subtle">Ask about the current file, selected code, or local project context. Messages stay in engine-owned local history and provider calls go through your configured local runtime.</p>
+          </div>
+          <div className="chat-hero-status stack">
+            <span className={`badge ${canSendChat ? "ok" : "warn"}`}>{canSendChat ? "ready to chat" : "setup needed"}</span>
+            <span className={`badge ${connectionStatus === "connected" ? "ok" : connectionStatus === "error" ? "warn" : ""}`}>runtime {connectionStatus}</span>
+          </div>
+        </div>
+        <div className={`readiness-card ${canSendChat ? "ready" : "warn"}`}>
+          <div className="row">
+            <strong>Chat readiness</strong>
+            <span className={`badge ${connectionStatus === "connected" ? "ok" : connectionStatus === "error" ? "warn" : ""}`}>runtime {connectionStatus}</span>
+            <span className={enabledProviders.length > 0 ? "badge ok" : "badge warn"}>{enabledProviders.length} enabled provider{enabledProviders.length === 1 ? "" : "s"}</span>
+          </div>
+          <div className="stack">
+            <span>State: {chatReadinessLabel}</span>
+            <span>{chatReadinessMessage}</span>
+            {chatModelStatus && <span className="subtle">Model status: {chatModelStatus}</span>}
+            {runtimeConnected && !canSendChat && <span className="subtle">For the quickest path, choose OpenAI API, paste a provider API key once, save, optionally test the provider, then send your first message. For local models, choose an OpenAI-compatible /v1 preset.</span>}
+            {experimentalOauthChatReady && <span className="subtle">OpenAI API-key fallback remains the safe/default setup and will be preferred when configured.</span>}
+            {!canSendChat && <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>}
+          </div>
+        </div>
+        {chatError && <ErrorBox error={chatError} />}
+        {chatHistoryError && <ErrorBox error={chatHistoryError} />}
+        <div className="conversations-layout">
+          <aside className="conversations-panel stack" aria-label="Local conversations">
+            <div className="row">
+              <h3>Conversations</h3>
+              <button type="button" onClick={() => void createNewChat()} disabled={chatHistoryLoading}>{chatHistoryLoading ? "Loading…" : "New chat"}</button>
+            </div>
+            <span className="subtle">Engine-owned local history. Messages are not written to browser storage.</span>
+            {activeChatSummaries.length === 0 ? <p className="subtle">No saved conversations yet.</p> : activeChatSummaries.map((summary) => (
+              <div className={`conversation-item ${summary.chatId === chatId ? "active" : ""}`} key={summary.chatId}>
+                <button type="button" className="conversation-select" onClick={() => selectChat(summary.chatId)}>
+                  <strong>{sanitizeDisplayText(summary.title)}</strong>
+                  <span>{summary.messageCount} message{summary.messageCount === 1 ? "" : "s"} · {sanitizeDisplayText(summary.updatedAt)}</span>
+                </button>
+                <button type="button" className="danger-button" onClick={() => void deleteCurrentChat(summary.chatId)}>Delete</button>
+              </div>
+            ))}
+          </aside>
+          <div className="stack">
+            <div className="chat-title-card row">
+              <div className="stack">
+                <strong>{sanitizeDisplayText(activeChatSummary?.title ?? chatId)}</strong>
+                <span className="subtle">{chatView.messages.length} visible message{chatView.messages.length === 1 ? "" : "s"} · {chatView.subscriptionReady ? "snapshot loaded" : activeChatSummary ? `${activeChatSummary.messageCount} persisted message${activeChatSummary.messageCount === 1 ? "" : "s"}` : "empty local chat"}</span>
+              </div>
+              <span className="badge">{sanitizeDisplayText(chatId)}</span>
+            </div>
+            <div className="form-grid">
+              <label>
+                Chat id
+                <input value={chatId} onChange={(event) => setChatId(event.target.value)} />
+              </label>
+            </div>
+            <div className="chat-panel" aria-label="Chat messages">
+              {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect()} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} />)}
+              {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
+            </div>
+            <form className="stack chat-composer" onSubmit={(event) => void submitChat(event)}>
+              <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} onIncludeChange={setIncludeAttachedContext} />
+              <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
+              <div className="row chat-actions">
+                <button type="submit" disabled={!canSendChat}>Send</button>
+                <button type="button" className="secondary-button" onClick={stopSse}>Stop SSE</button>
+              </div>
+            </form>
+            <details className="debug-details">
+              <summary>SSE debug details</summary>
+          <div className="timeline">
+            {timeline.length === 0 ? <span>No SSE events yet.</span> : timeline.map((entry, index) => <div className="timeline-entry" key={`${index}:${entry}`}>{entry}</div>)}
+          </div>
+        </details>
+          </div>
+        </div>
+      </section>
+
+
+      <section className="card stack secondary-card runtime-card">
         <h2>Local runtime connection</h2>
         <div className="form-grid">
           <label>
@@ -1083,7 +1166,7 @@ export function App() {
         </div>
       </section>
 
-      <section className="card stack agent-progress-card" aria-label="Agent progress">
+      <section className="card stack secondary-card agent-progress-card" aria-label="Agent progress">
         <div className="row">
           <h2>Agent progress</h2>
           <button type="button" onClick={() => void refreshAgentProgress()} disabled={agentProgress.state === "loading"}>{agentProgress.state === "loading" ? "Loading agent progress…" : "Refresh agent progress"}</button>
@@ -1092,7 +1175,7 @@ export function App() {
         <AgentProgressPanel progress={agentProgress} />
       </section>
 
-      <section className="card stack">
+      <section className="card stack secondary-card provider-setup-card">
         <h2>Provider setup</h2>
         {runtimeConnected && !apiKeyChatReady && !experimentalOauthChatReady && (
           <div className="guided-setup-card stack" role="status">
@@ -1230,84 +1313,15 @@ export function App() {
         </div>
       </section>
 
-      <section className="card stack">
-        <h2>Chat</h2>
-        <div className={`readiness-card ${canSendChat ? "ready" : "warn"}`}>
-          <div className="row">
-            <strong>Chat readiness</strong>
-            <span className={`badge ${connectionStatus === "connected" ? "ok" : connectionStatus === "error" ? "warn" : ""}`}>runtime {connectionStatus}</span>
-            <span className={enabledProviders.length > 0 ? "badge ok" : "badge warn"}>{enabledProviders.length} enabled provider{enabledProviders.length === 1 ? "" : "s"}</span>
-          </div>
-          <div className="stack">
-            <span>State: {chatReadinessLabel}</span>
-            <span>{chatReadinessMessage}</span>
-            {chatModelStatus && <span className="subtle">Model status: {chatModelStatus}</span>}
-            {runtimeConnected && !canSendChat && <span className="subtle">For the quickest path, choose OpenAI API, paste a provider API key once, save, optionally test the provider, then send your first message. For local models, choose an OpenAI-compatible /v1 preset.</span>}
-            {experimentalOauthChatReady && <span className="subtle">OpenAI API-key fallback remains the safe/default setup and will be preferred when configured.</span>}
-            {!canSendChat && <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>}
-          </div>
-        </div>
-        {chatError && <ErrorBox error={chatError} />}
-        {chatHistoryError && <ErrorBox error={chatHistoryError} />}
-        <div className="conversations-layout">
-          <aside className="conversations-panel stack" aria-label="Local conversations">
-            <div className="row">
-              <h3>Conversations</h3>
-              <button type="button" onClick={() => void createNewChat()} disabled={chatHistoryLoading}>{chatHistoryLoading ? "Loading…" : "New chat"}</button>
-            </div>
-            <span className="subtle">Engine-owned local history. Messages are not written to browser storage.</span>
-            {activeChatSummaries.length === 0 ? <p className="subtle">No saved conversations yet.</p> : activeChatSummaries.map((summary) => (
-              <div className={`conversation-item ${summary.chatId === chatId ? "active" : ""}`} key={summary.chatId}>
-                <button type="button" className="conversation-select" onClick={() => selectChat(summary.chatId)}>
-                  <strong>{sanitizeDisplayText(summary.title)}</strong>
-                  <span>{summary.messageCount} message{summary.messageCount === 1 ? "" : "s"} · {sanitizeDisplayText(summary.updatedAt)}</span>
-                </button>
-                <button type="button" className="danger-button" onClick={() => void deleteCurrentChat(summary.chatId)}>Delete</button>
-              </div>
-            ))}
-          </aside>
-          <div className="stack">
-            <div className="chat-title-card row">
-              <div className="stack">
-                <strong>{sanitizeDisplayText(activeChatSummary?.title ?? chatId)}</strong>
-                <span className="subtle">{chatView.messages.length} visible message{chatView.messages.length === 1 ? "" : "s"} · {chatView.subscriptionReady ? "snapshot loaded" : activeChatSummary ? `${activeChatSummary.messageCount} persisted message${activeChatSummary.messageCount === 1 ? "" : "s"}` : "empty local chat"}</span>
-              </div>
-              <span className="badge">{sanitizeDisplayText(chatId)}</span>
-            </div>
-            <div className="form-grid">
-              <label>
-                Chat id
-                <input value={chatId} onChange={(event) => setChatId(event.target.value)} />
-              </label>
-            </div>
-        <div className="chat-panel" aria-label="Chat messages">
-          {chatView.messages.length === 0 ? <p className="subtle">Ask a question to start this local chat.</p> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} />)}
-          {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
-        </div>
-        <form className="stack" onSubmit={(event) => void submitChat(event)}>
-          <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} onIncludeChange={setIncludeAttachedContext} />
-          <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder="Ask Yet AI..." />
-          <div className="row">
-            <button type="submit" disabled={!canSendChat}>Send</button>
-            <button type="button" onClick={stopSse}>Stop SSE</button>
-          </div>
-        </form>
-        <details>
-          <summary>SSE debug details</summary>
+
+      <section className="card stack secondary-card debug-card">
+        <details className="debug-details">
+          <summary>Bridge debug</summary>
+          <p className="subtle">Browser mock mode is non-privileged. It only logs bridge messages.</p>
           <div className="timeline">
-            {timeline.length === 0 ? <span>No SSE events yet.</span> : timeline.map((entry, index) => <div className="timeline-entry" key={`${index}:${entry}`}>{entry}</div>)}
+            {bridgeLog.map((entry, index) => <div className="timeline-entry" key={`${index}:${entry}`}>{entry}</div>)}
           </div>
         </details>
-          </div>
-        </div>
-      </section>
-
-      <section className="card stack">
-        <h2>Bridge debug</h2>
-        <p className="subtle">Browser mock mode is non-privileged. It only logs bridge messages.</p>
-        <div className="timeline">
-          {bridgeLog.map((entry, index) => <div className="timeline-entry" key={`${index}:${entry}`}>{entry}</div>)}
-        </div>
       </section>
     </main>
   );
@@ -1463,6 +1477,42 @@ function formatSelectionRange(selection: HostContextSnapshotPayload["selection"]
     return `${selection.startLine}:${selection.startCharacter}`;
   }
   return "unknown range";
+}
+
+function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, context, hasLocalConversations, onProviderSetup, onRefreshRuntime }: { runtimeConnected: boolean; canSendChat: boolean; providerReady: boolean; context: HostContextSnapshotPayload | null; hasLocalConversations: boolean; onProviderSetup: () => void; onRefreshRuntime: () => void }) {
+  if (!runtimeConnected) {
+    return (
+      <div className="chat-empty-state" role="status">
+        <strong>Connect the local runtime to start chatting.</strong>
+        <span>Refresh the loopback runtime connection or start the IDE-managed runtime. No hosted Yet AI backend, account, cloud workspace, or credit balance is required.</span>
+        <button type="button" onClick={onRefreshRuntime}>Refresh runtime</button>
+      </div>
+    );
+  }
+  if (!providerReady) {
+    return (
+      <div className="chat-empty-state" role="status">
+        <strong>Configure a provider or model before sending.</strong>
+        <span>Use the OpenAI API-key fallback or a local OpenAI-compatible /v1 server. Provider credentials stay local to the runtime and are not stored by the GUI.</span>
+        <button type="button" onClick={onProviderSetup}>Use OpenAI API key fallback</button>
+      </div>
+    );
+  }
+  if (context && hasUsableAttachedContext(context)) {
+    const fileLabel = sanitizeDisplayText(context.file?.displayPath ?? context.file?.workspaceRelativePath ?? "the active editor");
+    return (
+      <div className="chat-empty-state ready" role="status">
+        <strong>Ready to ask about {fileLabel}.</strong>
+        <span>Send a question about the attached file or selection, or turn off attached context before sending.</span>
+      </div>
+    );
+  }
+  return (
+    <div className="chat-empty-state ready" role="status">
+      <strong>{hasLocalConversations ? "This local conversation is empty." : "Ready for your first local conversation."}</strong>
+      <span>Ask about code, architecture, tests, or the current task. Local conversation history is owned by the engine, not browser storage.</span>
+    </div>
+  );
 }
 
 function ChatBubble({ message }: { message: ChatViewMessage }) {

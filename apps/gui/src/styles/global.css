@@ -112,6 +112,74 @@ textarea {
   gap: 12px;
 }
 
+.chat-primary-card {
+  border-color: #bfd0ff;
+  background: linear-gradient(180deg, #ffffff 0%, #f7f9ff 100%);
+  box-shadow: 0 24px 70px rgba(28, 40, 72, 0.14);
+  padding: 26px;
+}
+
+.secondary-card {
+  box-shadow: 0 10px 28px rgba(28, 40, 72, 0.05);
+}
+
+.chat-hero-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.chat-hero-status {
+  justify-items: end;
+}
+
+.chat-empty-state {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+  border: 1px dashed #b8c7ea;
+  border-radius: 18px;
+  background: #ffffff;
+  color: #34405a;
+  padding: 24px;
+}
+
+.chat-empty-state.ready {
+  border-color: #bce8cc;
+  background: #f7fcf9;
+}
+
+.chat-composer {
+  border: 1px solid #dfe5f0;
+  border-radius: 18px;
+  background: white;
+  padding: 14px;
+}
+
+.chat-composer textarea {
+  min-height: 128px;
+  border-color: #bfd0ff;
+  font-size: 16px;
+}
+
+.chat-actions {
+  justify-content: space-between;
+}
+
+.secondary-button {
+  background: #eaf0ff;
+  color: #2441a1;
+}
+
+.debug-details {
+  border: 1px solid #e2e7f0;
+  border-radius: 14px;
+  background: #fbfcff;
+  padding: 12px 14px;
+}
+
 .row {
   display: flex;
   flex-wrap: wrap;
@@ -402,21 +470,23 @@ pre,
 
 .chat-panel {
   display: grid;
-  gap: 12px;
-  min-height: 180px;
-  border: 1px solid #e2e7f0;
-  border-radius: 16px;
-  background: #f8faff;
-  padding: 16px;
+  align-content: start;
+  gap: 14px;
+  min-height: 320px;
+  border: 1px solid #d8e1f6;
+  border-radius: 20px;
+  background: #eef3ff;
+  padding: 18px;
 }
 
 .chat-bubble {
   display: grid;
   gap: 6px;
-  max-width: 78%;
-  border-radius: 16px;
-  padding: 12px 14px;
+  max-width: min(78%, 720px);
+  border-radius: 20px;
+  padding: 14px 16px;
   overflow-wrap: anywhere;
+  line-height: 1.5;
   white-space: pre-wrap;
 }
 
@@ -438,6 +508,11 @@ pre,
   border: 1px solid #ffc9c9;
   background: #fff0f0;
   color: #a11212;
+}
+
+.debug-card .timeline,
+.debug-details .timeline {
+  max-height: 240px;
 }
 
 @media (max-width: 760px) {
