@@ -1,0 +1,17 @@
+{
+  "protocolVersion": "2026-05-15",
+  "agentRunId": "agent-T330-context-overflow",
+  "cardId": "T330",
+  "poolId": "planner_overflow_recovery",
+  "autonomousMode": true,
+  "status": "failed",
+  "nextAction": "recover_failed",
+  "observedAt": "2026-05-30T10:00:00Z",
+  "failureKind": "agent_error",
+  "safeSummary": "Agent run stopped after context became too large; planner can retry with a compact sanitized brief.",
+  "overflowRecovery": {
+    "kind": "context_length_exceeded",
+    "message": "Context exceeded the safe planner window. Retry with compact card summaries and omit raw transcripts.",
+    "retryable": true
+  }
+}

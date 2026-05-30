@@ -5,7 +5,16 @@
   "description": "Future/simulator-facing sanitized scheduler snapshot for one delegated agent run. It contains no prompts, provider responses, tokens, auth codes, cookies, private paths, or workspace file contents.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["protocolVersion", "agentRunId", "cardId", "poolId", "autonomousMode", "status", "nextAction", "observedAt"],
+  "required": [
+    "protocolVersion",
+    "agentRunId",
+    "cardId",
+    "poolId",
+    "autonomousMode",
+    "status",
+    "nextAction",
+    "observedAt"
+  ],
   "properties": {
     "protocolVersion": {
       "type": "string",
@@ -34,15 +43,37 @@
     },
     "status": {
       "type": "string",
-      "enum": ["running", "done", "failed", "stuck", "unknown"]
+      "enum": [
+        "running",
+        "done",
+        "failed",
+        "stuck",
+        "unknown"
+      ]
     },
     "nextAction": {
       "type": "string",
-      "enum": ["check_agents", "merge_completed", "verify_merge", "spawn_ready", "recover_failed", "plan_next_pool", "idle_blocked"]
+      "enum": [
+        "check_agents",
+        "merge_completed",
+        "verify_merge",
+        "spawn_ready",
+        "recover_failed",
+        "plan_next_pool",
+        "idle_blocked"
+      ]
     },
     "idleReason": {
       "type": "string",
-      "enum": ["waiting_for_user_decision", "waiting_for_external_dependency", "concurrency_limit_reached", "blocked_by_failed_verification", "blocked_by_policy", "all_work_closed", "autonomy_not_permitted"]
+      "enum": [
+        "waiting_for_user_decision",
+        "waiting_for_external_dependency",
+        "concurrency_limit_reached",
+        "blocked_by_failed_verification",
+        "blocked_by_policy",
+        "all_work_closed",
+        "autonomy_not_permitted"
+      ]
     },
     "observedAt": {
       "type": "string",
@@ -58,12 +89,19 @@
     },
     "failureKind": {
       "type": "string",
-      "enum": ["agent_error", "verification_failed", "timeout", "heartbeat_expired", "unknown"]
+      "enum": [
+        "agent_error",
+        "verification_failed",
+        "timeout",
+        "heartbeat_expired",
+        "unknown"
+      ]
     },
     "safeSummary": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 512
+      "$ref": "#/$defs/safeSummary"
+    },
+    "overflowRecovery": {
+      "$ref": "#/$defs/overflowRecovery"
     }
   },
   "allOf": [
@@ -74,17 +112,23 @@
             "const": "idle_blocked"
           }
         },
-        "required": ["nextAction"]
+        "required": [
+          "nextAction"
+        ]
       },
       "then": {
         "properties": {
           "idleReason": true
         },
-        "required": ["idleReason"]
+        "required": [
+          "idleReason"
+        ]
       },
       "else": {
         "not": {
-          "required": ["idleReason"]
+          "required": [
+            "idleReason"
+          ]
         }
       }
     },
@@ -92,17 +136,81 @@
       "if": {
         "properties": {
           "status": {
-            "enum": ["failed", "stuck"]
+            "enum": [
+              "failed",
+              "stuck"
+            ]
           }
         },
-        "required": ["status"]
+        "required": [
+          "status"
+        ]
       },
       "then": {
         "properties": {
           "failureKind": true
         },
-        "required": ["failureKind"]
+        "required": [
+          "failureKind"
+        ]
       }
     }
-  ]
+  ],
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:api[_-]?key|authorization|bearer|token|secret|password|cookie|pkce|refresh|access[_-]?token|auth[_-]?code|chain[-_ ]?of[-_ ]?thought|raw[_-]?(?:prompt|dump|output)|provider[_-]?(?:response|body)|credential|file[_-]?content|workspace[_-]?file|/Users/|/home/|/private/|[A-Za-z]:\\\\|~/|\\.codex/auth\\.json|auth\\.json|BEGIN [A-Z ]*PRIVATE KEY))[\\s\\S]*$"
+    },
+    "safeSummary": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      ]
+    },
+    "safeOverflowMessage": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 320
+        }
+      ]
+    },
+    "overflowRecoveryKind": {
+      "type": "string",
+      "enum": [
+        "context_length_exceeded",
+        "tool_output_too_large",
+        "task_board_output_too_large"
+      ]
+    },
+    "overflowRecovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "message"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/overflowRecoveryKind"
+        },
+        "message": {
+          "$ref": "#/$defs/safeOverflowMessage"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
 }

@@ -1,0 +1,26 @@
+{
+  "protocolVersion": "2026-05-15",
+  "poolId": "planner_overflow_recovery",
+  "autonomousMode": true,
+  "poolStatus": "replan_required",
+  "nextAction": "recover_failed",
+  "cards": [
+    {
+      "cardId": "T331",
+      "status": "replan_required",
+      "blocker": "blocked_by_policy",
+      "safeSummary": "Task-board output was too large; planner should recover from bounded card counts and concise status notes.",
+      "overflowRecovery": {
+        "kind": "task_board_output_too_large",
+        "message": "Task-board output exceeded the safe contract budget. Use a compact status summary without raw board rows.",
+        "retryable": true
+      }
+    }
+  ],
+  "safeSummary": "Pool requires replan from sanitized task-board overflow summary.",
+  "overflowRecovery": {
+    "kind": "task_board_output_too_large",
+    "message": "Pool status contains a sanitized overflow summary only; raw task-board output is intentionally omitted.",
+    "retryable": true
+  }
+}

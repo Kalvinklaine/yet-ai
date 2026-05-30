@@ -5,7 +5,16 @@
   "description": "Future/simulator-facing sanitized no-idle scheduler tick or audit summary. It records the next deterministic action and audited blockers without raw prompts, provider responses, tokens, auth codes, cookies, private paths, or workspace file contents.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["protocolVersion", "tickId", "poolId", "autonomousMode", "nextAction", "observedAt", "agentCounts", "cardCounts"],
+  "required": [
+    "protocolVersion",
+    "tickId",
+    "poolId",
+    "autonomousMode",
+    "nextAction",
+    "observedAt",
+    "agentCounts",
+    "cardCounts"
+  ],
   "properties": {
     "protocolVersion": {
       "type": "string",
@@ -28,11 +37,27 @@
     },
     "nextAction": {
       "type": "string",
-      "enum": ["check_agents", "merge_completed", "verify_merge", "spawn_ready", "recover_failed", "plan_next_pool", "idle_blocked"]
+      "enum": [
+        "check_agents",
+        "merge_completed",
+        "verify_merge",
+        "spawn_ready",
+        "recover_failed",
+        "plan_next_pool",
+        "idle_blocked"
+      ]
     },
     "idleReason": {
       "type": "string",
-      "enum": ["waiting_for_user_decision", "waiting_for_external_dependency", "concurrency_limit_reached", "blocked_by_failed_verification", "blocked_by_policy", "all_work_closed", "autonomy_not_permitted"]
+      "enum": [
+        "waiting_for_user_decision",
+        "waiting_for_external_dependency",
+        "concurrency_limit_reached",
+        "blocked_by_failed_verification",
+        "blocked_by_policy",
+        "all_work_closed",
+        "autonomy_not_permitted"
+      ]
     },
     "observedAt": {
       "type": "string",
@@ -49,9 +74,10 @@
       "$ref": "#/$defs/cardCounts"
     },
     "safeSummary": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 512
+      "$ref": "#/$defs/safeSummary"
+    },
+    "overflowRecovery": {
+      "$ref": "#/$defs/overflowRecovery"
     }
   },
   "$defs": {
@@ -63,7 +89,13 @@
     "agentCounts": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["running", "done", "failed", "stuck", "unknown"],
+      "required": [
+        "running",
+        "done",
+        "failed",
+        "stuck",
+        "unknown"
+      ],
       "properties": {
         "running": {
           "$ref": "#/$defs/count"
@@ -85,7 +117,15 @@
     "cardCounts": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["running", "done_unmerged", "merge_pending", "verification_pending", "verified", "blocked", "replan_required"],
+      "required": [
+        "running",
+        "done_unmerged",
+        "merge_pending",
+        "verification_pending",
+        "verified",
+        "blocked",
+        "replan_required"
+      ],
       "properties": {
         "running": {
           "$ref": "#/$defs/count"
@@ -109,6 +149,61 @@
           "$ref": "#/$defs/count"
         }
       }
+    },
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:api[_-]?key|authorization|bearer|token|secret|password|cookie|pkce|refresh|access[_-]?token|auth[_-]?code|chain[-_ ]?of[-_ ]?thought|raw[_-]?(?:prompt|dump|output)|provider[_-]?(?:response|body)|credential|file[_-]?content|workspace[_-]?file|/Users/|/home/|/private/|[A-Za-z]:\\\\|~/|\\.codex/auth\\.json|auth\\.json|BEGIN [A-Z ]*PRIVATE KEY))[\\s\\S]*$"
+    },
+    "safeSummary": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      ]
+    },
+    "safeOverflowMessage": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 320
+        }
+      ]
+    },
+    "overflowRecoveryKind": {
+      "type": "string",
+      "enum": [
+        "context_length_exceeded",
+        "tool_output_too_large",
+        "task_board_output_too_large"
+      ]
+    },
+    "overflowRecovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "message"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/overflowRecoveryKind"
+        },
+        "message": {
+          "$ref": "#/$defs/safeOverflowMessage"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      }
     }
   },
   "allOf": [
@@ -119,18 +214,25 @@
             "const": "idle_blocked"
           }
         },
-        "required": ["nextAction"]
+        "required": [
+          "nextAction"
+        ]
       },
       "then": {
         "properties": {
           "idleReason": true,
           "nextWatchdogCheckAt": true
         },
-        "required": ["idleReason", "nextWatchdogCheckAt"]
+        "required": [
+          "idleReason",
+          "nextWatchdogCheckAt"
+        ]
       },
       "else": {
         "not": {
-          "required": ["idleReason"]
+          "required": [
+            "idleReason"
+          ]
         }
       }
     }

@@ -5,7 +5,14 @@
   "description": "Future/simulator-facing sanitized scheduler summary for cards and pools. It contains explicit no-idle actions without raw prompts, provider responses, tokens, auth codes, cookies, private paths, or workspace file contents.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["protocolVersion", "poolId", "autonomousMode", "poolStatus", "nextAction", "cards"],
+  "required": [
+    "protocolVersion",
+    "poolId",
+    "autonomousMode",
+    "poolStatus",
+    "nextAction",
+    "cards"
+  ],
   "properties": {
     "protocolVersion": {
       "type": "string",
@@ -22,15 +29,36 @@
     },
     "poolStatus": {
       "type": "string",
-      "enum": ["running", "blocked", "replan_required", "closed"]
+      "enum": [
+        "running",
+        "blocked",
+        "replan_required",
+        "closed"
+      ]
     },
     "nextAction": {
       "type": "string",
-      "enum": ["check_agents", "merge_completed", "verify_merge", "spawn_ready", "recover_failed", "plan_next_pool", "idle_blocked"]
+      "enum": [
+        "check_agents",
+        "merge_completed",
+        "verify_merge",
+        "spawn_ready",
+        "recover_failed",
+        "plan_next_pool",
+        "idle_blocked"
+      ]
     },
     "idleReason": {
       "type": "string",
-      "enum": ["waiting_for_user_decision", "waiting_for_external_dependency", "concurrency_limit_reached", "blocked_by_failed_verification", "blocked_by_policy", "all_work_closed", "autonomy_not_permitted"]
+      "enum": [
+        "waiting_for_user_decision",
+        "waiting_for_external_dependency",
+        "concurrency_limit_reached",
+        "blocked_by_failed_verification",
+        "blocked_by_policy",
+        "all_work_closed",
+        "autonomy_not_permitted"
+      ]
     },
     "cards": {
       "type": "array",
@@ -47,16 +75,20 @@
       "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$"
     },
     "safeSummary": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 512
+      "$ref": "#/$defs/safeSummary"
+    },
+    "overflowRecovery": {
+      "$ref": "#/$defs/overflowRecovery"
     }
   },
   "$defs": {
     "cardStatus": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["cardId", "status"],
+      "required": [
+        "cardId",
+        "status"
+      ],
       "properties": {
         "cardId": {
           "type": "string",
@@ -66,7 +98,18 @@
         },
         "status": {
           "type": "string",
-          "enum": ["running", "done_unmerged", "merge_pending", "verification_pending", "verified", "blocked", "replan_required", "failed", "stuck", "closed"]
+          "enum": [
+            "running",
+            "done_unmerged",
+            "merge_pending",
+            "verification_pending",
+            "verified",
+            "blocked",
+            "replan_required",
+            "failed",
+            "stuck",
+            "closed"
+          ]
         },
         "agentRunId": {
           "type": "string",
@@ -76,20 +119,37 @@
         },
         "mergeState": {
           "type": "string",
-          "enum": ["not_started", "pending", "merged", "failed"]
+          "enum": [
+            "not_started",
+            "pending",
+            "merged",
+            "failed"
+          ]
         },
         "verificationState": {
           "type": "string",
-          "enum": ["not_started", "pending", "passed", "failed"]
+          "enum": [
+            "not_started",
+            "pending",
+            "passed",
+            "failed"
+          ]
         },
         "blocker": {
           "type": "string",
-          "enum": ["waiting_for_user_decision", "waiting_for_external_dependency", "blocked_by_failed_verification", "blocked_by_policy", "autonomy_not_permitted"]
+          "enum": [
+            "waiting_for_user_decision",
+            "waiting_for_external_dependency",
+            "blocked_by_failed_verification",
+            "blocked_by_policy",
+            "autonomy_not_permitted"
+          ]
         },
         "safeSummary": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 512
+          "$ref": "#/$defs/safeSummary"
+        },
+        "overflowRecovery": {
+          "$ref": "#/$defs/overflowRecovery"
         }
       },
       "allOf": [
@@ -100,10 +160,15 @@
                 "const": "verified"
               }
             },
-            "required": ["status"]
+            "required": [
+              "status"
+            ]
           },
           "then": {
-            "required": ["mergeState", "verificationState"],
+            "required": [
+              "mergeState",
+              "verificationState"
+            ],
             "properties": {
               "mergeState": {
                 "const": "merged"
@@ -118,19 +183,81 @@
           "if": {
             "properties": {
               "status": {
-                "enum": ["blocked", "replan_required"]
+                "enum": [
+                  "blocked",
+                  "replan_required"
+                ]
               }
             },
-            "required": ["status"]
+            "required": [
+              "status"
+            ]
           },
           "then": {
             "properties": {
               "blocker": true
             },
-            "required": ["blocker"]
+            "required": [
+              "blocker"
+            ]
           }
         }
       ]
+    },
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:api[_-]?key|authorization|bearer|token|secret|password|cookie|pkce|refresh|access[_-]?token|auth[_-]?code|chain[-_ ]?of[-_ ]?thought|raw[_-]?(?:prompt|dump|output)|provider[_-]?(?:response|body)|credential|file[_-]?content|workspace[_-]?file|/Users/|/home/|/private/|[A-Za-z]:\\\\|~/|\\.codex/auth\\.json|auth\\.json|BEGIN [A-Z ]*PRIVATE KEY))[\\s\\S]*$"
+    },
+    "safeSummary": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      ]
+    },
+    "safeOverflowMessage": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 320
+        }
+      ]
+    },
+    "overflowRecoveryKind": {
+      "type": "string",
+      "enum": [
+        "context_length_exceeded",
+        "tool_output_too_large",
+        "task_board_output_too_large"
+      ]
+    },
+    "overflowRecovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "message"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/overflowRecoveryKind"
+        },
+        "message": {
+          "$ref": "#/$defs/safeOverflowMessage"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      }
     }
   },
   "allOf": [
@@ -141,17 +268,23 @@
             "const": "idle_blocked"
           }
         },
-        "required": ["nextAction"]
+        "required": [
+          "nextAction"
+        ]
       },
       "then": {
         "properties": {
           "idleReason": true
         },
-        "required": ["idleReason"]
+        "required": [
+          "idleReason"
+        ]
       },
       "else": {
         "not": {
-          "required": ["idleReason"]
+          "required": [
+            "idleReason"
+          ]
         }
       }
     }
