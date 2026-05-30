@@ -1,0 +1,9 @@
+{
+  "seq": 31,
+  "type": "error",
+  "chatId": "chat-001",
+  "payload": {
+    "code": "provider_config_error",
+    "message": "Provider configuration is invalid at C:\\Users\\example\\AppData."
+  }
+}

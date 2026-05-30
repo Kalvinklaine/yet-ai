@@ -1,0 +1,9 @@
+{
+  "seq": 35,
+  "type": "error",
+  "chatId": "chat-001",
+  "payload": {
+    "code": "provider_config_error",
+    "message": "Provider configuration is invalid in auth.json."
+  }
+}

@@ -6654,7 +6654,7 @@ async fn openai_compatible_streaming_maps_chunks_to_sse_events() {
 }
 
 #[tokio::test]
-async fn openai_compatible_streaming_accepts_split_multibyte_utf8_chunks() {
+async fn chat_openai_compatible_streaming_accepts_split_multibyte_utf8_chunks() {
     let api_key = "sk-split-utf8-stream-secret-abcd";
     let body = "data: {\"choices\":[{\"delta\":{\"content\":\"Привет 🌍\"}}]}\n\ndata: [DONE]\n\n";
     let bytes = body.as_bytes();
@@ -7432,6 +7432,22 @@ async fn provider_unauthorized_produces_sanitized_error_event() {
 #[tokio::test]
 async fn chat_provider_http_failures_produce_stable_sanitized_error_events_and_history() {
     for (status, body, expected_code, expected_message, chat_id, forbidden) in [
+        (
+            StatusCode::REQUEST_TIMEOUT,
+            r#"raw-provider-body sk-timeout-secret access_token=secret"#,
+            "provider_timeout",
+            "Provider request timed out.",
+            "chat-http-408-timeout-classified",
+            ["sk-timeout-secret", "raw-provider-body", "access_token"].as_slice(),
+        ),
+        (
+            StatusCode::GATEWAY_TIMEOUT,
+            r#"raw-provider-body sk-gateway-timeout-secret Cookie: secret"#,
+            "provider_timeout",
+            "Provider request timed out.",
+            "chat-http-504-timeout-classified",
+            ["sk-gateway-timeout-secret", "raw-provider-body", "Cookie"].as_slice(),
+        ),
         (
             StatusCode::UNAUTHORIZED,
             r#"{"error":{"message":"raw-provider-body sk-http-secret access_token=secret Bearer token","type":"invalid_api_key"}}"#,
