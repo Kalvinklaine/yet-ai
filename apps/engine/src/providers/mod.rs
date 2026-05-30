@@ -751,15 +751,25 @@ async fn migrate_provider_secret(
     let store = FileSecretStore::new(config_dir);
     let stored_secret = match store.get_secret(&config.id, SecretKind::ApiKey).await {
         Ok(secret) => secret,
+        Err(SecretStoreError::InvalidRecord) if should_scrub => {
+            return Err(ProviderError::SecretStorage)
+        }
         Err(SecretStoreError::InvalidRecord) => None,
         Err(error) => return Err(error.into()),
     };
 
     if config.auth.auth_type == AuthType::ApiKey && stored_secret.is_none() {
         if let Some(api_key) = inline_key.as_deref() {
-            store
-                .put_secret(&config.id, SecretKind::ApiKey, api_key)
-                .await?;
+            let latest_secret = match store.get_secret(&config.id, SecretKind::ApiKey).await {
+                Ok(secret) => secret,
+                Err(SecretStoreError::InvalidRecord) => return Err(ProviderError::SecretStorage),
+                Err(error) => return Err(error.into()),
+            };
+            if latest_secret.is_none() {
+                store
+                    .put_secret(&config.id, SecretKind::ApiKey, api_key)
+                    .await?;
+            }
         }
     }
 
