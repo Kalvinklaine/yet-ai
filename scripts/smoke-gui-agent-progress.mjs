@@ -23,6 +23,10 @@ const rawMarkers = [
   "SECRET_PROVIDER_RESPONSE_BODY",
   "SECRET_FILE_CONTENT_BODY",
   "SECRET_WORKSPACE_CONTENT_BODY",
+  "STRUCTURED_RAW_PROMPT_BODY",
+  "STRUCTURED_PROVIDER_BODY",
+  "STRUCTURED_BOARD_DUMP_BODY",
+  "GUI-SMOKE-BOUNDED-20",
 ];
 const failures = [];
 let agentProgressResponse = emptyAgentProgress();
@@ -184,6 +188,26 @@ try {
   await expectVisibleText(page, "GUI-SMOKE-NOISY-BOUNDED / run-gui-smoke", "noisy bounded run");
   await expectVisibleText(page, "Agent output was too large.", "noisy fallback recovery title");
   await assertBoundedNoisyOutput(page, noisyMarker);
+
+  agentProgressResponse = progressList(Array.from({ length: 25 }, (_, index) => progressSnapshot({
+    cardId: `GUI-SMOKE-BOUNDED-${index}`,
+    runId: `run-gui-bounded-${index}`,
+    message: "Bounded structured progress payload",
+    rawPrompt: { nested: "STRUCTURED_RAW_PROMPT_BODY" },
+    providerBody: ["STRUCTURED_PROVIDER_BODY"],
+    taskBoardDump: { raw: "STRUCTURED_BOARD_DUMP_BODY" },
+    recentEvents: Array.from({ length: 18 }, (_, eventIndex) => ({
+      eventId: `event-bounded-${index}-${eventIndex}`,
+      timestamp: "2026-05-29T15:01:00Z",
+      phase: "running_command",
+      status: "healthy_running",
+      message: `bounded recent summary ${eventIndex}`,
+    })),
+  })));
+  await refreshAgentProgress(page);
+  await expectVisibleText(page, "GUI-SMOKE-BOUNDED-0 / run-gui-bounded-0", "bounded first run");
+  await expectVisibleText(page, "5 more agent runs hidden.", "bounded hidden run count");
+  await expectVisibleText(page, "6 more summaries hidden.", "bounded hidden summary count");
 
   const pageState = await page.evaluate(() => ({
     body: document.body.innerText,
