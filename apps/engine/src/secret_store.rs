@@ -166,12 +166,16 @@ where
                 }
                 Ok(_) => Err(SecretStoreError::Storage),
                 Err(SecretStoreError::Unavailable) => {
-                    self.fallback.put_secret_if_absent(provider_id, kind, value).await
+                    self.fallback
+                        .put_secret_if_absent(provider_id, kind, value)
+                        .await
                 }
                 Err(error) => Err(error),
             },
             Err(SecretStoreError::Unavailable) => {
-                self.fallback.put_secret_if_absent(provider_id, kind, value).await
+                self.fallback
+                    .put_secret_if_absent(provider_id, kind, value)
+                    .await
             }
             Err(error) => Err(error),
         }
@@ -232,10 +236,7 @@ pub fn provider_secret_store(config_dir: impl AsRef<Path>) -> ProductionProvider
 
 #[cfg(any(test, debug_assertions))]
 pub fn provider_secret_store(config_dir: impl AsRef<Path>) -> ProductionProviderSecretStore {
-    CompositeProviderSecretStore::new(
-        TestUnavailableSecretStore,
-        FileSecretStore::new(config_dir),
-    )
+    CompositeProviderSecretStore::new(TestUnavailableSecretStore, FileSecretStore::new(config_dir))
 }
 
 #[cfg(any(test, debug_assertions))]
@@ -466,7 +467,8 @@ impl ProviderSecretStore for OsKeychainSecretStore {
 }
 
 fn keychain_account(provider_id: &str, kind: SecretKind) -> Result<String, SecretStoreError> {
-    providers::validate_provider_id(provider_id).map_err(|_| SecretStoreError::InvalidProviderId)?;
+    providers::validate_provider_id(provider_id)
+        .map_err(|_| SecretStoreError::InvalidProviderId)?;
     Ok(format!("{provider_id}:{}", kind.file_name()))
 }
 
@@ -1265,6 +1267,178 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn composite_secret_store_primary_wins_for_all_provider_secret_kinds() {
+        for (provider_id, kind, primary_secret, stale_fallback_secret) in [
+            (
+                "openai-api-primary",
+                SecretKind::ApiKey,
+                "sk-composite-primary-api-secret-abcd",
+                "sk-composite-stale-api-secret-wxyz",
+            ),
+            (
+                "openai-oauth-access",
+                SecretKind::OAuthAccessToken,
+                "codex-primary-access-token-abcd",
+                "codex-stale-access-token-wxyz",
+            ),
+            (
+                "openai-oauth-refresh",
+                SecretKind::OAuthRefreshToken,
+                "codex-primary-refresh-token-abcd",
+                "codex-stale-refresh-token-wxyz",
+            ),
+            (
+                "openai-oauth-metadata",
+                SecretKind::AuthMetadata,
+                r#"{"account":"primary","chatBaseUrl":"http://127.0.0.1:1"}"#,
+                r#"{"account":"stale","chatBaseUrl":"http://127.0.0.1:2"}"#,
+            ),
+        ] {
+            let primary = MockSecretBackend::with_secret(provider_id, kind, primary_secret);
+            let fallback = MockSecretBackend::with_secret(provider_id, kind, stale_fallback_secret);
+            let store = CompositeProviderSecretStore::new(primary.clone(), fallback.clone());
+
+            let secret = store.get_secret(provider_id, kind).await.unwrap();
+
+            assert_stored_secret(secret.as_deref(), primary_secret);
+            let fallback_secret = fallback.get_secret(provider_id, kind).await.unwrap();
+            assert_stored_secret(fallback_secret.as_deref(), stale_fallback_secret);
+            assert_eq!(fallback.delete_count(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn composite_secret_store_migrates_all_secret_kinds_after_verified_primary_write() {
+        for (provider_id, kind, fallback_secret) in [
+            (
+                "openai-api-migrate",
+                SecretKind::ApiKey,
+                "sk-composite-migrate-api-secret-abcd",
+            ),
+            (
+                "openai-access-migrate",
+                SecretKind::OAuthAccessToken,
+                "codex-migrate-access-token-abcd",
+            ),
+            (
+                "openai-refresh-migrate",
+                SecretKind::OAuthRefreshToken,
+                "codex-migrate-refresh-token-abcd",
+            ),
+            (
+                "openai-metadata-migrate",
+                SecretKind::AuthMetadata,
+                r#"{"account":"fallback","chatBaseUrl":"http://127.0.0.1:3"}"#,
+            ),
+        ] {
+            let primary = MockSecretBackend::default();
+            let fallback = MockSecretBackend::with_secret(provider_id, kind, fallback_secret);
+            let store = CompositeProviderSecretStore::new(primary.clone(), fallback.clone());
+
+            let secret = store.get_secret(provider_id, kind).await.unwrap();
+
+            assert_stored_secret(secret.as_deref(), fallback_secret);
+            let primary_secret = primary.get_secret(provider_id, kind).await.unwrap();
+            assert_stored_secret(primary_secret.as_deref(), fallback_secret);
+            assert_eq!(fallback.get_secret(provider_id, kind).await.unwrap(), None);
+            assert_eq!(fallback.delete_count(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn composite_secret_store_put_keeps_fallback_when_primary_readback_mismatches() {
+        let primary = MockSecretBackend::read_back_mismatch();
+        let fallback = MockSecretBackend::with_secret(
+            "openai-local",
+            SecretKind::ApiKey,
+            "sk-composite-existing-fallback-abcd",
+        );
+        let store = CompositeProviderSecretStore::new(primary, fallback.clone());
+
+        let error = store
+            .put_secret(
+                "openai-local",
+                SecretKind::ApiKey,
+                "sk-composite-replacement-secret-wxyz",
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, SecretStoreError::Storage));
+        assert_eq!(error.to_string(), "secret storage error");
+        let fallback_secret = fallback
+            .get_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap();
+        assert_stored_secret(
+            fallback_secret.as_deref(),
+            "sk-composite-existing-fallback-abcd",
+        );
+        assert_eq!(fallback.delete_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn composite_secret_store_put_if_absent_keeps_fallback_when_primary_readback_mismatches()
+    {
+        let primary = MockSecretBackend::read_back_mismatch();
+        let fallback = MockSecretBackend::default();
+        let store = CompositeProviderSecretStore::new(primary, fallback.clone());
+
+        let error = store
+            .put_secret_if_absent(
+                "openai-local",
+                SecretKind::ApiKey,
+                "sk-composite-if-absent-mismatch-abcd",
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, SecretStoreError::Storage));
+        assert_eq!(error.to_string(), "secret storage error");
+        assert_eq!(
+            fallback
+                .get_secret("openai-local", SecretKind::ApiKey)
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(fallback.delete_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn composite_secret_store_delete_covers_oauth_secret_kinds_in_both_stores() {
+        let primary = MockSecretBackend::default();
+        let fallback = MockSecretBackend::default();
+        for kind in [
+            SecretKind::OAuthAccessToken,
+            SecretKind::OAuthRefreshToken,
+            SecretKind::AuthMetadata,
+        ] {
+            primary
+                .put_secret("openai", kind, "codex-delete-primary-secret-abcd")
+                .await
+                .unwrap();
+            fallback
+                .put_secret("openai", kind, "codex-delete-fallback-secret-wxyz")
+                .await
+                .unwrap();
+        }
+        let store = CompositeProviderSecretStore::new(primary.clone(), fallback.clone());
+
+        for kind in [
+            SecretKind::OAuthAccessToken,
+            SecretKind::OAuthRefreshToken,
+            SecretKind::AuthMetadata,
+        ] {
+            store.delete_secret("openai", kind).await.unwrap();
+            assert_eq!(primary.get_secret("openai", kind).await.unwrap(), None);
+            assert_eq!(fallback.get_secret("openai", kind).await.unwrap(), None);
+        }
+
+        assert_eq!(primary.delete_count(), 3);
+        assert_eq!(fallback.delete_count(), 3);
+    }
     #[tokio::test]
     async fn composite_secret_store_delete_surfaces_sanitized_storage_failure() {
         let primary = MockSecretBackend::delete_failure();
