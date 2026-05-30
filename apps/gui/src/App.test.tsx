@@ -1739,6 +1739,21 @@ describe("active editor attached context", () => {
     expect(attachedContextToggle().checked).toBe(true);
   });
 
+  it("renders chat-first empty state for attached editor context", async () => {
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    await dispatchHostContextSnapshot({
+      file: { displayPath: "src/main.ts", workspaceRelativePath: "src/main.ts", languageId: "typescript" },
+      selection: { text: "const answer = 42;" },
+    });
+
+    expect(container?.textContent).toContain("Ready to ask about src/main.ts.");
+    expect(container?.textContent).toContain("Send a question about the attached file or selection");
+  });
+
+
   it("lets the user turn off attached context inclusion", async () => {
     mockRuntimeResponses();
     renderApp();
@@ -2320,6 +2335,18 @@ describe("chat panel", () => {
     expect(findButton("Send").disabled).toBe(true);
   });
 
+  it("renders chat-first empty state for provider setup", async () => {
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Chat with Yet AI");
+    expect(container?.textContent).toContain("Configure a provider or model before sending.");
+    expect(container?.textContent).toContain("Provider credentials stay local to the runtime and are not stored by the GUI.");
+  });
+
+
   it("enables chat readiness from connected experimental OpenAI OAuth when no provider model is ready", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     mockRuntimeResponses({ authResponse: providerAuthResponse("connected") });
@@ -2731,6 +2758,17 @@ describe("chat panel", () => {
     expect(findButton("Send").disabled).toBe(true);
   });
 
+  it("renders chat-first empty state for runtime connection", async () => {
+    mockRuntimeResponses({ runtimeFailure: true });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Connect the local runtime to start chatting.");
+    expect(container?.textContent).toContain("No hosted Yet AI backend, account, cloud workspace, or credit balance is required.");
+  });
+
+
   it("disables experimental OAuth Send when runtime connectivity fails", async () => {
     mockRuntimeResponses({ runtimeFailure: true, authResponse: providerAuthResponse("connected") });
     renderApp();
@@ -2866,7 +2904,7 @@ describe("chat panel", () => {
     expect(container?.textContent).not.toContain("old chat failed");
     expect(container?.textContent).not.toContain("Command error");
     expect(container?.textContent).not.toContain("old-secret");
-    expect(container?.textContent).toContain("Ask a question to start this local chat.");
+    expect(container?.textContent).toContain("Ready for your first local conversation.");
   });
 
   it("blocks programmatic submit while Send is disabled without opening SSE or posting a command", async () => {
@@ -3113,7 +3151,7 @@ describe("chat panel", () => {
     });
 
     expect(container?.textContent).not.toContain("First chat message");
-    expect(container?.textContent).toContain("Ask a question to start this local chat.");
+    expect(container?.textContent).toContain("Ready for your first local conversation.");
   });
 
   it("does not write chat messages or secrets to browser storage", async () => {
