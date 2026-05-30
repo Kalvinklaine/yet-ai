@@ -430,17 +430,7 @@ pub async fn get_provider_config(
     config_dir: &Path,
     id: &str,
 ) -> Result<StoredProviderConfig, ProviderError> {
-    let path = provider_config_path(config_dir, id)?;
-    let content = match tokio::fs::read_to_string(path).await {
-        Ok(content) => content,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(ProviderError::NotFound);
-        }
-        Err(_) => return Err(ProviderError::Storage),
-    };
-    let mut config: StoredProviderConfig =
-        serde_json::from_str(&content).map_err(|_| ProviderError::InvalidConfig)?;
-    validate_config(&config)?;
+    let mut config = read_provider_config(config_dir, id).await?;
     migrate_provider_secret(config_dir, &mut config).await?;
     Ok(config)
 }
@@ -760,25 +750,40 @@ async fn migrate_provider_secret(
 
     if config.auth.auth_type == AuthType::ApiKey && stored_secret.is_none() {
         if let Some(api_key) = inline_key.as_deref() {
-            let latest_secret = match store.get_secret(&config.id, SecretKind::ApiKey).await {
-                Ok(secret) => secret,
-                Err(SecretStoreError::InvalidRecord) => return Err(ProviderError::SecretStorage),
-                Err(error) => return Err(error.into()),
-            };
-            if latest_secret.is_none() {
-                store
-                    .put_secret(&config.id, SecretKind::ApiKey, api_key)
-                    .await?;
-            }
+            store
+                .put_secret_if_absent(&config.id, SecretKind::ApiKey, api_key)
+                .await?;
         }
     }
 
     if should_scrub {
-        config.auth.api_key = None;
-        let path = provider_config_path(config_dir, &config.id)?;
-        write_provider_config(&path, config).await?;
+        let mut latest = read_provider_config(config_dir, &config.id).await?;
+        if latest.auth.api_key.is_some() {
+            latest.auth.api_key = None;
+            let path = provider_config_path(config_dir, &latest.id)?;
+            write_provider_config(&path, &latest).await?;
+        }
+        *config = latest;
     }
     Ok(())
+}
+
+async fn read_provider_config(
+    config_dir: &Path,
+    id: &str,
+) -> Result<StoredProviderConfig, ProviderError> {
+    let path = provider_config_path(config_dir, id)?;
+    let content = match tokio::fs::read_to_string(path).await {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(ProviderError::NotFound);
+        }
+        Err(_) => return Err(ProviderError::Storage),
+    };
+    let config: StoredProviderConfig =
+        serde_json::from_str(&content).map_err(|_| ProviderError::InvalidConfig)?;
+    validate_config(&config)?;
+    Ok(config)
 }
 
 async fn summary_for_config(

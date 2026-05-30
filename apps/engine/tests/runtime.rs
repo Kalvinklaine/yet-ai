@@ -4140,22 +4140,82 @@ async fn provider_secret_caps_first_access_migrates_inline_key() {
 }
 
 #[tokio::test]
-async fn provider_secret_test_first_access_uses_migrated_store_key() {
+async fn provider_secret_atomic_migration_does_not_overwrite_newer_secret() {
     let paths = test_storage_paths();
-    let (base_url, auth_receiver) =
-        start_mock_models_provider(StatusCode::OK, r#"{"data":[{"id":"gpt-test"}]}"#).await;
     let app = app(AppState::with_storage_paths(
         ProductIdentity::load().unwrap(),
         AuthToken::new(TEST_TOKEN).unwrap(),
         paths.clone(),
     ));
-    let api_key = "sk-provider-test-migration-secret-abcd";
+    let stale_key = "sk-provider-race-stale-secret-abcd";
+    let newer_key = "sk-provider-race-newer-secret-wxyz";
+    write_legacy_provider_config(
+        &paths,
+        "provider-secret-atomic-race",
+        json!({ "type": "api_key", "apiKey": stale_key }),
+    );
+    let store = FileSecretStore::new(&paths.config_dir);
+    assert!(store
+        .put_secret_if_absent(
+            "provider-secret-atomic-race",
+            SecretKind::ApiKey,
+            newer_key,
+        )
+        .await
+        .unwrap());
+    assert!(!store
+        .put_secret_if_absent(
+            "provider-secret-atomic-race",
+            SecretKind::ApiKey,
+            stale_key,
+        )
+        .await
+        .unwrap());
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/providers/provider-secret-atomic-race",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["auth"]["configured"], true);
+    let text = body.to_string();
+    assert!(!text.contains(stale_key));
+    assert!(!text.contains(newer_key));
+    let stored = store
+        .get_secret("provider-secret-atomic-race", SecretKind::ApiKey)
+        .await
+        .unwrap();
+    assert_stored_secret(stored.as_deref(), newer_key);
+    assert!(!read_provider_config_text(&paths, "provider-secret-atomic-race").contains(stale_key));
+}
+
+#[tokio::test]
+async fn provider_secret_test_first_access_uses_stored_key_over_inline_key() {
+    let paths = test_storage_paths();
+    let (base_url, auth_receiver) =
+        start_mock_models_provider(StatusCode::OK, r#"{\"data\":[{\"id\":\"gpt-test\"}]}"#).await;
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let stored_key = "sk-provider-test-stored-secret-abcd";
+    let inline_key = "sk-provider-test-inline-secret-wxyz";
     write_legacy_provider_config_with_base_url(
         &paths,
         "provider-secret-test-migrate",
         base_url,
-        json!({ "type": "api_key", "apiKey": api_key }),
+        json!({ "type": "api_key", "apiKey": inline_key }),
     );
+    FileSecretStore::new(&paths.config_dir)
+        .put_secret("provider-secret-test-migrate", SecretKind::ApiKey, stored_key)
+        .await
+        .unwrap();
 
     let (status, body) = json_response_from(
         app,
@@ -4169,27 +4229,29 @@ async fn provider_secret_test_first_access_uses_migrated_store_key() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["ok"], true);
     assert_eq!(body["status"], "reachable");
-    assert!(!body.to_string().contains(api_key));
+    let text = body.to_string();
+    assert!(!text.contains(stored_key));
+    assert!(!text.contains(inline_key));
     assert_first_auth_and_no_immediate_extra_auth(
         auth_receiver,
-        "Bearer sk-provider-test-migration-secret-abcd",
-        "provider secret test migration",
+        "Bearer sk-provider-test-stored-secret-abcd",
+        "provider secret test stored wins",
     )
     .await;
     let stored = FileSecretStore::new(&paths.config_dir)
         .get_secret("provider-secret-test-migrate", SecretKind::ApiKey)
         .await
         .unwrap();
-    assert_stored_secret(stored.as_deref(), api_key);
-    assert!(!read_provider_config_text(&paths, "provider-secret-test-migrate").contains(api_key));
+    assert_stored_secret(stored.as_deref(), stored_key);
+    assert!(!read_provider_config_text(&paths, "provider-secret-test-migrate").contains(inline_key));
 }
 
 #[tokio::test]
-async fn provider_secret_chat_first_access_uses_migrated_store_key() {
+async fn provider_secret_chat_first_access_uses_stored_key_over_inline_key() {
     let paths = test_storage_paths();
     let (base_url, auth_receiver) = start_mock_provider(
         StatusCode::OK,
-        "data: {\"choices\":[{\"delta\":{\"content\":\"migrated-chat\"}}]}\n\ndata: [DONE]\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"stored-chat\"}}]}\n\ndata: [DONE]\n\n",
     )
     .await;
     let app = app(AppState::with_storage_paths(
@@ -4197,13 +4259,18 @@ async fn provider_secret_chat_first_access_uses_migrated_store_key() {
         AuthToken::new(TEST_TOKEN).unwrap(),
         paths.clone(),
     ));
-    let api_key = "sk-provider-chat-migration-secret-abcd";
+    let stored_key = "sk-provider-chat-stored-secret-abcd";
+    let inline_key = "sk-provider-chat-inline-secret-wxyz";
     write_legacy_provider_config_with_base_url(
         &paths,
         "provider-secret-chat-migrate",
         base_url,
-        json!({ "type": "api_key", "apiKey": api_key }),
+        json!({ "type": "api_key", "apiKey": inline_key }),
     );
+    FileSecretStore::new(&paths.config_dir)
+        .put_secret("provider-secret-chat-migrate", SecretKind::ApiKey, stored_key)
+        .await
+        .unwrap();
 
     send_user_message(app.clone(), "chat-provider-secret-migration").await;
     let text = sse_text_from(
@@ -4211,20 +4278,21 @@ async fn provider_secret_chat_first_access_uses_migrated_store_key() {
         "/v1/chats/subscribe?chat_id=chat-provider-secret-migration",
     )
     .await;
-    assert!(text.contains("migrated-chat"));
-    assert!(!text.contains(api_key));
+    assert!(text.contains("stored-chat"));
+    assert!(!text.contains(stored_key));
+    assert!(!text.contains(inline_key));
     assert_first_auth_and_no_immediate_extra_auth(
         auth_receiver,
-        "Bearer sk-provider-chat-migration-secret-abcd",
-        "provider secret chat migration",
+        "Bearer sk-provider-chat-stored-secret-abcd",
+        "provider secret chat stored wins",
     )
     .await;
     let stored = FileSecretStore::new(&paths.config_dir)
         .get_secret("provider-secret-chat-migrate", SecretKind::ApiKey)
         .await
         .unwrap();
-    assert_stored_secret(stored.as_deref(), api_key);
-    assert!(!read_provider_config_text(&paths, "provider-secret-chat-migrate").contains(api_key));
+    assert_stored_secret(stored.as_deref(), stored_key);
+    assert!(!read_provider_config_text(&paths, "provider-secret-chat-migrate").contains(inline_key));
 }
 
 #[tokio::test]
@@ -4264,6 +4332,80 @@ async fn provider_secret_corrupt_store_with_inline_key_fails_safely() {
     assert_eq!(body["error"], "provider secret storage error");
     assert!(!body.to_string().contains(api_key));
     assert!(read_provider_config_text(&paths, "provider-secret-corrupt-migrate").contains(api_key));
+}
+
+#[tokio::test]
+async fn provider_secret_corrupt_store_provider_test_does_not_fallback_to_inline() {
+    let paths = test_storage_paths();
+    let (base_url, auth_receiver) =
+        start_mock_models_provider(StatusCode::OK, r#"{\"data\":[{\"id\":\"gpt-test\"}]}"#).await;
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-provider-corrupt-test-secret-abcd";
+    write_legacy_provider_config_with_base_url(
+        &paths,
+        "provider-secret-corrupt-test",
+        base_url,
+        json!({ "type": "api_key", "apiKey": api_key }),
+    );
+    let secret_path = FileSecretStore::new(&paths.config_dir)
+        .secret_path("provider-secret-corrupt-test", SecretKind::ApiKey)
+        .unwrap();
+    std::fs::create_dir_all(secret_path.parent().unwrap()).unwrap();
+    std::fs::write(&secret_path, r#"{"value":"sk-provider-corrupt-test-secret-abcd""#).unwrap();
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/providers/provider-secret-corrupt-test/test",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["error"], "provider secret storage error");
+    assert!(!body.to_string().contains(api_key));
+    assert_no_observed_auth(auth_receiver).await;
+}
+
+#[tokio::test]
+async fn provider_secret_corrupt_store_chat_does_not_fallback_to_inline() {
+    let paths = test_storage_paths();
+    let (base_url, auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"unsafe\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-provider-corrupt-chat-secret-abcd";
+    write_legacy_provider_config_with_base_url(
+        &paths,
+        "provider-secret-corrupt-chat",
+        base_url,
+        json!({ "type": "api_key", "apiKey": api_key }),
+    );
+    let secret_path = FileSecretStore::new(&paths.config_dir)
+        .secret_path("provider-secret-corrupt-chat", SecretKind::ApiKey)
+        .unwrap();
+    std::fs::create_dir_all(secret_path.parent().unwrap()).unwrap();
+    std::fs::write(&secret_path, r#"{"value":"sk-provider-corrupt-chat-secret-abcd""#).unwrap();
+
+    send_user_message(app.clone(), "chat-provider-secret-corrupt").await;
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-provider-secret-corrupt").await;
+    let events = sse_json_events(&text);
+    let error = find_error_event(&events);
+    assert_eq!(error["payload"]["code"], "provider_config_error");
+    assert_sanitized_sse_error(&text);
+    assert!(!text.contains(api_key));
+    assert_no_observed_auth(auth_receiver).await;
 }
 
 #[tokio::test]
@@ -4406,6 +4548,84 @@ async fn provider_secret_whitespace_inline_key_is_scrubbed_without_secret() {
             .unwrap(),
         None
     );
+}
+
+#[tokio::test]
+async fn provider_secret_existing_store_and_whitespace_inline_key_uses_store_and_scrubs() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let stored_key = "sk-provider-whitespace-stored-secret-abcd";
+    write_legacy_provider_config(
+        &paths,
+        "provider-secret-whitespace-store",
+        json!({ "type": "api_key", "apiKey": "   \n\t  " }),
+    );
+    FileSecretStore::new(&paths.config_dir)
+        .put_secret("provider-secret-whitespace-store", SecretKind::ApiKey, stored_key)
+        .await
+        .unwrap();
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/providers/provider-secret-whitespace-store",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["auth"]["configured"], true);
+    assert_eq!(body["auth"]["redacted"], "sk...cd");
+    assert!(!body.to_string().contains(stored_key));
+    assert!(!read_provider_config_text(&paths, "provider-secret-whitespace-store").contains("apiKey"));
+    let stored = FileSecretStore::new(&paths.config_dir)
+        .get_secret("provider-secret-whitespace-store", SecretKind::ApiKey)
+        .await
+        .unwrap();
+    assert_stored_secret(stored.as_deref(), stored_key);
+}
+
+#[tokio::test]
+async fn provider_secret_scrub_rereads_current_metadata() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-provider-reread-secret-abcd";
+    write_legacy_provider_config(
+        &paths,
+        "provider-secret-reread",
+        json!({ "type": "api_key", "apiKey": api_key }),
+    );
+    let config_path = paths.config_dir.join("providers.d/provider-secret-reread.json");
+    let mut provider: Value = serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    provider["displayName"] = json!("Updated Provider Name");
+    provider["enabled"] = json!(false);
+    provider["models"] = json!([{ "id": "gpt-current", "displayName": "GPT Current" }]);
+    std::fs::write(&config_path, serde_json::to_string_pretty(&provider).unwrap()).unwrap();
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/providers/provider-secret-reread", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["displayName"], "Updated Provider Name");
+    assert_eq!(body["enabled"], false);
+    assert_eq!(body["models"][0]["id"], "gpt-current");
+    assert!(!body.to_string().contains(api_key));
+    let config_text = read_provider_config_text(&paths, "provider-secret-reread");
+    assert!(config_text.contains("Updated Provider Name"));
+    assert!(config_text.contains("gpt-current"));
+    assert!(!config_text.contains(api_key));
+    assert!(!config_text.contains("apiKey"));
 }
 
 #[tokio::test]

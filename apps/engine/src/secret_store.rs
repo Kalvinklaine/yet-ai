@@ -47,6 +47,13 @@ pub trait ProviderSecretStore {
         value: &str,
     ) -> Result<(), SecretStoreError>;
 
+    async fn put_secret_if_absent(
+        &self,
+        provider_id: &str,
+        kind: SecretKind,
+        value: &str,
+    ) -> Result<bool, SecretStoreError>;
+
     async fn get_secret(
         &self,
         provider_id: &str,
@@ -107,6 +114,28 @@ impl ProviderSecretStore for FileSecretStore {
         ensure_secret_directories(&self.root, provider_id).await?;
         reject_secret_file_symlink(&path).await?;
         write_secret_record(
+            &path,
+            &SecretRecord {
+                kind,
+                value: value.to_string(),
+            },
+        )
+        .await
+    }
+
+    async fn put_secret_if_absent(
+        &self,
+        provider_id: &str,
+        kind: SecretKind,
+        value: &str,
+    ) -> Result<bool, SecretStoreError> {
+        if value.is_empty() {
+            return Ok(false);
+        }
+        let path = self.secret_path(provider_id, kind)?;
+        ensure_secret_directories(&self.root, provider_id).await?;
+        reject_secret_file_symlink(&path).await?;
+        write_secret_record_if_absent(
             &path,
             &SecretRecord {
                 kind,
@@ -207,9 +236,17 @@ async fn ensure_secret_directory(path: &Path, create: bool) -> Result<bool, Secr
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound && !create => Ok(false),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            tokio::fs::create_dir(path)
+            match tokio::fs::create_dir(path).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(_) => return Err(SecretStoreError::Storage),
+            }
+            let metadata = tokio::fs::symlink_metadata(path)
                 .await
                 .map_err(|_| SecretStoreError::Storage)?;
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(SecretStoreError::Storage);
+            }
             set_private_directory_permissions(path).await?;
             Ok(true)
         }
@@ -265,6 +302,54 @@ async fn write_secret_record(path: &Path, record: &SecretRecord) -> Result<(), S
             cleanup_temp_secret_file(&temp_path).await?;
             Err(error)
         }
+    }
+}
+
+async fn write_secret_record_if_absent(
+    path: &Path,
+    record: &SecretRecord,
+) -> Result<bool, SecretStoreError> {
+    let dir = path.parent().ok_or(SecretStoreError::Storage)?;
+    ensure_secret_directory(dir, false).await?;
+    reject_secret_file_symlink(path).await?;
+    let content = serde_json::to_vec_pretty(record).map_err(|_| SecretStoreError::Storage)?;
+    let temp_path = temp_secret_path(path);
+    let mut options = tokio::fs::OpenOptions::new();
+    options.create_new(true).write(true).truncate(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600);
+    }
+    let result = async {
+        let mut file = options
+            .open(&temp_path)
+            .await
+            .map_err(|_| SecretStoreError::Storage)?;
+        file.write_all(&content)
+            .await
+            .map_err(|_| SecretStoreError::Storage)?;
+        file.sync_all()
+            .await
+            .map_err(|_| SecretStoreError::Storage)?;
+        set_private_permissions_for_open_file(file).await?;
+        match tokio::fs::hard_link(&temp_path, path).await {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Err(_) => Err(SecretStoreError::Storage),
+        }
+    }
+    .await;
+    let cleanup = cleanup_temp_secret_file(&temp_path).await;
+    match (result, cleanup) {
+        (Ok(created), Ok(())) => {
+            if created {
+                let _ = set_private_permissions(path).await;
+                let _ = sync_parent_directory(path).await;
+            }
+            Ok(created)
+        }
+        (Err(error), Ok(())) => Err(error),
+        (_, Err(error)) => Err(error),
     }
 }
 
@@ -539,6 +624,73 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn file_secret_store_put_if_absent_creates_and_preserves_existing() {
+        let store = FileSecretStore::new(temp_dir());
+        assert!(store
+            .put_secret_if_absent(
+                "openai-local",
+                SecretKind::ApiKey,
+                "sk-if-absent-first-secret-abcd",
+            )
+            .await
+            .unwrap());
+        assert!(!store
+            .put_secret_if_absent(
+                "openai-local",
+                SecretKind::ApiKey,
+                "sk-if-absent-second-secret-wxyz",
+            )
+            .await
+            .unwrap());
+        let secret = store
+            .get_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap();
+        assert_stored_secret(secret.as_deref(), "sk-if-absent-first-secret-abcd");
+    }
+
+    #[tokio::test]
+    async fn file_secret_store_put_if_absent_concurrent_single_winner() {
+        let store = FileSecretStore::new(temp_dir());
+        let first = store.clone();
+        let second = store.clone();
+        let (first_result, second_result) = tokio::join!(
+            first.put_secret_if_absent(
+                "openai-local",
+                SecretKind::ApiKey,
+                "sk-if-absent-race-first-abcd",
+            ),
+            second.put_secret_if_absent(
+                "openai-local",
+                SecretKind::ApiKey,
+                "sk-if-absent-race-second-wxyz",
+            ),
+        );
+        let results = [first_result.unwrap(), second_result.unwrap()];
+        assert_eq!(results.iter().filter(|created| **created).count(), 1);
+        let secret = store
+            .get_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            secret == "sk-if-absent-race-first-abcd"
+                || secret == "sk-if-absent-race-second-wxyz"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_secret_store_put_if_absent_rejects_unsafe_provider_ids() {
+        let store = FileSecretStore::new(temp_dir());
+        assert!(matches!(
+            store
+                .put_secret_if_absent("../openai", SecretKind::ApiKey, "sk-unsafe-secret-abcd")
+                .await,
+            Err(SecretStoreError::InvalidProviderId)
+        ));
+    }
+
     #[cfg(unix)]
     fn file_mode(path: &std::path::Path) -> u32 {
         use std::os::unix::fs::PermissionsExt;
@@ -563,6 +715,26 @@ mod tests {
         assert!(matches!(
             store
                 .put_secret("openai-local", SecretKind::ApiKey, "sk-symlink-secret-abcd")
+                .await,
+            Err(SecretStoreError::Storage)
+        ));
+        assert!(!outside.join("api-key.json").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn file_secret_store_put_if_absent_rejects_provider_directory_symlink_escape() {
+        let dir = temp_dir();
+        let outside = temp_dir();
+        let store = FileSecretStore::new(&dir);
+        std::fs::create_dir_all(&outside).unwrap();
+        let root = dir.join("provider-secrets");
+        std::fs::create_dir_all(&root).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("openai-local")).unwrap();
+
+        assert!(matches!(
+            store
+                .put_secret_if_absent("openai-local", SecretKind::ApiKey, "sk-symlink-secret-abcd")
                 .await,
             Err(SecretStoreError::Storage)
         ));
