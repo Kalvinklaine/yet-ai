@@ -148,6 +148,14 @@ export type AgentProgressRecentEvent = {
   message: string;
 };
 
+export type AgentOverflowRecoveryKind = "context_length_exceeded" | "tool_output_too_large" | "task_board_output_too_large";
+
+export type AgentOverflowRecovery = {
+  kind: AgentOverflowRecoveryKind;
+  message: string;
+  retryable?: boolean;
+};
+
 export type AgentProgressSnapshot = {
   protocolVersion: "2026-05-29";
   runId: string;
@@ -162,6 +170,7 @@ export type AgentProgressSnapshot = {
   ageMs: number;
   currentTool?: AgentProgressToolSummary;
   outputTail?: string;
+  overflowRecovery?: AgentOverflowRecovery;
   stuckReason?: "heartbeat_timeout" | "tool_output_timeout" | "explicit_failure" | "none";
   recentEvents: AgentProgressRecentEvent[];
 };
