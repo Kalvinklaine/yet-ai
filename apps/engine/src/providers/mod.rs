@@ -479,10 +479,12 @@ pub async fn create_provider_config(
         capabilities: request.capabilities.unwrap_or_default(),
     };
     validate_config(&config)?;
-    let (config, secret_change) = prepare_config_secrets(config);
-    create_provider_config_file(&path, &config).await?;
-    if let Err(error) = commit_secret_change(config_dir, &config.id, secret_change).await {
-        let _ = tokio::fs::remove_file(&path).await;
+    let (config, secret_change) = prepare_config_secrets_for_create(config);
+    let secret_created = commit_create_secret_change(config_dir, &config.id, secret_change).await?;
+    if let Err(error) = create_provider_config_file(&path, &config).await {
+        if secret_created {
+            rollback_secret(config_dir, &config.id, None).await?;
+        }
         return Err(error);
     }
     get_provider_config_with_secrets(config_dir, &config.id).await
@@ -499,7 +501,7 @@ pub async fn update_provider_config(
             return Err(ProviderError::InvalidId);
         }
     }
-    let mut config = get_provider_config_with_secrets(config_dir, id).await?;
+    let mut config = get_provider_config(config_dir, id).await?;
     if let Some(kind) = request.kind {
         config.kind = kind;
     }
@@ -515,9 +517,16 @@ pub async fn update_provider_config(
             request.base_url.or(Some(config.base_url)),
         )?;
     }
-    if let Some(auth) = request.auth {
-        config.auth = merge_auth(config.auth, auth);
-    }
+    let secret_change = if let Some(auth) = request.auth {
+        let secret_change = secret_change_for_auth_request(&auth);
+        config.auth = StoredAuthConfig {
+            auth_type: auth.auth_type,
+            api_key: None,
+        };
+        secret_change
+    } else {
+        SecretChange::None
+    };
     if let Some(models) = request.models {
         config.models = models;
     }
@@ -525,19 +534,30 @@ pub async fn update_provider_config(
         config.capabilities = capabilities;
     }
     validate_config(&config)?;
-    let (config, secret_change) = prepare_config_secrets(config);
-    let store = provider_secret_store(config_dir);
-    let previous_secret = store.get_secret(id, SecretKind::ApiKey).await?;
     let path = provider_config_path(config_dir, id)?;
+    let should_rollback_secret = !matches!(secret_change, SecretChange::None);
+    let previous_secret = if should_rollback_secret {
+        provider_secret_store(config_dir)
+            .get_secret(id, SecretKind::ApiKey)
+            .await?
+    } else {
+        None
+    };
     if let Err(error) = commit_secret_change(config_dir, id, secret_change).await {
         rollback_secret(config_dir, id, previous_secret).await?;
         return Err(error);
     }
     if let Err(error) = write_provider_config(&path, &config).await {
-        rollback_secret(config_dir, id, previous_secret).await?;
+        if should_rollback_secret {
+            rollback_secret(config_dir, id, previous_secret).await?;
+        }
         return Err(error);
     }
-    get_provider_config_with_secrets(config_dir, id).await
+    if should_rollback_secret {
+        get_provider_config_with_secrets(config_dir, id).await
+    } else {
+        Ok(config)
+    }
 }
 
 pub async fn delete_provider_config(config_dir: &Path, id: &str) -> Result<(), ProviderError> {
@@ -843,11 +863,11 @@ enum SecretChange {
     Delete,
 }
 
-fn prepare_config_secrets(
+fn prepare_config_secrets_for_create(
     mut config: StoredProviderConfig,
 ) -> (StoredProviderConfig, SecretChange) {
     let secret_change = match config.auth.auth_type {
-        AuthType::None => SecretChange::Delete,
+        AuthType::None => SecretChange::None,
         AuthType::ApiKey => config
             .auth
             .api_key
@@ -857,6 +877,32 @@ fn prepare_config_secrets(
     };
     config.auth.api_key = None;
     (config, secret_change)
+}
+
+fn secret_change_for_auth_request(auth: &AuthWriteRequest) -> SecretChange {
+    match auth.auth_type {
+        AuthType::None => SecretChange::Delete,
+        AuthType::ApiKey => auth
+            .api_key
+            .clone()
+            .and_then(clean)
+            .map_or(SecretChange::None, SecretChange::Put),
+    }
+}
+
+async fn commit_create_secret_change(
+    config_dir: &Path,
+    id: &str,
+    secret_change: SecretChange,
+) -> Result<bool, ProviderError> {
+    let store = provider_secret_store(config_dir);
+    match secret_change {
+        SecretChange::None | SecretChange::Delete => Ok(false),
+        SecretChange::Put(api_key) => store
+            .put_secret_if_absent(id, SecretKind::ApiKey, &api_key)
+            .await
+            .map_err(Into::into),
+    }
 }
 
 async fn commit_secret_change(
@@ -1034,19 +1080,6 @@ fn normalize_auth(auth: Option<AuthWriteRequest>) -> StoredAuthConfig {
         None => StoredAuthConfig {
             auth_type: AuthType::None,
             api_key: None,
-        },
-    }
-}
-
-fn merge_auth(current: StoredAuthConfig, auth: AuthWriteRequest) -> StoredAuthConfig {
-    match auth.auth_type {
-        AuthType::None => StoredAuthConfig {
-            auth_type: AuthType::None,
-            api_key: None,
-        },
-        AuthType::ApiKey => StoredAuthConfig {
-            auth_type: AuthType::ApiKey,
-            api_key: auth.api_key.and_then(clean).or(current.api_key),
         },
     }
 }
