@@ -2456,6 +2456,10 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("State: Provider required");
     expect(container?.textContent).toContain("Provider required: choose OpenAI API for the API-key fallback or configure a local OpenAI-compatible /v1 provider with a model before sending the first GPT message.");
     expect(container?.textContent).toContain("choose OpenAI API, paste a provider API key once, save, optionally test the provider");
+    expect(container?.textContent).toContain("Provider required for first message");
+    expect(container?.textContent).toContain("Why: No enabled OpenAI-compatible provider/model is ready for chat streaming.");
+    expect(container?.textContent).toContain("Next safest action: Use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, optionally test it, then refresh runtime.");
+    expect(container?.textContent).toContain("Provider setup stays local-first BYOK");
     expect(findButton("Send").disabled).toBe(true);
   });
 
@@ -2670,6 +2674,8 @@ describe("chat panel", () => {
 
     expect(container?.textContent).toContain("State: Runtime model/provider mismatch");
     expect(container?.textContent).toContain("Runtime model/provider mismatch. Refresh runtime or test/save provider before sending.");
+    expect(container?.textContent).toContain("Model and provider do not match");
+    expect(container?.textContent).toContain("Next safest action: Test the saved provider, then refresh runtime after fixing the provider/model id.");
     expect(findButton("Send").disabled).toBe(true);
   });
 
@@ -2756,6 +2762,9 @@ describe("chat panel", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("State: Runtime unavailable");
+    expect(container?.textContent).toContain("Connect the local runtime first");
+    expect(container?.textContent).toContain("Next safest action: Refresh runtime, then fix the loopback URL or Session token if the check fails.");
+    expect(container?.textContent).toContain("Session token unlocks this GUI to the local runtime only; Provider API key unlocks the upstream model through the runtime.");
     expect(findButton("Send").disabled).toBe(true);
 
     mockRuntimeResponses();
@@ -2764,6 +2773,7 @@ describe("chat panel", () => {
     });
 
     expect(container?.textContent).toContain("State: Provider required");
+    expect(container?.textContent).toContain("Provider required for first message");
     expect(findButton("Send").disabled).toBe(true);
 
     mockRuntimeResponses({
@@ -2777,6 +2787,9 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("1 enabled provider");
     expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
     expect(container?.textContent).toContain("Ready to send using GPT-4o mini.");
+    expect(container?.textContent).toContain("Ready for your first message");
+    expect(container?.textContent).toContain("Next safest action: Type a prompt and send it through the local runtime.");
+    expect(container?.textContent).toContain("Send available");
     expect(findButton("Send").disabled).toBe(false);
   });
 
@@ -2821,6 +2834,8 @@ describe("chat panel", () => {
 
     expect(container?.textContent).toContain("Model GPT-4o mini is not ready for chat streaming: missing credentials. Provider login failed [redacted]");
     expect(container?.textContent).toContain("Model status: GPT-4o mini (OpenAI API): missing credentials, Provider login failed [redacted]");
+    expect(container?.textContent).toContain("Model is not ready yet");
+    expect(container?.textContent).toContain("Next safest action: Test the provider, fix credentials/model readiness locally, then refresh runtime.");
     expect(container?.textContent).not.toContain("access_token");
     expect(container?.textContent).not.toContain("u".repeat(64));
     expect(findButton("Send").disabled).toBe(true);
