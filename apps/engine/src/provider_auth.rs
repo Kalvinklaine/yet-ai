@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
 use crate::providers::{self, AuthType, ProviderKind, StoredProviderConfig};
-use crate::secret_store::{FileSecretStore, ProviderSecretStore, SecretKind, SecretStoreError};
+use crate::secret_store::{provider_secret_store, ProviderSecretStore, SecretKind, SecretStoreError};
 
 const LOGIN_UNAVAILABLE_MESSAGE: &str = "OpenAI account login is not available for this local provider path. Create an API key in the provider console and paste it once into Yet AI.";
 const API_KEY_CONFIGURED_MESSAGE: &str = "API-key authentication is configured locally.";
@@ -889,7 +889,7 @@ async fn store_codex_connection(
     token: &CodexTokenResponse,
     metadata: &CodexAuthMetadata,
 ) -> Result<(), ProviderAuthError> {
-    let store = FileSecretStore::new(config_dir);
+    let store = provider_secret_store(config_dir);
     let prior_access = store
         .get_secret(provider, SecretKind::OAuthAccessToken)
         .await?;
@@ -930,7 +930,7 @@ async fn store_codex_connection(
 }
 
 async fn restore_codex_secret(
-    store: &FileSecretStore,
+    store: &impl ProviderSecretStore,
     provider: &str,
     kind: SecretKind,
     value: Option<String>,
@@ -946,7 +946,7 @@ async fn codex_connected_status(
     config_dir: &Path,
     provider: &str,
 ) -> Result<Option<ProviderAuthResponse>, ProviderAuthError> {
-    let store = FileSecretStore::new(config_dir);
+    let store = provider_secret_store(config_dir);
     let Some(metadata) = store.get_secret(provider, SecretKind::AuthMetadata).await? else {
         return Ok(None);
     };
@@ -966,7 +966,7 @@ pub async fn experimental_codex_chat_auth(
     config_dir: &Path,
 ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
     let provider = "openai";
-    let store = FileSecretStore::new(config_dir);
+    let store = provider_secret_store(config_dir);
     let Some(metadata) = store.get_secret(provider, SecretKind::AuthMetadata).await? else {
         return Ok(None);
     };
@@ -999,7 +999,7 @@ pub async fn experimental_codex_chat_auth(
 }
 
 async fn codex_has_complete_secrets(
-    store: &FileSecretStore,
+    store: &impl ProviderSecretStore,
     provider: &str,
 ) -> Result<bool, ProviderAuthError> {
     let has_access = store
@@ -1035,7 +1035,7 @@ fn default_codex_chat_model() -> String {
 }
 
 async fn codex_has_secrets(config_dir: &Path, provider: &str) -> Result<bool, ProviderAuthError> {
-    let store = FileSecretStore::new(config_dir);
+    let store = provider_secret_store(config_dir);
     Ok(store
         .get_secret(provider, SecretKind::OAuthAccessToken)
         .await?
@@ -1051,7 +1051,7 @@ async fn codex_has_secrets(config_dir: &Path, provider: &str) -> Result<bool, Pr
 }
 
 async fn delete_codex_secrets(config_dir: &Path, provider: &str) -> Result<(), ProviderAuthError> {
-    let store = FileSecretStore::new(config_dir);
+    let store = provider_secret_store(config_dir);
     for kind in [
         SecretKind::OAuthAccessToken,
         SecretKind::OAuthRefreshToken,
