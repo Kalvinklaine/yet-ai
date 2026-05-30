@@ -755,13 +755,20 @@ async fn start_stale_oauth_chat_provider() -> (String, mpsc::Receiver<Option<Str
     (format!("http://{address}"), auth_receiver)
 }
 
-async fn start_slow_401_oauth_chat_provider() -> (String, mpsc::Receiver<Option<String>>) {
+async fn start_slow_401_oauth_chat_provider() -> (
+    String,
+    mpsc::Receiver<Option<String>>,
+    oneshot::Receiver<()>,
+) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (auth_sender, auth_receiver) = mpsc::channel(16);
+    let (pending_sender, pending_receiver) = oneshot::channel();
+    let pending_sender = std::sync::Arc::new(std::sync::Mutex::new(Some(pending_sender)));
     tokio::spawn(async move {
         let handler = move |request: axum::http::Request<Body>| {
             let auth_sender = auth_sender.clone();
+            let pending_sender = pending_sender.clone();
             async move {
                 let auth = request
                     .headers()
@@ -777,7 +784,14 @@ async fn start_slow_401_oauth_chat_provider() -> (String, mpsc::Receiver<Option<
                     )
                         .into_response();
                 }
-                let (_tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(1);
+                let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(1);
+                if let Some(sender) = pending_sender.lock().unwrap().take() {
+                    let _ = sender.send(());
+                }
+                tokio::spawn(async move {
+                    let _tx = tx;
+                    std::future::pending::<()>().await;
+                });
                 (
                     StatusCode::UNAUTHORIZED,
                     [(header::CONTENT_TYPE, "application/json")],
@@ -791,7 +805,7 @@ async fn start_slow_401_oauth_chat_provider() -> (String, mpsc::Receiver<Option<
             .route("/v1/chat/completions", axum::routing::post(handler));
         axum::serve(listener, app).await.unwrap();
     });
-    (format!("http://{address}"), auth_receiver)
+    (format!("http://{address}"), auth_receiver, pending_receiver)
 }
 
 async fn seed_experimental_openai_oauth(
@@ -1902,6 +1916,109 @@ async fn provider_auth_openai_experimental_token_expires_in_invalid_values_are_r
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(pending["status"], "pending");
+        assert_provider_auth_response_has_no_codex_secrets(&pending);
+    }
+}
+
+#[tokio::test]
+async fn provider_auth_openai_experimental_exchange_rejects_missing_refresh_token() {
+    for response in [
+        json!({
+            "access_token": "codex-access-token-secret-abcd",
+            "expires_in": 1800,
+            "scope": "openid profile email offline_access",
+            "account_label": "mock-user@example.test"
+        }),
+        json!({
+            "access_token": "codex-access-token-secret-abcd",
+            "refresh_token": "   ",
+            "expires_in": 1800,
+            "scope": "openid profile email offline_access",
+            "account_label": "mock-user@example.test"
+        }),
+    ] {
+        let paths = test_storage_paths();
+        let app = app(AppState::with_storage_paths(
+            ProductIdentity::load().unwrap(),
+            AuthToken::new(TEST_TOKEN).unwrap(),
+            paths.clone(),
+        ));
+        let (token_endpoint_url, mut token_body_receiver) =
+            start_refresh_codex_token_endpoint(StatusCode::OK, response).await;
+        let (status, start) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::POST,
+                "/v1/provider-auth/openai/start",
+                Body::from(
+                    json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                        .to_string(),
+                ),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let session_id = start["sessionId"].as_str().unwrap().to_string();
+        let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap());
+        let exchange = json!({
+            "sessionId": session_id,
+            "state": state,
+            "code": "codex-code-empty-refresh-secret"
+        });
+
+        let (status, body) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::POST,
+                "/v1/provider-auth/openai/exchange",
+                Body::from(exchange.to_string()),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body["error"], "provider auth token exchange failed");
+        assert_provider_auth_response_has_no_codex_secrets(&body);
+        assert!(!body.to_string().contains("codex-code-empty-refresh-secret"));
+        let token_body = token_body_receiver.recv().await.unwrap();
+        assert_json_string_value(
+            &token_body["code"],
+            "codex-code-empty-refresh-secret",
+            "token request code",
+        );
+        let store = FileSecretStore::new(&paths.config_dir);
+        assert_eq!(
+            store
+                .get_secret("openai", SecretKind::OAuthAccessToken)
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            store
+                .get_secret("openai", SecretKind::OAuthRefreshToken)
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            store
+                .get_secret("openai", SecretKind::AuthMetadata)
+                .await
+                .unwrap(),
+            None
+        );
+        let (status, pending) = json_response_from(
+            app,
+            authed_request(
+                Method::GET,
+                "/v1/provider-auth/openai/status",
+                Body::empty(),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(pending["status"], "pending");
+        assert_eq!(pending["sessionId"], session_id);
         assert_provider_auth_response_has_no_codex_secrets(&pending);
     }
 }
@@ -7918,7 +8035,8 @@ async fn chat_experimental_oauth_slow_401_body_retries_without_waiting_for_body(
         AuthToken::new(TEST_TOKEN).unwrap(),
         paths.clone(),
     ));
-    let (chat_base_url, mut auth_receiver) = start_slow_401_oauth_chat_provider().await;
+    let (chat_base_url, mut auth_receiver, pending_body_receiver) =
+        start_slow_401_oauth_chat_provider().await;
     let (token_endpoint_url, mut token_body_receiver) = start_refresh_codex_token_endpoint(
         StatusCode::OK,
         json!({
@@ -7940,6 +8058,16 @@ async fn chat_experimental_oauth_slow_401_body_retries_without_waiting_for_body(
     .await;
 
     send_user_message(app.clone(), "chat-oauth-slow-401-retry").await;
+    tokio::time::timeout(std::time::Duration::from_secs(2), pending_body_receiver)
+        .await
+        .expect("provider should return a pending 401 body")
+        .expect("pending body signal should be sent");
+    let body = tokio::time::timeout(std::time::Duration::from_secs(2), token_body_receiver.recv())
+        .await
+        .expect("refresh should start without waiting for the 401 body")
+        .expect("refresh request should be observed");
+    assert_eq!(body["grant_type"], "refresh_token");
+    assert_json_string_value(&body["refresh_token"], "refresh-1", "slow 401 refresh token");
     let loaded = tokio::time::timeout(
         std::time::Duration::from_secs(4),
         wait_for_chat_messages(app.clone(), "chat-oauth-slow-401-retry", 2),
@@ -7959,9 +8087,6 @@ async fn chat_experimental_oauth_slow_401_body_retries_without_waiting_for_body(
     assert!(tokio::time::timeout(std::time::Duration::from_millis(100), auth_receiver.recv())
         .await
         .is_err());
-    let body = token_body_receiver.recv().await.unwrap();
-    assert_eq!(body["grant_type"], "refresh_token");
-    assert_json_string_value(&body["refresh_token"], "refresh-1", "slow 401 refresh token");
     assert!(tokio::time::timeout(
         std::time::Duration::from_millis(100),
         token_body_receiver.recv()
