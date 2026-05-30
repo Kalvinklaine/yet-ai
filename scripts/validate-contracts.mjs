@@ -379,6 +379,18 @@ const invalidMappings = [
     "packages/contracts/schemas/engine/planner-card-pool-status.schema.json"
   ],
   [
+    "packages/contracts/examples-invalid/engine/planner-pool-mixed-case-unsafe-summary.json",
+    "packages/contracts/schemas/engine/planner-card-pool-status.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/planner-pool-overflow-mixed-case-unsafe-message.json",
+    "packages/contracts/schemas/engine/planner-card-pool-status.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/planner-card-overflow-mixed-case-unsafe-message.json",
+    "packages/contracts/schemas/engine/planner-card-pool-status.schema.json"
+  ],
+  [
     "packages/contracts/examples-invalid/engine/planner-pool-closed-overflow-recovery.json",
     "packages/contracts/schemas/engine/planner-card-pool-status.schema.json"
   ],
