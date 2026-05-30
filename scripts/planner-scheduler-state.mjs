@@ -18,6 +18,13 @@ const SAFE_SUMMARY_MAX_LENGTH = 512;
 const SAFE_OVERFLOW_MESSAGE_MAX_LENGTH = 320;
 const AUDIT_TIMELINE_MAX_EVENTS = 10;
 const COUNT_MAP_MAX_ENTRIES = 16;
+const DATE_TIME_MAX_LENGTH = 64;
+const CARD_STATUSES = new Set(["ready", "queued", "running", "done_unmerged", "merge_pending", "verification_pending", "verified", "blocked", "replan_required", "failed", "stuck", "closed"]);
+const CARD_MERGE_STATES = new Set(["not_started", "pending", "merged", "failed"]);
+const CARD_VERIFICATION_STATES = new Set(["not_started", "pending", "passed", "failed"]);
+const AGENT_STATUSES = new Set(["running", "done", "failed", "stuck", "unknown"]);
+const AGENT_FAILURE_KINDS = new Set(["agent_error", "verification_failed", "timeout", "heartbeat_expired", "unknown"]);
+const SCHEDULER_NEXT_ACTIONS = new Set(["check_agents", "merge_completed", "verify_merge", "spawn_ready", "recover_failed", "plan_next_pool", "idle_blocked"]);
 const SENSITIVE_KEY = /(prompt|provider|response|token|api.?key|auth|cookie|secret|credential|path|content|dump|raw|board|workspace|tool.*output|full.*json)/i;
 const RAW_CONTENT_LABEL = String.raw`(?:chain[\s_-]*of[\s_-]*thought|raw[\s_-]*prompt|raw[\s_-]*(?:dump|output)|provider[\s_-]*(?:response|body)|file[\s_-]*contents?|workspace[\s_-]*(?:contents?|file))`;
 const UNSAFE_TEXT = new RegExp(String.raw`(api[_-]?key|authorization|bearer|token|secret|password|cookie|pkce|refresh|access[_-]?token|auth[_-]?code|${RAW_CONTENT_LABEL}|credential|\/Users\/|\/home\/|\/private\/|[A-Za-z]:\\|~\/|\.codex\/auth\.json|auth\.json|BEGIN [A-Z ]*PRIVATE KEY)`, "i");
@@ -79,7 +86,13 @@ function assertArray(value, label) {
 }
 
 function assertDateTime(value, label) {
-  if (typeof value !== "string" || Number.isNaN(Date.parse(value))) {
+  if (typeof value !== "string" || value.length < 1 || value.length > DATE_TIME_MAX_LENGTH || UNSAFE_TEXT.test(value) || Number.isNaN(Date.parse(value))) {
+    throw new Error(`${label}: invalid scheduler state`);
+  }
+}
+
+function assertEnum(value, allowed, label) {
+  if (typeof value !== "string" || value.length < 1 || value.length > 64 || UNSAFE_TEXT.test(value) || !allowed.has(value)) {
     throw new Error(`${label}: invalid scheduler state`);
   }
 }
@@ -118,20 +131,18 @@ function validateCards(cards) {
     assertObject(card, "card");
     assertAllowedKeys(card, CARD_KEYS, "card");
     assertSafeId(card.cardId, "card.cardId");
-    if (typeof card.status !== "string") {
-      throw new Error("card.status: invalid scheduler state");
-    }
+    assertEnum(card.status, CARD_STATUSES, "card.status");
     if (card.dependsOn !== undefined) {
       assertSafeStringArray(card.dependsOn, "card.dependsOn");
     }
     if (card.agentRunId !== undefined) {
       assertSafeId(card.agentRunId, "card.agentRunId");
     }
-    if (card.mergeState !== undefined && typeof card.mergeState !== "string") {
-      throw new Error("card.mergeState: invalid scheduler state");
+    if (card.mergeState !== undefined) {
+      assertEnum(card.mergeState, CARD_MERGE_STATES, "card.mergeState");
     }
-    if (card.verificationState !== undefined && typeof card.verificationState !== "string") {
-      throw new Error("card.verificationState: invalid scheduler state");
+    if (card.verificationState !== undefined) {
+      assertEnum(card.verificationState, CARD_VERIFICATION_STATES, "card.verificationState");
     }
     if (card.blocker !== undefined && !SAFE_IDLE_REASONS.has(card.blocker)) {
       throw new Error("card.blocker: invalid scheduler state");
@@ -147,17 +158,15 @@ function validateAgents(agents) {
     assertAllowedKeys(agent, AGENT_KEYS, "agent");
     assertSafeId(agent.agentRunId, "agent.agentRunId");
     assertSafeId(agent.cardId, "agent.cardId");
-    if (typeof agent.status !== "string") {
-      throw new Error("agent.status: invalid scheduler state");
-    }
+    assertEnum(agent.status, AGENT_STATUSES, "agent.status");
     if (agent.lastHeartbeatAt !== undefined) {
       assertDateTime(agent.lastHeartbeatAt, "agent.lastHeartbeatAt");
     }
     if (agent.completedAt !== undefined) {
       assertDateTime(agent.completedAt, "agent.completedAt");
     }
-    if (agent.failureKind !== undefined && typeof agent.failureKind !== "string") {
-      throw new Error("agent.failureKind: invalid scheduler state");
+    if (agent.failureKind !== undefined) {
+      assertEnum(agent.failureKind, AGENT_FAILURE_KINDS, "agent.failureKind");
     }
     assertOptionalSafeSummary(agent.safeSummary, "agent.safeSummary");
   }
@@ -184,9 +193,7 @@ function validateAuditTimeline(timeline) {
     assertSafeId(event.tickId, "auditTimeline.tickId");
     assertSafeId(event.poolId, "auditTimeline.poolId", SAFE_POOL_ID);
     assertDateTime(event.observedAt, "auditTimeline.observedAt");
-    if (typeof event.nextAction !== "string") {
-      throw new Error("auditTimeline.nextAction: invalid scheduler state");
-    }
+    assertEnum(event.nextAction, SCHEDULER_NEXT_ACTIONS, "auditTimeline.nextAction");
     if (event.idleReason !== undefined && !SAFE_IDLE_REASONS.has(event.idleReason)) {
       throw new Error("auditTimeline.idleReason: invalid scheduler state");
     }
@@ -247,9 +254,7 @@ function validateLastTick(lastTick) {
   assertAllowedKeys(lastTick, LAST_TICK_KEYS, "lastTick");
   assertSafeId(lastTick.tickId, "lastTick.tickId");
   assertDateTime(lastTick.observedAt, "lastTick.observedAt");
-  if (typeof lastTick.nextAction !== "string") {
-    throw new Error("lastTick.nextAction: invalid scheduler state");
-  }
+  assertEnum(lastTick.nextAction, SCHEDULER_NEXT_ACTIONS, "lastTick.nextAction");
   if (lastTick.leaseOwnerId !== undefined) {
     assertSafeId(lastTick.leaseOwnerId, "lastTick.leaseOwnerId");
   }
@@ -402,9 +407,7 @@ function sanitizeAuditEvent(event) {
   assertSafeId(sanitized.tickId, "audit event.tickId");
   assertSafeId(sanitized.poolId, "audit event.poolId", SAFE_POOL_ID);
   assertDateTime(sanitized.observedAt, "audit event.observedAt");
-  if (typeof sanitized.nextAction !== "string") {
-    throw new Error("audit event.nextAction: invalid scheduler state");
-  }
+  assertEnum(sanitized.nextAction, SCHEDULER_NEXT_ACTIONS, "audit event.nextAction");
   for (const key of Object.keys(event)) {
     if (SENSITIVE_KEY.test(key)) {
       continue;

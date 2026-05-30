@@ -343,6 +343,16 @@ function assertSanitizedNestedState(mutator, forbiddenKey, message) {
   assert.equal(JSON.stringify(sanitized).includes(forbiddenKey), false, message);
 }
 
+function assertInvalidSchedulerState(mutator, label) {
+  const state = durableState();
+  mutator(state);
+  assert.throws(
+    () => sanitizeSchedulerStateForWrite(state),
+    (error) => error instanceof Error && error.message.includes("invalid scheduler state") && !error.message.includes("raw prompt") && !error.message.includes("sk-test") && !error.message.includes("/Users/"),
+    label
+  );
+}
+
 function runStrictStateAssertions() {
   const rawFields = {
     rawPrompt: "do not persist raw prompt",
@@ -439,6 +449,47 @@ function runStrictStateAssertions() {
       })
     );
     assert.equal(sanitizedState.autonomousPolicy.safeSummary, "Autonomous policy was summarized without raw data.", `unsafe policy summary was retained: ${variant}`);
+  }
+
+  const unsafeAllowedField = "raw prompt: sk-test-secret /Users/private/project/file.ts";
+  const oversizedAllowedField = "check_agents".repeat(100);
+  const invalidAllowedFields = [
+    [(state) => {
+      state.cards[0].status = unsafeAllowedField;
+    }, "unsafe card status was accepted"],
+    [(state) => {
+      state.cards[0].mergeState = unsafeAllowedField;
+    }, "unsafe card merge state was accepted"],
+    [(state) => {
+      state.cards[0].verificationState = unsafeAllowedField;
+    }, "unsafe card verification state was accepted"],
+    [(state) => {
+      state.agents[0].status = unsafeAllowedField;
+    }, "unsafe agent status was accepted"],
+    [(state) => {
+      state.agents[0].failureKind = unsafeAllowedField;
+    }, "unsafe agent failure kind was accepted"],
+    [(state) => {
+      state.lastTick = { tickId: "tick-T229-unsafe-action", observedAt: "2026-05-29T00:44:00Z", nextAction: unsafeAllowedField };
+    }, "unsafe last tick action was accepted"],
+    [(state) => {
+      state.auditTimeline = [{ tickId: "tick-T229-unsafe-action", poolId: "planner_durable_state", observedAt: "2026-05-29T00:44:00Z", nextAction: unsafeAllowedField }];
+    }, "unsafe audit action was accepted"],
+    [(state) => {
+      state.cards[0].status = oversizedAllowedField;
+    }, "oversized card status was accepted"],
+    [(state) => {
+      state.agents[0].failureKind = oversizedAllowedField;
+    }, "oversized agent failure kind was accepted"],
+    [(state) => {
+      state.lastTick = { tickId: "tick-T229-oversized-action", observedAt: "2026-05-29T00:44:00Z", nextAction: oversizedAllowedField };
+    }, "oversized last tick action was accepted"],
+    [(state) => {
+      state.auditTimeline = [{ tickId: "tick-T229-oversized-action", poolId: "planner_durable_state", observedAt: "2026-05-29T00:44:00Z", nextAction: oversizedAllowedField }];
+    }, "oversized audit action was accepted"]
+  ];
+  for (const [mutator, label] of invalidAllowedFields) {
+    assertInvalidSchedulerState(mutator, label);
   }
 }
 
