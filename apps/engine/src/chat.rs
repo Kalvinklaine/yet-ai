@@ -89,6 +89,8 @@ pub enum ChatError {
     NoModel,
     #[error("provider authentication failed")]
     Unauthorized,
+    #[error("provider authentication failed")]
+    PreStreamUnauthorized,
     #[error("provider rate limit or quota reached")]
     RateLimited,
     #[error("provider context window is too small")]
@@ -579,7 +581,7 @@ impl ChatError {
         match self {
             Self::NoProvider => "provider_not_configured",
             Self::NoModel => "model_not_configured",
-            Self::Unauthorized => "provider_unauthorized",
+            Self::Unauthorized | Self::PreStreamUnauthorized => "provider_unauthorized",
             Self::RateLimited => "provider_rate_limited",
             Self::ContextTooLarge => "provider_context_too_large",
             Self::InvalidRequest => "provider_invalid_request",
@@ -595,7 +597,7 @@ impl ChatError {
         match self {
             Self::NoProvider => "No enabled OpenAI-compatible provider is configured.",
             Self::NoModel => "The configured provider has no chat model.",
-            Self::Unauthorized => "Provider credentials were rejected.",
+            Self::Unauthorized | Self::PreStreamUnauthorized => "Provider credentials were rejected.",
             Self::RateLimited => "Provider rate limit or quota reached.",
             Self::ContextTooLarge => {
                 "The request is too large for the selected model context window."
@@ -712,7 +714,7 @@ async fn bearer_stream_with_unauthorized_retry(
         content,
     )
     .await;
-    if !matches!(first, Err(ChatError::Unauthorized)) {
+    if !matches!(first, Err(ChatError::PreStreamUnauthorized)) {
         return first;
     }
     let Some(refreshed) = provider_auth::refresh_experimental_codex_chat_auth_after_rejection(
@@ -752,6 +754,13 @@ async fn collect_openai_compatible_stream(
         }
     })?;
     if !response.status().is_success() {
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            let error = classify_provider_http_error(response).await;
+            return Err(match error {
+                ChatError::Unauthorized => ChatError::PreStreamUnauthorized,
+                error => error,
+            });
+        }
         return Err(classify_provider_http_error(response).await);
     }
     let mut stream = response.bytes_stream();

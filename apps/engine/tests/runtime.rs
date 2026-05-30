@@ -7670,6 +7670,130 @@ async fn experimental_openai_oauth_unauthorized_error_is_sanitized() {
 }
 
 #[tokio::test]
+async fn chat_experimental_oauth_403_does_not_refresh_or_retry() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let (chat_base_url, auth_receiver) = start_mock_provider(
+        StatusCode::FORBIDDEN,
+        r#"{"error":{"message":"forbidden access_token=access-1 refresh_token=refresh-1"}}"#,
+    )
+    .await;
+    let (token_endpoint_url, mut token_body_receiver) = start_refresh_codex_token_endpoint(
+        StatusCode::OK,
+        json!({
+            "access_token": "access-2",
+            "refresh_token": "refresh-2",
+            "expires_in": 1800,
+            "scope": "openid profile email offline_access",
+            "account_label": "mock-user@example.test"
+        }),
+    )
+    .await;
+    seed_experimental_openai_oauth(
+        &paths,
+        chat_base_url,
+        token_endpoint_url,
+        "access-1",
+        "refresh-1",
+    )
+    .await;
+
+    send_user_message(app.clone(), "chat-oauth-forbidden-no-retry").await;
+    let loaded = wait_for_chat_messages(app.clone(), "chat-oauth-forbidden-no-retry", 2).await;
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-oauth-forbidden-no-retry").await;
+    let events = sse_json_events(&text);
+    let error = find_error_event(&events);
+    assert_eq!(error["payload"]["code"], "provider_unauthorized");
+    assert_eq!(loaded["messages"][1]["content"], "Provider credentials were rejected.");
+    assert_sanitized_sse_error(&text);
+    assert!(!text.contains("access-1"));
+    assert!(!text.contains("refresh-1"));
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer access-1",
+        "oauth 403 no retry",
+    )
+    .await;
+    assert!(tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        token_body_receiver.recv()
+    )
+    .await
+    .is_err());
+}
+
+#[tokio::test]
+async fn chat_experimental_oauth_stream_auth_error_after_delta_does_not_refresh_or_retry() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let (chat_base_url, auth_receiver) = start_chunked_mock_provider(vec![
+        b"data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n".to_vec(),
+        b"data: {\"error\":{\"message\":\"unauthorized access_token=access-1 refresh_token=refresh-1\",\"code\":\"invalid_api_key\"}}\n\n".to_vec(),
+    ])
+    .await;
+    let (token_endpoint_url, mut token_body_receiver) = start_refresh_codex_token_endpoint(
+        StatusCode::OK,
+        json!({
+            "access_token": "access-2",
+            "refresh_token": "refresh-2",
+            "expires_in": 1800,
+            "scope": "openid profile email offline_access",
+            "account_label": "mock-user@example.test"
+        }),
+    )
+    .await;
+    seed_experimental_openai_oauth(
+        &paths,
+        chat_base_url,
+        token_endpoint_url,
+        "access-1",
+        "refresh-1",
+    )
+    .await;
+
+    send_user_message(app.clone(), "chat-oauth-stream-auth-error-no-retry").await;
+    let loaded = wait_for_chat_messages(app.clone(), "chat-oauth-stream-auth-error-no-retry", 2).await;
+    let text = sse_text_from(
+        app,
+        "/v1/chats/subscribe?chat_id=chat-oauth-stream-auth-error-no-retry",
+    )
+    .await;
+    let events = sse_json_events(&text);
+    let deltas: Vec<_> = events
+        .iter()
+        .filter(|event| event["type"] == "stream_delta")
+        .collect();
+    assert_eq!(deltas.len(), 1);
+    assert_eq!(deltas[0]["payload"]["delta"]["content"], "partial");
+    let error = find_error_event(&events);
+    assert_eq!(error["payload"]["code"], "provider_unauthorized");
+    assert_eq!(loaded["messages"][1]["content"], "Provider credentials were rejected.");
+    assert_sanitized_sse_error(&text);
+    assert!(!text.contains("access-1"));
+    assert!(!text.contains("refresh-1"));
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer access-1",
+        "oauth stream auth error no retry",
+    )
+    .await;
+    assert!(tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        token_body_receiver.recv()
+    )
+    .await
+    .is_err());
+}
+
+#[tokio::test]
 async fn chat_experimental_oauth_retries_after_stale_access_token_401() {
     let paths = test_storage_paths();
     let app = app(AppState::with_storage_paths(
