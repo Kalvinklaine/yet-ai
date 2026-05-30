@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["os-keychain"]
+os-keychain = ["dep:keyring", "keyring/apple-native"]
+
 [[bin]]
 name = "yet-lsp"
 path = "src/main.rs"
@@ -17,6 +21,7 @@ futures-util.workspace = true
 getrandom.workspace = true
 http.workspace = true
 http-body-util.workspace = true
+keyring = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
