@@ -2203,7 +2203,35 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("Conversations");
     expect(container?.textContent).toContain("Alpha thread");
     expect(container?.textContent).toContain("Beta thread");
-    expect(container?.textContent).toContain("2 messages");
+    expect(container?.textContent).toContain("2 local conversations");
+    expect(container?.textContent).toContain("Updated 2026-05-29T07:16:30Z");
+    expect(container?.textContent).toContain("2 persisted messages");
+    expect(container?.textContent).toContain("current");
+  });
+
+  it("renders conversation empty and loading states", async () => {
+    const chats = deferred<Response>();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/chats") && init?.method !== "POST") {
+        return chats.promise;
+      }
+      return mockRuntimeResponse(input, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Loading local conversations…");
+    expect(container?.textContent).toContain("Loading saved conversations from the local runtime…");
+
+    chats.resolve(jsonResponse({ chats: [] }));
+    await flushAsync();
+
+    expect(container?.textContent).toContain("0 local conversations");
+    expect(container?.textContent).toContain("No saved conversations yet. Start a new local chat or send a message in the current chat.");
+    expect(chatInput().value).toBe("");
   });
 
   it("creates a new chat and selects it", async () => {
@@ -2222,7 +2250,9 @@ describe("chat panel", () => {
 
     expect(findInputValue("chat-created")).toBeDefined();
     expect(container?.textContent).toContain("chat-created");
+    expect(container?.textContent).toContain("current");
     expect(container?.textContent).toContain("0 persisted messages");
+    expect(chatInput().value).toBe("");
   });
 
   it("switches chats and renders persisted messages", async () => {
@@ -2238,7 +2268,7 @@ describe("chat panel", () => {
     await flushAsync();
     await flushAsync();
     await act(async () => {
-      findButton("Beta thread2 messages · 2026-05-29T07:16:30Z").click();
+      findButton("Beta threadUpdated 2026-05-29T07:16:30Z2 persisted messagesConversation 2 of 2").click();
       await Promise.resolve();
     });
 
@@ -2260,13 +2290,35 @@ describe("chat panel", () => {
     await flushAsync();
     await flushAsync();
     await act(async () => {
-      Array.from(container?.querySelectorAll<HTMLButtonElement>("button") ?? []).find((button) => button.textContent === "Delete")?.click();
+      Array.from(container?.querySelectorAll<HTMLButtonElement>("button") ?? []).find((button) => button.textContent === "Delete current")?.click();
       await Promise.resolve();
     });
 
     expect(container?.textContent).not.toContain("Alpha thread");
     expect(container?.textContent).toContain("Beta thread");
     expect(findInputValue("chat-beta")).toBeDefined();
+  });
+
+  it("resets to a fresh local state after deleting the last current chat", async () => {
+    mockRuntimeResponses({
+      chats: [chatSummary("chat-solo", "Solo thread", 1)],
+      chatThreads: {
+        "chat-solo": chatThread("chat-solo", "Solo thread", [chatMessage("chat-solo", "msg-solo", "user", "Solo persisted")]),
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+    await flushAsync();
+    await act(async () => {
+      findButton("Delete current").click();
+      await Promise.resolve();
+    });
+
+    expect(findInputValue("chat-001")).toBeDefined();
+    expect(container?.textContent).toContain("0 local conversations");
+    expect(container?.textContent).toContain("fresh local chat");
+    expect(container?.textContent).not.toContain("Solo persisted");
   });
 
   it("hydrates current chat from SSE snapshot without duplicate optimistic messages", async () => {
@@ -2342,6 +2394,52 @@ describe("chat panel", () => {
 
     expect(container?.textContent).toContain("Beta current");
     expect(container?.textContent).not.toContain("Alpha stale secret");
+  });
+
+  it("ignores active SSE events from an old chat after switching conversations", async () => {
+    let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const encoder = new TextEncoder();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/v1/chats/subscribe?chat_id=")) {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            sseController = controller;
+          },
+          cancel() {},
+        });
+        return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+      }
+      if (url.endsWith("/v1/chats/chat-beta")) {
+        return Promise.resolve(jsonResponse(chatThread("chat-beta", "Beta thread", [chatMessage("chat-beta", "msg-beta", "user", "Beta current")] )));
+      }
+      return mockRuntimeResponse(input, init, {
+        ...readyRuntimeOptions(),
+        chats: [chatSummary("chat-001", "Alpha thread", 1), chatSummary("chat-beta", "Beta thread", 1)],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setTextareaValue(chatInput(), "old chat stream");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      findButton("Beta threadUpdated 2026-05-29T07:16:30Z1 persisted messageConversation 2 of 2").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 1, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: "stale old chat stream text" } } })}\n\n`));
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("Beta current");
+    expect(container?.textContent).not.toContain("stale old chat stream text");
   });
 
   it("shows guided OpenAI API fallback CTA when runtime is connected with no provider", async () => {

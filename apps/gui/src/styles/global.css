@@ -468,6 +468,22 @@ pre,
   border-color: #2f5bea;
 }
 
+.conversation-status {
+  border: 1px solid #cdd8ff;
+  border-radius: 12px;
+  background: #f6f8ff;
+  color: #2441a1;
+  font-weight: 700;
+  padding: 10px;
+}
+
+.conversation-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .conversation-select {
   display: grid;
   gap: 4px;
