@@ -343,6 +343,8 @@ State is received from:
 GET /v1/chats/subscribe?chat_id={chat_id}
 ```
 
+Provider/chat error events use a stable sanitized taxonomy rather than raw provider text. Current categories cover missing local provider configuration, missing or not-ready model selection, unauthorized or expired credentials, rate limit/quota/credit exhaustion, context-window overflow, invalid request, timeout, upstream provider failure, malformed stream, local provider config error, and safe fallback request failure. Context-window overflow can be caused by the user prompt plus any included active editor context. The engine may use bounded provider status/body/stream signals to classify failures, but classification is best-effort because provider and gateway error shapes differ and are not all OpenAI-compatible. Unknown or ambiguous failures must fall back to sanitized generic categories. SSE error payloads, persisted chat error history, GUI recovery guidance, docs, tests, and smokes must not expose raw provider response bodies, request bodies, provider URLs with sensitive data, Authorization headers, API keys, OAuth tokens, cookies, account identifiers, credential paths, private local paths, or debug payloads. GUI recovery guidance may suggest fixing credentials, checking quota, reducing prompt/context, choosing a usable model, fixing configuration, checking provider status, or retrying later; it must not claim automatic retries or production-grade compatibility until those are implemented. Direct local BYOK provider access remains the model: Yet AI does not require a hosted proxy, managed gateway, account, product credit balance, or cloud workspace for core chat.
+
 Initial SSE event types:
 
 - `snapshot`
@@ -493,8 +495,8 @@ The approved near-term implementation sequence is local-first and incremental. F
 
 ### 3. OpenAI-compatible direct provider adapter and streaming — MVP baseline complete
 
-- Implemented the first direct BYOK OpenAI-compatible chat path and normalized streamed provider chunks into local chat/SSE events.
-- Remaining work: broader streaming parser coverage, provider quirks, cancellation/shutdown handling, retries, model capability enforcement, and expanded tests.
+- Implemented the first direct BYOK OpenAI-compatible chat path, normalized streamed provider chunks into local chat/SSE events, and mapped common provider/chat failures to stable sanitized SSE error categories with GUI recovery guidance.
+- Remaining work: broader streaming parser coverage, provider quirks, cancellation/shutdown handling, explicit retry policy if later approved, model capability enforcement, and expanded tests.
 
 ### 4. GUI local provider setup and runtime client — MVP baseline complete
 
