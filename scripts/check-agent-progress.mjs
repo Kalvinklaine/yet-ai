@@ -490,6 +490,69 @@ async function runAssertions() {
   assertAbsent(rawToolOverflow, rawToolOverflowMarkers);
   assertAbsent(formatProgressReport(rawToolOverflow), rawToolOverflowMarkers);
 
+  const spacedRawMarkers = [
+    "UNIQUE_SPACED_PROVIDER_BODY_DO_NOT_SHOW",
+    "UNIQUE_TABBED_PROMPT_BODY_DO_NOT_SHOW",
+    "UNIQUE_SPACED_COT_BODY_DO_NOT_SHOW",
+    "UNIQUE_SPACED_WORKSPACE_BODY_DO_NOT_SHOW",
+    "UNIQUE_SPACED_FILE_BODY_DO_NOT_SHOW",
+    "UNIQUE_SPACED_RAW_TOOL_BODY_DO_NOT_SHOW"
+  ];
+  const spacedRawLabels = reduceAgentProgress(
+    [
+      event({
+        eventId: "evt-spaced-raw-labels",
+        timestamp: "2026-05-29T12:58:00Z",
+        phase: "failed",
+        status: "failed",
+        message: "raw\tprompt: context_length_exceeded UNIQUE_TABBED_PROMPT_BODY_DO_NOT_SHOW",
+        outputTail: [
+          "provider   response: maximum context length exceeded UNIQUE_SPACED_PROVIDER_BODY_DO_NOT_SHOW",
+          "chain   of   thought: hidden reasoning UNIQUE_SPACED_COT_BODY_DO_NOT_SHOW",
+          "workspace   contents: task board output too large UNIQUE_SPACED_WORKSPACE_BODY_DO_NOT_SHOW",
+          "file   contents: private file body UNIQUE_SPACED_FILE_BODY_DO_NOT_SHOW",
+          "raw   tool   output: tool output too large during search UNIQUE_SPACED_RAW_TOOL_BODY_DO_NOT_SHOW"
+        ].join("\n")
+      })
+    ],
+    { now: NOW }
+  );
+  assert.equal(spacedRawLabels.status, "failed");
+  assert.equal(spacedRawLabels.overflowRecovery.kind, "context_length_exceeded");
+  assertNoSensitiveContent(spacedRawLabels);
+  assertAbsent(spacedRawLabels, spacedRawMarkers);
+  assertAbsent(formatProgressReport(spacedRawLabels), spacedRawMarkers);
+
+  const concatenationFalsePositive = reduceAgentProgress(
+    [
+      event({
+        eventId: "evt-concatenation-too-large",
+        timestamp: "2026-05-29T12:58:00Z",
+        phase: "failed",
+        status: "failed",
+        message: "concatenation result was too large"
+      })
+    ],
+    { now: NOW }
+  );
+  assert.equal(concatenationFalsePositive.status, "failed");
+  assert.equal(concatenationFalsePositive.overflowRecovery, undefined);
+
+  const catalogFalsePositive = reduceAgentProgress(
+    [
+      event({
+        eventId: "evt-catalog-exceeded",
+        timestamp: "2026-05-29T12:58:00Z",
+        phase: "failed",
+        status: "failed",
+        message: "catalog export exceeded size"
+      })
+    ],
+    { now: NOW }
+  );
+  assert.equal(catalogFalsePositive.status, "failed");
+  assert.equal(catalogFalsePositive.overflowRecovery, undefined);
+
 
   const tmp = await mkdtemp(join(tmpdir(), "yet-agent-progress-"));
   try {
