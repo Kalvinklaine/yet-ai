@@ -1,0 +1,30 @@
+{
+  "protocolVersion": "2026-05-15",
+  "tickId": "tick-merge-completed-overflow-001",
+  "poolId": "planner_overflow_recovery",
+  "autonomousMode": true,
+  "nextAction": "merge_completed",
+  "observedAt": "2026-05-30T10:10:00Z",
+  "agentCounts": {
+    "running": 0,
+    "done": 1,
+    "failed": 0,
+    "stuck": 0,
+    "unknown": 0
+  },
+  "cardCounts": {
+    "running": 0,
+    "done_unmerged": 0,
+    "merge_pending": 0,
+    "verification_pending": 0,
+    "verified": 1,
+    "blocked": 0,
+    "replan_required": 0
+  },
+  "safeSummary": "Merge completed without active recovery state.",
+  "overflowRecovery": {
+    "kind": "tool_output_too_large",
+    "message": "Tool output was too large to attach. Keep only a short sanitized outcome.",
+    "retryable": true
+  }
+}

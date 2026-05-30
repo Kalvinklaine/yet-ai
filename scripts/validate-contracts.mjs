@@ -263,6 +263,10 @@ const invalidMappings = [
     "packages/contracts/schemas/engine/planner-scheduler-tick.schema.json"
   ],
   [
+    "packages/contracts/examples-invalid/engine/planner-scheduler-merge-completed-overflow-recovery.json",
+    "packages/contracts/schemas/engine/planner-scheduler-tick.schema.json"
+  ],
+  [
     "packages/contracts/examples-invalid/engine/planner-agent-status-secret-field.json",
     "packages/contracts/schemas/engine/planner-agent-run-status.schema.json"
   ],
@@ -272,6 +276,10 @@ const invalidMappings = [
   ],
   [
     "packages/contracts/examples-invalid/engine/planner-agent-overflow-mixed-case-unsafe-message.json",
+    "packages/contracts/schemas/engine/planner-agent-run-status.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/planner-agent-done-overflow-recovery.json",
     "packages/contracts/schemas/engine/planner-agent-run-status.schema.json"
   ],
   [
@@ -368,6 +376,14 @@ const invalidMappings = [
   ],
   [
     "packages/contracts/examples-invalid/engine/planner-card-overflow-overlong-summary.json",
+    "packages/contracts/schemas/engine/planner-card-pool-status.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/planner-pool-closed-overflow-recovery.json",
+    "packages/contracts/schemas/engine/planner-card-pool-status.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/planner-card-verified-overflow-recovery.json",
     "packages/contracts/schemas/engine/planner-card-pool-status.schema.json"
   ],
   [
