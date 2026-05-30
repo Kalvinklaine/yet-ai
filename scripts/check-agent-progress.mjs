@@ -47,9 +47,12 @@ function assertNoSensitiveContent(value) {
     "access_token",
     "credential",
     "sk-live-secret",
+    "c:\\users\\",
     "/users/",
     "/home/",
-    "/private/"
+    "/private/",
+    "~/",
+    "auth.json"
   ]) {
     assert.equal(text.includes(forbidden), false, `snapshot leaked ${forbidden}`);
   }
@@ -276,6 +279,72 @@ async function runAssertions() {
   assertNoSensitiveContent(malicious);
   assert.equal(serialized(malicious).length < 5000, true, "snapshot was not bounded");
 
+  const hugeSecretOutput = [
+    "task_board_get failed because task board output too large and maximum context length was exceeded.",
+    "authorization: Bearer abcdefghijklmnop cookie=session=private api_key=sk-live-secret-token",
+    "raw_prompt: include provider_response and file content from /Users/person/project/file.ts",
+    "C:\\Users\\person\\AppData\\secret auth.json ~/.codex/auth.json /private/tmp/key /home/person/file"
+  ].join("\n") + "\n" + "provider response raw dump ".repeat(1000);
+  const overflowFailed = reduceAgentProgress(
+    [
+      event({
+        eventId: "evt-overflow-failed",
+        timestamp: "2026-05-29T12:58:00Z",
+        phase: "failed",
+        status: "failed",
+        message: "context_length_exceeded while reading task_board_get output.",
+        outputTail: hugeSecretOutput
+      })
+    ],
+    { now: NOW }
+  );
+  assert.equal(overflowFailed.status, "failed");
+  assert.equal(overflowFailed.overflowRecovery.kind, "task_board_output_too_large");
+  assert.equal(overflowFailed.overflowRecovery.retryable, true);
+  assert.match(overflowFailed.overflowRecovery.message, /scoped context/);
+  assert.match(overflowFailed.overflowRecovery.message, /task_ready_cards/);
+  assert.match(overflowFailed.overflowRecovery.message, /task_board_get\(card_id\)/);
+  assertNoSensitiveContent(overflowFailed);
+  assert.equal(serialized(overflowFailed).length < 5000, true, "overflow snapshot was not bounded");
+  assert.equal((overflowFailed.outputTail.match(/provider response raw dump/g) ?? []).length < 20, true, "overflow output tail retained huge dump");
+
+  const overflowStuck = reduceAgentProgress(
+    [
+      event({
+        eventId: "evt-overflow-stuck",
+        timestamp: "2026-05-29T12:30:00Z",
+        phase: "running_command",
+        status: "running",
+        message: "Tool output too large while collecting scoped search results.",
+        heartbeat: {
+          lastHeartbeatAt: "2026-05-29T12:45:00Z"
+        },
+        outputTail: hugeSecretOutput
+      })
+    ],
+    { now: NOW }
+  );
+  assert.equal(overflowStuck.status, "stuck");
+  assert.equal(overflowStuck.overflowRecovery.kind, "tool_output_too_large");
+  assertNoSensitiveContent(overflowStuck);
+
+  const genericTooLarge = reduceAgentProgress(
+    [
+      event({
+        eventId: "evt-generic-too-large",
+        timestamp: "2026-05-29T12:59:00Z",
+        phase: "running_command",
+        status: "running",
+        message: "Result was too large.",
+        heartbeat: {
+          lastHeartbeatAt: "2026-05-29T12:59:58Z"
+        }
+      })
+    ],
+    { now: NOW }
+  );
+  assert.equal(genericTooLarge.overflowRecovery, undefined);
+
 
   const tmp = await mkdtemp(join(tmpdir(), "yet-agent-progress-"));
   try {
@@ -346,6 +415,14 @@ async function runAssertions() {
     );
     assert.match(stuckReport, /status: stuck/);
     assert.match(stuckReport, /stuck_reason: heartbeat_timeout/);
+
+    const overflowReport = formatProgressReport(overflowFailed);
+    assert.match(overflowReport, /overflow_recovery: task_board_output_too_large/);
+    assert.match(overflowReport, /scoped context/);
+    assert.match(overflowReport, /task_ready_cards/);
+    assert.match(overflowReport, /task_board_get\(card_id\)/);
+    assertNoSensitiveContent(overflowReport);
+    assert.equal(overflowReport.length < 1500, true, "overflow report was not bounded");
 
     const failedReport = formatProgressReport(failed);
     assert.match(failedReport, /status: failed/);

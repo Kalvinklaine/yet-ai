@@ -2,6 +2,7 @@ const PROTOCOL_VERSION = "2026-05-29";
 const MAX_MESSAGE_LENGTH = 280;
 const MAX_TOOL_LABEL_LENGTH = 160;
 const MAX_OUTPUT_TAIL_LENGTH = 2000;
+const MAX_OVERFLOW_RECOVERY_MESSAGE_LENGTH = 320;
 const MAX_RECENT_EVENTS = 20;
 const MAX_ELAPSED_MS = 604800000;
 const MAX_TOOL_ELAPSED_MS = 86400000;
@@ -83,7 +84,9 @@ function sanitizeText(value, maxLength = MAX_MESSAGE_LENGTH) {
     .replace(/\b(?:chain[-_ ]?of[-_ ]?thought|raw[-_ ]?prompt|provider[-_ ]?response|file[-_ ]?content|workspace[-_ ]?content)\b\s*[:=]?\s*/gi, "[redacted-field] ")
     .replace(/BEGIN [A-Z ]*PRIVATE KEY[\s\S]*?END [A-Z ]*PRIVATE KEY/g, "[redacted-private-key]")
     .replace(/\/(?:Users|home|private)\/[^\s"'`<>]*/g, "[redacted-path]")
+    .replace(/~\/[^\s"'`<>]*/g, "[redacted-path]")
     .replace(/[A-Za-z]:\\[^\s"'`<>]*/g, "[redacted-path]")
+    .replace(/(?:\.codex\/)?auth\.json/gi, "[redacted-file]")
     .replace(/[ \t]+/g, " ")
     .replace(/\n{4,}/g, "\n\n\n")
     .trim();
@@ -99,6 +102,51 @@ function safeId(value, fallback) {
     return value;
   }
   return fallback;
+}
+
+function overflowRecoveryMessage(kind) {
+  if (kind === "task_board_output_too_large") {
+    return "Retry with scoped context: use task_ready_cards or task_board_get(card_id) for one card, and summarize results instead of dumping the full task board.";
+  }
+  if (kind === "tool_output_too_large") {
+    return "Retry with scoped context: use targeted search/cat commands and summarized outputs instead of a full tool dump.";
+  }
+  return "Retry with scoped context: use task_ready_cards, specific task_board_get(card_id), scoped search/cat, and summarized outputs.";
+}
+
+function classifyOverflowRecoveryText(value) {
+  const text = sanitizeText(value, MAX_OUTPUT_TAIL_LENGTH).toLowerCase();
+  if (text.length === 0) {
+    return undefined;
+  }
+
+  const mentionsTaskBoard = /task[_ -]?board|task_board_get|task_ready_cards/.test(text);
+  const mentionsTool = /tool|outputtail|command|search|cat/.test(text);
+  const mentionsContext = /context|prompt|window/.test(text);
+  const mentionsTooLarge = /too large|output too large|exceeded|maximum context length|context length/.test(text);
+
+  let kind;
+  if (/task board output too large/.test(text) || (/task_board_get/.test(text) && mentionsTooLarge) || (mentionsTaskBoard && /too large|maximum context length|context length exceeded/.test(text))) {
+    kind = "task_board_output_too_large";
+  } else if (/tool output too large/.test(text) || (mentionsTool && /output too large|too large/.test(text))) {
+    kind = "tool_output_too_large";
+  } else if (/context_length_exceeded|maximum context length|context length exceeded/.test(text) || (mentionsContext && /too large|exceeded/.test(text))) {
+    kind = "context_length_exceeded";
+  }
+
+  if (kind === undefined) {
+    return undefined;
+  }
+
+  return {
+    kind,
+    message: sanitizeText(overflowRecoveryMessage(kind), MAX_OVERFLOW_RECOVERY_MESSAGE_LENGTH),
+    retryable: true
+  };
+}
+
+function classifyOverflowRecovery(event) {
+  return classifyOverflowRecoveryText(event.message) ?? classifyOverflowRecoveryText(event.outputTail);
 }
 
 function safeCardId(value) {
@@ -328,6 +376,11 @@ function reduceAgentProgress(events, options = {}) {
   const outputTail = mostRecentBy(normalizedEvents, (event) => event.outputTail);
   if (outputTail !== undefined) {
     snapshot.outputTail = outputTail;
+  }
+
+  const overflowRecovery = mostRecentBy(normalizedEvents, classifyOverflowRecovery);
+  if (overflowRecovery !== undefined) {
+    snapshot.overflowRecovery = overflowRecovery;
   }
 
   if (lastHeartbeatAt !== undefined) {
