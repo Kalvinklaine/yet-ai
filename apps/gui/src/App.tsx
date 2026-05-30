@@ -202,6 +202,7 @@ export function App() {
   const [chatHistoryError, setChatHistoryError] = useState<RuntimeError | null>(null);
   const [chatHistoryRevision, setChatHistoryRevision] = useState<number | null>(null);
   const [chatHistoryLoading, setChatHistoryLoading] = useState(false);
+  const [deletingChatId, setDeletingChatId] = useState<string | null>(null);
   const [chatInput, setChatInput] = useState("");
   const [chatView, setChatView] = useState(() => createInitialChatViewState("chat-001"));
   const [timeline, setTimeline] = useState<string[]>([]);
@@ -249,6 +250,7 @@ export function App() {
   const activeProviderAuthStatus = providerAuthDataCurrent ? providerAuthStatus : null;
   const activeChatSummaries = chatHistoryCurrent ? chatSummaries : [];
   const activeChatSummary = activeChatSummaries.find((item) => item.chatId === chatId);
+  const activeChatIndex = activeChatSummaries.findIndex((item) => item.chatId === chatId);
   const runtimeConnected = activePing?.ready === true && !activeConnectionError;
   const connectionStatus = activeConnectionError ? "error" : activePing?.ready ? "connected" : "not checked";
   const enabledProviders = useMemo(() => activeProviders.filter((provider) => provider.enabled), [activeProviders]);
@@ -325,6 +327,7 @@ export function App() {
     setChatHistoryRevision(null);
     setChatSummaries([]);
     setChatHistoryError(null);
+    setDeletingChatId(null);
     setRuntimeRefreshStatus({
       state: "checking",
       attempt: runtimeRefreshAttemptRef.current + 1,
@@ -554,6 +557,9 @@ export function App() {
       if (summaries.length > 0 && !summaries.some((summary) => summary.chatId === currentChat)) {
         setChatId(summaries[0].chatId);
       }
+      if (summaries.length === 0 && currentChat !== "chat-001") {
+        setChatId("chat-001");
+      }
     } else {
       setChatSummaries([]);
       setChatHistoryError(result.error);
@@ -587,10 +593,14 @@ export function App() {
     const targetRevision = settingsRevisionRef.current;
     const attempt = chatHistoryAttemptRef.current + 1;
     chatHistoryAttemptRef.current = attempt;
+    abortActiveStream("SSE stopped and abort requested before creating a new chat");
     setChatHistoryLoading(true);
     setChatHistoryError(null);
+    setChatError(null);
+    setChatInput("");
     const result = await createChat(targetSettings);
     if (!isCurrentRefresh(targetRevision) || chatHistoryAttemptRef.current !== attempt) {
+      setChatHistoryLoading(false);
       return;
     }
     if (result.ok) {
@@ -601,30 +611,39 @@ export function App() {
       setTimeline([]);
       setAttachedContext(null);
       setIncludeAttachedContext(false);
+      setAttachedContextStatus(null);
     } else {
       setChatHistoryError(result.error);
       setChatHistoryRevision(targetRevision);
     }
     setChatHistoryLoading(false);
-  }, [isCurrentRefresh]);
+  }, [abortActiveStream, isCurrentRefresh]);
 
   const selectChat = useCallback((nextChatId: string) => {
     if (nextChatId === chatIdRef.current) {
       return;
     }
+    abortActiveStream("SSE stopped and abort requested before switching chats");
+    setChatInput("");
     setChatId(nextChatId);
+    setChatView(resetChatViewState(nextChatId));
     void loadChatThread(nextChatId);
-  }, [loadChatThread]);
+  }, [abortActiveStream, loadChatThread]);
 
   const deleteCurrentChat = useCallback(async (targetChatId: string) => {
     const targetSettings = settingsRef.current;
     const targetRevision = settingsRevisionRef.current;
     const attempt = chatHistoryAttemptRef.current + 1;
     chatHistoryAttemptRef.current = attempt;
+    if (chatIdRef.current === targetChatId) {
+      abortActiveStream("SSE stopped and abort requested before deleting the current chat");
+    }
+    setDeletingChatId(targetChatId);
     setChatHistoryLoading(true);
     setChatHistoryError(null);
     const result = await deleteChat(targetSettings, targetChatId);
     if (!isCurrentRefresh(targetRevision) || chatHistoryAttemptRef.current !== attempt) {
+      setDeletingChatId((current) => current === targetChatId ? null : current);
       return;
     }
     if (result.ok) {
@@ -632,16 +651,23 @@ export function App() {
       setChatSummaries(remaining);
       setChatHistoryRevision(targetRevision);
       if (chatIdRef.current === targetChatId) {
-        const nextChatId = remaining[0]?.chatId ?? "chat-001";
+        const deletedIndex = chatSummaries.findIndex((summary) => summary.chatId === targetChatId);
+        const nextChatId = remaining[Math.max(0, Math.min(deletedIndex, remaining.length - 1))]?.chatId ?? "chat-001";
         setChatId(nextChatId);
         setChatView(resetChatViewState(nextChatId));
+        setChatInput("");
+        setTimeline([]);
+        setAttachedContext(null);
+        setIncludeAttachedContext(false);
+        setAttachedContextStatus(null);
       }
     } else {
       setChatHistoryError(result.error);
       setChatHistoryRevision(targetRevision);
     }
+    setDeletingChatId(null);
     setChatHistoryLoading(false);
-  }, [chatSummaries, isCurrentRefresh]);
+  }, [abortActiveStream, chatSummaries, isCurrentRefresh]);
 
   const connect = useCallback(async () => {
     if (runtimeRefreshInFlightRef.current) {
@@ -1097,21 +1123,35 @@ export function App() {
               <button type="button" onClick={() => void createNewChat()} disabled={chatHistoryLoading}>{chatHistoryLoading ? "Loading…" : "New chat"}</button>
             </div>
             <span className="subtle">Engine-owned local history. Messages are not written to browser storage.</span>
-            {activeChatSummaries.length === 0 ? <p className="subtle">No saved conversations yet.</p> : activeChatSummaries.map((summary) => (
-              <div className={`conversation-item ${summary.chatId === chatId ? "active" : ""}`} key={summary.chatId}>
-                <button type="button" className="conversation-select" onClick={() => selectChat(summary.chatId)}>
-                  <strong>{sanitizeDisplayText(summary.title)}</strong>
-                  <span>{summary.messageCount} message{summary.messageCount === 1 ? "" : "s"} · {sanitizeDisplayText(summary.updatedAt)}</span>
-                </button>
-                <button type="button" className="danger-button" onClick={() => void deleteCurrentChat(summary.chatId)}>Delete</button>
-              </div>
-            ))}
+            <div className="conversation-status" role="status">
+              {chatHistoryLoading ? "Loading local conversations…" : chatHistoryCurrent ? `${activeChatSummaries.length} local conversation${activeChatSummaries.length === 1 ? "" : "s"}` : "Conversation history has not loaded yet."}
+            </div>
+            {activeChatSummaries.length === 0 ? (
+              <p className="subtle">{chatHistoryLoading ? "Loading saved conversations from the local runtime…" : chatHistoryError ? "Conversation history is unavailable." : "No saved conversations yet. Start a new local chat or send a message in the current chat."}</p>
+            ) : activeChatSummaries.map((summary, index) => {
+              const active = summary.chatId === chatId;
+              const deleting = deletingChatId === summary.chatId;
+              return (
+                <div className={`conversation-item ${active ? "active" : ""}`} key={summary.chatId}>
+                  <button type="button" className="conversation-select" onClick={() => selectChat(summary.chatId)} disabled={deleting} aria-current={active ? "true" : undefined}>
+                    <span className="conversation-title-row">
+                      <strong>{sanitizeDisplayText(summary.title || "Untitled chat")}</strong>
+                      {active && <span className="badge ok">current</span>}
+                    </span>
+                    <span>Updated {sanitizeDisplayText(summary.updatedAt)}</span>
+                    <span>{summary.messageCount} persisted message{summary.messageCount === 1 ? "" : "s"}</span>
+                    <span className="subtle">Conversation {index + 1} of {activeChatSummaries.length}</span>
+                  </button>
+                  <button type="button" className="danger-button" onClick={() => void deleteCurrentChat(summary.chatId)} disabled={deleting || chatHistoryLoading}>{deleting ? "Deleting…" : active ? "Delete current" : "Delete"}</button>
+                </div>
+              );
+            })}
           </aside>
           <div className="stack">
             <div className="chat-title-card row">
               <div className="stack">
                 <strong>{sanitizeDisplayText(activeChatSummary?.title ?? chatId)}</strong>
-                <span className="subtle">{chatView.messages.length} visible message{chatView.messages.length === 1 ? "" : "s"} · {chatView.subscriptionReady ? "snapshot loaded" : activeChatSummary ? `${activeChatSummary.messageCount} persisted message${activeChatSummary.messageCount === 1 ? "" : "s"}` : "empty local chat"}</span>
+                <span className="subtle">{activeChatIndex >= 0 ? `Conversation ${activeChatIndex + 1} of ${activeChatSummaries.length} · ` : ""}{chatView.messages.length} visible message{chatView.messages.length === 1 ? "" : "s"} · {chatView.subscriptionReady ? "snapshot loaded" : activeChatSummary ? `${activeChatSummary.messageCount} persisted message${activeChatSummary.messageCount === 1 ? "" : "s"}` : "fresh local chat"}</span>
               </div>
               <span className="badge">{sanitizeDisplayText(chatId)}</span>
             </div>
