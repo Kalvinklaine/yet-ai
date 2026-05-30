@@ -315,8 +315,17 @@ function assertNoSensitiveAuditFields(value) {
   assert.equal(serialized.includes("cookie"), false, "audit sanitizer kept cookie key");
   assert.equal(serialized.includes("privatePath"), false, "audit sanitizer kept private path key");
   assert.equal(serialized.includes("workspaceContent"), false, "audit sanitizer kept workspace content key");
+  assert.equal(serialized.includes("taskBoardDump"), false, "audit sanitizer kept task board dump key");
+  assert.equal(serialized.includes("toolRawOutput"), false, "audit sanitizer kept tool raw output key");
+  assert.equal(serialized.includes("fullBoardJson"), false, "audit sanitizer kept full board json key");
   assert.equal(serialized.includes("sk-test"), false, "audit sanitizer kept secret-like value");
   assert.equal(serialized.includes("/Users/private/project/file.ts"), false, "audit sanitizer kept private path value");
+  assert.equal(serialized.includes("raw tool output"), false, "audit sanitizer kept raw tool output value");
+  assert.equal(serialized.includes("full board payload"), false, "audit sanitizer kept raw board value");
+}
+
+function oversizedCountMap(prefix, total) {
+  return Object.fromEntries(Array.from({ length: total }, (_, index) => [`${prefix}_${index}`, index]));
 }
 
 async function runStateStoreAssertions() {
@@ -384,11 +393,53 @@ async function runStateStoreAssertions() {
     const released = releaseSchedulerLease(ticked, "owner-T229-001", "2026-05-29T00:43:00Z");
     assert.equal(released.activeSchedulerLease, null, "lease was not released");
 
-    await writeSchedulerState(statePath, released);
+    let overflowState = released;
+    for (let index = 0; index < 30; index += 1) {
+      overflowState = appendAuditEvent(overflowState, {
+        tickId: `tick-T229-overflow-${index}`,
+        poolId: "planner_durable_state",
+        observedAt: addMs("2026-05-29T00:44:00Z", index * 1000),
+        nextAction: "recover_failed",
+        safeSummary: `${"safe bounded scheduler recovery summary. ".repeat(40)}sk-test-secret /Users/private/project/file.ts`,
+        overflowRecovery: {
+          kind: "task_board_output_too_large",
+          message: `${"raw board payload ".repeat(200)} /Users/private/project/file.ts sk-test-secret`,
+          retryable: true,
+          rawPrompt: "do not persist"
+        },
+        agentCounts: oversizedCountMap("agent_status", 50),
+        cardCounts: oversizedCountMap("card_status", 50),
+        rawPrompt: "raw prompt with sk-test-secret",
+        providerResponse: "provider body with secret",
+        workspaceContent: "private source code",
+        taskBoardDump: `${"full board payload ".repeat(1000)}sk-test-secret`,
+        toolRawOutput: `${"raw tool output ".repeat(1000)}authorization bearer token`,
+        fullBoardJson: { cards: Array.from({ length: 1000 }, () => ({ content: "full board payload" })) },
+        credentials: { apiKey: "sk-test-secret" },
+        content: "private file content",
+        path: "/Users/private/project/file.ts"
+      });
+    }
+    assert.equal(overflowState.auditTimeline.length, 10, "audit timeline was not bounded");
+    const overflowEvent = overflowState.auditTimeline.at(-1);
+    assert.equal(overflowEvent.safeSummary, "Scheduler audit event was summarized without raw data.", "unsafe summary was not replaced");
+    assert.equal(overflowEvent.overflowRecovery.kind, "task_board_output_too_large", "overflow kind was not retained");
+    assert.equal(
+      overflowEvent.overflowRecovery.message,
+      "Task board overflow was detected and summarized without raw board data.",
+      "unsafe overflow message was not replaced"
+    );
+    assert.equal(Object.keys(overflowEvent.agentCounts).length, 16, "agent count map was not bounded");
+    assert.equal(Object.keys(overflowEvent.cardCounts).length, 16, "card count map was not bounded");
+    assertNoSensitiveAuditFields(overflowState);
+    assert.ok(JSON.stringify(overflowState).length < 20000, "persisted scheduler state was not compact");
+
+    await writeSchedulerState(statePath, overflowState);
     const finalRoundtrip = await readSchedulerState(statePath);
-    assert.deepEqual(finalRoundtrip, released, "updated state store roundtrip mismatch");
+    assert.deepEqual(finalRoundtrip, overflowState, "updated state store roundtrip mismatch");
     const files = await readFile(statePath, "utf8");
     assert.equal(files.endsWith("\n"), true, "state file is not newline terminated");
+    assert.ok(files.length < 24000, "persisted scheduler state file was not compact");
 
     await writeSchedulerState(
       cliStatePath,
@@ -419,6 +470,8 @@ async function runStateStoreAssertions() {
     const cliSummary = JSON.parse(cliResult.stdout);
     assert.equal(cliSummary.nextAction, "merge_completed", "CLI did not use scheduler decision helper");
     assert.equal(cliSummary.selectedAgentRunId, "agent-T230-001", "CLI did not report selected agent");
+    assert.deepEqual(Object.keys(cliSummary).sort(), ["dryRun", "nextAction", "poolId", "selectedAgentRunId", "selectedCardId", "tickId"], "CLI summary included non-compact fields");
+    assert.ok(cliResult.stdout.length < 240, "CLI summary was not compact");
     assertNoSensitiveAuditFields(cliSummary);
     const cliRoundtrip = await readSchedulerState(cliStatePath);
     assert.equal(cliRoundtrip.activeSchedulerLease, null, "CLI did not release scheduler lease");
