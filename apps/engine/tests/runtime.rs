@@ -303,6 +303,46 @@ async fn start_mock_provider_with_request_body(
     (format!("http://{address}"), body_receiver)
 }
 
+async fn start_chunked_mock_provider(
+    chunks: Vec<Vec<u8>>,
+) -> (String, mpsc::Receiver<Option<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (auth_sender, auth_receiver) = mpsc::channel(4);
+    let chunks = std::sync::Arc::new(chunks);
+    tokio::spawn(async move {
+        let handler = move |request: axum::http::Request<Body>| {
+            let auth_sender = auth_sender.clone();
+            let chunks = chunks.clone();
+            async move {
+                let auth = request
+                    .headers()
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                let _ = auth_sender.send(auth.clone()).await;
+                let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(8);
+                tokio::spawn(async move {
+                    for chunk in chunks.iter() {
+                        let _ = tx.send(Ok(Bytes::copy_from_slice(chunk))).await;
+                    }
+                });
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "text/event-stream")],
+                    Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx)),
+                )
+                    .into_response()
+            }
+        };
+        let app = axum::Router::new()
+            .route("/chat/completions", axum::routing::post(handler.clone()))
+            .route("/v1/chat/completions", axum::routing::post(handler));
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{address}"), auth_receiver)
+}
+
 async fn start_mock_models_provider(
     status: StatusCode,
     body: &'static str,
@@ -6611,6 +6651,32 @@ async fn openai_compatible_streaming_maps_chunks_to_sse_events() {
     )
     .await;
     assert!(!text.contains(api_key));
+}
+
+#[tokio::test]
+async fn openai_compatible_streaming_accepts_split_multibyte_utf8_chunks() {
+    let api_key = "sk-split-utf8-stream-secret-abcd";
+    let body = "data: {\"choices\":[{\"delta\":{\"content\":\"Привет 🌍\"}}]}\n\ndata: [DONE]\n\n";
+    let bytes = body.as_bytes();
+    let split = body.find('🌍').unwrap() + 1;
+    let chunks = vec![bytes[..split].to_vec(), bytes[split..].to_vec()];
+    let (base_url, auth_receiver) = start_chunked_mock_provider(chunks).await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    send_user_message(app.clone(), "chat-split-utf8-stream").await;
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-split-utf8-stream").await;
+    let events = sse_json_events(&text);
+    assert!(events.iter().any(|event| event["type"] == "stream_delta"
+        && event["payload"]["delta"]["content"] == "Привет 🌍"));
+    assert!(events.iter().any(|event| event["type"] == "stream_finished"));
+    assert!(!text.contains(api_key));
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer sk-split-utf8-stream-secret-abcd",
+        "split utf8 streaming",
+    )
+    .await;
 }
 
 #[tokio::test]
