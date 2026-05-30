@@ -347,12 +347,11 @@ impl ChatRuntime {
                     .await
             }
             ChatProvider::ExperimentalCodex(auth) => {
-                bearer_stream(
+                bearer_stream_with_unauthorized_retry(
                     self,
                     &self.client,
-                    &auth.base_url,
-                    &auth.model,
-                    &auth.access_token,
+                    config_dir,
+                    &auth,
                     chat_id,
                     content,
                 )
@@ -693,6 +692,51 @@ async fn bearer_stream(
             "messages": [{ "role": "user", "content": content }]
         }));
     collect_openai_compatible_stream(runtime, chat_id, request).await
+}
+
+async fn bearer_stream_with_unauthorized_retry(
+    runtime: &ChatRuntime,
+    client: &reqwest::Client,
+    config_dir: &std::path::Path,
+    auth: &ExperimentalCodexChatAuth,
+    chat_id: &str,
+    content: &str,
+) -> Result<String, ChatError> {
+    let first = bearer_stream(
+        runtime,
+        client,
+        &auth.base_url,
+        &auth.model,
+        &auth.access_token,
+        chat_id,
+        content,
+    )
+    .await;
+    if !matches!(first, Err(ChatError::Unauthorized)) {
+        return first;
+    }
+    let Some(refreshed) = provider_auth::refresh_experimental_codex_chat_auth_after_rejection(
+        config_dir,
+        &auth.access_token,
+    )
+    .await
+    .map_err(|_| ChatError::ProviderConfig)?
+    else {
+        return first;
+    };
+    if refreshed.access_token == auth.access_token {
+        return first;
+    }
+    bearer_stream(
+        runtime,
+        client,
+        &refreshed.base_url,
+        &refreshed.model,
+        &refreshed.access_token,
+        chat_id,
+        content,
+    )
+    .await
 }
 
 async fn collect_openai_compatible_stream(
@@ -1049,7 +1093,10 @@ mod tests {
             "x".repeat(PROVIDER_STREAM_EVENT_DATA_LIMIT)
         );
         let error = parser.push(&oversized).unwrap_err();
-        assert_eq!(error.to_string(), "provider returned malformed streaming data");
+        assert_eq!(
+            error.to_string(),
+            "provider returned malformed streaming data"
+        );
     }
 
     #[test]
@@ -1059,7 +1106,10 @@ mod tests {
             parser.push("x").unwrap();
         }
         let error = parser.push("x").unwrap_err();
-        assert_eq!(error.to_string(), "provider returned malformed streaming data");
+        assert_eq!(
+            error.to_string(),
+            "provider returned malformed streaming data"
+        );
     }
 
     #[test]
@@ -1068,7 +1118,10 @@ mod tests {
         let chunk = "x".repeat(PROVIDER_STREAM_LINE_BUFFER_LIMIT + 1);
         let error = parser.push(&chunk).unwrap_err();
         assert!(parser.buffer.is_empty());
-        assert_eq!(error.to_string(), "provider returned malformed streaming data");
+        assert_eq!(
+            error.to_string(),
+            "provider returned malformed streaming data"
+        );
     }
 
     #[test]
@@ -1081,7 +1134,10 @@ mod tests {
         let error = parser.push(&chunk).unwrap_err();
         assert!(parser.buffer.is_empty());
         assert!(parser.data_lines.is_empty());
-        assert_eq!(error.to_string(), "provider returned malformed streaming data");
+        assert_eq!(
+            error.to_string(),
+            "provider returned malformed streaming data"
+        );
     }
 
     #[test]
@@ -1089,7 +1145,9 @@ mod tests {
         let mut parser = OpenAiSseParser::default();
         let prefix = r#"{"choices":[{"delta":{"content":"ok"}}],"pad":""#;
         let suffix = r#""}"#;
-        let content = "x".repeat(PROVIDER_STREAM_LINE_BUFFER_LIMIT - "data: \n\n".len() - prefix.len() - suffix.len());
+        let content = "x".repeat(
+            PROVIDER_STREAM_LINE_BUFFER_LIMIT - "data: \n\n".len() - prefix.len() - suffix.len(),
+        );
         let frame = format!("data: {prefix}{content}{suffix}\n\n");
         parser.push(&frame).unwrap();
         assert_eq!(parser.finish().unwrap(), vec!["ok"]);
@@ -1101,7 +1159,10 @@ mod tests {
         let chunk = vec![b'x'; PROVIDER_STREAM_LINE_BUFFER_LIMIT + 1];
         let error = super::decode_stream_utf8_chunk(&mut pending, &chunk).unwrap_err();
         assert!(pending.is_empty());
-        assert_eq!(error.to_string(), "provider returned malformed streaming data");
+        assert_eq!(
+            error.to_string(),
+            "provider returned malformed streaming data"
+        );
     }
 
     #[test]
@@ -1112,6 +1173,9 @@ mod tests {
             frame.push_str("data: \n");
         }
         let error = parser.push(&frame).unwrap_err();
-        assert_eq!(error.to_string(), "provider returned malformed streaming data");
+        assert_eq!(
+            error.to_string(),
+            "provider returned malformed streaming data"
+        );
     }
 }
