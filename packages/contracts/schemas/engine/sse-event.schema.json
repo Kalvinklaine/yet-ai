@@ -77,7 +77,7 @@
                 "minLength": 1,
                 "maxLength": 240,
                 "not": {
-                  "pattern": "([sS][kK]-|[bB][eE][aA][rR][eE][rR]|[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[aA][cC][cC][eE][sS][sS]_[tT][oO][kK][eE][nN]|[rR][eE][fF][rR][eE][sS][hH]_[tT][oO][kK][eE][nN]|[aA][pP][iI][_-]?[kK][eE][yY]|[cC][oO][oO][kK][iI][eE]|/[uU][sS][eE][rR][sS]/|/[hH][oO][mM][eE]/)"
+                  "pattern": "([sS][kK]-|[bB][eE][aA][rR][eE][rR]|[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[aA][cC][cC][eE][sS][sS]_[tT][oO][kK][eE][nN]|[rR][eE][fF][rR][eE][sS][hH]_[tT][oO][kK][eE][nN]|[aA][pP][iI][_-]?[kK][eE][yY]|[cC][oO][oO][kK][iI][eE]|/[uU][sS][eE][rR][sS]/|/[hH][oO][mM][eE]/|/[pP][rR][iI][vV][aA][tT][eE]/|[cC]:\\\\[uU][sS][eE][rR][sS]\\\\|~/|\\.[cC][oO][dD][eE][xX]/[aA][uU][tT][hH]\\.[jJ][sS][oO][nN]|[aA][uU][tT][hH]\\.[jJ][sS][oO][nN])"
                 }
               }
             }

@@ -753,6 +753,9 @@ async fn collect_openai_compatible_stream(
 }
 
 fn decode_stream_utf8_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> Result<Vec<String>, ChatError> {
+    if pending.len() + chunk.len() > PROVIDER_STREAM_LINE_BUFFER_LIMIT {
+        return Err(ChatError::MalformedStream);
+    }
     pending.extend_from_slice(chunk);
     let error = match std::str::from_utf8(pending) {
         Ok(text) => {
@@ -781,7 +784,7 @@ fn decode_stream_utf8_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> Result<Vec<S
 }
 
 const PROVIDER_ERROR_BODY_CLASSIFICATION_LIMIT: usize = 16 * 1024;
-const PROVIDER_STREAM_EVENT_CLASSIFICATION_LIMIT: usize = 16 * 1024;
+const PROVIDER_STREAM_EVENT_DATA_LIMIT: usize = 16 * 1024;
 const PROVIDER_STREAM_LINE_BUFFER_LIMIT: usize = 16 * 1024;
 const PROVIDER_STREAM_EVENT_DATA_LINE_LIMIT: usize = 256;
 
@@ -821,6 +824,7 @@ fn classify_provider_error(status: reqwest::StatusCode, body: &[u8]) -> ChatErro
         413 => ChatError::ContextTooLarge,
         400 | 422 if provider_body_has_context_signal(body) => ChatError::ContextTooLarge,
         400 | 404 | 422 => ChatError::InvalidRequest,
+        408 | 504 => ChatError::Timeout,
         500..=599 => ChatError::UpstreamError,
         _ => ChatError::Request,
     }
@@ -882,14 +886,10 @@ struct OpenAiSseParser {
 
 impl OpenAiSseParser {
     fn push(&mut self, text: &str) -> Result<(), ChatError> {
-        self.buffer.push_str(text);
-        if self
-            .buffer
-            .split('\n')
-            .any(|line| line.len() > PROVIDER_STREAM_LINE_BUFFER_LIMIT)
-        {
+        if self.buffer.len() + text.len() > PROVIDER_STREAM_LINE_BUFFER_LIMIT {
             return Err(ChatError::MalformedStream);
         }
+        self.buffer.push_str(text);
         while let Some(index) = self.buffer.find('\n') {
             let line = self.buffer[..index].trim_end_matches('\r').to_string();
             self.buffer = self.buffer[index + 1..].to_string();
@@ -929,7 +929,7 @@ impl OpenAiSseParser {
         let separator_bytes = usize::from(!self.data_lines.is_empty());
         if self.data_lines.len() >= PROVIDER_STREAM_EVENT_DATA_LINE_LIMIT
             || self.event_data_bytes + separator_bytes + data.len()
-                > PROVIDER_STREAM_EVENT_CLASSIFICATION_LIMIT
+                > PROVIDER_STREAM_EVENT_DATA_LIMIT
         {
             return Err(ChatError::MalformedStream);
         }
@@ -988,7 +988,7 @@ fn chat_completions_url(base_url: &str) -> Result<String, ChatError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        chat_completions_url, OpenAiSseParser, PROVIDER_STREAM_EVENT_CLASSIFICATION_LIMIT,
+        chat_completions_url, OpenAiSseParser, PROVIDER_STREAM_EVENT_DATA_LIMIT,
         PROVIDER_STREAM_LINE_BUFFER_LIMIT,
     };
 
@@ -1046,7 +1046,7 @@ mod tests {
         let mut parser = OpenAiSseParser::default();
         let oversized = format!(
             "data: {{\"error\":{{\"message\":\"{} sk-oversized-frame-secret access_token=secret /Users/example\"}}}}\n\n",
-            "x".repeat(PROVIDER_STREAM_EVENT_CLASSIFICATION_LIMIT)
+            "x".repeat(PROVIDER_STREAM_EVENT_DATA_LIMIT)
         );
         let error = parser.push(&oversized).unwrap_err();
         assert_eq!(error.to_string(), "provider returned malformed streaming data");
@@ -1059,6 +1059,48 @@ mod tests {
             parser.push("x").unwrap();
         }
         let error = parser.push("x").unwrap_err();
+        assert_eq!(error.to_string(), "provider returned malformed streaming data");
+    }
+
+    #[test]
+    fn openai_sse_parser_rejects_huge_no_newline_chunk_before_append() {
+        let mut parser = OpenAiSseParser::default();
+        let chunk = "x".repeat(PROVIDER_STREAM_LINE_BUFFER_LIMIT + 1);
+        let error = parser.push(&chunk).unwrap_err();
+        assert!(parser.buffer.is_empty());
+        assert_eq!(error.to_string(), "provider returned malformed streaming data");
+    }
+
+    #[test]
+    fn openai_sse_parser_rejects_huge_many_line_chunk_before_processing() {
+        let mut parser = OpenAiSseParser::default();
+        let mut chunk = String::new();
+        while chunk.len() <= PROVIDER_STREAM_LINE_BUFFER_LIMIT {
+            chunk.push_str("data: {}\n");
+        }
+        let error = parser.push(&chunk).unwrap_err();
+        assert!(parser.buffer.is_empty());
+        assert!(parser.data_lines.is_empty());
+        assert_eq!(error.to_string(), "provider returned malformed streaming data");
+    }
+
+    #[test]
+    fn openai_sse_parser_accepts_large_allowed_chat_delta_event() {
+        let mut parser = OpenAiSseParser::default();
+        let prefix = r#"{"choices":[{"delta":{"content":"ok"}}],"pad":""#;
+        let suffix = r#""}"#;
+        let content = "x".repeat(PROVIDER_STREAM_LINE_BUFFER_LIMIT - "data: \n\n".len() - prefix.len() - suffix.len());
+        let frame = format!("data: {prefix}{content}{suffix}\n\n");
+        parser.push(&frame).unwrap();
+        assert_eq!(parser.finish().unwrap(), vec!["ok"]);
+    }
+
+    #[test]
+    fn chat_utf8_decoder_rejects_huge_pending_chunk() {
+        let mut pending = Vec::new();
+        let chunk = vec![b'x'; PROVIDER_STREAM_LINE_BUFFER_LIMIT + 1];
+        let error = super::decode_stream_utf8_chunk(&mut pending, &chunk).unwrap_err();
+        assert!(pending.is_empty());
         assert_eq!(error.to_string(), "provider returned malformed streaming data");
     }
 

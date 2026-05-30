@@ -374,6 +374,26 @@ const invalidMappings = [
     "packages/contracts/schemas/engine/sse-event.schema.json"
   ],
   [
+    "packages/contracts/examples-invalid/engine/error-sse-event-windows-path-message.json",
+    "packages/contracts/schemas/engine/sse-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/error-sse-event-home-path-message.json",
+    "packages/contracts/schemas/engine/sse-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/error-sse-event-private-root-message.json",
+    "packages/contracts/schemas/engine/sse-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/error-sse-event-codex-auth-path-message.json",
+    "packages/contracts/schemas/engine/sse-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/error-sse-event-auth-json-message.json",
+    "packages/contracts/schemas/engine/sse-event.schema.json"
+  ],
+  [
     "packages/contracts/examples-invalid/engine/error-sse-event-empty-message.json",
     "packages/contracts/schemas/engine/sse-event.schema.json"
   ],
