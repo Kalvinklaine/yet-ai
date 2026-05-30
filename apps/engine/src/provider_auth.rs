@@ -5,6 +5,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use base64::Engine;
 use chrono::{Duration, Utc};
+use futures_util::StreamExt;
 use http::StatusCode;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,9 @@ const MOCK_TTL_SECONDS: i64 = 600;
 const CODEX_TTL_SECONDS: i64 = 600;
 const MAX_PROVIDER_AUTH_TTL_SECONDS: i64 = 3600;
 const CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS: u64 = 2;
+const CODEX_TOKEN_ERROR_BODY_LIMIT_BYTES: usize = 4096;
+const CODEX_REFRESH_FILE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
+const CODEX_REFRESH_FILE_LOCK_RETRY: std::time::Duration = std::time::Duration::from_millis(10);
 const CODEX_TOKEN_REFRESH_SKEW_SECONDS: i64 = 60;
 const CODEX_TOKEN_DEFAULT_EXPIRES_IN_SECONDS: i64 = 3600;
 const MAX_CODEX_TOKEN_EXPIRES_IN_SECONDS: i64 = 86400;
@@ -865,13 +869,29 @@ async fn refresh_codex_token(
 }
 
 async fn bounded_codex_token_error_body(response: reqwest::Response) -> Vec<u8> {
+    let read = async move {
+        let mut body = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|_| ())?;
+            let remaining = CODEX_TOKEN_ERROR_BODY_LIMIT_BYTES.saturating_sub(body.len());
+            if remaining == 0 {
+                break;
+            }
+            body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+            if body.len() >= CODEX_TOKEN_ERROR_BODY_LIMIT_BYTES {
+                break;
+            }
+        }
+        Ok::<Vec<u8>, ()>(body)
+    };
     match tokio::time::timeout(
         std::time::Duration::from_secs(CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS),
-        response.bytes(),
+        read,
     )
     .await
     {
-        Ok(Ok(bytes)) => bytes[..bytes.len().min(4096)].to_vec(),
+        Ok(Ok(body)) => body,
         _ => Vec::new(),
     }
 }
@@ -963,13 +983,6 @@ async fn store_codex_connection(
     metadata: &CodexAuthMetadata,
 ) -> Result<(), ProviderAuthError> {
     let store = provider_secret_store(config_dir);
-    let prior_access = store
-        .get_secret(provider, SecretKind::OAuthAccessToken)
-        .await?;
-    let prior_refresh = store
-        .get_secret(provider, SecretKind::OAuthRefreshToken)
-        .await?;
-    let prior_metadata = store.get_secret(provider, SecretKind::AuthMetadata).await?;
     let metadata = serde_json::to_string(metadata).map_err(|_| ProviderAuthError::Storage)?;
     let result = async {
         store
@@ -989,28 +1002,21 @@ async fn store_codex_connection(
     }
     .await;
     if result.is_err() {
-        restore_codex_secret(&store, provider, SecretKind::OAuthAccessToken, prior_access).await?;
-        restore_codex_secret(
-            &store,
-            provider,
-            SecretKind::OAuthRefreshToken,
-            prior_refresh,
-        )
-        .await?;
-        restore_codex_secret(&store, provider, SecretKind::AuthMetadata, prior_metadata).await?;
+        delete_codex_secret_bundle(&store, provider).await?;
     }
     result
 }
 
-async fn restore_codex_secret(
+async fn delete_codex_secret_bundle(
     store: &impl ProviderSecretStore,
     provider: &str,
-    kind: SecretKind,
-    value: Option<String>,
 ) -> Result<(), ProviderAuthError> {
-    match value {
-        Some(value) => store.put_secret(provider, kind, &value).await?,
-        None => store.delete_secret(provider, kind).await?,
+    for kind in [
+        SecretKind::OAuthAccessToken,
+        SecretKind::OAuthRefreshToken,
+        SecretKind::AuthMetadata,
+    ] {
+        store.delete_secret(provider, kind).await?;
     }
     Ok(())
 }
@@ -1239,36 +1245,62 @@ async fn acquire_codex_refresh_file_lock(
     provider: &str,
 ) -> Result<CodexRefreshFileLock, ProviderAuthError> {
     let path = codex_refresh_lock_path(config_dir, provider)?;
-    let parent = path.parent().ok_or(ProviderAuthError::Storage)?;
-    tokio::fs::create_dir_all(parent)
-        .await
-        .map_err(|_| ProviderAuthError::Storage)?;
+    ensure_provider_auth_directory(&path).await?;
+    reject_provider_auth_file_symlink(&path).await?;
     #[cfg(unix)]
     {
-        let path = path.clone();
-        tokio::task::spawn_blocking(move || {
-            use std::os::unix::fs::OpenOptionsExt;
-            let file = std::fs::OpenOptions::new()
-                .create(true)
-                .read(true)
-                .write(true)
-                .mode(0o600)
-                .open(&path)
-                .map_err(|_| ProviderAuthError::Storage)?;
-            let rc = unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&file), libc::LOCK_EX) };
-            if rc != 0 {
-                return Err(ProviderAuthError::Storage);
+        let started = std::time::Instant::now();
+        loop {
+            match try_acquire_codex_refresh_file_lock_once(&path).await? {
+                Some(lock) => return Ok(lock),
+                None if started.elapsed() >= CODEX_REFRESH_FILE_LOCK_TIMEOUT => {
+                    return Err(ProviderAuthError::Storage)
+                }
+                None => tokio::time::sleep(CODEX_REFRESH_FILE_LOCK_RETRY).await,
             }
-            Ok(CodexRefreshFileLock { file: Some(file) })
-        })
-        .await
-        .map_err(|_| ProviderAuthError::Storage)?
+        }
     }
     #[cfg(not(unix))]
     {
         let _ = path;
-        Ok(CodexRefreshFileLock {})
+        Err(ProviderAuthError::Storage)
     }
+}
+
+#[cfg(unix)]
+async fn try_acquire_codex_refresh_file_lock_once(
+    path: &Path,
+) -> Result<Option<CodexRefreshFileLock>, ProviderAuthError> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&path)
+            .map_err(|_| ProviderAuthError::Storage)?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|_| ProviderAuthError::Storage)?;
+        let rc = unsafe {
+            libc::flock(
+                std::os::fd::AsRawFd::as_raw_fd(&file),
+                libc::LOCK_EX | libc::LOCK_NB,
+            )
+        };
+        if rc == 0 {
+            return Ok(Some(CodexRefreshFileLock { file: Some(file) }));
+        }
+        let error = std::io::Error::last_os_error();
+        if matches!(error.raw_os_error(), Some(code) if code == libc::EWOULDBLOCK || code == libc::EAGAIN) {
+            return Ok(None);
+        }
+        Err(ProviderAuthError::Storage)
+    })
+    .await
+    .map_err(|_| ProviderAuthError::Storage)?
 }
 
 fn codex_refresh_lock_path(
@@ -1774,6 +1806,68 @@ mod tests {
             .permissions()
             .mode()
             & 0o777
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn codex_refresh_lock_rejects_directory_symlink_escape() {
+        let dir = temp_dir();
+        let outside = temp_dir();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join("provider-auth-openai")).unwrap();
+
+        assert!(matches!(
+            super::acquire_codex_refresh_file_lock(&dir, "openai").await,
+            Err(ProviderAuthError::Storage)
+        ));
+        assert!(std::fs::read_dir(outside).unwrap().next().is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn codex_refresh_lock_rejects_final_file_symlink() {
+        let dir = temp_dir();
+        let outside = temp_dir();
+        let path = super::codex_refresh_lock_path(&dir, "openai").unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let target = outside.join("outside.lock");
+        std::fs::write(&target, "outside").unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+
+        assert!(matches!(
+            super::acquire_codex_refresh_file_lock(&dir, "openai").await,
+            Err(ProviderAuthError::Storage)
+        ));
+        assert_eq!(std::fs::read_to_string(target).unwrap(), "outside");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn codex_refresh_lock_times_out_when_already_locked() {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let dir = temp_dir();
+        let path = super::codex_refresh_lock_path(&dir, "openai").unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap();
+        let rc = unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&file), libc::LOCK_EX) };
+        assert_eq!(rc, 0);
+
+        let started = std::time::Instant::now();
+        assert!(matches!(
+            super::acquire_codex_refresh_file_lock(&dir, "openai").await,
+            Err(ProviderAuthError::Storage)
+        ));
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
+        let _ = unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&file), libc::LOCK_UN) };
     }
 
     #[tokio::test]

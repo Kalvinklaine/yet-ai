@@ -3003,16 +3003,142 @@ async fn provider_auth_openai_experimental_changed_token_after_lock_wait_require
     assert_stored_secret(Some(&second.access_token), "access-lock-fresh");
 
     assert_eq!(first_body["grant_type"], "refresh_token");
-    assert_json_string_value(&first_body["refresh_token"], "refresh-lock-old", "first lock refresh token");
+    assert_json_string_value(
+        &first_body["refresh_token"],
+        "refresh-lock-old",
+        "first lock refresh token",
+    );
     let second_body = token_body_receiver.recv().await.unwrap();
     assert_eq!(second_body["grant_type"], "refresh_token");
-    assert_json_string_value(&second_body["refresh_token"], "refresh-lock-near", "second lock refresh token");
+    assert_json_string_value(
+        &second_body["refresh_token"],
+        "refresh-lock-near",
+        "second lock refresh token",
+    );
     assert!(tokio::time::timeout(
         std::time::Duration::from_millis(100),
         token_body_receiver.recv()
     )
     .await
     .is_err());
+}
+
+#[tokio::test]
+async fn provider_auth_openai_experimental_refresh_commit_failure_deletes_consumed_refresh_token() {
+    let paths = test_storage_paths();
+    let store = FileSecretStore::new(&paths.config_dir);
+    let (token_endpoint_url, mut token_body_receiver) = start_refresh_codex_token_endpoint(
+        StatusCode::OK,
+        json!({
+            "access_token": "access-2",
+            "refresh_token": "refresh-2",
+            "expires_in": 1800,
+            "scope": "openid profile email offline_access",
+            "account_label": "mock-user@example.test"
+        }),
+    )
+    .await;
+    let metadata = json!({
+        "provider": "openai",
+        "accountLabel": "mock-user@example.test",
+        "scopes": ["openid", "profile", "email", "offline_access"],
+        "expiresAt": (chrono::Utc::now() + chrono::Duration::seconds(30)).to_rfc3339(),
+        "redacted": "ac...-1",
+        "chatBaseUrl": "http://127.0.0.1:1456/backend-api/codex",
+        "chatModel": "gpt-5-codex",
+        "tokenEndpointUrl": token_endpoint_url
+    });
+    store
+        .put_secret("openai", SecretKind::OAuthAccessToken, "access-1")
+        .await
+        .unwrap();
+    store
+        .put_secret("openai", SecretKind::OAuthRefreshToken, "refresh-1")
+        .await
+        .unwrap();
+    store
+        .put_secret("openai", SecretKind::AuthMetadata, &metadata.to_string())
+        .await
+        .unwrap();
+    let metadata_path = store
+        .secret_path("openai", SecretKind::AuthMetadata)
+        .unwrap();
+
+    let config_dir = paths.config_dir.clone();
+    let refresh = tokio::spawn(async move {
+        yet_lsp::provider_auth::refresh_experimental_codex_chat_auth_if_needed(&config_dir).await
+    });
+    let body = token_body_receiver.recv().await.unwrap();
+    assert_eq!(body["grant_type"], "refresh_token");
+    assert_json_string_value(&body["refresh_token"], "refresh-1", "refresh request token");
+    std::fs::remove_file(&metadata_path).unwrap();
+    std::fs::create_dir(&metadata_path).unwrap();
+
+    let error = refresh.await.unwrap().unwrap_err();
+    assert_eq!(error.to_string(), "provider auth storage error");
+    assert_eq!(
+        store
+            .get_secret("openai", SecretKind::OAuthAccessToken)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        store
+            .get_secret("openai", SecretKind::OAuthRefreshToken)
+            .await
+            .unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
+async fn provider_auth_openai_experimental_oversized_token_error_body_is_sanitized() {
+    let paths = test_storage_paths();
+    let store = FileSecretStore::new(&paths.config_dir);
+    let oversized = format!(
+        "{} refresh_token_reused access_token=secret refresh_token=secret",
+        "x".repeat(64 * 1024)
+    );
+    let (token_endpoint_url, mut token_body_receiver) = start_refresh_codex_token_endpoint(
+        StatusCode::UNAUTHORIZED,
+        json!({ "error": { "message": oversized, "code": "refresh_token_reused" } }),
+    )
+    .await;
+    let metadata = json!({
+        "provider": "openai",
+        "accountLabel": "mock-user@example.test",
+        "scopes": ["openid", "profile", "email", "offline_access"],
+        "expiresAt": (chrono::Utc::now() + chrono::Duration::seconds(30)).to_rfc3339(),
+        "redacted": "ac...-1",
+        "chatBaseUrl": "http://127.0.0.1:1456/backend-api/codex",
+        "chatModel": "gpt-5-codex",
+        "tokenEndpointUrl": token_endpoint_url
+    });
+    store
+        .put_secret("openai", SecretKind::OAuthAccessToken, "access-1")
+        .await
+        .unwrap();
+    store
+        .put_secret("openai", SecretKind::OAuthRefreshToken, "refresh-1")
+        .await
+        .unwrap();
+    store
+        .put_secret("openai", SecretKind::AuthMetadata, &metadata.to_string())
+        .await
+        .unwrap();
+
+    let error =
+        yet_lsp::provider_auth::refresh_experimental_codex_chat_auth_if_needed(&paths.config_dir)
+            .await
+            .unwrap_err();
+    assert_eq!(error.to_string(), "provider auth token exchange failed");
+    let text = error.to_string().to_lowercase();
+    assert!(!text.contains("refresh_token_reused"));
+    assert!(!text.contains("access_token"));
+    assert!(!text.contains("refresh-1"));
+    let body = token_body_receiver.recv().await.unwrap();
+    assert_json_string_value(&body["refresh_token"], "refresh-1", "refresh request token");
 }
 
 #[tokio::test]
