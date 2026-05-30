@@ -3842,6 +3842,155 @@ async fn duplicate_create_does_not_plant_orphan_secret_for_none_auth_provider() 
 }
 
 #[tokio::test]
+async fn provider_secret_metadata_only_update_does_not_touch_api_key_secret_storage() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-metadata-update-secret-abcd";
+    let provider = json!({
+        "id": "metadata-only-provider",
+        "kind": "openai-compatible",
+        "displayName": "Metadata Only Provider",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:9700/v1",
+        "auth": { "type": "api_key", "apiKey": api_key },
+        "models": [{ "id": "gpt-before", "displayName": "GPT Before" }],
+        "capabilities": { "chat": true, "completion": false, "embeddings": false }
+    });
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let store = FileSecretStore::new(&paths.config_dir);
+    let secret_path = store
+        .secret_path("metadata-only-provider", SecretKind::ApiKey)
+        .unwrap();
+    let before_metadata = std::fs::metadata(&secret_path).unwrap().modified().unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    let update = json!({
+        "displayName": "Metadata Updated Provider",
+        "enabled": false,
+        "baseUrl": "http://127.0.0.1:9701/v1",
+        "models": [{ "id": "gpt-after", "displayName": "GPT After" }],
+        "capabilities": { "chat": false, "completion": false, "embeddings": false }
+    });
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::PATCH,
+            "/v1/providers/metadata-only-provider",
+            Body::from(update.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["displayName"], "Metadata Updated Provider");
+    assert_eq!(body["enabled"], false);
+    assert_eq!(body["auth"]["type"], "api_key");
+    assert_eq!(body["auth"]["configured"], false);
+    assert!(!body.to_string().contains(api_key));
+
+    let after_metadata = std::fs::metadata(&secret_path).unwrap().modified().unwrap();
+    assert_eq!(after_metadata, before_metadata);
+    let secret = store
+        .get_secret("metadata-only-provider", SecretKind::ApiKey)
+        .await
+        .unwrap();
+    assert_stored_secret(secret.as_deref(), api_key);
+}
+
+#[tokio::test]
+async fn provider_secret_create_secret_commit_failure_leaves_no_provider_config() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-create-secret-failure-abcd";
+    let store = FileSecretStore::new(&paths.config_dir);
+    let secret_path = store
+        .secret_path("create-secret-failure", SecretKind::ApiKey)
+        .unwrap();
+    std::fs::create_dir_all(&secret_path).unwrap();
+
+    let provider = json!({
+        "id": "create-secret-failure",
+        "kind": "custom",
+        "displayName": "Create Secret Failure",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:9800",
+        "auth": { "type": "api_key", "apiKey": api_key }
+    });
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["error"], "provider secret storage error");
+    assert!(!body.to_string().contains(api_key));
+    assert!(!paths
+        .config_dir
+        .join("providers.d/create-secret-failure.json")
+        .exists());
+}
+
+#[tokio::test]
+async fn provider_secret_create_config_failure_rolls_back_committed_secret() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-create-config-failure-abcd";
+    std::fs::create_dir_all(&paths.config_dir).unwrap();
+    std::fs::write(paths.config_dir.join("providers.d"), "not a directory").unwrap();
+
+    let provider = json!({
+        "id": "create-config-failure",
+        "kind": "custom",
+        "displayName": "Create Config Failure",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:9801",
+        "auth": { "type": "api_key", "apiKey": api_key }
+    });
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["error"], "provider storage error");
+    assert!(!body.to_string().contains(api_key));
+    let secret = FileSecretStore::new(&paths.config_dir)
+        .get_secret("create-config-failure", SecretKind::ApiKey)
+        .await
+        .unwrap();
+    assert_eq!(secret, None);
+}
+
+#[tokio::test]
 async fn update_with_mismatched_id_is_rejected_without_mutation() {
     let app = test_app();
     let api_key = "sk-mismatch-secret-abcd";
