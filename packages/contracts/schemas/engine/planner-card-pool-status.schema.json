@@ -201,6 +201,31 @@
               "blocker"
             ]
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "overflowRecovery": true
+            },
+            "required": [
+              "overflowRecovery"
+            ]
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "blocked",
+                  "replan_required",
+                  "failed",
+                  "stuck"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
         }
       ]
     },
@@ -286,6 +311,36 @@
             "idleReason"
           ]
         }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "overflowRecovery": true
+        },
+        "required": [
+          "overflowRecovery"
+        ]
+      },
+      "then": {
+        "properties": {
+          "poolStatus": {
+            "enum": [
+              "blocked",
+              "replan_required"
+            ]
+          },
+          "nextAction": {
+            "enum": [
+              "recover_failed",
+              "idle_blocked"
+            ]
+          }
+        },
+        "required": [
+          "poolStatus",
+          "nextAction"
+        ]
       }
     }
   ]

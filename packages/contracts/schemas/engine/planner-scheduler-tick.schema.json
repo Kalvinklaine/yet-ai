@@ -235,6 +235,29 @@
           ]
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "overflowRecovery": true
+        },
+        "required": [
+          "overflowRecovery"
+        ]
+      },
+      "then": {
+        "properties": {
+          "nextAction": {
+            "enum": [
+              "recover_failed",
+              "idle_blocked"
+            ]
+          }
+        },
+        "required": [
+          "nextAction"
+        ]
+      }
     }
   ]
 }

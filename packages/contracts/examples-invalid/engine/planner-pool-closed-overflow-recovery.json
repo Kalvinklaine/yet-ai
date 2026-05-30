@@ -1,0 +1,20 @@
+{
+  "protocolVersion": "2026-05-15",
+  "poolId": "planner_overflow_recovery",
+  "autonomousMode": true,
+  "poolStatus": "closed",
+  "nextAction": "plan_next_pool",
+  "cards": [
+    {
+      "cardId": "T331",
+      "status": "closed",
+      "safeSummary": "Closed card should not expose active recovery guidance."
+    }
+  ],
+  "safeSummary": "Closed pool should not expose active recovery guidance.",
+  "overflowRecovery": {
+    "kind": "task_board_output_too_large",
+    "message": "Task-board output exceeded the safe contract budget. Use a compact status summary.",
+    "retryable": true
+  }
+}

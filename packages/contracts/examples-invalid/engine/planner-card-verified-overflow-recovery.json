@@ -1,0 +1,22 @@
+{
+  "protocolVersion": "2026-05-15",
+  "poolId": "planner_overflow_recovery",
+  "autonomousMode": true,
+  "poolStatus": "running",
+  "nextAction": "verify_merge",
+  "cards": [
+    {
+      "cardId": "T331",
+      "status": "verified",
+      "mergeState": "merged",
+      "verificationState": "passed",
+      "safeSummary": "Verified card should not expose active recovery guidance.",
+      "overflowRecovery": {
+        "kind": "context_length_exceeded",
+        "message": "Context exceeded the safe planner window. Retry with compact card summaries.",
+        "retryable": true
+      }
+    }
+  ],
+  "safeSummary": "Pool still has ordinary follow-up work without active overflow recovery."
+}

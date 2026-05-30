@@ -154,6 +154,33 @@
           "failureKind"
         ]
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "overflowRecovery": true
+        },
+        "required": [
+          "overflowRecovery"
+        ]
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "enum": [
+              "failed",
+              "stuck"
+            ]
+          },
+          "nextAction": {
+            "const": "recover_failed"
+          }
+        },
+        "required": [
+          "status",
+          "nextAction"
+        ]
+      }
     }
   ],
   "$defs": {
