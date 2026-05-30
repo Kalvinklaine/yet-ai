@@ -1,0 +1,18 @@
+{
+  "protocolVersion": "2026-05-15",
+  "agentRunId": "agent-T330-raw-dump",
+  "cardId": "T330",
+  "poolId": "planner_overflow_recovery",
+  "autonomousMode": true,
+  "status": "failed",
+  "nextAction": "recover_failed",
+  "observedAt": "2026-05-30T10:00:00Z",
+  "failureKind": "agent_error",
+  "safeSummary": "Agent overflow recovery should not expose raw dump fields.",
+  "overflowRecovery": {
+    "kind": "context_length_exceeded",
+    "message": "Context overflow recorded as a compact summary.",
+    "retryable": true,
+    "rawDump": "example oversized planner transcript placeholder"
+  }
+}

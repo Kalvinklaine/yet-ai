@@ -62,6 +62,8 @@ Planner scheduler contracts are future/simulator-facing product contracts only. 
 
 Current planner schemas cover sanitized scheduler tick audits, delegated agent run status snapshots, and card/pool status summaries. They require explicit `autonomousMode`, a bounded `nextAction`, audited `idleReason` whenever `nextAction = "idle_blocked"`, explicit agent statuses such as `running`, `done`, `failed`, `stuck`, and `unknown`, and card statuses such as `done_unmerged`, `merge_pending`, `verification_pending`, `verified`, `blocked`, and `replan_required`. A card can be `verified` only when merge and verification states show `merged` and `passed`.
 
+Planner overflow recovery is represented by the optional `overflowRecovery` object where the schema shape supports it: planner agent run snapshots, scheduler tick summaries, pool summaries, and individual card summaries. Its `kind` enum is limited to `context_length_exceeded`, `tool_output_too_large`, and `task_board_output_too_large`; its message is a short sanitized user-facing summary, not a raw prompt, raw tool result, raw task-board dump, transcript, log tail, provider body, file content, credential material, or private path. These contracts allow future planner/agent progress to report recoverable overflow and safe retry guidance while preserving local-first operation and without introducing hosted recovery services.
+
 The repository also includes local-only planner verification commands:
 
 ```sh

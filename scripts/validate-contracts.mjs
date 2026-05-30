@@ -25,6 +25,7 @@ const mappings = [
   ["packages/contracts/examples/engine/provider-auth-disconnect-success.json", "packages/contracts/schemas/engine/provider-auth-disconnect-response.schema.json"],
   ["packages/contracts/examples/engine/provider-auth-disconnect-api-key-fallback.json", "packages/contracts/schemas/engine/provider-auth-disconnect-response.schema.json"],
   ["packages/contracts/examples/engine/planner-agent-done-waiting-merge.json", "packages/contracts/schemas/engine/planner-agent-run-status.schema.json"],
+  ["packages/contracts/examples/engine/planner-agent-context-overflow-recovery.json", "packages/contracts/schemas/engine/planner-agent-run-status.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-event-healthy-command.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-event-stuck-heartbeat.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-event-failed-command.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
@@ -39,7 +40,9 @@ const mappings = [
   ["packages/contracts/examples/engine/agent-progress-list-failed-command.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-list-done.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
   ["packages/contracts/examples/engine/planner-scheduler-idle-blocked.json", "packages/contracts/schemas/engine/planner-scheduler-tick.schema.json"],
+  ["packages/contracts/examples/engine/planner-scheduler-tool-output-overflow-recovery.json", "packages/contracts/schemas/engine/planner-scheduler-tick.schema.json"],
   ["packages/contracts/examples/engine/planner-pool-complete-next-pool.json", "packages/contracts/schemas/engine/planner-card-pool-status.schema.json"],
+  ["packages/contracts/examples/engine/planner-pool-task-board-overflow-recovery.json", "packages/contracts/schemas/engine/planner-card-pool-status.schema.json"],
   ["packages/contracts/examples/engine/models-response.json", "packages/contracts/schemas/engine/models.schema.json"],
   ["packages/contracts/examples/engine/chat-list-response.json", "packages/contracts/schemas/engine/chat-list-response.schema.json"],
   ["packages/contracts/examples/engine/chat-thread-response.json", "packages/contracts/schemas/engine/chat-thread.schema.json"],
@@ -250,7 +253,15 @@ const invalidMappings = [
     "packages/contracts/schemas/engine/planner-scheduler-tick.schema.json"
   ],
   [
+    "packages/contracts/examples-invalid/engine/planner-scheduler-overflow-unsafe-message.json",
+    "packages/contracts/schemas/engine/planner-scheduler-tick.schema.json"
+  ],
+  [
     "packages/contracts/examples-invalid/engine/planner-agent-status-secret-field.json",
+    "packages/contracts/schemas/engine/planner-agent-run-status.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/planner-agent-overflow-raw-dump-field.json",
     "packages/contracts/schemas/engine/planner-agent-run-status.schema.json"
   ],
   [
@@ -331,6 +342,10 @@ const invalidMappings = [
   ],
   [
     "packages/contracts/examples-invalid/engine/planner-card-verified-without-merge.json",
+    "packages/contracts/schemas/engine/planner-card-pool-status.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/planner-card-overflow-overlong-summary.json",
     "packages/contracts/schemas/engine/planner-card-pool-status.schema.json"
   ],
   [
