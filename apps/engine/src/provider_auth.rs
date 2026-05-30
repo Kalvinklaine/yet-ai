@@ -1081,13 +1081,14 @@ pub async fn refresh_experimental_codex_chat_auth_after_rejection(
 pub async fn refresh_experimental_codex_chat_auth_if_needed(
     config_dir: &Path,
 ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
-    let Some(auth) = experimental_codex_chat_auth(config_dir).await? else {
+    let provider = "openai";
+    let Some(snapshot) = read_codex_chat_auth_snapshot(config_dir, provider).await? else {
         return Ok(None);
     };
-    if codex_auth_needs_refresh(config_dir, "openai").await? {
+    if metadata_needs_refresh(&snapshot.metadata)? {
         refresh_experimental_codex_chat_auth(config_dir, None).await
     } else {
-        Ok(Some(auth))
+        Ok(Some(snapshot.auth))
     }
 }
 
@@ -1102,10 +1103,11 @@ async fn refresh_experimental_codex_chat_auth(
     let Some(current) = read_codex_chat_auth_snapshot(config_dir, provider).await? else {
         return Ok(None);
     };
-    if rejected_access_token.is_some_and(|token| token != current.access_token) {
+    let needs_refresh = metadata_needs_refresh(&current.metadata)?;
+    if rejected_access_token.is_some_and(|token| token != current.access_token) && !needs_refresh {
         return Ok(Some(current.auth));
     }
-    if rejected_access_token.is_none() && !metadata_needs_refresh(&current.metadata)? {
+    if rejected_access_token.is_none() && !needs_refresh {
         return Ok(Some(current.auth));
     }
     let refresh_token = current.refresh_token;
@@ -1211,16 +1213,6 @@ async fn read_newer_codex_chat_auth(
     } else {
         Ok(None)
     }
-}
-
-async fn codex_auth_needs_refresh(
-    config_dir: &Path,
-    provider: &str,
-) -> Result<bool, ProviderAuthError> {
-    let Some(snapshot) = read_codex_chat_auth_snapshot(config_dir, provider).await? else {
-        return Ok(false);
-    };
-    metadata_needs_refresh(&snapshot.metadata)
 }
 
 fn metadata_needs_refresh(metadata: &CodexAuthMetadata) -> Result<bool, ProviderAuthError> {
