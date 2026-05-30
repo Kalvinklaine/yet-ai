@@ -111,13 +111,24 @@ SSE events with `type: "error"` use a stable sanitized payload shape with a boun
 - `model_not_configured` when the selected model is missing, disabled, or not ready.
 - `provider_unauthorized` when local credentials are missing, expired, revoked, or rejected.
 - `provider_rate_limited` when the provider reports rate limit, quota, or credit exhaustion.
-- `provider_context_too_large` when the prompt/request exceeds the selected model context window.
+- `provider_context_too_large` when the prompt/request, including any attached active editor context, exceeds the selected model context window.
 - `provider_invalid_request` when the provider rejects a sanitized malformed or unsupported request.
 - `provider_timeout` when the provider request or stream times out.
 - `provider_upstream_error` when the provider service returns an upstream failure.
 - `provider_malformed_stream` when streaming provider output is malformed or ends unexpectedly.
 - `provider_config_error` when local provider configuration is invalid.
 - `provider_request_failed` as the legacy fallback for provider request failures that cannot yet be mapped more specifically.
+
+Classification may use bounded HTTP status, bounded response text, or bounded stream error-frame signals, but it is best-effort because providers and local gateways do not all use OpenAI-compatible error shapes. Runtime and GUI-facing implementations must prefer safe fallback codes and stable Yet AI-generated messages over raw provider text. GUI recovery guidance should map the codes to user actions such as configure a provider, select a ready model, re-enter credentials, check quota, reduce prompt or attached editor context, fix invalid configuration, check provider status, or retry later. The contract does not define automatic retries or production-grade provider compatibility.
+
+Provider error taxonomy changes should keep positive and invalid SSE fixtures aligned and can be checked with:
+
+```sh
+npm run validate:contracts
+npm run smoke:provider-errors
+```
+
+`npm run smoke:provider-errors` is loopback-only and validates stable sanitized SSE codes/messages, sanitized persisted chat history, and absence of raw fake secrets, provider bodies, request-body markers, cookies, bearer strings, auth codes, or private paths in client-visible smoke output.
 
 ## Future commands
 
