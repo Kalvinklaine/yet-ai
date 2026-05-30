@@ -748,6 +748,7 @@ async fn collect_openai_compatible_stream(
 }
 
 const PROVIDER_ERROR_BODY_CLASSIFICATION_LIMIT: usize = 16 * 1024;
+const PROVIDER_STREAM_EVENT_CLASSIFICATION_LIMIT: usize = 16 * 1024;
 
 async fn classify_provider_http_error(response: reqwest::Response) -> ChatError {
     let status = response.status();
@@ -881,7 +882,12 @@ impl OpenAiSseParser {
         let Some(data) = line.strip_prefix("data:") else {
             return Err(ChatError::MalformedStream);
         };
-        self.data_lines.push(data.trim_start().to_string());
+        let data = data.trim_start();
+        let current_len: usize = self.data_lines.iter().map(|line| line.len()).sum();
+        if current_len + data.len() > PROVIDER_STREAM_EVENT_CLASSIFICATION_LIMIT {
+            return Err(ChatError::MalformedStream);
+        }
+        self.data_lines.push(data.to_string());
         Ok(())
     }
 
@@ -933,7 +939,9 @@ fn chat_completions_url(base_url: &str) -> Result<String, ChatError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{chat_completions_url, OpenAiSseParser};
+    use super::{
+        chat_completions_url, OpenAiSseParser, PROVIDER_STREAM_EVENT_CLASSIFICATION_LIMIT,
+    };
 
     #[test]
     fn chat_completions_url_normalizes_api_roots() {
@@ -982,5 +990,16 @@ mod tests {
     fn openai_sse_parser_rejects_malformed_frames() {
         let mut parser = OpenAiSseParser::default();
         assert!(parser.push("data: { not-json }\n\n").is_err());
+    }
+
+    #[test]
+    fn openai_sse_parser_rejects_oversized_chat_error_frames() {
+        let mut parser = OpenAiSseParser::default();
+        let oversized = format!(
+            "data: {{\"error\":{{\"message\":\"{} sk-oversized-frame-secret access_token=secret /Users/example\"}}}}\n\n",
+            "x".repeat(PROVIDER_STREAM_EVENT_CLASSIFICATION_LIMIT)
+        );
+        let error = parser.push(&oversized).unwrap_err();
+        assert_eq!(error.to_string(), "provider returned malformed streaming data");
     }
 }

@@ -1,0 +1,9 @@
+{
+  "seq": 26,
+  "type": "error",
+  "chatId": "chat-001",
+  "payload": {
+    "code": "provider_upstream_error",
+    "message": "Provider service returned an error with Cookie marker."
+  }
+}

@@ -815,9 +815,13 @@ fn assert_sanitized_sse_error(text: &str) {
     let lower = text.to_lowercase();
     assert!(!text.contains("sk-"));
     assert!(!lower.contains("bearer "));
+    assert!(!lower.contains("authorization"));
     assert!(!lower.contains("access_token"));
     assert!(!lower.contains("refresh_token"));
     assert!(!lower.contains("api_key"));
+    assert!(!lower.contains("cookie"));
+    assert!(!lower.contains("/users/"));
+    assert!(!lower.contains("/home/"));
     assert!(!text.contains("user:pass@"));
     assert!(!text.contains("raw-provider-body"));
     assert!(!text.contains("codex-access-token-secret"));
@@ -7436,7 +7440,7 @@ async fn chat_provider_http_failures_produce_stable_sanitized_error_events_and_h
 }
 
 #[tokio::test]
-async fn provider_stream_error_frame_is_classified_without_raw_body_leakage() {
+async fn chat_provider_stream_error_frame_is_classified_without_raw_body_leakage() {
     let api_key = "sk-stream-error-frame-secret-abcd";
     let (base_url, auth_receiver) = start_mock_provider(
         StatusCode::OK,
@@ -7483,6 +7487,63 @@ async fn provider_stream_error_frame_is_classified_without_raw_body_leakage() {
         auth_receiver,
         "Bearer sk-stream-error-frame-secret-abcd",
         "provider stream error frame classification",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn chat_provider_oversized_stream_error_frame_is_bounded_and_sanitized() {
+    let api_key = "sk-stream-oversized-frame-secret-abcd";
+    let oversized = format!(
+        "data: {{\"error\":{{\"message\":\"{} raw-provider-body sk-oversized-frame-secret Authorization: Bearer secret Cookie: secret /Users/example/private /home/example/private\"}}}}\n\n",
+        "x".repeat(16 * 1024)
+    );
+    let stream_body: &'static str = Box::leak(oversized.into_boxed_str());
+    let (base_url, auth_receiver) = start_mock_provider(StatusCode::OK, stream_body).await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+    send_user_message(app.clone(), "chat-stream-oversized-error-frame").await;
+
+    let loaded = wait_for_chat_messages(app.clone(), "chat-stream-oversized-error-frame", 2).await;
+    assert_eq!(loaded["messages"][1]["role"], "error");
+    assert_eq!(loaded["messages"][1]["content"], "Provider stream ended unexpectedly.");
+    assert_provider_error_text_is_sanitized(
+        &loaded.to_string(),
+        &[
+            "sk-oversized-frame-secret",
+            "raw-provider-body",
+            "Authorization",
+            "Cookie",
+            "/Users/example",
+            "/home/example",
+        ],
+    );
+
+    let text = sse_text_from(
+        app,
+        "/v1/chats/subscribe?chat_id=chat-stream-oversized-error-frame",
+    )
+    .await;
+    let events = sse_json_events(&text);
+    let error = find_error_event(&events);
+    assert_eq!(error["payload"]["code"], "provider_malformed_stream");
+    assert_eq!(error["payload"]["message"], "Provider stream ended unexpectedly.");
+    assert_provider_error_text_is_sanitized(
+        &text,
+        &[
+            "sk-oversized-frame-secret",
+            "raw-provider-body",
+            "Authorization",
+            "Cookie",
+            "/Users/example",
+            "/home/example",
+        ],
+    );
+    assert!(!text.contains(api_key));
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer sk-stream-oversized-frame-secret-abcd",
+        "provider oversized stream error frame",
     )
     .await;
 }

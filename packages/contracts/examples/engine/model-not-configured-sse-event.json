@@ -4,6 +4,6 @@
   "chatId": "chat-001",
   "payload": {
     "code": "model_not_configured",
-    "message": "Model is not configured."
+    "message": "The configured provider has no chat model."
   }
 }

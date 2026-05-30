@@ -356,6 +356,34 @@ const invalidMappings = [
   [
     "packages/contracts/examples-invalid/engine/error-sse-event-debug-payload.json",
     "packages/contracts/schemas/engine/sse-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/error-sse-event-secret-message.json",
+    "packages/contracts/schemas/engine/sse-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/error-sse-event-token-message.json",
+    "packages/contracts/schemas/engine/sse-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/error-sse-event-cookie-message.json",
+    "packages/contracts/schemas/engine/sse-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/error-sse-event-private-path-message.json",
+    "packages/contracts/schemas/engine/sse-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/error-sse-event-empty-message.json",
+    "packages/contracts/schemas/engine/sse-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/error-sse-event-missing-message.json",
+    "packages/contracts/schemas/engine/sse-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/error-sse-event-overlong-message.json",
+    "packages/contracts/schemas/engine/sse-event.schema.json"
   ]
 ].map(([examplePath, schemaPath]) => [normalizeContractPath(examplePath), normalizeContractPath(schemaPath)]);
 

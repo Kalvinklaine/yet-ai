@@ -1,0 +1,9 @@
+{
+  "seq": 30,
+  "type": "error",
+  "chatId": "chat-001",
+  "payload": {
+    "code": "provider_request_failed",
+    "message": "This provider error message is intentionally too long for the contract limit. It keeps repeating safe ordinary recovery copy without any credential-like markers so the schema maxLength boundary is exercised separately from secret redaction patterns. Please retry later after checking local provider configuration."
+  }
+}

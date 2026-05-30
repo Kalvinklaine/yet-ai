@@ -1,0 +1,9 @@
+{
+  "seq": 25,
+  "type": "error",
+  "chatId": "chat-001",
+  "payload": {
+    "code": "provider_request_failed",
+    "message": "Provider request failed with Bearer placeholder access_token field."
+  }
+}
