@@ -1382,6 +1382,81 @@ describe("agent progress panel", () => {
     expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Apply");
   });
 
+  it("explicit stuck snapshot renders contract stuck reason", async () => {
+    mockRuntimeResponses({ agentProgress: agentProgressResponse([agentProgressSnapshot({ phase: "stuck", status: "stuck", stuckReason: "explicit_stuck", message: "Agent explicitly reported stuck" })]) });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Refresh agent progress").click();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("stuck: explicit_stuck");
+    expect(container?.textContent).toContain("Stuck reason: explicit_stuck");
+  });
+
+  it("does not render stale overflow recovery for done snapshots", async () => {
+    mockRuntimeResponses({
+      agentProgress: agentProgressResponse([agentProgressSnapshot({
+        phase: "done",
+        status: "done",
+        message: "Completed after earlier context_length_exceeded recovery",
+        outputTail: "Previous task board output too large event was resolved.",
+        overflowRecovery: {
+          kind: "task_board_output_too_large",
+          message: "Retry with task_ready_cards or task_board_get(card_id).",
+          retryable: true,
+        },
+        recentEvents: [{ eventId: "event-done", timestamp: "2026-05-29T14:00:30Z", phase: "done", status: "done", message: "Done after overflow" }],
+      })]),
+    });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Refresh agent progress").click();
+      await Promise.resolve();
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("done");
+    expect(text).not.toContain("Task-board output was too large.");
+    expect(text).not.toContain("Use a specific card id, ready cards, or scoped search instead of a full task-board dump.");
+  });
+
+  it("redacts raw-content label bodies and bounds oversized noisy output", async () => {
+    const noisyChunk = "SAFE_NOISY_AGENT_OUTPUT_";
+    const hugeOutput = noisyChunk.repeat(1200);
+    mockRuntimeResponses({
+      agentProgress: agentProgressResponse([agentProgressSnapshot({
+        phase: "failed",
+        status: "failed",
+        message: "Failed after raw prompt: SECRET_PROMPT_BODY",
+        outputTail: `raw prompt SECRET_PROMPT_BODY\nprovider response: SECRET_PROVIDER_BODY\nfile content=SECRET_FILE_BODY\nworkspace contents: SECRET_WORKSPACE_BODY\nchain of thought SECRET_THOUGHT_BODY\n${hugeOutput}`,
+        recentEvents: [{ eventId: "event-raw-body", timestamp: "2026-05-29T14:00:30Z", phase: "failed", status: "failed", message: `tool output too large ${hugeOutput}` }],
+      })]),
+    });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Refresh agent progress").click();
+      await Promise.resolve();
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Agent output was too large.");
+    expect(text).toContain("[redacted]");
+    expect(text).not.toContain("SECRET_PROMPT_BODY");
+    expect(text).not.toContain("SECRET_PROVIDER_BODY");
+    expect(text).not.toContain("SECRET_FILE_BODY");
+    expect(text).not.toContain("SECRET_WORKSPACE_BODY");
+    expect(text).not.toContain("SECRET_THOUGHT_BODY");
+    expect((text.match(/SAFE_NOISY_AGENT_OUTPUT_/g) ?? []).length).toBeLessThan(220);
+    expect(text.length).toBeLessThan(16000);
+  });
+
   it("endpoint unavailable runtime error is sanitized and non-fatal", async () => {
     mockRuntimeResponses({ agentProgressStatus: 404, agentProgressError: "missing endpoint Authorization: Bearer progress-secret" });
     renderApp();

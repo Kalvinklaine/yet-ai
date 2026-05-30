@@ -13,7 +13,7 @@ const redactionPatterns: Array<[RegExp, string]> = [
   [new RegExp(String.raw`(["'])${secretKeyPattern}\1\s*:\s*(["'])(?:\\.|(?!\2).)*\2`, "gi"), "[redacted]"],
   [new RegExp(String.raw`(["'])${secretKeyPattern}\1\s*:\s*(?:-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)\b`, "gi"), "[redacted]"],
   [new RegExp(String.raw`\b${secretKeyPattern}\b\s*[:=]\s*[^\s,;)}\]]+`, "gi"), "[redacted]"],
-  [/\b(?:raw[_ -]?prompt|provider[_ -]?response|file[_ -]?contents?|workspace[_ -]?contents?)\b\s*[:=]\s*[^\r\n]*/gi, "[redacted]"],
+  [/\b(?:chain[_ -]?of[_ -]?thought|raw[_ -]?prompt|provider[_ -]?response|file[_ -]?contents?|workspace[_ -]?contents?)\b\s*(?::|=)?\s*[^\r\n]*/gi, "[redacted]"],
   [/(?:[A-Za-z]:[\\/][^\r\n,;]*?(?:\.codex[\\/]auth\.json|auth\.json)|\/[^\r\n,;]*?(?:\.codex\/auth\.json|auth\.json)|(?:~|\.{1,2})?[\\/]?\.codex[\\/]auth\.json|\bauth\.json\b)/gi, "[redacted]"],
   [/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, "[redacted]"],
   [/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[redacted]"],

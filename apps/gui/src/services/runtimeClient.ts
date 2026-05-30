@@ -171,7 +171,7 @@ export type AgentProgressSnapshot = {
   currentTool?: AgentProgressToolSummary;
   outputTail?: string;
   overflowRecovery?: AgentOverflowRecovery;
-  stuckReason?: "heartbeat_timeout" | "tool_output_timeout" | "explicit_failure" | "none";
+  stuckReason?: "heartbeat_timeout" | "tool_output_timeout" | "explicit_failure" | "explicit_stuck" | "none";
   recentEvents: AgentProgressRecentEvent[];
 };
 

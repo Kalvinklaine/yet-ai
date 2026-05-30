@@ -71,6 +71,17 @@ describe("redaction", () => {
     expect(isSecretLikeKey("PROVIDER_CLIENT_SECRET")).toBe(true);
   });
 
+  it("redacts raw content label bodies", () => {
+    const rawFragments = ["SECRET_PROMPT_BODY", "SECRET_PROVIDER_BODY", "SECRET_FILE_BODY", "SECRET_WORKSPACE_BODY", "SECRET_THOUGHT_BODY"];
+    expectRedacted([
+      "raw prompt: SECRET_PROMPT_BODY",
+      "provider response SECRET_PROVIDER_BODY",
+      "file content=SECRET_FILE_BODY",
+      "workspace contents: SECRET_WORKSPACE_BODY",
+      "chain of thought SECRET_THOUGHT_BODY",
+    ].join("\n"), rawFragments);
+  });
+
   it("redacts credential paths and markers", () => {
     expectRedacted("auth.json .codex/auth.json .codex\\auth.json ./.codex/auth.json ../.codex/auth.json /Users/alice/.codex/auth.json C:\\Users\\alice\\.codex\\auth.json", ["auth.json", ".codex", "Users", "alice"]);
   });
