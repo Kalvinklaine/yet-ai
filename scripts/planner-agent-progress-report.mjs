@@ -50,6 +50,10 @@ function formatProgressReport(snapshot) {
     line("stuck_reason", snapshot.stuckReason ?? "none")
   ];
 
+  if (snapshot.overflowRecovery !== undefined) {
+    lines.push(line("overflow_recovery", `${snapshot.overflowRecovery.kind}: ${snapshot.overflowRecovery.message}`));
+  }
+
   const outputTail = sanitizeText(snapshot.outputTail, MAX_REPORT_TAIL);
   if (outputTail.length > 0) {
     lines.push(line("output_tail", outputTail));
