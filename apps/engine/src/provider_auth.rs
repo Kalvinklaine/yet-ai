@@ -30,7 +30,7 @@ const CODEX_TTL_SECONDS: i64 = 600;
 const MAX_PROVIDER_AUTH_TTL_SECONDS: i64 = 3600;
 const CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS: u64 = 2;
 const CODEX_TOKEN_ERROR_BODY_LIMIT_BYTES: usize = 4096;
-const CODEX_REFRESH_FILE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
+const CODEX_REFRESH_FILE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS * 1000 + 500);
 const CODEX_REFRESH_FILE_LOCK_RETRY: std::time::Duration = std::time::Duration::from_millis(10);
 const CODEX_TOKEN_REFRESH_SKEW_SECONDS: i64 = 60;
 const CODEX_TOKEN_DEFAULT_EXPIRES_IN_SECONDS: i64 = 3600;
@@ -768,7 +768,7 @@ async fn codex_exchange(
             return Err(error);
         }
     };
-    if token.access_token.trim().is_empty() {
+    if token.access_token.trim().is_empty() || token.refresh_token.trim().is_empty() {
         codex.pending = Some(session);
         write_codex_state(config_dir, provider, &codex).await?;
         return Err(ProviderAuthError::TokenExchange);
@@ -1011,14 +1011,21 @@ async fn delete_codex_secret_bundle(
     store: &impl ProviderSecretStore,
     provider: &str,
 ) -> Result<(), ProviderAuthError> {
+    let mut failed = false;
     for kind in [
         SecretKind::OAuthAccessToken,
         SecretKind::OAuthRefreshToken,
         SecretKind::AuthMetadata,
     ] {
-        store.delete_secret(provider, kind).await?;
+        if store.delete_secret(provider, kind).await.is_err() {
+            failed = true;
+        }
     }
-    Ok(())
+    if failed {
+        Err(ProviderAuthError::Storage)
+    } else {
+        Ok(())
+    }
 }
 
 async fn codex_connected_status(
@@ -1391,14 +1398,7 @@ async fn codex_has_secrets(config_dir: &Path, provider: &str) -> Result<bool, Pr
 
 async fn delete_codex_secrets(config_dir: &Path, provider: &str) -> Result<(), ProviderAuthError> {
     let store = provider_secret_store(config_dir);
-    for kind in [
-        SecretKind::OAuthAccessToken,
-        SecretKind::OAuthRefreshToken,
-        SecretKind::AuthMetadata,
-    ] {
-        store.delete_secret(provider, kind).await?;
-    }
-    Ok(())
+    delete_codex_secret_bundle(&store, provider).await
 }
 
 fn codex_scopes() -> Vec<String> {
@@ -1868,6 +1868,43 @@ mod tests {
         ));
         assert!(started.elapsed() < std::time::Duration::from_secs(3));
         let _ = unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&file), libc::LOCK_UN) };
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn codex_refresh_lock_waits_beyond_legacy_timeout_and_succeeds() {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let dir = temp_dir();
+        let path = super::codex_refresh_lock_path(&dir, "openai").unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap();
+        let rc = unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&file), libc::LOCK_EX) };
+        assert_eq!(rc, 0);
+        let unlock_file = file.try_clone().unwrap();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            let _ = unsafe {
+                libc::flock(
+                    std::os::fd::AsRawFd::as_raw_fd(&unlock_file),
+                    libc::LOCK_UN,
+                )
+            };
+        });
+
+        let started = std::time::Instant::now();
+        let _guard = super::acquire_codex_refresh_file_lock(&dir, "openai")
+            .await
+            .unwrap();
+        let elapsed = started.elapsed();
+        assert!(elapsed >= std::time::Duration::from_millis(250));
+        assert!(elapsed < std::time::Duration::from_secs(2));
     }
 
     #[tokio::test]
