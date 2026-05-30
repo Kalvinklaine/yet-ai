@@ -178,6 +178,22 @@ describe("chatViewState", () => {
     expect(state.messages[0].content).not.toContain("x".repeat(64));
   });
 
+  it("keeps recovery guidance for long secret-bearing error messages", () => {
+    const state = applyChatViewEvent(
+      createInitialChatViewState("chat-1"),
+      event("error", {
+        code: "provider_context_too_large",
+        message: `Provider failed ${"A".repeat(1100)} Authorization: Bearer long-provider-secret access_token=${"x".repeat(64)}`,
+      }),
+    );
+
+    expect(state.messages[0].content.length).toBeLessThanOrEqual(501);
+    expect(state.messages[0].content).toContain("Recovery: shorten the prompt or reduce attached editor context, then retry.");
+    expect(state.messages[0].content).not.toContain("long-provider-secret");
+    expect(state.messages[0].content).not.toContain("access_token");
+    expect(state.messages[0].content).not.toContain("x".repeat(64));
+  });
+
   it("terminates active assistant streaming before appending an error", () => {
     const started = applyChatViewEvent(createInitialChatViewState("chat-1"), event("stream_started", { role: "assistant" }));
     const delta = applyChatViewEvent(started, event("stream_delta", { delta: { content: "Partial" } }));
