@@ -907,6 +907,29 @@ async fn text_response_from(app: axum::Router, request: Request<Body>) -> (Statu
     (status, String::from_utf8(bytes.to_vec()).unwrap())
 }
 
+fn assert_http_boundary_body_is_sanitized(text: &str) {
+    assert_eq!(text, r#"{"error":"invalid request body"}"#);
+    let lower = text.to_lowercase();
+    for forbidden in [
+        "sk-http-boundary-secret",
+        "bearer ",
+        "access_token",
+        "refresh_token",
+        "api_key",
+        "apikey",
+        "cookie",
+        "/users/example",
+        "/home/example",
+        "private/path",
+        "malformed-fragment",
+        "raw-body-fragment",
+        "secret-field",
+        "token-value",
+    ] {
+        assert!(!lower.contains(forbidden));
+    }
+}
+
 #[test]
 fn identity_loading_matches_contract() {
     let identity = ProductIdentity::load().unwrap();
@@ -3014,6 +3037,166 @@ async fn agent_progress_shape_is_local_only_and_sanitized() {
     ] {
         assert!(!text.contains(forbidden));
     }
+}
+
+#[tokio::test]
+async fn http_boundary_malformed_provider_create_body_is_sanitized() {
+    let raw = r#"{"id":"http-boundary-provider","auth":{"apiKey":"sk-http-boundary-secret-abcd"},"malformed-fragment":"raw-body-fragment""#;
+    let (status, text) = text_response_from(
+        test_app(),
+        authed_request(Method::POST, "/v1/providers", Body::from(raw)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_http_boundary_body_is_sanitized(&text);
+}
+
+#[tokio::test]
+async fn http_boundary_type_invalid_provider_auth_bodies_are_sanitized() {
+    for (uri, body) in [
+        (
+            "/v1/provider-auth/openai/start",
+            json!({
+                "mock": "sk-http-boundary-secret-start",
+                "tokenEndpointUrl": "/Users/example/private/path?access_token=secret"
+            }),
+        ),
+        (
+            "/v1/provider-auth/openai/exchange",
+            json!({
+                "sessionId": { "secretField": "sk-http-boundary-secret-session" },
+                "code": "Bearer token-value"
+            }),
+        ),
+    ] {
+        let (status, text) = text_response_from(
+            test_app(),
+            authed_request(Method::POST, uri, Body::from(body.to_string())),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_http_boundary_body_is_sanitized(&text);
+    }
+}
+
+#[tokio::test]
+async fn http_boundary_malformed_and_type_invalid_chat_command_bodies_are_sanitized() {
+    for raw in [
+        r#"{"requestId":"req-http-boundary","type":"user_message","payload":{"content":"sk-http-boundary-secret-chat"},"malformed-fragment":"raw-body-fragment""#.to_string(),
+        json!({
+            "requestId": { "secretField": "sk-http-boundary-secret-chat" },
+            "type": "user_message",
+            "payload": { "content": "Bearer token-value" }
+        })
+        .to_string(),
+    ] {
+        let (status, text) = text_response_from(
+            test_app(),
+            authed_request(
+                Method::POST,
+                "/v1/chats/chat-http-boundary/commands",
+                Body::from(raw),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_http_boundary_body_is_sanitized(&text);
+    }
+}
+
+#[tokio::test]
+async fn http_boundary_oversized_body_is_rejected_and_sanitized() {
+    let raw = format!(
+        "{{\"id\":\"http-boundary-oversized\",\"displayName\":\"{}sk-http-boundary-secret-oversized access_token=secret Cookie: token-value /Users/example\"}}",
+        "x".repeat(256 * 1024)
+    );
+    let (status, text) = text_response_from(
+        test_app(),
+        authed_request(Method::POST, "/v1/providers", Body::from(raw)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_http_boundary_body_is_sanitized(&text);
+}
+
+#[tokio::test]
+async fn http_boundary_valid_json_routes_keep_existing_behavior() {
+    let app = test_app();
+    let provider = json!({
+        "id": "http-boundary-valid-provider",
+        "kind": "custom",
+        "displayName": "HTTP Boundary Valid Provider",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:9900",
+        "auth": { "type": "api_key", "apiKey": "sk-http-boundary-secret-valid" }
+    });
+    let (status, created) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(created["id"], "http-boundary-valid-provider");
+    assert!(!created.to_string().contains("sk-http-boundary-secret-valid"));
+
+    let update = json!({ "displayName": "HTTP Boundary Updated Provider" });
+    let (status, updated) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::PATCH,
+            "/v1/providers/http-boundary-valid-provider",
+            Body::from(update.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["displayName"], "HTTP Boundary Updated Provider");
+
+    let (status, auth_start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from("{}"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(auth_start["status"], "login_unavailable");
+
+    let (status, auth_exchange) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from("{}"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(auth_exchange["status"], "login_unavailable");
+
+    let command = json!({
+        "requestId": "req-http-boundary-valid",
+        "type": "abort",
+        "payload": {}
+    });
+    let (status, accepted) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-http-boundary-valid/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(accepted["accepted"], true);
+    assert_eq!(accepted["type"], "abort");
 }
 
 #[tokio::test]
