@@ -68,6 +68,16 @@ npm run smoke:provider-errors
 
 `npm run smoke:provider-errors` starts the Rust engine with isolated local storage and loopback-only OpenAI-compatible mocks, configures a fake API-key provider, and exercises unauthorized, rate-limit, context-window, invalid-request, upstream, malformed-SSE, and OpenAI-style stream error-frame failures. It verifies accepted chat commands, stable SSE error codes/messages, sanitized persisted chat history, and no raw fake keys, bearer strings, cookies, provider bodies, auth codes, request-body secret markers, or private paths in client-visible output.
 
+Run the polished IDE Chat MVP browser/runtime smoke after changing the GUI first-message flow, active-context attach behavior, chat history rendering, or IDE bridge wiring:
+
+```sh
+cd apps/gui && npm run build
+cd ../..
+npm run smoke:gui-runtime-e2e
+```
+
+`npm run smoke:gui-runtime-e2e` uses only loopback services and fake credentials. It starts the local runtime with an IDE-style trusted session token, drives the built GUI, configures a fake OpenAI-compatible provider, simulates active editor context, sends one message with context included and one with context omitted, verifies provider prompt boundaries, checks streaming assistant rendering, reloads engine-owned local chat history, and asserts that generated runtime tokens, fake provider keys, and active-context sentinels do not appear in DOM text, browser storage, console/page errors, or smoke output.
+
 Run focused provider secret checks when changing legacy inline API-key migration, keychain/fallback policy, or the engine secret-store boundary:
 
 ```sh
@@ -212,11 +222,11 @@ Use this concise smoke after preparing either IDE dev preview. For VS Code, the 
 5. Interpret runtime feedback: connected means the loopback runtime and model/provider metadata are reachable; network/configuration errors mean URL, port, binary, or runtime startup problems; runtime `401` means the local Session token does not match `YET_AI_AUTH_TOKEN`; provider `401` means the provider API key was rejected by the upstream provider.
 6. Configure the safe/default `OpenAI API` API-key fallback or a local OpenAI-compatible mock/provider. The provider key belongs only in Provider setup, is sent to the local runtime, clears after save, and must not be stored in VS Code settings or the Session token field.
 7. Use provider test/status as sanitized feedback. If the GUI shows an active editor/selection context preview from VS Code or JetBrains, include it only when the selection is safe to send to the configured provider.
-8. Send `Say hello in one sentence.` Expected behavior: the user message is accepted, optional included context is prepended by the local runtime, SSE opens, the assistant streams snapshot/start/delta/finish updates, and no Yet AI hosted backend or account is required. After the accepted send, the GUI clears the attached context; a later message needs a fresh IDE snapshot.
+8. Send `Say hello in one sentence.` Expected behavior: the user message is accepted, optional included context is prepended by the local runtime, SSE opens, the assistant streams snapshot/start/delta/finish updates, and the conversation appears in engine-owned local history without any Yet AI hosted backend, cloud workspace, managed gateway, product credit balance, or Yet AI account. After the accepted send, the GUI clears the attached context; a later message needs a fresh IDE snapshot.
 
-Active context is a prompt-only, bounded, non-privileged IDE context feature for the next accepted message. It does not enable autonomous file reads, workspace indexing, file edits/apply patch, shell/tool execution, or background agent autonomy.
+Active context is a prompt-only, bounded, non-privileged IDE context feature for the next accepted message. The GUI preview shows the source host, file/workspace path, language/range metadata, selected character count, and a bounded sanitized preview before the user chooses whether to attach it. It does not enable autonomous file reads, workspace indexing, file edits/apply patch, shell/tool execution, or background agent autonomy.
 
-A login/account-based GPT first-message UX remains a mandatory future milestone. The current experimental Codex-like account path is separate, explicit-risk, mock-only in automation, and not the default first-message path.
+A login/account-based GPT first-message UX remains a mandatory future milestone. The safe/default real-provider path is still the OpenAI API-key or project-key fallback through the local runtime. The current experimental Codex-like account path is separate, explicit-risk, private-endpoint-style, mock-only in automation, not official public OpenAI OAuth support, not an OpenAI partnership claim, not production-ready, and not the default first-message path.
 
 For JetBrains runtime failures, use Tools → `Yet AI: Show Runtime Status` for sanitized launch/binary/ping diagnostics and Tools → `Yet AI: Restart Runtime` to restart only the plugin-owned local runtime.
 

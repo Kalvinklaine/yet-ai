@@ -38,6 +38,16 @@ Build the GUI first with `cd apps/gui && npm run build`. The browser smoke serve
 
 The runtime e2e smoke also requires `cargo build -p yet-lsp`. It starts `target/debug/yet-lsp` with a generated local runtime token and isolated temp HOME/config/cache, starts a loopback mock OpenAI-compatible streaming provider, drives the built GUI in Playwright, configures a fake API-key provider, simulates an IDE active-editor context snapshot, sends messages with context included and omitted, verifies the runtime/provider prompt boundary, verifies streamed assistant text and history reload, and checks DOM text, browser storage, console/page errors, and smoke output boundaries for generated-token/API-key/context-sentinel leaks. It uses only loopback URLs and fake credentials.
 
+Use this focused first-message GUI gate when polishing the IDE chat happy path:
+
+```sh
+cd apps/gui && npm test && npm run typecheck && npm run build
+cd ../..
+npm run smoke:gui-runtime-e2e
+```
+
+For docs-only updates, the repository gate remains `npm run check && git status --short` from the root.
+
 Manual IDE packaged-asset preview flows:
 
 ```sh
@@ -106,10 +116,12 @@ First-message smoke:
 
 1. For VS Code, run `npm run prepare:vscode-preview`, open the Extension Development Host, keep `yetai.launchMode = auto`, and run `Yet AI: Open Chat`. For other IDE previews, use IDE `auto` / `launch` mode or start the manual runtime command above only for deliberate debug connections.
 2. Click `Refresh runtime` and wait for connected feedback or a clear sanitized error.
-3. Choose `Use OpenAI API key fallback` / `OpenAI API`, or configure a local OpenAI-compatible mock/provider.
-4. Paste the provider API key once in the API key field, save, and confirm the field clears. Do not store provider keys in VS Code settings, SecretStorage, or the Session token field. For local mock providers, use only fake credentials.
-5. If the GUI shows an attached active editor/selection context preview from VS Code or JetBrains, include it only when the selected text is safe to send to the configured provider. The preview/opt-in state is held in React state and is not browser-storage persistence.
-6. Use provider test/status as sanitized feedback, then send `Say hello in one sentence.` Expected behavior: the command is accepted, optional included context is prepended by the local runtime, SSE opens, and the assistant response streams through snapshot/start/delta/finish events without any Yet AI hosted backend. After the accepted send, the GUI clears the attached context; a later message needs a fresh IDE snapshot.
+3. Confirm the readiness card: it should explain whether Send is blocked by runtime connection, missing provider credentials, a provider/model mismatch, an unready model, or whether the selected API-key model is ready. Use the highest-priority local CTA shown by the guide.
+4. Choose `Use OpenAI API key fallback` / `OpenAI API`, or configure a local OpenAI-compatible mock/provider.
+5. Paste the provider API key once in the API key field, save, and confirm the field clears. Do not store provider keys in VS Code settings, SecretStorage, or the Session token field. For local mock providers, use only fake credentials.
+6. If the GUI shows an attached active editor/selection context preview from VS Code or JetBrains, review the source host, path, language/range metadata, selected character count, and bounded preview. Keep `Attach to next message` enabled only when the selected text is safe to send to the configured provider; choose `Do not attach` when it is not. The preview/opt-in state is held in React state and is not browser-storage persistence.
+7. Use provider test/status as sanitized feedback, then send `Say hello in one sentence.` Expected behavior: the command is accepted, optional included context is prepended by the local runtime, SSE opens, and the assistant response streams through snapshot/start/delta/finish events without any Yet AI hosted backend. After the accepted send, the GUI clears the attached context; a later message needs a fresh IDE snapshot.
+8. Reload or switch back to the conversation and confirm visible messages come from engine-owned local chat history. The GUI may render history returned by the runtime, but it must not store messages, provider secrets, runtime tokens, or context sentinels in browser storage.
 
 Active context is prompt-only, bounded, and non-privileged IDE context. It is sent to the configured provider as prompt text when included. Do not attach secrets, credentials, private paths, or sensitive private data. This first-message context feature does not enable autonomous file reads, workspace indexing, file edits/apply patch, shell/tool execution, or background agent autonomy.
 
@@ -138,7 +150,7 @@ The GUI-to-host bridge currently sends only strict `gui.ready`. The GUI does not
 
 ## Chat panel
 
-The primary chat area renders a message-oriented local chat view with user, assistant, and safe error bubbles. A compact conversations panel lists engine-owned local chats, creates new chats, switches to persisted threads, and deletes local history through runtime endpoints. The GUI hydrates visible messages from engine snapshots and thread responses, but it must not persist chat messages or thread snapshots in browser `localStorage` or `sessionStorage`.
+The primary chat area renders a message-oriented local chat view with user, assistant, and safe error bubbles directly under the hero so the first-message flow is the main path rather than a debug shell. A compact conversations panel lists engine-owned local chats, creates new chats, shows current/local-history metadata, switches to persisted threads, and deletes local history through runtime endpoints. The GUI hydrates visible messages from engine snapshots and thread responses, but it must not persist chat messages or thread snapshots in browser `localStorage` or `sessionStorage`.
 
 User prompts and assistant replies may be persisted locally by the engine under Yet AI local storage. Users should not paste API keys, tokens, passwords, private keys, or sensitive private data into prompts. Provider API keys, OAuth tokens, authorization codes, PKCE verifiers, cookies, local runtime session tokens, raw provider responses, credential paths, and private local paths must not be rendered or stored as chat metadata. Deleting a conversation in the GUI deletes only local Yet AI history; it does not delete provider-side records or upstream account data.
 

@@ -105,9 +105,9 @@ This is the nearest hands-on path for trying the local-first VS Code dev preview
 
 7. Configure a local or OpenAI-compatible provider in the GUI. For the current real GPT first message, choose the `OpenAI API` preset, paste your own API key once in the provider API key field, save the provider, confirm that the form clears the raw key, and use the provider test action for sanitized status. Provider settings and credentials are stored by the local engine, not by the VS Code extension. Never put provider keys in VS Code settings, SecretStorage, or the GUI Session token field.
 
-8. If the GUI shows an attached active editor/selection context preview, include it only when the selected text is safe to send to the configured provider.
+8. If the GUI shows an attached active editor/selection context preview, review the source host, path, language/range metadata, selected character count, and bounded preview. Keep `Attach to next message` enabled only when the selected text is safe to send to the configured provider, or choose `Do not attach` before sending. The preview is one-shot prompt context, not browser-storage state.
 
-9. Send a simple chat message, such as `Say hello in one sentence.` Confirm that the optional included context is used as prompt context and the response streams in the GUI.
+9. Send a simple chat message, such as `Say hello in one sentence.` Confirm that the optional included context is used as prompt context, the response streams in the GUI, and the conversation is available through local engine-owned chat history after switching/reloading without a Yet AI hosted backend.
 
 For IDE-launched `auto` or `launch` mode, do not paste `local-dev-token` into the GUI. The extension generates a per-session local runtime token, starts `yet-lsp` with `YET_AI_AUTH_TOKEN`, and provides the token to the GUI through the trusted `host.ready` postMessage path. The token is not serialized into the inline webview bootstrap HTML. Enter `local-dev-token` only when you deliberately use `connect` mode with a runtime started manually:
 
@@ -194,7 +194,8 @@ Use this checklist after the steps above. The normal VS Code first-message previ
 - The GUI shows runtime status as connected/reachable.
 - Provider save/test uses an OpenAI API key, OpenAI-compatible endpoint, or local gateway URL and does not require a Yet AI-hosted backend.
 - Provider status after save is configured/redacted; the raw key is not rendered back into the form.
-- A simple chat message produces `snapshot`, stream start/delta, and finish behavior in the GUI.
+- The active editor context preview, when present, shows bounded metadata/preview and the attach toggle affects only the next accepted message.
+- A simple chat message produces `snapshot`, stream start/delta, and finish behavior in the GUI, then remains visible through local engine-owned conversation history.
 - For the real OpenAI API-key fallback smoke, the preset uses `https://api.openai.com/v1`, the API key field clears after save, and no automated test or committed file contains the real key.
 
 ### Experimental account-login manual checklist
@@ -233,7 +234,9 @@ Visible results:
 - Webview: packaged GUI | placeholder | blank/error
 - Runtime: connected | sanitized failure
 - Provider setup/test: visible | not visible | sanitized failure
+- Active context preview: not shown | shown and attached | shown and omitted
 - First chat message: streamed | accepted but no stream | failed with sanitized error
+- Local history: reloaded | not checked | sanitized failure
 
 Notes:
 - Include concise sanitized error text only.
