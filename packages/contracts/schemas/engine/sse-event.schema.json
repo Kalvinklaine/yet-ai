@@ -37,5 +37,50 @@
       "type": "object",
       "additionalProperties": true
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "error"
+          }
+        },
+        "required": ["type"]
+      },
+      "then": {
+        "required": ["payload"],
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "provider_not_configured",
+                  "model_not_configured",
+                  "provider_unauthorized",
+                  "provider_rate_limited",
+                  "provider_context_too_large",
+                  "provider_invalid_request",
+                  "provider_timeout",
+                  "provider_upstream_error",
+                  "provider_malformed_stream",
+                  "provider_config_error",
+                  "provider_request_failed"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

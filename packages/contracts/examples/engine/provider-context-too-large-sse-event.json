@@ -1,0 +1,9 @@
+{
+  "seq": 6,
+  "type": "error",
+  "chatId": "chat-001",
+  "payload": {
+    "code": "provider_context_too_large",
+    "message": "The request is too large for the selected model context window."
+  }
+}

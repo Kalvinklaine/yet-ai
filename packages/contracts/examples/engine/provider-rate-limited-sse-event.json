@@ -1,0 +1,9 @@
+{
+  "seq": 5,
+  "type": "error",
+  "chatId": "chat-001",
+  "payload": {
+    "code": "provider_rate_limited",
+    "message": "Provider rate limit or quota reached."
+  }
+}

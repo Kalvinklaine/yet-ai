@@ -1,0 +1,9 @@
+{
+  "seq": 11,
+  "type": "error",
+  "chatId": "chat-001",
+  "payload": {
+    "code": "model_not_configured",
+    "message": "Model is not configured."
+  }
+}

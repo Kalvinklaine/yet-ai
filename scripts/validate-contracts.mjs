@@ -52,6 +52,16 @@ const mappings = [
   ["packages/contracts/examples/engine/stream-delta-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
   ["packages/contracts/examples/engine/stream-finished-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
   ["packages/contracts/examples/engine/error-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
+  ["packages/contracts/examples/engine/provider-not-configured-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
+  ["packages/contracts/examples/engine/model-not-configured-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
+  ["packages/contracts/examples/engine/provider-unauthorized-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
+  ["packages/contracts/examples/engine/provider-rate-limited-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
+  ["packages/contracts/examples/engine/provider-context-too-large-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
+  ["packages/contracts/examples/engine/provider-invalid-request-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
+  ["packages/contracts/examples/engine/provider-timeout-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
+  ["packages/contracts/examples/engine/provider-upstream-error-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
+  ["packages/contracts/examples/engine/provider-malformed-stream-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
+  ["packages/contracts/examples/engine/provider-config-error-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
   ["packages/contracts/examples/bridge/host-ready-message.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-opened-from-command-message.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-context-snapshot-message.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
@@ -334,6 +344,18 @@ const invalidMappings = [
   [
     "packages/contracts/examples-invalid/engine/model-secret-provider-response-field.json",
     "packages/contracts/schemas/engine/models.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/error-sse-event-raw-provider-body.json",
+    "packages/contracts/schemas/engine/sse-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/error-sse-event-unknown-code.json",
+    "packages/contracts/schemas/engine/sse-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/error-sse-event-debug-payload.json",
+    "packages/contracts/schemas/engine/sse-event.schema.json"
   ]
 ].map(([examplePath, schemaPath]) => [normalizeContractPath(examplePath), normalizeContractPath(schemaPath)]);
 

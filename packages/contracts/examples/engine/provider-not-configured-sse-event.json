@@ -1,0 +1,9 @@
+{
+  "seq": 10,
+  "type": "error",
+  "chatId": "chat-001",
+  "payload": {
+    "code": "provider_not_configured",
+    "message": "Provider is not configured."
+  }
+}

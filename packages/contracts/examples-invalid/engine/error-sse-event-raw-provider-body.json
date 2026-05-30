@@ -1,0 +1,10 @@
+{
+  "seq": 21,
+  "type": "error",
+  "chatId": "chat-001",
+  "payload": {
+    "code": "provider_upstream_error",
+    "message": "Provider service returned an error.",
+    "rawProviderResponse": "example upstream response body"
+  }
+}
