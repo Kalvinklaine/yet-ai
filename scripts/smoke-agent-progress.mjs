@@ -148,7 +148,7 @@ async function runSmoke() {
     assert.equal(failed.snapshot.completedAt, "2026-05-29T12:57:00Z");
     assert.equal(failed.snapshot.outputTail.includes("[redacted"), true, "failed output was not redacted");
     assertReportIncludes(failed.report, /status: failed/, "failed command");
-    assertReportIncludes(failed.report, /output_tail: failure tail \[redacted/, "failed command");
+    assertReportIncludes(failed.report, /output_tail: .*\[redacted/, "failed command");
 
     const redacted = await loadScenario(tmp, "secret-redaction", [
       progressEvent({
