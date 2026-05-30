@@ -1,4 +1,5 @@
-use axum::extract::{Path, Query, State};
+use axum::extract::rejection::JsonRejection;
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::response::sse::{KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -14,6 +15,8 @@ use crate::provider_auth;
 use crate::providers;
 use crate::security::Authenticated;
 use crate::AppState;
+
+const V1_BODY_LIMIT_BYTES: usize = 256 * 1024;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -45,9 +48,20 @@ pub fn router(state: AppState) -> Router {
                 .route("/chats", get(chats_list).post(chats_create))
                 .route("/chats/:chat_id", get(chats_get).delete(chats_delete))
                 .route("/chats/:chat_id/commands", post(chat_command))
-                .route("/chats/subscribe", get(chats_subscribe)),
+                .route("/chats/subscribe", get(chats_subscribe))
+                .layer(DefaultBodyLimit::max(V1_BODY_LIMIT_BYTES)),
         )
         .with_state(state)
+}
+
+fn invalid_json_body(rejection: JsonRejection) -> Response {
+    let status = match rejection.status() {
+        StatusCode::BAD_REQUEST | StatusCode::PAYLOAD_TOO_LARGE | StatusCode::UNSUPPORTED_MEDIA_TYPE => {
+            rejection.status()
+        }
+        _ => StatusCode::BAD_REQUEST,
+    };
+    (status, Json(json!({ "error": "invalid request body" }))).into_response()
 }
 
 #[derive(Debug, Serialize)]
@@ -185,8 +199,12 @@ async fn providers_list(_auth: Authenticated, State(state): State<AppState>) -> 
 async fn providers_create(
     _auth: Authenticated,
     State(state): State<AppState>,
-    Json(request): Json<providers::ProviderWriteRequest>,
+    request: Result<Json<providers::ProviderWriteRequest>, JsonRejection>,
 ) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return invalid_json_body(rejection),
+    };
     match providers::create_provider_config(&state.storage_paths.config_dir, request).await {
         Ok(provider) => (StatusCode::CREATED, Json(provider.summary())).into_response(),
         Err(error) => provider_error(error),
@@ -208,8 +226,12 @@ async fn providers_update(
     _auth: Authenticated,
     State(state): State<AppState>,
     Path(provider_id): Path<String>,
-    Json(request): Json<providers::ProviderWriteRequest>,
+    request: Result<Json<providers::ProviderWriteRequest>, JsonRejection>,
 ) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return invalid_json_body(rejection),
+    };
     match providers::update_provider_config(&state.storage_paths.config_dir, &provider_id, request)
         .await
     {
@@ -252,8 +274,12 @@ async fn provider_auth_start(
     _auth: Authenticated,
     State(state): State<AppState>,
     Path(provider): Path<String>,
-    Json(request): Json<provider_auth::ProviderAuthStartRequest>,
+    request: Result<Json<provider_auth::ProviderAuthStartRequest>, JsonRejection>,
 ) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return invalid_json_body(rejection),
+    };
     provider_auth_response(
         provider_auth::start(&state.storage_paths.config_dir, &provider, request).await,
     )
@@ -263,8 +289,12 @@ async fn provider_auth_exchange(
     _auth: Authenticated,
     State(state): State<AppState>,
     Path(provider): Path<String>,
-    Json(request): Json<provider_auth::ProviderAuthExchangeRequest>,
+    request: Result<Json<provider_auth::ProviderAuthExchangeRequest>, JsonRejection>,
 ) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return invalid_json_body(rejection),
+    };
     provider_auth_response(
         provider_auth::exchange(&state.storage_paths.config_dir, &provider, request).await,
     )
@@ -374,8 +404,12 @@ async fn chat_command(
     _auth: Authenticated,
     State(state): State<AppState>,
     Path(chat_id): Path<String>,
-    Json(command): Json<ChatCommandRequest>,
+    command: Result<Json<ChatCommandRequest>, JsonRejection>,
 ) -> Response {
+    let Json(command) = match command {
+        Ok(command) => command,
+        Err(rejection) => return invalid_json_body(rejection),
+    };
     if chat_id.is_empty()
         || !valid_bounded_string(&command.request_id, CHAT_COMMAND_REQUEST_ID_MAX_LENGTH)
     {
