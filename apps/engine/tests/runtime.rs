@@ -3052,6 +3052,23 @@ async fn http_boundary_malformed_provider_create_body_is_sanitized() {
 }
 
 #[tokio::test]
+async fn http_boundary_malformed_provider_auth_bodies_are_sanitized() {
+    for uri in [
+        "/v1/provider-auth/openai/start",
+        "/v1/provider-auth/openai/exchange",
+    ] {
+        let raw = r#"{"mock":true,"code":"sk-http-boundary-secret-auth","malformed-fragment":"raw-body-fragment""#;
+        let (status, text) = text_response_from(
+            test_app(),
+            authed_request(Method::POST, uri, Body::from(raw)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_http_boundary_body_is_sanitized(&text);
+    }
+}
+
+#[tokio::test]
 async fn http_boundary_type_invalid_provider_auth_bodies_are_sanitized() {
     for (uri, body) in [
         (
@@ -3199,6 +3216,112 @@ async fn http_boundary_valid_json_routes_keep_existing_behavior() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(accepted["accepted"], true);
     assert_eq!(accepted["type"], "abort");
+}
+
+#[tokio::test]
+async fn http_boundary_invalid_chat_id_get_delete_and_command_are_sanitized() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let mut invalid_ids = vec!["bad:id".to_string(), ".bad".to_string(), "-bad".to_string()];
+    invalid_ids.push("a123456789".repeat(13));
+
+    for id in invalid_ids {
+        for method in [Method::GET, Method::DELETE] {
+            let (status, text) = text_response_from(
+                app.clone(),
+                authed_request(method, &format!("/v1/chats/{id}"), Body::empty()),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(text, r#"{"error":"invalid chat id"}"#);
+            assert!(!text.contains(&id));
+        }
+    }
+
+    let command = json!({
+        "requestId": "req-http-boundary-invalid-chat-id",
+        "type": "user_message",
+        "payload": { "content": "hello sk-http-boundary-invalid-chat-secret" }
+    });
+    let (status, text) = text_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/chats/bad:id/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(text, r#"{"error":"invalid chat id"}"#);
+    assert!(!text.contains("bad:id"));
+    assert!(!text.contains("sk-http-boundary-invalid-chat-secret"));
+    assert!(!paths.config_dir.join("chat-history").exists());
+}
+
+#[tokio::test]
+async fn http_boundary_invalid_subscribe_query_is_non_sse_400() {
+    let app = test_app();
+    let mut uris = vec![
+        "/v1/chats/subscribe".to_string(),
+        "/v1/chats/subscribe?chat_id=".to_string(),
+        "/v1/chats/subscribe?chat_id=bad:id".to_string(),
+        "/v1/chats/subscribe?chat_id=.bad".to_string(),
+        "/v1/chats/subscribe?chat_id=bad%2Fid".to_string(),
+    ];
+    uris.push(format!("/v1/chats/subscribe?chat_id={}", "a".repeat(129)));
+
+    for uri in uris {
+        let response = app
+            .clone()
+            .oneshot(authed_request(Method::GET, &uri, Body::empty()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_ne!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("text/event-stream")
+        );
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        assert_eq!(text, r#"{"error":"invalid chat id"}"#);
+        assert!(!text.contains("bad:id"));
+        assert!(!text.contains("bad/id"));
+    }
+}
+
+#[tokio::test]
+async fn http_boundary_valid_subscribe_still_emits_snapshot_event() {
+    let response = test_app()
+        .oneshot(authed_request(
+            Method::GET,
+            "/v1/chats/subscribe?chat_id=chat-http-boundary-subscribe",
+            Body::empty(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "text/event-stream"
+    );
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let text = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(text.contains("event: snapshot"));
+    assert!(text.contains("\"type\":\"snapshot\""));
+    assert!(text.contains("\"chatId\":\"chat-http-boundary-subscribe\""));
 }
 
 #[tokio::test]
