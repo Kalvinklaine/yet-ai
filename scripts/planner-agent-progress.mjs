@@ -73,7 +73,7 @@ function redactUnsafeText(value) {
   return value
     .replace(/\r/g, "\n")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
-    .replace(/(^|\n)[^\n]*(?:\b(?:chain[-_ ]?of[-_ ]?thought|raw[-_ ]?prompt|provider[-_ ]?(?:response|body)|tool[-_ ]?raw[-_ ]?output|raw[-_ ]?tool[-_ ]?output|file[-_ ]?contents?|workspace[-_ ]?contents?)\b\s*[:=]?)[^\n]*/gi, "$1[redacted-field]")
+    .replace(/(^|\n)[^\n]*(?:\b(?:chain[\t\r\s_-]*of[\t\r\s_-]*thought|raw[\t\r\s_-]*prompt|provider[\t\r\s_-]*(?:response|body)|tool[\t\r\s_-]*raw[\t\r\s_-]*output|raw[\t\r\s_-]*tool[\t\r\s_-]*output|file[\t\r\s_-]*contents?|workspace[\t\r\s_-]*contents?)\b\s*[:=]?)[^\n]*/gi, "$1[redacted-field]")
     .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "[redacted-auth]")
     .replace(/\b(?:api[_-]?key|authorization|token|secret|password|cookie|pkce|refresh|access[_-]?token|credential)\b\s*[:=]\s*\S+/gi, "[redacted-sensitive]")
     .replace(/\b(?:sk|pk|ghp|gho|github_pat|ya29)_[A-Za-z0-9_\-]{12,}\b/g, "[redacted-key]")
@@ -152,7 +152,7 @@ function classifyOverflowRecoveryText(value) {
   }
 
   const mentionsTaskBoard = /task[_ -]?board|task_board_get|task_ready_cards/.test(text);
-  const mentionsTool = /tool|outputtail|command|search|cat/.test(text);
+  const mentionsTool = /\b(?:tool|outputtail|command|search|cat)\b/.test(text);
   const mentionsContext = /context|prompt|window/.test(text);
   const mentionsTooLarge = /too large|output too large|exceeded|maximum context length|context length/.test(text);
 
