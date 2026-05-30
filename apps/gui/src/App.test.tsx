@@ -2880,6 +2880,44 @@ describe("chat panel", () => {
     }
   });
 
+  it("renders actionable sanitized provider recovery guidance from SSE error codes", async () => {
+    const rawToken = "access_token=" + "g".repeat(64);
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      sseEvents: [
+        { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
+        {
+          seq: 1,
+          type: "error",
+          chatId: "chat-001",
+          payload: {
+            code: "provider_context_too_large",
+            message: `The request is too large ${rawToken} Cookie: session=chat-cookie`,
+          },
+        },
+      ],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "Prompt with too much context");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("The request is too large [redacted]");
+    expect(text).toContain("Recovery: shorten the prompt or reduce attached editor context, then retry.");
+    expect(text).not.toContain("access_token");
+    expect(text).not.toContain("chat-cookie");
+    expect(text).not.toContain("g".repeat(64));
+  });
+
   it("changing chat id clears messages for the new chat", async () => {
     mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
