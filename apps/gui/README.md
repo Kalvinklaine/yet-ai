@@ -24,6 +24,16 @@ npm run smoke:gui-browser
 npm run smoke:gui-runtime-e2e
 ```
 
+Agent progress read-only panel coverage is available from the root:
+
+```sh
+npm run check:agent-progress
+npm run smoke:agent-progress
+npm run smoke:gui-agent-progress
+```
+
+Use the combined gate `npm run check:agent-progress && npm run smoke:agent-progress && npm run smoke:gui-agent-progress && npm run check && git status --short` when changing progress docs or surfaces.
+
 Build the GUI first with `cd apps/gui && npm run build`. The browser smoke serves `apps/gui/dist` on `127.0.0.1`, opens the built page with Playwright Chromium, and fails on blank UI, page JavaScript errors, or broken local JS/CSS assets without requiring the engine or provider credentials. If Playwright or Chromium is missing, run `npm install` from the repository root and `npx playwright install chromium`.
 
 The runtime e2e smoke also requires `cargo build -p yet-lsp`. It starts `target/debug/yet-lsp` with a generated local runtime token and isolated temp HOME/config/cache, starts a loopback mock OpenAI-compatible streaming provider, drives the built GUI in Playwright, configures a fake API-key provider, sends a chat message, verifies streamed assistant text, and checks DOM text, browser storage, console/page errors, and smoke output boundaries for generated-token/API-key leaks. It uses only loopback URLs and fake credentials.
@@ -117,6 +127,7 @@ Login/account-based GPT first-message UX is now more visible in the GUI as a gui
 - `GET /v1/chats`, `POST /v1/chats`, `GET /v1/chats/:chat_id`, and `DELETE /v1/chats/:chat_id` for engine-owned local chat history
 - `POST /v1/chats/:chat_id/commands` with strict current `user_message` and `abort`
 - `GET /v1/chats/subscribe?chat_id=...` through fetch streaming SSE
+- `GET /v1/agent-progress` for the read-only Agent progress panel
 - Browser, VS Code, and JetBrains-style logical bridge detection
 
 ## Bridge and command policy
@@ -132,6 +143,12 @@ The primary chat area renders a message-oriented local chat view with user, assi
 User prompts and assistant replies may be persisted locally by the engine under Yet AI local storage. Users should not paste API keys, tokens, passwords, private keys, or sensitive private data into prompts. Provider API keys, OAuth tokens, authorization codes, PKCE verifiers, cookies, local runtime session tokens, raw provider responses, credential paths, and private local paths must not be rendered or stored as chat metadata. Deleting a conversation in the GUI deletes only local Yet AI history; it does not delete provider-side records or upstream account data.
 
 A compact readiness summary near the chat shows local runtime status, enabled provider count, and the selected model returned by the runtime/provider metadata. Send is enabled for the API-key route only when an enabled configured provider maps to a model with `readiness.status = "ready"` and both `capabilities.chat` and `capabilities.streaming` set to `true`; missing readiness metadata, disabled providers, missing credentials, missing models, unsupported models, and non-chat or non-streaming models keep Send disabled with sanitized status copy. Provider list rows also show sanitized per-model capability/readiness labels so users can see whether configuration, model choice, or runtime refresh is blocking chat. If no enabled provider/model is available, Send is normally disabled and the panel points to the OpenAI API-key fallback preset before the first GPT message. The only fallback ready state without an enabled provider/model is a sanitized connected OpenAI provider-auth status with `configured: true`, `authSource: "oauth"`, and `status: "connected"`; then the GUI labels the route as `Experimental OpenAI account / gpt-5-codex`, enables Send, and shows high-risk/private-endpoint copy. API-key provider/model readiness remains preferred whenever configured, and pending, expired, revoked, or error OAuth states do not enable Send. When the IDE host provides an active editor/selection snapshot, the GUI renders an attached-context preview and opt-in toggle; sending includes that bounded context only when it is current, valid, and enabled. The attached context is one-shot for the next accepted message: accepted sends clear the snapshot and include state, disabled-toggle sends omit context, and failed or stale sends do not accidentally attach older context. Sending opens the fetch-streaming SSE subscription for the active chat, posts `user_message` through the local runtime, clears the input only after the command is accepted, and appends streaming assistant text from snapshot/start/delta/finish events. Stop SSE also posts an `abort` command for the active chat before closing the local subscription, so the runtime can cancel active provider streaming and emit a safe abort finish event. The raw SSE timeline remains available under `SSE debug details` for development troubleshooting.
+
+## Agent progress panel
+
+The Agent progress panel is a local read-only observability surface backed by `GET /v1/agent-progress`. It can refresh and render safe empty, running, stuck, done, and failed states from the strict list response, but the engine currently returns an empty local list until a future runner is wired. The panel must not expose Start, Stop, Merge, Apply, shell, tool, provider-call, git, or workspace-mutation controls.
+
+Displayed progress data is limited to safe operational fields such as ids, phase/status, tool label/kind, elapsed and heartbeat ages, stuck reason, recent summaries, and bounded sanitized output tails. The GUI must not render prompts, chain-of-thought, raw file contents, raw provider responses, tokens, cookies, provider credentials, runtime session tokens, credential paths, private absolute paths, shell scripts, or patch payloads. This panel does not implement production background agents, runner hooks, task-board integration, git merges, tool execution, shell authority, provider calls, hosted services, or cloud sync.
 
 ## Provider secret handling
 

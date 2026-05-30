@@ -29,8 +29,11 @@ The Rust crate and binary are named `yet-lsp`. The runtime currently exposes:
 - `DELETE /v1/chats/{chat_id}`
 - `POST /v1/chats/{chat_id}/commands`
 - `GET /v1/chats/subscribe?chat_id=...`
+- `GET /v1/agent-progress`
 
 Provider endpoints manage local BYOK provider configuration files under the user config directory. Provider secret material is centralized behind the engine secret store abstraction and is never owned by GUI/browser storage. `/v1/models`, `/v1/caps`, and provider summaries expose aligned sanitized model metadata: `capabilities.chat`, `capabilities.streaming`, `capabilities.tools`, `capabilities.reasoning`, and `readiness.status` values `ready`, `disabled`, `missing_credentials`, `missing_model`, or `unsupported`, with only short sanitized reasons when present. Chat accepts only strict current `user_message` and no-op-safe `abort` commands: `requestId` must be non-empty and bounded, `user_message.payload` may contain only non-empty bounded `content`, and `abort.payload` must be omitted or an empty object. Unsupported privileged command types remain disabled. `user_message` selects the first enabled `openai-compatible` API-key provider with a model whose readiness is `ready` and whose capabilities include both chat and streaming, posts directly to `{baseUrl}/chat/completions` with `stream: true`, and normalizes provider chunks into `snapshot`, `stream_started`, `stream_delta`, `stream_finished`, or `error` SSE events. Disabled providers, missing credentials, missing model metadata, unsupported models, and non-chat or non-streaming models are skipped. `abort` cancels the active provider streaming task for that chat id when one exists and emits a safe `stream_finished` event with `finishReason: "abort"`; abort without an active stream is accepted without emitting deltas or errors. If no enabled OpenAI-compatible API-key provider/model is usable, chat may use a locally stored, unexpired experimental OpenAI OAuth access token from the approved Codex-like path. No Yet AI hosted backend, gateway, account, or cloud workspace is required.
+
+`GET /v1/agent-progress` is a read-only local observability endpoint for the current agent progress MVP. It returns the strict list-response shape with `cloudRequired: false`, `providerAccess: "direct"`, and currently an empty `snapshots` array until a future runner is wired. It must not start, stop, merge, apply, execute tools, run shell commands, call providers, read task-board state, mutate workspaces, or require hosted services or cloud sync. Future non-empty snapshots may include only safe operational fields such as ids, phase/status, tool label/kind, elapsed and heartbeat ages, stuck reason, recent summaries, and bounded sanitized output tails. They must not include prompts, chain-of-thought, raw file contents, raw provider responses, tokens, cookies, provider credentials, runtime session tokens, credential paths, private absolute paths, shell scripts, or patch payloads.
 
 ## Local chat history
 
@@ -78,6 +81,9 @@ cargo check
 cargo test
 npm run check
 npm run smoke:local
+npm run check:agent-progress
+npm run smoke:agent-progress
+npm run smoke:gui-agent-progress
 ```
 
 `npm run smoke:local` is a local-only cross-subsystem smoke test. It starts the engine on a free loopback port through Cargo, starts mock OpenAI-compatible, experimental token, and experimental chat endpoints, configures a fake provider key, sends chat commands, reads SSE streams, checks provider Authorization internally, verifies local chat history persistence/snapshot hydration/delete behavior, exercises provider-auth default status plus the local mock OAuth start/exchange/status/disconnect flow, and covers the approved experimental Codex-like start/exchange/chat fallback through loopback mocks only. It asserts fake API keys, OAuth access tokens, refresh tokens, Authorization headers, cookies, PKCE verifier values, mock auth codes, Codex credential-file paths, and local history responses/events do not expose client-visible secrets. It requires Cargo on `PATH` and does not require real provider credentials, external network access, or hosted Yet AI services. Real experimental OpenAI/ChatGPT account testing remains manual, high-risk, and outside CI; the API-key fallback remains the safe/default real-provider path.
