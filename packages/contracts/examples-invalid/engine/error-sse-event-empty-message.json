@@ -1,0 +1,9 @@
+{
+  "seq": 28,
+  "type": "error",
+  "chatId": "chat-001",
+  "payload": {
+    "code": "provider_request_failed",
+    "message": ""
+  }
+}
