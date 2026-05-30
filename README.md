@@ -57,6 +57,14 @@ npm run smoke:local
 
 `npm run smoke:local` starts the Rust engine on a free loopback port through Cargo, starts local mock OpenAI-compatible, experimental token, and experimental chat endpoints, configures a fake local API key, checks ping/caps/provider setup/chat command/SSE streaming, exercises local chat history create/list/get/delete and persisted snapshot hydration, exercises provider-auth default status plus the local mock OAuth start/exchange/status/disconnect flow, and covers the approved experimental Codex-like start/exchange/chat fallback through loopback mocks only. It also verifies that bounded active editor context attached to a chat command reaches the mock provider prompt through the local runtime. Runtime and provider-test regressions use deterministic loopback mock helpers; Authorization expectations are asserted by the Rust test bodies from observed mock requests rather than hidden provider calls. It verifies raw fake API keys, OAuth access tokens, refresh tokens, Authorization header values, cookies, PKCE verifier values, mock auth codes, active selection markers, Codex credential-file paths, and local chat history responses/events do not leak client-visible secrets. JetBrains wrapper/browser smoke separately covers the JetBrains-style `host.contextSnapshot` bridge path, GUI preview/toggle behavior, one-shot disabled-toggle omission, and enabled context delivery to `user_message.payload.context` with local loopback mocks only. Prerequisites: Node 18+ with root dependencies installed and a Rust toolchain with Cargo on `PATH`.
 
+Run the provider secret migration smoke when changing legacy inline API-key migration or the engine secret-store fallback:
+
+```sh
+npm run smoke:provider-secret-migration
+```
+
+`npm run smoke:provider-secret-migration` starts the local runtime and loopback provider mocks with isolated storage, seeds legacy provider configs containing fake inline API keys, triggers migration through provider/model endpoints, verifies configs are scrubbed and secret files are created, checks provider-test Authorization with digest/length assertions only, and proves an existing stored secret wins over a different legacy inline key without leaking raw fake secrets.
+
 Run repository validation from the root before publishing or handing off changes:
 
 ```sh
