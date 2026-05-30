@@ -543,7 +543,7 @@ async fn select_chat_provider(config_dir: &std::path::Path) -> Result<ChatProvid
             });
         }
     }
-    if let Some(auth) = provider_auth::experimental_codex_chat_auth(config_dir)
+    if let Some(auth) = provider_auth::refresh_experimental_codex_chat_auth_if_needed(config_dir)
         .await
         .map_err(|_| ChatError::ProviderConfig)?
     {

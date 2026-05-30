@@ -676,18 +676,33 @@ async fn start_refresh_codex_token_endpoint(
     status: StatusCode,
     response: Value,
 ) -> (String, mpsc::Receiver<Value>) {
+    start_sequence_refresh_codex_token_endpoint(vec![(status, response)]).await
+}
+
+async fn start_sequence_refresh_codex_token_endpoint(
+    responses: Vec<(StatusCode, Value)>,
+) -> (String, mpsc::Receiver<Value>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (body_sender, body_receiver) = mpsc::channel(8);
+    let responses = std::sync::Arc::new(responses);
+    let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     tokio::spawn(async move {
         let handler = move |request: axum::http::Request<Body>| {
             let body_sender = body_sender.clone();
-            let response = response.clone();
+            let responses = responses.clone();
+            let attempts = attempts.clone();
             async move {
                 let bytes = to_bytes(request.into_body(), usize::MAX).await.unwrap();
                 let body: Value = serde_json::from_slice(&bytes).unwrap();
                 let _ = body_sender.send(body).await;
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                let index = attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let (status, response) = responses
+                    .get(index)
+                    .or_else(|| responses.last())
+                    .cloned()
+                    .unwrap();
                 (
                     status,
                     [(header::CONTENT_TYPE, "application/json")],
@@ -747,12 +762,31 @@ async fn seed_experimental_openai_oauth(
     access_token: &str,
     refresh_token: &str,
 ) {
+    seed_experimental_openai_oauth_with_ttl(
+        paths,
+        chat_base_url,
+        token_endpoint_url,
+        access_token,
+        refresh_token,
+        1800,
+    )
+    .await;
+}
+
+async fn seed_experimental_openai_oauth_with_ttl(
+    paths: &StoragePaths,
+    chat_base_url: String,
+    token_endpoint_url: String,
+    access_token: &str,
+    refresh_token: &str,
+    ttl_seconds: i64,
+) {
     let store = FileSecretStore::new(&paths.config_dir);
     let metadata = json!({
         "provider": "openai",
         "accountLabel": "mock-user@example.test",
         "scopes": ["openid", "profile", "email", "offline_access"],
-        "expiresAt": (chrono::Utc::now() + chrono::Duration::seconds(1800)).to_rfc3339(),
+        "expiresAt": (chrono::Utc::now() + chrono::Duration::seconds(ttl_seconds)).to_rfc3339(),
         "redacted": "ac...ss",
         "chatBaseUrl": chat_base_url,
         "chatModel": "gpt-5-codex",
@@ -2901,6 +2935,84 @@ async fn provider_auth_openai_experimental_concurrent_near_expiry_refresh_is_sin
         stored_refresh.as_deref(),
         "codex-refreshed-refresh-token-secret-wxyz",
     );
+}
+
+#[tokio::test]
+async fn provider_auth_openai_experimental_changed_token_after_lock_wait_requires_fresh_metadata() {
+    let paths = test_storage_paths();
+    let store = FileSecretStore::new(&paths.config_dir);
+    let (token_endpoint_url, mut token_body_receiver) = start_sequence_refresh_codex_token_endpoint(vec![
+        (
+            StatusCode::OK,
+            json!({
+                "access_token": "access-lock-near",
+                "refresh_token": "refresh-lock-near",
+                "expires_in": 30,
+                "scope": "openid profile email offline_access",
+                "account_label": "mock-user@example.test"
+            }),
+        ),
+        (
+            StatusCode::OK,
+            json!({
+                "access_token": "access-lock-fresh",
+                "refresh_token": "refresh-lock-fresh",
+                "expires_in": 1800,
+                "scope": "openid profile email offline_access",
+                "account_label": "mock-user@example.test"
+            }),
+        ),
+    ])
+    .await;
+    let metadata = json!({
+        "provider": "openai",
+        "accountLabel": "mock-user@example.test",
+        "scopes": ["openid", "profile", "email", "offline_access"],
+        "expiresAt": (chrono::Utc::now() + chrono::Duration::seconds(30)).to_rfc3339(),
+        "redacted": "co...ld",
+        "chatBaseUrl": "http://127.0.0.1:1456/backend-api/codex",
+        "chatModel": "gpt-5-codex",
+        "tokenEndpointUrl": token_endpoint_url
+    });
+    store
+        .put_secret("openai", SecretKind::OAuthAccessToken, "access-lock-old")
+        .await
+        .unwrap();
+    store
+        .put_secret("openai", SecretKind::OAuthRefreshToken, "refresh-lock-old")
+        .await
+        .unwrap();
+    store
+        .put_secret("openai", SecretKind::AuthMetadata, &metadata.to_string())
+        .await
+        .unwrap();
+
+    let first_paths = paths.config_dir.clone();
+    let first = tokio::spawn(async move {
+        yet_lsp::provider_auth::refresh_experimental_codex_chat_auth_if_needed(&first_paths).await
+    });
+    let first_body = token_body_receiver.recv().await.unwrap();
+    let second = yet_lsp::provider_auth::refresh_experimental_codex_chat_auth_after_rejection(
+        &paths.config_dir,
+        "access-lock-old",
+    );
+    let (first, second) = tokio::join!(first, second);
+    let first = first.unwrap().unwrap().unwrap();
+    let second = second.unwrap().unwrap();
+    assert_stored_secret(Some(&first.access_token), "access-lock-near");
+    assert_stored_secret(Some(&second.access_token), "access-lock-fresh");
+
+    assert_eq!(first_body["grant_type"], "refresh_token");
+    assert_json_string_value(&first_body["refresh_token"], "refresh-lock-old", "first lock refresh token");
+    let second_body = token_body_receiver.recv().await.unwrap();
+    assert_eq!(second_body["grant_type"], "refresh_token");
+    assert_json_string_value(&second_body["refresh_token"], "refresh-lock-near", "second lock refresh token");
+    assert!(tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        token_body_receiver.recv()
+    )
+    .await
+    .is_err());
 }
 
 #[tokio::test]
@@ -7263,6 +7375,114 @@ async fn api_key_provider_is_preferred_over_experimental_openai_oauth() {
     )
     .await;
     assert_no_observed_auth(oauth_auth_receiver).await;
+}
+
+#[tokio::test]
+async fn chat_expired_experimental_oauth_refreshes_during_selection() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let (chat_base_url, mut auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"expired-refreshed\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let (token_endpoint_url, mut token_body_receiver) = start_refresh_codex_token_endpoint(
+        StatusCode::OK,
+        json!({
+            "access_token": "access-expired-fresh",
+            "refresh_token": "refresh-expired-fresh",
+            "expires_in": 1800,
+            "scope": "openid profile email offline_access",
+            "account_label": "mock-user@example.test"
+        }),
+    )
+    .await;
+    seed_experimental_openai_oauth_with_ttl(
+        &paths,
+        chat_base_url,
+        token_endpoint_url,
+        "access-expired-old",
+        "refresh-expired-old",
+        -1,
+    )
+    .await;
+
+    send_user_message(app.clone(), "chat-expired-oauth-refresh-selection").await;
+    let loaded = wait_for_chat_messages(app.clone(), "chat-expired-oauth-refresh-selection", 2).await;
+    let text = sse_text_from(
+        app,
+        "/v1/chats/subscribe?chat_id=chat-expired-oauth-refresh-selection",
+    )
+    .await;
+    assert!(text.contains("expired-refreshed"));
+    assert_eq!(loaded["messages"][1]["content"], "expired-refreshed");
+    assert!(!text.contains("access-expired"));
+    assert!(!text.contains("refresh-expired"));
+    let auth = auth_receiver.recv().await.unwrap();
+    assert_stored_secret(auth.as_deref(), "Bearer access-expired-fresh");
+    assert!(tokio::time::timeout(std::time::Duration::from_millis(100), auth_receiver.recv())
+        .await
+        .is_err());
+    let body = token_body_receiver.recv().await.unwrap();
+    assert_eq!(body["grant_type"], "refresh_token");
+    assert_json_string_value(&body["refresh_token"], "refresh-expired-old", "expired refresh token");
+}
+
+#[tokio::test]
+async fn chat_near_expired_experimental_oauth_refreshes_before_provider_request() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let (chat_base_url, mut auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"near-refreshed\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let (token_endpoint_url, mut token_body_receiver) = start_refresh_codex_token_endpoint(
+        StatusCode::OK,
+        json!({
+            "access_token": "access-near-fresh",
+            "refresh_token": "refresh-near-fresh",
+            "expires_in": 1800,
+            "scope": "openid profile email offline_access",
+            "account_label": "mock-user@example.test"
+        }),
+    )
+    .await;
+    seed_experimental_openai_oauth_with_ttl(
+        &paths,
+        chat_base_url,
+        token_endpoint_url,
+        "access-near-old",
+        "refresh-near-old",
+        30,
+    )
+    .await;
+
+    send_user_message(app.clone(), "chat-near-oauth-refresh-selection").await;
+    let loaded = wait_for_chat_messages(app.clone(), "chat-near-oauth-refresh-selection", 2).await;
+    let text = sse_text_from(
+        app,
+        "/v1/chats/subscribe?chat_id=chat-near-oauth-refresh-selection",
+    )
+    .await;
+    assert!(text.contains("near-refreshed"));
+    assert_eq!(loaded["messages"][1]["content"], "near-refreshed");
+    let auth = auth_receiver.recv().await.unwrap();
+    assert_stored_secret(auth.as_deref(), "Bearer access-near-fresh");
+    assert!(tokio::time::timeout(std::time::Duration::from_millis(100), auth_receiver.recv())
+        .await
+        .is_err());
+    let body = token_body_receiver.recv().await.unwrap();
+    assert_eq!(body["grant_type"], "refresh_token");
+    assert_json_string_value(&body["refresh_token"], "refresh-near-old", "near refresh token");
 }
 
 #[tokio::test]
