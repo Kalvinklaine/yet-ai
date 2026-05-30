@@ -58,6 +58,13 @@ function assertNoSensitiveContent(value) {
   }
 }
 
+function assertAbsent(value, markers) {
+  const text = serialized(value);
+  for (const marker of markers) {
+    assert.equal(text.includes(marker), false, `value leaked ${marker}`);
+  }
+}
+
 async function runAssertions() {
   const healthy = reduceAgentProgress(
     [
@@ -344,6 +351,77 @@ async function runAssertions() {
     { now: NOW }
   );
   assert.equal(genericTooLarge.overflowRecovery, undefined);
+
+  const rawBodyMarkers = [
+    "UNIQUE_COT_BODY_DO_NOT_SHOW",
+    "UNIQUE_PROMPT_BODY_DO_NOT_SHOW",
+    "UNIQUE_PROVIDER_BODY_DO_NOT_SHOW",
+    "UNIQUE_FILE_BODY_DO_NOT_SHOW",
+    "UNIQUE_WORKSPACE_BODY_DO_NOT_SHOW"
+  ];
+  const rawContentSentinel = reduceAgentProgress(
+    [
+      event({
+        eventId: "evt-raw-content-sentinel",
+        timestamp: "2026-05-29T12:59:00Z",
+        phase: "failed",
+        status: "failed",
+        message: "Raw-Prompt: UNIQUE_PROMPT_BODY_DO_NOT_SHOW should be hidden",
+        outputTail: [
+          "chain of thought: UNIQUE_COT_BODY_DO_NOT_SHOW",
+          "provider_response = UNIQUE_PROVIDER_BODY_DO_NOT_SHOW",
+          "file-content: UNIQUE_FILE_BODY_DO_NOT_SHOW",
+          "workspace content: UNIQUE_WORKSPACE_BODY_DO_NOT_SHOW"
+        ].join("\n")
+      })
+    ],
+    { now: NOW }
+  );
+  assert.equal(rawContentSentinel.status, "failed");
+  assertNoSensitiveContent(rawContentSentinel);
+  assertAbsent(rawContentSentinel, rawBodyMarkers);
+  assertAbsent(formatProgressReport(rawContentSentinel), rawBodyMarkers);
+
+  const headOverflowMarker = reduceAgentProgress(
+    [
+      event({
+        eventId: "evt-head-overflow-marker",
+        timestamp: "2026-05-29T12:58:00Z",
+        phase: "failed",
+        status: "failed",
+        message: "Command failed.",
+        outputTail: `context_length_exceeded while building prompt window. ${"safe filler ".repeat(1200)}`
+      })
+    ],
+    { now: NOW }
+  );
+  assert.equal(headOverflowMarker.status, "failed");
+  assert.equal(headOverflowMarker.overflowRecovery.kind, "context_length_exceeded");
+  assert.equal(headOverflowMarker.outputTail.length <= 2000, true, "head overflow tail was not bounded");
+  assertNoSensitiveContent(headOverflowMarker);
+
+  const recoveredDone = reduceAgentProgress(
+    [
+      event({
+        eventId: "evt-recovered-overflow",
+        timestamp: "2026-05-29T12:50:00Z",
+        phase: "failed",
+        status: "failed",
+        message: "context_length_exceeded while reading task_board_get output."
+      }),
+      event({
+        eventId: "evt-recovered-done",
+        timestamp: "2026-05-29T12:59:00Z",
+        phase: "done",
+        status: "done",
+        message: "Agent completed after scoped retry."
+      })
+    ],
+    { now: NOW }
+  );
+  assert.equal(recoveredDone.status, "done");
+  assert.equal(recoveredDone.overflowRecovery, undefined);
+  assert.doesNotMatch(formatProgressReport(recoveredDone), /overflow_recovery/);
 
 
   const tmp = await mkdtemp(join(tmpdir(), "yet-agent-progress-"));
