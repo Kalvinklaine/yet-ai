@@ -710,7 +710,11 @@ async fn send_user_message(app: axum::Router, chat_id: &str) {
     assert_eq!(body["accepted"], true);
 }
 
-async fn send_user_message_with_content(app: axum::Router, chat_id: &str, content: &str) -> StatusCode {
+async fn send_user_message_with_content(
+    app: axum::Router,
+    chat_id: &str,
+    content: &str,
+) -> StatusCode {
     let command = json!({
         "requestId": format!("req-{chat_id}"),
         "type": "user_message",
@@ -2943,8 +2947,12 @@ async fn models_returns_empty_list() {
 
 #[tokio::test]
 async fn agent_progress_returns_authenticated_empty_read_only_response() {
-    let (status, body) =
-        json_response(authed_request(Method::GET, "/v1/agent-progress", Body::empty())).await;
+    let (status, body) = json_response(authed_request(
+        Method::GET,
+        "/v1/agent-progress",
+        Body::empty(),
+    ))
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["cloudRequired"], false);
     assert_eq!(body["providerAccess"], "direct");
@@ -2968,14 +2976,21 @@ async fn agent_progress_requires_bearer_token() {
 
 #[tokio::test]
 async fn agent_progress_shape_is_local_only_and_sanitized() {
-    let (status, body) =
-        json_response(authed_request(Method::GET, "/v1/agent-progress", Body::empty())).await;
+    let (status, body) = json_response(authed_request(
+        Method::GET,
+        "/v1/agent-progress",
+        Body::empty(),
+    ))
+    .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, json!({
-        "cloudRequired": false,
-        "providerAccess": "direct",
-        "snapshots": []
-    }));
+    assert_eq!(
+        body,
+        json!({
+            "cloudRequired": false,
+            "providerAccess": "direct",
+            "snapshots": []
+        })
+    );
     let text = body.to_string().to_lowercase();
     for forbidden in [
         TEST_TOKEN,
@@ -3836,6 +3851,20 @@ async fn provider_storage_path_uses_yet_ai_config_dir_not_project_state() {
 }
 
 fn write_legacy_provider_config(paths: &StoragePaths, id: &str, auth: Value) {
+    write_legacy_provider_config_with_base_url(
+        paths,
+        id,
+        "http://127.0.0.1:8080/v1".to_string(),
+        auth,
+    );
+}
+
+fn write_legacy_provider_config_with_base_url(
+    paths: &StoragePaths,
+    id: &str,
+    base_url: String,
+    auth: Value,
+) {
     let providers_dir = paths.config_dir.join("providers.d");
     std::fs::create_dir_all(&providers_dir).unwrap();
     let provider = json!({
@@ -3843,7 +3872,7 @@ fn write_legacy_provider_config(paths: &StoragePaths, id: &str, auth: Value) {
         "kind": "openai-compatible",
         "displayName": id,
         "enabled": true,
-        "baseUrl": "http://127.0.0.1:8080/v1",
+        "baseUrl": base_url,
         "auth": auth,
         "models": [{ "id": "gpt-test", "displayName": "GPT Test" }],
         "capabilities": { "chat": true, "completion": false, "embeddings": false }
@@ -3856,8 +3885,13 @@ fn write_legacy_provider_config(paths: &StoragePaths, id: &str, auth: Value) {
 }
 
 fn read_provider_config_text(paths: &StoragePaths, id: &str) -> String {
-    std::fs::read_to_string(paths.config_dir.join("providers.d").join(format!("{id}.json")))
-        .unwrap()
+    std::fs::read_to_string(
+        paths
+            .config_dir
+            .join("providers.d")
+            .join(format!("{id}.json")),
+    )
+    .unwrap()
 }
 
 #[tokio::test]
@@ -4005,6 +4039,369 @@ async fn provider_secret_non_api_key_stale_inline_field_is_scrubbed() {
     assert_eq!(
         FileSecretStore::new(&paths.config_dir)
             .get_secret("provider-secret-none-stale", SecretKind::ApiKey)
+            .await
+            .unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
+async fn provider_secret_list_first_access_migrates_inline_key() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-provider-list-migration-secret-abcd";
+    write_legacy_provider_config(
+        &paths,
+        "provider-secret-list-migrate",
+        json!({ "type": "api_key", "apiKey": api_key }),
+    );
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/providers", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["providers"][0]["auth"]["configured"], true);
+    assert_eq!(body["providers"][0]["auth"]["redacted"], "sk...cd");
+    assert!(!body.to_string().contains(api_key));
+    let stored = FileSecretStore::new(&paths.config_dir)
+        .get_secret("provider-secret-list-migrate", SecretKind::ApiKey)
+        .await
+        .unwrap();
+    assert_stored_secret(stored.as_deref(), api_key);
+    assert!(!read_provider_config_text(&paths, "provider-secret-list-migrate").contains(api_key));
+}
+
+#[tokio::test]
+async fn provider_secret_models_first_access_migrates_inline_key() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-provider-models-migration-secret-abcd";
+    write_legacy_provider_config(
+        &paths,
+        "provider-secret-models-migrate",
+        json!({ "type": "api_key", "apiKey": api_key }),
+    );
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/models", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["models"][0]["readiness"], json!({ "status": "ready" }));
+    assert!(!body.to_string().contains(api_key));
+    let stored = FileSecretStore::new(&paths.config_dir)
+        .get_secret("provider-secret-models-migrate", SecretKind::ApiKey)
+        .await
+        .unwrap();
+    assert_stored_secret(stored.as_deref(), api_key);
+    assert!(!read_provider_config_text(&paths, "provider-secret-models-migrate").contains(api_key));
+}
+
+#[tokio::test]
+async fn provider_secret_caps_first_access_migrates_inline_key() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-provider-caps-migration-secret-abcd";
+    write_legacy_provider_config(
+        &paths,
+        "provider-secret-caps-migrate",
+        json!({ "type": "api_key", "apiKey": api_key }),
+    );
+
+    let (status, body) =
+        json_response_from(app, authed_request(Method::GET, "/v1/caps", Body::empty())).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["providers"][0]["models"][0]["readiness"],
+        json!({ "status": "ready" })
+    );
+    assert!(!body.to_string().contains(api_key));
+    let stored = FileSecretStore::new(&paths.config_dir)
+        .get_secret("provider-secret-caps-migrate", SecretKind::ApiKey)
+        .await
+        .unwrap();
+    assert_stored_secret(stored.as_deref(), api_key);
+    assert!(!read_provider_config_text(&paths, "provider-secret-caps-migrate").contains(api_key));
+}
+
+#[tokio::test]
+async fn provider_secret_test_first_access_uses_migrated_store_key() {
+    let paths = test_storage_paths();
+    let (base_url, auth_receiver) =
+        start_mock_models_provider(StatusCode::OK, r#"{"data":[{"id":"gpt-test"}]}"#).await;
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-provider-test-migration-secret-abcd";
+    write_legacy_provider_config_with_base_url(
+        &paths,
+        "provider-secret-test-migrate",
+        base_url,
+        json!({ "type": "api_key", "apiKey": api_key }),
+    );
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/providers/provider-secret-test-migrate/test",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["status"], "reachable");
+    assert!(!body.to_string().contains(api_key));
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer sk-provider-test-migration-secret-abcd",
+        "provider secret test migration",
+    )
+    .await;
+    let stored = FileSecretStore::new(&paths.config_dir)
+        .get_secret("provider-secret-test-migrate", SecretKind::ApiKey)
+        .await
+        .unwrap();
+    assert_stored_secret(stored.as_deref(), api_key);
+    assert!(!read_provider_config_text(&paths, "provider-secret-test-migrate").contains(api_key));
+}
+
+#[tokio::test]
+async fn provider_secret_chat_first_access_uses_migrated_store_key() {
+    let paths = test_storage_paths();
+    let (base_url, auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"migrated-chat\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-provider-chat-migration-secret-abcd";
+    write_legacy_provider_config_with_base_url(
+        &paths,
+        "provider-secret-chat-migrate",
+        base_url,
+        json!({ "type": "api_key", "apiKey": api_key }),
+    );
+
+    send_user_message(app.clone(), "chat-provider-secret-migration").await;
+    let text = sse_text_from(
+        app,
+        "/v1/chats/subscribe?chat_id=chat-provider-secret-migration",
+    )
+    .await;
+    assert!(text.contains("migrated-chat"));
+    assert!(!text.contains(api_key));
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer sk-provider-chat-migration-secret-abcd",
+        "provider secret chat migration",
+    )
+    .await;
+    let stored = FileSecretStore::new(&paths.config_dir)
+        .get_secret("provider-secret-chat-migrate", SecretKind::ApiKey)
+        .await
+        .unwrap();
+    assert_stored_secret(stored.as_deref(), api_key);
+    assert!(!read_provider_config_text(&paths, "provider-secret-chat-migrate").contains(api_key));
+}
+
+#[tokio::test]
+async fn provider_secret_corrupt_store_with_inline_key_fails_safely() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-provider-corrupt-migration-secret-abcd";
+    write_legacy_provider_config(
+        &paths,
+        "provider-secret-corrupt-migrate",
+        json!({ "type": "api_key", "apiKey": api_key }),
+    );
+    let secret_path = FileSecretStore::new(&paths.config_dir)
+        .secret_path("provider-secret-corrupt-migrate", SecretKind::ApiKey)
+        .unwrap();
+    std::fs::create_dir_all(secret_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &secret_path,
+        r#"{"value":"sk-provider-corrupt-migration-secret-abcd""#,
+    )
+    .unwrap();
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/providers/provider-secret-corrupt-migrate",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["error"], "provider secret storage error");
+    assert!(!body.to_string().contains(api_key));
+    assert!(read_provider_config_text(&paths, "provider-secret-corrupt-migrate").contains(api_key));
+}
+
+#[tokio::test]
+async fn provider_secret_partial_migration_retry_scrubs_without_overwrite() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let stored_key = "sk-provider-partial-newer-secret-abcd";
+    let inline_key = "sk-provider-partial-stale-secret-wxyz";
+    write_legacy_provider_config(
+        &paths,
+        "provider-secret-partial-retry",
+        json!({ "type": "api_key", "apiKey": inline_key }),
+    );
+    FileSecretStore::new(&paths.config_dir)
+        .put_secret(
+            "provider-secret-partial-retry",
+            SecretKind::ApiKey,
+            stored_key,
+        )
+        .await
+        .unwrap();
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/providers/provider-secret-partial-retry",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["auth"]["configured"], true);
+    let text = body.to_string();
+    assert!(!text.contains(stored_key));
+    assert!(!text.contains(inline_key));
+    let stored = FileSecretStore::new(&paths.config_dir)
+        .get_secret("provider-secret-partial-retry", SecretKind::ApiKey)
+        .await
+        .unwrap();
+    assert_stored_secret(stored.as_deref(), stored_key);
+    assert!(
+        !read_provider_config_text(&paths, "provider-secret-partial-retry").contains(inline_key)
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn provider_secret_rewrite_failure_after_secret_write_keeps_retry_state() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-provider-rewrite-failure-secret-abcd";
+    write_legacy_provider_config(
+        &paths,
+        "provider-secret-rewrite-failure",
+        json!({ "type": "api_key", "apiKey": api_key }),
+    );
+    let providers_dir = paths.config_dir.join("providers.d");
+    std::fs::set_permissions(&providers_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::GET,
+            "/v1/providers/provider-secret-rewrite-failure",
+            Body::empty(),
+        ),
+    )
+    .await;
+    std::fs::set_permissions(&providers_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["error"], "provider storage error");
+    assert!(!body.to_string().contains(api_key));
+    let stored = FileSecretStore::new(&paths.config_dir)
+        .get_secret("provider-secret-rewrite-failure", SecretKind::ApiKey)
+        .await
+        .unwrap();
+    assert_stored_secret(stored.as_deref(), api_key);
+    assert!(read_provider_config_text(&paths, "provider-secret-rewrite-failure").contains(api_key));
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/providers/provider-secret-rewrite-failure",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["auth"]["configured"], true);
+    assert!(!body.to_string().contains(api_key));
+    assert!(
+        !read_provider_config_text(&paths, "provider-secret-rewrite-failure").contains(api_key)
+    );
+}
+
+#[tokio::test]
+async fn provider_secret_whitespace_inline_key_is_scrubbed_without_secret() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    write_legacy_provider_config(
+        &paths,
+        "provider-secret-whitespace",
+        json!({ "type": "api_key", "apiKey": "   \n\t  " }),
+    );
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/providers/provider-secret-whitespace",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["auth"]["type"], "api_key");
+    assert_eq!(body["auth"]["configured"], false);
+    assert!(body["auth"].get("redacted").is_none());
+    assert!(!read_provider_config_text(&paths, "provider-secret-whitespace").contains("apiKey"));
+    assert_eq!(
+        FileSecretStore::new(&paths.config_dir)
+            .get_secret("provider-secret-whitespace", SecretKind::ApiKey)
             .await
             .unwrap(),
         None
@@ -4364,7 +4761,11 @@ async fn chat_history_create_list_get_delete_endpoints_persist_locally() {
 
     let delete_status = empty_response_from(
         app_after_restart.clone(),
-        authed_request(Method::DELETE, &format!("/v1/chats/{chat_id}"), Body::empty()),
+        authed_request(
+            Method::DELETE,
+            &format!("/v1/chats/{chat_id}"),
+            Body::empty(),
+        ),
     )
     .await;
     assert_eq!(delete_status, StatusCode::NO_CONTENT);
@@ -4391,7 +4792,10 @@ async fn chat_history_invalid_missing_and_corrupt_state_are_sanitized() {
             authed_request(Method::GET, &format!("/v1/chats/{id}"), Body::empty()),
         )
         .await;
-        assert!(matches!(status, StatusCode::BAD_REQUEST | StatusCode::NOT_FOUND));
+        assert!(matches!(
+            status,
+            StatusCode::BAD_REQUEST | StatusCode::NOT_FOUND
+        ));
         assert!(!text.contains(id));
         assert!(!text.contains(&paths.config_dir.to_string_lossy().to_string()));
     }
@@ -4444,11 +4848,19 @@ async fn chat_history_private_permissions_and_symlink_rejection_are_enforced() {
     let root = paths.config_dir.join("chat-history");
     let path = chat_history::chat_history_path(&paths.config_dir, chat_id).unwrap();
     assert_eq!(
-        std::fs::symlink_metadata(&root).unwrap().permissions().mode() & 0o777,
+        std::fs::symlink_metadata(&root)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
         0o700
     );
     assert_eq!(
-        std::fs::symlink_metadata(&path).unwrap().permissions().mode() & 0o777,
+        std::fs::symlink_metadata(&path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
         0o600
     );
 
@@ -4470,7 +4882,9 @@ async fn chat_history_private_permissions_and_symlink_rejection_are_enforced() {
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(body["error"], "chat history storage error");
-    assert!(!body.to_string().contains(&outside.to_string_lossy().to_string()));
+    assert!(!body
+        .to_string()
+        .contains(&outside.to_string_lossy().to_string()));
 
     let symlink_paths = test_storage_paths();
     let symlink_app = yet_lsp::app(AppState::with_storage_paths(
@@ -4895,12 +5309,25 @@ async fn chat_success_persists_user_and_assistant_messages_for_snapshot_and_rest
         AuthToken::new(TEST_TOKEN).unwrap(),
         paths.clone(),
     ));
-    let text = sse_text_from(snapshot_app, "/v1/chats/subscribe?chat_id=chat-history-success").await;
+    let text = sse_text_from(
+        snapshot_app,
+        "/v1/chats/subscribe?chat_id=chat-history-success",
+    )
+    .await;
     let events = sse_json_events(&text);
     assert_eq!(events[0]["type"], "snapshot");
-    assert_eq!(events[0]["payload"]["messages"].as_array().unwrap().len(), 2);
-    assert_eq!(events[0]["payload"]["messages"][1]["content"], "persisted assistant");
-    assert_eq!(events[0]["payload"]["thread"]["messages"][0]["content"], "persist me");
+    assert_eq!(
+        events[0]["payload"]["messages"].as_array().unwrap().len(),
+        2
+    );
+    assert_eq!(
+        events[0]["payload"]["messages"][1]["content"],
+        "persisted assistant"
+    );
+    assert_eq!(
+        events[0]["payload"]["thread"]["messages"][0]["content"],
+        "persist me"
+    );
     assert!(!text.contains(api_key));
 
     let restarted = yet_lsp::app(AppState::with_storage_paths(
@@ -4914,8 +5341,17 @@ async fn chat_success_persists_user_and_assistant_messages_for_snapshot_and_rest
     )
     .await;
     let restart_events = sse_json_events(&restart_text);
-    assert_eq!(restart_events[0]["payload"]["messages"].as_array().unwrap().len(), 2);
-    assert_eq!(restart_events[0]["payload"]["messages"][1]["content"], "persisted assistant");
+    assert_eq!(
+        restart_events[0]["payload"]["messages"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        restart_events[0]["payload"]["messages"][1]["content"],
+        "persisted assistant"
+    );
     assert_first_auth_and_no_immediate_extra_auth(
         auth_receiver,
         "Bearer sk-history-success-secret-abcd",
@@ -4944,7 +5380,9 @@ async fn chat_provider_error_persists_sanitized_error_history_and_snapshot() {
         loaded["messages"][1]["content"],
         "Provider authentication failed. Check the configured credentials."
     );
-    assert!(loaded.to_string().contains("Provider authentication failed"));
+    assert!(loaded
+        .to_string()
+        .contains("Provider authentication failed"));
     assert_sanitized_sse_error(&loaded.to_string());
     assert!(!loaded.to_string().contains(api_key));
     assert_first_auth_and_no_immediate_extra_auth(
@@ -4958,7 +5396,8 @@ async fn chat_provider_error_persists_sanitized_error_history_and_snapshot() {
 #[tokio::test]
 async fn abort_does_not_leave_assistant_or_streaming_history_state() {
     let api_key = "sk-history-abort-secret-abcd";
-    let (base_url, auth_receiver, first_receiver, continue_sender) = start_slow_mock_provider().await;
+    let (base_url, auth_receiver, first_receiver, continue_sender) =
+        start_slow_mock_provider().await;
     let app = test_app();
     configure_openai_provider(app.clone(), base_url, api_key).await;
     send_user_message_with_content(app.clone(), "chat-history-abort", "abort history").await;
@@ -4974,7 +5413,10 @@ async fn abort_does_not_leave_assistant_or_streaming_history_state() {
     assert_ne!(loaded["messages"][0]["status"], "streaming");
     let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-history-abort").await;
     let events = sse_json_events(&text);
-    assert_eq!(events[0]["payload"]["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        events[0]["payload"]["messages"].as_array().unwrap().len(),
+        1
+    );
     assert_eq!(events[0]["payload"]["runtime"]["streaming"], false);
     assert!(!text.contains(api_key));
     assert_first_auth_and_no_immediate_extra_auth(
@@ -5005,7 +5447,11 @@ async fn rejected_user_message_command_does_not_create_history() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, body) = json_response_from(
         app.clone(),
-        authed_request(Method::GET, "/v1/chats/chat-history-rejected", Body::empty()),
+        authed_request(
+            Method::GET,
+            "/v1/chats/chat-history-rejected",
+            Body::empty(),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
