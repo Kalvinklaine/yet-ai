@@ -1457,6 +1457,31 @@ describe("agent progress panel", () => {
     expect(text.length).toBeLessThan(16000);
   });
 
+  it("detects fallback overflow before raw-content redaction", async () => {
+    mockRuntimeResponses({
+      agentProgress: agentProgressResponse([agentProgressSnapshot({
+        phase: "failed",
+        status: "failed",
+        message: "Provider request failed",
+        outputTail: "provider response: context_length_exceeded FALLBACK_RAW_SENTINEL",
+        recentEvents: [],
+      })]),
+    });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Refresh agent progress").click();
+      await Promise.resolve();
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Planner context was too large.");
+    expect(text).toContain("Retry with scoped context");
+    expect(text).toContain("[redacted]");
+    expect(text).not.toContain("FALLBACK_RAW_SENTINEL");
+  });
+
   it("bounds oversized agent-progress lists and recent summaries", async () => {
     const snapshots = Array.from({ length: 25 }, (_, index) => agentProgressSnapshot({
       cardId: `T-BOUND-${index}`,

@@ -26,6 +26,10 @@ const rawMarkers = [
   "STRUCTURED_RAW_PROMPT_BODY",
   "STRUCTURED_PROVIDER_BODY",
   "STRUCTURED_BOARD_DUMP_BODY",
+  "STRUCTURED_RAW_TOOL_OUTPUT_BODY",
+  "STRUCTURED_RAW_OUTPUT_BODY",
+  "STRUCTURED_RAW_DUMP_BODY",
+  "FALLBACK_PROVIDER_RESPONSE_SENTINEL",
   "GUI-SMOKE-BOUNDED-20",
 ];
 const failures = [];
@@ -189,6 +193,20 @@ try {
   await expectVisibleText(page, "Agent output was too large.", "noisy fallback recovery title");
   await assertBoundedNoisyOutput(page, noisyMarker);
 
+  agentProgressResponse = progressList([progressSnapshot({
+    cardId: "GUI-SMOKE-FALLBACK-RAW-LABEL",
+    phase: "failed",
+    status: "failed",
+    stuckReason: "explicit_failure",
+    message: "Provider failed before explicit overflow recovery was attached",
+    outputTail: "provider response: context_length_exceeded FALLBACK_PROVIDER_RESPONSE_SENTINEL",
+    recentEvents: [],
+  })]);
+  await refreshAgentProgress(page);
+  await expectVisibleText(page, "GUI-SMOKE-FALLBACK-RAW-LABEL / run-gui-smoke", "fallback raw label overflow run");
+  await expectVisibleText(page, "Planner context was too large.", "fallback raw label recovery title");
+  await expectVisibleText(page, "Retry with scoped context", "fallback raw label recovery message");
+
   agentProgressResponse = progressList(Array.from({ length: 25 }, (_, index) => progressSnapshot({
     cardId: `GUI-SMOKE-BOUNDED-${index}`,
     runId: `run-gui-bounded-${index}`,
@@ -196,6 +214,9 @@ try {
     rawPrompt: { nested: "STRUCTURED_RAW_PROMPT_BODY" },
     providerBody: ["STRUCTURED_PROVIDER_BODY"],
     taskBoardDump: { raw: "STRUCTURED_BOARD_DUMP_BODY" },
+    rawToolOutput: { nested: "STRUCTURED_RAW_TOOL_OUTPUT_BODY" },
+    rawOutput: { nested: "STRUCTURED_RAW_OUTPUT_BODY" },
+    rawDump: { nested: "STRUCTURED_RAW_DUMP_BODY" },
     recentEvents: Array.from({ length: 18 }, (_, eventIndex) => ({
       eventId: `event-bounded-${index}-${eventIndex}`,
       timestamp: "2026-05-29T15:01:00Z",

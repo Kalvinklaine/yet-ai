@@ -4,10 +4,11 @@ const defaultDisplayLimit = 500;
 const objectDisplayDepthLimit = 8;
 const arrayDisplayItemLimit = 50;
 const objectDisplayEntryLimit = 50;
+const objectDisplayNodeLimit = 500;
 
 const secretKeyPattern = String.raw`(?:access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|api[_-]?key|client[_-]?secret|authorization|proxy[_-]?authorization|bearer|cookie|set[_-]?cookie|setCookie|code[_-]?verifier|pkce[_-]?verifier|verifier|github[_-]?token|oauth[_-]?refresh[_-]?token|provider[_-]?client[_-]?secret|openai[_-]?api[_-]?key|anthropic[_-]?api[_-]?key|yet[_-]?ai[_-]?auth[_-]?token)`;
 const secretKeyRegExp = new RegExp(secretKeyPattern, "i");
-const rawContentKeyPattern = String.raw`(?:raw[\s_-]?prompt|provider[\s_-]?(?:response|body)|file[\s_-]?contents?|workspace[\s_-]?contents?|chain[\s_-]?of[\s_-]?thought|task[\s_-]?board[\s_-]?dump|tool[\s_-]?raw[\s_-]?output|full[\s_-]?board[\s_-]?json)`;
+const rawContentKeyPattern = String.raw`(?:raw[\s_-]?(?:prompt|tool[\s_-]?output|output|dump)|provider[\s_-]?(?:response|body)|file[\s_-]?contents?|workspace[\s_-]?contents?|chain[\s_-]?of[\s_-]?thought|task[\s_-]?board[\s_-]?dump|tool[\s_-]?raw[\s_-]?output|full[\s_-]?board[\s_-]?json)`;
 const rawContentKeyRegExp = new RegExp(rawContentKeyPattern, "i");
 
 const redactionPatterns: Array<[RegExp, string]> = [
@@ -39,7 +40,7 @@ export function sanitizeTimelineText(value: string): string {
 }
 
 export function sanitizeDisplayValue(value: unknown): unknown {
-  return sanitizeDisplayValueInner(value, new WeakSet<object>(), 0);
+  return sanitizeDisplayValueInner(value, new WeakSet<object>(), { remaining: objectDisplayNodeLimit }, 0);
 }
 
 export function isSecretLikeKey(key: string): boolean {
@@ -54,7 +55,11 @@ export function sanitizeErrorText(value: string): string {
   return truncate(redactSecrets(value), defaultDisplayLimit);
 }
 
-function sanitizeDisplayValueInner(value: unknown, seen: WeakSet<object>, depth: number): unknown {
+function sanitizeDisplayValueInner(value: unknown, seen: WeakSet<object>, budget: { remaining: number }, depth: number): unknown {
+  budget.remaining -= 1;
+  if (budget.remaining < 0) {
+    return "[redacted]";
+  }
   if (typeof value === "string") {
     return sanitizeTimelineText(value);
   }
@@ -66,7 +71,7 @@ function sanitizeDisplayValueInner(value: unknown, seen: WeakSet<object>, depth:
       return "[redacted]";
     }
     seen.add(value);
-    const sanitized = value.slice(0, arrayDisplayItemLimit).map((item) => sanitizeDisplayValueInner(item, seen, depth + 1));
+    const sanitized = value.slice(0, arrayDisplayItemLimit).map((item) => sanitizeDisplayValueInner(item, seen, budget, depth + 1));
     if (value.length > arrayDisplayItemLimit) {
       sanitized.push(`[${value.length - arrayDisplayItemLimit} more items redacted]`);
     }
@@ -82,7 +87,7 @@ function sanitizeDisplayValueInner(value: unknown, seen: WeakSet<object>, depth:
       if (isSecretLikeKey(key) || isRawContentLikeKey(key)) {
         return ["[redacted]", "[redacted]"];
       }
-      return [key, sanitizeDisplayValueInner(item, seen, depth + 1)];
+      return [key, sanitizeDisplayValueInner(item, seen, budget, depth + 1)];
     });
     if (entries.length > objectDisplayEntryLimit) {
       sanitized.push(["[redacted]", `[${entries.length - objectDisplayEntryLimit} more fields redacted]`]);

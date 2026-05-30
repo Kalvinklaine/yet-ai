@@ -1610,11 +1610,11 @@ function isActiveOverflowStatus(snapshot: AgentProgressSnapshot): boolean {
 }
 
 function detectAgentOverflowKind(snapshot: AgentProgressSnapshot): AgentOverflowRecoveryKind | null {
-  const text = sanitizeTimelineText([
+  const text = boundedAgentOverflowDetectionText([
     snapshot.message,
     snapshot.outputTail ?? "",
     ...snapshot.recentEvents.map((event) => event.message),
-  ].join("\n")).toLowerCase();
+  ]).toLowerCase();
   if (!text) {
     return null;
   }
@@ -1632,6 +1632,10 @@ function detectAgentOverflowKind(snapshot: AgentProgressSnapshot): AgentOverflow
     return "context_length_exceeded";
   }
   return null;
+}
+
+function boundedAgentOverflowDetectionText(values: string[]): string {
+  return values.map((value) => `${value.slice(0, 2000)}\n${value.slice(-2000)}`).join("\n").slice(0, 12000);
 }
 
 function agentOverflowRecoveryTitle(kind: AgentOverflowRecoveryKind): string {
