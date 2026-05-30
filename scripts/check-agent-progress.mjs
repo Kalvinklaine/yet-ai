@@ -37,6 +37,10 @@ function assertNoSensitiveContent(value) {
     "chain-of-thought",
     "providerresponse",
     "provider_response",
+    "providerbody",
+    "provider_body",
+    "toolrawoutput",
+    "tool_raw_output",
     "api_key",
     "apikey",
     "authorization",
@@ -356,8 +360,12 @@ async function runAssertions() {
     "UNIQUE_COT_BODY_DO_NOT_SHOW",
     "UNIQUE_PROMPT_BODY_DO_NOT_SHOW",
     "UNIQUE_PROVIDER_BODY_DO_NOT_SHOW",
+    "UNIQUE_PROVIDER_BODY_ALT_DO_NOT_SHOW",
     "UNIQUE_FILE_BODY_DO_NOT_SHOW",
-    "UNIQUE_WORKSPACE_BODY_DO_NOT_SHOW"
+    "UNIQUE_FILE_PLURAL_BODY_DO_NOT_SHOW",
+    "UNIQUE_WORKSPACE_BODY_DO_NOT_SHOW",
+    "UNIQUE_WORKSPACE_PLURAL_BODY_DO_NOT_SHOW",
+    "UNIQUE_TOOL_RAW_BODY_DO_NOT_SHOW"
   ];
   const rawContentSentinel = reduceAgentProgress(
     [
@@ -370,8 +378,12 @@ async function runAssertions() {
         outputTail: [
           "chain of thought: UNIQUE_COT_BODY_DO_NOT_SHOW",
           "provider_response = UNIQUE_PROVIDER_BODY_DO_NOT_SHOW",
+          "provider body: UNIQUE_PROVIDER_BODY_ALT_DO_NOT_SHOW",
           "file-content: UNIQUE_FILE_BODY_DO_NOT_SHOW",
-          "workspace content: UNIQUE_WORKSPACE_BODY_DO_NOT_SHOW"
+          "file contents: UNIQUE_FILE_PLURAL_BODY_DO_NOT_SHOW",
+          "workspace content: UNIQUE_WORKSPACE_BODY_DO_NOT_SHOW",
+          "workspace contents: UNIQUE_WORKSPACE_PLURAL_BODY_DO_NOT_SHOW",
+          "tool raw output: UNIQUE_TOOL_RAW_BODY_DO_NOT_SHOW"
         ].join("\n")
       })
     ],
@@ -422,6 +434,61 @@ async function runAssertions() {
   assert.equal(recoveredDone.status, "done");
   assert.equal(recoveredDone.overflowRecovery, undefined);
   assert.doesNotMatch(formatProgressReport(recoveredDone), /overflow_recovery/);
+
+  const rawProviderOverflowMarkers = [
+    "UNIQUE_PROVIDER_CONTEXT_BODY_DO_NOT_SHOW",
+    "UNIQUE_RAW_PROMPT_CONTEXT_BODY_DO_NOT_SHOW"
+  ];
+  const rawProviderOverflow = reduceAgentProgress(
+    [
+      event({
+        eventId: "evt-provider-response-overflow",
+        timestamp: "2026-05-29T12:58:00Z",
+        phase: "failed",
+        status: "failed",
+        message: "Command failed with generic sanitized message.",
+        outputTail: [
+          "provider response: context_length_exceeded while building maximum context window UNIQUE_PROVIDER_CONTEXT_BODY_DO_NOT_SHOW",
+          "raw prompt: maximum context length exceeded UNIQUE_RAW_PROMPT_CONTEXT_BODY_DO_NOT_SHOW"
+        ].join("\n")
+      })
+    ],
+    { now: NOW }
+  );
+  assert.equal(rawProviderOverflow.status, "failed");
+  assert.equal(rawProviderOverflow.overflowRecovery.kind, "context_length_exceeded");
+  assertNoSensitiveContent(rawProviderOverflow);
+  assertAbsent(rawProviderOverflow, rawProviderOverflowMarkers);
+  assertAbsent(formatProgressReport(rawProviderOverflow), rawProviderOverflowMarkers);
+
+  const rawToolOverflowMarkers = [
+    "UNIQUE_TOOL_OUTPUT_BODY_DO_NOT_SHOW",
+    "UNIQUE_PROVIDER_TOOL_BODY_DO_NOT_SHOW"
+  ];
+  const rawToolOverflow = reduceAgentProgress(
+    [
+      event({
+        eventId: "evt-tool-raw-output-overflow",
+        timestamp: "2026-05-29T12:30:00Z",
+        phase: "running_command",
+        status: "running",
+        message: "Waiting for command output.",
+        heartbeat: {
+          lastHeartbeatAt: "2026-05-29T12:45:00Z"
+        },
+        outputTail: [
+          "tool raw output: tool output too large during search UNIQUE_TOOL_OUTPUT_BODY_DO_NOT_SHOW",
+          "provider-body: output too large for command UNIQUE_PROVIDER_TOOL_BODY_DO_NOT_SHOW"
+        ].join("\n")
+      })
+    ],
+    { now: NOW }
+  );
+  assert.equal(rawToolOverflow.status, "stuck");
+  assert.equal(rawToolOverflow.overflowRecovery.kind, "tool_output_too_large");
+  assertNoSensitiveContent(rawToolOverflow);
+  assertAbsent(rawToolOverflow, rawToolOverflowMarkers);
+  assertAbsent(formatProgressReport(rawToolOverflow), rawToolOverflowMarkers);
 
 
   const tmp = await mkdtemp(join(tmpdir(), "yet-agent-progress-"));
