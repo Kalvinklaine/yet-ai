@@ -59,6 +59,14 @@ npm run smoke:local
 
 `npm run smoke:local` starts the Rust engine on a free loopback port through Cargo, starts local mock OpenAI-compatible, experimental token, and experimental chat endpoints, configures a fake local API key, checks ping/caps/provider setup/chat command/SSE streaming, exercises local chat history create/list/get/delete and persisted snapshot hydration, exercises provider-auth default status plus the local mock OAuth start/exchange/status/disconnect flow, and covers the approved experimental Codex-like start/exchange/chat fallback through loopback mocks only. It also verifies that bounded active editor context attached to a chat command reaches the mock provider prompt through the local runtime. Runtime and provider-test regressions use deterministic loopback mock helpers; Authorization expectations are asserted by the Rust test bodies from observed mock requests rather than hidden provider calls. It verifies raw fake API keys, OAuth access tokens, refresh tokens, Authorization header values, cookies, PKCE verifier values, mock auth codes, active selection markers, Codex credential-file paths, and local chat history responses/events do not leak client-visible secrets. JetBrains wrapper/browser smoke separately covers the JetBrains-style `host.contextSnapshot` bridge path, GUI preview/toggle behavior, one-shot disabled-toggle omission, and enabled context delivery to `user_message.payload.context` with local loopback mocks only. Prerequisites: Node 18+ with root dependencies installed and a Rust toolchain with Cargo on `PATH`.
 
+Run the focused provider error smoke when changing provider chat failure classification, SSE stream error handling, or sanitized chat error history:
+
+```sh
+npm run smoke:provider-errors
+```
+
+`npm run smoke:provider-errors` starts the Rust engine with isolated local storage and loopback-only OpenAI-compatible mocks, configures a fake API-key provider, and exercises unauthorized, rate-limit, context-window, invalid-request, upstream, malformed-SSE, and OpenAI-style stream error-frame failures. It verifies accepted chat commands, stable SSE error codes/messages, sanitized persisted chat history, and no raw fake keys, bearer strings, cookies, provider bodies, auth codes, request-body secret markers, or private paths in client-visible output.
+
 Run focused provider secret checks when changing legacy inline API-key migration, keychain/fallback policy, or the engine secret-store boundary:
 
 ```sh
