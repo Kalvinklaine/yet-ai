@@ -12,6 +12,7 @@
     "smoke:planner-resume": "node scripts/smoke-planner-resume.mjs",
     "smoke:planner-no-idle": "node scripts/smoke-planner-no-idle.mjs",
     "smoke:local": "node scripts/smoke-local.mjs",
+    "smoke:provider-errors": "node scripts/smoke-provider-errors.mjs",
     "smoke:provider-secret-migration": "node scripts/smoke-provider-secret-migration.mjs",
     "smoke:gui-browser": "node scripts/smoke-gui-browser.mjs",
     "smoke:gui-runtime-e2e": "node scripts/smoke-gui-runtime-e2e.mjs",
