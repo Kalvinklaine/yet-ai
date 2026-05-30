@@ -387,6 +387,39 @@ pre,
   font-weight: 700;
 }
 
+.first-message-wizard {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #cdd8ff;
+  border-radius: 14px;
+  background: #f6f8ff;
+  padding: 14px;
+}
+
+.first-message-wizard.ready {
+  border-color: #bce8cc;
+  background: #f4fbf7;
+}
+
+.first-message-wizard.blocked {
+  border-color: #ffe2a3;
+  background: #fffaf0;
+}
+
+.readiness-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.first-message-steps {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 20px;
+}
+
 .agent-progress-card {
   border-color: #cdd8ff;
 }

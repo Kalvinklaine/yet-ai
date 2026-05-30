@@ -77,6 +77,20 @@ type AgentProgressState = {
   error: RuntimeError | null;
 };
 
+type FirstMessageAction =
+  | { kind: "refresh_runtime"; label: string }
+  | { kind: "api_key_fallback"; label: string }
+  | { kind: "test_provider"; label: string; providerId: string }
+  | { kind: "send_first_message"; label: string };
+
+type FirstMessageReadiness = {
+  title: string;
+  reason: string;
+  nextAction: string;
+  actions: FirstMessageAction[];
+  notes: string[];
+};
+
 const emptyProviderForm: ProviderForm = {
   providerId: "openai-local",
   kind: "openai-compatible",
@@ -231,6 +245,7 @@ export function App() {
   const activeStreamRef = useRef<ActiveStream | null>(null);
   const attachedContextRef = useRef<typeof attachedContext>(null);
   const agentProgressAttemptRef = useRef(0);
+  const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
   settingsRef.current = settings;
@@ -1071,6 +1086,97 @@ export function App() {
     }
   };
 
+  const firstMessageReadiness = useMemo<FirstMessageReadiness>(() => {
+    const notes = [
+      "Session token unlocks this GUI to the local runtime only; Provider API key unlocks the upstream model through the runtime.",
+      "Provider setup stays local-first BYOK: no Yet AI hosted backend, account, cloud workspace, or credit balance is required.",
+    ];
+    const authStatus = activeProviderAuthStatus?.status;
+    if (activeProviderAuthStatus?.configured && activeProviderAuthStatus.authSource === "oauth") {
+      notes.push("Experimental account login is connected/available only as an explicit high-risk path; API-key providers remain the safe default when configured.");
+    } else if (authStatus === "login_available") {
+      notes.push("Account login may be available, but it is not the default first-message path; use an API-key provider unless you intentionally choose the experimental flow.");
+    } else if (authStatus === "api_key_configured") {
+      notes.push("API-key fallback status is available locally; configure or refresh an OpenAI-compatible provider/model if Send is still disabled.");
+    }
+    if (!runtimeConnected) {
+      const reason = activeConnectionError
+        ? `Runtime ${activeConnectionError.status}: ${sanitizeDisplayText(activeConnectionError.message)}`
+        : runtimeRefreshStatus?.state === "checking"
+          ? "Runtime check is in progress or has not completed for the current settings."
+          : "Runtime has not been checked for the current settings.";
+      return {
+        title: activeConnectionError?.status === 401 ? "Runtime authorization needs attention" : "Connect the local runtime first",
+        reason,
+        nextAction: "Refresh runtime, then fix the loopback URL or Session token if the check fails.",
+        actions: [{ kind: "refresh_runtime", label: runtimeRefreshInFlight ? "Checking runtime…" : "Refresh runtime" }],
+        notes,
+      };
+    }
+    if (apiKeyChatReady) {
+      return {
+        title: "Ready for your first message",
+        reason: `Send is enabled for ${selectedModelDisplayName ?? "the selected model"}${selectedModelProviderId ? ` through ${selectedModelProviderId}` : ""}.`,
+        nextAction: "Type a prompt and send it through the local runtime.",
+        actions: [{ kind: "send_first_message", label: "Send first message" }],
+        notes,
+      };
+    }
+    if (experimentalOauthChatReady) {
+      return {
+        title: "Experimental account login can send",
+        reason: "The account login fallback is connected, but this private-endpoint path is not the safe/default provider setup.",
+        nextAction: "Prefer configuring an API-key provider; otherwise type a prompt only if you accept the experimental risk.",
+        actions: [{ kind: "api_key_fallback", label: "Use OpenAI API key fallback" }, { kind: "send_first_message", label: "Send first message" }],
+        notes,
+      };
+    }
+    if (providerAuthMutationInFlight && activeProviderAuthStatus?.authSource === "oauth") {
+      return {
+        title: "Account login is changing",
+        reason: "Send is disabled while the local runtime updates account-login state and no API-key provider is ready.",
+        nextAction: "Wait for the login operation, refresh login/runtime status, or use the API-key fallback.",
+        actions: [{ kind: "refresh_runtime", label: "Refresh runtime" }, { kind: "api_key_fallback", label: "Use OpenAI API key fallback" }],
+        notes,
+      };
+    }
+    if (apiKeyReadiness.mismatch) {
+      const providerId = apiKeyReadiness.provider?.id ?? enabledProviders[0]?.id;
+      return {
+        title: "Model and provider do not match",
+        reason: apiKeyReadiness.message ?? "The runtime selected model does not map to one enabled provider with that model id.",
+        nextAction: providerId ? "Test the saved provider, then refresh runtime after fixing the provider/model id." : "Configure an OpenAI-compatible provider, then refresh runtime.",
+        actions: [
+          ...(providerId ? [{ kind: "test_provider" as const, label: "Test provider", providerId }] : [{ kind: "api_key_fallback" as const, label: "Use OpenAI API key fallback" }]),
+          { kind: "refresh_runtime", label: "Refresh runtime" },
+        ],
+        notes,
+      };
+    }
+    if (apiKeyReadiness.model && apiKeyReadiness.message) {
+      const providerId = apiKeyReadiness.provider?.id ?? enabledProviders[0]?.id;
+      return {
+        title: "Model is not ready yet",
+        reason: apiKeyReadiness.message,
+        nextAction: providerId ? "Test the provider, fix credentials/model readiness locally, then refresh runtime." : "Choose the API-key fallback or configure a usable OpenAI-compatible provider.",
+        actions: [
+          ...(providerId ? [{ kind: "test_provider" as const, label: "Test provider", providerId }] : [{ kind: "api_key_fallback" as const, label: "Use OpenAI API key fallback" }]),
+          { kind: "refresh_runtime", label: "Refresh runtime" },
+        ],
+        notes,
+      };
+    }
+    return {
+      title: enabledProviders.length > 0 ? "Provider model required" : "Provider required for first message",
+      reason: activeModelError
+        ? "Runtime model refresh failed, so no send-ready model can be selected."
+        : "No enabled OpenAI-compatible provider/model is ready for chat streaming.",
+      nextAction: "Use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, optionally test it, then refresh runtime.",
+      actions: [{ kind: "api_key_fallback", label: "Use OpenAI API key fallback" }, { kind: "refresh_runtime", label: "Refresh runtime" }],
+      notes,
+    };
+  }, [activeConnectionError, activeModelError, activeProviderAuthStatus, apiKeyChatReady, apiKeyReadiness, enabledProviders, experimentalOauthChatReady, providerAuthMutationInFlight, runtimeConnected, runtimeRefreshInFlight, runtimeRefreshStatus, selectedModelDisplayName, selectedModelProviderId]);
+
   return (
     <main className="app-shell">
       <section className="hero">
@@ -1113,6 +1219,16 @@ export function App() {
             {experimentalOauthChatReady && <span className="subtle">OpenAI API-key fallback remains the safe/default setup and will be preferred when configured.</span>}
             {!canSendChat && <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>}
           </div>
+          <FirstMessageReadinessWizard
+            readiness={firstMessageReadiness}
+            canSendChat={canSendChat}
+            runtimeRefreshInFlight={runtimeRefreshInFlight}
+            providerTestState={providerTestState}
+            onRefreshRuntime={() => void connect()}
+            onApiKeyFallback={applyOpenAiApiPreset}
+            onTestProvider={(providerId) => void runProviderTest(providerId)}
+            onFocusPrompt={() => chatInputRef.current?.focus()}
+          />
         </div>
         {chatError && <ErrorBox error={chatError} />}
         {chatHistoryError && <ErrorBox error={chatHistoryError} />}
@@ -1167,7 +1283,7 @@ export function App() {
             </div>
             <form className="stack chat-composer" onSubmit={(event) => void submitChat(event)}>
               <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} />
-              <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
+              <textarea ref={chatInputRef} value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
               <div className="row chat-actions">
                 <button type="submit" disabled={!canSendChat}>Send</button>
                 <button type="button" className="secondary-button" onClick={stopSse}>Stop SSE</button>
@@ -1589,6 +1705,58 @@ function ChatBubble({ message }: { message: ChatViewMessage }) {
       <span>{message.content || (message.status === "streaming" ? "…" : "")}</span>
     </div>
   );
+}
+
+function FirstMessageReadinessWizard({ readiness, canSendChat, runtimeRefreshInFlight, providerTestState, onRefreshRuntime, onApiKeyFallback, onTestProvider, onFocusPrompt }: {
+  readiness: FirstMessageReadiness;
+  canSendChat: boolean;
+  runtimeRefreshInFlight: boolean;
+  providerTestState: ProviderTestState | null;
+  onRefreshRuntime: () => void;
+  onApiKeyFallback: () => void;
+  onTestProvider: (providerId: string) => void;
+  onFocusPrompt: () => void;
+}) {
+  return (
+    <div className={`first-message-wizard ${canSendChat ? "ready" : "blocked"}`} role="status" aria-label="First message readiness guide">
+      <div className="stack">
+        <div className="row">
+          <strong>{readiness.title}</strong>
+          <span className={`badge ${canSendChat ? "ok" : "warn"}`}>{canSendChat ? "Send available" : "Send disabled"}</span>
+        </div>
+        <span>Why: {readiness.reason}</span>
+        <span>Next safest action: {readiness.nextAction}</span>
+      </div>
+      <div className="readiness-action-row">
+        {readiness.actions.map((action) => <FirstMessageActionButton key={`${action.kind}:${"providerId" in action ? action.providerId : action.label}`} action={action} runtimeRefreshInFlight={runtimeRefreshInFlight} providerTestState={providerTestState} onRefreshRuntime={onRefreshRuntime} onApiKeyFallback={onApiKeyFallback} onTestProvider={onTestProvider} onFocusPrompt={onFocusPrompt} />)}
+      </div>
+      <ol className="first-message-steps">
+        {readiness.notes.map((note) => <li key={note}>{note}</li>)}
+      </ol>
+    </div>
+  );
+}
+
+function FirstMessageActionButton({ action, runtimeRefreshInFlight, providerTestState, onRefreshRuntime, onApiKeyFallback, onTestProvider, onFocusPrompt }: {
+  action: FirstMessageAction;
+  runtimeRefreshInFlight: boolean;
+  providerTestState: ProviderTestState | null;
+  onRefreshRuntime: () => void;
+  onApiKeyFallback: () => void;
+  onTestProvider: (providerId: string) => void;
+  onFocusPrompt: () => void;
+}) {
+  if (action.kind === "refresh_runtime") {
+    return <button type="button" onClick={onRefreshRuntime} disabled={runtimeRefreshInFlight}>{runtimeRefreshInFlight ? "Checking runtime…" : action.label}</button>;
+  }
+  if (action.kind === "api_key_fallback") {
+    return <button type="button" onClick={onApiKeyFallback}>{action.label}</button>;
+  }
+  if (action.kind === "test_provider") {
+    const testing = providerTestState?.providerId === action.providerId && providerTestState.state === "testing";
+    return <button type="button" onClick={() => onTestProvider(action.providerId)} disabled={testing}>{testing ? "Testing provider…" : action.label}</button>;
+  }
+  return <button type="button" onClick={onFocusPrompt}>{action.label}</button>;
 }
 
 function AttachedContextPreview({ context, include, status, onIncludeChange }: { context: HostContextSnapshotPayload | null; include: boolean; status: string | null; onIncludeChange: (include: boolean) => void }) {
