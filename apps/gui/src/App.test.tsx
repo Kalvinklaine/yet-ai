@@ -1457,6 +1457,37 @@ describe("agent progress panel", () => {
     expect(text.length).toBeLessThan(16000);
   });
 
+  it("bounds oversized agent-progress lists and recent summaries", async () => {
+    const snapshots = Array.from({ length: 25 }, (_, index) => agentProgressSnapshot({
+      cardId: `T-BOUND-${index}`,
+      runId: `run-${index}`,
+      recentEvents: Array.from({ length: 18 }, (_, eventIndex) => ({
+        eventId: `event-${index}-${eventIndex}`,
+        timestamp: "2026-05-29T14:00:30Z",
+        phase: "running_command",
+        status: "healthy_running",
+        message: `safe recent summary ${eventIndex}`,
+      })),
+    }));
+    mockRuntimeResponses({ agentProgress: agentProgressResponse(snapshots) });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Refresh agent progress").click();
+      await Promise.resolve();
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("T-BOUND-0 / run-0");
+    expect(text).toContain("T-BOUND-19 / run-19");
+    expect(text).toContain("5 more agent runs hidden.");
+    expect(text).toContain("6 more summaries hidden.");
+    expect(text).not.toContain("T-BOUND-20 / run-20");
+    expect(text).not.toContain("safe recent summary 17");
+    expect(text.length).toBeLessThan(30000);
+  });
+
   it("endpoint unavailable runtime error is sanitized and non-fatal", async () => {
     mockRuntimeResponses({ agentProgressStatus: 404, agentProgressError: "missing endpoint Authorization: Bearer progress-secret" });
     renderApp();

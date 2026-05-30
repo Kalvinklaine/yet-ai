@@ -9,6 +9,8 @@ import { subscribeToChat, type SseEvent } from "./services/sseClient";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
+const agentProgressSnapshotDisplayLimit = 20;
+const agentProgressRecentEventDisplayLimit = 12;
 
 const providerAuthStatusCopy: Record<ProviderAuthStatus, string> = {
   not_configured: "No account login is configured yet. Use Login with OpenAI when available or the API key fallback.",
@@ -1523,9 +1525,12 @@ function AgentProgressPanel({ progress }: { progress: AgentProgressState }) {
   if (snapshots.length === 0) {
     return <div className="agent-progress-empty" role="status">No agent runs.</div>;
   }
+  const visibleSnapshots = snapshots.slice(0, agentProgressSnapshotDisplayLimit);
+  const hiddenSnapshotCount = Math.max(0, snapshots.length - visibleSnapshots.length);
   return (
     <div className="agent-progress-list">
-      {snapshots.map((snapshot) => <AgentProgressSnapshotCard key={`${snapshot.cardId}:${snapshot.runId}`} snapshot={snapshot} />)}
+      {visibleSnapshots.map((snapshot) => <AgentProgressSnapshotCard key={`${snapshot.cardId}:${snapshot.runId}`} snapshot={snapshot} />)}
+      {hiddenSnapshotCount > 0 && <div className="agent-progress-empty" role="status">{hiddenSnapshotCount} more agent run{hiddenSnapshotCount === 1 ? "" : "s"} hidden.</div>}
     </div>
   );
 }
@@ -1533,6 +1538,8 @@ function AgentProgressPanel({ progress }: { progress: AgentProgressState }) {
 function AgentProgressSnapshotCard({ snapshot }: { snapshot: AgentProgressSnapshot }) {
   const state = agentProgressStateLabel(snapshot);
   const overflowRecovery = agentOverflowRecovery(snapshot);
+  const visibleEvents = snapshot.recentEvents.slice(0, agentProgressRecentEventDisplayLimit);
+  const hiddenEventCount = Math.max(0, snapshot.recentEvents.length - visibleEvents.length);
   return (
     <article className={`agent-progress-run ${snapshot.status}`}>
       <div className="row">
@@ -1553,12 +1560,13 @@ function AgentProgressSnapshotCard({ snapshot }: { snapshot: AgentProgressSnapsh
       {snapshot.outputTail && <pre className="agent-progress-output">{sanitizeTimelineText(snapshot.outputTail)}</pre>}
       <div className="stack">
         <strong>Recent summaries</strong>
-        {snapshot.recentEvents.length === 0 ? <span className="subtle">No recent summaries.</span> : snapshot.recentEvents.map((event) => (
+        {snapshot.recentEvents.length === 0 ? <span className="subtle">No recent summaries.</span> : visibleEvents.map((event) => (
           <div className="agent-progress-event" key={event.eventId}>
             <span>{sanitizeDisplayText(event.timestamp)} · {sanitizeDisplayText(event.phase)} · {sanitizeDisplayText(event.status)}</span>
             <span>{sanitizeDisplayText(event.message)}</span>
           </div>
         ))}
+        {hiddenEventCount > 0 && <span className="subtle">{hiddenEventCount} more summaries hidden.</span>}
       </div>
     </article>
   );

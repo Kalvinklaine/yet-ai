@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSecretLikeKey, redactSecrets, sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./redaction";
+import { isRawContentLikeKey, isSecretLikeKey, redactSecrets, sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./redaction";
 
 const longOpaque = "a".repeat(64);
 
@@ -69,6 +69,49 @@ describe("redaction", () => {
     expect(sanitizeDisplayValue({ accessToken: "short", nested: { clientSecret: "tiny" }, safe: "ok" })).toEqual({ "[redacted]": "[redacted]", nested: { "[redacted]": "[redacted]" }, safe: "ok" });
     expect(sanitizeDisplayValue({ setCookie: "sid=secret; refresh=also-secret" })).toEqual({ "[redacted]": "[redacted]" });
     expect(isSecretLikeKey("PROVIDER_CLIENT_SECRET")).toBe(true);
+  });
+
+  it("redacts structured raw-content object values", () => {
+    const rawFragments = ["PROMPT_SENTINEL", "PROVIDER_SENTINEL", "BODY_SENTINEL", "FILE_SENTINEL", "WORKSPACE_SENTINEL", "THOUGHT_SENTINEL", "BOARD_SENTINEL", "TOOL_SENTINEL", "JSON_SENTINEL"];
+    const value = {
+      message: "safe status message",
+      phase: "running_command",
+      status: "failed",
+      cardId: "T-330",
+      rawPrompt: { nested: "PROMPT_SENTINEL" },
+      provider_response: ["PROVIDER_SENTINEL"],
+      "provider-body": { body: "BODY_SENTINEL" },
+      fileContent: "FILE_SENTINEL",
+      workspace_contents: { text: "WORKSPACE_SENTINEL" },
+      chainOfThought: { steps: ["THOUGHT_SENTINEL"] },
+      taskBoardDump: { cards: [{ title: "BOARD_SENTINEL" }] },
+      toolRawOutput: "TOOL_SENTINEL",
+      fullBoardJson: { raw: "JSON_SENTINEL" },
+    };
+
+    const sanitized = sanitizeDisplayValue(value);
+    const rendered = JSON.stringify(sanitized);
+
+    expect(rendered).toContain("safe status message");
+    expect(rendered).toContain("running_command");
+    expect(rendered).toContain("failed");
+    expect(rendered).toContain("T-330");
+    expect(rendered).toContain("[redacted]");
+    for (const fragment of rawFragments) {
+      expect(rendered).not.toContain(fragment);
+    }
+    expect(isRawContentLikeKey("provider.body")).toBe(true);
+  });
+
+  it("bounds structured display arrays and objects", () => {
+    const sanitizedArray = sanitizeDisplayValue(Array.from({ length: 60 }, (_, index) => `item-${index}`));
+    const sanitizedObject = sanitizeDisplayValue(Object.fromEntries(Array.from({ length: 60 }, (_, index) => [`key${index}`, `value-${index}`])));
+
+    expect(Array.isArray(sanitizedArray)).toBe(true);
+    expect(sanitizedArray).toHaveLength(51);
+    expect(JSON.stringify(sanitizedArray)).toContain("10 more items redacted");
+    expect(Object.keys(sanitizedObject as Record<string, unknown>)).toHaveLength(51);
+    expect(JSON.stringify(sanitizedObject)).toContain("10 more fields redacted");
   });
 
   it("redacts raw content label bodies", () => {
