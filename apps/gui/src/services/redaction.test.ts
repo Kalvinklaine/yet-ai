@@ -72,7 +72,7 @@ describe("redaction", () => {
   });
 
   it("redacts structured raw-content object values", () => {
-    const rawFragments = ["PROMPT_SENTINEL", "PROVIDER_SENTINEL", "BODY_SENTINEL", "FILE_SENTINEL", "WORKSPACE_SENTINEL", "THOUGHT_SENTINEL", "BOARD_SENTINEL", "TOOL_SENTINEL", "JSON_SENTINEL"];
+    const rawFragments = ["PROMPT_SENTINEL", "PROVIDER_SENTINEL", "BODY_SENTINEL", "FILE_SENTINEL", "WORKSPACE_SENTINEL", "THOUGHT_SENTINEL", "BOARD_SENTINEL", "TOOL_SENTINEL", "RAW_TOOL_SENTINEL", "RAW_OUTPUT_SENTINEL", "RAW_DUMP_SENTINEL", "JSON_SENTINEL"];
     const value = {
       message: "safe status message",
       phase: "running_command",
@@ -86,6 +86,10 @@ describe("redaction", () => {
       chainOfThought: { steps: ["THOUGHT_SENTINEL"] },
       taskBoardDump: { cards: [{ title: "BOARD_SENTINEL" }] },
       toolRawOutput: "TOOL_SENTINEL",
+      rawToolOutput: { nested: "RAW_TOOL_SENTINEL" },
+      raw_tool_output: { nested: "RAW_TOOL_SENTINEL" },
+      rawOutput: { nested: "RAW_OUTPUT_SENTINEL" },
+      rawDump: { nested: "RAW_DUMP_SENTINEL" },
       fullBoardJson: { raw: "JSON_SENTINEL" },
     };
 
@@ -101,6 +105,24 @@ describe("redaction", () => {
       expect(rendered).not.toContain(fragment);
     }
     expect(isRawContentLikeKey("provider.body")).toBe(true);
+    expect(isRawContentLikeKey("rawToolOutput")).toBe(true);
+    expect(isRawContentLikeKey("raw_tool_output")).toBe(true);
+    expect(isRawContentLikeKey("rawOutput")).toBe(true);
+    expect(isRawContentLikeKey("rawDump")).toBe(true);
+  });
+
+  it("bounds structured display traversal globally", () => {
+    const value = Object.fromEntries(Array.from({ length: 50 }, (_, outer) => [
+      `outer${outer}`,
+      Object.fromEntries(Array.from({ length: 50 }, (_, inner) => [`inner${inner}`, `GLOBAL_BUDGET_SENTINEL_${outer}_${inner}`])),
+    ]));
+
+    const rendered = JSON.stringify(sanitizeDisplayValue(value));
+
+    expect(rendered).toContain("[redacted]");
+    expect(rendered).toContain("GLOBAL_BUDGET_SENTINEL_0_0");
+    expect(rendered).not.toContain("GLOBAL_BUDGET_SENTINEL_49_49");
+    expect(rendered.length).toBeLessThan(22000);
   });
 
   it("bounds structured display arrays and objects", () => {
