@@ -8,7 +8,7 @@ use crate::providers;
 
 static TEMP_SECRET_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum SecretKind {
     ApiKey,
@@ -32,6 +32,8 @@ impl SecretKind {
 pub enum SecretStoreError {
     #[error("invalid provider id")]
     InvalidProviderId,
+    #[error("secret storage unavailable")]
+    Unavailable,
     #[error("secret storage error")]
     Storage,
     #[error("invalid secret record")]
@@ -65,6 +67,129 @@ pub trait ProviderSecretStore {
         provider_id: &str,
         kind: SecretKind,
     ) -> Result<(), SecretStoreError>;
+}
+
+#[derive(Clone, Debug)]
+pub struct CompositeProviderSecretStore<P, F> {
+    primary: P,
+    fallback: F,
+}
+
+impl<P, F> CompositeProviderSecretStore<P, F> {
+    pub fn new(primary: P, fallback: F) -> Self {
+        Self { primary, fallback }
+    }
+}
+
+impl<P, F> CompositeProviderSecretStore<P, F>
+where
+    P: ProviderSecretStore,
+    F: ProviderSecretStore,
+{
+    async fn put_verified_primary(
+        &self,
+        provider_id: &str,
+        kind: SecretKind,
+        value: &str,
+    ) -> Result<bool, SecretStoreError> {
+        match self.primary.put_secret(provider_id, kind, value).await {
+            Ok(()) => {}
+            Err(SecretStoreError::Unavailable) => return Ok(false),
+            Err(error) => return Err(error),
+        }
+        match self.primary.get_secret(provider_id, kind).await {
+            Ok(Some(stored)) if stored == value => Ok(true),
+            Ok(_) => Err(SecretStoreError::Storage),
+            Err(SecretStoreError::Unavailable) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn migrate_fallback_secret(
+        &self,
+        provider_id: &str,
+        kind: SecretKind,
+        value: &str,
+    ) -> Result<(), SecretStoreError> {
+        if self.put_verified_primary(provider_id, kind, value).await? {
+            self.fallback.delete_secret(provider_id, kind).await?;
+        }
+        Ok(())
+    }
+}
+
+impl<P, F> ProviderSecretStore for CompositeProviderSecretStore<P, F>
+where
+    P: ProviderSecretStore,
+    F: ProviderSecretStore,
+{
+    async fn put_secret(
+        &self,
+        provider_id: &str,
+        kind: SecretKind,
+        value: &str,
+    ) -> Result<(), SecretStoreError> {
+        if value.is_empty() {
+            return self.delete_secret(provider_id, kind).await;
+        }
+        if self.put_verified_primary(provider_id, kind, value).await? {
+            self.fallback.delete_secret(provider_id, kind).await?;
+            return Ok(());
+        }
+        self.fallback.put_secret(provider_id, kind, value).await
+    }
+
+    async fn put_secret_if_absent(
+        &self,
+        provider_id: &str,
+        kind: SecretKind,
+        value: &str,
+    ) -> Result<bool, SecretStoreError> {
+        if value.is_empty() {
+            return Ok(false);
+        }
+        if self.get_secret(provider_id, kind).await?.is_some() {
+            return Ok(false);
+        }
+        self.put_secret(provider_id, kind, value).await?;
+        Ok(true)
+    }
+
+    async fn get_secret(
+        &self,
+        provider_id: &str,
+        kind: SecretKind,
+    ) -> Result<Option<String>, SecretStoreError> {
+        match self.primary.get_secret(provider_id, kind).await {
+            Ok(Some(secret)) => Ok(Some(secret)),
+            Ok(None) => {
+                let fallback = self.fallback.get_secret(provider_id, kind).await?;
+                if let Some(secret) = fallback.as_deref() {
+                    self.migrate_fallback_secret(provider_id, kind, secret)
+                        .await?;
+                }
+                Ok(fallback)
+            }
+            Err(SecretStoreError::Unavailable) => self.fallback.get_secret(provider_id, kind).await,
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn delete_secret(
+        &self,
+        provider_id: &str,
+        kind: SecretKind,
+    ) -> Result<(), SecretStoreError> {
+        let primary = self.primary.delete_secret(provider_id, kind).await;
+        let fallback = self.fallback.delete_secret(provider_id, kind).await;
+        match (primary, fallback) {
+            (Ok(()), Ok(()))
+            | (Ok(()), Err(SecretStoreError::Unavailable))
+            | (Err(SecretStoreError::Unavailable), Ok(()))
+            | (Err(SecretStoreError::Unavailable), Err(SecretStoreError::Unavailable)) => Ok(()),
+            (Err(error), _) | (_, Err(error)) => Err(error),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -523,7 +648,12 @@ async fn set_private_directory_permissions(_path: &Path) -> Result<(), SecretSto
 
 #[cfg(test)]
 mod tests {
-    use super::{FileSecretStore, ProviderSecretStore, SecretKind, SecretStoreError};
+    use super::{
+        CompositeProviderSecretStore, FileSecretStore, ProviderSecretStore, SecretKind,
+        SecretStoreError,
+    };
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
 
     static TEST_DIR_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -560,6 +690,359 @@ mod tests {
             "stored secret digest mismatch"
         );
         assert!(actual == expected, "stored secret value mismatch");
+    }
+
+    type TestSecretKey = (String, SecretKind);
+
+    #[derive(Clone, Debug, Default)]
+    struct MockSecretBackend {
+        state: Arc<Mutex<MockSecretBackendState>>,
+    }
+
+    #[derive(Debug, Default)]
+    struct MockSecretBackendState {
+        records: HashMap<TestSecretKey, String>,
+        unavailable: bool,
+        put_failure: bool,
+        get_failure: bool,
+        delete_failure: bool,
+        read_back_mismatch: bool,
+        put_count: usize,
+        delete_count: usize,
+    }
+
+    impl MockSecretBackend {
+        fn unavailable() -> Self {
+            let store = Self::default();
+            store.with_state(|state| state.unavailable = true);
+            store
+        }
+
+        fn put_failure() -> Self {
+            let store = Self::default();
+            store.with_state(|state| state.put_failure = true);
+            store
+        }
+
+        fn delete_failure() -> Self {
+            let store = Self::default();
+            store.with_state(|state| state.delete_failure = true);
+            store
+        }
+
+        fn read_back_mismatch() -> Self {
+            let store = Self::default();
+            store.with_state(|state| state.read_back_mismatch = true);
+            store
+        }
+
+        fn with_secret(provider_id: &str, kind: SecretKind, value: &str) -> Self {
+            let store = Self::default();
+            store.with_state(|state| {
+                state
+                    .records
+                    .insert((provider_id.to_string(), kind), value.to_string());
+            });
+            store
+        }
+
+        fn with_state<R>(&self, f: impl FnOnce(&mut MockSecretBackendState) -> R) -> R {
+            f(&mut self.state.lock().unwrap())
+        }
+
+        fn put_count(&self) -> usize {
+            self.with_state(|state| state.put_count)
+        }
+
+        fn delete_count(&self) -> usize {
+            self.with_state(|state| state.delete_count)
+        }
+    }
+
+    impl ProviderSecretStore for MockSecretBackend {
+        async fn put_secret(
+            &self,
+            provider_id: &str,
+            kind: SecretKind,
+            value: &str,
+        ) -> Result<(), SecretStoreError> {
+            self.with_state(|state| {
+                if state.unavailable {
+                    return Err(SecretStoreError::Unavailable);
+                }
+                if state.put_failure {
+                    return Err(SecretStoreError::Storage);
+                }
+                state.put_count += 1;
+                if value.is_empty() {
+                    state.records.remove(&(provider_id.to_string(), kind));
+                } else {
+                    state
+                        .records
+                        .insert((provider_id.to_string(), kind), value.to_string());
+                }
+                Ok(())
+            })
+        }
+
+        async fn put_secret_if_absent(
+            &self,
+            provider_id: &str,
+            kind: SecretKind,
+            value: &str,
+        ) -> Result<bool, SecretStoreError> {
+            self.with_state(|state| {
+                if state.unavailable {
+                    return Err(SecretStoreError::Unavailable);
+                }
+                if state.put_failure {
+                    return Err(SecretStoreError::Storage);
+                }
+                let key = (provider_id.to_string(), kind);
+                if value.is_empty() || state.records.contains_key(&key) {
+                    return Ok(false);
+                }
+                state.put_count += 1;
+                state.records.insert(key, value.to_string());
+                Ok(true)
+            })
+        }
+
+        async fn get_secret(
+            &self,
+            provider_id: &str,
+            kind: SecretKind,
+        ) -> Result<Option<String>, SecretStoreError> {
+            self.with_state(|state| {
+                if state.unavailable {
+                    return Err(SecretStoreError::Unavailable);
+                }
+                if state.get_failure {
+                    return Err(SecretStoreError::Storage);
+                }
+                let secret = state.records.get(&(provider_id.to_string(), kind)).cloned();
+                if secret.is_some() && state.read_back_mismatch {
+                    return Ok(Some("mismatched-secret-value".to_string()));
+                }
+                Ok(secret)
+            })
+        }
+
+        async fn delete_secret(
+            &self,
+            provider_id: &str,
+            kind: SecretKind,
+        ) -> Result<(), SecretStoreError> {
+            self.with_state(|state| {
+                if state.unavailable {
+                    return Err(SecretStoreError::Unavailable);
+                }
+                if state.delete_failure {
+                    return Err(SecretStoreError::Storage);
+                }
+                state.delete_count += 1;
+                state.records.remove(&(provider_id.to_string(), kind));
+                Ok(())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn composite_secret_store_primary_wins_over_fallback() {
+        let primary = MockSecretBackend::with_secret(
+            "openai-local",
+            SecretKind::ApiKey,
+            "sk-composite-primary-secret-abcd",
+        );
+        let fallback = MockSecretBackend::with_secret(
+            "openai-local",
+            SecretKind::ApiKey,
+            "sk-composite-fallback-secret-wxyz",
+        );
+        let store = CompositeProviderSecretStore::new(primary.clone(), fallback.clone());
+
+        let secret = store
+            .get_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap();
+
+        assert_stored_secret(secret.as_deref(), "sk-composite-primary-secret-abcd");
+        assert_eq!(primary.put_count(), 0);
+        assert_eq!(fallback.delete_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn composite_secret_store_reads_fallback_when_primary_unavailable() {
+        let primary = MockSecretBackend::unavailable();
+        let fallback = MockSecretBackend::with_secret(
+            "openai-local",
+            SecretKind::ApiKey,
+            "sk-composite-fallback-read-abcd",
+        );
+        let store = CompositeProviderSecretStore::new(primary, fallback.clone());
+
+        let secret = store
+            .get_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap();
+
+        assert_stored_secret(secret.as_deref(), "sk-composite-fallback-read-abcd");
+        assert_eq!(fallback.delete_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn composite_secret_store_migrates_fallback_after_verified_primary_write() {
+        let primary = MockSecretBackend::default();
+        let fallback = MockSecretBackend::with_secret(
+            "openai-local",
+            SecretKind::ApiKey,
+            "sk-composite-migrate-secret-abcd",
+        );
+        let store = CompositeProviderSecretStore::new(primary.clone(), fallback.clone());
+
+        let secret = store
+            .get_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap();
+
+        assert_stored_secret(secret.as_deref(), "sk-composite-migrate-secret-abcd");
+        let primary_secret = primary
+            .get_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap();
+        assert_stored_secret(
+            primary_secret.as_deref(),
+            "sk-composite-migrate-secret-abcd",
+        );
+        assert_eq!(
+            fallback
+                .get_secret("openai-local", SecretKind::ApiKey)
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(fallback.delete_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn composite_secret_store_keeps_fallback_when_verification_fails() {
+        let primary = MockSecretBackend::read_back_mismatch();
+        let fallback = MockSecretBackend::with_secret(
+            "openai-local",
+            SecretKind::ApiKey,
+            "sk-composite-verify-failure-abcd",
+        );
+        let store = CompositeProviderSecretStore::new(primary, fallback.clone());
+
+        assert!(matches!(
+            store.get_secret("openai-local", SecretKind::ApiKey).await,
+            Err(SecretStoreError::Storage)
+        ));
+        let fallback_secret = fallback
+            .get_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap();
+        assert_stored_secret(
+            fallback_secret.as_deref(),
+            "sk-composite-verify-failure-abcd",
+        );
+        assert_eq!(fallback.delete_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn composite_secret_store_put_uses_fallback_when_primary_unavailable() {
+        let primary = MockSecretBackend::unavailable();
+        let fallback = MockSecretBackend::default();
+        let store = CompositeProviderSecretStore::new(primary, fallback.clone());
+
+        store
+            .put_secret(
+                "openai-local",
+                SecretKind::ApiKey,
+                "sk-composite-put-fallback-abcd",
+            )
+            .await
+            .unwrap();
+
+        let secret = fallback
+            .get_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap();
+        assert_stored_secret(secret.as_deref(), "sk-composite-put-fallback-abcd");
+    }
+
+    #[tokio::test]
+    async fn composite_secret_store_delete_covers_both_stores() {
+        let primary = MockSecretBackend::with_secret(
+            "openai-local",
+            SecretKind::ApiKey,
+            "sk-composite-delete-primary-abcd",
+        );
+        let fallback = MockSecretBackend::with_secret(
+            "openai-local",
+            SecretKind::ApiKey,
+            "sk-composite-delete-fallback-wxyz",
+        );
+        let store = CompositeProviderSecretStore::new(primary.clone(), fallback.clone());
+
+        store
+            .delete_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap();
+
+        assert_eq!(primary.delete_count(), 1);
+        assert_eq!(fallback.delete_count(), 1);
+        assert_eq!(
+            primary
+                .get_secret("openai-local", SecretKind::ApiKey)
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            fallback
+                .get_secret("openai-local", SecretKind::ApiKey)
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn composite_secret_store_delete_surfaces_sanitized_storage_failure() {
+        let primary = MockSecretBackend::delete_failure();
+        let fallback = MockSecretBackend::with_secret(
+            "openai-local",
+            SecretKind::ApiKey,
+            "sk-composite-delete-failure-abcd",
+        );
+        let store = CompositeProviderSecretStore::new(primary, fallback.clone());
+
+        let error = store
+            .delete_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, SecretStoreError::Storage));
+        assert_eq!(error.to_string(), "secret storage error");
+        assert_eq!(fallback.delete_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn composite_secret_store_storage_failures_are_sanitized() {
+        let primary = MockSecretBackend::put_failure();
+        let fallback = MockSecretBackend::default();
+        let store = CompositeProviderSecretStore::new(primary, fallback);
+        let forbidden = "sk-composite-storage-failure-abcd";
+
+        let error = store
+            .put_secret("openai-local", SecretKind::ApiKey, forbidden)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, SecretStoreError::Storage));
+        assert_eq!(error.to_string(), "secret storage error");
+        assert!(!error.to_string().contains(forbidden));
     }
 
     #[test]
@@ -675,8 +1158,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(
-            secret == "sk-if-absent-race-first-abcd"
-                || secret == "sk-if-absent-race-second-wxyz"
+            secret == "sk-if-absent-race-first-abcd" || secret == "sk-if-absent-race-second-wxyz"
         );
     }
 
