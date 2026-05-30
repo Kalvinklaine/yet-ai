@@ -7,6 +7,7 @@ use tokio::io::AsyncWriteExt;
 use crate::providers;
 
 static TEMP_SECRET_COUNTER: AtomicU64 = AtomicU64::new(0);
+const OS_KEYCHAIN_SERVICE: &str = "yet-ai.provider-secrets";
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -307,6 +308,172 @@ impl ProviderSecretStore for FileSecretStore {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(_) => Err(SecretStoreError::Storage),
         }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct OsKeychainSecretStore;
+
+impl OsKeychainSecretStore {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl ProviderSecretStore for OsKeychainSecretStore {
+    async fn put_secret(
+        &self,
+        provider_id: &str,
+        kind: SecretKind,
+        value: &str,
+    ) -> Result<(), SecretStoreError> {
+        if value.is_empty() {
+            return self.delete_secret(provider_id, kind).await;
+        }
+        let account = keychain_account(provider_id, kind)?;
+        let value = value.to_string();
+        run_keychain(move || {
+            let entry = ProductionKeychainAdapter::entry(OS_KEYCHAIN_SERVICE, &account)?;
+            ProductionKeychainAdapter::set_password(&entry, &value)
+        })
+        .await
+    }
+
+    async fn put_secret_if_absent(
+        &self,
+        provider_id: &str,
+        kind: SecretKind,
+        value: &str,
+    ) -> Result<bool, SecretStoreError> {
+        if value.is_empty() || self.get_secret(provider_id, kind).await?.is_some() {
+            return Ok(false);
+        }
+        self.put_secret(provider_id, kind, value).await?;
+        Ok(true)
+    }
+
+    async fn get_secret(
+        &self,
+        provider_id: &str,
+        kind: SecretKind,
+    ) -> Result<Option<String>, SecretStoreError> {
+        let account = keychain_account(provider_id, kind)?;
+        run_keychain(move || {
+            let entry = ProductionKeychainAdapter::entry(OS_KEYCHAIN_SERVICE, &account)?;
+            ProductionKeychainAdapter::get_password(&entry)
+        })
+        .await
+    }
+
+    async fn delete_secret(
+        &self,
+        provider_id: &str,
+        kind: SecretKind,
+    ) -> Result<(), SecretStoreError> {
+        let account = keychain_account(provider_id, kind)?;
+        run_keychain(move || {
+            let entry = ProductionKeychainAdapter::entry(OS_KEYCHAIN_SERVICE, &account)?;
+            ProductionKeychainAdapter::delete_credential(&entry)
+        })
+        .await
+    }
+}
+
+fn keychain_account(provider_id: &str, kind: SecretKind) -> Result<String, SecretStoreError> {
+    providers::validate_provider_id(provider_id).map_err(|_| SecretStoreError::InvalidProviderId)?;
+    Ok(format!("{provider_id}:{}", kind.file_name()))
+}
+
+async fn run_keychain<R>(
+    f: impl FnOnce() -> Result<R, KeychainError> + Send + 'static,
+) -> Result<R, SecretStoreError>
+where
+    R: Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|_| SecretStoreError::Storage)?
+        .map_err(keychain_error_to_secret_store_error)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+enum KeychainError {
+    NoEntry,
+    Unavailable,
+    Storage,
+}
+
+fn keychain_error_to_secret_store_error(error: KeychainError) -> SecretStoreError {
+    match error {
+        KeychainError::NoEntry => SecretStoreError::Storage,
+        KeychainError::Unavailable => SecretStoreError::Unavailable,
+        KeychainError::Storage => SecretStoreError::Storage,
+    }
+}
+
+#[cfg(feature = "os-keychain")]
+struct ProductionKeychainAdapter;
+
+#[cfg(feature = "os-keychain")]
+impl ProductionKeychainAdapter {
+    fn entry(service: &str, account: &str) -> Result<keyring::Entry, KeychainError> {
+        keyring::Entry::new(service, account).map_err(map_keyring_error)
+    }
+
+    fn set_password(entry: &keyring::Entry, value: &str) -> Result<(), KeychainError> {
+        entry.set_password(value).map_err(map_keyring_error)
+    }
+
+    fn get_password(entry: &keyring::Entry) -> Result<Option<String>, KeychainError> {
+        match entry.get_password() {
+            Ok(value) => Ok(Some(value)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(map_keyring_error(error)),
+        }
+    }
+
+    fn delete_credential(entry: &keyring::Entry) -> Result<(), KeychainError> {
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(map_keyring_error(error)),
+        }
+    }
+}
+
+#[cfg(feature = "os-keychain")]
+fn map_keyring_error(error: keyring::Error) -> KeychainError {
+    match error {
+        keyring::Error::NoEntry => KeychainError::NoEntry,
+        keyring::Error::NoStorageAccess(_) => KeychainError::Unavailable,
+        keyring::Error::PlatformFailure(_)
+        | keyring::Error::BadEncoding(_)
+        | keyring::Error::TooLong(_, _)
+        | keyring::Error::Invalid(_, _)
+        | keyring::Error::Ambiguous(_) => KeychainError::Storage,
+        _ => KeychainError::Storage,
+    }
+}
+
+#[cfg(not(feature = "os-keychain"))]
+struct ProductionKeychainAdapter;
+
+#[cfg(not(feature = "os-keychain"))]
+impl ProductionKeychainAdapter {
+    fn entry(_service: &str, _account: &str) -> Result<(), KeychainError> {
+        Err(KeychainError::Unavailable)
+    }
+
+    fn set_password(_entry: &(), _value: &str) -> Result<(), KeychainError> {
+        Err(KeychainError::Unavailable)
+    }
+
+    fn get_password(_entry: &()) -> Result<Option<String>, KeychainError> {
+        Err(KeychainError::Unavailable)
+    }
+
+    fn delete_credential(_entry: &()) -> Result<(), KeychainError> {
+        Err(KeychainError::Unavailable)
     }
 }
 
@@ -1043,6 +1210,51 @@ mod tests {
         assert!(matches!(error, SecretStoreError::Storage));
         assert_eq!(error.to_string(), "secret storage error");
         assert!(!error.to_string().contains(forbidden));
+    }
+
+    #[test]
+    fn os_keychain_names_are_stable_bounded_and_secret_free() {
+        let account = super::keychain_account("openai-local", SecretKind::OAuthRefreshToken)
+            .expect("valid account");
+
+        assert_eq!(super::OS_KEYCHAIN_SERVICE, "yet-ai.provider-secrets");
+        assert_eq!(account, "openai-local:oauth-refresh-token");
+        assert!(account.len() <= 96);
+        assert!(!super::OS_KEYCHAIN_SERVICE.contains("sk-"));
+        assert!(!super::OS_KEYCHAIN_SERVICE.contains("token-value"));
+        assert!(!super::OS_KEYCHAIN_SERVICE.contains('/'));
+        assert!(!super::OS_KEYCHAIN_SERVICE.contains("http"));
+        assert!(!super::OS_KEYCHAIN_SERVICE.contains("code_verifier"));
+        for forbidden in ["sk-", "token-value", "/", "http", "code_verifier"] {
+            assert!(!account.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn os_keychain_account_rejects_unsafe_provider_ids() {
+        assert!(matches!(
+            super::keychain_account("../openai", SecretKind::ApiKey),
+            Err(SecretStoreError::InvalidProviderId)
+        ));
+        assert!(matches!(
+            super::keychain_account("openai/local", SecretKind::ApiKey),
+            Err(SecretStoreError::InvalidProviderId)
+        ));
+    }
+
+    #[test]
+    fn keychain_errors_map_to_sanitized_secret_store_errors() {
+        assert!(matches!(
+            super::keychain_error_to_secret_store_error(super::KeychainError::Unavailable),
+            SecretStoreError::Unavailable
+        ));
+        assert!(matches!(
+            super::keychain_error_to_secret_store_error(super::KeychainError::Storage),
+            SecretStoreError::Storage
+        ));
+        let error = super::keychain_error_to_secret_store_error(super::KeychainError::Storage);
+        assert_eq!(error.to_string(), "secret storage error");
+        assert!(!error.to_string().contains("sk-keychain-secret-abcd"));
     }
 
     #[test]
