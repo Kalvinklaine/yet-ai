@@ -19,11 +19,16 @@ const providerId = `smoke-provider-${Date.now()}`;
 const chatId = `smoke-chat-${randomUUID()}`;
 const modelId = "smoke-model";
 const providerName = "Smoke Mock Provider";
-const userMessage = "Say hello from GUI runtime smoke.";
+const userMessageWithContext = "Say hello from GUI runtime smoke with attached context.";
+const userMessageWithoutContext = "Say hello from GUI runtime smoke without attached context.";
 const assistantText = "Hello smoke from mock provider.";
+const activeContextSentinel = `ACTIVE_CONTEXT_SENTINEL_${"x".repeat(64)}`;
+const activeContextText = `function smokeContext() { return "${activeContextSentinel}"; }`;
+const activeContextPath = "src/smoke-context.ts";
 const secretMarkers = [
   token,
   fakeApiKey,
+  activeContextSentinel,
   `Bearer ${token}`,
   `Bearer ${fakeApiKey}`,
   "authorization: bearer",
@@ -36,7 +41,7 @@ let mockProvider;
 let tempHome;
 let browser;
 let providerAuth;
-let providerRequestBody = "";
+const providerRequestBodies = [];
 let providerHits = 0;
 
 await requireBuiltGui();
@@ -102,7 +107,7 @@ try {
 
   await page.getByLabel("Runtime base URL").fill(runtimeBaseUrl);
   await page.getByRole("textbox", { name: "Session token", exact: true }).fill(token);
-  const refreshButton = page.getByRole("button", { name: "Refresh runtime" });
+  const refreshButton = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
   await refreshButton.waitFor({ state: "visible", timeout: 20_000 });
   await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Refresh runtime" && !button.disabled), undefined, { timeout: 20_000 });
   await refreshButton.click();
@@ -122,16 +127,44 @@ try {
   await expectVisibleText(page, `Ready to send using ${modelId}.`, "chat readiness", 20_000);
 
   await page.getByLabel("Chat id").fill(chatId);
-  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(userMessage);
-  await page.getByRole("button", { name: "Send" }).click();
-  await expectVisibleText(page, userMessage, "visible user chat bubble", 20_000);
-  await expectVisibleText(page, assistantText, "streamed assistant response", 30_000);
+  await deliverActiveContext(page);
+  await expectVisibleText(page, "Active editor context", "active editor context card", 20_000);
+  await expectVisibleText(page, activeContextPath, "active context file path", 20_000);
+  await expectVisibleText(page, "Selected characters:", "active context selected character count", 20_000);
+  await expectVisibleText(page, "Attach to next message", "active context include state", 20_000);
+  await assertContextSentinelNotVisible(page, "bounded active context preview");
+
+  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(userMessageWithContext);
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expectVisibleText(page, userMessageWithContext, "visible included-context user chat bubble", 20_000);
+  await expectVisibleText(page, assistantText, "included-context streamed assistant response", 30_000);
+  await expectVisibleText(page, "Context attached to the last accepted message", "one-shot context attached status", 20_000);
+
+  await deliverActiveContext(page);
+  await expectVisibleText(page, "Attach to next message", "refreshed active context include state", 20_000);
+  await page.locator("label.attached-context-toggle", { hasText: "Attach to next message" }).getByRole("checkbox").uncheck();
+  await expectVisibleText(page, "Do not attach", "active context omit state", 20_000);
+  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(userMessageWithoutContext);
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expectVisibleText(page, userMessageWithoutContext, "visible omitted-context user chat bubble", 20_000);
+  await expectVisibleText(page, assistantText, "omitted-context streamed assistant response", 30_000);
+  await waitForProviderHits(2);
 
   assert(providerAuth === `Bearer ${fakeApiKey}`, "mock provider did not receive the configured fake bearer key");
-  const parsedProviderBody = JSON.parse(providerRequestBody);
-  assert(parsedProviderBody.stream === true, "mock provider request was not streaming");
-  assert(parsedProviderBody.model === modelId, "mock provider request used the wrong model");
-  assert(parsedProviderBody.messages?.[0]?.content === userMessage, "mock provider request used the wrong chat content");
+  assert(providerRequestBodies.length === 2, `mock provider received ${providerRequestBodies.length} chat request(s), expected 2`);
+  const parsedProviderBodies = providerRequestBodies.map((body) => JSON.parse(body));
+  const includedPrompt = parsedProviderBodies[0].messages?.[0]?.content;
+  const omittedPrompt = parsedProviderBodies[1].messages?.[0]?.content;
+  assert(parsedProviderBodies.every((body) => body.stream === true), "mock provider requests were not streaming");
+  assert(parsedProviderBodies.every((body) => body.model === modelId), "mock provider request used the wrong model");
+  assert(typeof includedPrompt === "string" && includedPrompt.includes("IDE context"), "included-context request did not prepend IDE context");
+  assert(includedPrompt.includes(`Workspace-relative path: ${activeContextPath}`), "included-context request missed active file path");
+  assert(includedPrompt.includes(activeContextSentinel), "included-context request missed bounded active selection text");
+  assert(includedPrompt.includes(userMessageWithContext), "included-context request missed user content");
+  assert(omittedPrompt === userMessageWithoutContext, "omitted-context request unexpectedly included IDE context");
+  assert(!omittedPrompt.includes(activeContextSentinel), "omitted-context request leaked active context sentinel");
+
+  await exerciseHistoryReload(page, runtimeBaseUrl);
 
   const pageState = await page.evaluate(() => ({
     body: document.body.innerText,
@@ -152,7 +185,7 @@ try {
   }
 
   console.log("GUI runtime e2e smoke passed.");
-  console.log("Verified built GUI, loopback runtime, mock OpenAI-compatible streaming provider, visible chat response, and browser-state redaction.");
+  console.log("Verified built GUI, loopback runtime, mock OpenAI-compatible streaming provider, IDE-like active context include/omit, streamed chat responses, local history reload, and browser-state redaction.");
   console.log("No OpenAI/ChatGPT, hosted Yet AI service, non-loopback URL, IDE, or real provider credential was used.");
 } finally {
   await browser?.close().catch(() => undefined);
@@ -287,11 +320,13 @@ async function startMockProvider() {
     }
     providerHits += 1;
     providerAuth = request.headers.authorization;
+    let requestBody = "";
     request.setEncoding("utf8");
     request.on("data", (chunk) => {
-      providerRequestBody += chunk;
+      requestBody += chunk;
     });
     request.on("end", () => {
+      providerRequestBodies.push(requestBody);
       response.writeHead(200, {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
@@ -353,6 +388,64 @@ async function expectVisibleText(page, text, description, timeout = 10_000) {
     const body = await page.locator("body").innerText().catch(() => "");
     throw new Error(`Timed out waiting for ${description}. ${messageOf(error)}\nVisible body excerpt: ${redactSecrets(body).slice(0, 6000)}`);
   }
+}
+
+async function deliverActiveContext(page) {
+  await page.evaluate(({ text, path }) => {
+    window.postMessage({
+      version: "2026-05-15",
+      type: "host.contextSnapshot",
+      requestId: "smoke-context-001",
+      payload: {
+        kind: "active_editor",
+        source: "vscode",
+        file: {
+          displayPath: path,
+          workspaceRelativePath: path,
+          languageId: "typescript",
+        },
+        selection: {
+          startLine: 12,
+          startCharacter: 2,
+          endLine: 12,
+          endCharacter: 80,
+          text,
+        },
+      },
+    }, window.location.origin);
+  }, { text: activeContextText, path: activeContextPath });
+}
+
+async function assertContextSentinelNotVisible(page, description) {
+  const body = await page.locator("body").innerText();
+  assert(!body.includes(activeContextSentinel), `${description} leaked the active context sentinel`);
+}
+
+async function waitForProviderHits(expected) {
+  const started = Date.now();
+  while (Date.now() - started < 20_000) {
+    if (providerHits >= expected) {
+      return;
+    }
+    await delay(100);
+  }
+  throw new Error(`Timed out waiting for ${expected} mock provider request(s); received ${providerHits}.`);
+}
+
+async function exerciseHistoryReload(page, runtimeBaseUrl) {
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
+  await page.getByLabel("Runtime base URL").fill(runtimeBaseUrl);
+  await page.getByRole("textbox", { name: "Session token", exact: true }).fill(token);
+  await assertContextSentinelNotVisible(page, "browser storage after reload before refresh");
+  const refreshButton = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
+  await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Refresh runtime" && !button.disabled), undefined, { timeout: 20_000 });
+  await refreshButton.click();
+  await expectVisibleText(page, "Runtime connected", "runtime connection after reload", 20_000);
+  await expectVisibleText(page, userMessageWithContext, "persisted included-context message after reload", 20_000);
+  await expectVisibleText(page, userMessageWithoutContext, "persisted omitted-context message after reload", 20_000);
+  await expectVisibleText(page, assistantText, "persisted assistant response after reload", 20_000);
+  await assertContextSentinelNotVisible(page, "reloaded history DOM");
 }
 
 function authHeaders() {
