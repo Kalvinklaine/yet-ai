@@ -526,12 +526,14 @@ pub async fn update_provider_config(
     }
     validate_config(&config)?;
     let (config, secret_change) = prepare_config_secrets(config);
-    let previous_secret = provider_secret_store(config_dir)
-        .get_secret(id, SecretKind::ApiKey)
-        .await?;
+    let store = provider_secret_store(config_dir);
+    let previous_secret = store.get_secret(id, SecretKind::ApiKey).await?;
     let path = provider_config_path(config_dir, id)?;
-    write_provider_config(&path, &config).await?;
     if let Err(error) = commit_secret_change(config_dir, id, secret_change).await {
+        rollback_secret(config_dir, id, previous_secret).await?;
+        return Err(error);
+    }
+    if let Err(error) = write_provider_config(&path, &config).await {
         rollback_secret(config_dir, id, previous_secret).await?;
         return Err(error);
     }
@@ -540,14 +542,12 @@ pub async fn update_provider_config(
 
 pub async fn delete_provider_config(config_dir: &Path, id: &str) -> Result<(), ProviderError> {
     let path = provider_config_path(config_dir, id)?;
+    provider_secret_store(config_dir)
+        .delete_secret(id, SecretKind::ApiKey)
+        .await?;
     match tokio::fs::remove_file(path).await {
-        Ok(()) => {
-            provider_secret_store(config_dir)
-                .delete_secret(id, SecretKind::ApiKey)
-                .await?;
-            Ok(())
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(ProviderError::NotFound),
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(_) => Err(ProviderError::Storage),
     }
 }
