@@ -73,7 +73,7 @@ function redactUnsafeText(value) {
   return value
     .replace(/\r/g, "\n")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
-    .replace(/(^|\n)[^\n]*(?:\b(?:chain[-_ ]?of[-_ ]?thought|raw[-_ ]?prompt|provider[-_ ]?response|file[-_ ]?content|workspace[-_ ]?content)\b\s*[:=]?)[^\n]*/gi, "$1[redacted-field]")
+    .replace(/(^|\n)[^\n]*(?:\b(?:chain[-_ ]?of[-_ ]?thought|raw[-_ ]?prompt|provider[-_ ]?(?:response|body)|tool[-_ ]?raw[-_ ]?output|raw[-_ ]?tool[-_ ]?output|file[-_ ]?contents?|workspace[-_ ]?contents?)\b\s*[:=]?)[^\n]*/gi, "$1[redacted-field]")
     .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "[redacted-auth]")
     .replace(/\b(?:api[_-]?key|authorization|token|secret|password|cookie|pkce|refresh|access[_-]?token|credential)\b\s*[:=]\s*\S+/gi, "[redacted-sensitive]")
     .replace(/\b(?:sk|pk|ghp|gho|github_pat|ya29)_[A-Za-z0-9_\-]{12,}\b/g, "[redacted-key]")
@@ -112,6 +112,15 @@ function boundedHeadTailText(value, maxLength) {
   return truncateHeadTail(redactUnsafeText(value), maxLength);
 }
 
+function boundedRawHeadTailText(value, maxLength) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return truncateHeadTail(value, maxLength)
+    .replace(/\r/g, "\n")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ");
+}
+
 function sanitizeText(value, maxLength = MAX_MESSAGE_LENGTH) {
   if (typeof value !== "string") {
     return "";
@@ -137,7 +146,7 @@ function overflowRecoveryMessage(kind) {
 }
 
 function classifyOverflowRecoveryText(value) {
-  const text = boundedHeadTailText(value, MAX_OUTPUT_TAIL_LENGTH).toLowerCase();
+  const text = boundedRawHeadTailText(value, MAX_OUTPUT_TAIL_LENGTH).toLowerCase();
   if (text.length === 0) {
     return undefined;
   }
