@@ -9,7 +9,7 @@ use crate::providers;
 
 static TEMP_SECRET_COUNTER: AtomicU64 = AtomicU64::new(0);
 const OS_KEYCHAIN_SERVICE: &str = "yet-ai.provider-secrets";
-const OS_KEYCHAIN_OPERATION_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
+const OS_KEYCHAIN_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
 static KEYCHAIN_PUT_IF_ABSENT_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
 
@@ -183,17 +183,19 @@ where
                     Ok(true)
                 }
                 Ok(_) => Err(SecretStoreError::Storage),
-                Err(SecretStoreError::Disabled) => self
-                    .fallback
-                    .put_secret_if_absent(provider_id, kind, value)
-                    .await,
+                Err(SecretStoreError::Disabled) => {
+                    self.fallback
+                        .put_secret_if_absent(provider_id, kind, value)
+                        .await
+                }
                 Err(SecretStoreError::Unavailable) => Err(SecretStoreError::Unavailable),
                 Err(error) => Err(error),
             },
-            Err(SecretStoreError::Disabled) => self
-                .fallback
-                .put_secret_if_absent(provider_id, kind, value)
-                .await,
+            Err(SecretStoreError::Disabled) => {
+                self.fallback
+                    .put_secret_if_absent(provider_id, kind, value)
+                    .await
+            }
             Err(SecretStoreError::Unavailable) => Err(SecretStoreError::Unavailable),
             Err(error) => Err(error),
         }
@@ -217,9 +219,8 @@ where
                 }
                 Ok(fallback)
             }
-            Err(SecretStoreError::Disabled) | Err(SecretStoreError::Unavailable) => {
-                self.fallback.get_secret(provider_id, kind).await
-            }
+            Err(SecretStoreError::Disabled) => self.fallback.get_secret(provider_id, kind).await,
+            Err(SecretStoreError::Unavailable) => Err(SecretStoreError::Unavailable),
             Err(error) => Err(error),
         }
     }
@@ -442,7 +443,7 @@ impl ProviderSecretStore for OsKeychainSecretStore {
         }
         let account = keychain_account(provider_id, kind)?;
         let value = value.to_string();
-        run_keychain(move || {
+        run_keychain_mutation(move || {
             let entry = ProductionKeychainAdapter::entry(OS_KEYCHAIN_SERVICE, &account)?;
             ProductionKeychainAdapter::set_password(&entry, &value)
         })
@@ -475,7 +476,7 @@ impl ProviderSecretStore for OsKeychainSecretStore {
         kind: SecretKind,
     ) -> Result<Option<String>, SecretStoreError> {
         let account = keychain_account(provider_id, kind)?;
-        run_keychain(move || {
+        run_keychain_read(move || {
             let entry = ProductionKeychainAdapter::entry(OS_KEYCHAIN_SERVICE, &account)?;
             ProductionKeychainAdapter::get_password(&entry)
         })
@@ -488,7 +489,7 @@ impl ProviderSecretStore for OsKeychainSecretStore {
         kind: SecretKind,
     ) -> Result<(), SecretStoreError> {
         let account = keychain_account(provider_id, kind)?;
-        run_keychain(move || {
+        run_keychain_mutation(move || {
             let entry = ProductionKeychainAdapter::entry(OS_KEYCHAIN_SERVICE, &account)?;
             ProductionKeychainAdapter::delete_credential(&entry)
         })
@@ -502,20 +503,29 @@ fn keychain_account(provider_id: &str, kind: SecretKind) -> Result<String, Secre
     Ok(format!("{provider_id}:{}", kind.file_name()))
 }
 
-async fn run_keychain<R>(
+async fn run_keychain_read<R>(
     f: impl FnOnce() -> Result<R, KeychainError> + Send + 'static,
 ) -> Result<R, SecretStoreError>
 where
     R: Send + 'static,
 {
-    tokio::time::timeout(
-        OS_KEYCHAIN_OPERATION_TIMEOUT,
-        tokio::task::spawn_blocking(f),
-    )
-    .await
-    .map_err(|_| SecretStoreError::Unavailable)?
-    .map_err(|_| SecretStoreError::Storage)?
-    .map_err(keychain_error_to_secret_store_error)
+    tokio::time::timeout(OS_KEYCHAIN_READ_TIMEOUT, tokio::task::spawn_blocking(f))
+        .await
+        .map_err(|_| SecretStoreError::Unavailable)?
+        .map_err(|_| SecretStoreError::Storage)?
+        .map_err(keychain_error_to_secret_store_error)
+}
+
+async fn run_keychain_mutation<R>(
+    f: impl FnOnce() -> Result<R, KeychainError> + Send + 'static,
+) -> Result<R, SecretStoreError>
+where
+    R: Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|_| SecretStoreError::Storage)?
+        .map_err(keychain_error_to_secret_store_error)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -987,6 +997,17 @@ mod tests {
         );
     }
 
+    fn assert_secret_is_one_of(actual: &str, expected: &[&str]) {
+        let actual_digest = test_secret_digest(actual);
+        assert!(
+            expected
+                .iter()
+                .any(|value| value.len() == actual.len()
+                    && test_secret_digest(value) == actual_digest),
+            "stored secret did not match an expected digest"
+        );
+    }
+
     type TestSecretKey = (String, SecretKind);
 
     #[derive(Clone, Debug, Default)]
@@ -1197,12 +1218,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn composite_secret_store_reads_fallback_when_primary_unavailable() {
+    async fn composite_secret_store_rejects_fallback_read_when_primary_unavailable() {
         let primary = MockSecretBackend::unavailable();
         let fallback = MockSecretBackend::with_secret(
             "openai-local",
             SecretKind::ApiKey,
             "sk-composite-fallback-read-abcd",
+        );
+        let store = CompositeProviderSecretStore::new(primary, fallback);
+
+        let error = store
+            .get_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, SecretStoreError::Unavailable));
+    }
+
+    #[tokio::test]
+    async fn composite_secret_store_reads_fallback_when_primary_disabled() {
+        let primary = MockSecretBackend::disabled();
+        let fallback = MockSecretBackend::with_secret(
+            "openai-local",
+            SecretKind::ApiKey,
+            "sk-composite-disabled-fallback-abcd",
         );
         let store = CompositeProviderSecretStore::new(primary, fallback.clone());
 
@@ -1211,7 +1250,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_stored_secret(secret.as_deref(), "sk-composite-fallback-read-abcd");
+        assert_stored_secret(secret.as_deref(), "sk-composite-disabled-fallback-abcd");
         assert_eq!(fallback.delete_count(), 0);
     }
 
@@ -1282,6 +1321,34 @@ mod tests {
                 .unwrap(),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn composite_secret_store_fails_closed_when_primary_healthy_and_fallback_cleanup_broken()
+    {
+        let primary = MockSecretBackend::with_secret(
+            "openai-local",
+            SecretKind::ApiKey,
+            "sk-composite-cleanup-primary-abcd",
+        );
+        let fallback = MockSecretBackend::delete_failure();
+        fallback
+            .put_secret(
+                "openai-local",
+                SecretKind::ApiKey,
+                "sk-composite-cleanup-fallback-wxyz",
+            )
+            .await
+            .unwrap();
+        let store = CompositeProviderSecretStore::new(primary, fallback);
+
+        let error = store
+            .get_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, SecretStoreError::Storage));
+        assert_eq!(error.to_string(), "secret storage error");
     }
 
     #[tokio::test]
@@ -1738,9 +1805,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn keychain_timeout_returns_unavailable_without_waiting_for_late_write() {
+    async fn keychain_read_timeout_returns_unavailable_without_waiting() {
         let started = std::time::Instant::now();
-        let result = super::run_keychain(|| {
+        let result = super::run_keychain_read(|| {
             std::thread::sleep(std::time::Duration::from_millis(250));
             Ok(())
         })
@@ -1748,6 +1815,24 @@ mod tests {
 
         assert!(matches!(result, Err(SecretStoreError::Unavailable)));
         assert!(started.elapsed() < std::time::Duration::from_millis(200));
+    }
+
+    #[tokio::test]
+    async fn keychain_mutation_waits_for_delayed_completion() {
+        let completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mutation_completed = Arc::clone(&completed);
+        let started = std::time::Instant::now();
+
+        let result = super::run_keychain_mutation(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            mutation_completed.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        })
+        .await;
+
+        assert!(result.is_ok());
+        assert!(completed.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(started.elapsed() >= std::time::Duration::from_millis(100));
     }
 
     #[test]
@@ -1862,8 +1947,12 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert!(
-            secret == "sk-if-absent-race-first-abcd" || secret == "sk-if-absent-race-second-wxyz"
+        assert_secret_is_one_of(
+            &secret,
+            &[
+                "sk-if-absent-race-first-abcd",
+                "sk-if-absent-race-second-wxyz",
+            ],
         );
     }
 
