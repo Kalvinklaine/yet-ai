@@ -1,0 +1,30 @@
+{
+  "protocolVersion": "2026-05-15",
+  "tickId": "tick-T324-mixed-case",
+  "poolId": "planner_overflow_recovery",
+  "autonomousMode": true,
+  "nextAction": "recover_failed",
+  "observedAt": "2026-05-30T10:05:00Z",
+  "agentCounts": {
+    "running": 0,
+    "done": 0,
+    "failed": 1,
+    "stuck": 0,
+    "unknown": 0
+  },
+  "cardCounts": {
+    "running": 0,
+    "done_unmerged": 0,
+    "merge_pending": 0,
+    "verification_pending": 0,
+    "verified": 0,
+    "blocked": 0,
+    "replan_required": 1
+  },
+  "safeSummary": "Scheduler overflow recovery should reject mixed-case unsafe markers.",
+  "overflowRecovery": {
+    "kind": "task_board_output_too_large",
+    "message": "Task board summary referenced Raw Workspace Content and Credentials.json.",
+    "retryable": true
+  }
+}

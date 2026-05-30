@@ -34,11 +34,13 @@ const mappings = [
   ["packages/contracts/examples/engine/agent-progress-snapshot-stuck-heartbeat.json", "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-snapshot-failed-command.json", "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-snapshot-done.json", "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"],
+  ["packages/contracts/examples/engine/agent-progress-snapshot-overflow-recovery.json", "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-list-empty.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-list-healthy-command.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-list-stuck-heartbeat.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-list-failed-command.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-list-done.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
+  ["packages/contracts/examples/engine/agent-progress-list-overflow-recovery.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
   ["packages/contracts/examples/engine/planner-scheduler-idle-blocked.json", "packages/contracts/schemas/engine/planner-scheduler-tick.schema.json"],
   ["packages/contracts/examples/engine/planner-scheduler-tool-output-overflow-recovery.json", "packages/contracts/schemas/engine/planner-scheduler-tick.schema.json"],
   ["packages/contracts/examples/engine/planner-pool-complete-next-pool.json", "packages/contracts/schemas/engine/planner-card-pool-status.schema.json"],
@@ -257,11 +259,19 @@ const invalidMappings = [
     "packages/contracts/schemas/engine/planner-scheduler-tick.schema.json"
   ],
   [
+    "packages/contracts/examples-invalid/engine/planner-scheduler-overflow-mixed-case-unsafe-message.json",
+    "packages/contracts/schemas/engine/planner-scheduler-tick.schema.json"
+  ],
+  [
     "packages/contracts/examples-invalid/engine/planner-agent-status-secret-field.json",
     "packages/contracts/schemas/engine/planner-agent-run-status.schema.json"
   ],
   [
     "packages/contracts/examples-invalid/engine/planner-agent-overflow-raw-dump-field.json",
+    "packages/contracts/schemas/engine/planner-agent-run-status.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/planner-agent-overflow-mixed-case-unsafe-message.json",
     "packages/contracts/schemas/engine/planner-agent-run-status.schema.json"
   ],
   [
@@ -294,6 +304,14 @@ const invalidMappings = [
   ],
   [
     "packages/contracts/examples-invalid/engine/agent-progress-snapshot-secret-key.json",
+    "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-snapshot-overflow-mixed-case-unsafe.json",
+    "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-snapshot-overflow-overlong-message.json",
     "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
   ],
   [
@@ -334,6 +352,10 @@ const invalidMappings = [
   ],
   [
     "packages/contracts/examples-invalid/engine/agent-progress-list-oversized-output-tail.json",
+    "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-list-overflow-raw-content-marker.json",
     "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
   ],
   [

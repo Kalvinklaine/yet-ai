@@ -1,0 +1,28 @@
+{
+  "protocolVersion": "2026-05-29",
+  "runId": "run-T324-overflow-001",
+  "cardId": "T324",
+  "startedAt": "2026-05-30T10:10:00Z",
+  "updatedAt": "2026-05-30T10:18:00Z",
+  "phase": "failed",
+  "status": "failed",
+  "message": "Planner context exceeded the safe progress budget.",
+  "elapsedMs": 480000,
+  "ageMs": 0,
+  "outputTail": "Context overflow was summarized with bounded retry guidance.",
+  "stuckReason": "explicit_failure",
+  "overflowRecovery": {
+    "kind": "context_length_exceeded",
+    "message": "Retry with scoped context and compact card summaries instead of broad transcripts.",
+    "retryable": true
+  },
+  "recentEvents": [
+    {
+      "eventId": "evt-T324-overflow-001",
+      "timestamp": "2026-05-30T10:18:00Z",
+      "phase": "failed",
+      "status": "failed",
+      "message": "Planner context exceeded the safe progress budget."
+    }
+  ]
+}

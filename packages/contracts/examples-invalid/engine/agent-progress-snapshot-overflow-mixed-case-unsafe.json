@@ -1,0 +1,19 @@
+{
+  "protocolVersion": "2026-05-29",
+  "runId": "run-T324-invalid-mixed",
+  "cardId": "T324",
+  "startedAt": "2026-05-30T10:10:00Z",
+  "updatedAt": "2026-05-30T10:18:00Z",
+  "phase": "failed",
+  "status": "failed",
+  "message": "Planner overflow recovery included unsafe mixed-case markers.",
+  "elapsedMs": 480000,
+  "ageMs": 0,
+  "stuckReason": "explicit_failure",
+  "overflowRecovery": {
+    "kind": "context_length_exceeded",
+    "message": "Provider_Response included Authorization Bearer Cookie ApiKey ACCESS_TOKEN and Auth.json markers.",
+    "retryable": true
+  },
+  "recentEvents": []
+}

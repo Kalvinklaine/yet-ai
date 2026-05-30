@@ -1,0 +1,19 @@
+{
+  "protocolVersion": "2026-05-29",
+  "runId": "run-T324-invalid-overlong",
+  "cardId": "T324",
+  "startedAt": "2026-05-30T10:10:00Z",
+  "updatedAt": "2026-05-30T10:18:00Z",
+  "phase": "failed",
+  "status": "failed",
+  "message": "Planner overflow recovery included an overlong summary.",
+  "elapsedMs": 480000,
+  "ageMs": 0,
+  "stuckReason": "explicit_failure",
+  "overflowRecovery": {
+    "kind": "task_board_output_too_large",
+    "message": "This sanitized overflow recovery summary is intentionally too long for the bounded progress contract because it repeats operational recovery guidance far beyond the maximum size allowed for user-visible summaries in the schema, even though it avoids credential material, local paths, raw transcripts, provider bodies, and workspace content completely.",
+    "retryable": true
+  },
+  "recentEvents": []
+}

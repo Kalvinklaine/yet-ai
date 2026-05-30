@@ -152,7 +152,7 @@
     },
     "safeText": {
       "type": "string",
-      "pattern": "^(?![\\s\\S]*(?:api[_-]?key|authorization|bearer|token|secret|password|cookie|pkce|refresh|access[_-]?token|auth[_-]?code|chain[-_ ]?of[-_ ]?thought|raw[_-]?(?:prompt|dump|output)|provider[_-]?(?:response|body)|credential|file[_-]?content|workspace[_-]?file|/Users/|/home/|/private/|[A-Za-z]:\\\\|~/|\\.codex/auth\\.json|auth\\.json|BEGIN [A-Z ]*PRIVATE KEY))[\\s\\S]*$"
+      "pattern": "^(?![\\s\\S]*(?:[aA][pP][iI][-_ ]?[kK][eE][yY]|[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][eE][aA][rR][eE][rR]|[tT][oO][kK][eE][nN]|[sS][eE][cC][rR][eE][tT]|[pP][aA][sS][sS][wW][oO][rR][dD]|[cC][oO][oO][kK][iI][eE]|[pP][kK][cC][eE]|[rR][eE][fF][rR][eE][sS][hH]|[aA][cC][cC][eE][sS][sS][-_ ]?[tT][oO][kK][eE][nN]|[aA][uU][tT][hH][-_ ]?[cC][oO][dD][eE]|[cC][hH][aA][iI][nN][-_ ]?[oO][fF][-_ ]?[tT][hH][oO][uU][gG][hH][tT]|[rR][aA][wW][-_ ]?(?:[pP][rR][oO][mM][pP][tT]|[dD][uU][mM][pP]|[oO][uU][tT][pP][uU][tT]|[fF][iI][lL][eE]|[wW][oO][rR][kK][sS][pP][aA][cC][eE])|[pP][rR][oO][vV][iI][dD][eE][rR][-_ ]?(?:[rR][eE][sS][pP][oO][nN][sS][eE]|[bB][oO][dD][yY])|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[fF][iI][lL][eE][-_ ]?[cC][oO][nN][tT][eE][nN][tT]|[wW][oO][rR][kK][sS][pP][aA][cC][eE][-_ ]?(?:[fF][iI][lL][eE]|[cC][oO][nN][tT][eE][nN][tT])|/Users/|/home/|/private/|[A-Za-z]:\\\\|~/|\\.[cC][oO][dD][eE][xX]/[aA][uU][tT][hH]\\.json|(?:[aA][uU][tT][hH]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL][sS]?)\\.json|BEGIN [A-Z ]*PRIVATE KEY))[\\s\\S]*$"
     },
     "safeSummary": {
       "allOf": [

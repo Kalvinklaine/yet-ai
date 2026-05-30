@@ -1,0 +1,17 @@
+{
+  "protocolVersion": "2026-05-15",
+  "agentRunId": "agent-T324-mixed-case",
+  "cardId": "T324",
+  "poolId": "planner_overflow_recovery",
+  "autonomousMode": true,
+  "status": "failed",
+  "nextAction": "recover_failed",
+  "observedAt": "2026-05-30T10:00:00Z",
+  "failureKind": "agent_error",
+  "safeSummary": "Agent overflow recovery should reject mixed-case unsafe markers.",
+  "overflowRecovery": {
+    "kind": "context_length_exceeded",
+    "message": "Provider_Response with ACCESS_TOKEN and Cookie markers must not validate.",
+    "retryable": true
+  }
+}

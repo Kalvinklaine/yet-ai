@@ -1,0 +1,35 @@
+{
+  "cloudRequired": false,
+  "providerAccess": "direct",
+  "generatedAt": "2026-05-30T10:18:05Z",
+  "snapshots": [
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T324-overflow-002",
+      "cardId": "T324",
+      "startedAt": "2026-05-30T10:12:00Z",
+      "updatedAt": "2026-05-30T10:20:00Z",
+      "phase": "stuck",
+      "status": "stuck",
+      "message": "Tool output exceeded the safe progress budget.",
+      "elapsedMs": 480000,
+      "ageMs": 1000,
+      "outputTail": "Tool output was summarized with targeted retry guidance.",
+      "stuckReason": "explicit_stuck",
+      "overflowRecovery": {
+        "kind": "tool_output_too_large",
+        "message": "Retry with targeted search and compact command summaries instead of full output.",
+        "retryable": true
+      },
+      "recentEvents": [
+        {
+          "eventId": "evt-T324-overflow-002",
+          "timestamp": "2026-05-30T10:20:00Z",
+          "phase": "stuck",
+          "status": "stuck",
+          "message": "Tool output exceeded the safe progress budget."
+        }
+      ]
+    }
+  ]
+}
