@@ -1,0 +1,12 @@
+{
+  "seq": 23,
+  "type": "error",
+  "chatId": "chat-001",
+  "payload": {
+    "code": "provider_invalid_request",
+    "message": "Provider rejected the request.",
+    "debug": {
+      "requestBody": "example prompt payload"
+    }
+  }
+}

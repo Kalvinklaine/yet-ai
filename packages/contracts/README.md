@@ -105,6 +105,20 @@ Schemas are intentionally minimal and will evolve as implementation starts. Chan
 
 `snapshot` SSE events reset client state and sequence tracking. Other chat events use monotonic `seq` values within a chat stream.
 
+SSE events with `type: "error"` use a stable sanitized payload shape with a bounded user-facing `message` and one taxonomy `code`. Error payloads are intentionally small and do not carry raw provider responses, provider URLs, request bodies, authorization headers, API keys, OAuth tokens, cookies, account or organization ids, credential paths, private absolute paths, or debug payloads. Current provider/chat error codes are:
+
+- `provider_not_configured` when no usable local provider is configured.
+- `model_not_configured` when the selected model is missing, disabled, or not ready.
+- `provider_unauthorized` when local credentials are missing, expired, revoked, or rejected.
+- `provider_rate_limited` when the provider reports rate limit, quota, or credit exhaustion.
+- `provider_context_too_large` when the prompt/request exceeds the selected model context window.
+- `provider_invalid_request` when the provider rejects a sanitized malformed or unsupported request.
+- `provider_timeout` when the provider request or stream times out.
+- `provider_upstream_error` when the provider service returns an upstream failure.
+- `provider_malformed_stream` when streaming provider output is malformed or ends unexpectedly.
+- `provider_config_error` when local provider configuration is invalid.
+- `provider_request_failed` as the legacy fallback for provider request failures that cannot yet be mapped more specifically.
+
 ## Future commands
 
 These commands are available from the repository root:

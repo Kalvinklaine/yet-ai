@@ -1,0 +1,9 @@
+{
+  "seq": 18,
+  "type": "error",
+  "chatId": "chat-001",
+  "payload": {
+    "code": "provider_malformed_stream",
+    "message": "Provider stream ended unexpectedly."
+  }
+}
