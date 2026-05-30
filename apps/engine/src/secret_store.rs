@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
@@ -9,6 +10,8 @@ use crate::providers;
 static TEMP_SECRET_COUNTER: AtomicU64 = AtomicU64::new(0);
 const OS_KEYCHAIN_SERVICE: &str = "yet-ai.provider-secrets";
 const OS_KEYCHAIN_OPERATION_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
+static KEYCHAIN_PUT_IF_ABSENT_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -36,6 +39,8 @@ pub enum SecretStoreError {
     InvalidProviderId,
     #[error("secret storage unavailable")]
     Unavailable,
+    #[error("secret storage disabled")]
+    Disabled,
     #[error("secret storage error")]
     Storage,
     #[error("invalid secret record")]
@@ -96,13 +101,15 @@ where
     ) -> Result<bool, SecretStoreError> {
         match self.primary.put_secret(provider_id, kind, value).await {
             Ok(()) => {}
-            Err(SecretStoreError::Unavailable) => return Ok(false),
+            Err(SecretStoreError::Disabled) => return Ok(false),
+            Err(SecretStoreError::Unavailable) => return Err(SecretStoreError::Unavailable),
             Err(error) => return Err(error),
         }
         match self.primary.get_secret(provider_id, kind).await {
             Ok(Some(stored)) if stored == value => Ok(true),
             Ok(_) => Err(SecretStoreError::Storage),
-            Err(SecretStoreError::Unavailable) => Ok(false),
+            Err(SecretStoreError::Disabled) => Ok(false),
+            Err(SecretStoreError::Unavailable) => Err(SecretStoreError::Unavailable),
             Err(error) => Err(error),
         }
     }
@@ -114,6 +121,17 @@ where
         value: &str,
     ) -> Result<(), SecretStoreError> {
         if self.put_verified_primary(provider_id, kind, value).await? {
+            self.fallback.delete_secret(provider_id, kind).await?;
+        }
+        Ok(())
+    }
+
+    async fn retry_fallback_cleanup(
+        &self,
+        provider_id: &str,
+        kind: SecretKind,
+    ) -> Result<(), SecretStoreError> {
+        if self.fallback.get_secret(provider_id, kind).await?.is_some() {
             self.fallback.delete_secret(provider_id, kind).await?;
         }
         Ok(())
@@ -165,18 +183,18 @@ where
                     Ok(true)
                 }
                 Ok(_) => Err(SecretStoreError::Storage),
-                Err(SecretStoreError::Unavailable) => {
-                    self.fallback
-                        .put_secret_if_absent(provider_id, kind, value)
-                        .await
-                }
+                Err(SecretStoreError::Disabled) => self
+                    .fallback
+                    .put_secret_if_absent(provider_id, kind, value)
+                    .await,
+                Err(SecretStoreError::Unavailable) => Err(SecretStoreError::Unavailable),
                 Err(error) => Err(error),
             },
-            Err(SecretStoreError::Unavailable) => {
-                self.fallback
-                    .put_secret_if_absent(provider_id, kind, value)
-                    .await
-            }
+            Err(SecretStoreError::Disabled) => self
+                .fallback
+                .put_secret_if_absent(provider_id, kind, value)
+                .await,
+            Err(SecretStoreError::Unavailable) => Err(SecretStoreError::Unavailable),
             Err(error) => Err(error),
         }
     }
@@ -187,7 +205,10 @@ where
         kind: SecretKind,
     ) -> Result<Option<String>, SecretStoreError> {
         match self.primary.get_secret(provider_id, kind).await {
-            Ok(Some(secret)) => Ok(Some(secret)),
+            Ok(Some(secret)) => {
+                self.retry_fallback_cleanup(provider_id, kind).await?;
+                Ok(Some(secret))
+            }
             Ok(None) => {
                 let fallback = self.fallback.get_secret(provider_id, kind).await?;
                 if let Some(secret) = fallback.as_deref() {
@@ -196,7 +217,9 @@ where
                 }
                 Ok(fallback)
             }
-            Err(SecretStoreError::Unavailable) => self.fallback.get_secret(provider_id, kind).await,
+            Err(SecretStoreError::Disabled) | Err(SecretStoreError::Unavailable) => {
+                self.fallback.get_secret(provider_id, kind).await
+            }
             Err(error) => Err(error),
         }
     }
@@ -210,9 +233,9 @@ where
         let fallback = self.fallback.delete_secret(provider_id, kind).await;
         match (primary, fallback) {
             (Ok(()), Ok(()))
-            | (Ok(()), Err(SecretStoreError::Unavailable))
-            | (Err(SecretStoreError::Unavailable), Ok(()))
-            | (Err(SecretStoreError::Unavailable), Err(SecretStoreError::Unavailable)) => Ok(()),
+            | (Ok(()), Err(SecretStoreError::Disabled))
+            | (Err(SecretStoreError::Disabled), Ok(()))
+            | (Err(SecretStoreError::Disabled), Err(SecretStoreError::Disabled)) => Ok(()),
             (Err(error), _) | (_, Err(error)) => Err(error),
         }
     }
@@ -251,7 +274,7 @@ impl ProviderSecretStore for TestUnavailableSecretStore {
         _kind: SecretKind,
         _value: &str,
     ) -> Result<(), SecretStoreError> {
-        Err(SecretStoreError::Unavailable)
+        Err(SecretStoreError::Disabled)
     }
 
     async fn put_secret_if_absent(
@@ -260,7 +283,7 @@ impl ProviderSecretStore for TestUnavailableSecretStore {
         _kind: SecretKind,
         _value: &str,
     ) -> Result<bool, SecretStoreError> {
-        Err(SecretStoreError::Unavailable)
+        Err(SecretStoreError::Disabled)
     }
 
     async fn get_secret(
@@ -268,7 +291,7 @@ impl ProviderSecretStore for TestUnavailableSecretStore {
         _provider_id: &str,
         _kind: SecretKind,
     ) -> Result<Option<String>, SecretStoreError> {
-        Err(SecretStoreError::Unavailable)
+        Err(SecretStoreError::Disabled)
     }
 
     async fn delete_secret(
@@ -276,7 +299,7 @@ impl ProviderSecretStore for TestUnavailableSecretStore {
         _provider_id: &str,
         _kind: SecretKind,
     ) -> Result<(), SecretStoreError> {
-        Err(SecretStoreError::Unavailable)
+        Err(SecretStoreError::Disabled)
     }
 }
 
@@ -432,11 +455,18 @@ impl ProviderSecretStore for OsKeychainSecretStore {
         kind: SecretKind,
         value: &str,
     ) -> Result<bool, SecretStoreError> {
-        if value.is_empty() || self.get_secret(provider_id, kind).await?.is_some() {
+        if value.is_empty() {
+            return Ok(false);
+        }
+        let _guard = KEYCHAIN_PUT_IF_ABSENT_LOCK.lock().await;
+        if self.get_secret(provider_id, kind).await?.is_some() {
             return Ok(false);
         }
         self.put_secret(provider_id, kind, value).await?;
-        Ok(true)
+        match self.get_secret(provider_id, kind).await? {
+            Some(stored) if stored == value => Ok(true),
+            _ => Err(SecretStoreError::Storage),
+        }
     }
 
     async fn get_secret(
@@ -478,14 +508,14 @@ async fn run_keychain<R>(
 where
     R: Send + 'static,
 {
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    std::thread::spawn(move || {
-        let _ = sender.send(f());
-    });
-    receiver
-        .recv_timeout(OS_KEYCHAIN_OPERATION_TIMEOUT)
-        .map_err(|_| SecretStoreError::Unavailable)?
-        .map_err(keychain_error_to_secret_store_error)
+    tokio::time::timeout(
+        OS_KEYCHAIN_OPERATION_TIMEOUT,
+        tokio::task::spawn_blocking(f),
+    )
+    .await
+    .map_err(|_| SecretStoreError::Unavailable)?
+    .map_err(|_| SecretStoreError::Storage)?
+    .map_err(keychain_error_to_secret_store_error)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -493,6 +523,7 @@ where
 enum KeychainError {
     NoEntry,
     Unavailable,
+    Disabled,
     Storage,
 }
 
@@ -500,6 +531,7 @@ fn keychain_error_to_secret_store_error(error: KeychainError) -> SecretStoreErro
     match error {
         KeychainError::NoEntry => SecretStoreError::Storage,
         KeychainError::Unavailable => SecretStoreError::Unavailable,
+        KeychainError::Disabled => SecretStoreError::Disabled,
         KeychainError::Storage => SecretStoreError::Storage,
     }
 }
@@ -553,19 +585,19 @@ struct ProductionKeychainAdapter;
 #[cfg(not(feature = "os-keychain"))]
 impl ProductionKeychainAdapter {
     fn entry(_service: &str, _account: &str) -> Result<(), KeychainError> {
-        Err(KeychainError::Unavailable)
+        Err(KeychainError::Disabled)
     }
 
     fn set_password(_entry: &(), _value: &str) -> Result<(), KeychainError> {
-        Err(KeychainError::Unavailable)
+        Err(KeychainError::Disabled)
     }
 
     fn get_password(_entry: &()) -> Result<Option<String>, KeychainError> {
-        Err(KeychainError::Unavailable)
+        Err(KeychainError::Disabled)
     }
 
     fn delete_credential(_entry: &()) -> Result<(), KeychainError> {
-        Err(KeychainError::Unavailable)
+        Err(KeychainError::Disabled)
     }
 }
 
@@ -948,7 +980,11 @@ mod tests {
             test_secret_digest(expected),
             "stored secret digest mismatch"
         );
-        assert!(actual == expected, "stored secret value mismatch");
+        assert_eq!(
+            test_secret_digest(actual),
+            test_secret_digest(expected),
+            "stored secret value mismatch"
+        );
     }
 
     type TestSecretKey = (String, SecretKind);
@@ -962,9 +998,11 @@ mod tests {
     struct MockSecretBackendState {
         records: HashMap<TestSecretKey, String>,
         unavailable: bool,
+        disabled: bool,
         put_failure: bool,
         get_failure: bool,
         delete_failure: bool,
+        delete_failures_remaining: usize,
         read_back_mismatch: bool,
         put_count: usize,
         delete_count: usize,
@@ -977,6 +1015,12 @@ mod tests {
             store
         }
 
+        fn disabled() -> Self {
+            let store = Self::default();
+            store.with_state(|state| state.disabled = true);
+            store
+        }
+
         fn put_failure() -> Self {
             let store = Self::default();
             store.with_state(|state| state.put_failure = true);
@@ -986,6 +1030,12 @@ mod tests {
         fn delete_failure() -> Self {
             let store = Self::default();
             store.with_state(|state| state.delete_failure = true);
+            store
+        }
+
+        fn delete_fail_once() -> Self {
+            let store = Self::default();
+            store.with_state(|state| state.delete_failures_remaining = 1);
             store
         }
 
@@ -1026,6 +1076,9 @@ mod tests {
             value: &str,
         ) -> Result<(), SecretStoreError> {
             self.with_state(|state| {
+                if state.disabled {
+                    return Err(SecretStoreError::Disabled);
+                }
                 if state.unavailable {
                     return Err(SecretStoreError::Unavailable);
                 }
@@ -1051,6 +1104,9 @@ mod tests {
             value: &str,
         ) -> Result<bool, SecretStoreError> {
             self.with_state(|state| {
+                if state.disabled {
+                    return Err(SecretStoreError::Disabled);
+                }
                 if state.unavailable {
                     return Err(SecretStoreError::Unavailable);
                 }
@@ -1073,6 +1129,9 @@ mod tests {
             kind: SecretKind,
         ) -> Result<Option<String>, SecretStoreError> {
             self.with_state(|state| {
+                if state.disabled {
+                    return Err(SecretStoreError::Disabled);
+                }
                 if state.unavailable {
                     return Err(SecretStoreError::Unavailable);
                 }
@@ -1093,10 +1152,17 @@ mod tests {
             kind: SecretKind,
         ) -> Result<(), SecretStoreError> {
             self.with_state(|state| {
+                if state.disabled {
+                    return Err(SecretStoreError::Disabled);
+                }
                 if state.unavailable {
                     return Err(SecretStoreError::Unavailable);
                 }
                 if state.delete_failure {
+                    return Err(SecretStoreError::Storage);
+                }
+                if state.delete_failures_remaining > 0 {
+                    state.delete_failures_remaining -= 1;
                     return Err(SecretStoreError::Storage);
                 }
                 state.delete_count += 1;
@@ -1127,7 +1193,7 @@ mod tests {
 
         assert_stored_secret(secret.as_deref(), "sk-composite-primary-secret-abcd");
         assert_eq!(primary.put_count(), 0);
-        assert_eq!(fallback.delete_count(), 0);
+        assert_eq!(fallback.delete_count(), 1);
     }
 
     #[tokio::test]
@@ -1184,6 +1250,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn composite_secret_store_retries_fallback_cleanup_after_prior_failure() {
+        let primary = MockSecretBackend::default();
+        let fallback = MockSecretBackend::delete_fail_once();
+        fallback
+            .put_secret(
+                "openai-local",
+                SecretKind::ApiKey,
+                "sk-composite-cleanup-retry-abcd",
+            )
+            .await
+            .unwrap();
+        let store = CompositeProviderSecretStore::new(primary.clone(), fallback.clone());
+
+        let error = store
+            .get_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, SecretStoreError::Storage));
+        let secret = store
+            .get_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap();
+
+        assert_stored_secret(secret.as_deref(), "sk-composite-cleanup-retry-abcd");
+        assert_eq!(fallback.delete_count(), 1);
+        assert_eq!(
+            fallback
+                .get_secret("openai-local", SecretKind::ApiKey)
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
     async fn composite_secret_store_keeps_fallback_when_verification_fails() {
         let primary = MockSecretBackend::read_back_mismatch();
         let fallback = MockSecretBackend::with_secret(
@@ -1209,8 +1310,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn composite_secret_store_put_uses_fallback_when_primary_unavailable() {
-        let primary = MockSecretBackend::unavailable();
+    async fn composite_secret_store_put_uses_fallback_when_primary_disabled() {
+        let primary = MockSecretBackend::disabled();
         let fallback = MockSecretBackend::default();
         let store = CompositeProviderSecretStore::new(primary, fallback.clone());
 
@@ -1228,6 +1329,33 @@ mod tests {
             .await
             .unwrap();
         assert_stored_secret(secret.as_deref(), "sk-composite-put-fallback-abcd");
+    }
+
+    #[tokio::test]
+    async fn composite_secret_store_rejects_fallback_write_when_primary_unavailable() {
+        let primary = MockSecretBackend::unavailable();
+        let fallback = MockSecretBackend::with_secret(
+            "openai-local",
+            SecretKind::ApiKey,
+            "sk-composite-current-fallback-abcd",
+        );
+        let store = CompositeProviderSecretStore::new(primary, fallback.clone());
+
+        let error = store
+            .put_secret(
+                "openai-local",
+                SecretKind::ApiKey,
+                "sk-composite-newer-fallback-wxyz",
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, SecretStoreError::Unavailable));
+        let secret = fallback
+            .get_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap();
+        assert_stored_secret(secret.as_deref(), "sk-composite-current-fallback-abcd");
     }
 
     #[tokio::test]
@@ -1268,6 +1396,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn composite_secret_store_delete_rejects_success_when_primary_unavailable() {
+        let primary = MockSecretBackend::unavailable();
+        let fallback = MockSecretBackend::with_secret(
+            "openai-local",
+            SecretKind::ApiKey,
+            "sk-composite-delete-fallback-abcd",
+        );
+        let store = CompositeProviderSecretStore::new(primary, fallback.clone());
+
+        let error = store
+            .delete_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, SecretStoreError::Unavailable));
+        assert_eq!(fallback.delete_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn composite_secret_store_delete_allows_disabled_primary_fallback_cleanup() {
+        let primary = MockSecretBackend::disabled();
+        let fallback = MockSecretBackend::with_secret(
+            "openai-local",
+            SecretKind::ApiKey,
+            "sk-composite-delete-disabled-abcd",
+        );
+        let store = CompositeProviderSecretStore::new(primary, fallback.clone());
+
+        store
+            .delete_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap();
+
+        assert_eq!(fallback.delete_count(), 1);
+    }
+
+    #[tokio::test]
     async fn composite_secret_store_primary_wins_for_all_provider_secret_kinds() {
         for (provider_id, kind, primary_secret, stale_fallback_secret) in [
             (
@@ -1302,9 +1467,8 @@ mod tests {
             let secret = store.get_secret(provider_id, kind).await.unwrap();
 
             assert_stored_secret(secret.as_deref(), primary_secret);
-            let fallback_secret = fallback.get_secret(provider_id, kind).await.unwrap();
-            assert_stored_secret(fallback_secret.as_deref(), stale_fallback_secret);
-            assert_eq!(fallback.delete_count(), 0);
+            assert_eq!(fallback.get_secret(provider_id, kind).await.unwrap(), None);
+            assert_eq!(fallback.delete_count(), 1);
         }
     }
 
@@ -1404,6 +1568,58 @@ mod tests {
             None
         );
         assert_eq!(fallback.delete_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn composite_secret_store_put_if_absent_rejects_unavailable_primary_fallback_write() {
+        let primary = MockSecretBackend::unavailable();
+        let fallback = MockSecretBackend::default();
+        let store = CompositeProviderSecretStore::new(primary, fallback.clone());
+
+        let error = store
+            .put_secret_if_absent(
+                "openai-local",
+                SecretKind::ApiKey,
+                "sk-composite-if-absent-unavailable-abcd",
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, SecretStoreError::Unavailable));
+        assert_eq!(
+            fallback
+                .get_secret("openai-local", SecretKind::ApiKey)
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn composite_secret_store_put_if_absent_keeps_existing_primary_secret() {
+        let primary = MockSecretBackend::with_secret(
+            "openai-local",
+            SecretKind::ApiKey,
+            "sk-composite-existing-primary-abcd",
+        );
+        let fallback = MockSecretBackend::default();
+        let store = CompositeProviderSecretStore::new(primary.clone(), fallback);
+
+        let created = store
+            .put_secret_if_absent(
+                "openai-local",
+                SecretKind::ApiKey,
+                "sk-composite-stale-inline-wxyz",
+            )
+            .await
+            .unwrap();
+
+        assert!(!created);
+        let secret = primary
+            .get_secret("openai-local", SecretKind::ApiKey)
+            .await
+            .unwrap();
+        assert_stored_secret(secret.as_deref(), "sk-composite-existing-primary-abcd");
     }
 
     #[tokio::test]
@@ -1519,6 +1735,19 @@ mod tests {
         let error = super::keychain_error_to_secret_store_error(super::KeychainError::Storage);
         assert_eq!(error.to_string(), "secret storage error");
         assert!(!error.to_string().contains("sk-keychain-secret-abcd"));
+    }
+
+    #[tokio::test]
+    async fn keychain_timeout_returns_unavailable_without_waiting_for_late_write() {
+        let started = std::time::Instant::now();
+        let result = super::run_keychain(|| {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            Ok(())
+        })
+        .await;
+
+        assert!(matches!(result, Err(SecretStoreError::Unavailable)));
+        assert!(started.elapsed() < std::time::Duration::from_millis(200));
     }
 
     #[test]

@@ -262,6 +262,7 @@ impl From<SecretStoreError> for ProviderError {
         match error {
             SecretStoreError::InvalidProviderId => Self::InvalidId,
             SecretStoreError::Unavailable
+            | SecretStoreError::Disabled
             | SecretStoreError::Storage
             | SecretStoreError::InvalidRecord => Self::SecretStorage,
         }
