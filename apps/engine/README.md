@@ -81,12 +81,15 @@ cargo check
 cargo test
 npm run check
 npm run smoke:local
+npm run smoke:provider-secret-migration
 npm run check:agent-progress
 npm run smoke:agent-progress
 npm run smoke:gui-agent-progress
 ```
 
 `npm run smoke:local` is a local-only cross-subsystem smoke test. It starts the engine on a free loopback port through Cargo, starts mock OpenAI-compatible, experimental token, and experimental chat endpoints, configures a fake provider key, sends chat commands, reads SSE streams, checks provider Authorization internally, verifies local chat history persistence/snapshot hydration/delete behavior, exercises provider-auth default status plus the local mock OAuth start/exchange/status/disconnect flow, and covers the approved experimental Codex-like start/exchange/chat fallback through loopback mocks only. It asserts fake API keys, OAuth access tokens, refresh tokens, Authorization headers, cookies, PKCE verifier values, mock auth codes, Codex credential-file paths, and local history responses/events do not expose client-visible secrets. It requires Cargo on `PATH` and does not require real provider credentials, external network access, or hosted Yet AI services. Real experimental OpenAI/ChatGPT account testing remains manual, high-risk, and outside CI; the API-key fallback remains the safe/default real-provider path.
+
+`npm run smoke:provider-secret-migration` is the focused loopback smoke for legacy inline `auth.apiKey` migration. It verifies config scrubbing, secret-store record creation, provider-test Authorization by digest/length only, stored-secret-wins behavior, and no raw fake secret leakage.
 
 To run the engine locally:
 
@@ -131,7 +134,7 @@ Storage names come from `product/identity.json`:
 
 Provider configs are stored in the user config dir under `providers.d/{id}.json`. Local chat history is stored by the engine under the same Yet AI local storage boundary, separate from browser storage and provider secret files. New API keys are written through the engine-owned secret store abstraction to the protected file fallback under `provider-secrets/{providerId}/{secretKind}.json`; provider config files keep only metadata and auth type. The abstraction supports API keys, OAuth access tokens, OAuth refresh tokens, and auth metadata so future login support can use one boundary. On Unix, provider config and fallback secret files are written with private `0600` permissions where feasible. Provider secrets are never written into project `.yet-ai` state or chat metadata and are never returned by HTTP responses; responses only expose `auth.configured` and a redacted hint such as `sk-...abcd`.
 
-The file secret store is a development fallback and compatibility step, not the final production policy. Existing legacy provider config files that still contain `auth.apiKey` can be read as a compatibility fallback; new saves move the API key into `provider-secrets` and clear it from the provider config JSON. The planned next step is OS credential storage/keychain support behind the same trait, followed by a small migration that imports legacy file secrets into the selected secret backend and removes raw keys from provider config files.
+The file secret store is a development fallback and compatibility step, not the final production policy. Legacy provider config files that still contain `auth.apiKey` are migrated during normal provider/model/test/chat access. Migration first writes the inline value to the secret store with atomic create-if-absent semantics, then rewrites the provider config without `auth.apiKey`. If a secret already exists, that stored value wins and the stale inline value is scrubbed without overwriting it. If the engine cannot safely write or read the secret store, access fails with sanitized errors and does not fall back to using or exposing the inline key. If config scrubbing fails after a successful secret write, the stored secret remains usable and a later access can retry the scrub. The planned next step is OS credential storage/keychain support behind the same trait.
 
 Provider ids are path-safe stable identifiers containing only ASCII letters, digits, `-`, and `_`. `custom` and `openai-compatible` providers require an explicit `baseUrl`. `ollama` defaults to `http://127.0.0.1:11434` when `baseUrl` is omitted.
 
