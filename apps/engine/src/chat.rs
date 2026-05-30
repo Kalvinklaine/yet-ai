@@ -13,9 +13,7 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::chat_history::{self, ChatMessageRole, ChatMessageStatus};
 use crate::provider_auth::{self, ExperimentalCodexChatAuth};
-use crate::providers::{
-    self, AuthType, ModelReadinessStatus, ProviderKind, StoredProviderConfig,
-};
+use crate::providers::{self, AuthType, ModelReadinessStatus, ProviderKind, StoredProviderConfig};
 
 #[derive(Clone, Debug)]
 pub struct ChatRuntime {
@@ -91,6 +89,14 @@ pub enum ChatError {
     NoModel,
     #[error("provider authentication failed")]
     Unauthorized,
+    #[error("provider rate limit or quota reached")]
+    RateLimited,
+    #[error("provider context window is too small")]
+    ContextTooLarge,
+    #[error("provider rejected the request")]
+    InvalidRequest,
+    #[error("provider service returned an error")]
+    UpstreamError,
     #[error("provider request failed")]
     Request,
     #[error("provider stream timed out")]
@@ -189,11 +195,7 @@ impl ChatRuntime {
             let state = guard
                 .entry(chat_id.clone())
                 .or_insert_with(|| ChatState::new(&chat_id));
-            (
-                snapshot,
-                state.events.clone(),
-                state.sender.subscribe(),
-            )
+            (snapshot, state.events.clone(), state.sender.subscribe())
         };
         let snapshot_stream = futures_util::stream::once(async move { Ok(to_sse_event(snapshot)) });
         let replay_stream = futures_util::stream::iter(
@@ -300,11 +302,7 @@ impl ChatRuntime {
             .map(|_| ())
     }
 
-    async fn snapshot_event(
-        &self,
-        config_dir: &std::path::Path,
-        chat_id: &str,
-    ) -> ChatEvent {
+    async fn snapshot_event(&self, config_dir: &std::path::Path, chat_id: &str) -> ChatEvent {
         let lock = self.history_lock(chat_id).await;
         let _guard = lock.lock().await;
         let thread = chat_history::get_thread(config_dir, chat_id).await.ok();
@@ -583,6 +581,10 @@ impl ChatError {
             Self::NoProvider => "provider_not_configured",
             Self::NoModel => "model_not_configured",
             Self::Unauthorized => "provider_unauthorized",
+            Self::RateLimited => "provider_rate_limited",
+            Self::ContextTooLarge => "provider_context_too_large",
+            Self::InvalidRequest => "provider_invalid_request",
+            Self::UpstreamError => "provider_upstream_error",
             Self::Request => "provider_request_failed",
             Self::Timeout => "provider_timeout",
             Self::MalformedStream => "provider_malformed_stream",
@@ -594,12 +596,18 @@ impl ChatError {
         match self {
             Self::NoProvider => "No enabled OpenAI-compatible provider is configured.",
             Self::NoModel => "The configured provider has no chat model.",
-            Self::Unauthorized => {
-                "Provider authentication failed. Check the configured credentials."
+            Self::Unauthorized => "Provider credentials were rejected.",
+            Self::RateLimited => "Provider rate limit or quota reached.",
+            Self::ContextTooLarge => {
+                "The request is too large for the selected model context window."
             }
-            Self::Request => "Provider request failed.",
-            Self::Timeout => "Provider stream timed out.",
-            Self::MalformedStream => "Provider returned malformed streaming data.",
+            Self::InvalidRequest => "Provider rejected the request.",
+            Self::UpstreamError => "Provider service returned an error.",
+            Self::Request => {
+                "Provider request failed. Check the local provider configuration and try again."
+            }
+            Self::Timeout => "Provider request timed out.",
+            Self::MalformedStream => "Provider stream ended unexpectedly.",
             Self::ProviderConfig => "Provider configuration is invalid.",
         }
     }
@@ -699,11 +707,8 @@ async fn collect_openai_compatible_stream(
             ChatError::Request
         }
     })?;
-    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        return Err(ChatError::Unauthorized);
-    }
     if !response.status().is_success() {
-        return Err(ChatError::Request);
+        return Err(classify_provider_http_error(response).await);
     }
     let mut stream = response.bytes_stream();
     let mut parser = OpenAiSseParser::default();
@@ -740,6 +745,94 @@ async fn collect_openai_compatible_stream(
             .await;
     }
     Ok(assistant_content)
+}
+
+const PROVIDER_ERROR_BODY_CLASSIFICATION_LIMIT: usize = 16 * 1024;
+
+async fn classify_provider_http_error(response: reqwest::Response) -> ChatError {
+    let status = response.status();
+    match bounded_provider_error_body(response).await {
+        Ok(body) => classify_provider_error(status, &body),
+        Err(ChatError::Timeout) => ChatError::Timeout,
+        Err(_) => classify_provider_error(status, &[]),
+    }
+}
+
+async fn bounded_provider_error_body(response: reqwest::Response) -> Result<Vec<u8>, ChatError> {
+    let mut stream = response.bytes_stream();
+    let mut body = Vec::new();
+    while body.len() < PROVIDER_ERROR_BODY_CLASSIFICATION_LIMIT {
+        let Some(chunk) = stream.next().await else {
+            break;
+        };
+        let chunk = chunk.map_err(|error| {
+            if error.is_timeout() {
+                ChatError::Timeout
+            } else {
+                ChatError::Request
+            }
+        })?;
+        let remaining = PROVIDER_ERROR_BODY_CLASSIFICATION_LIMIT - body.len();
+        body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+    }
+    Ok(body)
+}
+
+fn classify_provider_error(status: reqwest::StatusCode, body: &[u8]) -> ChatError {
+    match status.as_u16() {
+        401 | 403 => ChatError::Unauthorized,
+        429 => ChatError::RateLimited,
+        413 => ChatError::ContextTooLarge,
+        400 | 422 if provider_body_has_context_signal(body) => ChatError::ContextTooLarge,
+        400 | 404 | 422 => ChatError::InvalidRequest,
+        500..=599 => ChatError::UpstreamError,
+        _ => ChatError::Request,
+    }
+}
+
+fn classify_provider_stream_error(value: &serde_json::Value) -> ChatError {
+    let body = serde_json::to_vec(value).unwrap_or_default();
+    if provider_body_has_context_signal(&body) {
+        return ChatError::ContextTooLarge;
+    }
+    let text = String::from_utf8_lossy(&body).to_ascii_lowercase();
+    if text.contains("rate_limit") || text.contains("rate limit") || text.contains("quota") {
+        ChatError::RateLimited
+    } else if text.contains("unauthorized")
+        || text.contains("authentication")
+        || text.contains("invalid_api_key")
+        || text.contains("permission")
+        || text.contains("forbidden")
+    {
+        ChatError::Unauthorized
+    } else if text.contains("invalid_request")
+        || text.contains("bad request")
+        || text.contains("not found")
+        || text.contains("unprocessable")
+    {
+        ChatError::InvalidRequest
+    } else if text.contains("server_error")
+        || text.contains("internal error")
+        || text.contains("service unavailable")
+        || text.contains("upstream")
+    {
+        ChatError::UpstreamError
+    } else {
+        ChatError::Request
+    }
+}
+
+fn provider_body_has_context_signal(body: &[u8]) -> bool {
+    let text = if let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) {
+        serde_json::to_string(&value).unwrap_or_default()
+    } else {
+        String::from_utf8_lossy(body).into_owned()
+    };
+    let text = text.to_ascii_lowercase();
+    text.contains("context_length_exceeded")
+        || text.contains("maximum context length")
+        || text.contains("too many tokens")
+        || text.contains("prompt is too long")
 }
 
 #[derive(Default)]
@@ -811,7 +904,9 @@ impl OpenAiSseParser {
         }
         let value: serde_json::Value =
             serde_json::from_str(data).map_err(|_| ChatError::MalformedStream)?;
-        if let Some(content) = value["choices"][0]["delta"]["content"].as_str() {
+        if value.get("error").is_some() {
+            Err(classify_provider_stream_error(&value))
+        } else if let Some(content) = value["choices"][0]["delta"]["content"].as_str() {
             if !content.is_empty() {
                 self.deltas.push(content.to_string());
             }

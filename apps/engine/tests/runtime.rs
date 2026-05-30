@@ -824,6 +824,16 @@ fn assert_sanitized_sse_error(text: &str) {
     assert!(!text.contains("codex-refresh-token-secret"));
 }
 
+fn assert_provider_error_text_is_sanitized(text: &str, forbidden: &[&str]) {
+    assert_sanitized_sse_error(text);
+    for value in forbidden {
+        assert!(
+            !text.contains(value),
+            "provider error leaked forbidden marker"
+        );
+    }
+}
+
 fn assert_provider_auth_response_has_no_codex_secrets(body: &Value) {
     let text = body.to_string().to_lowercase();
     assert!(!text.contains("verifier"));
@@ -6464,11 +6474,11 @@ async fn chat_provider_error_persists_sanitized_error_history_and_snapshot() {
     assert_eq!(loaded["messages"][1]["status"], "error");
     assert_eq!(
         loaded["messages"][1]["content"],
-        "Provider authentication failed. Check the configured credentials."
+        "Provider credentials were rejected."
     );
     assert!(loaded
         .to_string()
-        .contains("Provider authentication failed"));
+        .contains("Provider credentials were rejected"));
     assert_sanitized_sse_error(&loaded.to_string());
     assert!(!loaded.to_string().contains(api_key));
     assert_first_auth_and_no_immediate_extra_auth(
@@ -7345,6 +7355,134 @@ async fn provider_unauthorized_produces_sanitized_error_event() {
         auth_receiver,
         "Bearer sk-unauthorized-secret-abcd",
         "provider unauthorized error event",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn chat_provider_http_failures_produce_stable_sanitized_error_events_and_history() {
+    for (status, body, expected_code, expected_message, chat_id, forbidden) in [
+        (
+            StatusCode::UNAUTHORIZED,
+            r#"{"error":{"message":"raw-provider-body sk-http-secret access_token=secret Bearer token","type":"invalid_api_key"}}"#,
+            "provider_unauthorized",
+            "Provider credentials were rejected.",
+            "chat-http-unauthorized-classified",
+            ["sk-http-secret", "secret", "invalid_api_key"].as_slice(),
+        ),
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            r#"{"error":{"message":"quota exhausted raw-provider-body sk-rate-secret","type":"rate_limit_exceeded"}}"#,
+            "provider_rate_limited",
+            "Provider rate limit or quota reached.",
+            "chat-http-rate-classified",
+            ["sk-rate-secret", "quota exhausted", "rate_limit_exceeded"].as_slice(),
+        ),
+        (
+            StatusCode::BAD_REQUEST,
+            r#"{"error":{"code":"context_length_exceeded","message":"maximum context length sk-context-secret raw-provider-body"}}"#,
+            "provider_context_too_large",
+            "The request is too large for the selected model context window.",
+            "chat-http-context-classified",
+            [
+                "sk-context-secret",
+                "context_length_exceeded",
+                "maximum context length",
+            ]
+            .as_slice(),
+        ),
+        (
+            StatusCode::NOT_FOUND,
+            r#"<html>raw-provider-body /Users/example/private sk-invalid-secret api_key=secret</html>"#,
+            "provider_invalid_request",
+            "Provider rejected the request.",
+            "chat-http-invalid-classified",
+            ["sk-invalid-secret", "/Users/example", "api_key"].as_slice(),
+        ),
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            r#"upstream exploded raw-provider-body sk-upstream-secret Cookie: secret"#,
+            "provider_upstream_error",
+            "Provider service returned an error.",
+            "chat-http-upstream-classified",
+            ["sk-upstream-secret", "upstream exploded", "Cookie"].as_slice(),
+        ),
+    ] {
+        let api_key = "sk-provider-http-classification-secret-abcd";
+        let (base_url, auth_receiver) = start_mock_provider(status, body).await;
+        let app = test_app();
+        configure_openai_provider(app.clone(), base_url, api_key).await;
+        send_user_message(app.clone(), chat_id).await;
+
+        let loaded = wait_for_chat_messages(app.clone(), chat_id, 2).await;
+        assert_eq!(loaded["messages"][1]["role"], "error");
+        assert_eq!(loaded["messages"][1]["content"], expected_message);
+        assert_provider_error_text_is_sanitized(&loaded.to_string(), forbidden);
+
+        let text = sse_text_from(app, &format!("/v1/chats/subscribe?chat_id={chat_id}")).await;
+        let events = sse_json_events(&text);
+        let error = find_error_event(&events);
+        assert_eq!(error["payload"]["code"], expected_code);
+        assert_eq!(error["payload"]["message"], expected_message);
+        assert_provider_error_text_is_sanitized(&text, forbidden);
+        assert!(!text.contains(api_key));
+        assert_first_auth_and_no_immediate_extra_auth(
+            auth_receiver,
+            "Bearer sk-provider-http-classification-secret-abcd",
+            "provider http error classification",
+        )
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn provider_stream_error_frame_is_classified_without_raw_body_leakage() {
+    let api_key = "sk-stream-error-frame-secret-abcd";
+    let (base_url, auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"error\":{\"code\":\"context_length_exceeded\",\"message\":\"prompt is too long raw-provider-body sk-frame-secret access_token=secret\"}}\n\n",
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+    send_user_message(app.clone(), "chat-stream-error-frame").await;
+
+    let loaded = wait_for_chat_messages(app.clone(), "chat-stream-error-frame", 2).await;
+    assert_eq!(loaded["messages"][1]["role"], "error");
+    assert_eq!(
+        loaded["messages"][1]["content"],
+        "The request is too large for the selected model context window."
+    );
+    assert_provider_error_text_is_sanitized(
+        &loaded.to_string(),
+        &[
+            "sk-frame-secret",
+            "context_length_exceeded",
+            "prompt is too long",
+        ],
+    );
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-stream-error-frame").await;
+    let events = sse_json_events(&text);
+    let error = find_error_event(&events);
+    assert_eq!(error["payload"]["code"], "provider_context_too_large");
+    assert_eq!(
+        error["payload"]["message"],
+        "The request is too large for the selected model context window."
+    );
+    assert_provider_error_text_is_sanitized(
+        &text,
+        &[
+            "sk-frame-secret",
+            "context_length_exceeded",
+            "prompt is too long",
+        ],
+    );
+    assert!(!text.contains(api_key));
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer sk-stream-error-frame-secret-abcd",
+        "provider stream error frame classification",
     )
     .await;
 }
