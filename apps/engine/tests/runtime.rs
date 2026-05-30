@@ -4015,6 +4015,144 @@ async fn provider_secret_store_corruption_does_not_expose_raw_secret() {
 }
 
 #[tokio::test]
+async fn provider_secret_update_put_failure_keeps_previous_config_sanitized() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-update-put-failure-secret-abcd";
+    let provider = json!({
+        "id": "update-put-failure-provider",
+        "kind": "custom",
+        "displayName": "Update Put Failure Provider",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:9400",
+        "auth": { "type": "none" }
+    });
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let secret_path = FileSecretStore::new(&paths.config_dir)
+        .secret_path("update-put-failure-provider", SecretKind::ApiKey)
+        .unwrap();
+    std::fs::create_dir_all(secret_path.parent().unwrap()).unwrap();
+    std::fs::create_dir(&secret_path).unwrap();
+
+    let update = json!({
+        "displayName": "Mutated Put Failure Provider",
+        "auth": { "type": "api_key", "apiKey": api_key }
+    });
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::PATCH,
+            "/v1/providers/update-put-failure-provider",
+            Body::from(update.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["error"], "provider secret storage error");
+    let text = body.to_string().to_lowercase();
+    assert!(!text.contains(api_key));
+    assert!(!text.contains("update-put-failure-secret"));
+    assert!(!text.contains(&paths.config_dir.to_string_lossy().to_lowercase()));
+
+    let config_text = read_provider_config_text(&paths, "update-put-failure-provider");
+    assert!(config_text.contains("Update Put Failure Provider"));
+    assert!(!config_text.contains("Mutated Put Failure Provider"));
+    assert!(config_text.contains(r#""type": "none""#));
+    assert!(!config_text.contains(api_key));
+    std::fs::remove_dir(&secret_path).unwrap();
+    let (status, stored) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/providers/update-put-failure-provider",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(stored["displayName"], "Update Put Failure Provider");
+    assert_eq!(stored["auth"]["type"], "none");
+    assert_eq!(stored["auth"]["configured"], false);
+    assert!(!stored.to_string().contains(api_key));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn provider_secret_update_delete_failure_keeps_previous_config_sanitized() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-update-delete-failure-secret-abcd";
+    let provider = json!({
+        "id": "update-delete-failure-provider",
+        "kind": "custom",
+        "displayName": "Update Delete Failure Provider",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:9401",
+        "auth": { "type": "api_key", "apiKey": api_key }
+    });
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let store = FileSecretStore::new(&paths.config_dir);
+    let secret_path = store
+        .secret_path("update-delete-failure-provider", SecretKind::ApiKey)
+        .unwrap();
+    std::fs::remove_file(&secret_path).unwrap();
+    let outside = paths.config_dir.join("update-delete-failure-outside.json");
+    std::fs::write(&outside, "{}").unwrap();
+    std::os::unix::fs::symlink(&outside, &secret_path).unwrap();
+
+    let update = json!({
+        "displayName": "Mutated Delete Failure Provider",
+        "auth": { "type": "none" }
+    });
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::PATCH,
+            "/v1/providers/update-delete-failure-provider",
+            Body::from(update.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["error"], "provider secret storage error");
+    let text = body.to_string().to_lowercase();
+    assert!(!text.contains(api_key));
+    assert!(!text.contains("update-delete-failure-secret"));
+    assert!(!text.contains(&paths.config_dir.to_string_lossy().to_lowercase()));
+    let config_text = read_provider_config_text(&paths, "update-delete-failure-provider");
+    assert!(config_text.contains("Update Delete Failure Provider"));
+    assert!(!config_text.contains("Mutated Delete Failure Provider"));
+    assert!(config_text.contains(r#""type": "api_key""#));
+    assert!(!config_text.contains(api_key));
+}
+
+#[tokio::test]
 async fn update_secret_redacts_old_and_new_secrets() {
     let app = test_app();
     let old_key = "sk-old-provider-secret-abcd";
@@ -4058,6 +4196,7 @@ async fn update_secret_redacts_old_and_new_secrets() {
 #[tokio::test]
 async fn delete_provider_removes_local_config() {
     let app = test_app();
+
     let provider = json!({
         "id": "delete-provider",
         "kind": "ollama",
@@ -4093,6 +4232,131 @@ async fn delete_provider_removes_local_config() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn provider_secret_delete_cleanup_failure_is_retryable() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-delete-retry-secret-abcd";
+    let provider = json!({
+        "id": "delete-retry-provider",
+        "kind": "custom",
+        "displayName": "Delete Retry Provider",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:9500",
+        "auth": { "type": "api_key", "apiKey": api_key }
+    });
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let store = FileSecretStore::new(&paths.config_dir);
+    let secret_path = store
+        .secret_path("delete-retry-provider", SecretKind::ApiKey)
+        .unwrap();
+    std::fs::remove_file(&secret_path).unwrap();
+    let outside = paths.config_dir.join("delete-retry-outside.json");
+    std::fs::write(&outside, "{}").unwrap();
+    std::os::unix::fs::symlink(&outside, &secret_path).unwrap();
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::DELETE,
+            "/v1/providers/delete-retry-provider",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["error"], "provider secret storage error");
+    let text = body.to_string().to_lowercase();
+    assert!(!text.contains(api_key));
+    assert!(!text.contains("delete-retry-secret"));
+    assert!(!text.contains(&paths.config_dir.to_string_lossy().to_lowercase()));
+    assert!(paths
+        .config_dir
+        .join("providers.d/delete-retry-provider.json")
+        .exists());
+
+    std::fs::remove_file(&secret_path).unwrap();
+    store
+        .put_secret("delete-retry-provider", SecretKind::ApiKey, api_key)
+        .await
+        .unwrap();
+    let status = empty_response_from(
+        app.clone(),
+        authed_request(
+            Method::DELETE,
+            "/v1/providers/delete-retry-provider",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        store
+            .get_secret("delete-retry-provider", SecretKind::ApiKey)
+            .await
+            .unwrap(),
+        None
+    );
+    let (status, _) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/providers/delete-retry-provider",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn provider_secret_delete_missing_config_cleans_valid_orphan_secret() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-delete-missing-config-secret-abcd";
+    let store = FileSecretStore::new(&paths.config_dir);
+    store
+        .put_secret("delete-missing-config", SecretKind::ApiKey, api_key)
+        .await
+        .unwrap();
+
+    let status = empty_response_from(
+        app,
+        authed_request(
+            Method::DELETE,
+            "/v1/providers/delete-missing-config",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        store
+            .get_secret("delete-missing-config", SecretKind::ApiKey)
+            .await
+            .unwrap(),
+        None
+    );
 }
 
 #[tokio::test]
