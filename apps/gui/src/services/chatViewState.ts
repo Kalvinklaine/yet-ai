@@ -1,4 +1,4 @@
-import { sanitizeErrorText } from "./redaction";
+import { redactSecrets, sanitizeErrorText } from "./redaction";
 import type { ChatHistoryMessage, ChatThread } from "./runtimeClient";
 import type { SseEvent } from "./sseClient";
 
@@ -234,10 +234,17 @@ function readDeltaContent(payload: SseEvent["payload"]): string | null {
   return typeof content === "string" ? content : null;
 }
 
+const formattedChatErrorLimit = 500;
+
 function formatChatErrorContent(payload: SseEvent["payload"]): string {
-  const message = sanitizeErrorText(readErrorMessage(payload));
   const recovery = readErrorRecovery(payload);
-  return recovery ? sanitizeErrorText(`${message}\n${recovery}`) : message;
+  const messageLimit = Math.max(80, formattedChatErrorLimit - recovery.length - 1);
+  const message = truncateText(redactSecrets(readErrorMessage(payload)), messageLimit);
+  return sanitizeErrorText(`${message}\n${recovery}`);
+}
+
+function truncateText(value: string, limit: number): string {
+  return value.length > limit ? `${value.slice(0, limit)}…` : value;
 }
 
 function readErrorRecovery(payload: SseEvent["payload"]): string {
