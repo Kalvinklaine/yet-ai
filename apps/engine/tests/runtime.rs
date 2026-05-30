@@ -3835,6 +3835,182 @@ async fn provider_storage_path_uses_yet_ai_config_dir_not_project_state() {
     assert_stored_secret(secret.as_deref(), api_key);
 }
 
+fn write_legacy_provider_config(paths: &StoragePaths, id: &str, auth: Value) {
+    let providers_dir = paths.config_dir.join("providers.d");
+    std::fs::create_dir_all(&providers_dir).unwrap();
+    let provider = json!({
+        "id": id,
+        "kind": "openai-compatible",
+        "displayName": id,
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:8080/v1",
+        "auth": auth,
+        "models": [{ "id": "gpt-test", "displayName": "GPT Test" }],
+        "capabilities": { "chat": true, "completion": false, "embeddings": false }
+    });
+    std::fs::write(
+        providers_dir.join(format!("{id}.json")),
+        serde_json::to_string_pretty(&provider).unwrap(),
+    )
+    .unwrap();
+}
+
+fn read_provider_config_text(paths: &StoragePaths, id: &str) -> String {
+    std::fs::read_to_string(paths.config_dir.join("providers.d").join(format!("{id}.json")))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn provider_secret_legacy_inline_key_migrates_to_secret_store() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-provider-migration-secret-abcd";
+    write_legacy_provider_config(
+        &paths,
+        "provider-secret-migrate",
+        json!({ "type": "api_key", "apiKey": api_key }),
+    );
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/providers/provider-secret-migrate",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["auth"]["configured"], true);
+    assert_eq!(body["auth"]["redacted"], "sk...cd");
+    assert!(!body.to_string().contains(api_key));
+    let stored = FileSecretStore::new(&paths.config_dir)
+        .get_secret("provider-secret-migrate", SecretKind::ApiKey)
+        .await
+        .unwrap();
+    assert_stored_secret(stored.as_deref(), api_key);
+    assert!(!read_provider_config_text(&paths, "provider-secret-migrate").contains(api_key));
+}
+
+#[tokio::test]
+async fn provider_secret_store_value_wins_over_legacy_inline_key() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let stored_key = "sk-provider-store-wins-secret-abcd";
+    let inline_key = "sk-provider-inline-loses-secret-wxyz";
+    write_legacy_provider_config(
+        &paths,
+        "provider-secret-store-wins",
+        json!({ "type": "api_key", "apiKey": inline_key }),
+    );
+    FileSecretStore::new(&paths.config_dir)
+        .put_secret("provider-secret-store-wins", SecretKind::ApiKey, stored_key)
+        .await
+        .unwrap();
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/providers/provider-secret-store-wins",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["auth"]["redacted"], "sk...cd");
+    let text = body.to_string();
+    assert!(!text.contains(stored_key));
+    assert!(!text.contains(inline_key));
+    let stored = FileSecretStore::new(&paths.config_dir)
+        .get_secret("provider-secret-store-wins", SecretKind::ApiKey)
+        .await
+        .unwrap();
+    assert_stored_secret(stored.as_deref(), stored_key);
+    assert!(!read_provider_config_text(&paths, "provider-secret-store-wins").contains(inline_key));
+}
+
+#[tokio::test]
+async fn provider_secret_write_failure_keeps_legacy_inline_key() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-provider-write-failure-secret-abcd";
+    write_legacy_provider_config(
+        &paths,
+        "provider-secret-write-failure",
+        json!({ "type": "api_key", "apiKey": api_key }),
+    );
+    let secret_path = FileSecretStore::new(&paths.config_dir)
+        .secret_path("provider-secret-write-failure", SecretKind::ApiKey)
+        .unwrap();
+    std::fs::create_dir_all(&secret_path).unwrap();
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/providers/provider-secret-write-failure",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["error"], "provider secret storage error");
+    assert!(!body.to_string().contains(api_key));
+    assert!(read_provider_config_text(&paths, "provider-secret-write-failure").contains(api_key));
+}
+
+#[tokio::test]
+async fn provider_secret_non_api_key_stale_inline_field_is_scrubbed() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-provider-none-stale-secret-abcd";
+    write_legacy_provider_config(
+        &paths,
+        "provider-secret-none-stale",
+        json!({ "type": "none", "apiKey": api_key }),
+    );
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/providers/provider-secret-none-stale",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["auth"]["type"], "none");
+    assert_eq!(body["auth"]["configured"], false);
+    assert!(body["auth"].get("redacted").is_none());
+    assert!(!body.to_string().contains(api_key));
+    assert!(!read_provider_config_text(&paths, "provider-secret-none-stale").contains(api_key));
+    assert_eq!(
+        FileSecretStore::new(&paths.config_dir)
+            .get_secret("provider-secret-none-stale", SecretKind::ApiKey)
+            .await
+            .unwrap(),
+        None
+    );
+}
+
 #[tokio::test]
 async fn provider_test_openai_compatible_success_uses_loopback_models_and_auth() {
     let api_key = "sk-provider-test-secret-abcd";
