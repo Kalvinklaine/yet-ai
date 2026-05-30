@@ -15,6 +15,33 @@ export type ChatViewState = {
   subscriptionReady: boolean;
 };
 
+type ChatErrorCode =
+  | "provider_unauthorized"
+  | "provider_rate_limited"
+  | "provider_context_too_large"
+  | "provider_invalid_request"
+  | "provider_timeout"
+  | "provider_upstream_error"
+  | "provider_malformed_stream"
+  | "provider_config_error"
+  | "provider_not_configured"
+  | "model_not_configured"
+  | "provider_request_failed";
+
+const chatErrorRecoveryCopy: Record<ChatErrorCode, string> = {
+  provider_unauthorized: "Recovery: update or check the provider API key, reconnect account login, then retry.",
+  provider_rate_limited: "Recovery: wait before retrying, check provider quota or billing, or try another configured model/provider.",
+  provider_context_too_large: "Recovery: shorten the prompt or reduce attached editor context, then retry.",
+  provider_invalid_request: "Recovery: check the model id, provider endpoint, and saved provider settings.",
+  provider_timeout: "Recovery: retry, then check network connectivity or the local provider server.",
+  provider_upstream_error: "Recovery: the provider or local server failed. Retry or check provider/server status.",
+  provider_malformed_stream: "Recovery: the provider returned invalid streaming data. Retry or check the provider/local server.",
+  provider_config_error: "Recovery: review provider setup, saved endpoint, credentials, and model readiness.",
+  provider_not_configured: "Recovery: configure and enable a provider with local credentials before chatting.",
+  model_not_configured: "Recovery: configure a chat-ready model for an enabled provider before chatting.",
+  provider_request_failed: "Recovery: check local provider configuration and readiness, then retry.",
+};
+
 
 export function createInitialChatViewState(chatId: string): ChatViewState {
   return resetChatViewState(chatId);
@@ -80,7 +107,7 @@ export function applyChatViewEvent(state: ChatViewState, event: SseEvent): ChatV
     case "error":
       return appendMessage(stopStreamingAssistant(state), {
         role: "error",
-        content: sanitizeErrorText(readErrorMessage(event.payload)),
+        content: formatChatErrorContent(event.payload),
         status: "error",
       });
     default:
@@ -205,6 +232,24 @@ function readDeltaContent(payload: SseEvent["payload"]): string | null {
   }
   const content = (delta as Record<string, unknown>).content;
   return typeof content === "string" ? content : null;
+}
+
+function formatChatErrorContent(payload: SseEvent["payload"]): string {
+  const message = sanitizeErrorText(readErrorMessage(payload));
+  const recovery = readErrorRecovery(payload);
+  return recovery ? sanitizeErrorText(`${message}\n${recovery}`) : message;
+}
+
+function readErrorRecovery(payload: SseEvent["payload"]): string {
+  const code = typeof payload?.code === "string" ? payload.code : "";
+  if (isChatErrorCode(code)) {
+    return chatErrorRecoveryCopy[code];
+  }
+  return "Recovery: check local provider configuration and readiness, then retry.";
+}
+
+function isChatErrorCode(code: string): code is ChatErrorCode {
+  return Object.prototype.hasOwnProperty.call(chatErrorRecoveryCopy, code);
 }
 
 function readErrorMessage(payload: SseEvent["payload"]): string {

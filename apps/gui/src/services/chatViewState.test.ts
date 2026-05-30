@@ -126,6 +126,58 @@ describe("chatViewState", () => {
     expect(state.messages[0].content).not.toContain("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
   });
 
+  it.each([
+    ["provider_unauthorized", "update or check the provider API key"],
+    ["provider_rate_limited", "check provider quota or billing"],
+    ["provider_context_too_large", "shorten the prompt or reduce attached editor context"],
+    ["provider_invalid_request", "check the model id, provider endpoint, and saved provider settings"],
+    ["provider_timeout", "check network connectivity or the local provider server"],
+    ["provider_upstream_error", "the provider or local server failed"],
+    ["provider_malformed_stream", "invalid streaming data"],
+    ["provider_config_error", "review provider setup"],
+    ["provider_not_configured", "configure and enable a provider"],
+    ["model_not_configured", "configure a chat-ready model"],
+    ["provider_request_failed", "check local provider configuration and readiness"],
+  ])("adds recovery guidance for %s", (code, guidance) => {
+    const state = applyChatViewEvent(
+      createInitialChatViewState("chat-1"),
+      event("error", { code, message: "Provider failed safely." }),
+    );
+
+    expect(state.messages[0].content).toContain("Provider failed safely.");
+    expect(state.messages[0].content).toContain("Recovery:");
+    expect(state.messages[0].content).toContain(guidance);
+  });
+
+  it("uses safe fallback recovery for unknown and malformed error codes", () => {
+    const state = [
+      event("error", { code: "future_provider_error", message: "Future provider failure." }),
+      event("error", { code: 123, message: "Malformed code failure." }),
+    ].reduce<ChatViewState>(applyChatViewEvent, createInitialChatViewState("chat-1"));
+
+    expect(state.messages[0].content).toContain("Future provider failure.");
+    expect(state.messages[0].content).toContain("Recovery: check local provider configuration and readiness, then retry.");
+    expect(state.messages[1].content).toContain("Malformed code failure.");
+    expect(state.messages[1].content).toContain("Recovery: check local provider configuration and readiness, then retry.");
+  });
+
+  it("redacts secret-bearing payloads while preserving recovery guidance", () => {
+    const state = applyChatViewEvent(
+      createInitialChatViewState("chat-1"),
+      event("error", {
+        code: "provider_unauthorized",
+        message: `Provider rejected Authorization: Bearer provider-secret-token access_token=${"x".repeat(64)} Cookie: session=secret`,
+      }),
+    );
+
+    expect(state.messages[0].content).toContain("Provider rejected [redacted]");
+    expect(state.messages[0].content).toContain("Recovery: update or check the provider API key");
+    expect(state.messages[0].content).not.toContain("provider-secret-token");
+    expect(state.messages[0].content).not.toContain("access_token");
+    expect(state.messages[0].content).not.toContain("session=secret");
+    expect(state.messages[0].content).not.toContain("x".repeat(64));
+  });
+
   it("terminates active assistant streaming before appending an error", () => {
     const started = applyChatViewEvent(createInitialChatViewState("chat-1"), event("stream_started", { role: "assistant" }));
     const delta = applyChatViewEvent(started, event("stream_delta", { delta: { content: "Partial" } }));
@@ -166,7 +218,7 @@ describe("chatViewState", () => {
     expect(() => malformedEvents.reduce<ChatViewState>(applyChatViewEvent, state)).not.toThrow();
     const next = malformedEvents.reduce<ChatViewState>(applyChatViewEvent, state);
     expect(next.messages).toEqual([
-      { id: "chat-1-message-1", role: "error", content: "Chat error", status: "error" },
+      { id: "chat-1-message-1", role: "error", content: "Chat error\nRecovery: check local provider configuration and readiness, then retry.", status: "error" },
     ]);
   });
 });
