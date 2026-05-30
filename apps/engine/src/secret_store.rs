@@ -8,6 +8,7 @@ use crate::providers;
 
 static TEMP_SECRET_COUNTER: AtomicU64 = AtomicU64::new(0);
 const OS_KEYCHAIN_SERVICE: &str = "yet-ai.provider-secrets";
+const OS_KEYCHAIN_OPERATION_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -152,8 +153,28 @@ where
         if self.get_secret(provider_id, kind).await?.is_some() {
             return Ok(false);
         }
-        self.put_secret(provider_id, kind, value).await?;
-        Ok(true)
+        match self
+            .primary
+            .put_secret_if_absent(provider_id, kind, value)
+            .await
+        {
+            Ok(false) => Ok(false),
+            Ok(true) => match self.primary.get_secret(provider_id, kind).await {
+                Ok(Some(stored)) if stored == value => {
+                    self.fallback.delete_secret(provider_id, kind).await?;
+                    Ok(true)
+                }
+                Ok(_) => Err(SecretStoreError::Storage),
+                Err(SecretStoreError::Unavailable) => {
+                    self.fallback.put_secret_if_absent(provider_id, kind, value).await
+                }
+                Err(error) => Err(error),
+            },
+            Err(SecretStoreError::Unavailable) => {
+                self.fallback.put_secret_if_absent(provider_id, kind, value).await
+            }
+            Err(error) => Err(error),
+        }
     }
 
     async fn get_secret(
@@ -190,6 +211,71 @@ where
             | (Err(SecretStoreError::Unavailable), Err(SecretStoreError::Unavailable)) => Ok(()),
             (Err(error), _) | (_, Err(error)) => Err(error),
         }
+    }
+}
+
+#[cfg(not(any(test, debug_assertions)))]
+pub type ProductionProviderSecretStore =
+    CompositeProviderSecretStore<OsKeychainSecretStore, FileSecretStore>;
+
+#[cfg(any(test, debug_assertions))]
+pub type ProductionProviderSecretStore =
+    CompositeProviderSecretStore<TestUnavailableSecretStore, FileSecretStore>;
+
+#[cfg(not(any(test, debug_assertions)))]
+pub fn provider_secret_store(config_dir: impl AsRef<Path>) -> ProductionProviderSecretStore {
+    CompositeProviderSecretStore::new(
+        OsKeychainSecretStore::new(),
+        FileSecretStore::new(config_dir),
+    )
+}
+
+#[cfg(any(test, debug_assertions))]
+pub fn provider_secret_store(config_dir: impl AsRef<Path>) -> ProductionProviderSecretStore {
+    CompositeProviderSecretStore::new(
+        TestUnavailableSecretStore,
+        FileSecretStore::new(config_dir),
+    )
+}
+
+#[cfg(any(test, debug_assertions))]
+#[derive(Clone, Debug)]
+pub struct TestUnavailableSecretStore;
+
+#[cfg(any(test, debug_assertions))]
+impl ProviderSecretStore for TestUnavailableSecretStore {
+    async fn put_secret(
+        &self,
+        _provider_id: &str,
+        _kind: SecretKind,
+        _value: &str,
+    ) -> Result<(), SecretStoreError> {
+        Err(SecretStoreError::Unavailable)
+    }
+
+    async fn put_secret_if_absent(
+        &self,
+        _provider_id: &str,
+        _kind: SecretKind,
+        _value: &str,
+    ) -> Result<bool, SecretStoreError> {
+        Err(SecretStoreError::Unavailable)
+    }
+
+    async fn get_secret(
+        &self,
+        _provider_id: &str,
+        _kind: SecretKind,
+    ) -> Result<Option<String>, SecretStoreError> {
+        Err(SecretStoreError::Unavailable)
+    }
+
+    async fn delete_secret(
+        &self,
+        _provider_id: &str,
+        _kind: SecretKind,
+    ) -> Result<(), SecretStoreError> {
+        Err(SecretStoreError::Unavailable)
     }
 }
 
@@ -390,9 +476,13 @@ async fn run_keychain<R>(
 where
     R: Send + 'static,
 {
-    tokio::task::spawn_blocking(f)
-        .await
-        .map_err(|_| SecretStoreError::Storage)?
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let _ = sender.send(f());
+    });
+    receiver
+        .recv_timeout(OS_KEYCHAIN_OPERATION_TIMEOUT)
+        .map_err(|_| SecretStoreError::Unavailable)?
         .map_err(keychain_error_to_secret_store_error)
 }
 

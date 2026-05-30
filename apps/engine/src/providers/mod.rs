@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
 use crate::secret_store::{
-    redact_secret, FileSecretStore, ProviderSecretStore, SecretKind, SecretStoreError,
+    provider_secret_store, redact_secret, ProviderSecretStore, SecretKind, SecretStoreError,
 };
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -525,7 +525,7 @@ pub async fn update_provider_config(
     }
     validate_config(&config)?;
     let (config, secret_change) = prepare_config_secrets(config);
-    let previous_secret = FileSecretStore::new(config_dir)
+    let previous_secret = provider_secret_store(config_dir)
         .get_secret(id, SecretKind::ApiKey)
         .await?;
     let path = provider_config_path(config_dir, id)?;
@@ -541,7 +541,7 @@ pub async fn delete_provider_config(config_dir: &Path, id: &str) -> Result<(), P
     let path = provider_config_path(config_dir, id)?;
     match tokio::fs::remove_file(path).await {
         Ok(()) => {
-            FileSecretStore::new(config_dir)
+            provider_secret_store(config_dir)
                 .delete_secret(id, SecretKind::ApiKey)
                 .await?;
             Ok(())
@@ -740,7 +740,7 @@ async fn migrate_provider_secret(
 ) -> Result<(), ProviderError> {
     let inline_key = config.auth.api_key.clone().and_then(clean);
     let should_scrub = config.auth.api_key.is_some();
-    let store = FileSecretStore::new(config_dir);
+    let store = provider_secret_store(config_dir);
     let stored_secret = match store.get_secret(&config.id, SecretKind::ApiKey).await {
         Ok(secret) => secret,
         Err(SecretStoreError::InvalidRecord) if should_scrub => {
@@ -815,7 +815,7 @@ async fn configured_api_key(
     if config.auth.auth_type != AuthType::ApiKey {
         return Ok(None);
     }
-    let store = FileSecretStore::new(config_dir);
+    let store = provider_secret_store(config_dir);
     match store.get_secret(&config.id, SecretKind::ApiKey).await {
         Ok(Some(secret)) => Ok(Some(secret)),
         Ok(None) => Ok(config.auth.api_key.clone()),
@@ -863,7 +863,7 @@ async fn commit_secret_change(
     id: &str,
     secret_change: SecretChange,
 ) -> Result<(), ProviderError> {
-    let store = FileSecretStore::new(config_dir);
+    let store = provider_secret_store(config_dir);
     match secret_change {
         SecretChange::None => Ok(()),
         SecretChange::Put(api_key) => store
@@ -882,7 +882,7 @@ async fn rollback_secret(
     id: &str,
     previous_secret: Option<String>,
 ) -> Result<(), ProviderError> {
-    let store = FileSecretStore::new(config_dir);
+    let store = provider_secret_store(config_dir);
     match previous_secret {
         Some(secret) => store.put_secret(id, SecretKind::ApiKey, &secret).await?,
         None => store.delete_secret(id, SecretKind::ApiKey).await?,
