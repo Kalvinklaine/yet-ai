@@ -19,7 +19,16 @@ const SAFE_OVERFLOW_MESSAGE_MAX_LENGTH = 320;
 const AUDIT_TIMELINE_MAX_EVENTS = 10;
 const COUNT_MAP_MAX_ENTRIES = 16;
 const SENSITIVE_KEY = /(prompt|provider|response|token|api.?key|auth|cookie|secret|credential|path|content|dump|raw|board|workspace|tool.*output|full.*json)/i;
-const UNSAFE_TEXT = /(api[_-]?key|authorization|bearer|token|secret|password|cookie|pkce|refresh|access[_-]?token|auth[_-]?code|chain[-_ ]?of[-_ ]?thought|raw[_-]?(?:prompt|dump|output)|provider[_-]?(?:response|body)|credential|file[_-]?content|workspace[_-]?file|\/Users\/|\/home\/|\/private\/|[A-Za-z]:\\|~\/|\.codex\/auth\.json|auth\.json|BEGIN [A-Z ]*PRIVATE KEY)/i;
+const RAW_CONTENT_LABEL = String.raw`(?:chain[\s_-]*of[\s_-]*thought|raw[\s_-]*prompt|raw[\s_-]*(?:dump|output)|provider[\s_-]*(?:response|body)|file[\s_-]*contents?|workspace[\s_-]*(?:contents?|file))`;
+const UNSAFE_TEXT = new RegExp(String.raw`(api[_-]?key|authorization|bearer|token|secret|password|cookie|pkce|refresh|access[_-]?token|auth[_-]?code|${RAW_CONTENT_LABEL}|credential|\/Users\/|\/home\/|\/private\/|[A-Za-z]:\\|~\/|\.codex\/auth\.json|auth\.json|BEGIN [A-Z ]*PRIVATE KEY)`, "i");
+
+const STATE_KEYS = new Set(["poolId", "autonomousPolicy", "cards", "agents", "auditTimeline", "lastTick", "activeSchedulerLease", "lastLeaseReleasedAt", "idleReason", "nextPoolCandidate"]);
+const POLICY_KEYS = new Set(["autonomousMode", "safeSummary"]);
+const CARD_KEYS = new Set(["cardId", "status", "dependsOn", "agentRunId", "mergeState", "verificationState", "blocker", "safeSummary"]);
+const AGENT_KEYS = new Set(["agentRunId", "cardId", "status", "lastHeartbeatAt", "completedAt", "failureKind", "safeSummary"]);
+const LAST_TICK_KEYS = new Set(["tickId", "observedAt", "nextAction", "leaseOwnerId"]);
+const LEASE_KEYS = new Set(["ownerId", "acquiredAt"]);
+const AUDIT_EVENT_KEYS = new Set(["tickId", "poolId", "observedAt", "nextAction", "idleReason", "safeSummary", "agentCounts", "cardCounts", "leaseOwnerId", "overflowRecovery"]);
 
 function boundedSafeText(value, maxLength, fallback) {
   if (typeof value !== "string" || value.length < 1 || UNSAFE_TEXT.test(value)) {
@@ -75,22 +84,59 @@ function assertDateTime(value, label) {
   }
 }
 
+function assertAllowedKeys(value, allowed, label) {
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw new Error(`${label}: invalid scheduler state`);
+    }
+  }
+}
+
+function assertOptionalSafeSummary(value, label) {
+  if (value !== undefined && (typeof value !== "string" || value.length < 1 || value.length > SAFE_SUMMARY_MAX_LENGTH || UNSAFE_TEXT.test(value))) {
+    throw new Error(`${label}: invalid scheduler state`);
+  }
+}
+
+function assertSafeStringArray(value, label) {
+  assertArray(value, label);
+  for (const item of value) {
+    assertSafeId(item, label);
+  }
+}
+
 function validatePolicy(policy) {
   assertObject(policy, "policy");
+  assertAllowedKeys(policy, POLICY_KEYS, "policy");
   assertBoolean(policy.autonomousMode, "policy.autonomousMode");
-  if (policy.safeSummary !== undefined && (typeof policy.safeSummary !== "string" || policy.safeSummary.length < 1 || policy.safeSummary.length > SAFE_SUMMARY_MAX_LENGTH || UNSAFE_TEXT.test(policy.safeSummary))) {
-    throw new Error("policy.safeSummary: invalid scheduler state");
-  }
+  assertOptionalSafeSummary(policy.safeSummary, "policy.safeSummary");
 }
 
 function validateCards(cards) {
   assertArray(cards, "cards");
   for (const card of cards) {
     assertObject(card, "card");
+    assertAllowedKeys(card, CARD_KEYS, "card");
     assertSafeId(card.cardId, "card.cardId");
     if (typeof card.status !== "string") {
       throw new Error("card.status: invalid scheduler state");
     }
+    if (card.dependsOn !== undefined) {
+      assertSafeStringArray(card.dependsOn, "card.dependsOn");
+    }
+    if (card.agentRunId !== undefined) {
+      assertSafeId(card.agentRunId, "card.agentRunId");
+    }
+    if (card.mergeState !== undefined && typeof card.mergeState !== "string") {
+      throw new Error("card.mergeState: invalid scheduler state");
+    }
+    if (card.verificationState !== undefined && typeof card.verificationState !== "string") {
+      throw new Error("card.verificationState: invalid scheduler state");
+    }
+    if (card.blocker !== undefined && !SAFE_IDLE_REASONS.has(card.blocker)) {
+      throw new Error("card.blocker: invalid scheduler state");
+    }
+    assertOptionalSafeSummary(card.safeSummary, "card.safeSummary");
   }
 }
 
@@ -98,11 +144,22 @@ function validateAgents(agents) {
   assertArray(agents, "agents");
   for (const agent of agents) {
     assertObject(agent, "agent");
+    assertAllowedKeys(agent, AGENT_KEYS, "agent");
     assertSafeId(agent.agentRunId, "agent.agentRunId");
     assertSafeId(agent.cardId, "agent.cardId");
     if (typeof agent.status !== "string") {
       throw new Error("agent.status: invalid scheduler state");
     }
+    if (agent.lastHeartbeatAt !== undefined) {
+      assertDateTime(agent.lastHeartbeatAt, "agent.lastHeartbeatAt");
+    }
+    if (agent.completedAt !== undefined) {
+      assertDateTime(agent.completedAt, "agent.completedAt");
+    }
+    if (agent.failureKind !== undefined && typeof agent.failureKind !== "string") {
+      throw new Error("agent.failureKind: invalid scheduler state");
+    }
+    assertOptionalSafeSummary(agent.safeSummary, "agent.safeSummary");
   }
 }
 
@@ -111,6 +168,7 @@ function validateLease(lease) {
     return;
   }
   assertObject(lease, "activeSchedulerLease");
+  assertAllowedKeys(lease, LEASE_KEYS, "activeSchedulerLease");
   assertSafeId(lease.ownerId, "activeSchedulerLease.ownerId");
   assertDateTime(lease.acquiredAt, "activeSchedulerLease.acquiredAt");
 }
@@ -122,6 +180,7 @@ function validateAuditTimeline(timeline) {
   }
   for (const event of timeline) {
     assertObject(event, "auditTimeline.event");
+    assertAllowedKeys(event, AUDIT_EVENT_KEYS, "auditTimeline.event");
     assertSafeId(event.tickId, "auditTimeline.tickId");
     assertSafeId(event.poolId, "auditTimeline.poolId", SAFE_POOL_ID);
     assertDateTime(event.observedAt, "auditTimeline.observedAt");
@@ -185,15 +244,20 @@ function validateLastTick(lastTick) {
     return;
   }
   assertObject(lastTick, "lastTick");
+  assertAllowedKeys(lastTick, LAST_TICK_KEYS, "lastTick");
   assertSafeId(lastTick.tickId, "lastTick.tickId");
   assertDateTime(lastTick.observedAt, "lastTick.observedAt");
   if (typeof lastTick.nextAction !== "string") {
     throw new Error("lastTick.nextAction: invalid scheduler state");
   }
+  if (lastTick.leaseOwnerId !== undefined) {
+    assertSafeId(lastTick.leaseOwnerId, "lastTick.leaseOwnerId");
+  }
 }
 
 function validateSchedulerState(state) {
   assertObject(state, "state");
+  assertAllowedKeys(state, STATE_KEYS, "state");
   assertSafeId(state.poolId, "poolId", SAFE_POOL_ID);
   validatePolicy(state.autonomousPolicy);
   validateCards(state.cards);
@@ -201,6 +265,15 @@ function validateSchedulerState(state) {
   validateAuditTimeline(state.auditTimeline);
   validateLastTick(state.lastTick);
   validateLease(state.activeSchedulerLease);
+  if (state.lastLeaseReleasedAt !== undefined) {
+    assertDateTime(state.lastLeaseReleasedAt, "lastLeaseReleasedAt");
+  }
+  if (state.idleReason !== undefined && !SAFE_IDLE_REASONS.has(state.idleReason)) {
+    throw new Error("idleReason: invalid scheduler state");
+  }
+  if (state.nextPoolCandidate !== undefined) {
+    assertSafeId(state.nextPoolCandidate, "nextPoolCandidate", SAFE_POOL_ID);
+  }
   return state;
 }
 
@@ -214,12 +287,69 @@ async function readSchedulerState(filePath) {
   return validateSchedulerState(parsed);
 }
 
+function copyAllowedObject(value, allowed) {
+  assertObject(value, "state object");
+  const copied = {};
+  for (const key of allowed) {
+    if (value[key] !== undefined) {
+      copied[key] = value[key];
+    }
+  }
+  return copied;
+}
+
+function sanitizeCard(card) {
+  const sanitized = copyAllowedObject(card, CARD_KEYS);
+  if (typeof sanitized.safeSummary === "string") {
+    sanitized.safeSummary = boundedSafeText(sanitized.safeSummary, SAFE_SUMMARY_MAX_LENGTH, "Card state was summarized without raw data.");
+  }
+  return sanitized;
+}
+
+function sanitizeAgent(agent) {
+  const sanitized = copyAllowedObject(agent, AGENT_KEYS);
+  if (typeof sanitized.safeSummary === "string") {
+    sanitized.safeSummary = boundedSafeText(sanitized.safeSummary, SAFE_SUMMARY_MAX_LENGTH, "Agent state was summarized without raw data.");
+  }
+  return sanitized;
+}
+
+function sanitizeSchedulerStateForWrite(state) {
+  assertObject(state, "state");
+  const sanitized = {
+    poolId: state.poolId,
+    autonomousPolicy: copyAllowedObject(state.autonomousPolicy, POLICY_KEYS),
+    cards: Array.isArray(state.cards) ? state.cards.map(sanitizeCard) : state.cards,
+    agents: Array.isArray(state.agents) ? state.agents.map(sanitizeAgent) : state.agents,
+    auditTimeline: Array.isArray(state.auditTimeline) ? state.auditTimeline.slice(-AUDIT_TIMELINE_MAX_EVENTS).map(sanitizeAuditEvent) : state.auditTimeline,
+    lastTick: state.lastTick === null || state.lastTick === undefined ? state.lastTick : copyAllowedObject(state.lastTick, LAST_TICK_KEYS),
+    activeSchedulerLease: state.activeSchedulerLease === null || state.activeSchedulerLease === undefined ? state.activeSchedulerLease : copyAllowedObject(state.activeSchedulerLease, LEASE_KEYS)
+  };
+  if (typeof sanitized.autonomousPolicy.safeSummary === "string") {
+    sanitized.autonomousPolicy.safeSummary = boundedSafeText(
+      sanitized.autonomousPolicy.safeSummary,
+      SAFE_SUMMARY_MAX_LENGTH,
+      "Autonomous policy was summarized without raw data."
+    );
+  }
+  if (state.lastLeaseReleasedAt !== undefined) {
+    sanitized.lastLeaseReleasedAt = state.lastLeaseReleasedAt;
+  }
+  if (state.idleReason !== undefined) {
+    sanitized.idleReason = state.idleReason;
+  }
+  if (state.nextPoolCandidate !== undefined) {
+    sanitized.nextPoolCandidate = state.nextPoolCandidate;
+  }
+  return validateSchedulerState(sanitized);
+}
+
 async function writeSchedulerState(filePath, state) {
-  validateSchedulerState(state);
+  const sanitized = sanitizeSchedulerStateForWrite(state);
   await mkdir(dirname(filePath), { recursive: true });
   const tempPath = join(dirname(filePath), `.${process.pid}.${randomUUID()}.tmp`);
   try {
-    await writeFile(tempPath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+    await writeFile(tempPath, `${JSON.stringify(sanitized, null, 2)}\n`, { mode: 0o600 });
     await rename(tempPath, filePath);
   } catch (error) {
     await rm(tempPath, { force: true });
@@ -355,6 +485,7 @@ export {
   readSchedulerState,
   releaseSchedulerLease,
   sanitizeAuditEvent,
+  sanitizeSchedulerStateForWrite,
   validateSchedulerState,
   writeSchedulerState
 };

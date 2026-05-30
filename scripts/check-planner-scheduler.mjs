@@ -13,6 +13,7 @@ import {
   readSchedulerState,
   releaseSchedulerLease,
   sanitizeAuditEvent,
+  sanitizeSchedulerStateForWrite,
   writeSchedulerState
 } from "./planner-scheduler-state.mjs";
 
@@ -308,6 +309,8 @@ function durableState(overrides) {
 
 function assertNoSensitiveAuditFields(value) {
   const serialized = JSON.stringify(value);
+  assert.equal(serialized.includes("providerBody"), false, "audit sanitizer kept provider body key");
+  assert.equal(serialized.includes("fileContent"), false, "audit sanitizer kept file content key");
   assert.equal(serialized.includes("rawPrompt"), false, "audit sanitizer kept raw prompt key");
   assert.equal(serialized.includes("providerResponse"), false, "audit sanitizer kept provider response key");
   assert.equal(serialized.includes("apiKey"), false, "audit sanitizer kept api key key");
@@ -326,6 +329,117 @@ function assertNoSensitiveAuditFields(value) {
 
 function oversizedCountMap(prefix, total) {
   return Object.fromEntries(Array.from({ length: total }, (_, index) => [`${prefix}_${index}`, index]));
+}
+
+function assertSanitizedState(overrides, forbiddenKey, message) {
+  const sanitized = sanitizeSchedulerStateForWrite(durableState(overrides));
+  assert.equal(JSON.stringify(sanitized).includes(forbiddenKey), false, message);
+}
+
+function assertSanitizedNestedState(mutator, forbiddenKey, message) {
+  const state = durableState();
+  mutator(state);
+  const sanitized = sanitizeSchedulerStateForWrite(state);
+  assert.equal(JSON.stringify(sanitized).includes(forbiddenKey), false, message);
+}
+
+function runStrictStateAssertions() {
+  const rawFields = {
+    rawPrompt: "do not persist raw prompt",
+    providerResponse: "do not persist provider response",
+    providerBody: "do not persist provider body",
+    workspaceContent: "do not persist workspace contents",
+    fileContent: "do not persist file contents",
+    taskBoardDump: "do not persist task board",
+    toolRawOutput: "do not persist tool raw output",
+    fullBoardJson: "do not persist full board",
+    path: "/Users/private/project/file.ts",
+    content: "private file content",
+    credentials: { apiKey: "sk-test-secret" },
+    cookie: "session=secret",
+    authToken: "secret-token"
+  };
+  for (const [key, value] of Object.entries(rawFields)) {
+    assertSanitizedState({ [key]: value }, key, `top-level raw field persisted: ${key}`);
+    assertSanitizedNestedState((state) => {
+      state.autonomousPolicy[key] = value;
+    }, key, `policy raw field persisted: ${key}`);
+    assertSanitizedNestedState((state) => {
+      state.cards[0][key] = value;
+    }, key, `card raw field persisted: ${key}`);
+    assertSanitizedNestedState((state) => {
+      state.agents[0][key] = value;
+    }, key, `agent raw field persisted: ${key}`);
+    assertSanitizedNestedState((state) => {
+      state.lastTick = { tickId: "tick-T229-raw", observedAt: "2026-05-29T00:40:00Z", nextAction: "check_agents", [key]: value };
+    }, key, `lastTick raw field persisted: ${key}`);
+    assertSanitizedNestedState((state) => {
+      state.activeSchedulerLease = { ownerId: "owner-T229-raw", acquiredAt: "2026-05-29T00:41:00Z", [key]: value };
+    }, key, `lease raw field persisted: ${key}`);
+    assertSanitizedNestedState((state) => {
+      state.auditTimeline = [
+        {
+          tickId: "tick-T229-raw",
+          poolId: "planner_durable_state",
+          observedAt: "2026-05-29T00:42:00Z",
+          nextAction: "check_agents",
+          [key]: value
+        }
+      ];
+    }, key, `audit raw field persisted: ${key}`);
+  }
+
+  const unsafeVariants = [
+    "raw prompt: private request",
+    "raw-prompt private request",
+    "raw_prompt private request",
+    "rawprompt private request",
+    "provider response: private response",
+    "provider-response private response",
+    "provider_response private response",
+    "providerresponse private response",
+    "file content: private source",
+    "file contents: private source",
+    "file-content private source",
+    "file_contents private source",
+    "filecontent private source",
+    "filecontents private source",
+    "workspace content: private source",
+    "workspace contents: private source",
+    "workspace-content private source",
+    "workspace_contents private source",
+    "workspacecontent private source",
+    "workspacecontents private source",
+    "chain of thought: private reasoning",
+    "chain-of-thought private reasoning",
+    "chain_of_thought private reasoning",
+    "chainofthought private reasoning"
+  ];
+  for (const variant of unsafeVariants) {
+    const event = sanitizeAuditEvent({
+      tickId: "tick-T229-unsafe",
+      poolId: "planner_durable_state",
+      observedAt: "2026-05-29T00:43:00Z",
+      nextAction: "recover_failed",
+      safeSummary: variant,
+      overflowRecovery: {
+        kind: "context_length_exceeded",
+        message: variant,
+        retryable: true
+      }
+    });
+    assert.equal(event.safeSummary, "Scheduler audit event was summarized without raw data.", `unsafe summary was retained: ${variant}`);
+    assert.equal(event.overflowRecovery.message, "Context overflow was detected and summarized without raw context data.", `unsafe overflow message was retained: ${variant}`);
+    const sanitizedState = sanitizeSchedulerStateForWrite(
+      durableState({
+        autonomousPolicy: {
+          autonomousMode: true,
+          safeSummary: variant
+        }
+      })
+    );
+    assert.equal(sanitizedState.autonomousPolicy.safeSummary, "Autonomous policy was summarized without raw data.", `unsafe policy summary was retained: ${variant}`);
+  }
 }
 
 async function runStateStoreAssertions() {
@@ -584,6 +698,7 @@ async function runAssertions() {
   assertValid(schemas.tick, nextPoolDecision.tick, "next-pool tick");
   assertValid(schemas.pool, nextPoolDecision.poolStatus, "next-pool pool");
 
+  runStrictStateAssertions();
   await runStateStoreAssertions();
 }
 
