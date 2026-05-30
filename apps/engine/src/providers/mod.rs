@@ -416,9 +416,10 @@ pub async fn list_provider_configs(
         let content = tokio::fs::read_to_string(path)
             .await
             .map_err(|_| ProviderError::Storage)?;
-        let config: StoredProviderConfig =
+        let mut config: StoredProviderConfig =
             serde_json::from_str(&content).map_err(|_| ProviderError::InvalidConfig)?;
         validate_config(&config)?;
+        migrate_provider_secret(config_dir, &mut config).await?;
         providers.push(config);
     }
     providers.sort_by(|left, right| left.id.cmp(&right.id));
@@ -437,9 +438,10 @@ pub async fn get_provider_config(
         }
         Err(_) => return Err(ProviderError::Storage),
     };
-    let config: StoredProviderConfig =
+    let mut config: StoredProviderConfig =
         serde_json::from_str(&content).map_err(|_| ProviderError::InvalidConfig)?;
     validate_config(&config)?;
+    migrate_provider_secret(config_dir, &mut config).await?;
     Ok(config)
 }
 
@@ -738,6 +740,35 @@ fn models_url(base_url: &str) -> Result<String, ProviderError> {
         url.set_path(&format!("{normalized_path}/models"));
     }
     Ok(url.to_string())
+}
+
+async fn migrate_provider_secret(
+    config_dir: &Path,
+    config: &mut StoredProviderConfig,
+) -> Result<(), ProviderError> {
+    let inline_key = config.auth.api_key.clone().and_then(clean);
+    let should_scrub = config.auth.api_key.is_some();
+    let store = FileSecretStore::new(config_dir);
+    let stored_secret = match store.get_secret(&config.id, SecretKind::ApiKey).await {
+        Ok(secret) => secret,
+        Err(SecretStoreError::InvalidRecord) => None,
+        Err(error) => return Err(error.into()),
+    };
+
+    if config.auth.auth_type == AuthType::ApiKey && stored_secret.is_none() {
+        if let Some(api_key) = inline_key.as_deref() {
+            store
+                .put_secret(&config.id, SecretKind::ApiKey, api_key)
+                .await?;
+        }
+    }
+
+    if should_scrub {
+        config.auth.api_key = None;
+        let path = provider_config_path(config_dir, &config.id)?;
+        write_provider_config(&path, config).await?;
+    }
+    Ok(())
 }
 
 async fn summary_for_config(
