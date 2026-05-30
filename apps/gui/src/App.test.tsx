@@ -1338,6 +1338,50 @@ describe("agent progress panel", () => {
     expect(text).not.toContain("f".repeat(64));
   });
 
+  it("failed overflow snapshot renders safe recovery guidance without raw oversized output or mutating controls", async () => {
+    const rawSecret = "access_token=" + "o".repeat(64);
+    const hugeOutput = "RAW_TASK_BOARD_DUMP_".repeat(300);
+    mockRuntimeResponses({
+      agentProgress: agentProgressResponse([agentProgressSnapshot({
+        phase: "failed",
+        status: "failed",
+        message: "Planner context failed with context_length_exceeded.",
+        stuckReason: "explicit_failure",
+        outputTail: `task board output too large. task_board_get dumped too much. Authorization: Bearer planner-secret Cookie: session=planner-cookie /Users/Alice/.codex/auth.json raw prompt: ${hugeOutput} ${rawSecret}`,
+        overflowRecovery: {
+          kind: "task_board_output_too_large",
+          message: `Use task_ready_cards or task_board_get(card_id), not raw prompt: ${hugeOutput} ${rawSecret}`,
+          retryable: true,
+        },
+        recentEvents: [{ eventId: "event-overflow", timestamp: "2026-05-29T14:00:30Z", phase: "failed", status: "failed", message: `maximum context length exceeded provider response: ${hugeOutput} ${rawSecret}` }],
+      })]),
+    });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Refresh agent progress").click();
+      await Promise.resolve();
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Task-board output was too large.");
+    expect(text).toContain("Use a specific card id, ready cards, or scoped search instead of a full task-board dump.");
+    expect(text).toContain("task_board_get(card_id)");
+    expect(text).toContain("[redacted]");
+    expect(text).not.toContain("access_token");
+    expect(text).not.toContain("planner-secret");
+    expect(text).not.toContain("planner-cookie");
+    expect(text).not.toContain("Alice");
+    expect(text).not.toContain("auth.json");
+    expect(text).not.toContain("RAW_TASK_BOARD_DUMP_");
+    expect(text).not.toContain("o".repeat(64));
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Start agent");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Stop agent");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Merge");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Apply");
+  });
+
   it("endpoint unavailable runtime error is sanitized and non-fatal", async () => {
     mockRuntimeResponses({ agentProgressStatus: 404, agentProgressError: "missing endpoint Authorization: Bearer progress-secret" });
     renderApp();

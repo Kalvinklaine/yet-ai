@@ -3,7 +3,7 @@ import { createBridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, 
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
-import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
+import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
 
@@ -1532,6 +1532,7 @@ function AgentProgressPanel({ progress }: { progress: AgentProgressState }) {
 
 function AgentProgressSnapshotCard({ snapshot }: { snapshot: AgentProgressSnapshot }) {
   const state = agentProgressStateLabel(snapshot);
+  const overflowRecovery = agentOverflowRecovery(snapshot);
   return (
     <article className={`agent-progress-run ${snapshot.status}`}>
       <div className="row">
@@ -1548,6 +1549,7 @@ function AgentProgressSnapshotCard({ snapshot }: { snapshot: AgentProgressSnapsh
         {snapshot.stuckReason && snapshot.stuckReason !== "none" && <span>Stuck reason: {sanitizeDisplayText(snapshot.stuckReason)}</span>}
       </div>
       <span>{sanitizeDisplayText(snapshot.message)}</span>
+      {overflowRecovery && <AgentOverflowRecoveryCard recovery={overflowRecovery} />}
       {snapshot.outputTail && <pre className="agent-progress-output">{sanitizeTimelineText(snapshot.outputTail)}</pre>}
       <div className="stack">
         <strong>Recent summaries</strong>
@@ -1560,6 +1562,94 @@ function AgentProgressSnapshotCard({ snapshot }: { snapshot: AgentProgressSnapsh
       </div>
     </article>
   );
+}
+
+function AgentOverflowRecoveryCard({ recovery }: { recovery: AgentOverflowRecovery }) {
+  return (
+    <div className="readiness-card warn" role="status">
+      <div className="stack">
+        <strong>{agentOverflowRecoveryTitle(recovery.kind)}</strong>
+        <span>{agentOverflowRecoveryAction(recovery.kind)}</span>
+        <span className="subtle">{sanitizeDisplayText(recovery.message)}</span>
+      </div>
+    </div>
+  );
+}
+
+function agentOverflowRecovery(snapshot: AgentProgressSnapshot): AgentOverflowRecovery | null {
+  if (snapshot.overflowRecovery) {
+    return {
+      ...snapshot.overflowRecovery,
+      message: snapshot.overflowRecovery.message || agentOverflowRecoveryFallbackMessage(snapshot.overflowRecovery.kind),
+    };
+  }
+  if (snapshot.status !== "failed" && snapshot.status !== "stuck" && snapshot.status !== "stalled" && snapshot.phase !== "failed" && snapshot.phase !== "stuck") {
+    return null;
+  }
+  const kind = detectAgentOverflowKind(snapshot);
+  if (!kind) {
+    return null;
+  }
+  return {
+    kind,
+    message: agentOverflowRecoveryFallbackMessage(kind),
+    retryable: true,
+  };
+}
+
+function detectAgentOverflowKind(snapshot: AgentProgressSnapshot): AgentOverflowRecoveryKind | null {
+  const text = sanitizeTimelineText([
+    snapshot.message,
+    snapshot.outputTail ?? "",
+    ...snapshot.recentEvents.map((event) => event.message),
+  ].join("\n")).toLowerCase();
+  if (!text) {
+    return null;
+  }
+  const tooLarge = /too large|output too large|exceeded|maximum context length|context length/.test(text);
+  if (!tooLarge) {
+    return null;
+  }
+  if (/task board output too large|task[_ -]?board|task_board_get|task_ready_cards/.test(text)) {
+    return "task_board_output_too_large";
+  }
+  if (/tool output too large|outputtail|command output|tool dump|search output|cat output/.test(text)) {
+    return "tool_output_too_large";
+  }
+  if (/context_length_exceeded|maximum context length|context length|context window|prompt/.test(text)) {
+    return "context_length_exceeded";
+  }
+  return null;
+}
+
+function agentOverflowRecoveryTitle(kind: AgentOverflowRecoveryKind): string {
+  if (kind === "tool_output_too_large") {
+    return "Agent output was too large.";
+  }
+  if (kind === "task_board_output_too_large") {
+    return "Task-board output was too large.";
+  }
+  return "Planner context was too large.";
+}
+
+function agentOverflowRecoveryAction(kind: AgentOverflowRecoveryKind): string {
+  if (kind === "task_board_output_too_large") {
+    return "Use a specific card id, ready cards, or scoped search instead of a full task-board dump.";
+  }
+  if (kind === "tool_output_too_large") {
+    return "Continue with targeted commands, scoped search, and summarized output instead of a full tool dump.";
+  }
+  return "Continue with a narrower request.";
+}
+
+function agentOverflowRecoveryFallbackMessage(kind: AgentOverflowRecoveryKind): string {
+  if (kind === "task_board_output_too_large") {
+    return "Retry with task_ready_cards or task_board_get(card_id) for one card, then summarize results.";
+  }
+  if (kind === "tool_output_too_large") {
+    return "Retry with targeted search or cat commands and summarize the useful lines.";
+  }
+  return "Retry with scoped context, a specific card id, and summarized outputs.";
 }
 
 function agentProgressStateLabel(snapshot: AgentProgressSnapshot): string {
