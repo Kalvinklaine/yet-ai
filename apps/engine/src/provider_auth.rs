@@ -1,7 +1,7 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use base64::Engine;
 use chrono::{Duration, Utc};
@@ -12,7 +12,9 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
 use crate::providers::{self, AuthType, ProviderKind, StoredProviderConfig};
-use crate::secret_store::{provider_secret_store, ProviderSecretStore, SecretKind, SecretStoreError};
+use crate::secret_store::{
+    provider_secret_store, ProviderSecretStore, SecretKind, SecretStoreError,
+};
 
 const LOGIN_UNAVAILABLE_MESSAGE: &str = "OpenAI account login is not available for this local provider path. Create an API key in the provider console and paste it once into Yet AI.";
 const API_KEY_CONFIGURED_MESSAGE: &str = "API-key authentication is configured locally.";
@@ -26,6 +28,7 @@ const MOCK_TTL_SECONDS: i64 = 600;
 const CODEX_TTL_SECONDS: i64 = 600;
 const MAX_PROVIDER_AUTH_TTL_SECONDS: i64 = 3600;
 const CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS: u64 = 2;
+const CODEX_TOKEN_REFRESH_SKEW_SECONDS: i64 = 60;
 const CODEX_TOKEN_DEFAULT_EXPIRES_IN_SECONDS: i64 = 3600;
 const MAX_CODEX_TOKEN_EXPIRES_IN_SECONDS: i64 = 86400;
 const CODEX_AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
@@ -41,6 +44,8 @@ static MOCK_COUNTER: AtomicU64 = AtomicU64::new(1);
 static PROVIDER_AUTH_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 static CODEX_EXCHANGE_IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
+static CODEX_REFRESH_LOCKS: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 struct CodexExchangeGuard {
     key: String,
@@ -210,6 +215,8 @@ struct CodexAuthMetadata {
     chat_base_url: String,
     #[serde(default = "default_codex_chat_model")]
     chat_model: String,
+    #[serde(default = "default_codex_token_url")]
+    token_endpoint_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -231,6 +238,18 @@ struct CodexTokenResponse {
     scope: Option<String>,
     #[serde(default)]
     account_label: Option<String>,
+}
+
+#[derive(Debug)]
+enum CodexTokenEndpointError {
+    Failed,
+    RefreshTokenReused,
+}
+
+impl From<CodexTokenEndpointError> for ProviderAuthError {
+    fn from(_: CodexTokenEndpointError) -> Self {
+        ProviderAuthError::TokenExchange
+    }
 }
 
 pub async fn status(
@@ -765,6 +784,7 @@ async fn codex_exchange(
         redacted: crate::secret_store::redact_secret(&token.access_token),
         chat_base_url: session.chat_base_url,
         chat_model: session.chat_model,
+        token_endpoint_url: session.token_endpoint_url,
     };
     store_codex_connection(config_dir, provider, &token, &metadata).await?;
     write_codex_state(config_dir, provider, &CodexOAuthState::default()).await?;
@@ -782,10 +802,26 @@ async fn exchange_codex_token(
         "client_id": CODEX_CLIENT_ID,
         "code_verifier": session.verifier,
     });
+    post_codex_token(&session.token_endpoint_url, body).await
+}
+
+async fn post_codex_token(
+    token_endpoint_url: &str,
+    body: serde_json::Value,
+) -> Result<CodexTokenResponse, ProviderAuthError> {
+    post_codex_token_raw(token_endpoint_url, body)
+        .await
+        .map_err(Into::into)
+}
+
+async fn post_codex_token_raw(
+    token_endpoint_url: &str,
+    body: serde_json::Value,
+) -> Result<CodexTokenResponse, CodexTokenEndpointError> {
     let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(
         CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS,
     ));
-    if reqwest::Url::parse(&session.token_endpoint_url)
+    if reqwest::Url::parse(token_endpoint_url)
         .ok()
         .is_some_and(|url| is_allowed_loopback_host(&url))
     {
@@ -793,20 +829,57 @@ async fn exchange_codex_token(
     }
     let client = builder
         .build()
-        .map_err(|_| ProviderAuthError::TokenExchange)?;
+        .map_err(|_| CodexTokenEndpointError::Failed)?;
     let response = client
-        .post(&session.token_endpoint_url)
+        .post(token_endpoint_url)
         .json(&body)
         .send()
         .await
-        .map_err(|_| ProviderAuthError::TokenExchange)?;
-    if !response.status().is_success() {
-        return Err(ProviderAuthError::TokenExchange);
+        .map_err(|_| CodexTokenEndpointError::Failed)?;
+    let status = response.status();
+    if !status.is_success() {
+        if status == StatusCode::UNAUTHORIZED {
+            let body = bounded_codex_token_error_body(response).await;
+            if codex_token_error_is_refresh_token_reused(&body) {
+                return Err(CodexTokenEndpointError::RefreshTokenReused);
+            }
+        }
+        return Err(CodexTokenEndpointError::Failed);
     }
     response
         .json::<CodexTokenResponse>()
         .await
-        .map_err(|_| ProviderAuthError::TokenExchange)
+        .map_err(|_| CodexTokenEndpointError::Failed)
+}
+
+async fn refresh_codex_token(
+    token_endpoint_url: &str,
+    refresh_token: &str,
+) -> Result<CodexTokenResponse, CodexTokenEndpointError> {
+    let body = serde_json::json!({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": CODEX_CLIENT_ID,
+    });
+    post_codex_token_raw(token_endpoint_url, body).await
+}
+
+async fn bounded_codex_token_error_body(response: reqwest::Response) -> Vec<u8> {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS),
+        response.bytes(),
+    )
+    .await
+    {
+        Ok(Ok(bytes)) => bytes[..bytes.len().min(4096)].to_vec(),
+        _ => Vec::new(),
+    }
+}
+
+fn codex_token_error_is_refresh_token_reused(body: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(body).to_ascii_lowercase();
+    text.contains("refresh_token_reused")
+        || (text.contains("refresh token") && text.contains("already been used"))
 }
 
 fn validate_codex_token_expires_in(value: Option<i64>) -> Result<i64, ProviderAuthError> {
@@ -998,6 +1071,241 @@ pub async fn experimental_codex_chat_auth(
     }))
 }
 
+pub async fn refresh_experimental_codex_chat_auth_after_rejection(
+    config_dir: &Path,
+    rejected_access_token: &str,
+) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
+    refresh_experimental_codex_chat_auth(config_dir, Some(rejected_access_token)).await
+}
+
+pub async fn refresh_experimental_codex_chat_auth_if_needed(
+    config_dir: &Path,
+) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
+    let Some(auth) = experimental_codex_chat_auth(config_dir).await? else {
+        return Ok(None);
+    };
+    if codex_auth_needs_refresh(config_dir, "openai").await? {
+        refresh_experimental_codex_chat_auth(config_dir, None).await
+    } else {
+        Ok(Some(auth))
+    }
+}
+
+async fn refresh_experimental_codex_chat_auth(
+    config_dir: &Path,
+    rejected_access_token: Option<&str>,
+) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
+    let provider = "openai";
+    let lock = codex_refresh_lock(config_dir, provider)?;
+    let _guard = lock.lock().await;
+    let _file_guard = acquire_codex_refresh_file_lock(config_dir, provider).await?;
+    let Some(current) = read_codex_chat_auth_snapshot(config_dir, provider).await? else {
+        return Ok(None);
+    };
+    if rejected_access_token.is_some_and(|token| token != current.access_token) {
+        return Ok(Some(current.auth));
+    }
+    if rejected_access_token.is_none() && !metadata_needs_refresh(&current.metadata)? {
+        return Ok(Some(current.auth));
+    }
+    let refresh_token = current.refresh_token;
+    let token =
+        match refresh_codex_token(&current.metadata.token_endpoint_url, &refresh_token).await {
+            Ok(token) => token,
+            Err(CodexTokenEndpointError::RefreshTokenReused) => {
+                if let Some(newer) =
+                    read_newer_codex_chat_auth(config_dir, provider, &current.access_token).await?
+                {
+                    return Ok(Some(newer));
+                }
+                return Err(ProviderAuthError::TokenExchange);
+            }
+            Err(CodexTokenEndpointError::Failed) => return Err(ProviderAuthError::TokenExchange),
+        };
+    if token.access_token.trim().is_empty() || token.refresh_token.trim().is_empty() {
+        return Err(ProviderAuthError::TokenExchange);
+    }
+    let scopes = token
+        .scope
+        .as_deref()
+        .map(|value| value.split_whitespace().map(str::to_string).collect())
+        .unwrap_or_else(|| current.metadata.scopes.clone());
+    let expires_in = validate_codex_token_expires_in(token.expires_in)?;
+    let metadata = CodexAuthMetadata {
+        provider: provider.to_string(),
+        account_label: token
+            .account_label
+            .as_deref()
+            .map(|value| sanitized_account_label(Some(value)))
+            .unwrap_or(current.metadata.account_label),
+        scopes,
+        expires_at: (Utc::now() + Duration::seconds(expires_in)).to_rfc3339(),
+        redacted: crate::secret_store::redact_secret(&token.access_token),
+        chat_base_url: current.metadata.chat_base_url,
+        chat_model: current.metadata.chat_model,
+        token_endpoint_url: current.metadata.token_endpoint_url,
+    };
+    store_codex_connection(config_dir, provider, &token, &metadata).await?;
+    Ok(Some(ExperimentalCodexChatAuth {
+        access_token: token.access_token,
+        base_url: metadata.chat_base_url,
+        model: metadata.chat_model,
+    }))
+}
+
+struct CodexChatAuthSnapshot {
+    access_token: String,
+    refresh_token: String,
+    metadata: CodexAuthMetadata,
+    auth: ExperimentalCodexChatAuth,
+}
+
+async fn read_codex_chat_auth_snapshot(
+    config_dir: &Path,
+    provider: &str,
+) -> Result<Option<CodexChatAuthSnapshot>, ProviderAuthError> {
+    let store = provider_secret_store(config_dir);
+    let Some(metadata) = store.get_secret(provider, SecretKind::AuthMetadata).await? else {
+        return Ok(None);
+    };
+    let metadata: CodexAuthMetadata =
+        serde_json::from_str(&metadata).map_err(|_| ProviderAuthError::Storage)?;
+    validate_codex_metadata(provider, &metadata)?;
+    let Some(access_token) = store
+        .get_secret(provider, SecretKind::OAuthAccessToken)
+        .await?
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(None);
+    };
+    let Some(refresh_token) = store
+        .get_secret(provider, SecretKind::OAuthRefreshToken)
+        .await?
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(None);
+    };
+    let auth = ExperimentalCodexChatAuth {
+        access_token: access_token.clone(),
+        base_url: metadata.chat_base_url.clone(),
+        model: metadata.chat_model.clone(),
+    };
+    Ok(Some(CodexChatAuthSnapshot {
+        access_token,
+        refresh_token,
+        metadata,
+        auth,
+    }))
+}
+
+async fn read_newer_codex_chat_auth(
+    config_dir: &Path,
+    provider: &str,
+    old_access_token: &str,
+) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
+    let Some(snapshot) = read_codex_chat_auth_snapshot(config_dir, provider).await? else {
+        return Ok(None);
+    };
+    if snapshot.access_token != old_access_token && !metadata_needs_refresh(&snapshot.metadata)? {
+        Ok(Some(snapshot.auth))
+    } else {
+        Ok(None)
+    }
+}
+
+async fn codex_auth_needs_refresh(
+    config_dir: &Path,
+    provider: &str,
+) -> Result<bool, ProviderAuthError> {
+    let Some(snapshot) = read_codex_chat_auth_snapshot(config_dir, provider).await? else {
+        return Ok(false);
+    };
+    metadata_needs_refresh(&snapshot.metadata)
+}
+
+fn metadata_needs_refresh(metadata: &CodexAuthMetadata) -> Result<bool, ProviderAuthError> {
+    Ok(parse_time(&metadata.expires_at)?
+        <= Utc::now() + Duration::seconds(CODEX_TOKEN_REFRESH_SKEW_SECONDS))
+}
+
+fn codex_refresh_lock(
+    config_dir: &Path,
+    provider: &str,
+) -> Result<Arc<tokio::sync::Mutex<()>>, ProviderAuthError> {
+    let key = format!("{}\0{provider}", config_dir.display());
+    let mut locks = CODEX_REFRESH_LOCKS
+        .lock()
+        .map_err(|_| ProviderAuthError::Storage)?;
+    Ok(locks
+        .entry(key)
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone())
+}
+
+async fn acquire_codex_refresh_file_lock(
+    config_dir: &Path,
+    provider: &str,
+) -> Result<CodexRefreshFileLock, ProviderAuthError> {
+    let path = codex_refresh_lock_path(config_dir, provider)?;
+    let parent = path.parent().ok_or(ProviderAuthError::Storage)?;
+    tokio::fs::create_dir_all(parent)
+        .await
+        .map_err(|_| ProviderAuthError::Storage)?;
+    #[cfg(unix)]
+    {
+        let path = path.clone();
+        tokio::task::spawn_blocking(move || {
+            use std::os::unix::fs::OpenOptionsExt;
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .read(true)
+                .write(true)
+                .mode(0o600)
+                .open(&path)
+                .map_err(|_| ProviderAuthError::Storage)?;
+            let rc = unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&file), libc::LOCK_EX) };
+            if rc != 0 {
+                return Err(ProviderAuthError::Storage);
+            }
+            Ok(CodexRefreshFileLock { file: Some(file) })
+        })
+        .await
+        .map_err(|_| ProviderAuthError::Storage)?
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(CodexRefreshFileLock {})
+    }
+}
+
+fn codex_refresh_lock_path(
+    config_dir: &Path,
+    provider: &str,
+) -> Result<PathBuf, ProviderAuthError> {
+    providers::validate_provider_id(provider).map_err(|_| ProviderAuthError::InvalidProvider)?;
+    Ok(config_dir
+        .join("provider-auth-openai")
+        .join(format!(".{provider}.refresh.lock")))
+}
+
+#[cfg(unix)]
+struct CodexRefreshFileLock {
+    file: Option<std::fs::File>,
+}
+
+#[cfg(unix)]
+impl Drop for CodexRefreshFileLock {
+    fn drop(&mut self) {
+        if let Some(file) = self.file.take() {
+            let _ = unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&file), libc::LOCK_UN) };
+        }
+    }
+}
+
+#[cfg(not(unix))]
+struct CodexRefreshFileLock {}
+
 async fn codex_has_complete_secrets(
     store: &impl ProviderSecretStore,
     provider: &str,
@@ -1020,6 +1328,9 @@ fn validate_codex_metadata(
     if metadata.provider != provider {
         return Err(ProviderAuthError::Storage);
     }
+    if metadata.token_endpoint_url.trim() != CODEX_TOKEN_URL {
+        validate_experimental_endpoint_url(&metadata.token_endpoint_url, true)?;
+    }
     if metadata.chat_base_url.trim_end_matches('/') == CODEX_CHAT_BASE_URL {
         return Ok(());
     }
@@ -1032,6 +1343,10 @@ fn default_codex_chat_base_url() -> String {
 
 fn default_codex_chat_model() -> String {
     CODEX_CHAT_MODEL.to_string()
+}
+
+fn default_codex_token_url() -> String {
+    CODEX_TOKEN_URL.to_string()
 }
 
 async fn codex_has_secrets(config_dir: &Path, provider: &str) -> Result<bool, ProviderAuthError> {
