@@ -261,7 +261,9 @@ impl From<SecretStoreError> for ProviderError {
     fn from(error: SecretStoreError) -> Self {
         match error {
             SecretStoreError::InvalidProviderId => Self::InvalidId,
-            SecretStoreError::Storage | SecretStoreError::InvalidRecord => Self::SecretStorage,
+            SecretStoreError::Unavailable
+            | SecretStoreError::Storage
+            | SecretStoreError::InvalidRecord => Self::SecretStorage,
         }
     }
 }
