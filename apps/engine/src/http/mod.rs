@@ -1,4 +1,4 @@
-use axum::extract::rejection::JsonRejection;
+use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::response::sse::{KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -46,9 +46,9 @@ pub fn router(state: AppState) -> Router {
                 .route("/models", get(models_list))
                 .route("/agent-progress", get(agent_progress_list))
                 .route("/chats", get(chats_list).post(chats_create))
+                .route("/chats/subscribe", get(chats_subscribe))
                 .route("/chats/:chat_id", get(chats_get).delete(chats_delete))
                 .route("/chats/:chat_id/commands", post(chat_command))
-                .route("/chats/subscribe", get(chats_subscribe))
                 .layer(DefaultBodyLimit::max(V1_BODY_LIMIT_BYTES)),
         )
         .with_state(state)
@@ -56,9 +56,9 @@ pub fn router(state: AppState) -> Router {
 
 fn invalid_json_body(rejection: JsonRejection) -> Response {
     let status = match rejection.status() {
-        StatusCode::BAD_REQUEST | StatusCode::PAYLOAD_TOO_LARGE | StatusCode::UNSUPPORTED_MEDIA_TYPE => {
-            rejection.status()
-        }
+        StatusCode::BAD_REQUEST
+        | StatusCode::PAYLOAD_TOO_LARGE
+        | StatusCode::UNSUPPORTED_MEDIA_TYPE => rejection.status(),
         _ => StatusCode::BAD_REQUEST,
     };
     (status, Json(json!({ "error": "invalid request body" }))).into_response()
@@ -361,6 +361,9 @@ async fn chats_get(
     State(state): State<AppState>,
     Path(chat_id): Path<String>,
 ) -> Response {
+    if chat_history::validate_chat_id(&chat_id).is_err() {
+        return invalid_chat_id_response();
+    }
     match chat_history::get_thread(&state.storage_paths.config_dir, &chat_id).await {
         Ok(thread) => Json(thread).into_response(),
         Err(error) => chat_history_error(error),
@@ -372,6 +375,9 @@ async fn chats_delete(
     State(state): State<AppState>,
     Path(chat_id): Path<String>,
 ) -> Response {
+    if chat_history::validate_chat_id(&chat_id).is_err() {
+        return invalid_chat_id_response();
+    }
     match chat_history::delete_thread(&state.storage_paths.config_dir, &chat_id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => chat_history_error(error),
@@ -381,6 +387,14 @@ async fn chats_delete(
 fn chat_history_error(error: chat_history::ChatHistoryError) -> Response {
     let status = error.status();
     (status, Json(json!({ "error": error.to_string() }))).into_response()
+}
+
+fn invalid_chat_id_response() -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({ "error": "invalid chat id" })),
+    )
+        .into_response()
 }
 
 fn provider_error(error: providers::ProviderError) -> Response {
@@ -406,13 +420,14 @@ async fn chat_command(
     Path(chat_id): Path<String>,
     command: Result<Json<ChatCommandRequest>, JsonRejection>,
 ) -> Response {
+    if chat_history::validate_chat_id(&chat_id).is_err() {
+        return invalid_chat_id_response();
+    }
     let Json(command) = match command {
         Ok(command) => command,
         Err(rejection) => return invalid_json_body(rejection),
     };
-    if chat_id.is_empty()
-        || !valid_bounded_string(&command.request_id, CHAT_COMMAND_REQUEST_ID_MAX_LENGTH)
-    {
+    if !valid_bounded_string(&command.request_id, CHAT_COMMAND_REQUEST_ID_MAX_LENGTH) {
         return StatusCode::BAD_REQUEST.into_response();
     }
 
@@ -498,23 +513,33 @@ fn user_message_payload(
 #[derive(Debug, Deserialize)]
 struct SubscribeQuery {
     #[serde(rename = "chat_id")]
-    chat_id: String,
+    chat_id: Option<String>,
 }
 
 async fn chats_subscribe(
     _auth: Authenticated,
     State(state): State<AppState>,
-    Query(query): Query<SubscribeQuery>,
-) -> Sse<
-    impl futures_util::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
-> {
+    query: Result<Query<SubscribeQuery>, QueryRejection>,
+) -> Response {
+    let Query(query) = match query {
+        Ok(query) => query,
+        Err(_) => return invalid_chat_id_response(),
+    };
+    let Some(chat_id) = query.chat_id else {
+        return invalid_chat_id_response();
+    };
+    if chat_history::validate_chat_id(&chat_id).is_err() {
+        return invalid_chat_id_response();
+    }
     let stream = state
         .chat_runtime
-        .subscribe(state.storage_paths.config_dir.clone(), query.chat_id)
+        .subscribe(state.storage_paths.config_dir.clone(), chat_id)
         .await;
-    Sse::new(stream).keep_alive(
-        KeepAlive::new()
-            .interval(std::time::Duration::from_secs(30))
-            .text("keep-alive"),
-    )
+    Sse::new(stream)
+        .keep_alive(
+            KeepAlive::new()
+                .interval(std::time::Duration::from_secs(30))
+                .text("keep-alive"),
+        )
+        .into_response()
 }
