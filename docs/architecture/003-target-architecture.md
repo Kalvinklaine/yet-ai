@@ -68,7 +68,7 @@ Chat history may persist user-provided prompt content and assistant replies loca
 
 Deleting a chat deletes local Yet AI history for that thread only. It does not delete provider-side records, upstream account data, external logs, backups, or any cloud service state. This boundary does not implement production encrypted sync, hosted history sync, enterprise retention policy, legal hold, or centralized audit governance. The local-first BYOK contract remains unchanged: chat history, provider configuration, and model calls do not require a hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, or cloud workspace.
 
-Verification for this area is local-only: use `export PATH="$HOME/.cargo/bin:$PATH"; cargo test -p yet-lsp http_boundary` for focused HTTP boundary regressions, `npm run smoke:local` when changing history behavior, and `npm run check` for docs/contracts validation.
+Verification for this area is local-only: use `export PATH="$HOME/.cargo/bin:$PATH"; cargo test -p yet-lsp http_boundary` for focused HTTP boundary regressions, `npm run smoke:local` when changing history behavior, `cd apps/gui && npm run build && cd ../.. && npm run smoke:gui-runtime-e2e` for the polished IDE-like GUI/runtime chat happy path, and `npm run check` for docs/contracts validation.
 
 
 ## Active context first-message boundary
@@ -77,7 +77,7 @@ The current first-message context capability is intentionally narrow and non-pri
 
 Included active context is sent to the configured provider as prompt text. It may contain source code or selected text, so users should attach only content they are comfortable sending to that provider and should not include secrets, credentials, private paths, or sensitive data. The context contract is limited to safe labels, bounded relative/display paths, language id, selection range, and bounded selection text.
 
-This does not grant agent authority. Yet AI still does not perform autonomous file reads, workspace indexing, file edits/apply patch, shell/tool execution, or background agent autonomy from this feature. Future privileged context gathering, tools, edits, and indexing require separate schemas, policy checks, request correlation, and user confirmation. Local deterministic smoke coverage includes the runtime prompt path and the JetBrains wrapper/browser bridge path; installable JetBrains preflight can still depend on external Gradle/JetBrains dependency resolution when building the ZIP.
+This does not grant agent authority. Yet AI still does not perform autonomous file reads, workspace indexing, file edits/apply patch, shell/tool execution, or background agent autonomy from this feature. Future privileged context gathering, tools, edits, and indexing require separate schemas, policy checks, request correlation, and user confirmation. Local deterministic smoke coverage includes the runtime prompt path, the GUI/runtime include-and-omit happy path with streamed response and local history reload, and the JetBrains wrapper/browser bridge path; installable JetBrains preflight can still depend on external Gradle/JetBrains dependency resolution when building the ZIP.
 
 ## Autonomous planner no-idle reliability contract
 
