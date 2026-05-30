@@ -1577,14 +1577,14 @@ function AgentOverflowRecoveryCard({ recovery }: { recovery: AgentOverflowRecove
 }
 
 function agentOverflowRecovery(snapshot: AgentProgressSnapshot): AgentOverflowRecovery | null {
+  if (!isActiveOverflowStatus(snapshot)) {
+    return null;
+  }
   if (snapshot.overflowRecovery) {
     return {
       ...snapshot.overflowRecovery,
       message: snapshot.overflowRecovery.message || agentOverflowRecoveryFallbackMessage(snapshot.overflowRecovery.kind),
     };
-  }
-  if (snapshot.status !== "failed" && snapshot.status !== "stuck" && snapshot.status !== "stalled" && snapshot.phase !== "failed" && snapshot.phase !== "stuck") {
-    return null;
   }
   const kind = detectAgentOverflowKind(snapshot);
   if (!kind) {
@@ -1595,6 +1595,10 @@ function agentOverflowRecovery(snapshot: AgentProgressSnapshot): AgentOverflowRe
     message: agentOverflowRecoveryFallbackMessage(kind),
     retryable: true,
   };
+}
+
+function isActiveOverflowStatus(snapshot: AgentProgressSnapshot): boolean {
+  return snapshot.status === "failed" || snapshot.status === "stuck" || snapshot.status === "stalled" || snapshot.phase === "failed" || snapshot.phase === "stuck";
 }
 
 function detectAgentOverflowKind(snapshot: AgentProgressSnapshot): AgentOverflowRecoveryKind | null {

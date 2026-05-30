@@ -19,6 +19,10 @@ const rawMarkers = [
   "/Users/Gui Agent/.codex/auth.json",
   "raw prompt: inspect the whole workspace",
   "provider response raw dump",
+  "SECRET_RAW_PROMPT_BODY",
+  "SECRET_PROVIDER_RESPONSE_BODY",
+  "SECRET_FILE_CONTENT_BODY",
+  "SECRET_WORKSPACE_CONTENT_BODY",
 ];
 const failures = [];
 let agentProgressResponse = emptyAgentProgress();
@@ -143,6 +147,44 @@ try {
   await expectVisibleText(page, "targeted search_pattern", "overflow targeted search guidance");
   await assertNoMutatingAgentControls(page);
 
+  agentProgressResponse = progressList([progressSnapshot({
+    cardId: "GUI-SMOKE-DONE-AFTER-OVERFLOW",
+    phase: "done",
+    status: "done",
+    message: "Done after previous context_length_exceeded recovery",
+    outputTail: "Previous task board output too large event resolved.",
+    overflowRecovery: {
+      kind: "task_board_output_too_large",
+      message: "Retry with task_ready_cards or task_board_get(card_id).",
+      retryable: true,
+    },
+    recentEvents: [{ eventId: "event-done-overflow", timestamp: "2026-05-29T15:00:45Z", phase: "done", status: "done", message: "Done after overflow" }],
+  })]);
+  await refreshAgentProgress(page);
+  await expectVisibleText(page, "GUI-SMOKE-DONE-AFTER-OVERFLOW / run-gui-smoke", "done after overflow run");
+  await expectAbsentText(page, "Task-board output was too large.", "stale done overflow recovery");
+
+  const noisyMarker = "SAFE_GUI_AGENT_PROGRESS_NOISY_OUTPUT_";
+  agentProgressResponse = progressList([progressSnapshot({
+    cardId: "GUI-SMOKE-NOISY-BOUNDED",
+    phase: "failed",
+    status: "failed",
+    stuckReason: "explicit_failure",
+    message: "Tool output too large after raw prompt: SECRET_RAW_PROMPT_BODY",
+    outputTail: [
+      "raw prompt SECRET_RAW_PROMPT_BODY",
+      "provider response: SECRET_PROVIDER_RESPONSE_BODY",
+      "file content=SECRET_FILE_CONTENT_BODY",
+      "workspace contents: SECRET_WORKSPACE_CONTENT_BODY",
+      noisyMarker.repeat(1200),
+    ].join("\n"),
+    recentEvents: [{ eventId: "event-noisy", timestamp: "2026-05-29T15:00:50Z", phase: "failed", status: "failed", message: `tool output too large ${noisyMarker.repeat(1200)}` }],
+  })]);
+  await refreshAgentProgress(page);
+  await expectVisibleText(page, "GUI-SMOKE-NOISY-BOUNDED / run-gui-smoke", "noisy bounded run");
+  await expectVisibleText(page, "Agent output was too large.", "noisy fallback recovery title");
+  await assertBoundedNoisyOutput(page, noisyMarker);
+
   const pageState = await page.evaluate(() => ({
     body: document.body.innerText,
     localStorage: Object.fromEntries(Array.from({ length: localStorage.length }, (_, index) => {
@@ -236,6 +278,17 @@ async function expectAbsentText(page, text, description) {
   const body = await page.locator("body").innerText();
   if (body.includes(text)) {
     throw new Error(`Unexpected ${description} text was visible.`);
+  }
+}
+
+async function assertBoundedNoisyOutput(page, marker) {
+  const body = await page.locator("body").innerText();
+  const occurrences = body.split(marker).length - 1;
+  if (occurrences > 220) {
+    throw new Error(`Oversized non-secret output is visible in bulk: ${occurrences} repeated markers.`);
+  }
+  if (body.length > 18000) {
+    throw new Error(`Agent progress page text is too large after noisy output: ${body.length} characters.`);
   }
 }
 
