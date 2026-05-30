@@ -3141,7 +3141,9 @@ async fn http_boundary_valid_json_routes_keep_existing_behavior() {
     .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(created["id"], "http-boundary-valid-provider");
-    assert!(!created.to_string().contains("sk-http-boundary-secret-valid"));
+    assert!(!created
+        .to_string()
+        .contains("sk-http-boundary-secret-valid"));
 
     let update = json!({ "displayName": "HTTP Boundary Updated Provider" });
     let (status, updated) = json_response_from(
@@ -4339,19 +4341,11 @@ async fn provider_secret_atomic_migration_does_not_overwrite_newer_secret() {
     );
     let store = FileSecretStore::new(&paths.config_dir);
     assert!(store
-        .put_secret_if_absent(
-            "provider-secret-atomic-race",
-            SecretKind::ApiKey,
-            newer_key,
-        )
+        .put_secret_if_absent("provider-secret-atomic-race", SecretKind::ApiKey, newer_key,)
         .await
         .unwrap());
     assert!(!store
-        .put_secret_if_absent(
-            "provider-secret-atomic-race",
-            SecretKind::ApiKey,
-            stale_key,
-        )
+        .put_secret_if_absent("provider-secret-atomic-race", SecretKind::ApiKey, stale_key,)
         .await
         .unwrap());
 
@@ -4396,7 +4390,11 @@ async fn provider_secret_test_first_access_uses_stored_key_over_inline_key() {
         json!({ "type": "api_key", "apiKey": inline_key }),
     );
     FileSecretStore::new(&paths.config_dir)
-        .put_secret("provider-secret-test-migrate", SecretKind::ApiKey, stored_key)
+        .put_secret(
+            "provider-secret-test-migrate",
+            SecretKind::ApiKey,
+            stored_key,
+        )
         .await
         .unwrap();
 
@@ -4426,7 +4424,9 @@ async fn provider_secret_test_first_access_uses_stored_key_over_inline_key() {
         .await
         .unwrap();
     assert_stored_secret(stored.as_deref(), stored_key);
-    assert!(!read_provider_config_text(&paths, "provider-secret-test-migrate").contains(inline_key));
+    assert!(
+        !read_provider_config_text(&paths, "provider-secret-test-migrate").contains(inline_key)
+    );
 }
 
 #[tokio::test]
@@ -4451,7 +4451,11 @@ async fn provider_secret_chat_first_access_uses_stored_key_over_inline_key() {
         json!({ "type": "api_key", "apiKey": inline_key }),
     );
     FileSecretStore::new(&paths.config_dir)
-        .put_secret("provider-secret-chat-migrate", SecretKind::ApiKey, stored_key)
+        .put_secret(
+            "provider-secret-chat-migrate",
+            SecretKind::ApiKey,
+            stored_key,
+        )
         .await
         .unwrap();
 
@@ -4475,7 +4479,9 @@ async fn provider_secret_chat_first_access_uses_stored_key_over_inline_key() {
         .await
         .unwrap();
     assert_stored_secret(stored.as_deref(), stored_key);
-    assert!(!read_provider_config_text(&paths, "provider-secret-chat-migrate").contains(inline_key));
+    assert!(
+        !read_provider_config_text(&paths, "provider-secret-chat-migrate").contains(inline_key)
+    );
 }
 
 #[tokio::test]
@@ -4538,7 +4544,11 @@ async fn provider_secret_corrupt_store_provider_test_does_not_fallback_to_inline
         .secret_path("provider-secret-corrupt-test", SecretKind::ApiKey)
         .unwrap();
     std::fs::create_dir_all(secret_path.parent().unwrap()).unwrap();
-    std::fs::write(&secret_path, r#"{"value":"sk-provider-corrupt-test-secret-abcd""#).unwrap();
+    std::fs::write(
+        &secret_path,
+        r#"{"value":"sk-provider-corrupt-test-secret-abcd""#,
+    )
+    .unwrap();
 
     let (status, body) = json_response_from(
         app,
@@ -4579,10 +4589,18 @@ async fn provider_secret_corrupt_store_chat_does_not_fallback_to_inline() {
         .secret_path("provider-secret-corrupt-chat", SecretKind::ApiKey)
         .unwrap();
     std::fs::create_dir_all(secret_path.parent().unwrap()).unwrap();
-    std::fs::write(&secret_path, r#"{"value":"sk-provider-corrupt-chat-secret-abcd""#).unwrap();
+    std::fs::write(
+        &secret_path,
+        r#"{"value":"sk-provider-corrupt-chat-secret-abcd""#,
+    )
+    .unwrap();
 
     send_user_message(app.clone(), "chat-provider-secret-corrupt").await;
-    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-provider-secret-corrupt").await;
+    let text = sse_text_from(
+        app,
+        "/v1/chats/subscribe?chat_id=chat-provider-secret-corrupt",
+    )
+    .await;
     let events = sse_json_events(&text);
     let error = find_error_event(&events);
     assert_eq!(error["payload"]["code"], "provider_config_error");
@@ -4748,7 +4766,11 @@ async fn provider_secret_existing_store_and_whitespace_inline_key_uses_store_and
         json!({ "type": "api_key", "apiKey": "   \n\t  " }),
     );
     FileSecretStore::new(&paths.config_dir)
-        .put_secret("provider-secret-whitespace-store", SecretKind::ApiKey, stored_key)
+        .put_secret(
+            "provider-secret-whitespace-store",
+            SecretKind::ApiKey,
+            stored_key,
+        )
         .await
         .unwrap();
 
@@ -4765,7 +4787,9 @@ async fn provider_secret_existing_store_and_whitespace_inline_key_uses_store_and
     assert_eq!(body["auth"]["configured"], true);
     assert_eq!(body["auth"]["redacted"], "sk...cd");
     assert!(!body.to_string().contains(stored_key));
-    assert!(!read_provider_config_text(&paths, "provider-secret-whitespace-store").contains("apiKey"));
+    assert!(
+        !read_provider_config_text(&paths, "provider-secret-whitespace-store").contains("apiKey")
+    );
     let stored = FileSecretStore::new(&paths.config_dir)
         .get_secret("provider-secret-whitespace-store", SecretKind::ApiKey)
         .await
@@ -4787,16 +4811,27 @@ async fn provider_secret_scrub_rereads_current_metadata() {
         "provider-secret-reread",
         json!({ "type": "api_key", "apiKey": api_key }),
     );
-    let config_path = paths.config_dir.join("providers.d/provider-secret-reread.json");
-    let mut provider: Value = serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    let config_path = paths
+        .config_dir
+        .join("providers.d/provider-secret-reread.json");
+    let mut provider: Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
     provider["displayName"] = json!("Updated Provider Name");
     provider["enabled"] = json!(false);
     provider["models"] = json!([{ "id": "gpt-current", "displayName": "GPT Current" }]);
-    std::fs::write(&config_path, serde_json::to_string_pretty(&provider).unwrap()).unwrap();
+    std::fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&provider).unwrap(),
+    )
+    .unwrap();
 
     let (status, body) = json_response_from(
         app,
-        authed_request(Method::GET, "/v1/providers/provider-secret-reread", Body::empty()),
+        authed_request(
+            Method::GET,
+            "/v1/providers/provider-secret-reread",
+            Body::empty(),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -5199,7 +5234,7 @@ async fn chat_history_invalid_missing_and_corrupt_state_are_sanitized() {
             status,
             StatusCode::BAD_REQUEST | StatusCode::NOT_FOUND
         ));
-        assert!(!text.contains(id));
+        assert!(!text.contains(&id));
         assert!(!text.contains(&paths.config_dir.to_string_lossy().to_string()));
     }
 
@@ -5228,6 +5263,118 @@ async fn chat_history_invalid_missing_and_corrupt_state_are_sanitized() {
     let text = body.to_string();
     assert!(!text.contains("sk-corrupt-chat-secret-abcd"));
     assert!(!text.contains(&paths.config_dir.to_string_lossy().to_string()));
+}
+
+#[tokio::test]
+async fn chat_id_invalid_get_delete_and_command_are_rejected_safely() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let mut invalid_ids = vec!["bad:id".to_string(), ".bad".to_string(), "-bad".to_string()];
+    invalid_ids.push("a123456789".repeat(13));
+
+    for id in invalid_ids {
+        let (status, text) = text_response_from(
+            app.clone(),
+            authed_request(Method::GET, &format!("/v1/chats/{id}"), Body::empty()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{id}");
+        assert_eq!(text, r#"{"error":"invalid chat id"}"#);
+        assert!(!text.contains(&id));
+
+        let (status, text) = text_response_from(
+            app.clone(),
+            authed_request(Method::DELETE, &format!("/v1/chats/{id}"), Body::empty()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{id}");
+        assert_eq!(text, r#"{"error":"invalid chat id"}"#);
+        assert!(!text.contains(&id));
+    }
+
+    let command = json!({
+        "requestId": "req-invalid-chat-id",
+        "type": "user_message",
+        "payload": { "content": "hello sk-command-invalid-chat-id-secret" }
+    });
+    let (status, text) = text_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/bad:id/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(text, r#"{"error":"invalid chat id"}"#);
+    assert!(!text.contains("bad:id"));
+    assert!(!text.contains("sk-command-invalid-chat-id-secret"));
+    assert!(!paths.config_dir.join("chat-history").exists());
+}
+
+#[tokio::test]
+async fn chat_id_invalid_subscribe_queries_are_rejected_before_sse() {
+    let app = test_app();
+    let mut uris = vec![
+        "/v1/chats/subscribe".to_string(),
+        "/v1/chats/subscribe?chat_id=".to_string(),
+        "/v1/chats/subscribe?chat_id=bad:id".to_string(),
+        "/v1/chats/subscribe?chat_id=.bad".to_string(),
+        "/v1/chats/subscribe?chat_id=bad%2Fid".to_string(),
+    ];
+    uris.push(format!("/v1/chats/subscribe?chat_id={}", "a".repeat(129)));
+    for uri in uris {
+        let response = app
+            .clone()
+            .oneshot(authed_request(Method::GET, &uri, Body::empty()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{uri}");
+        assert_ne!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("text/event-stream")
+        );
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        assert_eq!(text, r#"{"error":"invalid chat id"}"#);
+        assert!(!text.contains("bad:id"));
+        assert!(!text.contains("bad/id"));
+    }
+}
+
+#[tokio::test]
+async fn chat_id_valid_subscribe_still_returns_sse_snapshot() {
+    let response = test_app()
+        .oneshot(authed_request(
+            Method::GET,
+            "/v1/chats/subscribe?chat_id=chat-001",
+            Body::empty(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "text/event-stream"
+    );
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let text = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(text.contains("event: snapshot"));
+    assert!(text.contains("\"type\":\"snapshot\""));
+    assert!(text.contains("\"chatId\":\"chat-001\""));
 }
 
 #[cfg(unix)]

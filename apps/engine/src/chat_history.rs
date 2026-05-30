@@ -189,7 +189,9 @@ pub async fn delete_thread(config_dir: &Path, chat_id: &str) -> Result<(), ChatH
     reject_chat_history_file_symlink(&path).await?;
     match tokio::fs::remove_file(path).await {
         Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(ChatHistoryError::NotFound),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(ChatHistoryError::NotFound)
+        }
         Err(_) => Err(ChatHistoryError::Storage),
     }
 }
@@ -249,7 +251,10 @@ pub fn validate_chat_id(chat_id: &str) -> Result<(), ChatHistoryError> {
     if !first.is_ascii_alphanumeric() {
         return Err(ChatHistoryError::InvalidChatId);
     }
-    if chat_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_') {
+    if chat_id
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
         Ok(())
     } else {
         Err(ChatHistoryError::InvalidChatId)
@@ -265,7 +270,8 @@ async fn read_thread_path(path: &Path) -> Result<ChatThread, ChatHistoryError> {
     let Some(bytes) = read_chat_history_file(path).await? else {
         return Err(ChatHistoryError::Storage);
     };
-    let thread: ChatThread = serde_json::from_slice(&bytes).map_err(|_| ChatHistoryError::Storage)?;
+    let thread: ChatThread =
+        serde_json::from_slice(&bytes).map_err(|_| ChatHistoryError::Storage)?;
     validate_thread(&thread)?;
     Ok(thread)
 }
@@ -628,7 +634,9 @@ mod tests {
     #[test]
     fn chat_history_id_validation_rejects_unsafe_paths() {
         assert!(super::validate_chat_id("chat_001").is_ok());
-        for id in ["", ".", "..", "../bad", "bad/id", "~bad", "bad\\id", "bad:id", "bad%2Fid", "-bad"] {
+        for id in [
+            "", ".", "..", "../bad", "bad/id", "~bad", "bad\\id", "bad:id", "bad%2Fid", "-bad",
+        ] {
             assert!(super::validate_chat_id(id).is_err(), "{id}");
         }
     }
