@@ -371,6 +371,22 @@ pre,
   background: #fffaf0;
 }
 
+.attached-context-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.attached-context-preview pre {
+  max-height: 160px;
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+}
+
+.attached-context-toggle {
+  font-weight: 700;
+}
+
 .agent-progress-card {
   border-color: #cdd8ff;
 }

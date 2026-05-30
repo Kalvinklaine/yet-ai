@@ -122,7 +122,7 @@ try {
   await expectVisibleText(page, `Ready to send using ${modelId}.`, "chat readiness", 20_000);
 
   await page.getByLabel("Chat id").fill(chatId);
-  await page.getByPlaceholder("Ask Yet AI...").fill(userMessage);
+  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(userMessage);
   await page.getByRole("button", { name: "Send" }).click();
   await expectVisibleText(page, userMessage, "visible user chat bubble", 20_000);
   await expectVisibleText(page, assistantText, "streamed assistant response", 30_000);

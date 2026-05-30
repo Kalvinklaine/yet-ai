@@ -1729,13 +1729,15 @@ describe("active editor attached context", () => {
       selection: { startLine: 10, startCharacter: 2, endLine: 12, endCharacter: 8, text: "function greet() {\n  return \"hello\";\n}" },
     });
 
-    expect(container?.textContent).toContain("Attached context");
+    expect(container?.textContent).toContain("Active editor context");
+    expect(container?.textContent).toContain("Source host: vscode");
     expect(container?.textContent).toContain("File: src/main.ts");
     expect(container?.textContent).toContain("Language: typescript");
-    expect(container?.textContent).toContain("Selection: 10:2-12:8");
-    expect(container?.textContent).toContain("Preview: function greet()");
-    expect(container?.textContent).toContain("Selection size: 38 characters");
-    expect(container?.textContent).toContain("sent only when this toggle is enabled for the next accepted message");
+    expect(container?.textContent).toContain("Selection range: 10:2-12:8");
+    expect(container?.textContent).toContain("Bounded previewfunction greet()");
+    expect(container?.textContent).toContain("Selected characters: 38");
+    expect(container?.textContent).toContain("one-shot and is attached only to the next accepted message while enabled");
+    expect(container?.textContent).toContain("Attach to next message");
     expect(attachedContextToggle().checked).toBe(true);
   });
 
@@ -1766,6 +1768,7 @@ describe("active editor attached context", () => {
     });
 
     expect(attachedContextToggle().checked).toBe(false);
+    expect(container?.textContent).toContain("Do not attach");
   });
 
   it("shows safe no-context status for missing or invalid context", async () => {
@@ -1810,13 +1813,30 @@ describe("active editor attached context", () => {
       selection: { startLine: 1, startCharacter: 0, endLine: 1, endCharacter: 10, text: `const token = "${rawSecret}"; Cookie: session=context-secret` },
     });
 
-    expect(container?.textContent).toContain("Preview: const token = \"[redacted]");
+    expect(container?.textContent).toContain("Bounded previewconst token = \"[redacted]");
     expect(container?.textContent).toContain("Host message host.contextSnapshot");
     expect(container?.textContent).not.toContain("access_token");
     expect(container?.textContent).not.toContain("s".repeat(64));
     expect(container?.textContent).not.toContain("context-secret");
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain(rawSecret);
+  });
+
+  it("bounds huge attached context previews", async () => {
+    const repeated = "SAFE_CONTEXT_PREVIEW_";
+    const hugeSelection = repeated.repeat(350);
+    mockRuntimeResponses();
+    renderApp();
+
+    await dispatchHostContextSnapshot({
+      file: { displayPath: "src/huge.ts", workspaceRelativePath: "src/huge.ts", languageId: "typescript" },
+      selection: { startLine: 1, startCharacter: 0, endLine: 200, endCharacter: 0, text: hugeSelection },
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Selected characters: 7350");
+    expect((text.match(/SAFE_CONTEXT_PREVIEW_/g) ?? []).length).toBeLessThan(30);
+    expect(text.length).toBeLessThan(20000);
   });
 
   it("sends attached context when valid and included", async () => {
@@ -1867,12 +1887,12 @@ describe("active editor attached context", () => {
       selection: { startLine: 7, startCharacter: 4, endLine: 7, endCharacter: 26, text: contextText },
     });
 
-    expect(container?.textContent).toContain("Attached context");
+    expect(container?.textContent).toContain("Active editor context");
     expect(container?.textContent).toContain("jetbrains");
     expect(container?.textContent).toContain("File: src/Main.kt");
     expect(container?.textContent).toContain("Language: kotlin");
-    expect(container?.textContent).toContain("Selection: 7:4-7:26");
-    expect(container?.textContent).toContain("Preview: val greeting");
+    expect(container?.textContent).toContain("Selection range: 7:4-7:26");
+    expect(container?.textContent).toContain("Bounded previewval greeting");
     expect(attachedContextToggle().checked).toBe(true);
     fetchMock.mockClear();
 
@@ -1893,6 +1913,7 @@ describe("active editor attached context", () => {
         selection: { startLine: 7, startCharacter: 4, endLine: 7, endCharacter: 26, text: contextText },
       },
     });
+    expect(container?.textContent).toContain("Context attached to the last accepted message from jetbrains src/Main.kt.");
     expect(container?.textContent).toContain("No valid active editor context is attached. Nothing will be included with the next message.");
     expect(attachedContextToggleOptional()).toBeUndefined();
 
@@ -1931,8 +1952,10 @@ describe("active editor attached context", () => {
     });
 
     expect(lastUserMessageBody().payload).toEqual({ content: "send without JetBrains context" });
-    expect(container?.textContent).toContain("No valid active editor context is attached. Nothing will be included with the next message.");
-    expect(attachedContextToggleOptional()).toBeUndefined();
+    expect(container?.textContent).toContain("Active editor context");
+    expect(attachedContextToggleOptional()).toBeDefined();
+    expect(attachedContextToggle().checked).toBe(false);
+    expect(container?.textContent).not.toContain("Context attached to the last accepted message");
     expect(browserStorageDump()).not.toContain(contextText);
   });
 
@@ -1949,7 +1972,7 @@ describe("active editor attached context", () => {
     });
 
     expect(container?.textContent).toContain("jetbrains");
-    expect(container?.textContent).toContain("Preview: val token = \"[redacted]");
+    expect(container?.textContent).toContain("Bounded previewval token = \"[redacted]");
     expect(container?.textContent).toContain("Host message host.contextSnapshot");
     expect(container?.textContent).not.toContain("access_token");
     expect(container?.textContent).not.toContain("j".repeat(64));
@@ -1985,6 +2008,7 @@ describe("active editor attached context", () => {
         selection: { text: contextText },
       },
     });
+    expect(container?.textContent).toContain("Context attached to the last accepted message from vscode active editor.");
     expect(container?.textContent).toContain("No valid active editor context is attached. Nothing will be included with the next message.");
     expect(attachedContextToggleOptional()).toBeUndefined();
 
@@ -2025,8 +2049,10 @@ describe("active editor attached context", () => {
     const body = lastUserMessageBody();
     expect(body.type).toBe("user_message");
     expect(body.payload).toEqual({ content: "hello without context" });
-    expect(container?.textContent).toContain("No valid active editor context is attached. Nothing will be included with the next message.");
-    expect(attachedContextToggleOptional()).toBeUndefined();
+    expect(container?.textContent).toContain("Active editor context");
+    expect(attachedContextToggleOptional()).toBeDefined();
+    expect(attachedContextToggle().checked).toBe(false);
+    expect(container?.textContent).not.toContain("Context attached to the last accepted message");
     expect(browserStorageDump()).not.toContain(contextText);
   });
 
@@ -2047,7 +2073,7 @@ describe("active editor attached context", () => {
       await Promise.resolve();
     });
 
-    expect(container?.textContent).toContain("Preview: retry selected context");
+    expect(container?.textContent).toContain("Bounded previewretry selected context");
     expect(attachedContextToggle().checked).toBe(true);
 
     mockRuntimeResponses(readyRuntimeOptions());
@@ -2098,7 +2124,7 @@ describe("active editor attached context", () => {
     oldCommand.resolve(jsonResponse({ accepted: true, chatId: "chat-001", requestId: "old-request", type: "user_message" }));
     await flushAsync();
 
-    expect(container?.textContent).toContain("Preview: new chat context");
+    expect(container?.textContent).toContain("Bounded previewnew chat context");
     expect(attachedContextToggle().checked).toBe(true);
     expect(container?.textContent).not.toContain("Command accepted old-request");
   });
@@ -4012,7 +4038,7 @@ function attachedContextToggle() {
 }
 
 function attachedContextToggleOptional() {
-  return Array.from(container?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]') ?? []).find((item) => item.parentElement?.textContent?.includes("Include attached context in next message"));
+  return Array.from(container?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]') ?? []).find((item) => item.parentElement?.textContent?.includes("Attach to next message") || item.parentElement?.textContent?.includes("Do not attach"));
 }
 
 function chatIdInput() {

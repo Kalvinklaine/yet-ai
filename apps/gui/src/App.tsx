@@ -209,6 +209,7 @@ export function App() {
   const [bridgeHost, setBridgeHost] = useState<BridgeHost>("browser");
   const [attachedContext, setAttachedContext] = useState<{ payload: HostContextSnapshotPayload; settingsRevision: number; chatId: string } | null>(null);
   const [includeAttachedContext, setIncludeAttachedContext] = useState(false);
+  const [attachedContextStatus, setAttachedContextStatus] = useState<string | null>(null);
   const [runtimeRefreshStatus, setRuntimeRefreshStatus] = useState<{ state: "checking" | "connected" | "failed"; attempt: number; checkedAt: string; detail: string } | null>(null);
   const [runtimeRefreshInFlight, setRuntimeRefreshInFlight] = useState(false);
   const [settingsRevision, setSettingsRevision] = useState(0);
@@ -340,6 +341,7 @@ export function App() {
     setAgentProgress({ state: "not_checked", response: null, error: null });
     setAttachedContext(null);
     setIncludeAttachedContext(false);
+    setAttachedContextStatus(null);
   }, [abortActiveStream]);
 
   const updateRuntimeSettings = useCallback((nextSettings: RuntimeSettings) => {
@@ -385,6 +387,7 @@ export function App() {
         const nextContext = message.payload as HostContextSnapshotPayload;
         setAttachedContext({ payload: nextContext, settingsRevision: settingsRevisionRef.current, chatId: chatIdRef.current });
         setIncludeAttachedContext(hasUsableAttachedContext(nextContext));
+        setAttachedContextStatus(null);
       }
     });
     return () => adapter.dispose();
@@ -407,6 +410,7 @@ export function App() {
     if (current?.settingsRevision === submittedContext.settingsRevision && current.chatId === submittedContext.chatId && current.payload === submittedContext.payload) {
       setAttachedContext(null);
       setIncludeAttachedContext(false);
+      setAttachedContextStatus(`Context attached to the last accepted message from ${attachedContextSummary(submittedContext.payload)}.`);
     }
   }, []);
 
@@ -942,6 +946,7 @@ export function App() {
     setTimeline([]);
     setAttachedContext(null);
     setIncludeAttachedContext(false);
+    setAttachedContextStatus(null);
     if (activeChatSummary) {
       void loadChatThread(chatId);
     }
@@ -1010,7 +1015,6 @@ export function App() {
     const targetSettings = settingsRef.current;
     const targetRevision = settingsRevisionRef.current;
     const targetChatId = chatIdRef.current;
-    const submittedAttachedContext = attachedContextRef.current?.settingsRevision === targetRevision && attachedContextRef.current.chatId === targetChatId ? attachedContextRef.current : null;
     setChatError(null);
     if (!canSendChat) {
       const runtimeError: RuntimeError = {
@@ -1022,7 +1026,8 @@ export function App() {
       addTimeline("Command blocked until current runtime settings are ready");
       return;
     }
-    const context = includeAttachedContext && currentAttachedContext && hasUsableAttachedContext(currentAttachedContext) ? currentAttachedContext : undefined;
+    const submittedAttachedContext = includeAttachedContext && attachedContextRef.current?.settingsRevision === targetRevision && attachedContextRef.current.chatId === targetChatId && currentAttachedContext && hasUsableAttachedContext(currentAttachedContext) ? attachedContextRef.current : null;
+    const context = submittedAttachedContext?.payload;
     startSse(targetChatId);
     const result = await sendUserMessage(targetSettings, targetChatId, content, context);
     if (!isCurrentRefresh(targetRevision) || chatIdRef.current !== targetChatId) {
@@ -1121,7 +1126,7 @@ export function App() {
               {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
             </div>
             <form className="stack chat-composer" onSubmit={(event) => void submitChat(event)}>
-              <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} onIncludeChange={setIncludeAttachedContext} />
+              <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} />
               <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
               <div className="row chat-actions">
                 <button type="submit" disabled={!canSendChat}>Send</button>
@@ -1464,6 +1469,28 @@ function hasUsableAttachedContext(context: HostContextSnapshotPayload): boolean 
   return Boolean(context.file?.displayPath || context.file?.workspaceRelativePath || context.file?.languageId || context.selection?.text?.trim() || formatSelectionRange(context.selection) !== "unknown range");
 }
 
+function attachedContextSummary(context: HostContextSnapshotPayload): string {
+  return `${sanitizeDisplayText(context.source)} ${sanitizeDisplayText(context.file?.workspaceRelativePath ?? context.file?.displayPath ?? "active editor")}`;
+}
+
+function attachedContextFileLabel(context: HostContextSnapshotPayload): string {
+  const displayPath = context.file?.displayPath;
+  const workspacePath = context.file?.workspaceRelativePath;
+  if (displayPath && workspacePath && displayPath !== workspacePath) {
+    return `${sanitizeDisplayText(displayPath)} (${sanitizeDisplayText(workspacePath)})`;
+  }
+  return sanitizeDisplayText(displayPath ?? workspacePath ?? "Untitled editor");
+}
+
+function boundedContextPreview(text: string): string {
+  if (!text.trim()) {
+    return "No selected text preview.";
+  }
+  const limit = 360;
+  const bounded = text.length > limit ? `${text.slice(0, limit)}…` : text;
+  return sanitizeDisplayText(bounded);
+}
+
 function formatSelectionRange(selection: HostContextSnapshotPayload["selection"]): string {
   if (!selection) {
     return "unknown range";
@@ -1524,37 +1551,46 @@ function ChatBubble({ message }: { message: ChatViewMessage }) {
   );
 }
 
-function AttachedContextPreview({ context, include, onIncludeChange }: { context: HostContextSnapshotPayload | null; include: boolean; onIncludeChange: (include: boolean) => void }) {
+function AttachedContextPreview({ context, include, status, onIncludeChange }: { context: HostContextSnapshotPayload | null; include: boolean; status: string | null; onIncludeChange: (include: boolean) => void }) {
   if (!context || !hasUsableAttachedContext(context)) {
     return (
       <div className="readiness-card warn" role="status">
         <div className="stack">
           <strong>Attached context</strong>
+          {status && <span>{sanitizeDisplayText(status)}</span>}
           <span className="subtle">No valid active editor context is attached. Nothing will be included with the next message.</span>
         </div>
       </div>
     );
   }
-  const fileLabel = sanitizeDisplayText(context.file?.displayPath ?? context.file?.workspaceRelativePath ?? "Untitled editor");
+  const fileLabel = attachedContextFileLabel(context);
   const language = context.file?.languageId ? sanitizeDisplayText(context.file.languageId) : "unknown language";
   const range = formatSelectionRange(context.selection);
   const text = context.selection?.text ?? "";
-  const preview = text.trim() ? sanitizeDisplayText(text) : "No selected text preview.";
+  const preview = boundedContextPreview(text);
   return (
-    <div className="readiness-card ready" role="status">
+    <div className="readiness-card ready attached-context-card" role="status">
       <div className="stack">
         <div className="row">
-          <strong>Attached context</strong>
+          <strong>Active editor context</strong>
           <span className="badge ok">{sanitizeDisplayText(context.source)}</span>
+          <span className={include ? "badge ok" : "badge warn"}>{include ? "Attach to next message" : "Do not attach"}</span>
         </div>
-        <span>File: {fileLabel}</span>
-        <span>Language: {language}</span>
-        <span>Selection: {range}</span>
-        <span>Preview: {preview}</span>
-        <span className="subtle">Selection size: {text.length} character{text.length === 1 ? "" : "s"}. Context stays in React state only and is sent only when this toggle is enabled for the next accepted message.</span>
-        <label className="row">
+        <div className="attached-context-grid">
+          <span>Source host: {sanitizeDisplayText(context.source)}</span>
+          <span>File: {fileLabel}</span>
+          <span>Language: {language}</span>
+          <span>Selection range: {range}</span>
+          <span>Selected characters: {text.length}</span>
+        </div>
+        <div className="attached-context-preview">
+          <strong>Bounded preview</strong>
+          <pre>{preview}</pre>
+        </div>
+        <span className="subtle">Context stays in React state only. It is one-shot and is attached only to the next accepted message while enabled.</span>
+        <label className="row attached-context-toggle">
           <input style={{ width: "auto" }} type="checkbox" checked={include} onChange={(event) => onIncludeChange(event.target.checked)} />
-          Include attached context in next message
+          {include ? "Attach to next message" : "Do not attach"}
         </label>
       </div>
     </div>
