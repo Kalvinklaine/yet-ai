@@ -69,19 +69,15 @@ function boundedText(value, maxLength, fallback) {
   return text.length > 0 ? text : fallback;
 }
 
-function sanitizeText(value, maxLength = MAX_MESSAGE_LENGTH) {
-  if (typeof value !== "string") {
-    return "";
-  }
-
-  const sanitized = value
+function redactUnsafeText(value) {
+  return value
     .replace(/\r/g, "\n")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+    .replace(/(^|\n)[^\n]*(?:\b(?:chain[-_ ]?of[-_ ]?thought|raw[-_ ]?prompt|provider[-_ ]?response|file[-_ ]?content|workspace[-_ ]?content)\b\s*[:=]?)[^\n]*/gi, "$1[redacted-field]")
     .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "[redacted-auth]")
     .replace(/\b(?:api[_-]?key|authorization|token|secret|password|cookie|pkce|refresh|access[_-]?token|credential)\b\s*[:=]\s*\S+/gi, "[redacted-sensitive]")
     .replace(/\b(?:sk|pk|ghp|gho|github_pat|ya29)_[A-Za-z0-9_\-]{12,}\b/g, "[redacted-key]")
     .replace(/\bsk-[A-Za-z0-9_\-]{12,}\b/g, "[redacted-key]")
-    .replace(/\b(?:chain[-_ ]?of[-_ ]?thought|raw[-_ ]?prompt|provider[-_ ]?response|file[-_ ]?content|workspace[-_ ]?content)\b\s*[:=]?\s*/gi, "[redacted-field] ")
     .replace(/BEGIN [A-Z ]*PRIVATE KEY[\s\S]*?END [A-Z ]*PRIVATE KEY/g, "[redacted-private-key]")
     .replace(/\/(?:Users|home|private)\/[^\s"'`<>]*/g, "[redacted-path]")
     .replace(/~\/[^\s"'`<>]*/g, "[redacted-path]")
@@ -90,11 +86,37 @@ function sanitizeText(value, maxLength = MAX_MESSAGE_LENGTH) {
     .replace(/[ \t]+/g, " ")
     .replace(/\n{4,}/g, "\n\n\n")
     .trim();
+}
 
-  if (sanitized.length <= maxLength) {
-    return sanitized;
+function truncateTail(text, maxLength) {
+  if (text.length <= maxLength) {
+    return text;
   }
-  return sanitized.slice(Math.max(0, sanitized.length - maxLength));
+  return text.slice(Math.max(0, text.length - maxLength));
+}
+
+function truncateHeadTail(text, maxLength) {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  const marker = "\n…\n";
+  const headLength = Math.max(0, Math.floor((maxLength - marker.length) / 2));
+  const tailLength = Math.max(0, maxLength - marker.length - headLength);
+  return `${text.slice(0, headLength)}${marker}${text.slice(Math.max(0, text.length - tailLength))}`;
+}
+
+function boundedHeadTailText(value, maxLength) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return truncateHeadTail(redactUnsafeText(value), maxLength);
+}
+
+function sanitizeText(value, maxLength = MAX_MESSAGE_LENGTH) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return truncateTail(redactUnsafeText(value), maxLength);
 }
 
 function safeId(value, fallback) {
@@ -115,7 +137,7 @@ function overflowRecoveryMessage(kind) {
 }
 
 function classifyOverflowRecoveryText(value) {
-  const text = sanitizeText(value, MAX_OUTPUT_TAIL_LENGTH).toLowerCase();
+  const text = boundedHeadTailText(value, MAX_OUTPUT_TAIL_LENGTH).toLowerCase();
   if (text.length === 0) {
     return undefined;
   }
@@ -146,7 +168,21 @@ function classifyOverflowRecoveryText(value) {
 }
 
 function classifyOverflowRecovery(event) {
-  return classifyOverflowRecoveryText(event.message) ?? classifyOverflowRecoveryText(event.outputTail);
+  return event.overflowRecovery;
+}
+
+function sanitizeOverflowRecovery(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  if (value.kind !== "context_length_exceeded" && value.kind !== "tool_output_too_large" && value.kind !== "task_board_output_too_large") {
+    return undefined;
+  }
+  return {
+    kind: value.kind,
+    message: boundedText(value.message, MAX_OVERFLOW_RECOVERY_MESSAGE_LENGTH, overflowRecoveryMessage(value.kind)),
+    retryable: value.retryable === false ? false : true
+  };
 }
 
 function safeCardId(value) {
@@ -190,6 +226,8 @@ function sanitizeEvent(event, index, nowMs) {
   const eventId = safeId(event?.eventId, `event-${String(index + 1).padStart(3, "0")}`);
   const phase = ALLOWED_PHASES.has(event?.phase) ? event.phase : "started";
   const status = ALLOWED_STATUSES.has(event?.status) ? event.status : phase === "failed" ? "failed" : phase === "done" ? "done" : "running";
+  const rawMessage = typeof event?.message === "string" ? event.message : "";
+  const rawOutputTail = typeof event?.outputTail === "string" ? event.outputTail : "";
   const sanitized = {
     protocolVersion: PROTOCOL_VERSION,
     eventId,
@@ -198,7 +236,7 @@ function sanitizeEvent(event, index, nowMs) {
     timestamp,
     phase,
     status,
-    message: boundedText(event?.message, MAX_MESSAGE_LENGTH, "Agent progress updated.")
+    message: boundedText(rawMessage, MAX_MESSAGE_LENGTH, "Agent progress updated.")
   };
 
   const tool = sanitizeTool(event?.tool, nowMs);
@@ -220,9 +258,14 @@ function sanitizeEvent(event, index, nowMs) {
     }
   }
 
-  const outputTail = sanitizeText(event?.outputTail, MAX_OUTPUT_TAIL_LENGTH);
+  const outputTail = sanitizeText(rawOutputTail, MAX_OUTPUT_TAIL_LENGTH);
   if (outputTail.length > 0) {
     sanitized.outputTail = outputTail;
+  }
+
+  const overflowRecovery = classifyOverflowRecoveryText(rawMessage) ?? classifyOverflowRecoveryText(rawOutputTail) ?? sanitizeOverflowRecovery(event?.overflowRecovery);
+  if (overflowRecovery !== undefined) {
+    sanitized.overflowRecovery = overflowRecovery;
   }
 
   return sanitized;
@@ -379,7 +422,7 @@ function reduceAgentProgress(events, options = {}) {
   }
 
   const overflowRecovery = mostRecentBy(normalizedEvents, classifyOverflowRecovery);
-  if (overflowRecovery !== undefined) {
+  if (overflowRecovery !== undefined && (status === "failed" || status === "stuck" || status === "stalled")) {
     snapshot.overflowRecovery = overflowRecovery;
   }
 
