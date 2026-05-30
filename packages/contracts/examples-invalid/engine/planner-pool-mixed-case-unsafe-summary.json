@@ -1,0 +1,15 @@
+{
+  "protocolVersion": "2026-05-15",
+  "poolId": "planner_overflow_recovery",
+  "autonomousMode": true,
+  "poolStatus": "running",
+  "nextAction": "check_agents",
+  "cards": [
+    {
+      "cardId": "T333",
+      "status": "running",
+      "safeSummary": "Card is running with sanitized status only."
+    }
+  ],
+  "safeSummary": "Provider Response included RAW PROMPT Api_Key Bearer Workspace Contents File Contents chain of thought /Users/example auth.json Cookie credential labels."
+}

@@ -1,0 +1,21 @@
+{
+  "protocolVersion": "2026-05-15",
+  "poolId": "planner_overflow_recovery",
+  "autonomousMode": true,
+  "poolStatus": "blocked",
+  "nextAction": "recover_failed",
+  "cards": [
+    {
+      "cardId": "T333",
+      "status": "blocked",
+      "blocker": "blocked_by_policy",
+      "safeSummary": "Card is blocked with compact sanitized recovery guidance."
+    }
+  ],
+  "safeSummary": "Pool blocked because the task board exceeded the safe summary budget.",
+  "overflowRecovery": {
+    "kind": "task_board_output_too_large",
+    "message": "Provider Response included RAW PROMPT Api_Key Bearer Workspace Contents File Contents chain of thought /private/example credentials.json.",
+    "retryable": true
+  }
+}

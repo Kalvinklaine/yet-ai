@@ -1,0 +1,20 @@
+{
+  "protocolVersion": "2026-05-15",
+  "poolId": "planner_overflow_recovery",
+  "autonomousMode": true,
+  "poolStatus": "running",
+  "nextAction": "check_agents",
+  "cards": [
+    {
+      "cardId": "T333",
+      "status": "failed",
+      "safeSummary": "Card failed after planner overflow and needs sanitized retry guidance.",
+      "overflowRecovery": {
+        "kind": "context_length_exceeded",
+        "message": "Provider Response included RAW PROMPT Api_Key Bearer Workspace Contents File Contents chain of thought C:\\Users\\example\\auth.json.",
+        "retryable": true
+      }
+    }
+  ],
+  "safeSummary": "Pool continues checking agents."
+}
