@@ -755,6 +755,45 @@ async fn start_stale_oauth_chat_provider() -> (String, mpsc::Receiver<Option<Str
     (format!("http://{address}"), auth_receiver)
 }
 
+async fn start_slow_401_oauth_chat_provider() -> (String, mpsc::Receiver<Option<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (auth_sender, auth_receiver) = mpsc::channel(16);
+    tokio::spawn(async move {
+        let handler = move |request: axum::http::Request<Body>| {
+            let auth_sender = auth_sender.clone();
+            async move {
+                let auth = request
+                    .headers()
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                let _ = auth_sender.send(auth.clone()).await;
+                if auth.as_deref() == Some("Bearer access-2") {
+                    return (
+                        StatusCode::OK,
+                        [(header::CONTENT_TYPE, "text/event-stream")],
+                        Body::from("data: {\"choices\":[{\"delta\":{\"content\":\"refreshed-after-slow-401\"}}]}\n\ndata: [DONE]\n\n"),
+                    )
+                        .into_response();
+                }
+                let (_tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(1);
+                (
+                    StatusCode::UNAUTHORIZED,
+                    [(header::CONTENT_TYPE, "application/json")],
+                    Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx)),
+                )
+                    .into_response()
+            }
+        };
+        let app = axum::Router::new()
+            .route("/chat/completions", axum::routing::post(handler.clone()))
+            .route("/v1/chat/completions", axum::routing::post(handler));
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{address}"), auth_receiver)
+}
+
 async fn seed_experimental_openai_oauth(
     paths: &StoragePaths,
     chat_base_url: String,
@@ -7612,16 +7651,24 @@ async fn chat_near_expired_experimental_oauth_refreshes_before_provider_request(
 }
 
 #[tokio::test]
-async fn expired_experimental_openai_oauth_falls_back_to_provider_not_configured() {
-    let (chat_base_url, _) = start_mock_provider(
+async fn expired_experimental_openai_oauth_without_refresh_falls_back_to_provider_not_configured() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let (chat_base_url, auth_receiver) = start_mock_provider(
         StatusCode::OK,
         "data: {\"choices\":[{\"delta\":{\"content\":\"unused\"}}]}\n\ndata: [DONE]\n\n",
     )
     .await;
     let (token_endpoint_url, _) = start_mock_codex_token_endpoint_with(1).await;
-    let app = test_app();
     connect_experimental_openai_oauth(app.clone(), token_endpoint_url, chat_base_url).await;
-    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    FileSecretStore::new(&paths.config_dir)
+        .delete_secret("openai", SecretKind::OAuthRefreshToken)
+        .await
+        .unwrap();
 
     let (status, auth_status) = json_response_from(
         app.clone(),
@@ -7633,15 +7680,20 @@ async fn expired_experimental_openai_oauth_falls_back_to_provider_not_configured
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(auth_status["status"], "expired");
+    assert_eq!(auth_status["status"], "login_unavailable");
     assert_provider_auth_response_has_no_codex_secrets(&auth_status);
 
-    send_user_message(app.clone(), "chat-expired-oauth").await;
-    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-expired-oauth").await;
+    send_user_message(app.clone(), "chat-expired-oauth-missing-refresh").await;
+    let text = sse_text_from(
+        app,
+        "/v1/chats/subscribe?chat_id=chat-expired-oauth-missing-refresh",
+    )
+    .await;
     let events = sse_json_events(&text);
     let error = find_error_event(&events);
     assert_eq!(error["payload"]["code"], "provider_not_configured");
     assert_sanitized_sse_error(&text);
+    assert_no_observed_auth(auth_receiver).await;
 }
 
 #[tokio::test]
@@ -7850,6 +7902,66 @@ async fn chat_experimental_oauth_retries_after_stale_access_token_401() {
     let body = token_body_receiver.recv().await.unwrap();
     assert_eq!(body["grant_type"], "refresh_token");
     assert_json_string_value(&body["refresh_token"], "refresh-1", "refresh request token");
+    assert!(tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        token_body_receiver.recv()
+    )
+    .await
+    .is_err());
+}
+
+#[tokio::test]
+async fn chat_experimental_oauth_slow_401_body_retries_without_waiting_for_body() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let (chat_base_url, mut auth_receiver) = start_slow_401_oauth_chat_provider().await;
+    let (token_endpoint_url, mut token_body_receiver) = start_refresh_codex_token_endpoint(
+        StatusCode::OK,
+        json!({
+            "access_token": "access-2",
+            "refresh_token": "refresh-2",
+            "expires_in": 1800,
+            "scope": "openid profile email offline_access",
+            "account_label": "mock-user@example.test"
+        }),
+    )
+    .await;
+    seed_experimental_openai_oauth(
+        &paths,
+        chat_base_url,
+        token_endpoint_url,
+        "access-1",
+        "refresh-1",
+    )
+    .await;
+
+    send_user_message(app.clone(), "chat-oauth-slow-401-retry").await;
+    let loaded = tokio::time::timeout(
+        std::time::Duration::from_secs(4),
+        wait_for_chat_messages(app.clone(), "chat-oauth-slow-401-retry", 2),
+    )
+    .await
+    .expect("slow 401 body must not delay OAuth retry");
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-oauth-slow-401-retry").await;
+    assert!(text.contains("refreshed-after-slow-401"));
+    assert_eq!(loaded["messages"][1]["content"], "refreshed-after-slow-401");
+    assert_sanitized_sse_error(&text);
+    assert!(!text.contains("access-1"));
+    assert!(!text.contains("refresh-1"));
+    let first = auth_receiver.recv().await.unwrap();
+    assert_stored_secret(first.as_deref(), "Bearer access-1");
+    let second = auth_receiver.recv().await.unwrap();
+    assert_stored_secret(second.as_deref(), "Bearer access-2");
+    assert!(tokio::time::timeout(std::time::Duration::from_millis(100), auth_receiver.recv())
+        .await
+        .is_err());
+    let body = token_body_receiver.recv().await.unwrap();
+    assert_eq!(body["grant_type"], "refresh_token");
+    assert_json_string_value(&body["refresh_token"], "refresh-1", "slow 401 refresh token");
     assert!(tokio::time::timeout(
         std::time::Duration::from_millis(100),
         token_body_receiver.recv()

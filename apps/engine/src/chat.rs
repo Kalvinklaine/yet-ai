@@ -545,11 +545,10 @@ async fn select_chat_provider(config_dir: &std::path::Path) -> Result<ChatProvid
             });
         }
     }
-    if let Some(auth) = provider_auth::refresh_experimental_codex_chat_auth_if_needed(config_dir)
-        .await
-        .map_err(|_| ChatError::ProviderConfig)?
-    {
-        return Ok(ChatProvider::ExperimentalCodex(auth));
+    match provider_auth::refresh_experimental_codex_chat_auth_if_needed(config_dir).await {
+        Ok(Some(auth)) => return Ok(ChatProvider::ExperimentalCodex(auth)),
+        Ok(None) | Err(provider_auth::ProviderAuthError::InvalidRequest) => {}
+        Err(_) => return Err(ChatError::ProviderConfig),
     }
     if saw_enabled_openai_compatible {
         Err(ChatError::NoModel)
@@ -755,11 +754,7 @@ async fn collect_openai_compatible_stream(
     })?;
     if !response.status().is_success() {
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-            let error = classify_provider_http_error(response).await;
-            return Err(match error {
-                ChatError::Unauthorized => ChatError::PreStreamUnauthorized,
-                error => error,
-            });
+            return Err(ChatError::PreStreamUnauthorized);
         }
         return Err(classify_provider_http_error(response).await);
     }
