@@ -4,7 +4,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { createProgressState, snapshotProgressState } from "./planner-agent-progress-state.mjs";
+import { createProgressState, resolveAgentProgressStatePath, snapshotProgressState } from "./planner-agent-progress-state.mjs";
 
 const rootDir = process.cwd();
 const token = `agent-progress-endpoint-${randomUUID()}`;
@@ -158,9 +158,9 @@ async function writeProgressSource(home, value) {
 
 async function writeRawProgressSource(home, value) {
   for (const cacheRoot of cacheRoots(home)) {
-    const progressDir = path.join(cacheRoot, "yet-ai", "agent-progress");
-    await mkdir(progressDir, { recursive: true });
-    await writeFile(path.join(progressDir, "progress.json"), value);
+    const sourcePath = resolveAgentProgressStatePath({ cacheRoot, env: {} });
+    await mkdir(path.dirname(sourcePath), { recursive: true });
+    await writeFile(sourcePath, value);
   }
 }
 
