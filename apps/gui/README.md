@@ -158,7 +158,7 @@ A compact readiness summary near the chat shows local runtime status, enabled pr
 
 ## Agent progress panel
 
-The Agent progress panel is a local read-only observability surface backed by `GET /v1/agent-progress`. It can refresh and render safe empty, running, stuck, done, and failed states from the strict list response, but the engine currently returns an empty local list until a future runner is wired. The panel must not expose Start, Stop, Merge, Apply, shell, tool, provider-call, git, or workspace-mutation controls.
+The Agent progress panel is a local read-only observability surface backed by `GET /v1/agent-progress`. It distinguishes not-checked, loading, empty/no-runs, populated, and unavailable local-source states. When the runtime returns `generatedAt`, the GUI renders it as bounded sanitized freshness metadata. Endpoint errors, corrupt local progress files, oversized sources, or unsafe source data are shown only as sanitized unavailable copy. The panel must not expose Start, Stop, Merge, Apply, shell, tool, provider-call, git, or workspace-mutation controls.
 
 Displayed progress data is limited to safe operational fields such as ids, phase/status, tool label/kind, elapsed and heartbeat ages, stuck reason, recent summaries, and bounded sanitized output tails. The GUI must not render prompts, chain-of-thought, raw file contents, raw provider responses, tokens, cookies, provider credentials, runtime session tokens, credential paths, private absolute paths, shell scripts, or patch payloads. This panel does not implement production background agents, runner hooks, task-board integration, git merges, tool execution, shell authority, provider calls, hosted services, or cloud sync.
 

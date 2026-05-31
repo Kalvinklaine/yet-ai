@@ -1807,24 +1807,40 @@ function AttachedContextPreview({ context, include, status, onIncludeChange }: {
 
 function AgentProgressPanel({ progress }: { progress: AgentProgressState }) {
   if (progress.state === "not_checked") {
-    return <div className="agent-progress-empty" role="status">Agent progress has not been checked yet.</div>;
+    return <AgentProgressStatusCard tone="idle" title="Agent progress not checked" detail="Refresh to read the local runtime agent-progress source. No agents are started from this panel." />;
   }
   if (progress.state === "loading") {
-    return <div className="agent-progress-empty" role="status">Loading agent progress…</div>;
+    return <AgentProgressStatusCard tone="loading" title="Loading agent progress" detail="Reading the local runtime progress endpoint…" />;
   }
   if (progress.state === "error" && progress.error) {
-    return <div className="error" role="status">Agent progress unavailable: {progress.error.status}: {sanitizeDisplayText(progress.error.message)}</div>;
+    return <AgentProgressStatusCard tone="error" title="Agent progress unavailable" detail={`The local progress source is unavailable, corrupt, oversized, or unsafe. Runtime ${progress.error.status}: ${sanitizeDisplayText(progress.error.message)}`} />;
   }
+  const generatedAt = progress.response?.generatedAt ? sanitizeDisplayText(progress.response.generatedAt) : null;
   const snapshots = progress.response?.snapshots ?? [];
   if (snapshots.length === 0) {
-    return <div className="agent-progress-empty" role="status">No agent runs.</div>;
+    return <AgentProgressStatusCard tone="empty" title="No local agent runs" detail="The local progress source is reachable but currently has no runs to display." generatedAt={generatedAt} />;
   }
   const visibleSnapshots = snapshots.slice(0, agentProgressSnapshotDisplayLimit);
   const hiddenSnapshotCount = Math.max(0, snapshots.length - visibleSnapshots.length);
   return (
     <div className="agent-progress-list">
+      <AgentProgressStatusCard tone="ready" title="Populated local progress" detail={`${snapshots.length} local agent run${snapshots.length === 1 ? "" : "s"} returned by the read-only runtime endpoint.`} generatedAt={generatedAt} />
       {visibleSnapshots.map((snapshot) => <AgentProgressSnapshotCard key={`${snapshot.cardId}:${snapshot.runId}`} snapshot={snapshot} />)}
       {hiddenSnapshotCount > 0 && <div className="agent-progress-empty" role="status">{hiddenSnapshotCount} more agent run{hiddenSnapshotCount === 1 ? "" : "s"} hidden.</div>}
+    </div>
+  );
+}
+
+function AgentProgressStatusCard({ tone, title, detail, generatedAt }: { tone: "idle" | "loading" | "empty" | "ready" | "error"; title: string; detail: string; generatedAt?: string | null }) {
+  return (
+    <div className={`agent-progress-status ${tone}`} role="status">
+      <div className="row">
+        <strong>{title}</strong>
+        <span className={`badge ${tone === "ready" || tone === "empty" ? "ok" : tone === "error" ? "warn" : ""}`}>{tone}</span>
+      </div>
+      <span>{detail}</span>
+      {generatedAt && <span className="subtle">Generated at: {generatedAt}</span>}
+      <span className="subtle">Read-only local observability; refresh only re-reads local progress.</span>
     </div>
   );
 }

@@ -104,10 +104,14 @@ try {
 
   agentProgressResponse = emptyAgentProgress();
   await refreshAgentProgress(page);
-  await expectVisibleText(page, "No agent runs.", "empty no-runs state");
+  await expectVisibleText(page, "No local agent runs", "empty no-runs state");
+  await expectVisibleText(page, "Generated at: 2026-05-29T15:00:00Z", "empty freshness state");
+  await expectVisibleText(page, "Read-only local observability; refresh only re-reads local progress.", "read-only refresh state");
 
   agentProgressResponse = progressList([progressSnapshot({ cardId: "GUI-SMOKE-LONG", status: "long_running", message: "Verification is still running with fresh heartbeats", elapsedMs: 900000 })]);
   await refreshAgentProgress(page);
+  await expectVisibleText(page, "Populated local progress", "populated progress state");
+  await expectVisibleText(page, "1 local agent run returned by the read-only runtime endpoint.", "populated progress count");
   await expectVisibleText(page, "GUI-SMOKE-LONG / run-gui-smoke", "healthy long-running run");
   await expectVisibleText(page, "long-running, not stuck", "healthy long-running not stuck label");
   await expectAbsentText(page, "stuck: heartbeat_timeout", "healthy long-running stuck label");
@@ -229,6 +233,12 @@ try {
   await expectVisibleText(page, "GUI-SMOKE-BOUNDED-0 / run-gui-bounded-0", "bounded first run");
   await expectVisibleText(page, "5 more agent runs hidden.", "bounded hidden run count");
   await expectVisibleText(page, "6 more summaries hidden.", "bounded hidden summary count");
+
+  agentProgressResponse = unavailableAgentProgress();
+  await refreshAgentProgress(page);
+  await expectVisibleText(page, "Agent progress unavailable", "unavailable progress state");
+  await expectVisibleText(page, "The local progress source is unavailable, corrupt, oversized, or unsafe. Runtime 503: agent progress unavailable", "unavailable sanitized progress copy");
+  await assertNoMutatingAgentControls(page);
 
   const pageState = await page.evaluate(() => ({
     body: document.body.innerText,
@@ -361,6 +371,9 @@ function mockRuntimeResponse(value, method) {
     return json({ chats: [] });
   }
   if (url.pathname === "/v1/agent-progress") {
+    if (agentProgressResponse?.unavailable === true) {
+      return json({ error: "agent progress unavailable provider response: SECRET_PROVIDER_RESPONSE_BODY Authorization: Bearer gui-agent-progress-secret-000" }, 503);
+    }
     return json(agentProgressResponse);
   }
   return undefined;
@@ -372,6 +385,10 @@ function json(body, status = 200) {
 
 function emptyAgentProgress() {
   return progressList([]);
+}
+
+function unavailableAgentProgress() {
+  return { unavailable: true };
 }
 
 function progressList(snapshots) {
@@ -493,7 +510,7 @@ function isStaticServerAsset(url, guiBaseUrl) {
 }
 
 function isExpectedFetchConsoleError(text) {
-  return /^Failed to load resource: (net::ERR_CONNECTION_REFUSED|the server responded with a status of 401 \(Unauthorized\))$/.test(text);
+  return /^Failed to load resource: (net::ERR_CONNECTION_REFUSED|the server responded with a status of (401 \(Unauthorized\)|503 \(Service Unavailable\)))$/.test(text);
 }
 
 function redactUrl(value) {

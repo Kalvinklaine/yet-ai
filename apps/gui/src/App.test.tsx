@@ -1275,7 +1275,50 @@ describe("agent progress panel", () => {
     });
 
     expect(container?.textContent).toContain("Agent progress");
-    expect(container?.textContent).toContain("No agent runs.");
+    expect(container?.textContent).toContain("No local agent runs");
+    expect(container?.textContent).toContain("The local progress source is reachable but currently has no runs to display.");
+    expect(container?.textContent).toContain("Generated at: 2026-05-29T15:00:00Z");
+  });
+
+  it("populated local progress renders freshness and read-only state", async () => {
+    mockRuntimeResponses({ agentProgress: agentProgressResponse([agentProgressSnapshot({ message: "Running local endpoint verification" })]) });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Refresh agent progress").click();
+      await Promise.resolve();
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Populated local progress");
+    expect(text).toContain("1 local agent run returned by the read-only runtime endpoint.");
+    expect(text).toContain("Generated at: 2026-05-29T15:00:00Z");
+    expect(text).toContain("Read-only local observability; refresh only re-reads local progress.");
+    expect(text).toContain("Running local endpoint verification");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Start agent");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Stop agent");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Merge");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Apply");
+  });
+
+  it("sanitizes generatedAt before rendering", async () => {
+    const rawSecret = "access_token=" + "g".repeat(64);
+    mockRuntimeResponses({ agentProgress: { ...agentProgressResponse([agentProgressSnapshot()]), generatedAt: `2026-05-29T15:00:00Z ${rawSecret} /Users/Alice/.codex/auth.json` } });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Refresh agent progress").click();
+      await Promise.resolve();
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Generated at: 2026-05-29T15:00:00Z [redacted]");
+    expect(text).not.toContain("access_token");
+    expect(text).not.toContain("Alice");
+    expect(text).not.toContain("auth.json");
+    expect(text).not.toContain("g".repeat(64));
   });
 
   it("running long-running snapshot renders as not stuck", async () => {
@@ -1513,8 +1556,8 @@ describe("agent progress panel", () => {
     expect(text.length).toBeLessThan(30000);
   });
 
-  it("endpoint unavailable runtime error is sanitized and non-fatal", async () => {
-    mockRuntimeResponses({ agentProgressStatus: 404, agentProgressError: "missing endpoint Authorization: Bearer progress-secret" });
+  it("endpoint unavailable or corrupt runtime error is sanitized and non-fatal", async () => {
+    mockRuntimeResponses({ agentProgressStatus: 503, agentProgressError: "agent progress unavailable provider response: RAW_CORRUPT_BODY Authorization: Bearer progress-secret" });
     renderApp();
 
     await flushAsync();
@@ -1523,8 +1566,10 @@ describe("agent progress panel", () => {
       await Promise.resolve();
     });
 
-    expect(container?.textContent).toContain("Agent progress unavailable: 404: missing endpoint [redacted]");
+    expect(container?.textContent).toContain("Agent progress unavailable");
+    expect(container?.textContent).toContain("The local progress source is unavailable, corrupt, oversized, or unsafe. Runtime 503: agent progress unavailable [redacted]");
     expect(container?.textContent).toContain("Chat readiness");
+    expect(container?.textContent).not.toContain("RAW_CORRUPT_BODY");
     expect(container?.textContent).not.toContain("progress-secret");
   });
 
@@ -1570,7 +1615,8 @@ describe("agent progress panel", () => {
     oldProgress.resolve(jsonResponse(agentProgressResponse([agentProgressSnapshot({ cardId: "T-OLD", message: "stale progress secret" })])));
     await flushAsync();
 
-    expect(container?.textContent).toContain("Agent progress has not been checked yet.");
+    expect(container?.textContent).toContain("Agent progress not checked");
+    expect(container?.textContent).toContain("Refresh to read the local runtime agent-progress source.");
     expect(container?.textContent).not.toContain("T-OLD");
     expect(container?.textContent).not.toContain("stale progress secret");
   });
