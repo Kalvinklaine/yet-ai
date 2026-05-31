@@ -3937,6 +3937,38 @@ async fn agent_progress_rejects_done_overflow_recovery_from_local_source() {
 }
 
 #[tokio::test]
+async fn agent_progress_rejects_done_failed_overflow_recovery_from_local_source() {
+    let paths = test_storage_paths();
+    let mut snapshot = valid_agent_progress_snapshot(1, 1);
+    snapshot["phase"] = json!("done");
+    snapshot["status"] = json!("failed");
+    snapshot["message"] = json!("Agent reported failed status after completion.");
+    snapshot["completedAt"] = json!("2026-05-31T10:05:00Z");
+    snapshot["overflowRecovery"] = json!({
+        "kind": "context_length_exceeded",
+        "message": "Retry with scoped context and compact summaries.",
+        "retryable": true
+    });
+    write_agent_progress_source(
+        &paths,
+        &json!({
+            "cloudRequired": false,
+            "providerAccess": "direct",
+            "snapshots": [snapshot]
+        })
+        .to_string(),
+    );
+
+    let (status, body) = agent_progress_response_for_paths(paths.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_agent_progress_error_is_sanitized(
+        &body,
+        &["run-1", "context_length_exceeded", "failed status"],
+        &paths,
+    );
+}
+
+#[tokio::test]
 async fn agent_progress_rejects_excessive_heartbeat_age_from_local_source() {
     let paths = test_storage_paths();
     let mut snapshot = valid_agent_progress_snapshot(1, 1);

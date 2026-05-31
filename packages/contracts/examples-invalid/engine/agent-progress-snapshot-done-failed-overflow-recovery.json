@@ -1,0 +1,20 @@
+{
+  "protocolVersion": "2026-05-29",
+  "runId": "run-T386-done-failed-overflow",
+  "cardId": "T386",
+  "startedAt": "2026-05-31T10:00:00Z",
+  "updatedAt": "2026-05-31T10:05:00Z",
+  "completedAt": "2026-05-31T10:05:00Z",
+  "phase": "done",
+  "status": "failed",
+  "message": "Agent reported failed status after completion.",
+  "elapsedMs": 300000,
+  "ageMs": 0,
+  "stuckReason": "explicit_failure",
+  "overflowRecovery": {
+    "kind": "context_length_exceeded",
+    "message": "Retry with scoped context and compact summaries.",
+    "retryable": true
+  },
+  "recentEvents": []
+}

@@ -41,6 +41,11 @@
           },
           "then": {
             "properties": {
+              "phase": {
+                "not": {
+                  "const": "done"
+                }
+              },
               "status": {
                 "enum": ["failed", "stuck", "stalled"]
               }
