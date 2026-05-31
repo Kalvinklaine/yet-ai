@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = path.join(root, "apps", "gui", "dist");
 const indexPath = path.join(distRoot, "index.html");
-const requiredVisibleText = ["Yet AI", "Local runtime connection", "Provider setup", "Chat", "Bridge debug"];
+const requiredVisibleText = ["Yet AI", "Local runtime connection", "Provider setup", "Chat with Yet AI", "Bridge debug"];
 const bridgeVersion = "2026-05-15";
 const failures = [];
 const runtimeToken = `jb-wrapper-runtime-token-${randomUUID()}`;
@@ -75,6 +75,19 @@ try {
   }
 
   const page = await browser.newPage();
+  await page.route("**/*", async (route) => {
+    const url = route.request().url();
+    if (url.startsWith("http://127.0.0.1:8001/")) {
+      await route.abort();
+      return;
+    }
+    if (isAllowedBrowserUrl(url, [wrapperBaseUrl, guiBaseUrl, runtimeBaseUrl])) {
+      await route.continue();
+      return;
+    }
+    failures.push(`Unexpected browser request outside wrapper/GUI/runtime allowlist: ${redactUrl(url)}`);
+    await route.abort();
+  });
 
   page.on("pageerror", (error) => {
     failures.push(`Page JavaScript error: ${error.message}`);
@@ -89,7 +102,7 @@ try {
   });
   page.on("response", (response) => {
     const url = response.url();
-    if (isLoopbackServerAsset(url) && (isJsOrCssAssetUrl(url) || response.status() === 404 || response.status() >= 500)) {
+    if ((url.startsWith(guiBaseUrl) || url.startsWith(wrapperBaseUrl)) && (isJsOrCssAssetUrl(url) || response.status() === 404 || response.status() >= 500)) {
       if (response.status() === 404 || response.status() >= 500) {
         failures.push(`Broken local asset response: ${response.status()} ${url}`);
       }
@@ -272,6 +285,8 @@ try {
     failures.push("Wrapper relayed an arbitrary wrapper-origin host.ready postMessage into the iframe.");
   }
 
+  await frameLocator.getByText("State: Experimental OpenAI account / gpt-5-codex", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not use host.ready runtime endpoints to enter connected experimental readiness."));
+
   const refreshButton = frameLocator.getByRole("button", { name: "Refresh runtime" });
   await refreshButton.click();
   await refreshButton.click();
@@ -302,7 +317,10 @@ try {
   if (failures.length > 0) {
     reportFailures();
   }
-  await frameLocator.getByRole("button", { name: "Send" }).waitFor({ state: "visible", timeout: 5000 });
+  await frameLocator.getByRole("button", { name: "Send", exact: true }).waitFor({ state: "visible", timeout: 5000 });
+  if (await frameLocator.getByRole("button", { name: "Send", exact: true }).isDisabled().catch(() => true)) {
+    failures.push("Send was not enabled for the JetBrains first-message preview path after safe mock readiness.");
+  }
 
   await page.evaluate(({ version, payload }) => {
     window.__yetAiSendHostMessageToFrame({
@@ -312,18 +330,18 @@ try {
       payload,
     });
   }, { version: bridgeVersion, payload: jetbrainsContextSnapshot });
-  await frameLocator.getByText("Attached context", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show attached context preview for JetBrains context."));
+  await frameLocator.getByText("Active editor context", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show attached context preview for JetBrains context."));
   await frameLocator.getByText("jetbrains", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context source label."));
   await frameLocator.getByText("File: src/main/kotlin/ContextSmoke.kt", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show safe JetBrains context file label."));
   await frameLocator.getByText("Language: kotlin", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context language id."));
-  await frameLocator.getByText(`Preview: ${activeContextSelectionMarker}`, { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context selected text preview."));
-  const includeContextToggle = frameLocator.getByLabel("Include attached context in next message");
+  await frameLocator.getByText(activeContextSelectionMarker, { exact: false }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context selected text preview."));
+  const includeContextToggle = frameLocator.locator("label.attached-context-toggle", { hasText: "Attach to next message" }).getByRole("checkbox");
   if (!await includeContextToggle.isChecked({ timeout: 5000 }).catch(() => false)) {
     failures.push("JetBrains attached context include toggle was not enabled by default.");
   }
   await includeContextToggle.uncheck();
-  await frameLocator.getByPlaceholder("Ask Yet AI...").fill("Send without JetBrains context.");
-  await frameLocator.getByRole("button", { name: "Send" }).click();
+  await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill("Send without JetBrains context.");
+  await frameLocator.getByRole("button", { name: "Send", exact: true }).click();
   await frameLocator.getByText("JetBrains login smoke", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not render the assistant response from mock SSE."));
   if (chatCommandRequestCount !== 1) {
     failures.push(`Mock runtime received ${chatCommandRequestCount} chat command requests after disabled-toggle send instead of exactly one.`);
@@ -347,8 +365,8 @@ try {
   if (!await includeContextToggle.isChecked({ timeout: 5000 }).catch(() => false)) {
     failures.push("JetBrains attached context include toggle was not re-enabled for the next context snapshot.");
   }
-  await frameLocator.getByPlaceholder("Ask Yet AI...").fill("Say hello through JetBrains login-shaped smoke.");
-  await frameLocator.getByRole("button", { name: "Send" }).click();
+  await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill("Say hello through JetBrains login-shaped smoke.");
+  await frameLocator.getByRole("button", { name: "Send", exact: true }).click();
   await frameLocator.getByText("JetBrains login smoke", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not render the assistant response from mock SSE after context send."));
   if (chatCommandRequestCount !== 2) {
     failures.push(`Mock runtime received ${chatCommandRequestCount} chat command requests instead of exactly two.`);
@@ -638,6 +656,10 @@ async function startMockRuntimeServer() {
     if (request.headers.authorization === `Bearer ${runtimeToken}`) {
       observedRuntimeAuthorization = true;
     }
+    const allowedOrigin = request.headers.origin === undefined || request.headers.origin === runtimeBaseUrl || request.headers.origin === wrapperBaseUrl || request.headers.origin === guiBaseUrl;
+    if (!allowedOrigin) {
+      failures.push(`Mock runtime received request from unexpected origin ${String(request.headers.origin)}.`);
+    }
     if (!isAuthorizedRuntimeRequest(request)) {
       json(response, 401, { error: "Unauthorized local runtime request. Check the session token." });
       return;
@@ -682,6 +704,10 @@ async function startMockRuntimeServer() {
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/provider-auth/openai/status") {
       json(response, 200, connectedProviderAuthStatus());
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === "/v1/chats") {
+      json(response, 200, { chats: [] });
       return;
     }
     const commandMatch = /^\/v1\/chats\/([^/]+)\/commands$/.exec(requestUrl.pathname);
@@ -914,6 +940,28 @@ function isLoopbackServerAsset(url) {
 function isJsOrCssAssetUrl(value) {
   const pathname = new URL(value).pathname;
   return pathname.endsWith(".js") || pathname.endsWith(".css");
+}
+
+function isAllowedBrowserUrl(value, origins) {
+  try {
+    const url = new URL(value);
+    return origins.includes(url.origin);
+  } catch {
+    return false;
+  }
+}
+
+function redactUrl(value) {
+  try {
+    const url = new URL(value);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return String(value);
+  }
 }
 
 function escapeHtml(value) {
