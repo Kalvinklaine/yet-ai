@@ -1815,20 +1815,133 @@ function AgentProgressPanel({ progress }: { progress: AgentProgressState }) {
   if (progress.state === "error" && progress.error) {
     return <AgentProgressStatusCard tone="error" title="Agent progress unavailable" detail={`The local progress source is unavailable, corrupt, oversized, or unsafe. Runtime ${progress.error.status}: ${sanitizeDisplayText(progress.error.message)}`} />;
   }
-  const generatedAt = progress.response?.generatedAt ? sanitizeDisplayText(progress.response.generatedAt) : null;
-  const snapshots = progress.response?.snapshots ?? [];
+  const normalized = normalizeAgentProgressResponse(progress.response);
+  const snapshots = normalized.snapshots;
   if (snapshots.length === 0) {
-    return <AgentProgressStatusCard tone="empty" title="No local agent runs" detail="The local progress source is reachable but currently has no runs to display." generatedAt={generatedAt} />;
+    return <AgentProgressStatusCard tone="empty" title="No local agent runs" detail="The local progress source is reachable but currently has no runs to display." generatedAt={normalized.generatedAt} />;
   }
   const visibleSnapshots = snapshots.slice(0, agentProgressSnapshotDisplayLimit);
   const hiddenSnapshotCount = Math.max(0, snapshots.length - visibleSnapshots.length);
   return (
     <div className="agent-progress-list">
-      <AgentProgressStatusCard tone="ready" title="Populated local progress" detail={`${snapshots.length} local agent run${snapshots.length === 1 ? "" : "s"} returned by the read-only runtime endpoint.`} generatedAt={generatedAt} />
+      <AgentProgressStatusCard tone="ready" title="Populated local progress" detail={`${snapshots.length} local agent run${snapshots.length === 1 ? "" : "s"} returned by the read-only runtime endpoint.`} generatedAt={normalized.generatedAt} />
       {visibleSnapshots.map((snapshot) => <AgentProgressSnapshotCard key={`${snapshot.cardId}:${snapshot.runId}`} snapshot={snapshot} />)}
       {hiddenSnapshotCount > 0 && <div className="agent-progress-empty" role="status">{hiddenSnapshotCount} more agent run{hiddenSnapshotCount === 1 ? "" : "s"} hidden.</div>}
     </div>
   );
+}
+
+function normalizeAgentProgressResponse(response: AgentProgressListResponse | null): { generatedAt: string | null; snapshots: AgentProgressSnapshot[] } {
+  const source = asRecord(response);
+  const generatedAt = stringOrNull(source?.generatedAt);
+  const rawSnapshots = Array.isArray(source?.snapshots) ? source.snapshots : [];
+  return {
+    generatedAt: generatedAt ? sanitizeDisplayText(generatedAt) : null,
+    snapshots: rawSnapshots.map((snapshot, index) => normalizeAgentProgressSnapshot(snapshot, index)),
+  };
+}
+
+function normalizeAgentProgressSnapshot(value: unknown, index: number): AgentProgressSnapshot {
+  const source = asRecord(value);
+  const cardId = stringOrNull(source?.cardId) ?? `unknown-card-${index + 1}`;
+  const runId = stringOrNull(source?.runId) ?? `unknown-run-${index + 1}`;
+  const phase = agentProgressPhaseOrDefault(source?.phase);
+  const status = agentProgressStatusOrDefault(source?.status);
+  const currentTool = normalizeAgentProgressTool(source?.currentTool);
+  const recentEvents = Array.isArray(source?.recentEvents) ? source.recentEvents.map((event, eventIndex) => normalizeAgentProgressEvent(event, eventIndex)) : [];
+  const overflowRecovery = normalizeAgentOverflowRecovery(source?.overflowRecovery);
+  return {
+    protocolVersion: "2026-05-29",
+    runId,
+    cardId,
+    startedAt: stringOrNull(source?.startedAt) ?? "unknown",
+    updatedAt: stringOrNull(source?.updatedAt) ?? "unknown",
+    completedAt: stringOrNull(source?.completedAt) ?? undefined,
+    phase,
+    status,
+    message: stringOrNull(source?.message) ?? "No progress message reported.",
+    elapsedMs: numberOrUnknown(source?.elapsedMs),
+    ageMs: numberOrUnknown(source?.ageMs),
+    currentTool,
+    outputTail: stringOrNull(source?.outputTail) ?? undefined,
+    overflowRecovery,
+    stuckReason: agentProgressStuckReasonOrDefault(source?.stuckReason),
+    recentEvents,
+  };
+}
+
+function normalizeAgentProgressTool(value: unknown): AgentProgressSnapshot["currentTool"] {
+  const source = asRecord(value);
+  if (!source) {
+    return undefined;
+  }
+  const label = stringOrNull(source.label);
+  return {
+    kind: agentProgressToolKindOrDefault(source.kind),
+    label: label ?? "unknown tool",
+    startedAt: stringOrNull(source.startedAt) ?? undefined,
+    elapsedMs: numberOrUndefined(source.elapsedMs),
+  };
+}
+
+function normalizeAgentProgressEvent(value: unknown, index: number) {
+  const source = asRecord(value);
+  return {
+    eventId: stringOrNull(source?.eventId) ?? `event-${index + 1}`,
+    timestamp: stringOrNull(source?.timestamp) ?? "unknown time",
+    phase: agentProgressPhaseOrDefault(source?.phase),
+    status: agentProgressStatusOrDefault(source?.status),
+    message: stringOrNull(source?.message) ?? "No summary reported.",
+  };
+}
+
+function normalizeAgentOverflowRecovery(value: unknown): AgentOverflowRecovery | undefined {
+  const source = asRecord(value);
+  const kind = agentOverflowRecoveryKindOrNull(source?.kind);
+  if (!source || !kind) {
+    return undefined;
+  }
+  return {
+    kind,
+    message: stringOrNull(source.message) ?? agentOverflowRecoveryFallbackMessage(kind),
+    retryable: typeof source.retryable === "boolean" ? source.retryable : undefined,
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function numberOrUnknown(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : Number.NaN;
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function agentProgressPhaseOrDefault(value: unknown): AgentProgressSnapshot["phase"] {
+  return typeof value === "string" && ["queued", "started", "reading_context", "editing", "running_command", "waiting_for_tool", "verifying", "finishing", "done", "failed", "stuck"].includes(value) ? value as AgentProgressSnapshot["phase"] : "started";
+}
+
+function agentProgressStatusOrDefault(value: unknown): AgentProgressSnapshot["status"] {
+  return typeof value === "string" && ["pending", "running", "healthy_running", "long_running", "stalled", "stuck", "done", "failed"].includes(value) ? value as AgentProgressSnapshot["status"] : "running";
+}
+
+function agentProgressToolKindOrDefault(value: unknown): NonNullable<AgentProgressSnapshot["currentTool"]>["kind"] {
+  return typeof value === "string" && ["read", "edit", "command", "test", "validation", "network", "planner", "other"].includes(value) ? value as NonNullable<AgentProgressSnapshot["currentTool"]>["kind"] : "other";
+}
+
+function agentProgressStuckReasonOrDefault(value: unknown): AgentProgressSnapshot["stuckReason"] {
+  return typeof value === "string" && ["heartbeat_timeout", "tool_output_timeout", "explicit_failure", "explicit_stuck", "none"].includes(value) ? value as AgentProgressSnapshot["stuckReason"] : "none";
+}
+
+function agentOverflowRecoveryKindOrNull(value: unknown): AgentOverflowRecoveryKind | null {
+  return typeof value === "string" && ["context_length_exceeded", "tool_output_too_large", "task_board_output_too_large"].includes(value) ? value as AgentOverflowRecoveryKind : null;
 }
 
 function AgentProgressStatusCard({ tone, title, detail, generatedAt }: { tone: "idle" | "loading" | "empty" | "ready" | "error"; title: string; detail: string; generatedAt?: string | null }) {

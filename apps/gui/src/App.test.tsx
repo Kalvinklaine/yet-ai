@@ -1302,6 +1302,55 @@ describe("agent progress panel", () => {
     expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Apply");
   });
 
+
+  it("defensively renders malformed agent-progress snapshots without leaking raw markers", async () => {
+    mockRuntimeResponses({
+      agentProgress: {
+        cloudRequired: false,
+        providerAccess: "direct",
+        generatedAt: 42,
+        snapshots: [
+          {
+            cardId: 123,
+            runId: null,
+            phase: { invalid: true },
+            status: "invalid_status",
+            message: ["provider response: RAW_MESSAGE_BODY"],
+            elapsedMs: "slow",
+            ageMs: null,
+            currentTool: { kind: "mystery", label: "provider response: RAW_TOOL_LABEL" },
+            outputTail: "provider response: RAW_OUTPUT_BODY Authorization: Bearer progress-secret",
+            recentEvents: "not an array",
+          },
+        ],
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Refresh agent progress").click();
+      await Promise.resolve();
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Populated local progress");
+    expect(text).toContain("unknown-card-1 / unknown-run-1");
+    expect(text).toContain("Phase: started");
+    expect(text).toContain("Status: running");
+    expect(text).toContain("Elapsed: unknown");
+    expect(text).toContain("Heartbeat age: unknown");
+    expect(text).toContain("No progress message reported.");
+    expect(text).toContain("No recent summaries.");
+    expect(text).toContain("[redacted]");
+    expect(text).not.toContain("RAW_MESSAGE_BODY");
+    expect(text).not.toContain("RAW_TOOL_LABEL");
+    expect(text).not.toContain("RAW_OUTPUT_BODY");
+    expect(text).not.toContain("progress-secret");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Start agent");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Merge");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Apply");
+  });
   it("sanitizes generatedAt before rendering", async () => {
     const rawSecret = "access_token=" + "g".repeat(64);
     mockRuntimeResponses({ agentProgress: { ...agentProgressResponse([agentProgressSnapshot()]), generatedAt: `2026-05-29T15:00:00Z ${rawSecret} /Users/Alice/.codex/auth.json` } });
