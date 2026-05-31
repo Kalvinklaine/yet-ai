@@ -3921,6 +3921,83 @@ async fn agent_progress_oversized_local_source_fails_without_raw_echo() {
 }
 
 #[tokio::test]
+async fn agent_progress_oversized_local_source_uses_bounded_read_without_raw_echo() {
+    let paths = test_storage_paths();
+    let body = "{".repeat(yet_lsp::agent_progress::MAX_PROGRESS_SOURCE_BYTES as usize + 1);
+    write_agent_progress_source(&paths, &body);
+
+    let (status, body) = agent_progress_response_for_paths(paths.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_agent_progress_error_is_sanitized(&body, &["agent-progress"], &paths);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn agent_progress_final_file_symlink_is_rejected_without_raw_echo() {
+    let paths = test_storage_paths();
+    let outside = std::env::temp_dir().join(format!(
+        "yet-ai-agent-progress-outside-{}",
+        TEST_STORAGE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&outside);
+    std::fs::create_dir_all(&outside).unwrap();
+    let target = outside.join("progress.json");
+    std::fs::write(
+        &target,
+        json!({
+            "cloudRequired": false,
+            "providerAccess": "direct",
+            "snapshots": [valid_agent_progress_snapshot(1, 1)]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let source = yet_lsp::agent_progress::progress_source_path(&paths.cache_dir);
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&target, &source).unwrap();
+
+    let (status, body) = agent_progress_response_for_paths(paths.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_agent_progress_error_is_sanitized(
+        &body,
+        &["run-1", &outside.to_string_lossy()],
+        &paths,
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn agent_progress_parent_directory_symlink_is_rejected_without_raw_echo() {
+    let paths = test_storage_paths();
+    let outside = std::env::temp_dir().join(format!(
+        "yet-ai-agent-progress-parent-outside-{}",
+        TEST_STORAGE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&outside);
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(
+        outside.join("progress.json"),
+        json!({
+            "cloudRequired": false,
+            "providerAccess": "direct",
+            "snapshots": [valid_agent_progress_snapshot(2, 1)]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::create_dir_all(&paths.cache_dir).unwrap();
+    std::os::unix::fs::symlink(&outside, paths.cache_dir.join("agent-progress")).unwrap();
+
+    let (status, body) = agent_progress_response_for_paths(paths.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_agent_progress_error_is_sanitized(
+        &body,
+        &["run-2", &outside.to_string_lossy()],
+        &paths,
+    );
+}
+
+#[tokio::test]
 async fn agent_progress_unsafe_local_source_fails_without_secret_or_path_echo() {
     let paths = test_storage_paths();
     let mut snapshot = valid_agent_progress_snapshot(1, 1);

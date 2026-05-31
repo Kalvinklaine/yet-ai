@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::io::AsyncReadExt;
 
 pub const MAX_PROGRESS_SOURCE_BYTES: u64 = 256 * 1024;
 pub const MAX_SNAPSHOTS: usize = 50;
@@ -99,26 +100,62 @@ pub async fn load_progress(
     cache_dir: &Path,
 ) -> Result<AgentProgressListResponse, AgentProgressError> {
     let path = progress_source_path(cache_dir);
-    let metadata = match tokio::fs::metadata(&path).await {
+    reject_symlink(path.parent().ok_or(AgentProgressError::Unavailable)?).await?;
+    let metadata = match tokio::fs::symlink_metadata(&path).await {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(AgentProgressListResponse::empty());
         }
         Err(_) => return Err(AgentProgressError::Unavailable),
     };
-    if !metadata.is_file() || metadata.len() > MAX_PROGRESS_SOURCE_BYTES {
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(AgentProgressError::Unavailable);
     }
-    let bytes = tokio::fs::read(&path)
+    let bytes = read_bounded(&path).await?;
+    let mut response: AgentProgressListResponse =
+        serde_json::from_slice(&bytes).map_err(|_| AgentProgressError::Unavailable)?;
+    normalize_response(&mut response)?;
+    Ok(response)
+}
+
+async fn reject_symlink(path: &Path) -> Result<(), AgentProgressError> {
+    match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(AgentProgressError::Unavailable),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(AgentProgressError::Unavailable),
+    }
+}
+
+async fn read_bounded(path: &Path) -> Result<Vec<u8>, AgentProgressError> {
+    let mut bytes = Vec::new();
+    open_progress_file(path)
+        .await?
+        .take(MAX_PROGRESS_SOURCE_BYTES + 1)
+        .read_to_end(&mut bytes)
         .await
         .map_err(|_| AgentProgressError::Unavailable)?;
     if bytes.len() as u64 > MAX_PROGRESS_SOURCE_BYTES {
         return Err(AgentProgressError::Unavailable);
     }
-    let mut response: AgentProgressListResponse =
-        serde_json::from_slice(&bytes).map_err(|_| AgentProgressError::Unavailable)?;
-    normalize_response(&mut response)?;
-    Ok(response)
+    Ok(bytes)
+}
+
+#[cfg(unix)]
+async fn open_progress_file(path: &Path) -> Result<tokio::fs::File, AgentProgressError> {
+    tokio::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .await
+        .map_err(|_| AgentProgressError::Unavailable)
+}
+
+#[cfg(not(unix))]
+async fn open_progress_file(path: &Path) -> Result<tokio::fs::File, AgentProgressError> {
+    tokio::fs::File::open(path)
+        .await
+        .map_err(|_| AgentProgressError::Unavailable)
 }
 
 fn normalize_response(response: &mut AgentProgressListResponse) -> Result<(), AgentProgressError> {
