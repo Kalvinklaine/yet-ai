@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { appendProgressEvent, readProgressState, resolveAgentProgressStatePath, snapshotProgressState } from "./planner-agent-progress-state.mjs";
+import { appendProgressEvent, readProgressState, resolveAgentProgressStatePath } from "./planner-agent-progress-state.mjs";
 import { run as runProgressCommand } from "./planner-agent-progress-run.mjs";
 
 const rootDir = process.cwd();
@@ -43,8 +43,9 @@ try {
   assert(populated.cloudRequired === false, "populated source cloud flag mismatch");
   assert(populated.providerAccess === "direct", "populated source provider access mismatch");
   assert(populated.generatedAt === "2026-05-31T10:00:02Z", "populated source generatedAt mismatch");
-  assert(Array.isArray(populated.snapshots) && populated.snapshots.length === 1, "populated source snapshot count mismatch");
-  const healthy = populated.snapshots[0];
+  assert(Array.isArray(populated.snapshots) && populated.snapshots.length === 2, "populated source snapshot count mismatch");
+  const healthy = populated.snapshots.find((snapshot) => snapshot.runId === "run-endpoint-writer");
+  assert(healthy !== undefined, "writer snapshot missing from endpoint response");
   assert(healthy.cardId === "T373", "writer snapshot card id mismatch");
   assert(healthy.runId === "run-endpoint-writer", "writer snapshot run id mismatch");
   assert(healthy.status === "healthy_running", "writer snapshot status mismatch");
@@ -140,14 +141,13 @@ async function writeLiveProgressSource(home) {
     { now }
   );
   const state = await readProgressState(statePath);
-  assert(state.events.some((event) => event.runId === "run-endpoint-wrapper"), "wrapper event was not written to canonical state");
-  const snapshot = snapshotProgressState({ ...state, events: state.events.filter((event) => event.runId === "run-endpoint-writer") }, { now });
-  await writeProgressSource(home, {
-    cloudRequired: false,
-    providerAccess: "direct",
-    generatedAt: now,
-    snapshots: [snapshot]
-  });
+  assert(state.events.some((event) => event.runId === "run-endpoint-wrapper"), "wrapper event was not written to internal state");
+  const published = JSON.parse(await readFile(statePath, "utf8"));
+  assert(published.cloudRequired === false, "published writer output cloud flag mismatch");
+  assert(published.providerAccess === "direct", "published writer output provider access mismatch");
+  assert(published.generatedAt === now, "published writer output generatedAt mismatch");
+  assert(published.snapshots.some((snapshot) => snapshot.runId === "run-endpoint-writer"), "published writer output missed writer run");
+  assert(published.snapshots.some((snapshot) => snapshot.runId === "run-endpoint-wrapper"), "published writer output missed wrapper run");
   assert(statePath === resolveAgentProgressStatePath({ cacheRoot, env: {} }), "canonical writer path drifted");
 }
 
@@ -172,10 +172,6 @@ async function makeTempHome() {
   await mkdir(path.join(home, ".config"), { recursive: true });
   await mkdir(path.join(home, ".cache"), { recursive: true });
   return home;
-}
-
-async function writeProgressSource(home, value) {
-  await writeRawProgressSource(home, `${JSON.stringify(value)}\n`);
 }
 
 async function writeRawProgressSource(home, value) {

@@ -47,15 +47,27 @@ function createProgressState(events = [], options = {}) {
   };
 }
 
+function eventStatePath(path) {
+  return `${path}.events.json`;
+}
+
 async function readProgressState(path) {
+  const internalPath = eventStatePath(path);
   let raw;
   try {
-    raw = await readFile(path, "utf8");
+    raw = await readFile(internalPath, "utf8");
   } catch (error) {
-    if (error?.code === "ENOENT") {
-      throw stateError("Agent progress state file was not found.");
+    if (error?.code !== "ENOENT") {
+      throw stateError("Agent progress state file could not be read.");
     }
-    throw stateError("Agent progress state file could not be read.");
+    try {
+      raw = await readFile(path, "utf8");
+    } catch (readError) {
+      if (readError?.code === "ENOENT") {
+        throw stateError("Agent progress state file was not found.");
+      }
+      throw stateError("Agent progress state file could not be read.");
+    }
   }
 
   let parsed;
@@ -69,16 +81,28 @@ async function readProgressState(path) {
   return createProgressState(state.events, { now: state.updatedAt ?? new Date().toISOString() });
 }
 
-async function writeProgressState(path, state, options = {}) {
-  const normalized = createProgressState(validateStateShape(state).events, options);
-  const dir = dirname(path);
+async function writeJsonAtomic(path, value) {
   const tempPath = `${path}.tmp-${process.pid}-${randomUUID()}`;
   try {
-    await mkdir(dir, { recursive: true });
-    await writeFile(tempPath, `${JSON.stringify(normalized, null, 2)}\n`, { mode: 0o600 });
+    await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
     await rename(tempPath, path);
   } catch {
     await rm(tempPath, { force: true }).catch(() => {});
+    throw stateError("Agent progress state file could not be written.");
+  }
+}
+
+async function writeProgressState(path, state, options = {}) {
+  const normalized = createProgressState(validateStateShape(state).events, options);
+  const dir = dirname(path);
+  try {
+    await mkdir(dir, { recursive: true });
+    await writeJsonAtomic(eventStatePath(path), normalized);
+    await writeJsonAtomic(path, createProgressListResponse(normalized, options));
+  } catch (error) {
+    if (error?.name === "AgentProgressStateError") {
+      throw error;
+    }
     throw stateError("Agent progress state file could not be written.");
   }
   return normalized;
@@ -141,16 +165,39 @@ function snapshotProgressState(state, options = {}) {
   return reduceAgentProgress(validateStateShape(state).events, options);
 }
 
+function snapshotProgressStates(state, options = {}) {
+  const events = validateStateShape(state).events;
+  const byRunId = new Map();
+  for (const event of events) {
+    const runEvents = byRunId.get(event.runId) ?? [];
+    runEvents.push(event);
+    byRunId.set(event.runId, runEvents);
+  }
+  return [...byRunId.values()].map((runEvents) => reduceAgentProgress(runEvents, options));
+}
+
+function createProgressListResponse(state, options = {}) {
+  const now = options.now ?? state.updatedAt ?? new Date().toISOString();
+  return {
+    cloudRequired: false,
+    providerAccess: "direct",
+    generatedAt: now,
+    snapshots: snapshotProgressStates(state, { ...options, now })
+  };
+}
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export {
   appendProgressEvent,
+  createProgressListResponse,
   createProgressState,
   readProgressState,
   resolveAgentProgressStatePath,
   snapshotProgressState,
+  snapshotProgressStates,
   validateStateShape,
   writeProgressState
 };
