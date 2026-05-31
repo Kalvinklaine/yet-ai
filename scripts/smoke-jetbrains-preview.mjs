@@ -208,6 +208,11 @@ async function checkFreshness(generatedPath, sourcePaths, staleMessage) {
       continue;
     }
     if (generatedStat.mtimeMs + staleToleranceMs < sourceStat.mtimeMs) {
+      const generatedBytes = await readFile(generatedPath);
+      const sourceBytes = await readFile(sourcePath);
+      if (generatedBytes.equals(sourceBytes)) {
+        continue;
+      }
       failures.push(`${staleMessage} ${prepareMessage} Generated: ${relative(generatedPath)}; newer source: ${relative(sourcePath)}.`);
     }
   }

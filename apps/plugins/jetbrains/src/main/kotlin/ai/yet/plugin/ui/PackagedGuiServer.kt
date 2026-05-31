@@ -10,6 +10,7 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 @Service(Service.Level.APP)
@@ -26,26 +27,31 @@ class PackagedGuiServer : Disposable {
             return null
         }
         val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
-        server.executor = Executors.newCachedThreadPool { runnable ->
+        val executor = Executors.newFixedThreadPool(4) { runnable ->
             Thread(runnable, "Yet AI packaged GUI server").apply { isDaemon = true }
         }
+        server.executor = executor
         server.createContext("/") { exchange -> handle(exchange, ::resourceBytes) }
         server.start()
         val origin = "http://127.0.0.1:${server.address.port}"
         val gui = PackagedGui("$origin/index.html", origin)
-        running = RunningServer(server, gui)
+        running = RunningServer(server, executor, gui)
         return gui
     }
 
     @Synchronized
     override fun dispose() {
-        running?.server?.stop(0)
+        val current = running
+        if (current != null) {
+            current.server.stop(0)
+            current.executor.shutdownNow()
+        }
         running = null
     }
 
     private fun resourceBytes(path: String): ByteArray? = PackagedGuiServer::class.java.getResourceAsStream(path)?.use { it.readBytes() }
 
-    private data class RunningServer(val server: HttpServer, val gui: PackagedGui)
+    private data class RunningServer(val server: HttpServer, val executor: ExecutorService, val gui: PackagedGui)
 
     companion object {
         fun getInstance(): PackagedGuiServer = service()
@@ -106,7 +112,7 @@ private fun decodePath(rawPath: String): String? {
     var current = rawPath
     repeat(4) {
         val decoded = try {
-            URLDecoder.decode(current, StandardCharsets.UTF_8)
+            URLDecoder.decode(current.replace("+", "%2B"), StandardCharsets.UTF_8)
         } catch (_: IllegalArgumentException) {
             return null
         }
