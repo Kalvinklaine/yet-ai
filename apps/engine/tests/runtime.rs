@@ -3097,29 +3097,30 @@ async fn provider_auth_openai_experimental_concurrent_near_expiry_refresh_is_sin
 async fn provider_auth_openai_experimental_changed_token_after_lock_wait_requires_fresh_metadata() {
     let paths = test_storage_paths();
     let store = FileSecretStore::new(&paths.config_dir);
-    let (token_endpoint_url, mut token_body_receiver) = start_sequence_refresh_codex_token_endpoint(vec![
-        (
-            StatusCode::OK,
-            json!({
-                "access_token": "access-lock-near",
-                "refresh_token": "refresh-lock-near",
-                "expires_in": 30,
-                "scope": "openid profile email offline_access",
-                "account_label": "mock-user@example.test"
-            }),
-        ),
-        (
-            StatusCode::OK,
-            json!({
-                "access_token": "access-lock-fresh",
-                "refresh_token": "refresh-lock-fresh",
-                "expires_in": 1800,
-                "scope": "openid profile email offline_access",
-                "account_label": "mock-user@example.test"
-            }),
-        ),
-    ])
-    .await;
+    let (token_endpoint_url, mut token_body_receiver) =
+        start_sequence_refresh_codex_token_endpoint(vec![
+            (
+                StatusCode::OK,
+                json!({
+                    "access_token": "access-lock-near",
+                    "refresh_token": "refresh-lock-near",
+                    "expires_in": 30,
+                    "scope": "openid profile email offline_access",
+                    "account_label": "mock-user@example.test"
+                }),
+            ),
+            (
+                StatusCode::OK,
+                json!({
+                    "access_token": "access-lock-fresh",
+                    "refresh_token": "refresh-lock-fresh",
+                    "expires_in": 1800,
+                    "scope": "openid profile email offline_access",
+                    "account_label": "mock-user@example.test"
+                }),
+            ),
+        ])
+        .await;
     let metadata = json!({
         "provider": "openai",
         "accountLabel": "mock-user@example.test",
@@ -3752,6 +3753,225 @@ async fn agent_progress_requires_bearer_token() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+fn valid_agent_progress_snapshot(index: usize, event_count: usize) -> Value {
+    json!({
+        "protocolVersion": "2026-05-29",
+        "runId": format!("run-{index}"),
+        "cardId": format!("T{index}"),
+        "startedAt": "2026-05-31T10:00:00Z",
+        "updatedAt": "2026-05-31T10:00:01Z",
+        "phase": "editing",
+        "status": "running",
+        "message": format!("Working on safe step {index}"),
+        "elapsedMs": 1000,
+        "ageMs": 10,
+        "currentTool": {
+            "kind": "test",
+            "label": "contract check",
+            "startedAt": "2026-05-31T10:00:00Z",
+            "elapsedMs": 100
+        },
+        "outputTail": "safe bounded output",
+        "stuckReason": "none",
+        "overflowRecovery": {
+            "kind": "context_length_exceeded",
+            "message": "Use scoped context and retry with smaller inputs.",
+            "retryable": true
+        },
+        "recentEvents": (0..event_count)
+            .map(|event_index| json!({
+                "eventId": format!("event-{index}-{event_index}"),
+                "timestamp": "2026-05-31T10:00:01Z",
+                "phase": "editing",
+                "status": "running",
+                "message": format!("Safe event {event_index}")
+            }))
+            .collect::<Vec<_>>()
+    })
+}
+
+fn write_agent_progress_source(paths: &StoragePaths, body: &str) {
+    let path = yet_lsp::agent_progress::progress_source_path(&paths.cache_dir);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, body).unwrap();
+}
+
+async fn agent_progress_response_for_paths(paths: StoragePaths) -> (StatusCode, Value) {
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths,
+    ));
+    json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/agent-progress", Body::empty()),
+    )
+    .await
+}
+
+fn assert_agent_progress_error_is_sanitized(
+    body: &Value,
+    forbidden: &[&str],
+    paths: &StoragePaths,
+) {
+    assert_eq!(body["error"], "agent progress unavailable");
+    let text = body.to_string().to_lowercase();
+    for value in forbidden {
+        assert!(!text.contains(&value.to_lowercase()));
+    }
+    assert!(!text.contains(&paths.cache_dir.to_string_lossy().to_lowercase().to_string()));
+    assert!(!text.contains("api_key"));
+    assert!(!text.contains("authorization"));
+    assert!(!text.contains("bearer"));
+    assert!(!text.contains("secret"));
+    assert!(!text.contains("/users/"));
+    assert!(!text.contains("/home/"));
+    assert!(!text.contains("/private/"));
+    assert!(!text.contains("auth.json"));
+}
+
+#[tokio::test]
+async fn agent_progress_missing_local_source_returns_empty_list() {
+    let paths = test_storage_paths();
+    let (status, body) = agent_progress_response_for_paths(paths).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!({
+            "cloudRequired": false,
+            "providerAccess": "direct",
+            "snapshots": []
+        })
+    );
+}
+
+#[tokio::test]
+async fn agent_progress_valid_local_source_returns_populated_list() {
+    let paths = test_storage_paths();
+    write_agent_progress_source(
+        &paths,
+        &json!({
+            "cloudRequired": false,
+            "providerAccess": "direct",
+            "generatedAt": "2026-05-31T10:00:02Z",
+            "snapshots": [valid_agent_progress_snapshot(1, 2)]
+        })
+        .to_string(),
+    );
+
+    let (status, body) = agent_progress_response_for_paths(paths).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["cloudRequired"], false);
+    assert_eq!(body["providerAccess"], "direct");
+    assert_eq!(body["generatedAt"], "2026-05-31T10:00:02Z");
+    assert_eq!(body["snapshots"].as_array().unwrap().len(), 1);
+    assert_eq!(body["snapshots"][0]["runId"], "run-1");
+    assert_eq!(
+        body["snapshots"][0]["currentTool"]["label"],
+        "contract check"
+    );
+    assert_eq!(
+        body["snapshots"][0]["recentEvents"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn agent_progress_corrupt_local_source_fails_without_raw_echo() {
+    let paths = test_storage_paths();
+    write_agent_progress_source(
+        &paths,
+        r#"{"snapshots":[{"message":"sk-corrupt-progress-secret /Users/example/.codex/auth.json"}"#,
+    );
+
+    let (status, body) = agent_progress_response_for_paths(paths.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_agent_progress_error_is_sanitized(
+        &body,
+        &["sk-corrupt-progress-secret", "/Users/example", "snapshots"],
+        &paths,
+    );
+}
+
+#[tokio::test]
+async fn agent_progress_oversized_local_source_fails_without_raw_echo() {
+    let paths = test_storage_paths();
+    let body = format!(
+        "{} sk-oversized-progress-secret access_token=secret /private/tmp/auth.json",
+        "x".repeat(yet_lsp::agent_progress::MAX_PROGRESS_SOURCE_BYTES as usize + 1)
+    );
+    write_agent_progress_source(&paths, &body);
+
+    let (status, body) = agent_progress_response_for_paths(paths.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_agent_progress_error_is_sanitized(
+        &body,
+        &[
+            "sk-oversized-progress-secret",
+            "access_token",
+            "/private/tmp",
+        ],
+        &paths,
+    );
+}
+
+#[tokio::test]
+async fn agent_progress_unsafe_local_source_fails_without_secret_or_path_echo() {
+    let paths = test_storage_paths();
+    let mut snapshot = valid_agent_progress_snapshot(1, 1);
+    snapshot["message"] =
+        json!("raw prompt: sk-progress-secret Bearer token /Users/example/.codex/auth.json");
+    write_agent_progress_source(
+        &paths,
+        &json!({
+            "cloudRequired": false,
+            "providerAccess": "direct",
+            "snapshots": [snapshot]
+        })
+        .to_string(),
+    );
+
+    let (status, body) = agent_progress_response_for_paths(paths.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_agent_progress_error_is_sanitized(
+        &body,
+        &[
+            "sk-progress-secret",
+            "raw prompt",
+            "Bearer",
+            "/Users/example",
+        ],
+        &paths,
+    );
+}
+
+#[tokio::test]
+async fn agent_progress_caps_snapshots_and_recent_events_from_local_source() {
+    let paths = test_storage_paths();
+    let snapshots = (0..55)
+        .map(|index| valid_agent_progress_snapshot(index, 25))
+        .collect::<Vec<_>>();
+    write_agent_progress_source(
+        &paths,
+        &json!({
+            "cloudRequired": false,
+            "providerAccess": "direct",
+            "snapshots": snapshots
+        })
+        .to_string(),
+    );
+
+    let (status, body) = agent_progress_response_for_paths(paths).await;
+    assert_eq!(status, StatusCode::OK);
+    let snapshots = body["snapshots"].as_array().unwrap();
+    assert_eq!(snapshots.len(), yet_lsp::agent_progress::MAX_SNAPSHOTS);
+    assert_eq!(snapshots[0]["recentEvents"].as_array().unwrap().len(), 20);
+    assert_eq!(snapshots[49]["runId"], "run-49");
 }
 
 #[tokio::test]
@@ -7694,7 +7914,8 @@ async fn chat_expired_experimental_oauth_refreshes_during_selection() {
     .await;
 
     send_user_message(app.clone(), "chat-expired-oauth-refresh-selection").await;
-    let loaded = wait_for_chat_messages(app.clone(), "chat-expired-oauth-refresh-selection", 2).await;
+    let loaded =
+        wait_for_chat_messages(app.clone(), "chat-expired-oauth-refresh-selection", 2).await;
     let text = sse_text_from(
         app,
         "/v1/chats/subscribe?chat_id=chat-expired-oauth-refresh-selection",
@@ -7706,12 +7927,18 @@ async fn chat_expired_experimental_oauth_refreshes_during_selection() {
     assert!(!text.contains("refresh-expired"));
     let auth = auth_receiver.recv().await.unwrap();
     assert_stored_secret(auth.as_deref(), "Bearer access-expired-fresh");
-    assert!(tokio::time::timeout(std::time::Duration::from_millis(100), auth_receiver.recv())
-        .await
-        .is_err());
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), auth_receiver.recv())
+            .await
+            .is_err()
+    );
     let body = token_body_receiver.recv().await.unwrap();
     assert_eq!(body["grant_type"], "refresh_token");
-    assert_json_string_value(&body["refresh_token"], "refresh-expired-old", "expired refresh token");
+    assert_json_string_value(
+        &body["refresh_token"],
+        "refresh-expired-old",
+        "expired refresh token",
+    );
 }
 
 #[tokio::test]
@@ -7759,12 +7986,18 @@ async fn chat_near_expired_experimental_oauth_refreshes_before_provider_request(
     assert_eq!(loaded["messages"][1]["content"], "near-refreshed");
     let auth = auth_receiver.recv().await.unwrap();
     assert_stored_secret(auth.as_deref(), "Bearer access-near-fresh");
-    assert!(tokio::time::timeout(std::time::Duration::from_millis(100), auth_receiver.recv())
-        .await
-        .is_err());
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), auth_receiver.recv())
+            .await
+            .is_err()
+    );
     let body = token_body_receiver.recv().await.unwrap();
     assert_eq!(body["grant_type"], "refresh_token");
-    assert_json_string_value(&body["refresh_token"], "refresh-near-old", "near refresh token");
+    assert_json_string_value(
+        &body["refresh_token"],
+        "refresh-near-old",
+        "near refresh token",
+    );
 }
 
 #[tokio::test]
@@ -7873,11 +8106,18 @@ async fn chat_experimental_oauth_403_does_not_refresh_or_retry() {
 
     send_user_message(app.clone(), "chat-oauth-forbidden-no-retry").await;
     let loaded = wait_for_chat_messages(app.clone(), "chat-oauth-forbidden-no-retry", 2).await;
-    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-oauth-forbidden-no-retry").await;
+    let text = sse_text_from(
+        app,
+        "/v1/chats/subscribe?chat_id=chat-oauth-forbidden-no-retry",
+    )
+    .await;
     let events = sse_json_events(&text);
     let error = find_error_event(&events);
     assert_eq!(error["payload"]["code"], "provider_unauthorized");
-    assert_eq!(loaded["messages"][1]["content"], "Provider credentials were rejected.");
+    assert_eq!(
+        loaded["messages"][1]["content"],
+        "Provider credentials were rejected."
+    );
     assert_sanitized_sse_error(&text);
     assert!(!text.contains("access-1"));
     assert!(!text.contains("refresh-1"));
@@ -7929,7 +8169,8 @@ async fn chat_experimental_oauth_stream_auth_error_after_delta_does_not_refresh_
     .await;
 
     send_user_message(app.clone(), "chat-oauth-stream-auth-error-no-retry").await;
-    let loaded = wait_for_chat_messages(app.clone(), "chat-oauth-stream-auth-error-no-retry", 2).await;
+    let loaded =
+        wait_for_chat_messages(app.clone(), "chat-oauth-stream-auth-error-no-retry", 2).await;
     let text = sse_text_from(
         app,
         "/v1/chats/subscribe?chat_id=chat-oauth-stream-auth-error-no-retry",
@@ -7944,7 +8185,10 @@ async fn chat_experimental_oauth_stream_auth_error_after_delta_does_not_refresh_
     assert_eq!(deltas[0]["payload"]["delta"]["content"], "partial");
     let error = find_error_event(&events);
     assert_eq!(error["payload"]["code"], "provider_unauthorized");
-    assert_eq!(loaded["messages"][1]["content"], "Provider credentials were rejected.");
+    assert_eq!(
+        loaded["messages"][1]["content"],
+        "Provider credentials were rejected."
+    );
     assert_sanitized_sse_error(&text);
     assert!(!text.contains("access-1"));
     assert!(!text.contains("refresh-1"));
@@ -8062,12 +8306,19 @@ async fn chat_experimental_oauth_slow_401_body_retries_without_waiting_for_body(
         .await
         .expect("provider should return a pending 401 body")
         .expect("pending body signal should be sent");
-    let body = tokio::time::timeout(std::time::Duration::from_secs(2), token_body_receiver.recv())
-        .await
-        .expect("refresh should start without waiting for the 401 body")
-        .expect("refresh request should be observed");
+    let body = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        token_body_receiver.recv(),
+    )
+    .await
+    .expect("refresh should start without waiting for the 401 body")
+    .expect("refresh request should be observed");
     assert_eq!(body["grant_type"], "refresh_token");
-    assert_json_string_value(&body["refresh_token"], "refresh-1", "slow 401 refresh token");
+    assert_json_string_value(
+        &body["refresh_token"],
+        "refresh-1",
+        "slow 401 refresh token",
+    );
     let loaded = tokio::time::timeout(
         std::time::Duration::from_secs(4),
         wait_for_chat_messages(app.clone(), "chat-oauth-slow-401-retry", 2),
@@ -8084,9 +8335,11 @@ async fn chat_experimental_oauth_slow_401_body_retries_without_waiting_for_body(
     assert_stored_secret(first.as_deref(), "Bearer access-1");
     let second = auth_receiver.recv().await.unwrap();
     assert_stored_secret(second.as_deref(), "Bearer access-2");
-    assert!(tokio::time::timeout(std::time::Duration::from_millis(100), auth_receiver.recv())
-        .await
-        .is_err());
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), auth_receiver.recv())
+            .await
+            .is_err()
+    );
     assert!(tokio::time::timeout(
         std::time::Duration::from_millis(100),
         token_body_receiver.recv()
