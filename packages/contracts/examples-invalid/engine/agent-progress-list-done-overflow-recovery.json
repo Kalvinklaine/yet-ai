@@ -1,0 +1,27 @@
+{
+  "cloudRequired": false,
+  "providerAccess": "direct",
+  "generatedAt": "2026-05-31T10:05:01Z",
+  "snapshots": [
+    {
+      "protocolVersion": "2026-05-29",
+      "runId": "run-T382-done-overflow-list",
+      "cardId": "T382",
+      "startedAt": "2026-05-31T10:00:00Z",
+      "updatedAt": "2026-05-31T10:05:00Z",
+      "completedAt": "2026-05-31T10:05:00Z",
+      "phase": "done",
+      "status": "done",
+      "message": "Agent completed the card successfully.",
+      "elapsedMs": 300000,
+      "ageMs": 0,
+      "stuckReason": "none",
+      "overflowRecovery": {
+        "kind": "context_length_exceeded",
+        "message": "Retry with scoped context and compact summaries.",
+        "retryable": true
+      },
+      "recentEvents": []
+    }
+  ]
+}

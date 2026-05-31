@@ -6,6 +6,23 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["protocolVersion", "runId", "cardId", "startedAt", "updatedAt", "phase", "status", "message", "elapsedMs", "ageMs", "recentEvents"],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "overflowRecovery": true
+        },
+        "required": ["overflowRecovery"]
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "enum": ["failed", "stuck", "stalled"]
+          }
+        }
+      }
+    }
+  ],
   "properties": {
     "protocolVersion": {
       "type": "string",

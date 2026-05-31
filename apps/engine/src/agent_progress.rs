@@ -255,6 +255,7 @@ fn validate_snapshot(snapshot: &AgentProgressSnapshot) -> Result<(), AgentProgre
         )?;
     }
     if let Some(overflow_recovery) = &snapshot.overflow_recovery {
+        validate_enum(&snapshot.status, &["failed", "stuck", "stalled"])?;
         validate_overflow_recovery(overflow_recovery)?;
     }
     for event in &snapshot.recent_events {
