@@ -4134,6 +4134,85 @@ async fn agent_progress_unsafe_local_source_fails_without_secret_or_path_echo() 
     );
 }
 
+async fn assert_agent_progress_rejects_snapshot(snapshot: Value, forbidden: &[&str]) {
+    let paths = test_storage_paths();
+    write_agent_progress_source(
+        &paths,
+        &json!({
+            "cloudRequired": false,
+            "providerAccess": "direct",
+            "snapshots": [snapshot]
+        })
+        .to_string(),
+    );
+
+    let (status, body) = agent_progress_response_for_paths(paths.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_agent_progress_error_is_sanitized(&body, forbidden, &paths);
+}
+
+#[tokio::test]
+async fn agent_progress_rejects_schema_equivalent_unsafe_markers() {
+    let mut snapshot = valid_agent_progress_snapshot(1, 1);
+    snapshot["message"] = json!("api-key=sk-example");
+    assert_agent_progress_rejects_snapshot(snapshot, &["api-key", "sk-example"]).await;
+
+    let mut snapshot = valid_agent_progress_snapshot(1, 1);
+    snapshot["outputTail"] = json!("raw-prompt: summarized request");
+    assert_agent_progress_rejects_snapshot(snapshot, &["raw-prompt", "summarized request"]).await;
+
+    let mut snapshot = valid_agent_progress_snapshot(1, 1);
+    snapshot["currentTool"]["label"] = json!("auth-code exchange");
+    assert_agent_progress_rejects_snapshot(snapshot, &["auth-code", "exchange"]).await;
+
+    let mut snapshot = valid_agent_progress_snapshot(1, 1);
+    snapshot["status"] = json!("failed");
+    snapshot["overflowRecovery"] = json!({
+        "kind": "context_length_exceeded",
+        "message": "provider-body contained unsafe data",
+        "retryable": true
+    });
+    assert_agent_progress_rejects_snapshot(snapshot, &["provider-body", "unsafe data"]).await;
+
+    let mut snapshot = valid_agent_progress_snapshot(1, 1);
+    snapshot["recentEvents"][0]["message"] = json!("file-content follows");
+    assert_agent_progress_rejects_snapshot(snapshot, &["file-content", "follows"]).await;
+}
+
+#[tokio::test]
+async fn agent_progress_rejects_card_id_with_dot() {
+    let mut snapshot = valid_agent_progress_snapshot(1, 1);
+    snapshot["cardId"] = json!("T.386");
+    assert_agent_progress_rejects_snapshot(snapshot, &["T.386", "run-1"]).await;
+}
+
+#[tokio::test]
+async fn agent_progress_accepts_schema_aligned_card_and_generic_run_event_ids() {
+    let paths = test_storage_paths();
+    let mut first = valid_agent_progress_snapshot(1, 1);
+    first["cardId"] = json!("T-386");
+    first["runId"] = json!("run.386");
+    first["recentEvents"][0]["eventId"] = json!("event.386");
+    let mut second = valid_agent_progress_snapshot(2, 1);
+    second["cardId"] = json!("T_386");
+    write_agent_progress_source(
+        &paths,
+        &json!({
+            "cloudRequired": false,
+            "providerAccess": "direct",
+            "snapshots": [first, second]
+        })
+        .to_string(),
+    );
+
+    let (status, body) = agent_progress_response_for_paths(paths).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["snapshots"][0]["cardId"], "T-386");
+    assert_eq!(body["snapshots"][0]["runId"], "run.386");
+    assert_eq!(body["snapshots"][0]["recentEvents"][0]["eventId"], "event.386");
+    assert_eq!(body["snapshots"][1]["cardId"], "T_386");
+}
+
 #[tokio::test]
 async fn agent_progress_rejects_over_cap_snapshots_before_truncation() {
     let paths = test_storage_paths();
