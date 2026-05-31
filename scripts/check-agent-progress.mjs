@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 import { reduceAgentProgress } from "./planner-agent-progress.mjs";
-import { appendProgressEvent, createProgressState, readProgressState, resolveAgentProgressStatePath, snapshotProgressState, writeProgressState } from "./planner-agent-progress-state.mjs";
+import { appendProgressEvent, createProgressListResponse, createProgressState, readProgressState, resolveAgentProgressStatePath, snapshotProgressState, writeProgressState } from "./planner-agent-progress-state.mjs";
 import { formatProgressReport, main as reportMain } from "./planner-agent-progress-report.mjs";
 
 const NOW = "2026-05-29T13:00:00Z";
@@ -594,6 +594,7 @@ async function runAssertions() {
     );
     assert.equal(canonicalAppend.events.length, 1);
     assert.deepEqual(await readProgressState(canonicalPath), canonicalAppend);
+    assert.deepEqual(JSON.parse(await readFile(canonicalPath, "utf8")), createProgressListResponse(canonicalAppend, { now: NOW }));
 
     const concurrentPath = join(tmp, "concurrent-progress.json");
     const concurrentEvents = Array.from({ length: 24 }, (_, index) => event({
@@ -760,6 +761,10 @@ async function runAssertions() {
     assert.equal(successResult.code, 0);
     assert.equal(successResult.stderr, "");
     const wrapperSuccessState = await readProgressState(wrapperSuccessPath);
+    const wrapperSuccessPublished = JSON.parse(await readFile(wrapperSuccessPath, "utf8"));
+    assert.equal(wrapperSuccessPublished.cloudRequired, false);
+    assert.equal(wrapperSuccessPublished.providerAccess, "direct");
+    assert.equal(wrapperSuccessPublished.snapshots.some((snapshot) => snapshot.runId === "run-wrapper-success" && snapshot.status === "done"), true);
     assert.equal(wrapperSuccessState.events.some((nextEvent) => nextEvent.phase === "started"), true);
     assert.equal(wrapperSuccessState.events.some((nextEvent) => nextEvent.phase === "verifying" && nextEvent.heartbeat?.lastHeartbeatAt !== undefined), true);
     assert.equal(wrapperSuccessState.events.some((nextEvent) => nextEvent.phase === "done" && nextEvent.status === "done"), true);
