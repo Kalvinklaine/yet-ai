@@ -1280,8 +1280,17 @@ describe("agent progress panel", () => {
     expect(container?.textContent).toContain("Generated at: 2026-05-29T15:00:00Z");
   });
 
-  it("populated local progress renders freshness and read-only state", async () => {
-    mockRuntimeResponses({ agentProgress: agentProgressResponse([agentProgressSnapshot({ message: "Running local endpoint verification" })]) });
+  it("populated live writer progress renders snapshot and heartbeat freshness as read-only state", async () => {
+    mockRuntimeResponses({
+      agentProgress: agentProgressResponse([agentProgressSnapshot({
+        message: "Running local endpoint verification",
+        ageMs: 2500,
+        lastHeartbeatAt: "2026-05-29T14:00:55Z",
+        heartbeatAgeMs: 1200,
+        lastToolOutputAt: "2026-05-29T14:00:50Z",
+        toolOutputAgeMs: 6400,
+      })]),
+    });
     renderApp();
 
     await flushAsync();
@@ -1296,6 +1305,48 @@ describe("agent progress panel", () => {
     expect(text).toContain("Generated at: 2026-05-29T15:00:00Z");
     expect(text).toContain("Read-only local observability; refresh only re-reads local progress.");
     expect(text).toContain("Running local endpoint verification");
+    expect(text).toContain("Snapshot age: 3 s");
+    expect(text).toContain("Last heartbeat: 2026-05-29T14:00:55Z");
+    expect(text).toContain("Heartbeat age: 1 s");
+    expect(text).toContain("Last tool output: 2026-05-29T14:00:50Z");
+    expect(text).toContain("Tool output age: 6 s");
+    expect(text).not.toContain("Snapshot age: unknown");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Start agent");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Stop agent");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Merge");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Apply");
+  });
+
+  it("malformed live writer freshness falls back safely without raw marker leaks", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const rawSecret = "access_token=" + "h".repeat(64);
+    mockRuntimeResponses({
+      agentProgress: agentProgressResponse([agentProgressSnapshot({
+        lastHeartbeatAt: `provider response: RAW_HEARTBEAT_BODY ${rawSecret}`,
+        heartbeatAgeMs: "fresh",
+        lastToolOutputAt: 12345,
+        toolOutputAgeMs: null,
+      })]),
+    });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Refresh agent progress").click();
+      await Promise.resolve();
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Snapshot age: 1 s");
+    expect(text).toContain("Last heartbeat: [redacted]");
+    expect(text).toContain("Heartbeat age: unknown");
+    expect(text).toContain("Last tool output: unknown");
+    expect(text).toContain("Tool output age: unknown");
+    expect(text).not.toContain("RAW_HEARTBEAT_BODY");
+    expect(text).not.toContain("access_token");
+    expect(text).not.toContain("h".repeat(64));
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("RAW_HEARTBEAT_BODY");
     expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Start agent");
     expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Stop agent");
     expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Merge");
@@ -1339,7 +1390,11 @@ describe("agent progress panel", () => {
     expect(text).toContain("Phase: started");
     expect(text).toContain("Status: running");
     expect(text).toContain("Elapsed: unknown");
+    expect(text).toContain("Snapshot age: unknown");
     expect(text).toContain("Heartbeat age: unknown");
+    expect(text).toContain("Last heartbeat: unknown");
+    expect(text).toContain("Last tool output: unknown");
+    expect(text).toContain("Tool output age: unknown");
     expect(text).toContain("No progress message reported.");
     expect(text).toContain("No recent summaries.");
     expect(text).toContain("[redacted]");
@@ -1602,7 +1657,7 @@ describe("agent progress panel", () => {
     expect(text).toContain("6 more summaries hidden.");
     expect(text).not.toContain("T-BOUND-20 / run-20");
     expect(text).not.toContain("safe recent summary 17");
-    expect(text.length).toBeLessThan(30000);
+    expect(text.length).toBeLessThan(32000);
   });
 
   it("endpoint unavailable or corrupt runtime error is sanitized and non-fatal", async () => {

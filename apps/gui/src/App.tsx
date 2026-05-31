@@ -1862,6 +1862,10 @@ function normalizeAgentProgressSnapshot(value: unknown, index: number): AgentPro
     message: stringOrNull(source?.message) ?? "No progress message reported.",
     elapsedMs: numberOrUnknown(source?.elapsedMs),
     ageMs: numberOrUnknown(source?.ageMs),
+    lastHeartbeatAt: stringOrNull(source?.lastHeartbeatAt) ?? undefined,
+    heartbeatAgeMs: numberOrUndefined(source?.heartbeatAgeMs),
+    lastToolOutputAt: stringOrNull(source?.lastToolOutputAt) ?? undefined,
+    toolOutputAgeMs: numberOrUndefined(source?.toolOutputAgeMs),
     currentTool,
     outputTail: stringOrNull(source?.outputTail) ?? undefined,
     overflowRecovery,
@@ -1973,7 +1977,11 @@ function AgentProgressSnapshotCard({ snapshot }: { snapshot: AgentProgressSnapsh
         <span>Phase: {sanitizeDisplayText(snapshot.phase)}</span>
         <span>Status: {sanitizeDisplayText(snapshot.status)}</span>
         <span>Elapsed: {formatDuration(snapshot.elapsedMs)}</span>
-        <span>Heartbeat age: {formatDuration(snapshot.ageMs)}</span>
+        <span>Snapshot age: {formatDuration(snapshot.ageMs)}</span>
+        <span>Last heartbeat: {formatFreshnessTimestamp(snapshot.lastHeartbeatAt)}</span>
+        <span>Heartbeat age: {formatOptionalDuration(snapshot.heartbeatAgeMs)}</span>
+        <span>Last tool output: {formatFreshnessTimestamp(snapshot.lastToolOutputAt)}</span>
+        <span>Tool output age: {formatOptionalDuration(snapshot.toolOutputAgeMs)}</span>
         {snapshot.completedAt && <span>Completed: {sanitizeDisplayText(snapshot.completedAt)}</span>}
         {snapshot.currentTool && <span>Tool: {sanitizeDisplayText(snapshot.currentTool.kind)} · {sanitizeDisplayText(snapshot.currentTool.label)}{snapshot.currentTool.elapsedMs !== undefined ? ` · ${formatDuration(snapshot.currentTool.elapsedMs)}` : ""}</span>}
         {snapshot.stuckReason && snapshot.stuckReason !== "none" && <span>Stuck reason: {sanitizeDisplayText(snapshot.stuckReason)}</span>}
@@ -2121,6 +2129,14 @@ function formatDuration(ms: number): string {
     return `${Math.max(0, Math.round(ms))} ms`;
   }
   return `${Math.round(ms / 1000)} s`;
+}
+
+function formatOptionalDuration(ms: number | undefined): string {
+  return ms === undefined ? "unknown" : formatDuration(ms);
+}
+
+function formatFreshnessTimestamp(value: string | undefined): string {
+  return value ? sanitizeDisplayText(value) : "unknown";
 }
 
 
