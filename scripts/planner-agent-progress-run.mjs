@@ -118,6 +118,19 @@ function boundedOutputTail(rawOutput) {
   return sanitizeText(rawOutput, MAX_OUTPUT_TAIL_LENGTH);
 }
 
+function exitCodeForSignal(signal) {
+  if (signal === "SIGHUP") {
+    return 129;
+  }
+  if (signal === "SIGINT") {
+    return 130;
+  }
+  if (signal === "SIGTERM") {
+    return 143;
+  }
+  return 1;
+}
+
 async function appendSafe(statePath, event) {
   await appendProgressEvent(statePath, event);
 }
@@ -152,14 +165,28 @@ async function run(argv = process.argv.slice(2), io = { stdout: process.stdout, 
     return 1;
   }
 
-  try {
-    child = spawn(options.command[0], options.command.slice(1), {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: io.env
+  const childFinished = new Promise((resolve) => {
+    try {
+      child = spawn(options.command[0], options.command.slice(1), {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: io.env
+      });
+    } catch (error) {
+      resolve({ type: "error", error });
+      return;
+    }
+
+    child.once("error", (error) => {
+      resolve({ type: "error", error });
     });
-  } catch (error) {
+    child.once("close", (code, signal) => {
+      resolve({ type: "close", code, signal });
+    });
+  });
+
+  if (child === undefined) {
     await writeEvent(makeEvent(options, "failed", "failed", "Wrapped command could not be started.", { tool })).catch(() => {});
-    io.stderr.write(safeError(error.message));
+    io.stderr.write(safeError("Wrapped command could not be started."));
     return 1;
   }
 
@@ -219,51 +246,41 @@ async function run(argv = process.argv.slice(2), io = { stdout: process.stdout, 
   process.once("SIGINT", onSigint);
   process.once("SIGTERM", onSigterm);
 
-  return await new Promise((resolve) => {
-    child.once("error", async (error) => {
-      if (finished) {
-        return;
-      }
-      finished = true;
-      clearInterval(heartbeatTimer);
-      process.off("SIGINT", onSigint);
-      process.off("SIGTERM", onSigterm);
-      await heartbeatWrites;
-      await writeEvent(makeEvent(options, "failed", "failed", "Wrapped command spawn failed.", { tool })).catch(() => {});
-      io.stderr.write(safeError(error.message));
-      resolve(1);
-    });
+  const childResult = await childFinished;
+  if (finished) {
+    return childResult.type === "close" ? childResult.code ?? exitCodeForSignal(childResult.signal) : 1;
+  }
+  finished = true;
+  clearInterval(heartbeatTimer);
+  process.off("SIGINT", onSigint);
+  process.off("SIGTERM", onSigterm);
+  await heartbeatWrites;
 
-    child.once("close", async (code, signal) => {
-      if (finished) {
-        return;
-      }
-      finished = true;
-      clearInterval(heartbeatTimer);
-      process.off("SIGINT", onSigint);
-      process.off("SIGTERM", onSigterm);
-      await heartbeatWrites;
-      const cleanTail = boundedOutputTail(outputTail);
-      const terminal = code === 0 ? "done" : "failed";
-      const message = code === 0 ? "Wrapped command completed." : signal === null ? "Wrapped command failed." : "Wrapped command interrupted.";
-      try {
-        await writeEvent(makeEvent(options, terminal, terminal, message, {
-          tool,
-          heartbeat: {
-            lastHeartbeatAt: nowIso(),
-            ...(lastToolOutputAt === undefined ? {} : { lastToolOutputAt }),
-            attempt: Math.max(1, heartbeatAttempt)
-          },
-          outputTail: cleanTail
-        }));
-      } catch (error) {
-        io.stderr.write(safeError(error.message));
-        resolve(1);
-        return;
-      }
-      resolve(code === 0 ? 0 : code ?? 1);
-    });
-  });
+  if (childResult.type === "error") {
+    await writeEvent(makeEvent(options, "failed", "failed", "Wrapped command spawn failed.", { tool })).catch(() => {});
+    io.stderr.write(safeError("Wrapped command could not be started."));
+    return 1;
+  }
+
+  const { code, signal } = childResult;
+  const cleanTail = boundedOutputTail(outputTail);
+  const terminal = code === 0 ? "done" : "failed";
+  const message = code === 0 ? "Wrapped command completed." : signal === null ? "Wrapped command failed." : "Wrapped command interrupted.";
+  try {
+    await writeEvent(makeEvent(options, terminal, terminal, message, {
+      tool,
+      heartbeat: {
+        lastHeartbeatAt: nowIso(),
+        ...(lastToolOutputAt === undefined ? {} : { lastToolOutputAt }),
+        attempt: Math.max(1, heartbeatAttempt)
+      },
+      outputTail: cleanTail
+    }));
+  } catch (error) {
+    io.stderr.write(safeError(error.message));
+    return 1;
+  }
+  return code === 0 ? 0 : code ?? exitCodeForSignal(signal);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

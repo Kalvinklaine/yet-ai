@@ -823,6 +823,58 @@ async function runAssertions() {
     assertAbsent(wrapperFailSnapshot, ["UNIQUE_FAIL_BODY_DO_NOT_SHOW"]);
     assertNoSensitiveContent(wrapperFailState);
 
+    const wrapperMissingPath = join(tmp, "wrapper-missing.json");
+    const missingCommandResult = await runWrapper([
+      "--card", "T371",
+      "--run", "run-wrapper-missing",
+      "--state", wrapperMissingPath,
+      "--tool-kind", "command",
+      "--tool-label", "missing wrapped command",
+      "--heartbeat-interval-ms", "100",
+      "--",
+      "definitely-not-a-real-command"
+    ]);
+    assert.notEqual(missingCommandResult.code, 0);
+    assert.equal(missingCommandResult.signal, null);
+    assert.equal(missingCommandResult.stdout, "");
+    assert.match(missingCommandResult.stderr, /Wrapped command could not be started/);
+    assert.doesNotMatch(missingCommandResult.stderr, /Unhandled 'error' event/);
+    assert.doesNotMatch(missingCommandResult.stderr, /definitely-not-a-real-command/);
+    assert.equal(missingCommandResult.stderr.length <= 1000, true, "missing command stderr was not bounded");
+    assertNoSensitiveContent(missingCommandResult.stderr);
+    const wrapperMissingState = await readProgressState(wrapperMissingPath);
+    const wrapperMissingSnapshot = snapshotProgressState(wrapperMissingState);
+    assert.equal(wrapperMissingSnapshot.status, "failed");
+    assert.equal(wrapperMissingSnapshot.stuckReason, "explicit_failure");
+    assert.equal(wrapperMissingState.events.at(-1).phase, "failed");
+    assert.equal(wrapperMissingState.events.at(-1).status, "failed");
+    assertNoSensitiveContent(wrapperMissingState);
+
+    if (process.platform !== "win32") {
+      const wrapperSigtermPath = join(tmp, "wrapper-sigterm.json");
+      const sigtermResult = await runWrapper([
+        "--card", "T371",
+        "--run", "run-wrapper-sigterm",
+        "--state", wrapperSigtermPath,
+        "--tool-kind", "command",
+        "--tool-label", "self terminating command",
+        "--heartbeat-interval-ms", "100",
+        "--",
+        process.execPath,
+        "-e",
+        "process.kill(process.pid, 'SIGTERM');"
+      ]);
+      assert.equal(sigtermResult.code, 143);
+      assert.equal(sigtermResult.signal, null);
+      const wrapperSigtermState = await readProgressState(wrapperSigtermPath);
+      const wrapperSigtermSnapshot = snapshotProgressState(wrapperSigtermState);
+      assert.equal(wrapperSigtermSnapshot.status, "failed");
+      assert.equal(wrapperSigtermSnapshot.stuckReason, "explicit_failure");
+      assert.equal(wrapperSigtermState.events.at(-1).phase, "failed");
+      assert.equal(wrapperSigtermState.events.at(-1).status, "failed");
+      assertNoSensitiveContent(wrapperSigtermState);
+    }
+
     const wrapperRacePath = join(tmp, "wrapper-race.json");
     const raceResult = await runWrapper([
       "--card", "T371",
