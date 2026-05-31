@@ -11,6 +11,8 @@ const jetbrainsRoot = path.join(root, "apps", "plugins", "jetbrains");
 const distributionsDir = path.join(jetbrainsRoot, "build", "distributions");
 const rootDistDir = path.join(root, "dist", "plugins", "jetbrains");
 const failures = [];
+const staleToleranceMs = 2000;
+const prepareMessage = "Run `npm run prepare:jetbrains-preview` from the repository root to rebuild generated JetBrains preview artifacts.";
 
 const zipPaths = await findDistributionZips();
 if (zipPaths.length === 0) {
@@ -76,6 +78,7 @@ async function checkRootDistArtifact(zipPath) {
     failures.push(`${relativeZip} must use the stable yet-ai-jetbrains-<version>-dev-preview.zip naming pattern.`);
   }
   await checkChecksum(zipPath);
+  await checkFreshness(zipPath, await collectRootArtifactInputs(), `${relativeZip} is older than JetBrains preview build inputs.`);
   await checkZip(zipPath);
 }
 
@@ -88,14 +91,51 @@ async function checkChecksum(zipPath) {
     failures.push(`${path.relative(root, checksumPath)} must exist next to the root dev-preview ZIP.`);
     return;
   }
-  const expected = checksumText.trim().split(/\s+/)[0];
+  const parts = checksumText.trim().split(/\s+/);
+  const expected = parts[0];
+  const checksumFileName = parts[1];
   if (!expected?.match(/^[a-f0-9]{64}$/i)) {
     failures.push(`${path.relative(root, checksumPath)} must contain a SHA-256 digest.`);
     return;
   }
+  if (checksumFileName !== undefined && checksumFileName !== path.basename(zipPath)) {
+    failures.push(`${path.relative(root, checksumPath)} must reference ${path.basename(zipPath)}.`);
+  }
   const actual = createHash("sha256").update(await readFile(zipPath)).digest("hex");
   if (actual.toLowerCase() !== expected.toLowerCase()) {
     failures.push(`${path.relative(root, checksumPath)} does not match ${path.relative(root, zipPath)}.`);
+  }
+}
+
+async function collectRootArtifactInputs() {
+  const inputs = [
+    path.join(jetbrainsRoot, "build.gradle.kts"),
+    path.join(jetbrainsRoot, "settings.gradle.kts"),
+    path.join(jetbrainsRoot, "src", "main", "resources", "META-INF", "plugin.xml"),
+    path.join(root, "apps", "gui", "dist", "index.html"),
+  ];
+  for (const zipPath of await findDistributionZips()) {
+    inputs.push(zipPath);
+  }
+  await collectFiles(path.join(jetbrainsRoot, "src", "main", "kotlin"), inputs, [".kt", ".java"]);
+  await collectFiles(path.join(jetbrainsRoot, "build", "generated", "resources", "yet-ai-gui"), inputs, [".html", ".js", ".css"]);
+  return inputs;
+}
+
+async function collectFiles(directoryPath, results, extensions) {
+  let entries;
+  try {
+    entries = await readdir(directoryPath, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const entryPath = path.join(directoryPath, entry.name);
+    if (entry.isDirectory()) {
+      await collectFiles(entryPath, results, extensions);
+    } else if (entry.isFile() && extensions.some((extension) => entry.name.endsWith(extension))) {
+      results.push(entryPath);
+    }
   }
 }
 
@@ -130,6 +170,11 @@ async function checkZip(zipPath) {
     failures.push(`${path.relative(root, zipPath)} must contain a plugin JAR under lib/.`);
     return;
   }
+  for (const entry of entries) {
+    if (!isSafeZipEntryPath(entry)) {
+      failures.push(`${path.relative(root, zipPath)} contains unsafe ZIP/JAR entry path ${JSON.stringify(entry)}.`);
+    }
+  }
   const pluginJar = await extractZipEntry(zipPath, pluginJarEntry);
   if (pluginJar === undefined) {
     return;
@@ -139,11 +184,17 @@ async function checkZip(zipPath) {
     if (jarListing === undefined) {
       return;
     }
+    const jarEntries = jarListing.split(/\r?\n/).filter(Boolean);
+    for (const entry of jarEntries) {
+      if (!isSafeZipEntryPath(entry)) {
+        failures.push(`${path.relative(root, zipPath)} plugin JAR contains unsafe ZIP/JAR entry path ${JSON.stringify(entry)}.`);
+      }
+    }
     requireZipEntry(jarListing, "META-INF/plugin.xml", `${path.relative(root, zipPath)} plugin JAR must contain META-INF/plugin.xml.`);
     requireZipEntry(jarListing, "yet-ai-gui/index.html", `${path.relative(root, zipPath)} plugin JAR must contain packaged GUI resources with yet-ai-gui/index.html. Run npm run prepare:jetbrains-preview after building GUI assets.`);
     const indexHtml = await extractZipEntryText(pluginJar, "yet-ai-gui/index.html", `${path.relative(root, zipPath)} plugin JAR must allow reading yet-ai-gui/index.html.`);
     if (indexHtml !== undefined) {
-      requireReferencedGuiScripts(jarListing, indexHtml, zipPath);
+      requireReferencedGuiAssets(jarEntries, indexHtml, zipPath);
     }
   } finally {
     await rm(path.dirname(pluginJar), { recursive: true, force: true });
@@ -216,7 +267,11 @@ function isSafeZipEntryPath(entry) {
   if (path.posix.isAbsolute(entry) || path.win32.isAbsolute(entry) || /^[A-Za-z]:/.test(entry)) {
     return false;
   }
-  const segments = entry.split(/[\\/]/);
+  const normalized = entry.replace(/\\/g, "/").replace(/\/+$/g, "");
+  if (normalized.length === 0) {
+    return false;
+  }
+  const segments = normalized.split("/");
   return segments.every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
@@ -238,22 +293,55 @@ async function resolveExtractedEntryPath(tempDir, entry) {
   return realExtractedPath;
 }
 
-function requireReferencedGuiScripts(jarListing, indexHtml, zipPath) {
-  const scriptPaths = [...indexHtml.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi)]
-    .map((match) => match[1])
-    .filter((src) => src.endsWith(".js") && !URL.canParse(src))
-    .map((src) => src.replace(/^\.\//, "").replace(/^\//, ""));
-  if (scriptPaths.length === 0) {
-    failures.push(`${path.relative(root, zipPath)} packaged GUI index.html must reference at least one JavaScript asset.`);
-    return;
+function requireReferencedGuiAssets(jarEntries, indexHtml, zipPath) {
+  const references = collectLocalAssetReferences(indexHtml);
+  const assetReferences = [...references].filter((reference) => /\.(?:js|css)$/i.test(reference));
+  if (assetReferences.length === 0) {
+    failures.push(`${path.relative(root, zipPath)} packaged GUI index.html must reference at least one JavaScript or CSS asset.`);
   }
-  const entries = jarListing.split(/\r?\n/);
-  for (const scriptPath of scriptPaths) {
-    const expected = `yet-ai-gui/${scriptPath}`;
-    if (!entries.some((entry) => entry.endsWith(expected))) {
-      failures.push(`${path.relative(root, zipPath)} plugin JAR must contain packaged GUI script asset ${expected} referenced by yet-ai-gui/index.html.`);
+  for (const reference of references) {
+    if (!isSafeZipEntryPath(reference)) {
+      failures.push(`${path.relative(root, zipPath)} packaged GUI index.html references unsafe local asset ${JSON.stringify(reference)}.`);
+      continue;
+    }
+    const expected = `yet-ai-gui/${reference}`;
+    if (!jarEntries.some((entry) => entry.endsWith(expected))) {
+      failures.push(`${path.relative(root, zipPath)} plugin JAR must contain packaged GUI asset ${expected} referenced by yet-ai-gui/index.html.`);
     }
   }
+}
+
+function collectLocalAssetReferences(html) {
+  const references = new Set();
+  const assetPattern = /\b(?:src|href)=("|')([^"']+)\1/g;
+  for (const match of html.matchAll(assetPattern)) {
+    const value = match[2];
+    const localPath = toLocalAssetPath(value);
+    if (localPath !== undefined) {
+      references.add(localPath);
+    }
+  }
+  return references;
+}
+
+function toLocalAssetPath(value) {
+  if (
+    value.length === 0 ||
+    value.startsWith("#") ||
+    value.startsWith("data:") ||
+    value.startsWith("http://") ||
+    value.startsWith("https://") ||
+    value.startsWith("vscode-resource:") ||
+    value.startsWith("vscode-webview-resource:")
+  ) {
+    return undefined;
+  }
+  const withoutQuery = value.split(/[?#]/, 1)[0];
+  const normalized = withoutQuery.replace(/^\.\//, "").replace(/^\//, "");
+  if (normalized.length === 0 || normalized.includes("..")) {
+    return undefined;
+  }
+  return normalized;
 }
 
 function listZip(zipPath) {
@@ -275,6 +363,33 @@ function listZip(zipPath) {
   }
   failures.push(`Could not inspect ${path.relative(root, zipPath)}. Install zipinfo/unzip or ensure jar is available with a JDK.`);
   return undefined;
+}
+
+async function checkFreshness(generatedPath, sourcePaths, staleMessage) {
+  let generatedStat;
+  try {
+    generatedStat = await stat(generatedPath);
+  } catch {
+    return;
+  }
+  if (!generatedStat.isFile()) {
+    return;
+  }
+
+  for (const sourcePath of sourcePaths) {
+    let sourceStat;
+    try {
+      sourceStat = await stat(sourcePath);
+    } catch {
+      continue;
+    }
+    if (!sourceStat.isFile()) {
+      continue;
+    }
+    if (generatedStat.mtimeMs + staleToleranceMs < sourceStat.mtimeMs) {
+      failures.push(`${staleMessage} ${prepareMessage} Generated artifact: ${path.relative(root, generatedPath)}; newer input: ${path.relative(root, sourcePath)}.`);
+    }
+  }
 }
 
 function requireZipEntry(listing, needle, message) {
