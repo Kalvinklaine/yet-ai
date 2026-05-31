@@ -425,11 +425,29 @@ pre,
 }
 
 .agent-progress-empty,
+.agent-progress-status,
 .agent-progress-run {
   border: 1px solid #e2e7f0;
   border-radius: 16px;
   background: #f8faff;
   padding: 14px;
+}
+
+.agent-progress-status {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-progress-status.ready,
+.agent-progress-status.empty {
+  border-color: #bce8cc;
+  background: #f4fbf7;
+}
+
+.agent-progress-status.error {
+  border-color: #ffc9c9;
+  background: #fff0f0;
+  color: #a11212;
 }
 
 .agent-progress-list {
