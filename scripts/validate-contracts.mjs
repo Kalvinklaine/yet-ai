@@ -339,7 +339,15 @@ const invalidMappings = [
     "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
   ],
   [
+    "packages/contracts/examples-invalid/engine/agent-progress-snapshot-done-failed-overflow-recovery.json",
+    "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
+  ],
+  [
     "packages/contracts/examples-invalid/engine/agent-progress-list-done-overflow-recovery.json",
+    "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-list-done-failed-overflow-recovery.json",
     "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
   ],
   [
