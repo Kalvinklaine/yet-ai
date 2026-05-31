@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { reduceAgentProgress } from "./planner-agent-progress.mjs";
-import { appendProgressEvent, createProgressState, readProgressState, snapshotProgressState, writeProgressState } from "./planner-agent-progress-state.mjs";
+import { appendProgressEvent, createProgressState, readProgressState, resolveAgentProgressStatePath, snapshotProgressState, writeProgressState } from "./planner-agent-progress-state.mjs";
 import { formatProgressReport, main as reportMain } from "./planner-agent-progress-report.mjs";
 
 const NOW = "2026-05-29T13:00:00Z";
@@ -556,6 +556,59 @@ async function runAssertions() {
 
   const tmp = await mkdtemp(join(tmpdir(), "yet-agent-progress-"));
   try {
+    const canonicalCacheRoot = join(tmp, "cache-root");
+    const canonicalPath = join(canonicalCacheRoot, "yet-ai", "agent-progress", "progress.json");
+    const explicitPath = join(tmp, "explicit-progress.json");
+    const envPath = join(tmp, "env-progress.json");
+    assert.equal(resolveAgentProgressStatePath({ state: explicitPath, cacheRoot: canonicalCacheRoot, env: { YET_AI_AGENT_PROGRESS_STATE: envPath } }), explicitPath);
+    assert.equal(resolveAgentProgressStatePath({ cacheRoot: canonicalCacheRoot, env: { YET_AI_AGENT_PROGRESS_STATE: envPath } }), envPath);
+    assert.equal(resolveAgentProgressStatePath({ cacheRoot: canonicalCacheRoot, env: {} }), canonicalPath);
+
+    const canonicalAppend = await appendProgressEvent(
+      canonicalPath,
+      event({
+        eventId: "evt-canonical-001",
+        timestamp: "2026-05-29T12:59:00Z",
+        phase: "started",
+        status: "running",
+        message: "Canonical path append started."
+      }),
+      { now: NOW }
+    );
+    assert.equal(canonicalAppend.events.length, 1);
+    assert.deepEqual(await readProgressState(canonicalPath), canonicalAppend);
+
+    const concurrentPath = join(tmp, "concurrent-progress.json");
+    const concurrentEvents = Array.from({ length: 24 }, (_, index) => event({
+      eventId: `evt-concurrent-${String(index).padStart(2, "0")}`,
+      timestamp: "2026-05-29T12:59:00Z",
+      phase: "running_command",
+      status: "running",
+      message: `Concurrent append ${index}.`
+    }));
+    await Promise.all(concurrentEvents.map((nextEvent) => appendProgressEvent(concurrentPath, nextEvent, { now: NOW, lockTimeoutMs: 5000 })));
+    const concurrentState = await readProgressState(concurrentPath);
+    assert.deepEqual(new Set(concurrentState.events.map((nextEvent) => nextEvent.eventId)), new Set(concurrentEvents.map((nextEvent) => nextEvent.eventId)));
+    assert.equal(concurrentState.events.length, concurrentEvents.length);
+    assertNoSensitiveContent(concurrentState);
+
+    const lockedSecretPath = join(tmp, "sk-live-secret-token-progress.json");
+    await writeFile(`${lockedSecretPath}.lock`, "api_key=sk-live-secret-token /private/tmp/secret");
+    await assert.rejects(
+      appendProgressEvent(
+        lockedSecretPath,
+        event({ eventId: "evt-lock-timeout", message: "Lock timeout event." }),
+        { now: NOW, lockTimeoutMs: 1 }
+      ),
+      (error) => {
+        assert.equal(error.name, "AgentProgressStateError");
+        assert.match(error.message, /lock timed out/);
+        assertNoSensitiveContent(error.message);
+        assertAbsent(error.message, [lockedSecretPath, "sk-live-secret-token", "/private/tmp/secret"]);
+        return true;
+      }
+    );
+
     const statePath = join(tmp, "progress-state.json");
     const initialState = createProgressState(
       [
