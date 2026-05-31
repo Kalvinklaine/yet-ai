@@ -67,14 +67,8 @@ try {
     assertNoRawMarkers(error.message, "page error");
     failures.push(`Page JavaScript error: ${redactSecrets(error.message)}`);
   });
-  page.on("request", (request) => {
-    const url = request.url();
-    if (!isLoopbackUrl(url)) {
-      failures.push(`Non-loopback request attempted: ${redactUrl(url)}`);
-    }
-  });
   page.on("requestfailed", (request) => {
-    if (isJsOrCssAssetRequest(request.url(), request.resourceType())) {
+    if (isAllowedNetworkUrl(request.url(), guiBaseUrl) && isJsOrCssAssetRequest(request.url(), request.resourceType())) {
       failures.push(`Failed JS/CSS asset request: ${request.method()} ${redactUrl(request.url())} (${request.failure()?.errorText ?? "unknown failure"})`);
     }
   });
@@ -85,16 +79,28 @@ try {
     }
   });
 
-  await page.route(`${runtimeOrigin}/**`, async (route) => {
+  await page.route("**/*", async (route) => {
     const request = route.request();
-    const response = mockRuntimeResponse(request.url(), request.method());
-    if (!response) {
-      failures.push(`Unexpected runtime request: ${request.method()} ${redactUrl(request.url())}`);
-      await route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "unexpected local mock endpoint" }) });
+    const url = request.url();
+    if (isRuntimeOriginUrl(url)) {
+      const response = mockRuntimeResponse(url, request.method());
+      if (!response) {
+        failures.push(`Unexpected runtime request: ${request.method()} ${redactUrl(url)}`);
+        await route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "unexpected local mock endpoint" }) });
+        return;
+      }
+      await route.fulfill({ status: response.status, contentType: "application/json", body: JSON.stringify(response.body) });
       return;
     }
-    await route.fulfill({ status: response.status, contentType: "application/json", body: JSON.stringify(response.body) });
+    if (isStaticServerAsset(url, guiBaseUrl)) {
+      await route.continue();
+      return;
+    }
+    failures.push(`Unexpected network request blocked: ${request.method()} ${redactUrl(url)}`);
+    await route.abort("blockedbyclient");
   });
+
+  await assertUnexpectedNetworkGuard(page);
 
   await page.goto(`${guiBaseUrl}/index.html`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
@@ -347,6 +353,23 @@ async function assertBoundedNoisyOutput(page, marker) {
   }
 }
 
+async function assertUnexpectedNetworkGuard(page) {
+  const before = failures.length;
+  const blocked = await page.evaluate(async () => {
+    try {
+      await fetch("http://127.0.0.1:11434/gui-agent-progress-smoke-probe", { mode: "no-cors" });
+      return false;
+    } catch {
+      return true;
+    }
+  });
+  const recorded = failures.slice(before).some((failure) => failure.includes("http://127.0.0.1:11434/gui-agent-progress-smoke-probe"));
+  failures.splice(before);
+  if (!blocked || !recorded) {
+    throw new Error("Unexpected loopback provider request probe was not blocked and recorded by the smoke network guard.");
+  }
+}
+
 function mockRuntimeResponse(value, method) {
   const url = new URL(value);
   if (method !== "GET") {
@@ -487,17 +510,20 @@ function contentType(filePath) {
   return "application/octet-stream";
 }
 
-function isLoopbackUrl(value) {
+function isAllowedNetworkUrl(value, guiBaseUrl) {
+  return isStaticServerAsset(value, guiBaseUrl) || isRuntimeOriginUrl(value);
+}
+
+function isRuntimeOriginUrl(value) {
   try {
-    const url = new URL(value);
-    return (url.protocol === "http:" || url.protocol === "ws:") && ["127.0.0.1", "localhost", "[::1]", "::1"].includes(url.hostname);
+    return new URL(value).origin === runtimeOrigin;
   } catch {
     return false;
   }
 }
 
 function isJsOrCssAssetRequest(url, resourceType) {
-  return isLoopbackUrl(url) && (resourceType === "script" || resourceType === "stylesheet" || isJsOrCssAssetUrl(url));
+  return resourceType === "script" || resourceType === "stylesheet" || isJsOrCssAssetUrl(url);
 }
 
 function isJsOrCssAssetUrl(value) {
