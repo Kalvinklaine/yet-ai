@@ -91,22 +91,27 @@ function platformCommand(command) {
   }[command] ?? command;
 }
 
+const pluginVersion = await readGradleProjectVersion();
+const gradleProjectName = await readGradleProjectName();
+const expectedGradleZipName = `${gradleProjectName}-${pluginVersion}.zip`;
+
 run("npm", ["run", "prepare:ide-engine", "--", ...args]);
 run("npm", ["run", "build"], { cwd: path.join(root, "apps", "gui") });
 await rm(path.join(jetbrainsRoot, "build", "generated", "resources", "yet-ai-gui"), { recursive: true, force: true });
+await clearDistributionZips();
 run("gradle", ["buildPlugin", "--console=plain"], { cwd: jetbrainsRoot, diagnoseGradleFailure: true });
 
-const zips = await findDistributionZips();
-if (zips.length === 0) {
-  console.error(`JetBrains Gradle build finished, but no installable ZIP was found under ${distributionsDir}.`);
+const zips = await findCurrentDistributionZips(expectedGradleZipName);
+if (zips.length !== 1) {
+  const found = zips.length === 0 ? "none" : zips.map((zip) => path.relative(root, zip)).join(", ");
+  console.error(`JetBrains Gradle build must produce exactly one current installable ZIP named ${expectedGradleZipName} under ${distributionsDir}; found ${found}.`);
   process.exit(1);
 }
 
 const profile = new Set(args).has("--release") ? "release" : "debug";
 const binaryName = process.platform === "win32" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
 const engineBinaryPath = path.join(root, "target", profile, binaryName);
-const selectedZip = zips[zips.length - 1];
-const pluginVersion = await readGradleProjectVersion();
+const selectedZip = zips[0];
 const distZipName = `${identity.product.id}-jetbrains-${pluginVersion}-dev-preview.zip`;
 const distZipPath = path.join(rootDistDir, distZipName);
 const distChecksumPath = `${distZipPath}.sha256`;
@@ -150,6 +155,26 @@ async function readGradleProjectVersion() {
     process.exit(1);
   }
   return match[1];
+}
+
+async function readGradleProjectName() {
+  const settingsFile = await readFile(path.join(jetbrainsRoot, "settings.gradle.kts"), "utf8");
+  const match = settingsFile.match(/^rootProject\.name\s*=\s*"([^"]+)"/m);
+  if (match === null) {
+    console.error("Could not read JetBrains plugin project name from apps/plugins/jetbrains/settings.gradle.kts.");
+    process.exit(1);
+  }
+  return match[1];
+}
+
+async function clearDistributionZips() {
+  const zips = await findDistributionZips();
+  await Promise.all(zips.map((zipPath) => rm(zipPath, { force: true })));
+}
+
+async function findCurrentDistributionZips(expectedZipName) {
+  const zips = await findDistributionZips();
+  return zips.filter((zipPath) => path.basename(zipPath) === expectedZipName);
 }
 
 async function findDistributionZips() {

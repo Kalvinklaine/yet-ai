@@ -11,6 +11,8 @@ const jetbrainsRoot = path.join(root, "apps", "plugins", "jetbrains");
 const distributionsDir = path.join(jetbrainsRoot, "build", "distributions");
 const rootDistDir = path.join(root, "dist", "plugins", "jetbrains");
 const failures = [];
+const identity = JSON.parse(await readFile(path.join(root, "product", "identity.json"), "utf8"));
+const expectedPluginVersion = await readGradleProjectVersion();
 const staleToleranceMs = 2000;
 const prepareMessage = "Run `npm run prepare:jetbrains-preview` from the repository root to rebuild generated JetBrains preview artifacts.";
 
@@ -49,6 +51,16 @@ if (rootDistZipPath !== undefined) {
 }
 console.log("Verified installable ZIP structure and manual install docs without launching an IDE, using provider credentials, calling OpenAI, or contacting hosted Yet AI services.");
 
+async function readGradleProjectVersion() {
+  const buildFile = await readFile(path.join(jetbrainsRoot, "build.gradle.kts"), "utf8");
+  const match = buildFile.match(/^version\s*=\s*"([^"]+)"/m);
+  if (match === null) {
+    failures.push("Could not read JetBrains plugin version from apps/plugins/jetbrains/build.gradle.kts.");
+    return "";
+  }
+  return match[1];
+}
+
 async function findRootDistZip() {
   try {
     const entries = await readdir(rootDistDir);
@@ -74,8 +86,9 @@ async function findRootDistZip() {
 
 async function checkRootDistArtifact(zipPath) {
   const relativeZip = path.relative(root, zipPath);
-  if (!path.basename(zipPath).match(/^yet-ai-jetbrains-.+-dev-preview\.zip$/)) {
-    failures.push(`${relativeZip} must use the stable yet-ai-jetbrains-<version>-dev-preview.zip naming pattern.`);
+  const expectedName = `${identity.product.id}-jetbrains-${expectedPluginVersion}-dev-preview.zip`;
+  if (path.basename(zipPath) !== expectedName) {
+    failures.push(`${relativeZip} must use the stable ${expectedName} naming pattern for the current JetBrains plugin version.`);
   }
   await checkChecksum(zipPath);
   await checkFreshness(zipPath, await collectRootArtifactInputs(), `${relativeZip} is older than JetBrains preview build inputs.`);
@@ -191,6 +204,10 @@ async function checkZip(zipPath) {
       }
     }
     requireZipEntry(jarListing, "META-INF/plugin.xml", `${path.relative(root, zipPath)} plugin JAR must contain META-INF/plugin.xml.`);
+    const pluginXml = await extractZipEntryText(pluginJar, "META-INF/plugin.xml", `${path.relative(root, zipPath)} plugin JAR must allow reading META-INF/plugin.xml.`);
+    if (pluginXml !== undefined) {
+      validatePluginMetadata(pluginXml, zipPath);
+    }
     requireZipEntry(jarListing, "yet-ai-gui/index.html", `${path.relative(root, zipPath)} plugin JAR must contain packaged GUI resources with yet-ai-gui/index.html. Run npm run prepare:jetbrains-preview after building GUI assets.`);
     const indexHtml = await extractZipEntryText(pluginJar, "yet-ai-gui/index.html", `${path.relative(root, zipPath)} plugin JAR must allow reading yet-ai-gui/index.html.`);
     if (indexHtml !== undefined) {
@@ -291,6 +308,27 @@ async function resolveExtractedEntryPath(tempDir, entry) {
     return undefined;
   }
   return realExtractedPath;
+}
+
+function validatePluginMetadata(pluginXml, zipPath) {
+  const relativeZip = path.relative(root, zipPath);
+  const pluginId = readPluginXmlTag(pluginXml, "id");
+  const pluginName = readPluginXmlTag(pluginXml, "name");
+  const pluginVersion = readPluginXmlTag(pluginXml, "version");
+  if (pluginId !== identity.jetbrains.pluginId) {
+    failures.push(`${relativeZip} packaged META-INF/plugin.xml plugin id must be ${identity.jetbrains.pluginId}.`);
+  }
+  if (pluginName !== identity.jetbrains.pluginName) {
+    failures.push(`${relativeZip} packaged META-INF/plugin.xml plugin name must be ${identity.jetbrains.pluginName}.`);
+  }
+  if (pluginVersion !== expectedPluginVersion) {
+    failures.push(`${relativeZip} packaged META-INF/plugin.xml version must be ${expectedPluginVersion}.`);
+  }
+}
+
+function readPluginXmlTag(pluginXml, tagName) {
+  const match = pluginXml.match(new RegExp(`<${tagName}>([^<]+)</${tagName}>`));
+  return match?.[1]?.trim();
 }
 
 function requireReferencedGuiAssets(jarEntries, indexHtml, zipPath) {
