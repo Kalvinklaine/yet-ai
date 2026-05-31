@@ -363,15 +363,21 @@ async function launchOrReuseEngine(runtimeUrl: string, binaryPath: string, outpu
 
   const token = crypto.randomBytes(32).toString("base64url");
   const port = parseRuntimePort(runtimeUrl);
-  const child = childProcess.spawn(binaryPath, [], {
-    env: {
-      ...process.env,
-      YET_AI_AUTH_TOKEN: token,
-      YET_AI_HTTP_PORT: port.toString(),
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-  });
+  let child: childProcess.ChildProcess;
+  try {
+    child = childProcess.spawn(binaryPath, [], {
+      env: {
+        ...process.env,
+        YET_AI_AUTH_TOKEN: token,
+        YET_AI_HTTP_PORT: port.toString(),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? redactRuntimeDiagnosticText(error.message, token) : "spawn failed";
+    throw new Error(`Could not start Yet AI local runtime from ${path.basename(binaryPath)}: ${message}`);
+  }
 
   const engine: LaunchedEngine = {
     process: child,
@@ -388,7 +394,7 @@ async function launchOrReuseEngine(runtimeUrl: string, binaryPath: string, outpu
     }
   });
   child.on("error", (error) => {
-    output.appendLine(`Yet AI local runtime process error: ${redactRuntimeDiagnosticText(error.message, token)}`);
+    output.appendLine(`Yet AI local runtime process error from ${path.basename(binaryPath)}: ${redactRuntimeDiagnosticText(error.message, token)}`);
   });
   return {
     runtimeUrl,
@@ -489,6 +495,8 @@ export function redactRuntimeDiagnosticText(value: string, token?: string): stri
 
 const secretDiagnosticKeyPattern = String.raw`(?:access[_-]?token|refresh[_-]?token|session[_-]?token|session|auth[_-]?token|api[_-]?key|apikey|client[_-]?secret|authorization|proxy[_-]?authorization|bearer|cookie|set[_-]?cookie|setCookie|secret|token|oauth[_-]?code|code[_-]?verifier|pkce[_-]?verifier|github[_-]?token|oauth[_-]?refresh[_-]?token|provider[_-]?client[_-]?secret|openai[_-]?api[_-]?key|anthropic[_-]?api[_-]?key|yet[_-]?ai[_-]?auth[_-]?token)`;
 
+const privatePathPattern = String.raw`(?:[A-Za-z]:\\[^\r\n,;)}\]\s]+(?:\\[^\r\n,;)}\]\s]+)+|/(?:Users|home|var/folders|tmp|private|Volumes)/[^\r\n,;)}\]\s]+(?:/[^\r\n,;)}\]\s]+)*)`;
+
 const runtimeRedactionPatterns: Array<[RegExp, string]> = [
   [/\b(?:Authorization|Proxy-Authorization|Cookie|Set-Cookie)\s*:\s*[^\r\n]*/gi, "[redacted]"],
   [new RegExp(String.raw`\b(?:cookie|set[_-]?cookie|setCookie)\b\s*[:=]\s*[^\r\n]*`, "gi"), "[redacted]"],
@@ -502,6 +510,7 @@ const runtimeRedactionPatterns: Array<[RegExp, string]> = [
   [/\b(?:sk|sess|token)-[A-Za-z0-9_-]{8,}\b/g, "[redacted]"],
   [/\b[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/g, "[redacted]"],
   [/\b[A-Za-z0-9+/=_-]{24,}\b/g, "[redacted]"],
+  [new RegExp(privatePathPattern, "g"), "[redacted path]"],
 ];
 
 export function safeRuntimeUrl(runtimeUrl: string): string {

@@ -395,7 +395,7 @@ private fun redactSensitiveText(value: String, exactToken: String?): String {
         .replace(Regex("(?i)\\bBearer\\s+[^\\s\"']+"), "Bearer [redacted]")
         .replace(Regex("\\b[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}\\b"), "[redacted]")
         .replace(Regex("\\bsk-[A-Za-z0-9_-]{8,}\\b"), "[redacted]")
-        .replace(Regex("(?i)([?&;])([A-Za-z0-9_-]*(?:access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|token|api[_-]?key|authorization|bearer|cookie|client[_-]?secret|code[_-]?verifier|pkce[_-]?verifier|verifier)[A-Za-z0-9_-]*)=([^\\s&#;]+)")) { match ->
+        .replace(Regex("(?i)([?&;#])([A-Za-z0-9_-]*(?:access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|token|api[_-]?key|authorization|bearer|cookie|client[_-]?secret|oauth[_-]?code|code[_-]?verifier|pkce[_-]?verifier|verifier)[A-Za-z0-9_-]*)=([^\\s&#;]+)")) { match ->
             match.groupValues[1] + match.groupValues[2] + "=[redacted]"
         }
         .replace(Regex("(?i)(?:^|[\\s,{(])(?:[A-Za-z0-9_-]*(?:access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|token|api[_-]?key|authorization|bearer|cookie|client[_-]?secret|code[_-]?verifier|pkce[_-]?verifier|verifier)[A-Za-z0-9_-]*)\\s*[:=]\\s*[^\\s,)}\\]]+"), "[redacted]")
@@ -406,6 +406,7 @@ private fun redactSensitiveText(value: String, exactToken: String?): String {
             match.groupValues[1] + "[redacted]"
         }
         .replace(Regex("(?i)(?:[A-Za-z]:)?(?:[/\\\\][^\\r\\n,;)}\\]]*)*(?:[/\\\\](?:\\.codex[/\\\\])?auth\\.json)"), "[redacted]")
+        .replace(Regex("(?:[A-Za-z]:\\\\[^\\r\\n,;)}\\]\\s]+(?:\\\\[^\\r\\n,;)}\\]\\s]+)+|/(?:Users|home|var/folders|tmp|private|Volumes)/[^\\r\\n,;)}\\]\\s]+(?:/[^\\r\\n,;)}\\]\\s]+)*)"), "[redacted path]")
         .replace(Regex("\\b[A-Za-z0-9_-]{48,}\\b"), "[redacted]")
     return if (redacted.length > 500) redacted.take(500) + "…" else redacted
 }
