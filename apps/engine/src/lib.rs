@@ -1,3 +1,4 @@
+pub mod agent_progress;
 pub mod chat;
 pub mod chat_history;
 pub mod http;

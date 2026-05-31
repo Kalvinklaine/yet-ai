@@ -9,6 +9,7 @@ use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::agent_progress;
 use crate::chat::ChatContext;
 use crate::chat_history;
 use crate::provider_auth;
@@ -326,20 +327,15 @@ async fn models_list(_auth: Authenticated, State(state): State<AppState>) -> Res
     }
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentProgressListResponse {
-    pub cloud_required: bool,
-    pub provider_access: String,
-    pub snapshots: Vec<serde_json::Value>,
-}
-
-async fn agent_progress_list(_auth: Authenticated) -> Json<AgentProgressListResponse> {
-    Json(AgentProgressListResponse {
-        cloud_required: false,
-        provider_access: "direct".to_string(),
-        snapshots: Vec::new(),
-    })
+async fn agent_progress_list(_auth: Authenticated, State(state): State<AppState>) -> Response {
+    match agent_progress::load_progress(&state.storage_paths.cache_dir).await {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 async fn chats_list(_auth: Authenticated, State(state): State<AppState>) -> Response {
