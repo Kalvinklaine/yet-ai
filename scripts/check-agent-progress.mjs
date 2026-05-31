@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 import { reduceAgentProgress } from "./planner-agent-progress.mjs";
-import { appendProgressEvent, createProgressListResponse, createProgressState, readProgressState, resolveAgentProgressStatePath, snapshotProgressState, writeProgressState } from "./planner-agent-progress-state.mjs";
+import { appendProgressEvent, createProgressListResponse, createProgressState, readProgressState, resolveAgentProgressCacheRoot, resolveAgentProgressStatePath, snapshotProgressState, writeProgressState } from "./planner-agent-progress-state.mjs";
 import { formatProgressReport, main as reportMain } from "./planner-agent-progress-report.mjs";
 
 const NOW = "2026-05-29T13:00:00Z";
@@ -580,6 +580,18 @@ async function runAssertions() {
     assert.equal(resolveAgentProgressStatePath({ state: explicitPath, cacheRoot: canonicalCacheRoot, env: { YET_AI_AGENT_PROGRESS_STATE: envPath } }), explicitPath);
     assert.equal(resolveAgentProgressStatePath({ cacheRoot: canonicalCacheRoot, env: { YET_AI_AGENT_PROGRESS_STATE: envPath } }), envPath);
     assert.equal(resolveAgentProgressStatePath({ cacheRoot: canonicalCacheRoot, env: {} }), canonicalPath);
+    const portableHome = join(tmp, "portable-home");
+    const portableEnv = {
+      XDG_CACHE_HOME: join(portableHome, ".cache"),
+      LOCALAPPDATA: join(portableHome, "AppData", "Local"),
+      APPDATA: join(portableHome, "AppData", "Roaming")
+    };
+    assert.equal(resolveAgentProgressCacheRoot({ env: portableEnv, home: portableHome, platform: "darwin" }), join(portableHome, "Library", "Caches"));
+    assert.equal(resolveAgentProgressCacheRoot({ env: portableEnv, home: portableHome, platform: "linux" }), join(portableHome, ".cache"));
+    assert.equal(resolveAgentProgressCacheRoot({ env: portableEnv, home: portableHome, platform: "win32" }), join(portableHome, "AppData", "Local"));
+    assert.equal(resolveAgentProgressStatePath({ env: portableEnv, home: portableHome, platform: "darwin" }), join(portableHome, "Library", "Caches", "yet-ai", "agent-progress", "progress.json"));
+    assert.equal(resolveAgentProgressStatePath({ env: portableEnv, home: portableHome, platform: "linux" }), join(portableHome, ".cache", "yet-ai", "agent-progress", "progress.json"));
+    assert.equal(resolveAgentProgressStatePath({ env: portableEnv, home: portableHome, platform: "win32" }), join(portableHome, "AppData", "Local", "yet-ai", "agent-progress", "progress.json"));
 
     const canonicalAppend = await appendProgressEvent(
       canonicalPath,
