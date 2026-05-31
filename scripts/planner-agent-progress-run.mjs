@@ -139,6 +139,7 @@ async function run(argv = process.argv.slice(2), io = { stdout: process.stdout, 
   let heartbeatTimer;
   let heartbeatAttempt = 0;
   let finished = false;
+  let heartbeatWrites = Promise.resolve();
   let lastToolOutputAt;
 
   const writeEvent = async (event) => appendSafe(statePath, event);
@@ -163,29 +164,41 @@ async function run(argv = process.argv.slice(2), io = { stdout: process.stdout, 
   }
 
   child.stdout?.on("data", (chunk) => {
+    io.stdout.write(chunk);
     outputTail = appendChunk(outputTail, chunk);
     lastToolOutputAt = nowIso();
   });
   child.stderr?.on("data", (chunk) => {
+    io.stderr.write(chunk);
     outputTail = appendChunk(outputTail, chunk);
     lastToolOutputAt = nowIso();
   });
 
-  const writeHeartbeat = async () => {
-    heartbeatAttempt += 1;
-    const heartbeat = { lastHeartbeatAt: nowIso(), attempt: heartbeatAttempt };
-    if (lastToolOutputAt !== undefined) {
-      heartbeat.lastToolOutputAt = lastToolOutputAt;
+  const queueHeartbeat = () => {
+    if (finished) {
+      return heartbeatWrites;
     }
-    await writeEvent(makeEvent(options, options.phase, "running", "Wrapped command heartbeat.", {
-      tool,
-      heartbeat,
-      outputTail: boundedOutputTail(outputTail)
-    })).catch(() => {});
+    heartbeatWrites = heartbeatWrites.then(async () => {
+      if (finished) {
+        return;
+      }
+      heartbeatAttempt += 1;
+      const heartbeat = { lastHeartbeatAt: nowIso(), attempt: heartbeatAttempt };
+      if (lastToolOutputAt !== undefined) {
+        heartbeat.lastToolOutputAt = lastToolOutputAt;
+      }
+      await writeEvent(makeEvent(options, options.phase, "running", "Wrapped command heartbeat.", {
+        tool,
+        heartbeat,
+        outputTail: boundedOutputTail(outputTail)
+      })).catch(() => {});
+    });
+    heartbeatWrites = heartbeatWrites.catch(() => {});
+    return heartbeatWrites;
   };
 
-  heartbeatTimer = setInterval(writeHeartbeat, options.heartbeatIntervalMs);
-  await writeHeartbeat();
+  heartbeatTimer = setInterval(queueHeartbeat, options.heartbeatIntervalMs);
+  await queueHeartbeat();
 
   const interrupt = async (signal) => {
     if (finished) {
@@ -194,6 +207,7 @@ async function run(argv = process.argv.slice(2), io = { stdout: process.stdout, 
     finished = true;
     clearInterval(heartbeatTimer);
     child.kill(signal);
+    await heartbeatWrites;
     await writeEvent(makeEvent(options, "failed", "failed", "Wrapped command interrupted.", {
       tool,
       outputTail: boundedOutputTail(outputTail)
@@ -214,6 +228,7 @@ async function run(argv = process.argv.slice(2), io = { stdout: process.stdout, 
       clearInterval(heartbeatTimer);
       process.off("SIGINT", onSigint);
       process.off("SIGTERM", onSigterm);
+      await heartbeatWrites;
       await writeEvent(makeEvent(options, "failed", "failed", "Wrapped command spawn failed.", { tool })).catch(() => {});
       io.stderr.write(safeError(error.message));
       resolve(1);
@@ -227,6 +242,7 @@ async function run(argv = process.argv.slice(2), io = { stdout: process.stdout, 
       clearInterval(heartbeatTimer);
       process.off("SIGINT", onSigint);
       process.off("SIGTERM", onSigterm);
+      await heartbeatWrites;
       const cleanTail = boundedOutputTail(outputTail);
       const terminal = code === 0 ? "done" : "failed";
       const message = code === 0 ? "Wrapped command completed." : signal === null ? "Wrapped command failed." : "Wrapped command interrupted.";

@@ -759,6 +759,8 @@ async function runAssertions() {
       "console.log('api_key=sk-live-secret-token /Users/person/project'); setTimeout(() => console.log('safe output done'), 260);"
     ]);
     assert.equal(successResult.code, 0);
+    assert.match(successResult.stdout, /api_key=sk-live-secret-token/);
+    assert.match(successResult.stdout, /safe output done/);
     assert.equal(successResult.stderr, "");
     const wrapperSuccessState = await readProgressState(wrapperSuccessPath);
     const wrapperSuccessPublished = JSON.parse(await readFile(wrapperSuccessPath, "utf8"));
@@ -768,6 +770,8 @@ async function runAssertions() {
     assert.equal(wrapperSuccessState.events.some((nextEvent) => nextEvent.phase === "started"), true);
     assert.equal(wrapperSuccessState.events.some((nextEvent) => nextEvent.phase === "verifying" && nextEvent.heartbeat?.lastHeartbeatAt !== undefined), true);
     assert.equal(wrapperSuccessState.events.some((nextEvent) => nextEvent.phase === "done" && nextEvent.status === "done"), true);
+    assert.equal(wrapperSuccessState.events.at(-1).phase, "done");
+    assert.equal(wrapperSuccessState.events.at(-1).status, "done");
     const wrapperSuccessSnapshot = snapshotProgressState(wrapperSuccessState);
     assert.equal(wrapperSuccessSnapshot.status, "done");
     assert.equal(wrapperSuccessSnapshot.phase, "done");
@@ -795,14 +799,36 @@ async function runAssertions() {
       "console.error('provider response: UNIQUE_FAIL_BODY_DO_NOT_SHOW'); process.exit(7);"
     ]);
     assert.equal(failResult.code, 7);
-    assert.equal(failResult.stderr, "");
+    assert.match(failResult.stderr, /provider response: UNIQUE_FAIL_BODY_DO_NOT_SHOW/);
+    assert.equal(failResult.stdout, "");
     const wrapperFailState = await readProgressState(wrapperFailPath);
     const wrapperFailSnapshot = snapshotProgressState(wrapperFailState);
     assert.equal(wrapperFailSnapshot.status, "failed");
     assert.equal(wrapperFailSnapshot.stuckReason, "explicit_failure");
     assert.equal(wrapperFailSnapshot.currentTool.kind, "test");
+    assert.equal(wrapperFailState.events.at(-1).phase, "failed");
+    assert.equal(wrapperFailState.events.at(-1).status, "failed");
     assertAbsent(wrapperFailSnapshot, ["UNIQUE_FAIL_BODY_DO_NOT_SHOW"]);
     assertNoSensitiveContent(wrapperFailState);
+
+    const wrapperRacePath = join(tmp, "wrapper-race.json");
+    const raceResult = await runWrapper([
+      "--card", "T371",
+      "--run", "run-wrapper-race",
+      "--state", wrapperRacePath,
+      "--heartbeat-interval-ms", "1",
+      "--",
+      process.execPath,
+      "-e",
+      "setTimeout(() => process.exit(0), 220);"
+    ]);
+    assert.equal(raceResult.code, 0);
+    const wrapperRaceState = await readProgressState(wrapperRacePath);
+    const wrapperRaceSnapshot = snapshotProgressState(wrapperRaceState);
+    assert.equal(wrapperRaceSnapshot.status, "done");
+    assert.equal(wrapperRaceSnapshot.phase, "done");
+    assert.equal(wrapperRaceState.events.at(-1).phase, "done");
+    assert.equal(wrapperRaceState.events.at(-1).status, "done");
 
     const wrapperBoundedPath = join(tmp, "wrapper-bounded.json");
     const boundedResult = await runWrapper([
@@ -816,6 +842,8 @@ async function runAssertions() {
       "console.log('safe-line '.repeat(600) + ' authorization: Bearer abcdefghijklmnop /private/tmp/key ' + 'tail '.repeat(600));"
     ]);
     assert.equal(boundedResult.code, 0);
+    assert.match(boundedResult.stdout, /authorization: Bearer abcdefghijklmnop/);
+    assert.match(boundedResult.stdout, /safe-line/);
     const wrapperBoundedSnapshot = snapshotProgressState(await readProgressState(wrapperBoundedPath));
     assert.equal(wrapperBoundedSnapshot.outputTail.length <= 2000, true, "wrapper output tail exceeded limit");
     assertNoSensitiveContent(wrapperBoundedSnapshot);
