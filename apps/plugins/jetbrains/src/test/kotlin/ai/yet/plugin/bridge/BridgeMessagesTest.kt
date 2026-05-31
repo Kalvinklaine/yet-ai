@@ -13,7 +13,7 @@ import kotlin.test.assertNull
 class BridgeMessagesTest {
     @Test
     fun validGuiReadyPasses() {
-        val parsed = BridgeMessages.parseGuiReady("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.ready","requestId":"abc","payload":{}}""")
+        val parsed = BridgeMessages.parseGuiReady("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.ready","requestId":"abc","payload":{"supportedBridgeVersion":"${ProductIdentity.bridgeVersion}"}}""")
 
         assertNotNull(parsed)
         assertEquals("abc", parsed.requestId)
@@ -70,6 +70,13 @@ class BridgeMessagesTest {
     fun invalidPayloadShapesRejected() {
         assertNull(BridgeMessages.parseGuiReady("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.ready","payload":[]}"""))
         assertNull(BridgeMessages.parseGuiReady("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.ready","payload":"ready"}"""))
+    }
+
+    @Test
+    fun invalidPayloadContentsRejected() {
+        assertNull(BridgeMessages.parseGuiReady("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.ready","payload":{"supportedBridgeVersion":"old"}}"""))
+        assertNull(BridgeMessages.parseGuiReady("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.ready","payload":{"supportedBridgeVersion":"${ProductIdentity.bridgeVersion}","extra":true}}"""))
+        assertNull(BridgeMessages.parseGuiReady("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.ready","payload":{"supportedBridgeVersion":1}}"""))
     }
 
     @Test

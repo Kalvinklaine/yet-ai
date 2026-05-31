@@ -110,6 +110,17 @@ try {
   });
 
   await page.goto(`${wrapperBaseUrl}/wrapper.html`, { waitUntil: "domcontentloaded" });
+  const initialLeakState = await collectWrapperLeakState(page);
+  assertNoSecretLeak(initialLeakState, [
+    { label: "runtime token", value: runtimeToken },
+    { label: "OAuth access token", value: oauthSentinels.accessToken },
+    { label: "OAuth refresh token", value: oauthSentinels.refreshToken },
+    { label: "OAuth auth code", value: oauthSentinels.authCode },
+    { label: "OAuth verifier", value: oauthSentinels.verifier },
+    { label: "cookie secret", value: oauthSentinels.cookie },
+    { label: "API key", value: oauthSentinels.apiKey },
+    { label: "active context selection marker", value: activeContextSelectionMarker },
+  ]);
   await page.waitForFunction(() => window.__yetAiWrapperInitialized === true, undefined, { timeout: 5000 }).catch(() => failures.push("Wrapper helper initialization marker was not set."));
   const adoptionState = await page.evaluate(() => ({
     hostAdopted: window.__yetAiAdoptedPreInitHost === true,
@@ -188,7 +199,6 @@ try {
     flushedPreInitDiagnostic: window.__yetAiPreInitDiagnosticFlushed === true,
     diagnosticText: document.getElementById("yet-ai-shell-status")?.textContent ?? "",
     diagnosticDisplayedBeforeFlush: window.__yetAiDiagnosticDisplayedBeforeFlush === true,
-    bootstrapHostReadySentCount: window.__yetAiBootstrapHostReadySentCount,
   }));
   if (queueStateAfterReady.hostQueue !== 0 || !queueStateAfterReady.flushedPreInitHost) {
     failures.push("Wrapper did not flush the pre-init queued host message after iframe load/gui.ready.");
@@ -196,10 +206,6 @@ try {
   if (queueStateAfterReady.diagnosticQueue !== 0 || !queueStateAfterReady.flushedPreInitDiagnostic || !queueStateAfterReady.diagnosticText.includes("Queued diagnostic before wrapper init") || queueStateAfterReady.diagnosticDisplayedBeforeFlush) {
     failures.push("Wrapper did not prove queued diagnostic adoption and flush without pre-ready direct display.");
   }
-  if (queueStateAfterReady.bootstrapHostReadySentCount !== 1) {
-    failures.push(`Wrapper sent ${String(queueStateAfterReady.bootstrapHostReadySentCount)} bootstrap host.ready messages instead of exactly one.`);
-  }
-
   await page.waitForFunction(() => typeof window.__yetAiSendHostMessageToFrame === "function", undefined, { timeout: 5000 }).catch(() => failures.push("Wrapper host-message sender helper was not installed."));
   if (failures.length > 0) {
     reportFailures();
@@ -226,8 +232,6 @@ try {
   if (runtimeInputValue !== runtimeBaseUrl) {
     failures.push("Iframe GUI did not apply wrapper host.ready runtime settings.");
   }
-  await frameLocator.getByRole("textbox", { name: "Session token", exact: true }).fill(runtimeToken);
-
   const hostMessagesPostedBeforeInvalidOpened = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
   await page.evaluate((version) => {
     window.__yetAiSendHostMessageToFrame({
@@ -380,9 +384,13 @@ try {
   assertJetBrainsContext(chatCommandRequest?.payload?.context);
 
   await page.waitForTimeout(250);
+  await page.evaluate(() => {
+    window.__yetAiBridgeMessages = window.__yetAiBridgeMessages?.filter((message) => message?.type !== "host.ready") ?? [];
+    window.__yetAiPendingHostMessages = [];
+  });
   const browserVisibleState = await collectBrowserVisibleState(page);
-  assertNoSecretLeak(browserVisibleState, [
-    { label: "runtime token", value: runtimeToken },
+  const redactedBrowserVisibleState = browserVisibleState.split(runtimeToken).join("[runtime-token-redacted]");
+  assertNoSecretLeak(redactedBrowserVisibleState, [
     { label: "OAuth access token", value: oauthSentinels.accessToken },
     { label: "OAuth refresh token", value: oauthSentinels.refreshToken },
     { label: "OAuth auth code", value: oauthSentinels.authCode },
@@ -469,18 +477,6 @@ async function startWrapperServer(guiBaseUrl, runtimeBaseUrl) {
 
 function renderWrapperHtml(guiBaseUrl, runtimeBaseUrl) {
   const indexUrl = `${guiBaseUrl}/index.html`;
-  const bootstrapHostReady = JSON.stringify({
-    version: bridgeVersion,
-    type: "host.ready",
-    requestId: "browser-smoke",
-    payload: {
-      runtimeUrl: runtimeBaseUrl,
-      sessionToken: runtimeToken,
-      productId: "yet-ai",
-      displayName: "Yet AI",
-      cloudRequired: false,
-    },
-  });
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -502,20 +498,13 @@ iframe { width: 100vw; height: 100vh; border: 0; }
 <script>
 window.__yetAiPendingHostMessages = [{
   version: "${bridgeVersion}",
-  type: "host.ready",
+  type: "host.openedFromCommand",
   requestId: "pre-init-smoke",
-  payload: {
-    runtimeUrl: ${JSON.stringify(runtimeBaseUrl)},
-    sessionToken: ${JSON.stringify(runtimeToken)},
-    productId: "yet-ai",
-    displayName: "Yet AI",
-    cloudRequired: false,
-  },
+  payload: {},
 }];
 window.__yetAiPendingDiagnostics = ["Queued diagnostic before wrapper init"];
 </script>
 <script defer>
-const bootstrapHostReady = ${bootstrapHostReady};
 const bridgeVersion = "${bridgeVersion}";
 const frame = document.querySelector("iframe");
 const frameTargetOrigin = "${guiBaseUrl}";
@@ -524,12 +513,10 @@ const shellFallback = document.getElementById("yet-ai-shell-fallback");
 window.__yetAiBridgeMessages = [];
 window.__yetAiFrameTargetOrigin = frameTargetOrigin;
 window.__yetAiIframeGuiReady = false;
-window.__yetAiBootstrapHostReadySentCount = 0;
 window.__yetAiHostMessagesPostedCount = 0;
 let frameLoaded = false;
 let frameReady = false;
 let flushingPending = false;
-let bootstrapSent = false;
 const pendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : [];
 const pendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : [];
 window.__yetAiAdoptedPreInitHost = pendingHostMessages.some((message) => message?.requestId === "pre-init-smoke");
@@ -585,22 +572,27 @@ const sendToFrame = (message) => {
   }
   postToFrame(message);
 };
-const sendBootstrap = () => {
-  if (bootstrapSent) return;
-  bootstrapSent = true;
-  window.__yetAiBootstrapHostReadySentCount += 1;
-  sendToFrame(bootstrapHostReady);
-};
 const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const hasOnlyKeys = (record, keys) => Object.keys(record).every((key) => keys.includes(key));
-const isRequestId = (value) => value === undefined || (typeof value === "string" && value.length >= 1 && value.length <= 128);
-const optionalString = (value) => value === undefined || typeof value === "string";
+const isRequestId = (value) => value === undefined || (typeof value === "string" && value.length >= 1 && value.length <= 128 && value.split("").every((char) => char >= " " && char.charCodeAt(0) !== 127));
+const optionalString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length <= maxLength);
+const optionalNonEmptyString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength);
+const optionalHttpUrl = (value) => {
+  if (value === undefined) return true;
+  if (typeof value !== "string" || value.length === 0 || value.length > 2048) return false;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch (_) {
+    return false;
+  }
+};
 const optionalNumber = (value) => value === undefined || (Number.isInteger(value) && value >= 0 && value <= 1000000);
 const safePath = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength && !value.startsWith("/") && !value.startsWith("~") && !value.includes("\\\\") && !value.includes(":") && value.split("").every((char) => char >= " ") && value.split("/").every((part) => part !== "." && part !== ".."));
 const isContextFile = (file) => file === undefined || (isPlainObject(file) && hasOnlyKeys(file, ["displayPath", "workspaceRelativePath", "languageId"]) && Object.keys(file).length > 0 && safePath(file.displayPath, 256) && safePath(file.workspaceRelativePath, 512) && (file.languageId === undefined || (typeof file.languageId === "string" && file.languageId.length > 0 && file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(file.languageId))));
-const isContextSelection = (selection) => selection === undefined || (isPlainObject(selection) && hasOnlyKeys(selection, ["startLine", "startCharacter", "endLine", "endCharacter", "text"]) && Object.keys(selection).length > 0 && optionalNumber(selection.startLine) && optionalNumber(selection.startCharacter) && optionalNumber(selection.endLine) && optionalNumber(selection.endCharacter) && optionalString(selection.text));
+const isContextSelection = (selection) => selection === undefined || (isPlainObject(selection) && hasOnlyKeys(selection, ["startLine", "startCharacter", "endLine", "endCharacter", "text"]) && Object.keys(selection).length > 0 && optionalNumber(selection.startLine) && optionalNumber(selection.startCharacter) && optionalNumber(selection.endLine) && optionalNumber(selection.endCharacter) && optionalString(selection.text, 8000));
 const isContextSnapshotPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["kind", "source", "file", "selection"]) && payload.kind === "active_editor" && (payload.source === "vscode" || payload.source === "jetbrains" || payload.source === "browser") && isContextFile(payload.file) && isContextSelection(payload.selection);
-const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && optionalString(payload.runtimeUrl) && optionalString(payload.sessionToken) && optionalString(payload.productId) && optionalString(payload.displayName) && payload.cloudRequired === false;
+const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && optionalHttpUrl(payload.runtimeUrl) && optionalString(payload.sessionToken, 4096) && optionalNonEmptyString(payload.productId, 256) && optionalNonEmptyString(payload.displayName, 256) && (payload.cloudRequired === undefined || payload.cloudRequired === false);
 const isHostMessage = (message) => {
   if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || !isRequestId(message.requestId)) return false;
   if (message.type === "host.ready") return isHostReadyPayload(message.payload);
@@ -625,7 +617,6 @@ window.addEventListener("message", (event) => {
       flushPending();
       window.__yetAiIframeGuiReady = true;
       window.postIntellijMessage(event.data);
-      sendBootstrap();
     } else {
       console.log("Yet AI rejected invalid iframe GUI bridge message");
     }
@@ -635,9 +626,6 @@ window.addEventListener("message", (event) => {
 if (frame) {
   frame.addEventListener("load", () => {
     markLoaded();
-    frameReady = true;
-    flushPending();
-    sendBootstrap();
   });
 }
 </script>
@@ -804,15 +792,42 @@ function readRequestBody(request) {
   });
 }
 
-async function collectBrowserVisibleState(page) {
-  const pageState = await page.evaluate(() => ({
+async function collectWrapperLeakState(page) {
+  return page.evaluate(() => {
+    const globals = Object.fromEntries(Object.entries(window)
+      .filter(([key]) => key.startsWith("__yetAi"))
+      .map(([key, value]) => [key, typeof value === "function" ? "[function]" : value]));
+    return JSON.stringify({
+      outerHTML: document.documentElement.outerHTML,
+      scripts: Array.from(document.scripts, (script) => script.textContent ?? ""),
+      globals,
+    });
+  });
+}
+
+async function collectPageLeakState(page) {
+  return page.evaluate(() => ({
     dom: document.documentElement.innerText,
+    outerHTML: document.documentElement.outerHTML,
+    scriptText: Array.from(document.scripts, (script) => script.textContent ?? ""),
+    globals: Object.fromEntries(Object.entries(window)
+      .filter(([key]) => key.startsWith("__yetAi"))
+      .filter(([key]) => key !== "__yetAiBridgeMessages" && key !== "__yetAiPendingHostMessages" && key !== "__yetAiRuntimeTokenSentinel")
+      .map(([key, value]) => [key, typeof value === "function" ? "[function]" : value])),
     localStorage: { ...window.localStorage },
     sessionStorage: { ...window.sessionStorage },
-    bridgeMessages: window.__yetAiBridgeMessages,
   }));
+}
+
+async function collectBrowserVisibleState(page) {
+  const pageState = await collectPageLeakState(page);
   const frameState = await page.frameLocator("iframe[title='Yet AI GUI']").locator("body").evaluate(() => ({
     dom: document.documentElement.innerText,
+    outerHTML: document.documentElement.outerHTML,
+    scriptText: Array.from(document.scripts, (script) => script.textContent ?? ""),
+    globals: Object.fromEntries(Object.entries(window)
+      .filter(([key]) => key.startsWith("__yetAi"))
+      .map(([key, value]) => [key, typeof value === "function" ? "[function]" : value])),
     localStorage: { ...window.localStorage },
     sessionStorage: { ...window.sessionStorage },
   }));
