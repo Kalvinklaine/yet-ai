@@ -93,6 +93,7 @@ function platformCommand(command) {
 
 run("npm", ["run", "prepare:ide-engine", "--", ...args]);
 run("npm", ["run", "build"], { cwd: path.join(root, "apps", "gui") });
+await rm(path.join(jetbrainsRoot, "build", "generated", "resources", "yet-ai-gui"), { recursive: true, force: true });
 run("gradle", ["buildPlugin", "--console=plain"], { cwd: jetbrainsRoot, diagnoseGradleFailure: true });
 
 const zips = await findDistributionZips();

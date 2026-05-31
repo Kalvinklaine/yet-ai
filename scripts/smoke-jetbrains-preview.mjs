@@ -9,6 +9,8 @@ const identity = JSON.parse(await readFile(path.join(root, "product", "identity.
 const binaryFileName = process.platform === "win32" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
 const failures = [];
 const warnings = [];
+const staleToleranceMs = 2000;
+const prepareMessage = "Run `npm run prepare:jetbrains-preview` from the repository root to rebuild generated JetBrains preview artifacts.";
 
 await checkFile(path.join(jetbrainsRoot, "build.gradle.kts"), "JetBrains Gradle build file is missing.");
 await checkFile(path.join(jetbrainsRoot, "settings.gradle.kts"), "JetBrains Gradle settings file is missing.");
@@ -88,10 +90,11 @@ async function checkGeneratedGuiResources() {
   const generatedIndex = path.join(generatedRoot, "index.html");
   const generatedHtml = await readOptionalTextFile(generatedIndex);
   if (generatedHtml === undefined) {
-    warnings.push("Generated JetBrains packaged GUI resources are absent. Run `cd apps/gui && npm run build` and then `cd apps/plugins/jetbrains && gradle build --console=plain` when you need to verify copied GUI resources.");
+    warnings.push("Generated JetBrains packaged GUI resources are absent. Run `npm run prepare:jetbrains-preview` when you need to verify copied GUI resources.");
     return;
   }
   await checkGuiAssetReferences(generatedHtml, generatedRoot, "apps/plugins/jetbrains/build/generated/resources/yet-ai-gui/yet-ai-gui");
+  await checkFreshness(generatedIndex, [path.join(root, "apps", "gui", "dist", "index.html")], "Generated JetBrains packaged GUI index.html is older than apps/gui/dist/index.html.");
 }
 
 async function checkGuiAssetReferences(html, guiRootPath, label) {
@@ -181,6 +184,33 @@ function toLocalAssetPath(value) {
     return undefined;
   }
   return normalized;
+}
+
+async function checkFreshness(generatedPath, sourcePaths, staleMessage) {
+  let generatedStat;
+  try {
+    generatedStat = await stat(generatedPath);
+  } catch {
+    return;
+  }
+  if (!generatedStat.isFile()) {
+    return;
+  }
+
+  for (const sourcePath of sourcePaths) {
+    let sourceStat;
+    try {
+      sourceStat = await stat(sourcePath);
+    } catch {
+      continue;
+    }
+    if (!sourceStat.isFile()) {
+      continue;
+    }
+    if (generatedStat.mtimeMs + staleToleranceMs < sourceStat.mtimeMs) {
+      failures.push(`${staleMessage} ${prepareMessage} Generated: ${relative(generatedPath)}; newer source: ${relative(sourcePath)}.`);
+    }
+  }
 }
 
 function relative(filePath) {
