@@ -48,7 +48,7 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
-    fun wrapperFlushesQueuedMessagesWhenFrameLoadsOrGuiIsReady() {
+    fun wrapperFlushesQueuedMessagesOnlyWhenGuiIsReady() {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, "runtime unavailable"),
             "console.log('bridge')",
@@ -61,7 +61,9 @@ class YetToolWindowFactoryTest {
         assertContains(html, "frameReady = true;")
         assertContains(html, "flushPending();")
         assertContains(html, "window.postIntellijMessage(event.data);")
-        assertContains(html, "sendToFrame(bootstrapHostReady);")
+        assertContains(html, "markLoaded();")
+        assertFalse(html.contains("sendToFrame(bootstrapHostReady);"))
+        assertFalse(html.contains("const bootstrapHostReady"))
     }
 
     @Test
@@ -72,12 +74,12 @@ class YetToolWindowFactoryTest {
             PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
         )
 
-        assertContains(html, "const isValidRequestId = (requestId) => typeof requestId === \"string\" && requestId.length > 0 && requestId.length <= 128")
-        assertContains(html, "if (!message || typeof message !== \"object\" || Array.isArray(message)) return false")
-        assertContains(html, "if (!keys.every((key) => key === \"version\" || key === \"type\" || key === \"requestId\" || key === \"payload\")) return false")
-        assertContains(html, "if (message.version !== bridgeVersion || message.type !== \"gui.ready\") return false")
-        assertContains(html, "Object.prototype.hasOwnProperty.call(message, \"requestId\") && !isValidRequestId(message.requestId)")
-        assertContains(html, "Object.prototype.hasOwnProperty.call(message, \"payload\") && (typeof message.payload !== \"object\" || message.payload === null || Array.isArray(message.payload))")
+        assertContains(html, "const isRequestId = (value) => value === undefined || (typeof value === \"string\" && value.length > 0 && value.length <= 128")
+        assertContains(html, "value.split(\"\").every((char) => char >= \" \" && char.charCodeAt(0) !== 127)")
+        assertContains(html, "!isPlainObject(message) || !hasOnlyKeys(message, [\"version\", \"type\", \"requestId\", \"payload\"])")
+        assertContains(html, "message.version !== bridgeVersion || message.type !== \"gui.ready\" || !isRequestId(message.requestId)")
+        assertContains(html, "hasOnlyKeys(message.payload, [\"supportedBridgeVersion\"])")
+        assertContains(html, "message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion")
         assertFalse(html.contains("message.type === \"gui.openFile\""))
         assertFalse(html.contains("message.type === \"gui.revealRange\""))
         assertFalse(html.contains("message.type === \"gui.applyWorkspaceEditRequest\""))
@@ -85,9 +87,38 @@ class YetToolWindowFactoryTest {
         assertFalse(html.contains("message.type === \"gui.copyText\""))
         assertFalse(html.contains("message.type === \"gui.showNotification\""))
         assertFalse(html.contains("message.type === \"gui.getHostContext\""))
-        assertFalse(html.contains("workspaceRelativePath"))
         assertFalse(html.contains("clipboard"))
         assertFalse(html.contains("executeCommand"))
+    }
+
+    @Test
+    fun wrapperHtmlDoesNotSerializeSessionToken() {
+        val html = renderHtml(
+            RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, "raw-static-session-token"), null, null),
+            "console.log('bridge')",
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+        )
+
+        assertFalse(html.contains("raw-static-session-token"))
+        assertFalse(html.contains("const bootstrapHostReady"))
+        assertFalse(html.contains("sendToFrame(bootstrapHostReady);"))
+    }
+
+    @Test
+    fun wrapperValidatesHostMessagesStrictlyBeforeForwarding() {
+        val html = renderHtml(
+            RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
+            "console.log('bridge')",
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+        )
+
+        assertContains(html, "if (message.type === \"host.ready\") return isHostReadyPayload(message.payload)")
+        assertContains(html, "hasOnlyKeys(payload, [\"runtimeUrl\", \"sessionToken\", \"productId\", \"displayName\", \"cloudRequired\"])")
+        assertContains(html, "optionalHttpUrl(payload.runtimeUrl)")
+        assertContains(html, "optionalString(payload.sessionToken, 4096)")
+        assertContains(html, "payload.cloudRequired === undefined || payload.cloudRequired === false")
+        assertContains(html, "if (message.type === \"host.contextSnapshot\") return isContextSnapshotPayload(message.payload)")
+        assertContains(html, "if (message.type === \"host.openedFromCommand\") return message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0)")
     }
 
     @Test

@@ -81,6 +81,8 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
     @Volatile
     private var latestConnection = RuntimeConnectionResult(RuntimeSettings.safeFallback(), "Connecting to Yet AI local runtime...", null)
     @Volatile
+    private var guiReadyRequestId: String? = null
+    @Volatile
     private var disposed = false
 
     init {
@@ -92,6 +94,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
                 return@addHandler null
             }
             logger.info("Yet AI received gui.ready")
+            guiReadyRequestId = guiReady.requestId
             deliverReadyMessages(latestConnection.settings, guiReady.requestId)
             null
         }
@@ -105,7 +108,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
             latestConnection = connection
             ApplicationManager.getApplication().invokeLater {
                 if (!disposed) {
-                    deliverReadyMessages(connection.settings, "jb-runtime-ready")
+                    guiReadyRequestId?.let { requestId -> deliverReadyMessages(connection.settings, requestId) }
                     connection.error?.let { error -> sendDiagnostic(error) }
                 }
             }
@@ -210,12 +213,8 @@ object ActiveEditorContextCollector {
 
 fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packagedGui: PackagedGui?): String {
     val settings = connection.settings
-    val requestId = "jb-${System.currentTimeMillis()}"
     val frame = buildGuiFrame(settings.guiDevUrl, packagedGui)
     val frameOrigin = buildFrameOrigin(settings.guiDevUrl, packagedGui)
-    val bootstrap = BridgeMessages.escapeScriptJson(
-        BridgeMessages.hostReady(settings, requestId)
-    )
     val status = connection.status?.let { "<p>${html(it)}</p>" } ?: ""
     val error = connection.error?.let { "<p><strong>Runtime error:</strong> ${html(it)}</p>" } ?: ""
     val placeholder = if (settings.guiDevUrl == null && packagedGui == null) {
@@ -245,7 +244,6 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         <body>
         $placeholder$diagnostics$frame
         <script>
-        const bootstrapHostReady = $bootstrap;
         const bridgeVersion = "${ProductIdentity.bridgeVersion}";
         const frame = document.querySelector("iframe");
         const frameTargetOrigin = $frameOrigin;
@@ -264,7 +262,10 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           }
         };
         window.__yetAiSetRuntimeDiagnostic = (message) => {
-          if (!frameReady) pendingDiagnostics.push(message);
+          if (!frameReady) {
+            pendingDiagnostics.push(message);
+            return;
+          }
           showDiagnostic(message);
         };
         const markLoaded = () => {
@@ -278,6 +279,38 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           }, 8000);
         }
         window.postIntellijMessage = (message) => { $postIntellij };
+        const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+        const hasOnlyKeys = (record, keys) => Object.keys(record).every((key) => keys.includes(key));
+        const isRequestId = (value) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 128 && value.split("").every((char) => char >= " " && char.charCodeAt(0) !== 127));
+        const optionalString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length <= maxLength);
+        const optionalNonEmptyString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength);
+        const optionalHttpUrl = (value) => {
+          if (value === undefined) return true;
+          if (typeof value !== "string" || value.length === 0 || value.length > 2048) return false;
+          try {
+            const parsed = new URL(value);
+            return parsed.protocol === "http:" || parsed.protocol === "https:";
+          } catch (_) {
+            return false;
+          }
+        };
+        const optionalNumber = (value) => value === undefined || (Number.isInteger(value) && value >= 0 && value <= 1000000);
+        const safePath = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength && !value.startsWith("/") && !value.startsWith("~") && !value.includes("\\") && !value.includes(":") && /^[^\u0000-\u001f]+$/.test(value) && value.split("/").every((part) => part !== "." && part !== ".."));
+        const isContextFile = (file) => file === undefined || (isPlainObject(file) && hasOnlyKeys(file, ["displayPath", "workspaceRelativePath", "languageId"]) && Object.keys(file).length > 0 && safePath(file.displayPath, 256) && safePath(file.workspaceRelativePath, 512) && (file.languageId === undefined || (typeof file.languageId === "string" && file.languageId.length > 0 && file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(file.languageId))));
+        const isContextSelection = (selection) => selection === undefined || (isPlainObject(selection) && hasOnlyKeys(selection, ["startLine", "startCharacter", "endLine", "endCharacter", "text"]) && Object.keys(selection).length > 0 && optionalNumber(selection.startLine) && optionalNumber(selection.startCharacter) && optionalNumber(selection.endLine) && optionalNumber(selection.endCharacter) && optionalString(selection.text, 8000));
+        const isContextSnapshotPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["kind", "source", "file", "selection"]) && payload.kind === "active_editor" && (payload.source === "vscode" || payload.source === "jetbrains" || payload.source === "browser") && isContextFile(payload.file) && isContextSelection(payload.selection);
+        const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && optionalHttpUrl(payload.runtimeUrl) && optionalString(payload.sessionToken, 4096) && optionalNonEmptyString(payload.productId, 256) && optionalNonEmptyString(payload.displayName, 256) && (payload.cloudRequired === undefined || payload.cloudRequired === false);
+        const isHostMessage = (message) => {
+          if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || !isRequestId(message.requestId)) return false;
+          if (message.type === "host.ready") return isHostReadyPayload(message.payload);
+          if (message.type === "host.contextSnapshot") return isContextSnapshotPayload(message.payload);
+          if (message.type === "host.openedFromCommand") return message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0);
+          return false;
+        };
+        const isGuiMessage = (message) => {
+          if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.ready" || !isRequestId(message.requestId)) return false;
+          return message.payload === undefined || (isPlainObject(message.payload) && hasOnlyKeys(message.payload, ["supportedBridgeVersion"]) && (message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion));
+        };
         const postToFrame = (message) => {
           if (frame && frame.contentWindow && frameTargetOrigin && isHostMessage(message)) {
             frame.contentWindow.postMessage(message, frameTargetOrigin);
@@ -294,17 +327,6 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
             return;
           }
           postToFrame(message);
-        };
-        const isHostMessage = (message) => message && message.version === bridgeVersion && (message.type === "host.ready" || message.type === "host.openedFromCommand" || message.type === "host.contextSnapshot") && (message.payload === undefined || (typeof message.payload === "object" && message.payload !== null && !Array.isArray(message.payload)));
-        const isValidRequestId = (requestId) => typeof requestId === "string" && requestId.length > 0 && requestId.length <= 128 && !/[\u0000-\u001f\u007f]/u.test(requestId);
-        const isGuiMessage = (message) => {
-          if (!message || typeof message !== "object" || Array.isArray(message)) return false;
-          const keys = Object.keys(message);
-          if (!keys.every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload")) return false;
-          if (message.version !== bridgeVersion || message.type !== "gui.ready") return false;
-          if (Object.prototype.hasOwnProperty.call(message, "requestId") && !isValidRequestId(message.requestId)) return false;
-          if (Object.prototype.hasOwnProperty.call(message, "payload") && (typeof message.payload !== "object" || message.payload === null || Array.isArray(message.payload))) return false;
-          return true;
         };
         window.__yetAiSendHostMessageToFrame = sendToFrame;
         window.addEventListener("message", (event) => {
@@ -326,9 +348,6 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         if (frame) {
           frame.addEventListener("load", () => {
             markLoaded();
-            frameReady = true;
-            flushPending();
-            sendToFrame(bootstrapHostReady);
           });
         }
         </script>

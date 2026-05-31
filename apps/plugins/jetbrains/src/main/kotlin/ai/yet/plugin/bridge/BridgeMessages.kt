@@ -36,8 +36,18 @@ object BridgeMessages {
             }
             else -> return null
         }
-        if (record.has("payload") && !record.get("payload").isJsonObject) {
-            return null
+        if (record.has("payload")) {
+            val payload = record.get("payload")
+            if (!payload.isJsonObject) {
+                return null
+            }
+            val payloadObject = payload.asJsonObject
+            if (!payloadObject.keySet().all { it == "supportedBridgeVersion" }) {
+                return null
+            }
+            if (payloadObject.has("supportedBridgeVersion") && payloadObject.stringValue("supportedBridgeVersion") != ProductIdentity.bridgeVersion) {
+                return null
+            }
         }
         return GuiReady(requestId)
     }
