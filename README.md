@@ -178,16 +178,14 @@ npm run validate:contracts && npm run check:planner-scheduler && npm run smoke:p
 This gate verifies that contracts reject unsafe public payloads, scheduler simulator state cannot persist unsafe active guidance, agent progress classifies from bounded raw head/tail while persisting sanitized output, and the GUI renders only sanitized bounded overflow guidance.
 
 
-Prepare and validate the local VS Code installable dev-preview artifact from the root when changing VS Code packaging, packaged GUI, or preview docs:
+Prepare and validate both local IDE installable dev-preview artifacts from the root when changing IDE packaging, packaged GUI, or preview docs:
 
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"
-npm run prepare:vscode-preview
-npm run smoke:vscode-installable
-npm run smoke:vscode-preview
+npm run smoke:ide-preview
 ```
 
-`npm run prepare:vscode-preview` builds/prepares the local engine, builds `apps/gui`, prepares the VS Code extension output, and writes the stable ignored artifact `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix` plus `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix.sha256`. `npm run smoke:vscode-installable` validates the root VSIX name, checksum, archive paths, package metadata, bundled identity, packaged GUI assets, and copied engine binary without launching VS Code. `npm run smoke:vscode-preview` validates the generated extension workspace artifacts. The generated VSIX, checksum, GUI assets, extension output, engine binaries, and root `dist/` artifacts are ignored and must not be committed. This is a local dev-preview/install-from-file flow only: it is not marketplace publication, signing, notarization, a production installer, or a production release, and it requires no provider credentials, hosted Yet AI backend, real OpenAI/ChatGPT calls, or cloud workspace.
+`npm run smoke:ide-preview` is the cross-IDE preview gate. It runs `npm run prepare:vscode-preview`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, and `npm run smoke:jetbrains-preview` in order with fail-fast step labels. The underlying prepare commands build/prepare the local engine and `apps/gui`, then publish ignored root dev-preview artifacts under `dist/plugins/vscode/` and `dist/plugins/jetbrains/` with matching `.sha256` checksums. The generated VSIX, ZIP, checksums, GUI assets, extension/plugin output, engine binaries, and root `dist/` artifacts are ignored and must not be committed. This is a local dev-preview/install-from-file flow only: it is not marketplace publication, signing, notarization, a production installer, or a production release, and it requires no provider credentials, hosted Yet AI backend, real OpenAI/ChatGPT calls, or cloud workspace.
 
 Current baseline subsystem checks are:
 

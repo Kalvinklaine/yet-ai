@@ -18,6 +18,7 @@
     "smoke:provider-secret-migration": "node scripts/smoke-provider-secret-migration.mjs",
     "smoke:gui-browser": "node scripts/smoke-gui-browser.mjs",
     "smoke:gui-runtime-e2e": "node scripts/smoke-gui-runtime-e2e.mjs",
+    "smoke:ide-preview": "node scripts/smoke-ide-preview.mjs",
     "smoke:vscode-preview": "node scripts/smoke-vscode-preview.mjs",
     "smoke:vscode-installable": "node scripts/smoke-vscode-installable.mjs",
     "smoke:vscode-first-message": "node scripts/smoke-vscode-first-message.mjs",
