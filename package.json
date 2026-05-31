@@ -5,6 +5,7 @@
     "check": "node scripts/check.mjs",
     "check:agent-progress": "node scripts/check-agent-progress.mjs",
     "planner:agent-progress:report": "node scripts/planner-agent-progress-report.mjs",
+    "planner:agent-progress:run": "node scripts/planner-agent-progress-run.mjs",
     "smoke:agent-progress": "node scripts/smoke-agent-progress.mjs",
     "smoke:agent-progress-endpoint": "node scripts/smoke-agent-progress-endpoint.mjs",
     "smoke:gui-agent-progress": "node scripts/smoke-gui-agent-progress.mjs",
