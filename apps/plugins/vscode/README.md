@@ -47,6 +47,15 @@ npm run smoke:vscode-installable
 npm run smoke:vscode-preview
 ```
 
+The repository-level cross-IDE gate is available when the same change should validate both VS Code and JetBrains preview routes:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+npm run smoke:ide-preview
+```
+
+It runs `npm run prepare:vscode-preview`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, and `npm run smoke:jetbrains-preview` in order. It is local-only, uses ignored preview artifacts, and does not launch real IDEs or call real providers.
+
 `npm run smoke:vscode-installable` checks that `dist/plugins/vscode/` contains exactly one current `yet-ai-vscode-<version>-dev-preview.vsix`, validates its `.sha256` checksum, safe archive paths, package metadata, command/activation/configuration surfaces, bundled product identity, packaged GUI local JS/CSS references, and copied engine binary. `npm run smoke:vscode-preview` checks the copied `yet-lsp` binary, packaged GUI `media/gui/index.html`, bundled `out/product/identity.json`, compiled `out/extension.js`, manifest `main`, copied GUI asset references, and obvious stale-artifact mtimes against existing GUI dist and VS Code source files. If preparation has not been run or generated artifacts are stale, the smokes fail with the artifact and the command to run.
 
 Repository-level validation is available from the root:
@@ -211,6 +220,8 @@ Use this only for an explicitly accepted manual run of the experimental Codex-li
 
 ## Manual preview report template
 
+## Manual preview report template
+
 Use this template for hands-on VS Code dev-preview issues. Keep reports safe to share and omit secrets, private paths, query strings, URL fragments, bridge payloads, and provider responses. Runtime diagnostics are redacted before they reach the output channel, but reports should still include only concise sanitized error text.
 
 ```text
@@ -219,29 +230,37 @@ VS Code preview report
 Environment:
 - OS/architecture:
 - VS Code version:
+- Yet AI artifact: Extension Development Host | installed VSIX
+- VSIX path family: dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix
+- VSIX checksum: present and matched | missing | not checked
 - Launch mode: auto | launch | connect
+- Engine binary: discovered | configured absolute path | missing | not checked
 - Runtime URL: http://127.0.0.1:<port> (omit query/hash)
 - GUI mode: packaged GUI | guiDevUrl loopback
 
 Commands run:
 - npm run prepare:vscode-preview: pass | fail
 - npm run smoke:vscode-installable: pass | fail | not run
-- npm run smoke:vscode-preview: pass | fail
+- npm run smoke:vscode-preview: pass | fail | not run
+- npm run smoke:ide-preview: pass | fail | not run
 - Yet AI: Open Chat: pass | fail
 - Yet AI: Show Runtime Status: not run | pass | sanitized failure
 
 Visible results:
 - Webview: packaged GUI | placeholder | blank/error
-- Runtime: connected | sanitized failure
+- Runtime refresh: connected | sanitized failure
+- Runtime diagnostics: sanitized pass | sanitized failure | not checked
+- Provider path: OpenAI API-key fallback | local OpenAI-compatible mock | experimental account-login
 - Provider setup/test: visible | not visible | sanitized failure
+- Provider secret handling: key field cleared | not checked | sanitized issue
 - Active context preview: not shown | shown and attached | shown and omitted
 - First chat message: streamed | accepted but no stream | failed with sanitized error
 - Local history: reloaded | not checked | sanitized failure
 
 Notes:
 - Include concise sanitized error text only.
-- Never paste provider API keys or local runtime session tokens.
-- Never include raw bearer headers, Authorization values, cookies, OAuth codes, or screenshots showing secrets.
+- Attach checksum mismatch text only if it contains no private paths.
+- Never paste provider API keys, local runtime session tokens, bearer headers, Authorization values, OAuth auth codes, access tokens, refresh tokens, cookies, PKCE verifiers, query values, fragment values, private absolute paths, raw provider responses, raw bridge payloads, request bodies, browser storage dumps, or screenshots showing secrets.
 ```
 
 ## Refresh runtime and first message
