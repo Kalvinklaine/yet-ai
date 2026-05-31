@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { reduceAgentProgress } from "./planner-agent-progress.mjs";
 import { appendProgressEvent, createProgressState, readProgressState, resolveAgentProgressStatePath, snapshotProgressState, writeProgressState } from "./planner-agent-progress-state.mjs";
 import { formatProgressReport, main as reportMain } from "./planner-agent-progress-report.mjs";
@@ -67,6 +69,21 @@ function assertAbsent(value, markers) {
   for (const marker of markers) {
     assert.equal(text.includes(marker), false, `value leaked ${marker}`);
   }
+}
+
+function runWrapper(args, options = {}) {
+  const scriptPath = fileURLToPath(new URL("./planner-agent-progress-run.mjs", import.meta.url));
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [scriptPath, ...args], {
+      env: { ...process.env, ...(options.env ?? {}) },
+      cwd: new URL("..", import.meta.url)
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+    child.once("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
+  });
 }
 
 async function runAssertions() {
@@ -725,6 +742,107 @@ async function runAssertions() {
     });
     assert.equal(missingExit, 1);
     assert.match(stderr, /not found/);
+
+    const wrapperSuccessPath = join(tmp, "wrapper-success.json");
+    const successResult = await runWrapper([
+      "--card", "T371",
+      "--run", "run-wrapper-success",
+      "--state", wrapperSuccessPath,
+      "--phase", "verifying",
+      "--tool-kind", "validation",
+      "--tool-label", "npm run validate:contracts /Users/person/project",
+      "--heartbeat-interval-ms", "100",
+      "--",
+      process.execPath,
+      "-e",
+      "console.log('api_key=sk-live-secret-token /Users/person/project'); setTimeout(() => console.log('safe output done'), 260);"
+    ]);
+    assert.equal(successResult.code, 0);
+    assert.equal(successResult.stderr, "");
+    const wrapperSuccessState = await readProgressState(wrapperSuccessPath);
+    assert.equal(wrapperSuccessState.events.some((nextEvent) => nextEvent.phase === "started"), true);
+    assert.equal(wrapperSuccessState.events.some((nextEvent) => nextEvent.phase === "verifying" && nextEvent.heartbeat?.lastHeartbeatAt !== undefined), true);
+    assert.equal(wrapperSuccessState.events.some((nextEvent) => nextEvent.phase === "done" && nextEvent.status === "done"), true);
+    const wrapperSuccessSnapshot = snapshotProgressState(wrapperSuccessState);
+    assert.equal(wrapperSuccessSnapshot.status, "done");
+    assert.equal(wrapperSuccessSnapshot.phase, "done");
+    assert.equal(wrapperSuccessSnapshot.currentTool.kind, "validation");
+    assert.match(wrapperSuccessSnapshot.currentTool.label, /npm run validate:contracts/);
+    assert.equal(typeof wrapperSuccessSnapshot.lastHeartbeatAt, "string");
+    assert.equal(Number.isInteger(wrapperSuccessSnapshot.heartbeatAgeMs), true);
+    assert.equal(typeof wrapperSuccessSnapshot.lastToolOutputAt, "string");
+    assert.equal(Number.isInteger(wrapperSuccessSnapshot.toolOutputAgeMs), true);
+    assert.equal(wrapperSuccessSnapshot.outputTail.length <= 2000, true, "wrapper success output tail was not bounded");
+    assert.match(wrapperSuccessSnapshot.outputTail, /\[redacted/);
+    assertNoSensitiveContent(wrapperSuccessState);
+
+    const wrapperFailPath = join(tmp, "wrapper-fail.json");
+    const failResult = await runWrapper([
+      "--card", "T371",
+      "--run", "run-wrapper-fail",
+      "--state", wrapperFailPath,
+      "--tool-kind", "test",
+      "--tool-label", "failing command",
+      "--heartbeat-interval-ms", "100",
+      "--",
+      process.execPath,
+      "-e",
+      "console.error('provider response: UNIQUE_FAIL_BODY_DO_NOT_SHOW'); process.exit(7);"
+    ]);
+    assert.equal(failResult.code, 7);
+    assert.equal(failResult.stderr, "");
+    const wrapperFailState = await readProgressState(wrapperFailPath);
+    const wrapperFailSnapshot = snapshotProgressState(wrapperFailState);
+    assert.equal(wrapperFailSnapshot.status, "failed");
+    assert.equal(wrapperFailSnapshot.stuckReason, "explicit_failure");
+    assert.equal(wrapperFailSnapshot.currentTool.kind, "test");
+    assertAbsent(wrapperFailSnapshot, ["UNIQUE_FAIL_BODY_DO_NOT_SHOW"]);
+    assertNoSensitiveContent(wrapperFailState);
+
+    const wrapperBoundedPath = join(tmp, "wrapper-bounded.json");
+    const boundedResult = await runWrapper([
+      "--card", "T371",
+      "--run", "run-wrapper-bounded",
+      "--state", wrapperBoundedPath,
+      "--heartbeat-interval-ms", "100",
+      "--",
+      process.execPath,
+      "-e",
+      "console.log('safe-line '.repeat(600) + ' authorization: Bearer abcdefghijklmnop /private/tmp/key ' + 'tail '.repeat(600));"
+    ]);
+    assert.equal(boundedResult.code, 0);
+    const wrapperBoundedSnapshot = snapshotProgressState(await readProgressState(wrapperBoundedPath));
+    assert.equal(wrapperBoundedSnapshot.outputTail.length <= 2000, true, "wrapper output tail exceeded limit");
+    assertNoSensitiveContent(wrapperBoundedSnapshot);
+
+    const envStatePath = join(tmp, "wrapper-env", "progress.json");
+    const envResult = await runWrapper([
+      "--card", "T371",
+      "--run", "run-wrapper-env",
+      "--",
+      process.execPath,
+      "-e",
+      "process.exit(0);"
+    ], { env: { YET_AI_AGENT_PROGRESS_STATE: envStatePath } });
+    assert.equal(envResult.code, 0);
+    assert.equal(snapshotProgressState(await readProgressState(envStatePath)).status, "done");
+
+    const missingArgsResult = await runWrapper(["--card", "T371"]);
+    assert.notEqual(missingArgsResult.code, 0);
+    assert.match(missingArgsResult.stderr, /missing run id|Missing wrapped command|Usage/);
+    assertNoSensitiveContent(missingArgsResult.stderr);
+
+    const invalidIdResult = await runWrapper([
+      "--card", "T371/api_key=sk-live-secret-token",
+      "--run", "run-wrapper-invalid",
+      "--",
+      process.execPath,
+      "-e",
+      "process.exit(0);"
+    ]);
+    assert.notEqual(invalidIdResult.code, 0);
+    assert.match(invalidIdResult.stderr, /Invalid or missing card id/);
+    assertNoSensitiveContent(invalidIdResult.stderr);
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
