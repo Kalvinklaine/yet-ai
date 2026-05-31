@@ -4,6 +4,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { createProgressState, snapshotProgressState } from "./planner-agent-progress-state.mjs";
 
 const rootDir = process.cwd();
 const token = `agent-progress-endpoint-${randomUUID()}`;
@@ -39,7 +40,7 @@ try {
     cloudRequired: false,
     providerAccess: "direct",
     generatedAt: "2026-05-31T10:00:02Z",
-    snapshots: [healthySnapshot(), failedSnapshot()]
+    snapshots: [reducerSnapshot(), failedSnapshot()]
   });
 
   const populated = await requestJson(baseUrl, "/v1/agent-progress");
@@ -50,6 +51,11 @@ try {
   const statuses = new Map(populated.snapshots.map((snapshot) => [snapshot.runId, snapshot.status]));
   assert(statuses.get("run-endpoint-healthy") === "healthy_running", "healthy snapshot status mismatch");
   assert(statuses.get("run-endpoint-failed") === "failed", "failed snapshot status mismatch");
+  const healthy = populated.snapshots.find((snapshot) => snapshot.runId === "run-endpoint-healthy");
+  assert(healthy?.lastHeartbeatAt === "2026-05-31T10:00:01Z", "healthy snapshot heartbeat timestamp mismatch");
+  assert(healthy?.heartbeatAgeMs === 1000, "healthy snapshot heartbeat age mismatch");
+  assert(healthy?.lastToolOutputAt === "2026-05-31T10:00:00Z", "healthy snapshot tool output timestamp mismatch");
+  assert(healthy?.toolOutputAgeMs === 2000, "healthy snapshot tool output age mismatch");
   const failed = populated.snapshots.find((snapshot) => snapshot.runId === "run-endpoint-failed");
   assert(failed?.stuckReason === "explicit_failure", "failed snapshot stuck reason mismatch");
   assert(failed?.overflowRecovery?.kind === "tool_output_too_large", "failed snapshot recovery kind mismatch");
@@ -70,36 +76,33 @@ try {
   }
 }
 
-function healthySnapshot() {
-  return {
-    protocolVersion: "2026-05-29",
-    runId: "run-endpoint-healthy",
-    cardId: "T360",
-    startedAt: "2026-05-31T10:00:00Z",
-    updatedAt: "2026-05-31T10:00:01Z",
-    phase: "running_command",
-    status: "healthy_running",
-    message: "Running endpoint smoke safely.",
-    elapsedMs: 1000,
-    ageMs: 10,
-    currentTool: {
-      kind: "test",
-      label: "endpoint smoke",
-      startedAt: "2026-05-31T10:00:00Z",
-      elapsedMs: 100
-    },
-    outputTail: "safe bounded output",
-    stuckReason: "none",
-    recentEvents: [
+function reducerSnapshot() {
+  const state = createProgressState(
+    [
       {
+        protocolVersion: "2026-05-29",
         eventId: "evt-endpoint-healthy-1",
+        runId: "run-endpoint-healthy",
+        cardId: "T360",
         timestamp: "2026-05-31T10:00:01Z",
         phase: "running_command",
-        status: "healthy_running",
-        message: "Safe heartbeat received."
+        status: "running",
+        message: "Running endpoint smoke safely.",
+        tool: {
+          kind: "test",
+          label: "endpoint smoke",
+          startedAt: "2026-05-31T10:00:00Z"
+        },
+        heartbeat: {
+          lastHeartbeatAt: "2026-05-31T10:00:01Z",
+          lastToolOutputAt: "2026-05-31T10:00:00Z"
+        },
+        outputTail: "safe bounded output"
       }
-    ]
-  };
+    ],
+    { now: "2026-05-31T10:00:02Z" }
+  );
+  return snapshotProgressState(state, { now: "2026-05-31T10:00:02Z" });
 }
 
 function failedSnapshot() {

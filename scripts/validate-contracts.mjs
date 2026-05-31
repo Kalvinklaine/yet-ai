@@ -303,6 +303,18 @@ const invalidMappings = [
     "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
   ],
   [
+    "packages/contracts/examples-invalid/engine/agent-progress-snapshot-offset-timestamp.json",
+    "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-snapshot-excessive-heartbeat-age.json",
+    "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-snapshot-invalid-heartbeat-age-type.json",
+    "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
+  ],
+  [
     "packages/contracts/examples-invalid/engine/agent-progress-snapshot-raw-provider-response.json",
     "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
   ],
