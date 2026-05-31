@@ -71,6 +71,15 @@ npm run smoke:jetbrains-gui-browser
 npm run smoke:jetbrains-wrapper-browser
 ```
 
+When a change should validate both IDE preview routes, use the root cross-IDE gate:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+npm run smoke:ide-preview
+```
+
+It runs `npm run prepare:vscode-preview`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, and `npm run smoke:jetbrains-preview` in order. It validates ignored local preview artifacts without launching VS Code, IntelliJ IDEA, JCEF automation, real provider calls, hosted Yet AI services, signing, marketplace publication, or production installers.
+
 The installable smoke checks that a Gradle distribution ZIP exists, that exactly one stable root `dist/plugins/jetbrains/` dev-preview ZIP and matching `.sha256` checksum exist, that the ZIP and nested plugin JAR use safe archive paths, that the root ZIP is not obviously older than source build inputs or the Gradle distribution ZIP, that the ZIP contains `META-INF/plugin.xml` and packaged GUI `yet-ai-gui/index.html` plus referenced JavaScript assets, and that docs describe Install Plugin from Disk plus `Engine binary path` expectations. The generated-resource preview smoke fails when `apps/gui/dist/index.html` is newer than `apps/plugins/jetbrains/build/generated/resources/yet-ai-gui/yet-ai-gui/index.html`; rerun `npm run prepare:jetbrains-preview` after rebuilding GUI assets. The packaged GUI browser smoke extracts `yet-ai-gui/index.html` and `yet-ai-gui/assets/*` from the ZIP's nested plugin JAR into a temporary local directory, serves it on loopback, and verifies that the core GUI renders non-blank with working JavaScript and CSS assets. If the ZIP is missing or stale, run `npm run prepare:jetbrains-preview` first. The wrapper browser smoke serves the current built `apps/gui/dist` on loopback, opens a generated JetBrains-like wrapper on a separate loopback origin, embeds the GUI iframe with the exact target origin, installs a fake `window.postIntellijMessage` collector, serves a token-protected mock local runtime on loopback, and verifies non-blank iframe rendering, pre-init queued host-message/diagnostic adoption and flush, real iframe-origin `gui.ready` / `host.ready` bridge delivery, rejection of arbitrary wrapper-origin host `postMessage` relays, connected experimental OpenAI account readiness, JetBrains-style `host.contextSnapshot` active editor/selection preview, default include toggle behavior, disabled-toggle omission, enabled context delivery to `user_message.payload.context`, first-message send/streamed response, and no raw runtime token, OAuth, cookie, API-key, or active-context sentinels in browser-visible state. No provider credentials, real OpenAI/ChatGPT calls, JetBrains IDE launch, JCEF automation, or hosted Yet AI services are required.
 
 The browser smokes catch broken packaged GUI resources and wrapper/iframe bridge regressions before manual IDE install testing, but they complement rather than replace manual JetBrains/JCEF testing because browser rendering is not identical to the installed IDE tool window.
@@ -195,6 +204,52 @@ Use Tools → `Yet AI: Show Runtime Status` when the tool window cannot connect,
 Use Tools → `Yet AI: Restart Runtime` to stop only the process launched by this plugin and prepare the current settings again. It does not stop externally managed runtimes used in `connect` mode, does not inspect provider configuration, and does not expose the local runtime session token. If restart reports a missing binary, invalid configured path, port conflict, runtime-down health failure, or 401/token mismatch, copy the sanitized status text and verify the settings above before reinstalling the ZIP.
 
 Diagnostics and restart output must not include session tokens, bearer/authorization headers, raw bridge payloads, provider API keys, environment dumps, provider tokens, or raw process output containing secrets. Runtime process logs and connection failures are redacted before IDE display/logging.
+
+## Manual preview report template
+
+Use this template for hands-on JetBrains dev-preview issues. Keep reports safe to share and include only sanitized runtime/provider evidence.
+
+```text
+JetBrains preview report
+
+Environment:
+- OS/architecture:
+- IntelliJ IDEA version:
+- ZIP path family: dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip
+- ZIP checksum: present and matched | missing | not checked
+- Install path: Install Plugin from Disk | Gradle run/debug | not installed
+- Launch mode: auto | launch | connect
+- Engine binary: discovered | configured absolute path | missing | not checked
+- Runtime URL: http://127.0.0.1:<port> (omit query/hash)
+- GUI mode: packaged GUI | guiDevUrl loopback
+
+Commands run:
+- npm run prepare:jetbrains-preview: pass | fail
+- npm run smoke:jetbrains-installable: pass | fail | not run
+- npm run smoke:jetbrains-preview: pass | fail | not run
+- npm run smoke:jetbrains-gui-browser: pass | fail | not run
+- npm run smoke:jetbrains-wrapper-browser: pass | fail | not run
+- npm run smoke:ide-preview: pass | fail | not run
+- Yet AI: Open Chat/tool window: pass | fail
+- Tools → Yet AI: Show Runtime Status: not run | pass | sanitized failure
+- Tools → Yet AI: Restart Runtime: not run | pass | sanitized failure
+
+Visible results:
+- Tool window: packaged GUI | placeholder | blank/error
+- Runtime refresh: connected | sanitized failure
+- Runtime diagnostics: sanitized pass | sanitized failure | not checked
+- Provider path: OpenAI API-key fallback | local OpenAI-compatible mock | experimental account-login
+- Provider setup/test: visible | not visible | sanitized failure
+- Provider secret handling: key field cleared | not checked | sanitized issue
+- Active context preview: not shown | shown and attached | shown and omitted
+- First chat message: streamed | accepted but no stream | failed with sanitized error
+- Local history: reloaded | not checked | sanitized failure
+
+Notes:
+- Include concise sanitized error text only.
+- Mention only artifact path families, not private absolute paths.
+- Never paste provider API keys, local runtime session tokens, bearer headers, Authorization values, OAuth auth codes, access tokens, refresh tokens, cookies, PKCE verifiers, query values, fragment values, private absolute paths, raw provider responses, raw bridge payloads, request bodies, browser storage dumps, or screenshots showing secrets.
+```
 
 ## Current limitations
 

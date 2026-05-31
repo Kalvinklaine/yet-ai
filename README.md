@@ -178,6 +178,7 @@ npm run validate:contracts && npm run check:planner-scheduler && npm run smoke:p
 This gate verifies that contracts reject unsafe public payloads, scheduler simulator state cannot persist unsafe active guidance, agent progress classifies from bounded raw head/tail while persisting sanitized output, and the GUI renders only sanitized bounded overflow guidance.
 
 
+
 Prepare and validate both local IDE installable dev-preview artifacts from the root when changing IDE packaging, packaged GUI, or preview docs:
 
 ```sh
@@ -185,7 +186,68 @@ export PATH="$HOME/.cargo/bin:$PATH"
 npm run smoke:ide-preview
 ```
 
-`npm run smoke:ide-preview` is the cross-IDE preview gate. It runs `npm run prepare:vscode-preview`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, and `npm run smoke:jetbrains-preview` in order with fail-fast step labels. The underlying prepare commands build/prepare the local engine and `apps/gui`, then publish ignored root dev-preview artifacts under `dist/plugins/vscode/` and `dist/plugins/jetbrains/` with matching `.sha256` checksums. The generated VSIX, ZIP, checksums, GUI assets, extension/plugin output, engine binaries, and root `dist/` artifacts are ignored and must not be committed. This is a local dev-preview/install-from-file flow only: it is not marketplace publication, signing, notarization, a production installer, or a production release, and it requires no provider credentials, hosted Yet AI backend, real OpenAI/ChatGPT calls, or cloud workspace.
+`npm run smoke:ide-preview` is the cross-IDE preview gate. It runs these exact local commands in order:
+
+```sh
+npm run prepare:vscode-preview
+npm run smoke:vscode-installable
+npm run smoke:vscode-preview
+npm run prepare:jetbrains-preview
+npm run smoke:jetbrains-installable
+npm run smoke:jetbrains-preview
+```
+
+Run individual prepare commands when you need one IDE artifact only:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+npm run prepare:vscode-preview
+npm run prepare:jetbrains-preview
+```
+
+The VS Code prepare command builds/prepares the local `yet-lsp` runtime, builds `apps/gui`, copies packaged GUI assets into the extension workspace, compiles the extension, and publishes the ignored install-from-file artifact plus checksum:
+
+```text
+dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix
+dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix.sha256
+```
+
+The JetBrains prepare command builds/prepares the local `yet-lsp` runtime, builds `apps/gui`, refreshes generated JetBrains GUI resources, runs the Gradle plugin package, prints the Gradle distribution ZIP under `apps/plugins/jetbrains/build/distributions/`, and publishes the ignored Install Plugin from Disk artifact plus checksum:
+
+```text
+dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip
+dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip.sha256
+```
+
+All generated VSIX/ZIP files, `.sha256` files, packaged GUI assets, copied engine binaries, Gradle outputs, `apps/gui/dist`, and root `dist/` preview artifacts are ignored/untracked local build outputs and must not be committed.
+
+`npm run smoke:ide-preview` runs `npm run prepare:vscode-preview`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, and `npm run smoke:jetbrains-preview` in order with fail-fast step labels. The underlying prepare commands build/prepare the local engine and `apps/gui`, then publish ignored root dev-preview artifacts under `dist/plugins/vscode/` and `dist/plugins/jetbrains/` with matching `.sha256` checksums. The generated VSIX, ZIP, checksums, GUI assets, extension/plugin output, engine binaries, and root `dist/` artifacts are ignored and must not be committed. This is a local dev-preview/install-from-file flow only: it is not marketplace publication, signing, notarization, a production installer, or a production release, and it requires no provider credentials, hosted Yet AI backend, real OpenAI/ChatGPT calls, or cloud workspace.
+
+Manual launch paths after preparation:
+
+- VS Code primary path: open `apps/plugins/vscode` in VS Code, start an Extension Development Host, keep `yetai.launchMode = auto`, run `Yet AI: Open Chat`, and use the packaged GUI. For install-from-file testing, install `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix` with `code --install-extension ...` after `npm run smoke:vscode-installable` passes.
+- JetBrains primary path: open IntelliJ IDEA Settings/Preferences → Plugins → gear → Install Plugin from Disk, choose `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip`, restart the IDE, keep `Launch mode = auto` or `launch`, and open the Yet AI tool window.
+
+Runtime launch modes are the same across IDEs:
+
+- `auto`: default dev-preview path. The plugin discovers or uses the prepared `yet-lsp`, starts it with a generated `YET_AI_AUTH_TOKEN`, and gives the GUI the local Session token through trusted `host.ready` only.
+- `launch`: require the plugin to start a configured absolute `yet-lsp` binary path. Use the path printed by the prepare command when discovery is insufficient.
+- `connect`: use an already running loopback runtime. Start it manually only for debugging, for example `YET_AI_AUTH_TOKEN=local-dev-token YET_AI_HTTP_PORT=8001 cargo run -p yet-lsp`, then configure the matching loopback URL and local Session token in IDE settings/SecretStorage/PasswordSafe.
+
+For normal `auto` or `launch` previews, do not manually start `yet-lsp`, do not paste `local-dev-token`, and do not put provider API keys in runtime-token fields. The safe/default real-provider path is the GUI `OpenAI API` API-key fallback or another OpenAI-compatible/local provider configured through the local runtime. Provider keys belong only in the GUI Provider setup API-key field, clear after save, and remain engine-owned local BYOK credentials. The experimental account-login path remains separate, explicit-risk, private-endpoint-style, mock-only in automation, not official public OpenAI OAuth support, not an OpenAI partnership claim, and not production-ready.
+
+First-message manual checklist for either IDE:
+
+1. Run the IDE prepare command and matching smoke commands, or run the full `npm run smoke:ide-preview` gate when validating both IDEs.
+2. Open the prepared IDE path: VS Code Extension Development Host for VS Code, or IntelliJ Install Plugin from Disk ZIP for JetBrains.
+3. Keep `auto` for the normal preview, or set `launch` with an absolute `yet-lsp` path if discovery fails. Use `connect` only for a manually started loopback runtime.
+4. Open `Yet AI: Open Chat` / the Yet AI tool window and verify the packaged GUI loads.
+5. Click `Refresh runtime`; it checks `/v1/ping`, `/v1/caps`, `/v1/models`, provider summaries, and OpenAI provider-auth status through the local runtime.
+6. Configure the `OpenAI API` API-key fallback or a local OpenAI-compatible mock/provider. Confirm the API-key field clears after save and provider status is sanitized/redacted.
+7. Review active editor/selection context if shown. Attach it only when the selected text is safe to send to the configured provider.
+8. Send `Say hello in one sentence.` Expected behavior: accepted user message, optional one-shot context prepended by the local runtime, SSE snapshot/start/delta/finish updates, visible assistant response, and engine-owned local history reload without a Yet AI hosted backend, cloud workspace, managed gateway, product credit balance, or Yet AI account.
+
+Safe manual report evidence should be actionable but sanitized. Include command pass/fail results, IDE and OS versions, launch mode, artifact path family, checksum presence/match result, packaged GUI vs placeholder, sanitized runtime status, sanitized provider status, active-context attach/omit choice, and first-message outcome. Never share provider API keys, local runtime session tokens, bearer/Authorization values, auth codes, OAuth access/refresh tokens, PKCE verifiers, cookies, query values, fragment values, private absolute paths, raw provider responses, raw bridge payloads, request bodies, browser storage dumps, terminal scrollback containing secrets, or screenshots that show any of those values.
 
 Current baseline subsystem checks are:
 
