@@ -182,6 +182,7 @@ try {
   const fakeJsonClientSecret = "fake-json-client-secret-sentinel";
   const fakeLongOpaque = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   const fakeJwt = "abcdefghijklmnop.abcdefghijklmnop.abcdefghijklmnop";
+  const fakePrivatePath = path.join(os.homedir(), "Library", "Application Support", "yet-ai", "private", "progress.json");
   const diagnostic = redactRuntimeDiagnosticText(
     [
       `ping failed with ${fakeBearer} and ${fakeSessionToken} and ${fakeApiKey}`,
@@ -196,6 +197,7 @@ try {
       "local-dev-token",
       fakeLongOpaque,
       fakeJwt,
+      `private path ${fakePrivatePath}`,
     ].join("\n"),
     fakeSessionToken,
   );
@@ -236,6 +238,8 @@ try {
     "local-dev-token",
     fakeLongOpaque,
     fakeJwt,
+    fakePrivatePath,
+    os.homedir(),
   ];
   for (const forbidden of forbiddenValues) {
     assert.equal(diagnostic.includes(forbidden), false, `diagnostics leaked ${forbidden}`);
@@ -629,6 +633,60 @@ try {
     assert.equal(explicitLaunch.connection.sessionToken, spawnedProcesses[1].options.env.YET_AI_AUTH_TOKEN);
     assert.notEqual(explicitLaunch.connection.sessionToken, autoLaunch.connection.sessionToken);
     assert.deepEqual(explicitLaunch.pingAuthorizations, [`Bearer ${explicitLaunch.connection.sessionToken}`]);
+
+    const outputErrorLines = [];
+    const processErrorSecret = "process-error-session-sentinel";
+    const processErrorOutput = { appendLine(line) { outputErrorLines.push(line); } };
+    childProcess.spawn = (command, args, options) => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.killed = false;
+      child.kill = () => true;
+      setImmediate(() => child.emit("error", new Error(`process error ${processErrorSecret} ${executable} /Users/private/runtime.sock`)));
+      return child;
+    };
+    configValues = {
+      runtimeUrl: "http://127.0.0.1:7766",
+      launchMode: "launch",
+      engineBinaryPath: executable,
+    };
+    globalThis.fetch = async () => ({ ok: true, status: 200 });
+    await prepareEngineConnection(
+      { ...fakeContext, extensionPath: tempRoot },
+      { engine: { binaryName: "yet-lsp" } },
+      processErrorOutput,
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    const processErrorText = outputErrorLines.join("\n");
+    assert.equal(processErrorText.includes(processErrorSecret), false, "process error leaked secret");
+    assert.equal(processErrorText.includes(privateDirectory), false, "process error leaked private path");
+    assert.match(processErrorText, /yet-lsp-executable/);
+
+    childProcess.spawn = () => {
+      throw new Error(`EACCES ${executable} Authorization: Bearer thrown-spawn-secret /Users/private/runtime.sock`);
+    };
+    configValues = {
+      runtimeUrl: "http://127.0.0.1:8899",
+      launchMode: "launch",
+      engineBinaryPath: executable,
+    };
+    await assert.rejects(
+      () => prepareEngineConnection(
+        { ...fakeContext, extensionPath: tempRoot },
+        { engine: { binaryName: "yet-lsp" } },
+        fakeOutputChannel(),
+      ),
+      (error) => {
+        assert.equal(error.message.includes("thrown-spawn-secret"), false, error.message);
+        assert.equal(error.message.includes(privateDirectory), false, error.message);
+        assert.equal(error.message.includes("/Users/private/runtime.sock"), false, error.message);
+        assert.match(error.message, /Could not start Yet AI local runtime from yet-lsp-executable/);
+        return true;
+      },
+    );
+
+    childProcess.spawn = originalSpawn;
 
     configValues = {
       runtimeUrl: "http://127.0.0.1:8001",

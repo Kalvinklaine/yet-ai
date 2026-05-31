@@ -215,6 +215,49 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun diagnosticsRedactPrivatePathsFragmentsAndModeSpecificFailures() {
+        val privatePath = "/Users/alice/Library/Application Support/yet-ai/runtime/yet-lsp"
+        val diagnostics = formatRuntimeDiagnostics(
+            RuntimeDiagnostics(
+                launchMode = "auto",
+                runtimeUrl = sanitizeRuntimeUrlForDiagnostics("http://127.0.0.1:8123/runtime?api_key=query-secret#access_token=fragment-secret"),
+                engineBinaryConfigured = true,
+                binaryStatus = "configured binary failed at $privatePath with OPENAI_API_KEY=provider-secret",
+                launchedByPlugin = false,
+                health = "HTTP 401 from /v1/ping?token=health-secret#refresh_token=fragment-refresh",
+                error = "Process failed at $privatePath with Cookie: session=cookie-secret",
+            ),
+        )
+
+        assertTrue(diagnostics.contains("Launch mode: auto"), diagnostics)
+        assertTrue(diagnostics.contains("Auto mode launches"), diagnostics)
+        listOf("alice", "Application Support", privatePath, "query-secret", "fragment-secret", "provider-secret", "health-secret", "fragment-refresh", "cookie-secret", "Cookie").forEach { secret ->
+            assertFalse(diagnostics.contains(secret), diagnostics)
+        }
+        assertTrue(diagnostics.contains("[redacted"), diagnostics)
+    }
+
+    @Test
+    fun diagnosticsGuidanceDistinguishesConnectLaunchAndAutoModes() {
+        val connect = formatRuntimeDiagnostics(
+            RuntimeDiagnostics("connect", "http://127.0.0.1:8123", false, "not used in connect mode", false, "HTTP 401", null),
+        )
+        val launch = formatRuntimeDiagnostics(
+            RuntimeDiagnostics("launch", "http://127.0.0.1:8123", true, "configured binary is not executable", false, null, "spawn failed"),
+        )
+        val auto = formatRuntimeDiagnostics(
+            RuntimeDiagnostics("auto", "http://127.0.0.1:8123", false, "no configured or discovered binary; connect-only fallback", false, null, null),
+        )
+
+        assertTrue(connect.contains("Connect mode expects an already running loopback Yet AI runtime"), connect)
+        assertTrue(connect.contains("Last health: HTTP 401"), connect)
+        assertTrue(launch.contains("Launch mode requires an executable"), launch)
+        assertTrue(launch.contains("configured binary is not executable"), launch)
+        assertTrue(auto.contains("Auto mode launches"), auto)
+        assertTrue(auto.contains("connect-only fallback"), auto)
+    }
+
+    @Test
     fun diagnosticsDescribeModeGuidanceAndBinaryStatus() {
         val diagnostics = formatRuntimeDiagnostics(
             RuntimeDiagnostics(
