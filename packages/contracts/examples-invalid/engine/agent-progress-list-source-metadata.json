@@ -1,0 +1,9 @@
+{
+  "cloudRequired": false,
+  "providerAccess": "direct",
+  "source": {
+    "path": "/Users/example/.yet-ai/agent-progress.json",
+    "status": "loaded"
+  },
+  "snapshots": []
+}

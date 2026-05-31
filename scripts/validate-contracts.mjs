@@ -359,6 +359,14 @@ const invalidMappings = [
     "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
   ],
   [
+    "packages/contracts/examples-invalid/engine/agent-progress-list-overlong-generated-at.json",
+    "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-list-source-metadata.json",
+    "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
+  ],
+  [
     "packages/contracts/examples-invalid/engine/agent-progress-list-oversized-output-tail.json",
     "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
   ],
