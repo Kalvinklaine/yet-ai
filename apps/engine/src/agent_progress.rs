@@ -190,7 +190,7 @@ fn validate_snapshot(snapshot: &AgentProgressSnapshot) -> Result<(), AgentProgre
         return Err(AgentProgressError::Unavailable);
     }
     validate_id(&snapshot.run_id, 128)?;
-    validate_id(&snapshot.card_id, 64)?;
+    validate_card_id(&snapshot.card_id)?;
     validate_timestamp(&snapshot.started_at)?;
     validate_timestamp(&snapshot.updated_at)?;
     if let Some(completed_at) = &snapshot.completed_at {
@@ -365,6 +365,23 @@ fn validate_id(value: &str, max_length: usize) -> Result<(), AgentProgressError>
     Ok(())
 }
 
+fn validate_card_id(value: &str) -> Result<(), AgentProgressError> {
+    if value.is_empty() || value.len() > 64 {
+        return Err(AgentProgressError::Unavailable);
+    }
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return Err(AgentProgressError::Unavailable);
+    };
+    if !first.is_ascii_alphanumeric() {
+        return Err(AgentProgressError::Unavailable);
+    }
+    if !chars.all(|value| value.is_ascii_alphanumeric() || value == '_' || value == '-') {
+        return Err(AgentProgressError::Unavailable);
+    }
+    Ok(())
+}
+
 fn validate_timestamp(value: &str) -> Result<(), AgentProgressError> {
     if value.len() < 20 || value.len() > 32 {
         return Err(AgentProgressError::Unavailable);
@@ -407,8 +424,6 @@ fn validate_safe_string(
 fn contains_unsafe_text(value: &str) -> bool {
     let lower = value.to_lowercase();
     for marker in [
-        "api_key",
-        "apikey",
         "authorization",
         "bearer",
         "token",
@@ -417,34 +432,7 @@ fn contains_unsafe_text(value: &str) -> bool {
         "cookie",
         "pkce",
         "refresh",
-        "access_token",
-        "access token",
-        "auth_code",
-        "auth code",
-        "chain-of-thought",
-        "chain_of_thought",
-        "chain of thought",
-        "raw_prompt",
-        "raw prompt",
-        "raw_dump",
-        "raw dump",
-        "raw_output",
-        "raw output",
-        "raw_file",
-        "raw file",
-        "raw_workspace",
-        "raw workspace",
-        "provider_response",
-        "provider response",
-        "provider_body",
-        "provider body",
         "credential",
-        "file_content",
-        "file content",
-        "workspace_file",
-        "workspace file",
-        "workspace_content",
-        "workspace content",
         "/users/",
         "/home/",
         "/private/",
@@ -456,6 +444,30 @@ fn contains_unsafe_text(value: &str) -> bool {
         "begin private key",
     ] {
         if lower.contains(marker) {
+            return true;
+        }
+    }
+    let normalized = lower
+        .chars()
+        .filter(|value| !matches!(value, '-' | '_' | ' '))
+        .collect::<String>();
+    for marker in [
+        "apikey",
+        "accesstoken",
+        "authcode",
+        "chainofthought",
+        "rawprompt",
+        "rawdump",
+        "rawoutput",
+        "rawfile",
+        "rawworkspace",
+        "providerresponse",
+        "providerbody",
+        "filecontent",
+        "workspacefile",
+        "workspacecontent",
+    ] {
+        if normalized.contains(marker) {
             return true;
         }
     }
