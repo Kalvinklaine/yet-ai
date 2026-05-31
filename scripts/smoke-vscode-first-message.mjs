@@ -304,8 +304,15 @@ function mockModel() {
 async function startStaticServer(staticRoot) {
   const realStaticRoot = await realpath(staticRoot);
   const server = http.createServer(async (request, response) => {
-    const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
-    const pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
+    let requestUrl;
+    let pathname;
+    try {
+      requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+      pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
+    } catch {
+      response.writeHead(400).end("Bad request");
+      return;
+    }
     const requestedPath = path.normalize(path.join(realStaticRoot, pathname));
     let realRequestedPath;
     try {

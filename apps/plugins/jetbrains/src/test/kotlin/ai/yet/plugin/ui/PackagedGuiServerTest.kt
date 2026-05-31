@@ -11,6 +11,8 @@ class PackagedGuiServerTest {
         assertEquals("/yet-ai-gui/index.html", resourcePath("/index.html"))
         assertEquals("/yet-ai-gui/assets/index.js", resourcePath("/assets/index.js"))
         assertEquals("/yet-ai-gui/assets/app.css", resourcePath("/assets/app.css"))
+        assertEquals("/yet-ai-gui/assets/app+chunk.js", resourcePath("/assets/app+chunk.js"))
+        assertEquals("/yet-ai-gui/assets/app+chunk.js", resourcePath("/assets/app%2Bchunk.js"))
     }
 
     @Test
@@ -20,6 +22,7 @@ class PackagedGuiServerTest {
         assertNull(resourcePath("/assets/%252e%252e/index.html"))
         assertNull(resourcePath("/assets/%5c..%5cindex.html"))
         assertNull(resourcePath("/assets/..%2findex.html"))
+        assertNull(resourcePath("/assets/%E0%A4%A"))
         assertNull(resourcePath("/assets\\index.js"))
         assertNull(resourcePath("/favicon.ico"))
         assertNull(resourcePath("/assets/"))
