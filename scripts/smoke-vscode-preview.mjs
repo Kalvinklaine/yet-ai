@@ -268,8 +268,20 @@ async function checkFreshness(generatedPath, sourcePaths, staleMessage) {
       continue;
     }
     if (generatedStat.mtimeMs + staleToleranceMs < sourceStat.mtimeMs) {
+      if (await sameFileContent(generatedPath, sourcePath)) {
+        continue;
+      }
       failures.push(`${staleMessage} ${prepareMessage} Generated: ${relative(generatedPath)}; newer source: ${relative(sourcePath)}.`);
     }
+  }
+}
+
+async function sameFileContent(leftPath, rightPath) {
+  try {
+    const [left, right] = await Promise.all([readFile(leftPath), readFile(rightPath)]);
+    return left.equals(right);
+  } catch {
+    return false;
   }
 }
 
