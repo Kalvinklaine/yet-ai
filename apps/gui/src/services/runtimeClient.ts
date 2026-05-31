@@ -168,6 +168,10 @@ export type AgentProgressSnapshot = {
   message: string;
   elapsedMs: number;
   ageMs: number;
+  lastHeartbeatAt?: string;
+  heartbeatAgeMs?: number;
+  lastToolOutputAt?: string;
+  toolOutputAgeMs?: number;
   currentTool?: AgentProgressToolSummary;
   outputTail?: string;
   overflowRecovery?: AgentOverflowRecovery;
