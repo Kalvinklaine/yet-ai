@@ -4,7 +4,8 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { createProgressState, resolveAgentProgressStatePath, snapshotProgressState } from "./planner-agent-progress-state.mjs";
+import { appendProgressEvent, readProgressState, resolveAgentProgressStatePath, snapshotProgressState } from "./planner-agent-progress-state.mjs";
+import { run as runProgressCommand } from "./planner-agent-progress-run.mjs";
 
 const rootDir = process.cwd();
 const token = `agent-progress-endpoint-${randomUUID()}`;
@@ -36,29 +37,22 @@ try {
   assert(Array.isArray(missing.snapshots) && missing.snapshots.length === 0, "missing source did not return empty snapshots");
   assertNoRawMarkers(missing, "missing source response");
 
-  await writeProgressSource(tempHome, {
-    cloudRequired: false,
-    providerAccess: "direct",
-    generatedAt: "2026-05-31T10:00:02Z",
-    snapshots: [reducerSnapshot(), failedSnapshot()]
-  });
+  await writeLiveProgressSource(tempHome);
 
   const populated = await requestJson(baseUrl, "/v1/agent-progress");
   assert(populated.cloudRequired === false, "populated source cloud flag mismatch");
   assert(populated.providerAccess === "direct", "populated source provider access mismatch");
   assert(populated.generatedAt === "2026-05-31T10:00:02Z", "populated source generatedAt mismatch");
-  assert(Array.isArray(populated.snapshots) && populated.snapshots.length === 2, "populated source snapshot count mismatch");
-  const statuses = new Map(populated.snapshots.map((snapshot) => [snapshot.runId, snapshot.status]));
-  assert(statuses.get("run-endpoint-healthy") === "healthy_running", "healthy snapshot status mismatch");
-  assert(statuses.get("run-endpoint-failed") === "failed", "failed snapshot status mismatch");
-  const healthy = populated.snapshots.find((snapshot) => snapshot.runId === "run-endpoint-healthy");
-  assert(healthy?.lastHeartbeatAt === "2026-05-31T10:00:01Z", "healthy snapshot heartbeat timestamp mismatch");
-  assert(healthy?.heartbeatAgeMs === 1000, "healthy snapshot heartbeat age mismatch");
-  assert(healthy?.lastToolOutputAt === "2026-05-31T10:00:00Z", "healthy snapshot tool output timestamp mismatch");
-  assert(healthy?.toolOutputAgeMs === 2000, "healthy snapshot tool output age mismatch");
-  const failed = populated.snapshots.find((snapshot) => snapshot.runId === "run-endpoint-failed");
-  assert(failed?.stuckReason === "explicit_failure", "failed snapshot stuck reason mismatch");
-  assert(failed?.overflowRecovery?.kind === "tool_output_too_large", "failed snapshot recovery kind mismatch");
+  assert(Array.isArray(populated.snapshots) && populated.snapshots.length === 1, "populated source snapshot count mismatch");
+  const healthy = populated.snapshots[0];
+  assert(healthy.cardId === "T373", "writer snapshot card id mismatch");
+  assert(healthy.runId === "run-endpoint-writer", "writer snapshot run id mismatch");
+  assert(healthy.status === "healthy_running", "writer snapshot status mismatch");
+  assert(healthy.message === "Wrapped endpoint smoke command is running.", "writer snapshot message mismatch");
+  assert(healthy.lastHeartbeatAt === "2026-05-31T10:00:01Z", "writer snapshot heartbeat timestamp mismatch");
+  assert(healthy.heartbeatAgeMs === 1000, "writer snapshot heartbeat age mismatch");
+  assert(healthy.lastToolOutputAt === "2026-05-31T10:00:00Z", "writer snapshot tool output timestamp mismatch");
+  assert(healthy.toolOutputAgeMs === 2000, "writer snapshot tool output age mismatch");
   assertNoRawMarkers(populated, "populated response");
 
   await writeRawProgressSource(tempHome, `{"cloudRequired":false,"providerAccess":"direct","snapshots":[{"message":"${rawMarkers.join(" ")}"}`);
@@ -76,70 +70,98 @@ try {
   }
 }
 
-function reducerSnapshot() {
-  const state = createProgressState(
+async function writeLiveProgressSource(home) {
+  const cacheRoot = endpointCacheRoot(home);
+  const statePath = resolveAgentProgressStatePath({ cacheRoot, env: {} });
+  const now = "2026-05-31T10:00:02Z";
+  assert(statePath === path.join(endpointCacheRoot(home), "yet-ai", "agent-progress", "progress.json"), "endpoint smoke resolved unexpected canonical path");
+  const wrapperCode = await runProgressCommand(
     [
-      {
-        protocolVersion: "2026-05-29",
-        eventId: "evt-endpoint-healthy-1",
-        runId: "run-endpoint-healthy",
-        cardId: "T360",
-        timestamp: "2026-05-31T10:00:01Z",
-        phase: "running_command",
-        status: "running",
-        message: "Running endpoint smoke safely.",
-        tool: {
-          kind: "test",
-          label: "endpoint smoke",
-          startedAt: "2026-05-31T10:00:00Z"
-        },
-        heartbeat: {
-          lastHeartbeatAt: "2026-05-31T10:00:01Z",
-          lastToolOutputAt: "2026-05-31T10:00:00Z"
-        },
-        outputTail: "safe bounded output"
-      }
+      "--card",
+      "T373",
+      "--run",
+      "run-endpoint-wrapper",
+      "--state",
+      statePath,
+      "--phase",
+      "running_command",
+      "--tool-kind",
+      "command",
+      "--tool-label",
+      "endpoint smoke wrapper",
+      "--heartbeat-interval-ms",
+      "100",
+      "--",
+      process.execPath,
+      "-e",
+      "process.stdout.write('safe wrapper output')"
     ],
-    { now: "2026-05-31T10:00:02Z" }
+    {
+      stdout: { write() {} },
+      stderr: { write(value) { throw new Error(`wrapper wrote stderr: ${value}`); } },
+      env: process.env
+    }
   );
-  return snapshotProgressState(state, { now: "2026-05-31T10:00:02Z" });
+  assert(wrapperCode === 0, "live wrapper command failed");
+  await appendProgressEvent(
+    statePath,
+    progressEvent({
+      eventId: "evt-endpoint-writer-1",
+      runId: "run-endpoint-writer",
+      cardId: "T373",
+      timestamp: "2026-05-31T10:00:00Z",
+      phase: "started",
+      status: "running",
+      message: "Command wrapper started."
+    }),
+    { now }
+  );
+  await appendProgressEvent(
+    statePath,
+    progressEvent({
+      eventId: "evt-endpoint-writer-2",
+      runId: "run-endpoint-writer",
+      cardId: "T373",
+      timestamp: "2026-05-31T10:00:01Z",
+      phase: "running_command",
+      status: "running",
+      message: "Wrapped endpoint smoke command is running.",
+      tool: {
+        kind: "command",
+        label: "endpoint smoke writer",
+        startedAt: "2026-05-31T10:00:00Z"
+      },
+      heartbeat: {
+        lastHeartbeatAt: "2026-05-31T10:00:01Z",
+        lastToolOutputAt: "2026-05-31T10:00:00Z"
+      },
+      outputTail: "safe writer output"
+    }),
+    { now }
+  );
+  const state = await readProgressState(statePath);
+  assert(state.events.some((event) => event.runId === "run-endpoint-wrapper"), "wrapper event was not written to canonical state");
+  const snapshot = snapshotProgressState({ ...state, events: state.events.filter((event) => event.runId === "run-endpoint-writer") }, { now });
+  await writeProgressSource(home, {
+    cloudRequired: false,
+    providerAccess: "direct",
+    generatedAt: now,
+    snapshots: [snapshot]
+  });
+  assert(statePath === resolveAgentProgressStatePath({ cacheRoot, env: {} }), "canonical writer path drifted");
 }
 
-function failedSnapshot() {
+function progressEvent(overrides) {
   return {
     protocolVersion: "2026-05-29",
-    runId: "run-endpoint-failed",
-    cardId: "T361",
-    startedAt: "2026-05-31T09:59:00Z",
-    updatedAt: "2026-05-31T10:00:00Z",
-    completedAt: "2026-05-31T10:00:00Z",
-    phase: "failed",
-    status: "failed",
-    message: "Verification failed with sanitized output.",
-    elapsedMs: 60000,
-    ageMs: 1000,
-    currentTool: {
-      kind: "validation",
-      label: "contract validation",
-      startedAt: "2026-05-31T09:59:00Z",
-      elapsedMs: 60000
-    },
-    outputTail: "[redacted-field]",
-    stuckReason: "explicit_failure",
-    overflowRecovery: {
-      kind: "tool_output_too_large",
-      message: "Use targeted search/cat commands and rerun verification.",
-      retryable: true
-    },
-    recentEvents: [
-      {
-        eventId: "evt-endpoint-failed-1",
-        timestamp: "2026-05-31T10:00:00Z",
-        phase: "failed",
-        status: "failed",
-        message: "Safe failure summary."
-      }
-    ]
+    eventId: "evt-endpoint-default",
+    runId: "run-endpoint-writer",
+    cardId: "T373",
+    timestamp: "2026-05-31T10:00:00Z",
+    phase: "running_command",
+    status: "running",
+    message: "Endpoint smoke progress event.",
+    ...overrides
   };
 }
 
@@ -157,15 +179,13 @@ async function writeProgressSource(home, value) {
 }
 
 async function writeRawProgressSource(home, value) {
-  for (const cacheRoot of cacheRoots(home)) {
-    const sourcePath = resolveAgentProgressStatePath({ cacheRoot, env: {} });
-    await mkdir(path.dirname(sourcePath), { recursive: true });
-    await writeFile(sourcePath, value);
-  }
+  const sourcePath = resolveAgentProgressStatePath({ cacheRoot: endpointCacheRoot(home), env: {} });
+  await mkdir(path.dirname(sourcePath), { recursive: true });
+  await writeFile(sourcePath, value);
 }
 
-function cacheRoots(home) {
-  return [path.join(home, ".cache"), path.join(home, "Library", "Caches")];
+function endpointCacheRoot(home) {
+  return path.join(home, "Library", "Caches");
 }
 
 function startEngine(port, home) {
