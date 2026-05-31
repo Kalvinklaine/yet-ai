@@ -1,0 +1,13 @@
+{
+  "protocolVersion": "2026-05-29",
+  "runId": "run-T369-invalid-offset",
+  "cardId": "T369",
+  "startedAt": "2026-05-31T13:00:00+03:00",
+  "updatedAt": "2026-05-31T10:00:01Z",
+  "phase": "running_command",
+  "status": "healthy_running",
+  "message": "Progress snapshot used a non-UTC offset timestamp.",
+  "elapsedMs": 1000,
+  "ageMs": 10,
+  "recentEvents": []
+}

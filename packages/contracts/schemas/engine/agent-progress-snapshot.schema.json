@@ -41,6 +41,18 @@
     "ageMs": {
       "$ref": "#/$defs/durationMs"
     },
+    "lastHeartbeatAt": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "heartbeatAgeMs": {
+      "$ref": "#/$defs/durationMs"
+    },
+    "lastToolOutputAt": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "toolOutputAgeMs": {
+      "$ref": "#/$defs/durationMs"
+    },
     "currentTool": {
       "$ref": "#/$defs/toolSummary"
     },
@@ -79,7 +91,8 @@
       "type": "string",
       "format": "date-time",
       "minLength": 20,
-      "maxLength": 32
+      "maxLength": 32,
+      "pattern": "Z$"
     },
     "durationMs": {
       "type": "integer",

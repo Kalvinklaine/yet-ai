@@ -3767,6 +3767,10 @@ fn valid_agent_progress_snapshot(index: usize, event_count: usize) -> Value {
         "message": format!("Working on safe step {index}"),
         "elapsedMs": 1000,
         "ageMs": 10,
+        "lastHeartbeatAt": "2026-05-31T10:00:01Z",
+        "heartbeatAgeMs": 5,
+        "lastToolOutputAt": "2026-05-31T10:00:00Z",
+        "toolOutputAgeMs": 1005,
         "currentTool": {
             "kind": "test",
             "label": "contract check",
@@ -3868,6 +3872,10 @@ async fn agent_progress_valid_local_source_returns_populated_list() {
     assert_eq!(body["generatedAt"], "2026-05-31T10:00:02Z");
     assert_eq!(body["snapshots"].as_array().unwrap().len(), 1);
     assert_eq!(body["snapshots"][0]["runId"], "run-1");
+    assert_eq!(body["snapshots"][0]["lastHeartbeatAt"], "2026-05-31T10:00:01Z");
+    assert_eq!(body["snapshots"][0]["heartbeatAgeMs"], 5);
+    assert_eq!(body["snapshots"][0]["lastToolOutputAt"], "2026-05-31T10:00:00Z");
+    assert_eq!(body["snapshots"][0]["toolOutputAgeMs"], 1005);
     assert_eq!(
         body["snapshots"][0]["currentTool"]["label"],
         "contract check"
@@ -3879,6 +3887,46 @@ async fn agent_progress_valid_local_source_returns_populated_list() {
             .len(),
         2
     );
+}
+
+#[tokio::test]
+async fn agent_progress_rejects_offset_timestamps_from_local_source() {
+    let paths = test_storage_paths();
+    let mut snapshot = valid_agent_progress_snapshot(1, 1);
+    snapshot["lastHeartbeatAt"] = json!("2026-05-31T13:00:01+03:00");
+    write_agent_progress_source(
+        &paths,
+        &json!({
+            "cloudRequired": false,
+            "providerAccess": "direct",
+            "snapshots": [snapshot]
+        })
+        .to_string(),
+    );
+
+    let (status, body) = agent_progress_response_for_paths(paths.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_agent_progress_error_is_sanitized(&body, &["2026-05-31T13:00:01+03:00"], &paths);
+}
+
+#[tokio::test]
+async fn agent_progress_rejects_excessive_heartbeat_age_from_local_source() {
+    let paths = test_storage_paths();
+    let mut snapshot = valid_agent_progress_snapshot(1, 1);
+    snapshot["heartbeatAgeMs"] = json!(604_800_001u64);
+    write_agent_progress_source(
+        &paths,
+        &json!({
+            "cloudRequired": false,
+            "providerAccess": "direct",
+            "snapshots": [snapshot]
+        })
+        .to_string(),
+    );
+
+    let (status, body) = agent_progress_response_for_paths(paths.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_agent_progress_error_is_sanitized(&body, &["604800001"], &paths);
 }
 
 #[tokio::test]

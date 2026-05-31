@@ -9,6 +9,10 @@
   "message": "Running contract validation with current tool output.",
   "elapsedMs": 120000,
   "ageMs": 2000,
+  "lastHeartbeatAt": "2026-05-29T12:39:58Z",
+  "heartbeatAgeMs": 2000,
+  "lastToolOutputAt": "2026-05-29T12:39:55Z",
+  "toolOutputAgeMs": 5000,
   "currentTool": {
     "kind": "validation",
     "label": "npm run validate:contracts",

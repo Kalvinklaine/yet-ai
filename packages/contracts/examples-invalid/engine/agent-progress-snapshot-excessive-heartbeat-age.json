@@ -1,0 +1,15 @@
+{
+  "protocolVersion": "2026-05-29",
+  "runId": "run-T369-invalid-age",
+  "cardId": "T369",
+  "startedAt": "2026-05-31T10:00:00Z",
+  "updatedAt": "2026-05-31T10:00:01Z",
+  "phase": "running_command",
+  "status": "healthy_running",
+  "message": "Progress snapshot used an excessive heartbeat age.",
+  "elapsedMs": 1000,
+  "ageMs": 10,
+  "lastHeartbeatAt": "2026-05-31T10:00:01Z",
+  "heartbeatAgeMs": 604800001,
+  "recentEvents": []
+}

@@ -50,6 +50,14 @@ pub struct AgentProgressSnapshot {
     pub elapsed_ms: u64,
     pub age_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_heartbeat_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heartbeat_age_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_tool_output_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_output_age_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub current_tool: Option<AgentProgressToolSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_tail: Option<String>,
@@ -216,6 +224,18 @@ fn validate_snapshot(snapshot: &AgentProgressSnapshot) -> Result<(), AgentProgre
     validate_safe_string(&snapshot.message, 1, 280)?;
     validate_duration(snapshot.elapsed_ms, 604_800_000)?;
     validate_duration(snapshot.age_ms, 604_800_000)?;
+    if let Some(last_heartbeat_at) = &snapshot.last_heartbeat_at {
+        validate_timestamp(last_heartbeat_at)?;
+    }
+    if let Some(heartbeat_age_ms) = snapshot.heartbeat_age_ms {
+        validate_duration(heartbeat_age_ms, 604_800_000)?;
+    }
+    if let Some(last_tool_output_at) = &snapshot.last_tool_output_at {
+        validate_timestamp(last_tool_output_at)?;
+    }
+    if let Some(tool_output_age_ms) = snapshot.tool_output_age_ms {
+        validate_duration(tool_output_age_ms, 604_800_000)?;
+    }
     if let Some(tool) = &snapshot.current_tool {
         validate_tool(tool)?;
     }
@@ -339,6 +359,9 @@ fn validate_id(value: &str, max_length: usize) -> Result<(), AgentProgressError>
 
 fn validate_timestamp(value: &str) -> Result<(), AgentProgressError> {
     if value.len() < 20 || value.len() > 32 {
+        return Err(AgentProgressError::Unavailable);
+    }
+    if !value.ends_with('Z') {
         return Err(AgentProgressError::Unavailable);
     }
     DateTime::parse_from_rfc3339(value)
