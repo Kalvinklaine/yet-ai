@@ -29,10 +29,11 @@ Agent progress read-only panel coverage is available from the root:
 ```sh
 npm run check:agent-progress
 npm run smoke:agent-progress
+npm run smoke:agent-progress-endpoint
 npm run smoke:gui-agent-progress
 ```
 
-Use the combined gate `npm run check:agent-progress && npm run smoke:agent-progress && npm run smoke:gui-agent-progress && npm run check && git status --short` when changing progress docs or surfaces.
+Use the combined gate `npm run check:agent-progress && npm run smoke:agent-progress && npm run smoke:agent-progress-endpoint && npm run smoke:gui-agent-progress && npm run check && git status --short` when changing progress docs or surfaces.
 
 Build the GUI first with `cd apps/gui && npm run build`. The browser smoke serves `apps/gui/dist` on `127.0.0.1`, opens the built page with Playwright Chromium, and fails on blank UI, page JavaScript errors, or broken local JS/CSS assets without requiring the engine or provider credentials. If Playwright or Chromium is missing, run `npm install` from the repository root and `npx playwright install chromium`.
 
@@ -158,7 +159,7 @@ A compact readiness summary near the chat shows local runtime status, enabled pr
 
 ## Agent progress panel
 
-The Agent progress panel is a local read-only observability surface backed by `GET /v1/agent-progress`. It distinguishes not-checked, loading, empty/no-runs, populated, and unavailable local-source states. When the runtime returns `generatedAt`, the GUI renders it as bounded sanitized freshness metadata. Endpoint errors, corrupt local progress files, oversized sources, or unsafe source data are shown only as sanitized unavailable copy. The panel must not expose Start, Stop, Merge, Apply, shell, tool, provider-call, git, or workspace-mutation controls.
+The Agent progress panel is a local read-only observability surface backed by `GET /v1/agent-progress`. The endpoint reads the engine-owned local progress source when present, returns populated sanitized snapshots, returns an empty list when the source is missing, and reports corrupt, oversized, or unsafe source data only as sanitized unavailable copy. The GUI distinguishes not-checked, loading, empty/no-runs, populated, and unavailable local-source states. When the runtime returns `generatedAt`, the GUI renders it as bounded sanitized freshness metadata. The panel must not expose Start, Stop, Merge, Apply, shell, tool, provider-call, git, or workspace-mutation controls.
 
 Displayed progress data is limited to safe operational fields such as ids, phase/status, tool label/kind, elapsed and heartbeat ages, stuck reason, recent summaries, and bounded sanitized output tails. The GUI must not render prompts, chain-of-thought, raw file contents, raw provider responses, tokens, cookies, provider credentials, runtime session tokens, credential paths, private absolute paths, shell scripts, or patch payloads. This panel does not implement production background agents, runner hooks, task-board integration, git merges, tool execution, shell authority, provider calls, hosted services, or cloud sync.
 
