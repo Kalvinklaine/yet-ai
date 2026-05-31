@@ -220,8 +220,6 @@ Use this only for an explicitly accepted manual run of the experimental Codex-li
 
 ## Manual preview report template
 
-## Manual preview report template
-
 Use this template for hands-on VS Code dev-preview issues. Keep reports safe to share and omit secrets, private paths, query strings, URL fragments, bridge payloads, and provider responses. Runtime diagnostics are redacted before they reach the output channel, but reports should still include only concise sanitized error text.
 
 ```text

@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, realpath, rm, stat } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -238,15 +239,15 @@ async function extractJson(zipPath, entry, message) {
 }
 
 async function extractText(zipPath, entry, message) {
-  const bytes = extractBytes(zipPath, entry);
+  const bytes = await extractBytes(zipPath, entry);
   if (bytes === undefined) {
-    failures.push(`${message} Could not extract ${entry} with unzip -p. Install unzip to inspect VSIX entry contents.`);
+    failures.push(`${message} Could not extract ${entry} with unzip -p or JDK jar. Install unzip or ensure jar is available with a JDK to inspect VSIX entry contents.`);
     return undefined;
   }
   return bytes.toString("utf8");
 }
 
-function extractBytes(zipPath, entry) {
+async function extractBytes(zipPath, entry) {
   if (!isSafeArchiveEntryPath(entry)) {
     failures.push(`${path.relative(root, zipPath)} contains unsafe archive entry path ${JSON.stringify(entry)}.`);
     return undefined;
@@ -260,7 +261,46 @@ function extractBytes(zipPath, entry) {
   if (result.status === 0) {
     return result.stdout;
   }
-  return undefined;
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "yet-ai-vscode-extract-"));
+  try {
+    const jarResult = spawnSync("jar", ["xf", zipPath, entry], {
+      cwd: tempDir,
+      encoding: "buffer",
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
+    });
+    if (jarResult.status !== 0) {
+      return undefined;
+    }
+    const extractedPath = await resolveExtractedEntryPath(tempDir, entry);
+    if (extractedPath === undefined) {
+      failures.push(`${path.relative(root, zipPath)} extracted unsafe VSIX entry path ${JSON.stringify(entry)} outside the temporary directory.`);
+      return undefined;
+    }
+    return await readFile(extractedPath);
+  } catch {
+    return undefined;
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+async function resolveExtractedEntryPath(tempDir, entry) {
+  if (!isSafeArchiveEntryPath(entry)) {
+    return undefined;
+  }
+  const resolvedTempDir = await realpath(tempDir);
+  const resolvedPath = path.resolve(resolvedTempDir, ...entry.split(/[\\/]/));
+  const relative = path.relative(resolvedTempDir, resolvedPath);
+  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
+    return undefined;
+  }
+  const realExtractedPath = await realpath(resolvedPath);
+  const realRelative = path.relative(resolvedTempDir, realExtractedPath);
+  if (realRelative === "" || realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+    return undefined;
+  }
+  return realExtractedPath;
 }
 
 function listZip(zipPath) {
