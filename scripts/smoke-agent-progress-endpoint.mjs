@@ -4,7 +4,8 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { appendProgressEvent, readProgressState, resolveAgentProgressStatePath } from "./planner-agent-progress-state.mjs";
+import { sanitizeText } from "./planner-agent-progress.mjs";
+import { appendProgressEvent, readProgressState, resolveAgentProgressCacheRoot, resolveAgentProgressStatePath } from "./planner-agent-progress-state.mjs";
 import { run as runProgressCommand } from "./planner-agent-progress-run.mjs";
 
 const rootDir = process.cwd();
@@ -26,6 +27,7 @@ let tempHome;
 
 try {
   tempHome = await makeTempHome();
+  assertSmokeHelpers(tempHome);
   const enginePort = await freePort();
   engine = startEngine(enginePort, tempHome);
   const baseUrl = `http://127.0.0.1:${enginePort}`;
@@ -75,7 +77,7 @@ async function writeLiveProgressSource(home) {
   const cacheRoot = endpointCacheRoot(home);
   const statePath = resolveAgentProgressStatePath({ cacheRoot, env: {} });
   const now = "2026-05-31T10:00:02Z";
-  assert(statePath === path.join(endpointCacheRoot(home), "yet-ai", "agent-progress", "progress.json"), "endpoint smoke resolved unexpected canonical path");
+  assert(statePath === endpointProgressSourcePath(home), "endpoint smoke resolved unexpected canonical path");
   const wrapperCode = await runProgressCommand(
     [
       "--card",
@@ -171,6 +173,7 @@ async function makeTempHome() {
   await mkdir(path.join(home, "Library", "Caches"), { recursive: true });
   await mkdir(path.join(home, ".config"), { recursive: true });
   await mkdir(path.join(home, ".cache"), { recursive: true });
+  await mkdir(path.join(home, "AppData", "Local"), { recursive: true });
   return home;
 }
 
@@ -181,7 +184,25 @@ async function writeRawProgressSource(home, value) {
 }
 
 function endpointCacheRoot(home) {
-  return path.join(home, "Library", "Caches");
+  return resolveAgentProgressCacheRoot({
+    env: endpointStorageEnv(home),
+    home,
+    platform: process.platform
+  });
+}
+
+function endpointProgressSourcePath(home) {
+  return path.join(endpointCacheRoot(home), "yet-ai", "agent-progress", "progress.json");
+}
+
+function endpointStorageEnv(home) {
+  return {
+    HOME: home,
+    XDG_CONFIG_HOME: path.join(home, ".config"),
+    XDG_CACHE_HOME: path.join(home, ".cache"),
+    LOCALAPPDATA: path.join(home, "AppData", "Local"),
+    APPDATA: path.join(home, "AppData", "Roaming")
+  };
 }
 
 function startEngine(port, home) {
@@ -189,9 +210,7 @@ function startEngine(port, home) {
     cwd: rootDir,
     env: {
       ...process.env,
-      HOME: home,
-      XDG_CONFIG_HOME: path.join(home, ".config"),
-      XDG_CACHE_HOME: path.join(home, ".cache"),
+      ...endpointStorageEnv(home),
       CARGO_HOME: process.env.CARGO_HOME ?? path.join(process.env.HOME ?? home, ".cargo"),
       RUSTUP_HOME: process.env.RUSTUP_HOME ?? path.join(process.env.HOME ?? home, ".rustup"),
       NO_PROXY: appendNoProxy(process.env.NO_PROXY),
@@ -282,7 +301,42 @@ function assertNoRawMarkers(value, label) {
 }
 
 function safeEngineOutput(output) {
-  return output.split("\n").slice(-20).join("\n");
+  return redactSmokeSecrets(sanitizeText(output.split("\n").slice(-20).join("\n"), 4000));
+}
+
+function redactSmokeSecrets(value) {
+  let redacted = String(value ?? "");
+  for (const marker of [token, tempHome, tempHome && endpointCacheRoot(tempHome), tempHome && endpointProgressSourcePath(tempHome), ...rawMarkers].filter(Boolean)) {
+    redacted = redacted.split(marker).join("[redacted]");
+  }
+  return redacted;
+}
+
+function assertSmokeHelpers(home) {
+  const env = endpointStorageEnv(home);
+  assert(resolveAgentProgressCacheRoot({ env, home, platform: "darwin" }) === path.join(home, "Library", "Caches"), "darwin cache root mismatch");
+  assert(resolveAgentProgressCacheRoot({ env, home, platform: "linux" }) === path.join(home, ".cache"), "linux cache root mismatch");
+  assert(resolveAgentProgressCacheRoot({ env, home, platform: "win32" }) === path.join(home, "AppData", "Local"), "windows cache root mismatch");
+  assert(resolveAgentProgressStatePath({ env, home, platform: "linux" }) === path.join(home, ".cache", "yet-ai", "agent-progress", "progress.json"), "linux state path mismatch");
+  const unsafeOutput = [
+    `Bearer ${token}`,
+    token,
+    home,
+    endpointCacheRoot(home),
+    endpointProgressSourcePath(home),
+    "api_key=agent-progress-endpoint-secret",
+    "raw prompt: private workspace dump",
+    "safe final line"
+  ].join("\n");
+  const safe = safeEngineOutput(`${"line\n".repeat(30)}${unsafeOutput}`);
+  assert(!safe.includes(token), "safe engine output leaked runtime token");
+  assert(!safe.includes(home), "safe engine output leaked temp home");
+  assert(!safe.includes(endpointCacheRoot(home)), "safe engine output leaked cache path");
+  assert(!safe.includes(endpointProgressSourcePath(home)), "safe engine output leaked progress path");
+  assert(!safe.includes("agent-progress-endpoint-secret"), "safe engine output leaked generated secret marker");
+  assert(!safe.includes("raw prompt: private workspace dump"), "safe engine output leaked raw prompt");
+  assert(safe.includes("safe final line"), "safe engine output removed safe tail");
+  assert(safe.length <= 4000, "safe engine output was not bounded");
 }
 
 async function freePort() {

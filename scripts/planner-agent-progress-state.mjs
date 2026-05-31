@@ -1,5 +1,6 @@
 import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { PROTOCOL_VERSION, normalizeEvents, reduceAgentProgress } from "./planner-agent-progress.mjs";
 
@@ -26,6 +27,22 @@ function validateStateShape(value) {
   return value;
 }
 
+function resolveAgentProgressCacheRoot(options = {}) {
+  if (typeof options.cacheRoot === "string" && options.cacheRoot.length > 0) {
+    return options.cacheRoot;
+  }
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const home = typeof options.home === "string" && options.home.length > 0 ? options.home : homedir();
+  if (platform === "win32") {
+    return env?.LOCALAPPDATA || env?.APPDATA || join(home, "AppData", "Local");
+  }
+  if (platform === "darwin") {
+    return join(home, "Library", "Caches");
+  }
+  return env?.XDG_CACHE_HOME || join(home, ".cache");
+}
+
 function resolveAgentProgressStatePath(options = {}) {
   if (typeof options.state === "string" && options.state.length > 0) {
     return options.state;
@@ -34,8 +51,7 @@ function resolveAgentProgressStatePath(options = {}) {
   if (typeof env?.[STATE_ENV_OVERRIDE] === "string" && env[STATE_ENV_OVERRIDE].length > 0) {
     return env[STATE_ENV_OVERRIDE];
   }
-  const cacheRoot = typeof options.cacheRoot === "string" && options.cacheRoot.length > 0 ? options.cacheRoot : ".";
-  return join(cacheRoot, "yet-ai", "agent-progress", "progress.json");
+  return join(resolveAgentProgressCacheRoot(options), "yet-ai", "agent-progress", "progress.json");
 }
 
 function createProgressState(events = [], options = {}) {
@@ -195,6 +211,7 @@ export {
   createProgressListResponse,
   createProgressState,
   readProgressState,
+  resolveAgentProgressCacheRoot,
   resolveAgentProgressStatePath,
   snapshotProgressState,
   snapshotProgressStates,
