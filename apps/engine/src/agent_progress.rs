@@ -173,9 +173,13 @@ fn normalize_response(response: &mut AgentProgressListResponse) -> Result<(), Ag
     if let Some(generated_at) = &response.generated_at {
         validate_timestamp(generated_at)?;
     }
-    response.snapshots.truncate(MAX_SNAPSHOTS);
-    for snapshot in response.snapshots.iter_mut() {
-        snapshot.recent_events.truncate(MAX_RECENT_EVENTS);
+    if response.snapshots.len() > MAX_SNAPSHOTS {
+        return Err(AgentProgressError::Unavailable);
+    }
+    for snapshot in &response.snapshots {
+        if snapshot.recent_events.len() > MAX_RECENT_EVENTS {
+            return Err(AgentProgressError::Unavailable);
+        }
         validate_snapshot(snapshot)?;
     }
     Ok(())

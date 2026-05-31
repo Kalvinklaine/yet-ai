@@ -4103,10 +4103,85 @@ async fn agent_progress_unsafe_local_source_fails_without_secret_or_path_echo() 
 }
 
 #[tokio::test]
-async fn agent_progress_caps_snapshots_and_recent_events_from_local_source() {
+async fn agent_progress_rejects_over_cap_snapshots_before_truncation() {
     let paths = test_storage_paths();
-    let snapshots = (0..55)
-        .map(|index| valid_agent_progress_snapshot(index, 25))
+    let mut snapshots = (0..yet_lsp::agent_progress::MAX_SNAPSHOTS)
+        .map(|index| valid_agent_progress_snapshot(index, 1))
+        .collect::<Vec<_>>();
+    let mut hidden_invalid = valid_agent_progress_snapshot(50, 1);
+    hidden_invalid["phase"] = json!("done");
+    hidden_invalid["status"] = json!("done");
+    hidden_invalid["message"] = json!("Completed after the visible cap");
+    hidden_invalid["completedAt"] = json!("2026-05-31T10:05:00Z");
+    hidden_invalid["overflowRecovery"] = json!({
+        "kind": "context_length_exceeded",
+        "message": "Hidden invalid recovery after public cap.",
+        "retryable": true
+    });
+    snapshots.push(hidden_invalid);
+    write_agent_progress_source(
+        &paths,
+        &json!({
+            "cloudRequired": false,
+            "providerAccess": "direct",
+            "snapshots": snapshots
+        })
+        .to_string(),
+    );
+
+    let (status, body) = agent_progress_response_for_paths(paths.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_agent_progress_error_is_sanitized(
+        &body,
+        &[
+            "run-50",
+            "Completed after the visible cap",
+            "context_length_exceeded",
+            "Hidden invalid recovery",
+        ],
+        &paths,
+    );
+}
+
+#[tokio::test]
+async fn agent_progress_rejects_over_cap_recent_events_before_truncation() {
+    let paths = test_storage_paths();
+    let mut snapshot = valid_agent_progress_snapshot(1, yet_lsp::agent_progress::MAX_RECENT_EVENTS);
+    snapshot["recentEvents"].as_array_mut().unwrap().push(json!({
+        "eventId": "event-unsafe-hidden",
+        "timestamp": "2026-05-31T10:00:01Z",
+        "phase": "editing",
+        "status": "running",
+        "message": "Bearer hidden token /Users/example/.codex/auth.json"
+    }));
+    write_agent_progress_source(
+        &paths,
+        &json!({
+            "cloudRequired": false,
+            "providerAccess": "direct",
+            "snapshots": [snapshot]
+        })
+        .to_string(),
+    );
+
+    let (status, body) = agent_progress_response_for_paths(paths.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_agent_progress_error_is_sanitized(
+        &body,
+        &[
+            "event-unsafe-hidden",
+            "Bearer hidden token",
+            "/Users/example",
+        ],
+        &paths,
+    );
+}
+
+#[tokio::test]
+async fn agent_progress_accepts_exact_snapshot_and_recent_event_caps() {
+    let paths = test_storage_paths();
+    let snapshots = (0..yet_lsp::agent_progress::MAX_SNAPSHOTS)
+        .map(|index| valid_agent_progress_snapshot(index, yet_lsp::agent_progress::MAX_RECENT_EVENTS))
         .collect::<Vec<_>>();
     write_agent_progress_source(
         &paths,
@@ -4122,7 +4197,10 @@ async fn agent_progress_caps_snapshots_and_recent_events_from_local_source() {
     assert_eq!(status, StatusCode::OK);
     let snapshots = body["snapshots"].as_array().unwrap();
     assert_eq!(snapshots.len(), yet_lsp::agent_progress::MAX_SNAPSHOTS);
-    assert_eq!(snapshots[0]["recentEvents"].as_array().unwrap().len(), 20);
+    assert_eq!(
+        snapshots[0]["recentEvents"].as_array().unwrap().len(),
+        yet_lsp::agent_progress::MAX_RECENT_EVENTS
+    );
     assert_eq!(snapshots[49]["runId"], "run-49");
 }
 
