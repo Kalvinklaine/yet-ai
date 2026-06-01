@@ -295,6 +295,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         let frameLoaded = false;
         let frameReady = false;
         let frameGeneration = 0;
+        let currentFrameWindow = frame?.contentWindow;
         let currentGuiReadyRequestId;
         let guiReadySequence = 0;
         let currentGuiReadySequence = 0;
@@ -379,8 +380,8 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           return hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
         };
         const postToFrame = (message) => {
-          if (frame && frame.contentWindow && frameTargetOrigin && isHostMessage(message) && canDeliverHostMessage(message)) {
-            frame.contentWindow.postMessage(message, frameTargetOrigin);
+          if (frame && currentFrameWindow && frame.contentWindow === currentFrameWindow && frameTargetOrigin && isHostMessage(message) && canDeliverHostMessage(message)) {
+            currentFrameWindow.postMessage(message, frameTargetOrigin);
             if (message.type === "host.ready") {
               acceptedHostReadyRequestId = message.requestId;
               hostReadyAcceptedForCurrentFrame = true;
@@ -398,7 +399,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         };
         window.__yetAiSendHostMessageToFrame = sendToFrame;
         window.addEventListener("message", (event) => {
-          if (event.source === frame?.contentWindow) {
+          if (event.source === currentFrameWindow && event.source === frame?.contentWindow) {
             if (frameTargetOrigin && frameTargetOrigin !== "*" && event.origin !== frameTargetOrigin) {
               console.log("Yet AI rejected iframe message from unexpected origin");
               return;
@@ -429,6 +430,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           frame.addEventListener("load", () => {
             frameReady = false;
             frameGeneration += 1;
+            currentFrameWindow = frame.contentWindow;
             currentGuiReadySequence = 0;
             currentGuiReadyRequestId = undefined;
             acceptedHostReadyRequestId = undefined;

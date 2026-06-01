@@ -110,6 +110,7 @@ try {
   });
 
   await page.goto(`${wrapperBaseUrl}/wrapper.html`, { waitUntil: "domcontentloaded" });
+  await assertLeakDetectorSelfCheck(page);
   const initialLeakState = await collectWrapperLeakState(page);
   assertNoSecretLeak(initialLeakState, [
     { label: "runtime token", value: runtimeToken },
@@ -302,6 +303,7 @@ try {
     failures.push("Wrapper relayed an arbitrary wrapper-origin host.ready postMessage into the iframe.");
   }
 
+  await assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocator, bridgeVersion, guiBaseUrl, runtimeBaseUrl, runtimeToken);
   await assertReloadRequiresFreshGuiReady(page, bridgeVersion, guiBaseUrl, runtimeBaseUrl, runtimeToken);
 
   await frameLocator.getByText("State: Experimental OpenAI account / gpt-5-codex", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not use host.ready runtime endpoints to enter connected experimental readiness."));
@@ -406,8 +408,8 @@ try {
     window.__yetAiPendingHostMessages = [];
   });
   const browserVisibleState = await collectBrowserVisibleState(page);
-  const redactedBrowserVisibleState = browserVisibleState.split(runtimeToken).join("[runtime-token-redacted]");
-  assertNoSecretLeak(redactedBrowserVisibleState, [
+  assertNoSecretLeak(browserVisibleState, [
+    { label: "runtime token", value: runtimeToken },
     { label: "OAuth access token", value: oauthSentinels.accessToken },
     { label: "OAuth refresh token", value: oauthSentinels.refreshToken },
     { label: "OAuth auth code", value: oauthSentinels.authCode },
@@ -507,6 +509,70 @@ async function assertInvalidRuntimeUrlsRejected(page, version, currentReadyReque
   if (batchAfter !== batchBefore) {
     failures.push("Wrapper relayed opened/context messages from a batch whose host.ready runtime URL was invalid.");
   }
+}
+
+async function assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocator, version, guiUrl, runtimeUrl, token) {
+  const beforeUnloadEvents = await page.evaluate(() => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.unloaded").length);
+  await page.locator("iframe[title='Yet AI GUI']").evaluate((frame) => {
+    frame.src = "about:blank";
+  });
+  await page.waitForFunction((count) => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.unloaded").length > count, beforeUnloadEvents, { timeout: 5000 }).catch(() => failures.push("Wrapper did not report iframe unload during old-document gui.ready smoke."));
+  const beforeReadySequence = await page.evaluate(() => window.__yetAiGuiReadySequence ?? 0);
+  const beforePostedCount = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
+  const staleAttempt = await page.evaluate(({ bridgeVersion, readyUrl, sessionToken }) => new Promise((resolve) => {
+    const oldWindow = document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow;
+    oldWindow?.postMessage({
+      version: bridgeVersion,
+      type: "gui.ready",
+      payload: { supportedBridgeVersion: bridgeVersion },
+    }, "*");
+    window.setTimeout(() => {
+      const requestId = window.__yetAiCurrentReadyRequestId;
+      window.__yetAiSendHostMessageToFrame({
+        version: bridgeVersion,
+        type: "host.ready",
+        requestId,
+        payload: {
+          runtimeUrl: readyUrl,
+          sessionToken,
+          productId: "yet-ai",
+          displayName: "Yet AI",
+          cloudRequired: false,
+        },
+      });
+      resolve({
+        readySequence: window.__yetAiGuiReadySequence ?? 0,
+        postedCount: window.__yetAiHostMessagesPostedCount,
+      });
+    }, 50);
+  }), { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token });
+  if (staleAttempt.readySequence !== beforeReadySequence) {
+    failures.push("Wrapper accepted stale old-document gui.ready from the previous iframe document.");
+  }
+  if (staleAttempt.postedCount !== beforePostedCount) {
+    failures.push("Wrapper allowed stale old-document gui.ready to authorize host delivery.");
+  }
+  await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, url) => {
+    frame.src = `${url}/index.html`;
+  }, guiUrl);
+  await page.waitForFunction((count) => (window.__yetAiGuiReadySequence ?? 0) > count, beforeReadySequence, { timeout: 5000 }).catch(() => failures.push("Wrapper did not observe fresh gui.ready after old-document regression reload."));
+  const currentRequestId = await page.evaluate(() => window.__yetAiCurrentReadyRequestId);
+  assertRandomReadyRequestId(currentRequestId, "fresh gui.ready after old-document regression");
+  await page.evaluate(({ bridgeVersion, readyUrl, sessionToken, requestId }) => {
+    window.__yetAiSendHostMessageToFrame({
+      version: bridgeVersion,
+      type: "host.ready",
+      requestId,
+      payload: {
+        runtimeUrl: readyUrl,
+        sessionToken,
+        productId: "yet-ai",
+        displayName: "Yet AI",
+        cloudRequired: false,
+      },
+    });
+  }, { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token, requestId: currentRequestId });
+  await frameLocator.getByLabel("Runtime base URL").inputValue({ timeout: 5000 }).catch(() => failures.push("Current gui.ready path did not keep working after old-document regression."));
 }
 
 async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeUrl, token) {
@@ -771,6 +837,7 @@ window.__yetAiGuiReadySequence = 0;
 let frameLoaded = false;
 let frameReady = false;
 let frameGeneration = 0;
+let currentFrameWindow = frame?.contentWindow;
 let currentGuiReadyRequestId;
 let guiReadySequence = 0;
 let currentGuiReadySequence = 0;
@@ -829,8 +896,8 @@ const canDeliverHostMessage = (message) => {
   return hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
 };
 const postToFrame = (message) => {
-  if (frame && frame.contentWindow && frameTargetOrigin && isHostMessage(message) && canDeliverHostMessage(message)) {
-    frame.contentWindow.postMessage(message, frameTargetOrigin);
+  if (frame && currentFrameWindow && frame.contentWindow === currentFrameWindow && frameTargetOrigin && isHostMessage(message) && canDeliverHostMessage(message)) {
+    currentFrameWindow.postMessage(message, frameTargetOrigin);
     window.__yetAiHostMessagesPostedCount += 1;
     window.__yetAiHostMessagesPosted.push(message);
     if (message.type === "host.ready") {
@@ -888,7 +955,7 @@ const isGuiMessage = (message) => {
 window.__yetAiSendHostMessageToFrame = sendToFrame;
 window.__yetAiWrapperInitialized = true;
 window.addEventListener("message", (event) => {
-  if (event.source === frame?.contentWindow) {
+  if (event.source === currentFrameWindow && event.source === frame?.contentWindow) {
     if (frameTargetOrigin && frameTargetOrigin !== "*" && event.origin !== frameTargetOrigin) {
       console.log("Yet AI rejected iframe message from unexpected origin");
       return;
@@ -922,6 +989,7 @@ if (frame) {
   frame.addEventListener("load", () => {
     frameReady = false;
     frameGeneration += 1;
+    currentFrameWindow = frame.contentWindow;
     currentGuiReadySequence = 0;
     currentGuiReadyRequestId = undefined;
     acceptedHostReadyRequestId = undefined;
@@ -1095,6 +1163,34 @@ function readRequestBody(request) {
   });
 }
 
+async function assertLeakDetectorSelfCheck(page) {
+  const leaked = await page.evaluate((token) => {
+    const marker = document.createElement("div");
+    marker.id = "yet-ai-leak-detector-self-check";
+    marker.textContent = token;
+    document.body.append(marker);
+    window.localStorage.setItem("yet-ai-leak-detector-self-check", token);
+    window.sessionStorage.setItem("yet-ai-leak-detector-self-check", token);
+    return JSON.stringify({
+      dom: document.documentElement.innerText,
+      localStorage: { ...window.localStorage },
+      sessionStorage: { ...window.sessionStorage },
+    });
+  }, runtimeToken);
+  const before = failures.length;
+  assertNoSecretLeak(leaked, [{ label: "runtime token self-check", value: runtimeToken }]);
+  if (failures.length === before) {
+    failures.push("Runtime token leak detector self-check did not catch DOM/storage leaks.");
+  } else {
+    failures.splice(before, failures.length - before);
+  }
+  await page.evaluate(() => {
+    document.getElementById("yet-ai-leak-detector-self-check")?.remove();
+    window.localStorage.removeItem("yet-ai-leak-detector-self-check");
+    window.sessionStorage.removeItem("yet-ai-leak-detector-self-check");
+  });
+}
+
 async function collectWrapperLeakState(page) {
   return page.evaluate(() => {
     const globals = Object.fromEntries(Object.entries(window)
@@ -1115,7 +1211,7 @@ async function collectPageLeakState(page) {
     scriptText: Array.from(document.scripts, (script) => script.textContent ?? ""),
     globals: Object.fromEntries(Object.entries(window)
       .filter(([key]) => key.startsWith("__yetAi"))
-      .filter(([key]) => key !== "__yetAiBridgeMessages" && key !== "__yetAiPendingHostMessages" && key !== "__yetAiRuntimeTokenSentinel")
+      .filter(([key]) => !["__yetAiBridgeMessages", "__yetAiPendingHostMessages", "__yetAiHostMessagesPosted", "__yetAiRuntimeTokenSentinel"].includes(key))
       .map(([key, value]) => [key, typeof value === "function" ? "[function]" : value])),
     localStorage: { ...window.localStorage },
     sessionStorage: { ...window.sessionStorage },
@@ -1124,16 +1220,33 @@ async function collectPageLeakState(page) {
 
 async function collectBrowserVisibleState(page) {
   const pageState = await collectPageLeakState(page);
-  const frameState = await page.frameLocator("iframe[title='Yet AI GUI']").locator("body").evaluate(() => ({
-    dom: document.documentElement.innerText,
-    outerHTML: document.documentElement.outerHTML,
-    scriptText: Array.from(document.scripts, (script) => script.textContent ?? ""),
-    globals: Object.fromEntries(Object.entries(window)
-      .filter(([key]) => key.startsWith("__yetAi"))
-      .map(([key, value]) => [key, typeof value === "function" ? "[function]" : value])),
-    localStorage: { ...window.localStorage },
-    sessionStorage: { ...window.sessionStorage },
-  }));
+  const frameState = await page.frameLocator("iframe[title='Yet AI GUI']").locator("body").evaluate(() => {
+    const passwordInputs = Array.from(document.querySelectorAll('input[type="password"]'));
+    const inputValues = Array.from(document.querySelectorAll("input, textarea"), (input) => {
+      if (passwordInputs.includes(input)) return undefined;
+      return input.value;
+    }).filter((value) => typeof value === "string");
+    return {
+      dom: document.documentElement.innerText,
+      outerHTML: (() => {
+        const clone = document.documentElement.cloneNode(true);
+        clone.querySelectorAll('input[type="password"]').forEach((input) => input.setAttribute("value", "[password-value]"));
+        return clone.outerHTML;
+      })(),
+      scriptText: Array.from(document.scripts, (script) => script.textContent ?? ""),
+      globals: Object.fromEntries(Object.entries(window)
+        .filter(([key]) => key.startsWith("__yetAi"))
+        .map(([key, value]) => [key, typeof value === "function" ? "[function]" : value])),
+      passwordInputs: Array.from(document.querySelectorAll('input[type="password"]'), (input) => ({
+        autocomplete: input.autocomplete,
+        placeholder: input.placeholder,
+        type: input.type,
+      })),
+      inputValues,
+      localStorage: { ...window.localStorage },
+      sessionStorage: { ...window.sessionStorage },
+    };
+  });
   return JSON.stringify({ pageState, frameState, consoleMessages });
 }
 
