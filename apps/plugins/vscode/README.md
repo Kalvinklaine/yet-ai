@@ -54,7 +54,15 @@ export PATH="$HOME/.cargo/bin:$PATH"
 npm run smoke:ide-preview
 ```
 
-It runs `npm run prepare:vscode-preview`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, and `npm run smoke:jetbrains-preview` in order. It is local-only, uses ignored preview artifacts, and does not launch real IDEs or call real providers.
+It runs `npm run prepare:vscode-preview`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, `npm run smoke:vscode-first-message`, `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, `npm run smoke:jetbrains-preview`, `npm run smoke:jetbrains-gui-browser`, and `npm run smoke:jetbrains-first-message` in order. It is local-only, uses ignored preview artifacts and loopback first-message mocks, and does not launch real IDEs or call real providers.
+
+Run the VS Code first-message smoke directly when changing only the VS Code packaged GUI or bridge bootstrap path:
+
+```sh
+npm run smoke:vscode-first-message
+```
+
+The first-message smoke uses a loopback mock runtime/provider with fake credentials and validates packaged GUI bootstrap, provider-required gating, active-context delivery, streamed assistant rendering, and no token/key leakage. It does not launch VS Code, use real provider credentials, call OpenAI/ChatGPT, or contact hosted Yet AI services.
 
 `npm run smoke:vscode-installable` checks that `dist/plugins/vscode/` contains exactly one current `yet-ai-vscode-<version>-dev-preview.vsix`, validates its `.sha256` checksum, safe archive paths, package metadata, command/activation/configuration surfaces, bundled product identity, packaged GUI local JS/CSS references, and copied engine binary. `npm run smoke:vscode-preview` checks the copied `yet-lsp` binary, packaged GUI `media/gui/index.html`, bundled `out/product/identity.json`, compiled `out/extension.js`, manifest `main`, copied GUI asset references, and obvious stale-artifact mtimes against existing GUI dist and VS Code source files. If preparation has not been run or generated artifacts are stale, the smokes fail with the artifact and the command to run.
 
@@ -193,6 +201,8 @@ Use this checklist after the steps above. The normal VS Code first-message previ
 
 - `npm run smoke:vscode-installable` passes after preparation and validates `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix` plus `.sha256` without launching VS Code or using provider credentials.
 - `npm run smoke:vscode-preview` passes after preparation without launching VS Code or using provider credentials.
+- `npm run smoke:vscode-first-message` passes when validating packaged GUI first-message bootstrap without launching VS Code or using real provider credentials.
+- `npm run smoke:ide-preview` passes when validating the full VS Code and JetBrains dogfood gate, including installable/generated artifacts and both first-message smoke paths.
 - Engine binary exists at `apps/plugins/vscode/bin/yet-lsp` or at the configured absolute `yetai.engineBinaryPath`.
 - `apps/gui/dist/index.html` exists after `npm run prepare:vscode-preview`.
 - `apps/plugins/vscode/media/gui/index.html` exists after `npm run prepare:vscode-preview`.
@@ -240,6 +250,7 @@ Commands run:
 - npm run prepare:vscode-preview: pass | fail
 - npm run smoke:vscode-installable: pass | fail | not run
 - npm run smoke:vscode-preview: pass | fail | not run
+- npm run smoke:vscode-first-message: pass | fail | not run
 - npm run smoke:ide-preview: pass | fail | not run
 - Yet AI: Open Chat: pass | fail
 - Yet AI: Show Runtime Status: not run | pass | sanitized failure
