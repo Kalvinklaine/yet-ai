@@ -1,6 +1,6 @@
 use axum::body::Bytes;
 use axum::body::{to_bytes, Body};
-use axum::http::{header, Method, Request, StatusCode};
+use axum::http::{header, HeaderValue, Method, Request, StatusCode};
 use axum::response::IntoResponse;
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
@@ -1146,6 +1146,14 @@ async fn text_response_from(app: axum::Router, request: Request<Body>) -> (Statu
     let status = response.status();
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     (status, String::from_utf8(bytes.to_vec()).unwrap())
+}
+
+async fn response_from(app: axum::Router, request: Request<Body>) -> axum::response::Response {
+    app.oneshot(request).await.unwrap()
+}
+
+fn cors_header(name: &'static str) -> header::HeaderName {
+    header::HeaderName::from_static(name)
 }
 
 fn assert_http_boundary_body_is_sanitized(text: &str) {
@@ -4534,6 +4542,135 @@ async fn http_boundary_valid_json_routes_keep_existing_behavior() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(accepted["accepted"], true);
     assert_eq!(accepted["type"], "abort");
+}
+
+#[tokio::test]
+async fn http_boundary_no_origin_authenticated_request_still_works_without_cors() {
+    let response = response_from(
+        test_app(),
+        authed_request(Method::GET, "/v1/ping", Body::empty()),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response
+        .headers()
+        .get(cors_header("access-control-allow-origin"))
+        .is_none());
+}
+
+#[tokio::test]
+async fn http_boundary_loopback_origins_receive_cors_headers() {
+    for origin in [
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "http://[::1]:5173",
+        "https://127.0.0.1:5173",
+    ] {
+        let mut request = authed_request(Method::GET, "/v1/ping", Body::empty());
+        request
+            .headers_mut()
+            .insert(header::ORIGIN, HeaderValue::from_str(origin).unwrap());
+        let response = response_from(test_app(), request).await;
+        assert_eq!(response.status(), StatusCode::OK, "{origin}");
+        assert_eq!(
+            response
+                .headers()
+                .get(cors_header("access-control-allow-origin"))
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            origin
+        );
+        assert!(response
+            .headers()
+            .get(cors_header("access-control-allow-credentials"))
+            .is_none());
+    }
+}
+
+#[tokio::test]
+async fn http_boundary_disallowed_origins_do_not_receive_cors_headers() {
+    for origin in [
+        "https://example.test",
+        "null",
+        "not a url",
+        "http://user:pass@127.0.0.1:5173",
+        "http://127.0.0.1:5173?token=secret",
+        "http://127.0.0.1:5173#token",
+        "http://127.0.0.1",
+    ] {
+        let mut request = authed_request(Method::GET, "/v1/ping", Body::empty());
+        request
+            .headers_mut()
+            .insert(header::ORIGIN, HeaderValue::from_str(origin).unwrap());
+        let response = response_from(test_app(), request).await;
+        assert_eq!(response.status(), StatusCode::OK, "{origin}");
+        assert!(
+            response
+                .headers()
+                .get(cors_header("access-control-allow-origin"))
+                .is_none(),
+            "{origin}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn http_boundary_preflight_is_deterministic_and_origin_bounded() {
+    let allowed = Request::builder()
+        .method(Method::OPTIONS)
+        .uri("/v1/providers")
+        .header(header::ORIGIN, "http://localhost:5173")
+        .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+        .header(
+            header::ACCESS_CONTROL_REQUEST_HEADERS,
+            "authorization, content-type",
+        )
+        .body(Body::empty())
+        .unwrap();
+    let response = response_from(test_app(), allowed).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(cors_header("access-control-allow-origin"))
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "http://localhost:5173"
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get(cors_header("access-control-allow-methods"))
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "GET,POST,PATCH,DELETE,OPTIONS"
+    );
+    let allow_headers = response
+        .headers()
+        .get(cors_header("access-control-allow-headers"))
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(allow_headers.contains("authorization"));
+    assert!(allow_headers.contains("content-type"));
+    assert!(!allow_headers.contains("cookie"));
+
+    let denied = Request::builder()
+        .method(Method::OPTIONS)
+        .uri("/v1/providers")
+        .header(header::ORIGIN, "https://example.test")
+        .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+        .body(Body::empty())
+        .unwrap();
+    let response = response_from(test_app(), denied).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response
+        .headers()
+        .get(cors_header("access-control-allow-origin"))
+        .is_none());
 }
 
 #[tokio::test]
