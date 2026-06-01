@@ -510,7 +510,13 @@ async fn chat_command(
 }
 
 fn valid_bounded_string(value: &str, max_length: usize) -> bool {
-    !value.is_empty() && value.chars().count() <= max_length
+    !value.is_empty()
+        && value.chars().count() <= max_length
+        && !value.chars().any(is_c0_c1_control)
+}
+
+fn is_c0_c1_control(value: char) -> bool {
+    matches!(value as u32, 0x00..=0x1f | 0x7f..=0x9f)
 }
 
 fn valid_abort_payload(payload: Option<&serde_json::Value>) -> bool {

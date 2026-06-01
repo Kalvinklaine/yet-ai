@@ -1689,6 +1689,28 @@ async fn provider_auth_openai_experimental_overrides_reject_query_and_fragment_s
 }
 
 #[tokio::test]
+async fn provider_auth_start_rejects_empty_control_and_oversized_overrides_safely() {
+    for request in [
+        json!({ "experimentalCodexLike": true, "tokenEndpointUrl": "   " }),
+        json!({ "experimentalCodexLike": true, "chatEndpointUrl": "http://127.0.0.1:1456/backend-api/codex\u{0085}" }),
+        json!({ "experimentalCodexLike": true, "tokenEndpointUrl": format!("http://127.0.0.1:1455/{}", "x".repeat(2050)) }),
+    ] {
+        let (status, body) = json_response(authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(request.to_string()),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "invalid provider auth request");
+        let text = body.to_string();
+        assert!(!text.contains("127.0.0.1:1456"));
+        assert!(!text.contains(&"x".repeat(64)));
+        assert_provider_auth_response_has_no_codex_secrets(&body);
+    }
+}
+
+#[tokio::test]
 async fn provider_auth_start_rejects_unsafe_ttl_values_safely() {
     for request in [
         json!({ "mock": true, "ttlSeconds": 0 }),
@@ -2597,6 +2619,119 @@ async fn provider_auth_openai_experimental_invalid_exchange_keeps_pending_until_
         "codex-code-after-invalid-session",
         "token request code",
     );
+}
+
+#[tokio::test]
+async fn provider_auth_exchange_rejects_invalid_strings_before_token_call_and_storage_mutation() {
+    for invalid_field in ["sessionId", "state", "code"] {
+        let paths = test_storage_paths();
+        let app = app(AppState::with_storage_paths(
+            ProductIdentity::load().unwrap(),
+            AuthToken::new(TEST_TOKEN).unwrap(),
+            paths.clone(),
+        ));
+        let (token_endpoint_url, token_body_receiver) = start_mock_codex_token_endpoint().await;
+        let (status, start) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::POST,
+                "/v1/provider-auth/openai/start",
+                Body::from(
+                    json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                        .to_string(),
+                ),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let session_id = start["sessionId"].as_str().unwrap().to_string();
+        let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap()).to_string();
+        let mut exchange = json!({
+            "sessionId": session_id,
+            "state": state,
+            "code": "codex-code-invalid-input-secret"
+        });
+        exchange[invalid_field] = json!(match invalid_field {
+            "sessionId" => "bad-session\u{0085}secret",
+            "state" => "bad-state\u{0085}secret",
+            _ => "bad-code\u{0085}secret",
+        });
+
+        let (status, body) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::POST,
+                "/v1/provider-auth/openai/exchange",
+                Body::from(exchange.to_string()),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "invalid provider auth request");
+        let text = body.to_string();
+        assert!(!text.contains("bad-session"));
+        assert!(!text.contains("bad-state"));
+        assert!(!text.contains("bad-code"));
+        assert!(!text.contains("codex-code-invalid-input-secret"));
+        assert_provider_auth_response_has_no_codex_secrets(&body);
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(100), token_body_receiver)
+            .await
+            .is_err());
+        let (status, pending) = json_response_from(
+            app,
+            authed_request(
+                Method::GET,
+                "/v1/provider-auth/openai/status",
+                Body::empty(),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(pending["status"], "pending");
+        assert_provider_auth_response_has_no_codex_secrets(&pending);
+        let store = FileSecretStore::new(&paths.config_dir);
+        assert_eq!(
+            store
+                .get_secret("openai", SecretKind::OAuthAccessToken)
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            store
+                .get_secret("openai", SecretKind::OAuthRefreshToken)
+                .await
+                .unwrap(),
+            None
+        );
+    }
+}
+
+#[tokio::test]
+async fn provider_auth_exchange_rejects_empty_and_oversized_strings_safely() {
+    for exchange in [
+        json!({ "sessionId": "   ", "state": "state", "code": "codex-code-empty-session-secret" }),
+        json!({ "sessionId": "session", "state": "   ", "code": "codex-code-empty-state-secret" }),
+        json!({ "sessionId": "session", "state": "state", "code": "   " }),
+        json!({ "sessionId": "s".repeat(257), "state": "state", "code": "codex-code-long-session-secret" }),
+        json!({ "sessionId": "session", "state": "s".repeat(513), "code": "codex-code-long-state-secret" }),
+        json!({ "sessionId": "session", "state": "state", "code": "c".repeat(4097) }),
+    ] {
+        let (status, body) = json_response(authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from(exchange.to_string()),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "invalid provider auth request");
+        let text = body.to_string();
+        assert!(!text.contains("codex-code-empty-session-secret"));
+        assert!(!text.contains("codex-code-empty-state-secret"));
+        assert!(!text.contains("codex-code-long-session-secret"));
+        assert!(!text.contains("codex-code-long-state-secret"));
+        assert_provider_auth_response_has_no_codex_secrets(&body);
+    }
 }
 
 #[tokio::test]
@@ -7710,6 +7845,33 @@ async fn chat_command_rejects_too_long_request_id() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(!text.contains("sk-too-long-request-secret-abcd"));
+}
+
+#[tokio::test]
+async fn chat_command_rejects_empty_and_control_request_ids_safely() {
+    for request_id in ["", "req-c0\u{001f}secret", "req-c1\u{0085}secret"] {
+        let command = json!({
+            "requestId": request_id,
+            "type": "user_message",
+            "payload": { "content": "hello sk-invalid-request-id-secret-abcd" }
+        });
+        let (status, text) = text_response_from(
+            test_app(),
+            authed_request(
+                Method::POST,
+                "/v1/chats/chat-001/commands",
+                Body::from(command.to_string()),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        if !request_id.is_empty() {
+            assert!(!text.contains(request_id));
+        }
+        assert!(!text.contains("sk-invalid-request-id-secret-abcd"));
+        assert!(!text.contains("req-c0"));
+        assert!(!text.contains("req-c1"));
+    }
 }
 
 #[tokio::test]
