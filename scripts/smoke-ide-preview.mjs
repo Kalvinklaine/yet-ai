@@ -9,9 +9,12 @@ const steps = [
   ["Prepare VS Code dev-preview", "npm", ["run", "prepare:vscode-preview"]],
   ["Smoke VS Code installable artifact", "npm", ["run", "smoke:vscode-installable"]],
   ["Smoke VS Code generated preview", "npm", ["run", "smoke:vscode-preview"]],
+  ["Smoke VS Code first-message preview", "npm", ["run", "smoke:vscode-first-message"]],
   ["Prepare JetBrains dev-preview", "npm", ["run", "prepare:jetbrains-preview"]],
   ["Smoke JetBrains installable artifact", "npm", ["run", "smoke:jetbrains-installable"]],
   ["Smoke JetBrains generated preview", "npm", ["run", "smoke:jetbrains-preview"]],
+  ["Smoke JetBrains packaged GUI browser", "npm", ["run", "smoke:jetbrains-gui-browser"]],
+  ["Smoke JetBrains first-message preview", "npm", ["run", "smoke:jetbrains-first-message"]],
 ];
 
 for (const [label, command, args] of steps) {
@@ -19,7 +22,7 @@ for (const [label, command, args] of steps) {
 }
 
 console.log("\nCross-IDE preview smoke passed.");
-console.log("Verified VS Code and JetBrains local dev-preview prepare/installable/generated-artifact gates without launching IDEs, requiring provider credentials, calling providers, or contacting hosted Yet AI services.");
+console.log("Verified VS Code and JetBrains local installable/generated artifacts and first-message preview paths without launching real IDEs, using provider credentials, calling OpenAI/ChatGPT, or contacting hosted Yet AI services.");
 
 function runStep(label, command, args) {
   const printable = [command, ...args].join(" ");

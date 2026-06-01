@@ -192,9 +192,12 @@ npm run smoke:ide-preview
 npm run prepare:vscode-preview
 npm run smoke:vscode-installable
 npm run smoke:vscode-preview
+npm run smoke:vscode-first-message
 npm run prepare:jetbrains-preview
 npm run smoke:jetbrains-installable
 npm run smoke:jetbrains-preview
+npm run smoke:jetbrains-gui-browser
+npm run smoke:jetbrains-first-message
 ```
 
 Run individual prepare commands when you need one IDE artifact only:
@@ -221,7 +224,7 @@ dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip.sha256
 
 All generated VSIX/ZIP files, `.sha256` files, packaged GUI assets, copied engine binaries, Gradle outputs, `apps/gui/dist`, and root `dist/` preview artifacts are ignored/untracked local build outputs and must not be committed.
 
-`npm run smoke:ide-preview` runs `npm run prepare:vscode-preview`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, and `npm run smoke:jetbrains-preview` in order with fail-fast step labels. The underlying prepare commands build/prepare the local engine and `apps/gui`, then publish ignored root dev-preview artifacts under `dist/plugins/vscode/` and `dist/plugins/jetbrains/` with matching `.sha256` checksums. The generated VSIX, ZIP, checksums, GUI assets, extension/plugin output, engine binaries, and root `dist/` artifacts are ignored and must not be committed. This is a local dev-preview/install-from-file flow only: it is not marketplace publication, signing, notarization, a production installer, or a production release, and it requires no provider credentials, hosted Yet AI backend, real OpenAI/ChatGPT calls, or cloud workspace.
+`npm run smoke:ide-preview` runs `npm run prepare:vscode-preview`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, `npm run smoke:vscode-first-message`, `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, `npm run smoke:jetbrains-preview`, `npm run smoke:jetbrains-gui-browser`, and `npm run smoke:jetbrains-first-message` in order with fail-fast step labels. The underlying prepare commands build/prepare the local engine and `apps/gui`, then publish ignored root dev-preview artifacts under `dist/plugins/vscode/` and `dist/plugins/jetbrains/` with matching `.sha256` checksums. The generated VSIX, ZIP, checksums, GUI assets, extension/plugin output, engine binaries, and root `dist/` artifacts are ignored and must not be committed. This is a local dev-preview/install-from-file and first-message preview flow only: it is not marketplace publication, signing, notarization, a production installer, or a production release, and it requires no provider credentials, hosted Yet AI backend, real OpenAI/ChatGPT calls, or cloud workspace.
 
 Manual launch paths after preparation:
 
