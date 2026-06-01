@@ -44,7 +44,7 @@ describe("bridgeAdapter", () => {
     adapter.dispose();
   });
 
-  it("echoes a JetBrains iframe frame nonce in gui.ready using the referrer origin", () => {
+  it("echoes each JetBrains iframe frame nonce once in gui.ready using the referrer origin", () => {
     const logs: string[] = [];
     const parent = { postMessage: vi.fn() };
     Object.defineProperty(Document.prototype, "referrer", {
@@ -57,25 +57,38 @@ describe("bridgeAdapter", () => {
     });
 
     const adapter = createBridgeAdapter((entry) => logs.push(entry));
-    window.dispatchEvent(new MessageEvent("message", {
+    const dispatchNonce = (frameNonce: string) => window.dispatchEvent(new MessageEvent("message", {
       data: {
         version: bridgeVersion,
         type: "host.frameNonce",
-        payload: { frameNonce: "0123456789abcdef0123456789abcdef" },
+        payload: { frameNonce },
       },
       origin: "https://wrapper.example",
       source: parent as unknown as Window,
     }));
 
+    dispatchNonce("0123456789abcdef0123456789abcdef");
+    dispatchNonce("0123456789abcdef0123456789abcdef");
+    dispatchNonce("fedcba9876543210fedcba9876543210");
+
     expect(adapter.host).toBe("browser");
     expect(logs).toContain("Bridge host browser");
     expect(logs).not.toContain("Browser mock sent gui.ready");
-    expect(parent.postMessage).toHaveBeenCalledWith({
+    expect(parent.postMessage).toHaveBeenCalledTimes(2);
+    expect(parent.postMessage).toHaveBeenNthCalledWith(1, {
       version: bridgeVersion,
       type: "gui.ready",
       payload: {
         supportedBridgeVersion: bridgeVersion,
         frameNonce: "0123456789abcdef0123456789abcdef",
+      },
+    }, "https://wrapper.example");
+    expect(parent.postMessage).toHaveBeenNthCalledWith(2, {
+      version: bridgeVersion,
+      type: "gui.ready",
+      payload: {
+        supportedBridgeVersion: bridgeVersion,
+        frameNonce: "fedcba9876543210fedcba9876543210",
       },
     }, "https://wrapper.example");
     adapter.dispose();
@@ -443,6 +456,8 @@ describe("bridgeAdapter", () => {
     expect(isGuiMessage({ version: "1", type: "gui.ready" })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "" })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "a".repeat(129) })).toBe(false);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "bad\nrequest" })).toBe(false);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "bad\u007frequest" })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", payload: { supportedBridgeVersion: "1" } })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", payload: { supportedBridgeVersion: bridgeVersion, extra: true } })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", extra: true })).toBe(false);
@@ -456,6 +471,8 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage({ version: "1", type: "host.ready", payload: {} })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", requestId: "", payload: {} })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", requestId: "a".repeat(129), payload: {} })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", requestId: "bad\nrequest", payload: {} })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", requestId: "bad\u007frequest", payload: {} })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: [] })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { sessionToken: 123 } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { cloudRequired: "false" } })).toBe(false);
