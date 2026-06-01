@@ -17,7 +17,9 @@ export type RuntimeDiagnostics = {
   launchMode: LaunchMode;
   configuredEngineBinaryPath: boolean;
   engineBinaryStatus: string;
+  pluginLaunchedProcessStatus: string;
   pingStatus: string;
+  guidance: string;
 };
 
 type LaunchMode = "auto" | "connect" | "launch";
@@ -69,7 +71,9 @@ export async function collectRuntimeDiagnostics(
     launchMode: settings.launchMode,
     configuredEngineBinaryPath: settings.engineBinaryPath !== undefined,
     engineBinaryStatus: "not checked",
+    pluginLaunchedProcessStatus: launchedEngine && !launchedEngine.process.killed ? "running" : "not running",
     pingStatus: "not checked",
+    guidance: runtimeDiagnosticsGuidance(settings.launchMode),
   };
 
   try {
@@ -87,7 +91,9 @@ export async function collectRuntimeDiagnostics(
   } else {
     try {
       binaryPath = findEngineBinary(settings.engineBinaryPath, context.extensionPath, identity.engine.binaryName);
-      diagnostics.engineBinaryStatus = describeEngineBinaryStatus(binaryPath, settings.engineBinaryPath !== undefined);
+      diagnostics.engineBinaryStatus = settings.launchMode === "auto" && binaryPath === undefined
+        ? "not found; connect-only fallback"
+        : describeEngineBinaryStatus(binaryPath, settings.engineBinaryPath !== undefined);
     } catch (error) {
       diagnostics.engineBinaryStatus = error instanceof Error ? `not usable: ${redactRuntimeDiagnosticText(error.message, settings.sessionToken)}` : "not usable";
       if (settings.launchMode === "launch" || (settings.launchMode === "auto" && settings.engineBinaryPath !== undefined)) {
@@ -279,9 +285,14 @@ export function validateRuntimeLaunchProtocol(runtimeUrl: string, launchMode: La
     return;
   }
   const parsed = new URL(runtimeUrl);
-  if (parsed.protocol === "https:") {
+  if (parsed.protocol !== "http:") {
     throw new Error(
       `${configurationPrefix}.runtimeUrl must use http when ${configurationPrefix}.launchMode ${launchMode} starts the local engine. Use connect mode for an externally managed loopback HTTPS runtime.`,
+    );
+  }
+  if (parsed.port.length === 0 || Number.parseInt(parsed.port, 10) <= 0) {
+    throw new Error(
+      `${configurationPrefix}.runtimeUrl must include an explicit nonzero port such as http://127.0.0.1:8001 when ${configurationPrefix}.launchMode ${launchMode} starts the local engine.`,
     );
   }
 }
@@ -345,6 +356,29 @@ function describeEngineBinaryStatus(binaryPath: string | undefined, configured: 
   }
   const fileName = path.basename(binaryPath);
   return configured ? `found configured binary: ${fileName}` : `found discovered binary: ${fileName}`;
+}
+
+export function runtimeDiagnosticsGuidance(launchMode: LaunchMode): string {
+  if (launchMode === "connect") {
+    return "Connect mode expects an already running loopback Yet AI runtime. Verify the URL, port, and local runtime session token match the external process.";
+  }
+  if (launchMode === "launch") {
+    return "Launch mode requires an executable engine binary and a loopback http runtime URL with an explicit nonzero port.";
+  }
+  return "Auto mode launches a configured or discovered engine binary when available; otherwise it falls back to connect-only mode and pings the configured loopback runtime.";
+}
+
+export function formatRuntimeDiagnostics(diagnostics: RuntimeDiagnostics): string {
+  return [
+    "Yet AI Runtime Status",
+    `Launch mode: ${diagnostics.launchMode}`,
+    `Runtime URL: ${diagnostics.runtimeUrl}`,
+    `Engine binary path configured: ${diagnostics.configuredEngineBinaryPath ? "yes" : "no"}`,
+    `Binary status: ${redactRuntimeDiagnosticText(diagnostics.engineBinaryStatus)}`,
+    `Plugin-launched process: ${redactRuntimeDiagnosticText(diagnostics.pluginLaunchedProcessStatus)}`,
+    `Last/ping health: ${redactRuntimeDiagnosticText(diagnostics.pingStatus)}`,
+    `Guidance: ${redactRuntimeDiagnosticText(diagnostics.guidance)}`,
+  ].join("\n");
 }
 
 export function formatStartedRuntimeMessage(binaryPath: string): string {

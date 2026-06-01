@@ -38,6 +38,7 @@ try {
     createEngineLogRedactor,
     findEngineBinary,
     prepareEngineConnection,
+    formatRuntimeDiagnostics,
     formatStartedRuntimeMessage,
     pingEngineOnce,
     redactRuntimeDiagnosticText,
@@ -113,6 +114,15 @@ try {
     /yetai\.runtimeUrl must use http when yetai\.launchMode auto starts the local engine\./,
   );
   assert.doesNotThrow(() => validateRuntimeLaunchProtocol("http://127.0.0.1:8001", "launch", true));
+  assert.throws(
+    () => validateRuntimeLaunchProtocol("http://127.0.0.1", "launch", true),
+    /yetai\.runtimeUrl must include an explicit nonzero port such as http:\/\/127\.0\.0\.1:8001/,
+  );
+  assert.throws(
+    () => validateRuntimeLaunchProtocol("http://127.0.0.1:0", "auto", true),
+    /yetai\.runtimeUrl must include an explicit nonzero port such as http:\/\/127\.0\.0\.1:8001/,
+  );
+  assert.doesNotThrow(() => validateRuntimeLaunchProtocol("https://127.0.0.1:8001", "connect", false));
 
   const secretOperations = [];
   const fakeContext = {
@@ -243,6 +253,25 @@ try {
   ];
   for (const forbidden of forbiddenValues) {
     assert.equal(diagnostic.includes(forbidden), false, `diagnostics leaked ${forbidden}`);
+  }
+
+  const formattedDiagnostics = formatRuntimeDiagnostics({
+    runtimeUrl: "http://127.0.0.1:8001/",
+    launchMode: "launch",
+    configuredEngineBinaryPath: true,
+    engineBinaryStatus: `configured binary failed at ${fakePrivatePath} with OPENAI_API_KEY=provider-secret`,
+    pluginLaunchedProcessStatus: "not running",
+    pingStatus: "skipped: Authorization: Bearer formatted-secret-token /Users/private/runtime.sock",
+    guidance: "Launch mode requires an executable engine binary and a loopback http runtime URL with an explicit nonzero port.",
+  });
+  assert.match(formattedDiagnostics, /^Yet AI Runtime Status\n/);
+  assert.match(formattedDiagnostics, /Launch mode: launch/);
+  assert.match(formattedDiagnostics, /Engine binary path configured: yes/);
+  assert.match(formattedDiagnostics, /Plugin-launched process: not running/);
+  assert.match(formattedDiagnostics, /Last\/ping health: skipped:/);
+  assert.match(formattedDiagnostics, /Guidance: Launch mode requires/);
+  for (const forbidden of [fakePrivatePath, os.homedir(), "provider-secret", "formatted-secret-token", "/Users/private/runtime.sock"]) {
+    assert.equal(formattedDiagnostics.includes(forbidden), false, `formatted diagnostics leaked ${forbidden}`);
   }
 
   const shortFragmentDiagnostic = redactRuntimeDiagnosticText(
@@ -452,6 +481,40 @@ try {
     assert.equal(launchHttpsPinged, false);
 
     configValues = {
+      runtimeUrl: "http://127.0.0.1",
+      launchMode: "launch",
+      engineBinaryPath: executable,
+    };
+    let launchMissingPortPinged = false;
+    globalThis.fetch = async () => {
+      launchMissingPortPinged = true;
+      return { ok: true, status: 200 };
+    };
+    const launchMissingPortDiagnostics = await collectRuntimeDiagnostics(
+      { ...fakeContext, extensionPath: tempRoot },
+      { engine: { binaryName: "yet-lsp" } },
+    );
+    assert.match(launchMissingPortDiagnostics.pingStatus, /^skipped: yetai\.runtimeUrl must include an explicit nonzero port/);
+    assert.equal(launchMissingPortPinged, false);
+
+    configValues = {
+      runtimeUrl: "http://127.0.0.1:0",
+      launchMode: "launch",
+      engineBinaryPath: executable,
+    };
+    let launchZeroPortPinged = false;
+    globalThis.fetch = async () => {
+      launchZeroPortPinged = true;
+      return { ok: true, status: 200 };
+    };
+    const launchZeroPortDiagnostics = await collectRuntimeDiagnostics(
+      { ...fakeContext, extensionPath: tempRoot },
+      { engine: { binaryName: "yet-lsp" } },
+    );
+    assert.match(launchZeroPortDiagnostics.pingStatus, /^skipped: yetai\.runtimeUrl must include an explicit nonzero port/);
+    assert.equal(launchZeroPortPinged, false);
+
+    configValues = {
       runtimeUrl: "https://127.0.0.1:8001",
       launchMode: "auto",
       engineBinaryPath: executable,
@@ -567,9 +630,14 @@ try {
           { engine: { binaryName: "yet-lsp" } },
         ),
       );
-      assert.equal(autoFallbackDiagnostics.engineBinaryStatus, "not found");
+      assert.equal(autoFallbackDiagnostics.engineBinaryStatus, "not found; connect-only fallback");
       assert.equal(autoFallbackDiagnostics.pingStatus, "passed");
       assert.equal(autoFallbackPinged, true);
+      assert.equal(autoFallbackDiagnostics.guidance.includes("connect-only mode"), true);
+      assert.equal(autoFallbackDiagnostics.pluginLaunchedProcessStatus, "not running");
+      const renderedAutoFallback = formatRuntimeDiagnostics(autoFallbackDiagnostics);
+      assert.match(renderedAutoFallback, /Yet AI Runtime Status/);
+      assert.match(renderedAutoFallback, /Guidance: Auto mode launches/);
     } finally {
       process.env.PATH = previousPath;
     }

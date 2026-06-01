@@ -13,7 +13,7 @@ The plugin connects the GUI to the local Yet AI runtime for local-first BYOK wor
 VS Code command palette commands:
 
 - `Yet AI: Open Chat` opens the dev-preview chat webview and prepares or checks the local runtime.
-- `Yet AI: Show Runtime Status` writes safe local runtime diagnostics to the `Yet AI Runtime` output channel, including the loopback runtime URL without query data, launch mode, engine binary discovery status, and `/v1/ping` result. It does not show session tokens, bearer headers, provider credentials, bridge payloads, provider-auth state, or model-provider responses.
+- `Yet AI: Show Runtime Status` writes a compact safe-shareable `Yet AI Runtime Status` report to the `Yet AI Runtime` output channel, including the loopback runtime URL without userinfo/query/fragment data, launch mode, engine binary basename/status, plugin-launched process state, `/v1/ping` result or skipped reason, and mode-specific guidance. It does not show session tokens, bearer headers, provider credentials, private absolute paths, bridge payloads, provider-auth state, or model-provider responses.
 - `Yet AI: Set Local Runtime Session Token` stores the manual local runtime session token in VS Code SecretStorage for `connect` mode or other manual debug connections. This token is not a provider API key.
 - `Yet AI: Clear Local Runtime Session Token` removes the SecretStorage token.
 
@@ -98,7 +98,7 @@ This is the nearest hands-on path for trying the local-first VS Code dev preview
 
    - `yetai.launchMode`: `auto` for normal dev-preview, `launch` to require starting a local binary, or `connect` to use an already running loopback runtime.
    - `yetai.engineBinaryPath`: optional absolute path to the built `yet-lsp`.
-   - `yetai.runtimeUrl`: keep a loopback URL without userinfo, query, or fragment, such as `http://127.0.0.1:8001`. The port is passed to the launched engine as `YET_AI_HTTP_PORT`. Use `http` for `auto` or `launch`; `https` is only for `connect` mode with an externally managed loopback runtime.
+   - `yetai.runtimeUrl`: keep a loopback URL without userinfo, query, or fragment, such as `http://127.0.0.1:8001`. When `auto` or `launch` starts the local engine, the URL must use `http` with an explicit nonzero port, and that port is passed to the launched engine as `YET_AI_HTTP_PORT`. `https` is only for `connect` mode with an externally managed loopback runtime.
    - Manual local runtime session token: use `Yet AI: Set Local Runtime Session Token` for `connect` mode when an already running engine requires a known local bearer token. The token is stored in VS Code SecretStorage. In `auto` or `launch`, the extension generates a per-session token and does not persist it.
    - `yetai.sessionToken`: deprecated dev-preview fallback only. Prefer the SecretStorage command.
 
@@ -307,7 +307,7 @@ Use `Yet AI: Show Runtime Status` to write sanitized local runtime diagnostics t
   - `yetai.launchMode`, one of `auto`, `connect`, or `launch`.
   - `yetai.engineBinaryPath`, optional absolute path to `yet-lsp`.
 
-`runtimeUrl` and `guiDevUrl` are restricted to loopback `http` or `https` URLs without userinfo, query, or fragment before the webview opens. `runtimeUrl` must use `http` when `auto` or `launch` starts the bundled local engine; `connect` may use `https` only for an externally managed loopback runtime. The manual local runtime `sessionToken` is a sensitive local runtime credential, not a provider secret. It is stored in VS Code SecretStorage through the command palette, passed only in the trusted `host.ready` bridge path needed by the GUI runtime client, is not logged, and is not rendered in the placeholder UI. The legacy `yetai.sessionToken` setting remains a deprecated dev-preview fallback only when SecretStorage has no token; raw provider secrets must never be stored in extension settings or SecretStorage by this plugin.
+`runtimeUrl` and `guiDevUrl` are restricted to loopback `http` or `https` URLs without userinfo, query, or fragment before the webview opens. `runtimeUrl` must use `http` with an explicit nonzero port when `auto` or `launch` starts the bundled local engine; `connect` may use `https` only for an externally managed loopback runtime. The manual local runtime `sessionToken` is a sensitive local runtime credential, not a provider secret. It is stored in VS Code SecretStorage through the command palette, passed only in the trusted `host.ready` bridge path needed by the GUI runtime client, is not logged, and is not rendered in the placeholder UI. The legacy `yetai.sessionToken` setting remains a deprecated dev-preview fallback only when SecretStorage has no token; raw provider secrets must never be stored in extension settings or SecretStorage by this plugin.
 
 ## Runtime connection and launch
 
