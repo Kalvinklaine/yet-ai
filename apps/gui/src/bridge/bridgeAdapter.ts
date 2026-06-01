@@ -93,6 +93,7 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
   const pendingMessages: HostMessage[] = [];
   const maxPendingMessages = 8;
   let jetbrainsFrameNonce: string | undefined;
+  let postedJetbrainsFrameNonce: string | undefined;
   const append = (entry: string) => {
     log.push(entry);
     onLog(entry);
@@ -153,11 +154,14 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
     }
     if (parentBridge && isFrameNonceMessage(message)) {
       jetbrainsFrameNonce = message.payload.frameNonce;
-      post({
-        version: bridgeVersion,
-        type: "gui.ready",
-        payload: { supportedBridgeVersion: bridgeVersion },
-      });
+      if (postedJetbrainsFrameNonce !== jetbrainsFrameNonce) {
+        postedJetbrainsFrameNonce = jetbrainsFrameNonce;
+        post({
+          version: bridgeVersion,
+          type: "gui.ready",
+          payload: { supportedBridgeVersion: bridgeVersion },
+        });
+      }
       return;
     }
     if (!isHostMessage(message)) {
@@ -282,7 +286,7 @@ function hasOnlyKeys(value: Record<string, unknown>, keys: string[]): boolean {
 }
 
 function isBoundedRequestId(value: unknown): boolean {
-  return value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 128);
+  return value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 128 && [...value].every((char) => char >= " " && char.charCodeAt(0) !== 127));
 }
 
 function isEmptyPayload(value: unknown): boolean {

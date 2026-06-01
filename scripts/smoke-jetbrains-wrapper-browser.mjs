@@ -553,7 +553,7 @@ async function assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocat
           type: "gui.ready",
           payload: { supportedBridgeVersion: bridgeVersion, ...(frameNonce === undefined ? {} : { frameNonce }) },
         },
-        origin: document.querySelector("iframe[title='Yet AI GUI']")?.src ? new URL(document.querySelector("iframe[title='Yet AI GUI']").src).origin : window.location.origin,
+        origin: readyUrl,
         source: frameWindow,
       }));
     }
@@ -638,6 +638,32 @@ async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeU
   }
   if (afterReloadState.queueLength !== 0) {
     failures.push("Wrapper queued stale host.ready after iframe reload before fresh gui.ready.");
+  }
+  const beforeRandomFailureSequence = await page.evaluate(() => window.__yetAiGuiReadySequence ?? 0);
+  const randomFailureState = await page.evaluate(({ bridgeVersion, origin }) => {
+    const frameWindow = document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow;
+    const originalGetRandomValues = globalThis.crypto?.getRandomValues;
+    try {
+      Object.defineProperty(globalThis.crypto, "getRandomValues", { value: undefined, configurable: true });
+      window.dispatchEvent(new MessageEvent("message", {
+        data: {
+          version: bridgeVersion,
+          type: "gui.ready",
+          payload: { supportedBridgeVersion: bridgeVersion, frameNonce: window.__yetAiCurrentFrameNonce },
+        },
+        origin,
+        source: frameWindow,
+      }));
+    } finally {
+      Object.defineProperty(globalThis.crypto, "getRandomValues", { value: originalGetRandomValues, configurable: true });
+    }
+    return {
+      readySequence: window.__yetAiGuiReadySequence ?? 0,
+      currentRequestId: window.__yetAiCurrentReadyRequestId,
+    };
+  }, { bridgeVersion: version, origin: guiUrl });
+  if (randomFailureState.readySequence !== beforeRandomFailureSequence || randomFailureState.currentRequestId !== undefined) {
+    failures.push(`Wrapper mutated readiness state when secure randomness was unavailable for gui.ready: before=${beforeRandomFailureSequence} after=${randomFailureState.readySequence} requestId=${String(randomFailureState.currentRequestId)}.`);
   }
   await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, url) => {
     frame.src = `${url}/index.html`;
@@ -940,7 +966,7 @@ const wrapperReadyRequestId = (sequence) => {
 };
 const newFrameNonce = () => randomToken();
 const sendFrameNonceChallenge = () => {
-  if (!frame || !currentFrameWindow || frame.contentWindow !== currentFrameWindow || !frameTargetOrigin || currentFrameNonce === undefined) return;
+  if (frameReady || !frame || !currentFrameWindow || frame.contentWindow !== currentFrameWindow || !frameTargetOrigin || !isFrameNonce(currentFrameNonce)) return;
   currentFrameWindow.postMessage({ version: bridgeVersion, type: "host.frameNonce", payload: { frameNonce: currentFrameNonce } }, frameTargetOrigin);
   window.__yetAiCurrentFrameNonce = currentFrameNonce;
   frameNonceChallengeAttempts += 1;
@@ -990,6 +1016,7 @@ const sendToFrame = (message) => {
 const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const hasOnlyKeys = (record, keys) => Object.keys(record).every((key) => keys.includes(key));
 const isRequestId = (value) => value === undefined || (typeof value === "string" && value.length >= 1 && value.length <= 128 && value.split("").every((char) => char >= " " && char.charCodeAt(0) !== 127));
+const isFrameNonce = (value) => typeof value === "string" && /^[0-9a-f]{32}$/.test(value);
 const optionalString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length <= maxLength);
 const optionalNonEmptyString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength);
 const requiredLoopbackRuntimeUrl = (value) => {
@@ -1018,7 +1045,7 @@ const isHostMessage = (message) => {
 };
 const isGuiMessage = (message) => {
   if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.ready" || !isRequestId(message.requestId)) return false;
-  return isPlainObject(message.payload) && hasOnlyKeys(message.payload, ["supportedBridgeVersion", "frameNonce"]) && (message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion) && message.payload.frameNonce === currentFrameNonce;
+  return isPlainObject(message.payload) && hasOnlyKeys(message.payload, ["supportedBridgeVersion", "frameNonce"]) && (message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion) && isFrameNonce(currentFrameNonce) && isFrameNonce(message.payload.frameNonce) && message.payload.frameNonce === currentFrameNonce;
 };
 window.__yetAiSendHostMessageToFrame = sendToFrame;
 window.__yetAiWrapperInitialized = true;
@@ -1029,17 +1056,18 @@ window.addEventListener("message", (event) => {
       return;
     }
     if (isGuiMessage(event.data)) {
-      frameReady = true;
-      guiReadySequence += 1;
-      currentGuiReadySequence = guiReadySequence;
-      window.__yetAiGuiReadySequence = guiReadySequence;
-      currentGuiReadyRequestId = wrapperReadyRequestId(currentGuiReadySequence);
-      if (currentGuiReadyRequestId === undefined) {
-        frameReady = false;
-        currentGuiReadySequence = 0;
+      if (frameReady && event.data.payload.frameNonce === currentFrameNonce) return;
+      const nextGuiReadySequence = guiReadySequence + 1;
+      const nextGuiReadyRequestId = wrapperReadyRequestId(nextGuiReadySequence);
+      if (nextGuiReadyRequestId === undefined) {
         console.log("Yet AI rejected gui.ready because secure wrapper randomness is unavailable");
         return;
       }
+      frameReady = true;
+      guiReadySequence = nextGuiReadySequence;
+      currentGuiReadySequence = nextGuiReadySequence;
+      window.__yetAiGuiReadySequence = guiReadySequence;
+      currentGuiReadyRequestId = nextGuiReadyRequestId;
       const readyMessage = { ...event.data, requestId: currentGuiReadyRequestId, payload: { supportedBridgeVersion: event.data.payload?.supportedBridgeVersion } };
       window.__yetAiCurrentReadyRequestId = currentGuiReadyRequestId;
       acceptedHostReadyRequestId = undefined;
@@ -1060,6 +1088,7 @@ if (frame) {
     currentFrameWindow = frame.contentWindow;
     currentGuiReadySequence = 0;
     currentGuiReadyRequestId = undefined;
+    window.__yetAiCurrentReadyRequestId = undefined;
     acceptedHostReadyRequestId = undefined;
     hostReadyAcceptedForCurrentFrame = false;
     currentFrameNonce = undefined;

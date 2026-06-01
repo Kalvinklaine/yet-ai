@@ -334,6 +334,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
         const hasOnlyKeys = (record, keys) => Object.keys(record).every((key) => keys.includes(key));
         const isRequestId = (value) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 128 && value.split("").every((char) => char >= " " && char.charCodeAt(0) !== 127));
+        const isFrameNonce = (value) => typeof value === "string" && /^[0-9a-f]{32}$/.test(value);
         const optionalString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length <= maxLength);
         const optionalNonEmptyString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength);
         const requiredLoopbackRuntimeUrl = (value) => {
@@ -362,7 +363,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         };
         const isGuiMessage = (message) => {
           if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.ready" || !isRequestId(message.requestId)) return false;
-          return isPlainObject(message.payload) && hasOnlyKeys(message.payload, ["supportedBridgeVersion", "frameNonce"]) && (message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion) && message.payload.frameNonce === currentFrameNonce;
+          return isPlainObject(message.payload) && hasOnlyKeys(message.payload, ["supportedBridgeVersion", "frameNonce"]) && (message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion) && isFrameNonce(currentFrameNonce) && isFrameNonce(message.payload.frameNonce) && message.payload.frameNonce === currentFrameNonce;
         };
         const currentReadyRequestId = () => currentGuiReadyRequestId;
         const randomToken = () => {
@@ -377,7 +378,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         };
         const newFrameNonce = () => randomToken();
         const sendFrameNonceChallenge = () => {
-          if (!frame || !currentFrameWindow || frame.contentWindow !== currentFrameWindow || !frameTargetOrigin || currentFrameNonce === undefined) return;
+          if (frameReady || !frame || !currentFrameWindow || frame.contentWindow !== currentFrameWindow || !frameTargetOrigin || !isFrameNonce(currentFrameNonce)) return;
           currentFrameWindow.postMessage({ version: bridgeVersion, type: "host.frameNonce", payload: { frameNonce: currentFrameNonce } }, frameTargetOrigin);
           frameNonceChallengeAttempts += 1;
           if (!frameReady && frameNonceChallengeAttempts < 20) {
@@ -425,16 +426,17 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
               return;
             }
             if (isGuiMessage(event.data)) {
-              frameReady = true;
-              guiReadySequence += 1;
-              currentGuiReadySequence = guiReadySequence;
-              currentGuiReadyRequestId = wrapperReadyRequestId(currentGuiReadySequence);
-              if (currentGuiReadyRequestId === undefined) {
-                frameReady = false;
-                currentGuiReadySequence = 0;
+              if (frameReady && event.data.payload.frameNonce === currentFrameNonce) return;
+              const nextGuiReadySequence = guiReadySequence + 1;
+              const nextGuiReadyRequestId = wrapperReadyRequestId(nextGuiReadySequence);
+              if (nextGuiReadyRequestId === undefined) {
                 console.log("Yet AI rejected gui.ready because secure wrapper randomness is unavailable");
                 return;
               }
+              frameReady = true;
+              guiReadySequence = nextGuiReadySequence;
+              currentGuiReadySequence = nextGuiReadySequence;
+              currentGuiReadyRequestId = nextGuiReadyRequestId;
               const readyMessage = { ...event.data, requestId: currentGuiReadyRequestId, payload: { supportedBridgeVersion: event.data.payload?.supportedBridgeVersion } };
               acceptedHostReadyRequestId = undefined;
               hostReadyAcceptedForCurrentFrame = false;
