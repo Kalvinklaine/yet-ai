@@ -208,9 +208,7 @@ try {
   }
   await page.waitForFunction(() => typeof window.__yetAiSendHostMessageToFrame === "function", undefined, { timeout: 5000 }).catch(() => failures.push("Wrapper host-message sender helper was not installed."));
   const currentReadyRequestId = await page.evaluate(() => window.__yetAiCurrentReadyRequestId);
-  if (!currentReadyRequestId || currentReadyRequestId === "gui-ready") {
-    failures.push(`Wrapper did not synthesize a generation-bound ready request id, got ${String(currentReadyRequestId)}.`);
-  }
+  assertRandomReadyRequestId(currentReadyRequestId, "initial gui.ready");
   await assertInvalidRuntimeUrlsRejected(page, bridgeVersion, currentReadyRequestId);
   await assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocator, bridgeVersion, guiBaseUrl, runtimeBaseUrl, runtimeToken);
   if (failures.length > 0) {
@@ -436,6 +434,12 @@ try {
   await guiServer.close();
 }
 
+function assertRandomReadyRequestId(requestId, label) {
+  if (typeof requestId !== "string" || !/^gui-ready-\d+-\d+-[0-9a-f]{32}$/.test(requestId)) {
+    failures.push(`Wrapper did not synthesize a random authoritative ready id for ${label}, got ${String(requestId)}.`);
+  }
+}
+
 async function assertInvalidRuntimeUrlsRejected(page, version, currentReadyRequestId) {
   const invalidRuntimeUrls = [
     undefined,
@@ -574,7 +578,8 @@ async function assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocato
   }, version);
   await page.waitForTimeout(100);
   const oldNonce = await page.evaluate(() => window.__yetAiCurrentReadyRequestId);
-  if (!oldNonce || oldNonce === "same") {
+  assertRandomReadyRequestId(oldNonce, "explicit same requestId before reload");
+  if (oldNonce === "same") {
     failures.push(`Wrapper used GUI-supplied requestId instead of authoritative nonce before reload: ${String(oldNonce)}.`);
   }
   const beforeUnloadEvents = await page.evaluate(() => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.unloaded").length);
@@ -626,11 +631,31 @@ async function assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocato
     deliveredSame: window.__yetAiHostMessagesPosted?.slice(beforeCount).some((message) => message?.requestId === "same") === true,
     deliveredOldNonce: window.__yetAiHostMessagesPosted?.slice(beforeCount).some((message) => message?.requestId === oldRequestId) === true,
   }), { beforeCount: beforeStaleCount, oldRequestId: oldNonce });
+  assertRandomReadyRequestId(afterRepeatedReady.currentRequestId, "explicit same requestId after reload");
   if (!afterRepeatedReady.currentRequestId || afterRepeatedReady.currentRequestId === "same" || afterRepeatedReady.currentRequestId === oldNonce) {
     failures.push("Wrapper did not issue a fresh authoritative nonce for repeated explicit gui.ready requestId after reload.");
   }
   if (afterRepeatedReady.deliveredSame || afterRepeatedReady.deliveredOldNonce) {
     failures.push("Wrapper delivered stale host message after repeated explicit gui.ready requestId across reload.");
+  }
+  const beforeOldNonceReplayCount = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
+  await page.evaluate(({ bridgeVersion, readyUrl, sessionToken, requestId }) => {
+    window.__yetAiSendHostMessageToFrame({
+      version: bridgeVersion,
+      type: "host.ready",
+      requestId,
+      payload: {
+        runtimeUrl: readyUrl,
+        sessionToken,
+        productId: "yet-ai",
+        displayName: "Yet AI",
+        cloudRequired: false,
+      },
+    });
+  }, { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token, requestId: oldNonce });
+  const afterOldNonceReplayCount = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
+  if (afterOldNonceReplayCount !== beforeOldNonceReplayCount) {
+    failures.push("Wrapper delivered a stale host.ready bound to the previous authoritative ready id after a new ready id was accepted.");
   }
 }
 
@@ -787,7 +812,16 @@ window.postIntellijMessage = (message) => {
   window.__yetAiBridgeMessages.push(message);
 };
 const currentReadyRequestId = () => currentGuiReadyRequestId;
-const wrapperReadyRequestId = (sequence) => "gui-ready-" + frameGeneration + "-" + sequence;
+const randomReadyToken = () => {
+  if (!globalThis.crypto || typeof globalThis.crypto.getRandomValues !== "function") return undefined;
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+};
+const wrapperReadyRequestId = (sequence) => {
+  const token = randomReadyToken();
+  return token === undefined ? undefined : "gui-ready-" + frameGeneration + "-" + sequence + "-" + token;
+};
 const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
 const canDeliverHostMessage = (message) => {
   if (!messageMatchesCurrentReady(message)) return false;
@@ -865,6 +899,12 @@ window.addEventListener("message", (event) => {
       currentGuiReadySequence = guiReadySequence;
       window.__yetAiGuiReadySequence = guiReadySequence;
       currentGuiReadyRequestId = wrapperReadyRequestId(currentGuiReadySequence);
+      if (currentGuiReadyRequestId === undefined) {
+        frameReady = false;
+        currentGuiReadySequence = 0;
+        console.log("Yet AI rejected gui.ready because secure wrapper randomness is unavailable");
+        return;
+      }
       const readyMessage = { ...event.data, requestId: currentGuiReadyRequestId };
       window.__yetAiCurrentReadyRequestId = currentGuiReadyRequestId;
       acceptedHostReadyRequestId = undefined;
