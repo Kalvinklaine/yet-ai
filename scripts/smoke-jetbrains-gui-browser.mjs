@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jetbrainsRoot = path.join(root, "apps", "plugins", "jetbrains");
 const distributionsDir = path.join(jetbrainsRoot, "build", "distributions");
-const requiredVisibleText = ["Yet AI", "Local runtime connection", "Provider setup", "Chat", "Bridge debug"];
+const requiredVisibleText = ["Yet AI", "Local runtime connection", "Provider setup", "Chat with Yet AI", "Bridge debug"];
 const failures = [];
 
 let chromium;
