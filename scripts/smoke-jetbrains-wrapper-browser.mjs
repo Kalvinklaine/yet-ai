@@ -207,6 +207,7 @@ try {
     failures.push("Wrapper did not prove queued diagnostic adoption and flush without pre-ready direct display.");
   }
   await page.waitForFunction(() => typeof window.__yetAiSendHostMessageToFrame === "function", undefined, { timeout: 5000 }).catch(() => failures.push("Wrapper host-message sender helper was not installed."));
+  await assertInvalidRuntimeUrlsRejected(page, bridgeVersion);
   if (failures.length > 0) {
     reportFailures();
   }
@@ -289,9 +290,11 @@ try {
     failures.push("Wrapper relayed an arbitrary wrapper-origin host.ready postMessage into the iframe.");
   }
 
+  await assertReloadRequiresFreshGuiReady(page, bridgeVersion, guiBaseUrl, runtimeBaseUrl, runtimeToken);
+
   await frameLocator.getByText("State: Experimental OpenAI account / gpt-5-codex", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not use host.ready runtime endpoints to enter connected experimental readiness."));
 
-  const refreshButton = frameLocator.getByRole("button", { name: "Refresh runtime" });
+  const refreshButton = frameLocator.getByRole("button", { name: "Refresh runtime" }).first();
   await refreshButton.click();
   await refreshButton.click();
   await page.waitForTimeout(500);
@@ -385,6 +388,7 @@ try {
 
   await page.waitForTimeout(250);
   await page.evaluate(() => {
+    window.__yetAiHostMessagesPosted = window.__yetAiHostMessagesPosted?.filter((message) => message?.type !== "host.contextSnapshot") ?? [];
     window.__yetAiBridgeMessages = window.__yetAiBridgeMessages?.filter((message) => message?.type !== "host.ready") ?? [];
     window.__yetAiPendingHostMessages = [];
   });
@@ -415,6 +419,89 @@ try {
   await wrapperServer.close();
   await runtimeServer.close();
   await guiServer.close();
+}
+
+async function assertInvalidRuntimeUrlsRejected(page, version) {
+  const invalidRuntimeUrls = [
+    "https://example.com/",
+    "http://user@127.0.0.1/",
+    "http://127.0.0.1/?token=unsafe",
+    "http://127.0.0.1/#token",
+    "http://127.0.0.1/v1",
+  ];
+  const before = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
+  await page.evaluate(({ bridgeVersion, urls }) => {
+    for (const runtimeUrl of urls) {
+      window.__yetAiSendHostMessageToFrame({
+        version: bridgeVersion,
+        type: "host.ready",
+        requestId: `invalid-runtime-url-${runtimeUrl}`,
+        payload: {
+          runtimeUrl,
+          productId: "yet-ai",
+          displayName: "Yet AI",
+          cloudRequired: false,
+        },
+      });
+    }
+  }, { bridgeVersion: version, urls: invalidRuntimeUrls });
+  await page.waitForTimeout(100);
+  const after = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
+  if (after !== before) {
+    failures.push("Wrapper relayed host.ready with a non-loopback, credentialed, queried, fragmented, or non-root runtime URL.");
+  }
+}
+
+async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeUrl, token) {
+  const beforeUnloadEvents = await page.evaluate(() => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.unloaded").length);
+  await page.locator("iframe[title='Yet AI GUI']").evaluate((frame) => {
+    frame.src = "about:blank";
+  });
+  await page.waitForFunction((count) => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.unloaded").length > count, beforeUnloadEvents, { timeout: 5000 }).catch(() => failures.push("Wrapper did not report iframe unload during reload smoke."));
+  const beforeReloadCount = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
+  const afterReloadState = await page.evaluate(({ bridgeVersion, readyUrl, sessionToken }) => {
+    window.__yetAiSendHostMessageToFrame({
+      version: bridgeVersion,
+      type: "host.ready",
+      requestId: "queued-after-reload-before-ready",
+      payload: {
+        runtimeUrl: readyUrl,
+        sessionToken,
+        productId: "yet-ai",
+        displayName: "Yet AI",
+        cloudRequired: false,
+      },
+    });
+    return {
+      count: window.__yetAiHostMessagesPostedCount,
+      queueLength: window.__yetAiPendingHostMessages.length,
+      bridgeMessages: window.__yetAiBridgeMessages,
+    };
+  }, { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token });
+  if (afterReloadState.count !== beforeReloadCount) {
+    failures.push("Wrapper delivered host.ready after iframe reload before fresh gui.ready.");
+  }
+  if (afterReloadState.queueLength !== 1) {
+    failures.push("Wrapper did not queue exactly one host.ready after iframe reload before fresh gui.ready.");
+  }
+  await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, url) => {
+    frame.src = `${url}/index.html`;
+  }, guiUrl);
+  await page.waitForFunction(() => window.__yetAiHostMessagesPosted?.some((message) => message?.requestId === "queued-after-reload-before-ready"), undefined, { timeout: 5000 }).catch(() => failures.push("Wrapper did not deliver queued host.ready after fresh gui.ready following reload."));
+  await page.evaluate(({ bridgeVersion, readyUrl, sessionToken }) => {
+    window.__yetAiSendHostMessageToFrame({
+      version: bridgeVersion,
+      type: "host.ready",
+      requestId: "login-shaped-runtime-ready-after-reload",
+      payload: {
+        runtimeUrl: readyUrl,
+        sessionToken,
+        productId: "yet-ai",
+        displayName: "Yet AI",
+        cloudRequired: false,
+      },
+    });
+  }, { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token });
 }
 
 function assertJetBrainsContext(context) {
@@ -514,8 +601,11 @@ window.__yetAiBridgeMessages = [];
 window.__yetAiFrameTargetOrigin = frameTargetOrigin;
 window.__yetAiIframeGuiReady = false;
 window.__yetAiHostMessagesPostedCount = 0;
+window.__yetAiHostMessagesPosted = [];
 let frameLoaded = false;
 let frameReady = false;
+let frameLoadCount = 0;
+let currentGuiReadyRequestId;
 let flushingPending = false;
 const pendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : [];
 const pendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : [];
@@ -555,13 +645,15 @@ const postToFrame = (message) => {
   if (frame && frame.contentWindow && frameTargetOrigin && isHostMessage(message)) {
     frame.contentWindow.postMessage(message, frameTargetOrigin);
     window.__yetAiHostMessagesPostedCount += 1;
+    window.__yetAiHostMessagesPosted.push(message);
     if (message?.requestId === "pre-init-smoke") window.__yetAiPreInitHostFlushed = true;
   }
 };
 const flushPending = () => {
+  const readyFrameLoadCount = frameLoadCount;
   flushingPending = true;
   while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift());
-  while (pendingHostMessages.length > 0) postToFrame(pendingHostMessages.shift());
+  while (frameReady && readyFrameLoadCount === frameLoadCount && pendingHostMessages.length > 0) postToFrame(pendingHostMessages.shift());
   flushingPending = false;
 };
 const sendToFrame = (message) => {
@@ -577,12 +669,14 @@ const hasOnlyKeys = (record, keys) => Object.keys(record).every((key) => keys.in
 const isRequestId = (value) => value === undefined || (typeof value === "string" && value.length >= 1 && value.length <= 128 && value.split("").every((char) => char >= " " && char.charCodeAt(0) !== 127));
 const optionalString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length <= maxLength);
 const optionalNonEmptyString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength);
-const optionalHttpUrl = (value) => {
+const optionalLoopbackRuntimeUrl = (value) => {
   if (value === undefined) return true;
   if (typeof value !== "string" || value.length === 0 || value.length > 2048) return false;
   try {
     const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
+    const hostname = parsed.hostname.toLowerCase();
+    const isLoopback = hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1" || hostname === "[::1]";
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && isLoopback && parsed.username === "" && parsed.password === "" && parsed.search === "" && parsed.hash === "" && (parsed.pathname === "" || parsed.pathname === "/");
   } catch (_) {
     return false;
   }
@@ -592,7 +686,7 @@ const safePath = (value, maxLength) => value === undefined || (typeof value === 
 const isContextFile = (file) => file === undefined || (isPlainObject(file) && hasOnlyKeys(file, ["displayPath", "workspaceRelativePath", "languageId"]) && Object.keys(file).length > 0 && safePath(file.displayPath, 256) && safePath(file.workspaceRelativePath, 512) && (file.languageId === undefined || (typeof file.languageId === "string" && file.languageId.length > 0 && file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(file.languageId))));
 const isContextSelection = (selection) => selection === undefined || (isPlainObject(selection) && hasOnlyKeys(selection, ["startLine", "startCharacter", "endLine", "endCharacter", "text"]) && Object.keys(selection).length > 0 && optionalNumber(selection.startLine) && optionalNumber(selection.startCharacter) && optionalNumber(selection.endLine) && optionalNumber(selection.endCharacter) && optionalString(selection.text, 8000));
 const isContextSnapshotPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["kind", "source", "file", "selection"]) && payload.kind === "active_editor" && (payload.source === "vscode" || payload.source === "jetbrains" || payload.source === "browser") && isContextFile(payload.file) && isContextSelection(payload.selection);
-const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && optionalHttpUrl(payload.runtimeUrl) && optionalString(payload.sessionToken, 4096) && optionalNonEmptyString(payload.productId, 256) && optionalNonEmptyString(payload.displayName, 256) && (payload.cloudRequired === undefined || payload.cloudRequired === false);
+const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && optionalLoopbackRuntimeUrl(payload.runtimeUrl) && optionalString(payload.sessionToken, 4096) && optionalNonEmptyString(payload.productId, 256) && optionalNonEmptyString(payload.displayName, 256) && (payload.cloudRequired === undefined || payload.cloudRequired === false);
 const isHostMessage = (message) => {
   if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || !isRequestId(message.requestId)) return false;
   if (message.type === "host.ready") return isHostReadyPayload(message.payload);
@@ -614,6 +708,7 @@ window.addEventListener("message", (event) => {
     }
     if (isGuiMessage(event.data)) {
       frameReady = true;
+      currentGuiReadyRequestId = event.data.requestId;
       flushPending();
       window.__yetAiIframeGuiReady = true;
       window.postIntellijMessage(event.data);
@@ -625,6 +720,12 @@ window.addEventListener("message", (event) => {
 });
 if (frame) {
   frame.addEventListener("load", () => {
+    const wasReady = frameReady;
+    frameReady = false;
+    frameLoadCount += 1;
+    currentGuiReadyRequestId = undefined;
+    if (wasReady) pendingHostMessages.length = 0;
+    window.postIntellijMessage({ version: bridgeVersion, type: "gui.unloaded", payload: {} });
     markLoaded();
   });
 }
