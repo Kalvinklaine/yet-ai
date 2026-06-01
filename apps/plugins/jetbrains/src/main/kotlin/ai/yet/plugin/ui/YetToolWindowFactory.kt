@@ -23,6 +23,7 @@ import com.intellij.ui.jcef.JBCefApp
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefJSQuery
 import java.awt.BorderLayout
+import java.net.URI
 import java.nio.file.Path
 import javax.swing.JLabel
 import javax.swing.JPanel
@@ -99,8 +100,9 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
                 return@addHandler null
             }
             logger.info("Yet AI received gui.ready")
-            guiReadyRequestId = guiReady.requestId
-            deliverReadyMessages(latestConnection.settings, guiReady.requestId)
+            val requestId = guiReady.requestId ?: "gui-ready"
+            guiReadyRequestId = requestId
+            deliverReadyMessages(latestConnection.settings, requestId)
             null
         }
         val initialSettings = initialSettings()
@@ -113,7 +115,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
             latestConnection = connection
             ApplicationManager.getApplication().invokeLater {
                 if (!disposed) {
-                    guiReadyRequestId?.let { requestId -> deliverReadyMessages(connection.settings, requestId) }
+                    guiReadyRequestId?.let { requestId -> deliverReadyMessages(connection.settings, requestId.ifBlank { "gui-ready" }) }
                     connection.error?.let { error -> sendDiagnostic(error) }
                 }
             }
@@ -174,8 +176,12 @@ object JetBrainsReadyMessageDelivery {
         contextSupplier: () -> ActiveEditorContext.Snapshot?,
         logContextStatus: (String) -> Unit,
     ) {
+        if (!isValidRuntimeUrl(settings.runtimeUrl)) {
+            logContextStatus("Yet AI rejected invalid runtime URL for GUI bridge ready batch")
+            return
+        }
         send(BridgeMessages.hostReady(settings, requestId))
-        send(BridgeMessages.openedFromCommand())
+        send(BridgeMessages.openedFromCommand(requestId))
         val snapshot = try {
             contextSupplier()
         } catch (_: Exception) {
@@ -185,6 +191,25 @@ object JetBrainsReadyMessageDelivery {
         if (snapshot != null) {
             send(BridgeMessages.contextSnapshot(snapshot, requestId))
         }
+    }
+
+    private fun isValidRuntimeUrl(value: String): Boolean {
+        if (value.isBlank()) return false
+        val uri = try {
+            URI(value)
+        } catch (_: Exception) {
+            return false
+        }
+        val scheme = uri.scheme?.lowercase() ?: return false
+        val host = uri.host?.removeSurrounding("[", "]") ?: return false
+        val path = uri.rawPath ?: ""
+        return uri.isAbsolute &&
+            (scheme == "http" || scheme == "https") &&
+            (host == "127.0.0.1" || host == "localhost" || host == "::1") &&
+            uri.rawUserInfo == null &&
+            uri.rawQuery == null &&
+            uri.rawFragment == null &&
+            (path.isEmpty() || path == "/")
     }
 }
 
@@ -269,8 +294,11 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const shellFallback = document.getElementById("yet-ai-shell-fallback");
         let frameLoaded = false;
         let frameReady = false;
-        let frameLoadCount = 0;
+        let frameGeneration = 0;
         let currentGuiReadyRequestId;
+        let guiReadySequence = 0;
+        let acceptedHostReadyRequestId;
+        let hostReadyAcceptedForCurrentFrame = false;
         const pendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : [];
         const pendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : [];
         window.__yetAiPendingHostMessages = pendingHostMessages;
@@ -304,8 +332,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isRequestId = (value) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 128 && value.split("").every((char) => char >= " " && char.charCodeAt(0) !== 127));
         const optionalString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length <= maxLength);
         const optionalNonEmptyString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength);
-        const optionalLoopbackRuntimeUrl = (value) => {
-          if (value === undefined) return true;
+        const requiredLoopbackRuntimeUrl = (value) => {
           if (typeof value !== "string" || value.length === 0 || value.length > 2048) return false;
           try {
             const parsed = new URL(value);
@@ -321,7 +348,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isContextFile = (file) => file === undefined || (isPlainObject(file) && hasOnlyKeys(file, ["displayPath", "workspaceRelativePath", "languageId"]) && Object.keys(file).length > 0 && safePath(file.displayPath, 256) && safePath(file.workspaceRelativePath, 512) && (file.languageId === undefined || (typeof file.languageId === "string" && file.languageId.length > 0 && file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(file.languageId))));
         const isContextSelection = (selection) => selection === undefined || (isPlainObject(selection) && hasOnlyKeys(selection, ["startLine", "startCharacter", "endLine", "endCharacter", "text"]) && Object.keys(selection).length > 0 && optionalNumber(selection.startLine) && optionalNumber(selection.startCharacter) && optionalNumber(selection.endLine) && optionalNumber(selection.endCharacter) && optionalString(selection.text, 8000));
         const isContextSnapshotPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["kind", "source", "file", "selection"]) && payload.kind === "active_editor" && (payload.source === "vscode" || payload.source === "jetbrains" || payload.source === "browser") && isContextFile(payload.file) && isContextSelection(payload.selection);
-        const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && optionalLoopbackRuntimeUrl(payload.runtimeUrl) && optionalString(payload.sessionToken, 4096) && optionalNonEmptyString(payload.productId, 256) && optionalNonEmptyString(payload.displayName, 256) && (payload.cloudRequired === undefined || payload.cloudRequired === false);
+        const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && requiredLoopbackRuntimeUrl(payload.runtimeUrl) && optionalString(payload.sessionToken, 4096) && optionalNonEmptyString(payload.productId, 256) && optionalNonEmptyString(payload.displayName, 256) && (payload.cloudRequired === undefined || payload.cloudRequired === false);
         const isHostMessage = (message) => {
           if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || !isRequestId(message.requestId)) return false;
           if (message.type === "host.ready") return isHostReadyPayload(message.payload);
@@ -333,15 +360,28 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.ready" || !isRequestId(message.requestId)) return false;
           return message.payload === undefined || (isPlainObject(message.payload) && hasOnlyKeys(message.payload, ["supportedBridgeVersion"]) && (message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion));
         };
+        const currentReadyRequestId = () => currentGuiReadyRequestId;
+        const messageMatchesCurrentReady = (message) => frameReady && message.requestId === currentReadyRequestId();
+        const canDeliverHostMessage = (message) => {
+          if (!messageMatchesCurrentReady(message)) return false;
+          if (message.type === "host.ready") return true;
+          return hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
+        };
         const postToFrame = (message) => {
-          if (frame && frame.contentWindow && frameTargetOrigin && isHostMessage(message)) {
+          if (frame && frame.contentWindow && frameTargetOrigin && isHostMessage(message) && canDeliverHostMessage(message)) {
             frame.contentWindow.postMessage(message, frameTargetOrigin);
+            if (message.type === "host.ready") {
+              acceptedHostReadyRequestId = message.requestId;
+              hostReadyAcceptedForCurrentFrame = true;
+            }
           }
         };
         const flushPending = () => {
-          const readyFrameLoadCount = frameLoadCount;
+          const readyFrameGeneration = frameGeneration;
+          const readyRequestId = currentReadyRequestId();
           while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift());
-          while (frameReady && readyFrameLoadCount === frameLoadCount && pendingHostMessages.length > 0) postToFrame(pendingHostMessages.shift());
+          while (frameReady && readyFrameGeneration === frameGeneration && readyRequestId === currentReadyRequestId() && pendingHostMessages.length > 0) postToFrame(pendingHostMessages.shift());
+          pendingHostMessages.length = 0;
         };
         const sendToFrame = (message) => {
           if (!isHostMessage(message)) return;
@@ -360,7 +400,10 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
             }
             if (isGuiMessage(event.data)) {
               frameReady = true;
-              currentGuiReadyRequestId = event.data.requestId;
+              guiReadySequence += 1;
+              currentGuiReadyRequestId = event.data.requestId === undefined ? "gui-ready" : event.data.requestId;
+              acceptedHostReadyRequestId = undefined;
+              hostReadyAcceptedForCurrentFrame = false;
               flushPending();
               window.postIntellijMessage(event.data);
             } else {
@@ -371,11 +414,12 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         });
         if (frame) {
           frame.addEventListener("load", () => {
-            const wasReady = frameReady;
             frameReady = false;
-            frameLoadCount += 1;
+            frameGeneration += 1;
             currentGuiReadyRequestId = undefined;
-            if (wasReady) pendingHostMessages.length = 0;
+            acceptedHostReadyRequestId = undefined;
+            hostReadyAcceptedForCurrentFrame = false;
+            pendingHostMessages.length = 0;
             window.postIntellijMessage({ version: bridgeVersion, type: "gui.unloaded", payload: {} });
             markLoaded();
           });
