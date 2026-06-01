@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { clearStoredSessionToken, collectRuntimeDiagnostics, prepareEngineConnection, setStoredSessionToken, stopLaunchedEngine } from "./engineConnection";
+import { clearStoredSessionToken, collectRuntimeDiagnostics, formatRuntimeDiagnostics, prepareEngineConnection, setStoredSessionToken, stopLaunchedEngine } from "./engineConnection";
 import { assertExtensionIdentity, clearSessionTokenCommand, extensionCommand, loadProductIdentity, runtimeStatusCommand, setSessionTokenCommand } from "./identity";
 import { openYetAiWebview } from "./webview";
 
@@ -24,12 +24,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const runtimeStatusDisposable = vscode.commands.registerCommand(runtimeStatusCommand, async () => {
     try {
       const diagnostics = await collectRuntimeDiagnostics(context, identity);
-      engineOutput?.appendLine("Yet AI runtime diagnostics:");
-      engineOutput?.appendLine(`Runtime URL: ${diagnostics.runtimeUrl}`);
-      engineOutput?.appendLine(`Launch mode: ${diagnostics.launchMode}`);
-      engineOutput?.appendLine(`Engine binary configured: ${diagnostics.configuredEngineBinaryPath ? "yes" : "no"}`);
-      engineOutput?.appendLine(`Engine binary: ${diagnostics.engineBinaryStatus}`);
-      engineOutput?.appendLine(`Ping: ${diagnostics.pingStatus}`);
+      engineOutput?.appendLine(formatRuntimeDiagnostics(diagnostics));
       engineOutput?.show(true);
       void vscode.window.showInformationMessage(`Yet AI runtime diagnostics: ping ${diagnostics.pingStatus}. See Yet AI Runtime output for details.`);
     } catch (error) {
