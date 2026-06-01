@@ -5,9 +5,10 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
-use http::StatusCode;
+use http::{header, HeaderValue, Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::agent_progress;
 use crate::chat::ChatContext;
@@ -52,7 +53,44 @@ pub fn router(state: AppState) -> Router {
                 .route("/chats/:chat_id/commands", post(chat_command))
                 .layer(DefaultBodyLimit::max(V1_BODY_LIMIT_BYTES)),
         )
+        .layer(cors_layer())
         .with_state(state)
+}
+
+fn cors_layer() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(|origin, _| {
+            is_allowed_loopback_origin(origin)
+        }))
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::ACCEPT])
+}
+
+fn is_allowed_loopback_origin(origin: &HeaderValue) -> bool {
+    let Ok(origin) = origin.to_str() else {
+        return false;
+    };
+    if origin.contains('?') || origin.contains('#') || origin.contains('@') {
+        return false;
+    }
+    let Some(authority) = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let Some((host, port)) = authority.rsplit_once(':') else {
+        return false;
+    };
+    !port.is_empty()
+        && port.chars().all(|value| value.is_ascii_digit())
+        && matches!(host, "127.0.0.1" | "localhost" | "[::1]")
 }
 
 fn invalid_json_body(rejection: JsonRejection) -> Response {
