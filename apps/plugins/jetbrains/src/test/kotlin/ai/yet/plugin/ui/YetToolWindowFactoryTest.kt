@@ -56,23 +56,30 @@ class YetToolWindowFactoryTest {
         )
 
         assertContains(html, "let frameReady = false")
-        assertContains(html, "let frameLoadCount = 0;")
+        assertContains(html, "let frameGeneration = 0;")
         assertContains(html, "let currentGuiReadyRequestId;")
-        assertContains(html, "const readyFrameLoadCount = frameLoadCount;")
+        assertContains(html, "let guiReadySequence = 0;")
+        assertContains(html, "let acceptedHostReadyRequestId;")
+        assertContains(html, "let hostReadyAcceptedForCurrentFrame = false;")
+        assertContains(html, "const currentReadyRequestId = () => currentGuiReadyRequestId;")
+        assertContains(html, "const readyFrameGeneration = frameGeneration;")
+        assertContains(html, "const readyRequestId = currentReadyRequestId();")
         assertContains(html, "while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift())")
-        assertContains(html, "while (frameReady && readyFrameLoadCount === frameLoadCount && pendingHostMessages.length > 0) postToFrame(pendingHostMessages.shift())")
+        assertContains(html, "while (frameReady && readyFrameGeneration === frameGeneration && readyRequestId === currentReadyRequestId() && pendingHostMessages.length > 0) postToFrame(pendingHostMessages.shift())")
+        assertContains(html, "pendingHostMessages.length = 0;")
         assertContains(html, "frameReady = true;")
-        assertContains(html, "currentGuiReadyRequestId = event.data.requestId;")
+        assertContains(html, "guiReadySequence += 1;")
+        assertContains(html, "currentGuiReadyRequestId = event.data.requestId === undefined ? \"gui-ready\" : event.data.requestId;")
+        assertContains(html, "acceptedHostReadyRequestId = undefined;")
+        assertContains(html, "hostReadyAcceptedForCurrentFrame = false;")
         assertContains(html, "flushPending();")
         assertContains(html, "window.postIntellijMessage(event.data);")
-        assertContains(html, "const wasReady = frameReady;")
         assertContains(html, "frameReady = false;")
-        assertContains(html, "frameLoadCount += 1;")
+        assertContains(html, "frameGeneration += 1;")
         assertContains(html, "currentGuiReadyRequestId = undefined;")
-        assertContains(html, "if (wasReady) pendingHostMessages.length = 0;")
-        assertContains(html, "type: \"gui.unloaded\"")
-        assertContains(html, "markLoaded();")
-        assertFalse(html.contains("sendToFrame(bootstrapHostReady);"))
+        assertContains(html, "acceptedHostReadyRequestId = undefined;")
+        assertContains(html, "hostReadyAcceptedForCurrentFrame = false;")
+        assertContains(html, "pendingHostMessages.length = 0;")
         assertFalse(html.contains("const bootstrapHostReady"))
     }
 
@@ -124,7 +131,7 @@ class YetToolWindowFactoryTest {
 
         assertContains(html, "if (message.type === \"host.ready\") return isHostReadyPayload(message.payload)")
         assertContains(html, "hasOnlyKeys(payload, [\"runtimeUrl\", \"sessionToken\", \"productId\", \"displayName\", \"cloudRequired\"])")
-        assertContains(html, "optionalLoopbackRuntimeUrl(payload.runtimeUrl)")
+        assertContains(html, "requiredLoopbackRuntimeUrl(payload.runtimeUrl)")
         assertContains(html, "hostname === \"127.0.0.1\" || hostname === \"localhost\" || hostname === \"::1\" || hostname === \"[::1]\"")
         assertContains(html, "parsed.username === \"\" && parsed.password === \"\"")
         assertContains(html, "parsed.search === \"\" && parsed.hash === \"\"")
@@ -133,6 +140,11 @@ class YetToolWindowFactoryTest {
         assertContains(html, "payload.cloudRequired === undefined || payload.cloudRequired === false")
         assertContains(html, "if (message.type === \"host.contextSnapshot\") return isContextSnapshotPayload(message.payload)")
         assertContains(html, "if (message.type === \"host.openedFromCommand\") return message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0)")
+        assertContains(html, "const messageMatchesCurrentReady = (message) => frameReady && message.requestId === currentReadyRequestId();")
+        assertContains(html, "return hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();")
+        assertContains(html, "if (message.type === \"host.ready\") {")
+        assertContains(html, "acceptedHostReadyRequestId = message.requestId;")
+        assertContains(html, "hostReadyAcceptedForCurrentFrame = true;")
     }
 
     @Test
@@ -171,6 +183,7 @@ class YetToolWindowFactoryTest {
 
         assertEquals(listOf("host.ready", "host.openedFromCommand", "host.contextSnapshot"), sent.map(::messageType))
         assertContains(sent[0], "\"sessionToken\":\"session-token\"")
+        assertContains(sent[1], "\"requestId\":\"ready-1\"")
         assertContains(sent[2], "\"source\":\"jetbrains\"")
         assertContains(sent[2], "safe text")
         assertEquals(emptyList(), logs)
@@ -189,6 +202,48 @@ class YetToolWindowFactoryTest {
         )
 
         assertEquals(listOf("host.ready", "host.openedFromCommand"), sent.map(::messageType))
+    }
+
+    @Test
+    fun readyDeliveryRejectsInvalidRuntimeUrlBatchBeforeCollectingContext() {
+        val sent = mutableListOf<String>()
+        val logs = mutableListOf<String>()
+        var contextCollected = false
+
+        JetBrainsReadyMessageDelivery.deliver(
+            settings = RuntimeSettings("https://example.com/", null, null),
+            requestId = "ready-invalid",
+            send = { sent.add(it) },
+            contextSupplier = {
+                contextCollected = true
+                null
+            },
+            logContextStatus = { logs.add(it) },
+        )
+
+        assertEquals(emptyList(), sent)
+        assertFalse(contextCollected)
+        assertEquals(listOf("Yet AI rejected invalid runtime URL for GUI bridge ready batch"), logs)
+    }
+
+    @Test
+    fun readyDeliveryRejectsMissingRuntimeUrlBatchBeforeCollectingContext() {
+        val sent = mutableListOf<String>()
+        var contextCollected = false
+
+        JetBrainsReadyMessageDelivery.deliver(
+            settings = RuntimeSettings("", null, null),
+            requestId = "ready-missing",
+            send = { sent.add(it) },
+            contextSupplier = {
+                contextCollected = true
+                null
+            },
+            logContextStatus = {},
+        )
+
+        assertEquals(emptyList(), sent)
+        assertFalse(contextCollected)
     }
 
     @Test
