@@ -1,0 +1,68 @@
+name: Yet AI CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Local validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/gui/package-lock.json
+            apps/plugins/vscode/package-lock.json
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install GUI dependencies
+        run: npm ci
+        working-directory: apps/gui
+
+      - name: Install VS Code plugin dependencies
+        run: npm ci
+        working-directory: apps/plugins/vscode
+
+      - name: Repository validation
+        run: npm run check
+
+      - name: Rust check
+        run: cargo check -p yet-lsp
+
+      - name: Rust tests
+        run: cargo test -p yet-lsp
+
+      - name: GUI tests
+        run: npm test
+        working-directory: apps/gui
+
+      - name: GUI build
+        run: npm run build
+        working-directory: apps/gui
+
+      - name: VS Code compile and local engine checks
+        run: npm run compile
+        working-directory: apps/plugins/vscode
