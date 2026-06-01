@@ -301,6 +301,8 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         let currentGuiReadySequence = 0;
         let acceptedHostReadyRequestId;
         let hostReadyAcceptedForCurrentFrame = false;
+        let currentFrameNonce;
+        let frameNonceChallengeAttempts = 0;
         const pendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : [];
         const pendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : [];
         window.__yetAiPendingHostMessages = pendingHostMessages;
@@ -360,18 +362,36 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         };
         const isGuiMessage = (message) => {
           if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.ready" || !isRequestId(message.requestId)) return false;
-          return message.payload === undefined || (isPlainObject(message.payload) && hasOnlyKeys(message.payload, ["supportedBridgeVersion"]) && (message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion));
+          return isPlainObject(message.payload) && hasOnlyKeys(message.payload, ["supportedBridgeVersion", "frameNonce"]) && (message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion) && message.payload.frameNonce === currentFrameNonce;
         };
         const currentReadyRequestId = () => currentGuiReadyRequestId;
-        const randomReadyToken = () => {
+        const randomToken = () => {
           if (!globalThis.crypto || typeof globalThis.crypto.getRandomValues !== "function") return undefined;
           const bytes = new Uint8Array(16);
           globalThis.crypto.getRandomValues(bytes);
           return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
         };
         const wrapperReadyRequestId = (sequence) => {
-          const token = randomReadyToken();
+          const token = randomToken();
           return token === undefined ? undefined : "gui-ready-" + frameGeneration + "-" + sequence + "-" + token;
+        };
+        const newFrameNonce = () => randomToken();
+        const sendFrameNonceChallenge = () => {
+          if (!frame || !currentFrameWindow || frame.contentWindow !== currentFrameWindow || !frameTargetOrigin || currentFrameNonce === undefined) return;
+          currentFrameWindow.postMessage({ version: bridgeVersion, type: "host.frameNonce", payload: { frameNonce: currentFrameNonce } }, frameTargetOrigin);
+          frameNonceChallengeAttempts += 1;
+          if (!frameReady && frameNonceChallengeAttempts < 20) {
+            window.setTimeout(sendFrameNonceChallenge, 50);
+          }
+        };
+        const resetFrameNonceChallenge = () => {
+          currentFrameNonce = newFrameNonce();
+          frameNonceChallengeAttempts = 0;
+          if (currentFrameNonce === undefined) {
+            console.log("Yet AI cannot create frame nonce because secure wrapper randomness is unavailable");
+            return;
+          }
+          sendFrameNonceChallenge();
         };
         const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
         const canDeliverHostMessage = (message) => {
@@ -415,7 +435,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
                 console.log("Yet AI rejected gui.ready because secure wrapper randomness is unavailable");
                 return;
               }
-              const readyMessage = { ...event.data, requestId: currentGuiReadyRequestId };
+              const readyMessage = { ...event.data, requestId: currentGuiReadyRequestId, payload: { supportedBridgeVersion: event.data.payload?.supportedBridgeVersion } };
               acceptedHostReadyRequestId = undefined;
               hostReadyAcceptedForCurrentFrame = false;
               flushPending();
@@ -435,9 +455,11 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
             currentGuiReadyRequestId = undefined;
             acceptedHostReadyRequestId = undefined;
             hostReadyAcceptedForCurrentFrame = false;
+            currentFrameNonce = undefined;
             pendingHostMessages.length = 0;
             window.postIntellijMessage({ version: bridgeVersion, type: "gui.unloaded", payload: {} });
             markLoaded();
+            resetFrameNonceChallenge();
           });
         }
         </script>
