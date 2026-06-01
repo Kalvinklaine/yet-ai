@@ -7,6 +7,7 @@ import ai.yet.plugin.runtime.RuntimeConnectionManager
 import ai.yet.plugin.runtime.RuntimeConnectionResult
 import ai.yet.plugin.runtime.RuntimeSettings
 import ai.yet.plugin.runtime.loopbackOrigin
+import com.google.gson.JsonParser
 import com.google.gson.JsonPrimitive
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
@@ -88,6 +89,10 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
     init {
         add(browser.component, BorderLayout.CENTER)
         query.addHandler { raw ->
+            if (isGuiUnloaded(raw)) {
+                guiReadyRequestId = null
+                return@addHandler null
+            }
             val guiReady = BridgeMessages.parseGuiReady(raw)
             if (guiReady == null) {
                 logger.info("Yet AI rejected invalid GUI bridge message")
@@ -113,6 +118,19 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
                 }
             }
         }
+    }
+
+    private fun isGuiUnloaded(raw: String): Boolean {
+        val element = try {
+            JsonParser.parseString(raw)
+        } catch (_: RuntimeException) {
+            return false
+        }
+        if (!element.isJsonObject) return false
+        val record = element.asJsonObject
+        return record.keySet().all { it in setOf("version", "type", "payload") } &&
+            record.stringValue("version") == ProductIdentity.bridgeVersion &&
+            record.stringValue("type") == "gui.unloaded"
     }
 
     private fun deliverReadyMessages(settings: RuntimeSettings, requestId: String?) {
@@ -251,6 +269,8 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const shellFallback = document.getElementById("yet-ai-shell-fallback");
         let frameLoaded = false;
         let frameReady = false;
+        let frameLoadCount = 0;
+        let currentGuiReadyRequestId;
         const pendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : [];
         const pendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : [];
         window.__yetAiPendingHostMessages = pendingHostMessages;
@@ -284,12 +304,14 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isRequestId = (value) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 128 && value.split("").every((char) => char >= " " && char.charCodeAt(0) !== 127));
         const optionalString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length <= maxLength);
         const optionalNonEmptyString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength);
-        const optionalHttpUrl = (value) => {
+        const optionalLoopbackRuntimeUrl = (value) => {
           if (value === undefined) return true;
           if (typeof value !== "string" || value.length === 0 || value.length > 2048) return false;
           try {
             const parsed = new URL(value);
-            return parsed.protocol === "http:" || parsed.protocol === "https:";
+            const hostname = parsed.hostname.toLowerCase();
+            const isLoopback = hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1" || hostname === "[::1]";
+            return (parsed.protocol === "http:" || parsed.protocol === "https:") && isLoopback && parsed.username === "" && parsed.password === "" && parsed.search === "" && parsed.hash === "" && (parsed.pathname === "" || parsed.pathname === "/");
           } catch (_) {
             return false;
           }
@@ -299,7 +321,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isContextFile = (file) => file === undefined || (isPlainObject(file) && hasOnlyKeys(file, ["displayPath", "workspaceRelativePath", "languageId"]) && Object.keys(file).length > 0 && safePath(file.displayPath, 256) && safePath(file.workspaceRelativePath, 512) && (file.languageId === undefined || (typeof file.languageId === "string" && file.languageId.length > 0 && file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(file.languageId))));
         const isContextSelection = (selection) => selection === undefined || (isPlainObject(selection) && hasOnlyKeys(selection, ["startLine", "startCharacter", "endLine", "endCharacter", "text"]) && Object.keys(selection).length > 0 && optionalNumber(selection.startLine) && optionalNumber(selection.startCharacter) && optionalNumber(selection.endLine) && optionalNumber(selection.endCharacter) && optionalString(selection.text, 8000));
         const isContextSnapshotPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["kind", "source", "file", "selection"]) && payload.kind === "active_editor" && (payload.source === "vscode" || payload.source === "jetbrains" || payload.source === "browser") && isContextFile(payload.file) && isContextSelection(payload.selection);
-        const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && optionalHttpUrl(payload.runtimeUrl) && optionalString(payload.sessionToken, 4096) && optionalNonEmptyString(payload.productId, 256) && optionalNonEmptyString(payload.displayName, 256) && (payload.cloudRequired === undefined || payload.cloudRequired === false);
+        const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && optionalLoopbackRuntimeUrl(payload.runtimeUrl) && optionalString(payload.sessionToken, 4096) && optionalNonEmptyString(payload.productId, 256) && optionalNonEmptyString(payload.displayName, 256) && (payload.cloudRequired === undefined || payload.cloudRequired === false);
         const isHostMessage = (message) => {
           if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || !isRequestId(message.requestId)) return false;
           if (message.type === "host.ready") return isHostReadyPayload(message.payload);
@@ -317,8 +339,9 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           }
         };
         const flushPending = () => {
+          const readyFrameLoadCount = frameLoadCount;
           while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift());
-          while (pendingHostMessages.length > 0) postToFrame(pendingHostMessages.shift());
+          while (frameReady && readyFrameLoadCount === frameLoadCount && pendingHostMessages.length > 0) postToFrame(pendingHostMessages.shift());
         };
         const sendToFrame = (message) => {
           if (!isHostMessage(message)) return;
@@ -337,6 +360,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
             }
             if (isGuiMessage(event.data)) {
               frameReady = true;
+              currentGuiReadyRequestId = event.data.requestId;
               flushPending();
               window.postIntellijMessage(event.data);
             } else {
@@ -347,6 +371,12 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         });
         if (frame) {
           frame.addEventListener("load", () => {
+            const wasReady = frameReady;
+            frameReady = false;
+            frameLoadCount += 1;
+            currentGuiReadyRequestId = undefined;
+            if (wasReady) pendingHostMessages.length = 0;
+            window.postIntellijMessage({ version: bridgeVersion, type: "gui.unloaded", payload: {} });
             markLoaded();
           });
         }
@@ -366,6 +396,12 @@ fun buildFrameOrigin(guiDevUrl: String?, packagedGui: PackagedGui?): String = wh
     guiDevUrl != null -> "\"${html(loopbackOrigin(guiDevUrl))}\""
     packagedGui != null -> "\"${html(packagedGui.origin)}\""
     else -> "undefined"
+}
+
+private fun com.google.gson.JsonObject.stringValue(name: String): String? {
+    val element = get(name) ?: return null
+    if (!element.isJsonPrimitive || !element.asJsonPrimitive.isString) return null
+    return element.asString
 }
 
 private fun html(value: String): String = value
