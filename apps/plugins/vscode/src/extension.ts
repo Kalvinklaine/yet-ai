@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { clearStoredSessionToken, collectRuntimeDiagnostics, formatRuntimeDiagnostics, prepareEngineConnection, setStoredSessionToken, stopLaunchedEngine } from "./engineConnection";
+import { clearStoredSessionToken, collectRuntimeDiagnostics, formatRuntimeDiagnostics, prepareEngineConnection, redactRuntimeDiagnosticText, setStoredSessionToken, stopLaunchedEngine } from "./engineConnection";
 import { assertExtensionIdentity, clearSessionTokenCommand, extensionCommand, loadProductIdentity, runtimeStatusCommand, setSessionTokenCommand } from "./identity";
 import { openYetAiWebview } from "./webview";
 
@@ -15,7 +15,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const connection = await prepareEngineConnection(context, identity, engineOutput!);
       openYetAiWebview(context, identity, connection);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown Yet AI extension error.";
+      const message = sanitizeCommandError(error, "Unknown Yet AI extension error.");
       void vscode.window.showErrorMessage(message);
       engineOutput?.appendLine(message);
     }
@@ -28,7 +28,7 @@ export function activate(context: vscode.ExtensionContext): void {
       engineOutput?.show(true);
       void vscode.window.showInformationMessage(`Yet AI runtime diagnostics: ping ${diagnostics.pingStatus}. See Yet AI Runtime output for details.`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown Yet AI diagnostics error.";
+      const message = sanitizeCommandError(error, "Unknown Yet AI diagnostics error.");
       void vscode.window.showErrorMessage(message);
       engineOutput?.appendLine(message);
     }
@@ -57,6 +57,10 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   context.subscriptions.push(openChatDisposable, runtimeStatusDisposable, setSessionTokenDisposable, clearSessionTokenDisposable, engineOutput);
+}
+
+function sanitizeCommandError(error: unknown, fallback: string): string {
+  return redactRuntimeDiagnosticText(error instanceof Error ? error.message : fallback);
 }
 
 export function deactivate(): void {

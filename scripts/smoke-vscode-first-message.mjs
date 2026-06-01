@@ -111,7 +111,7 @@ try {
     }));
   }, { version: bridgeVersion, runtimeUrl: runtimeBaseUrl, token: runtimeToken });
 
-  await expectVisibleText(page, "Host runtime settings received", "host.ready runtime bootstrap");
+  await expectAttachedText(page, "Host runtime settings received", "host.ready runtime bootstrap");
   await expectVisibleText(page, "Runtime connected", "runtime connected through host.ready", 20_000);
   await expectVisibleText(page, "State: Provider required", "provider-required first-message state", 20_000);
   await expectVisibleText(page, "Provider required for first message", "provider-required guidance", 20_000);
@@ -349,6 +349,15 @@ async function readRequestBody(request) {
 }
 
 async function expectVisibleText(page, text, description, timeout = 10_000) {
+  try {
+    await page.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout });
+  } catch (error) {
+    const body = await page.locator("body").innerText().catch(() => "");
+    throw new Error(`Timed out waiting for ${description}. ${messageOf(error)}\nVisible body excerpt: ${redactSecrets(body).slice(0, 4000)}`);
+  }
+}
+
+async function expectAttachedText(page, text, description, timeout = 10_000) {
   try {
     await page.getByText(text, { exact: false }).first().waitFor({ state: "attached", timeout });
   } catch (error) {

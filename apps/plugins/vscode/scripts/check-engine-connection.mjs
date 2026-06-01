@@ -7,6 +7,10 @@ import path from "node:path";
 import Module from "node:module";
 
 let configValues = {};
+const registeredCommands = new Map();
+const errorMessages = [];
+const informationMessages = [];
+const outputLines = [];
 const originalFetch = globalThis.fetch;
 const originalLoad = Module._load;
 const originalSpawn = childProcess.spawn;
@@ -15,7 +19,51 @@ Module._load = function load(request, parent, isMain) {
     return {
       Uri: {
         parse(value) {
-          return { href: value, toString: () => value };
+          return { href: value, fsPath: value, path: value, scheme: "file", toString: () => value };
+        },
+        joinPath(base, ...segments) {
+          const basePath = base.fsPath ?? base.path ?? String(base);
+          const fsPath = path.join(basePath, ...segments);
+          return { fsPath, path: fsPath, scheme: "file", toString: () => fsPath };
+        },
+      },
+      ViewColumn: { Beside: 2 },
+      commands: {
+        registerCommand(command, callback) {
+          registeredCommands.set(command, callback);
+          return { dispose() {} };
+        },
+      },
+      window: {
+        activeTextEditor: undefined,
+        createOutputChannel() {
+          return {
+            appendLine(line) { outputLines.push(line); },
+            show() {},
+            dispose() {},
+          };
+        },
+        createWebviewPanel() {
+          return {
+            webview: {
+              cspSource: "vscode-resource:",
+              html: "",
+              asWebviewUri(uri) { return uri; },
+              onDidReceiveMessage() { return { dispose() {} }; },
+              postMessage() { return Promise.resolve(true); },
+            },
+          };
+        },
+        showErrorMessage(message) {
+          errorMessages.push(message);
+          return Promise.resolve(undefined);
+        },
+        showInformationMessage(message) {
+          informationMessages.push(message);
+          return Promise.resolve(undefined);
+        },
+        showInputBox() {
+          return Promise.resolve(undefined);
         },
       },
       workspace: {
@@ -26,6 +74,8 @@ Module._load = function load(request, parent, isMain) {
             },
           };
         },
+        getWorkspaceFolder() { return undefined; },
+        asRelativePath(uri) { return uri.fsPath ?? uri.path ?? String(uri); },
       },
     };
   }
@@ -33,6 +83,8 @@ Module._load = function load(request, parent, isMain) {
 };
 
 try {
+  const extensionModule = await import("../out/extension.js");
+
   const {
     collectRuntimeDiagnostics,
     createEngineLogRedactor,
@@ -139,6 +191,46 @@ try {
       },
     },
   };
+
+  const commandPrivatePath = path.join(os.homedir(), "Library", "Application Support", "yet-ai", "command-error.json");
+  const commandRuntimeToken = "token-command-runtime-sentinel";
+  const commandBearerValue = "command-bearer-secret-sentinel";
+  const commandProviderKey = "sk-command-provider-secret-sentinel";
+  const commandQuerySecret = "command-query-secret-sentinel";
+  const commandFragmentSecret = "command-fragment-secret-sentinel";
+  const commandErrorText = `top command failed with local-dev-token ${commandRuntimeToken} Authorization: Bearer ${commandBearerValue} ${commandProviderKey} http://127.0.0.1:8001/ping?session_token=${commandQuerySecret}#access_token=${commandFragmentSecret} ${commandPrivatePath}`;
+  const commandContext = {
+    extensionPath: process.cwd(),
+    extensionUri: { fsPath: process.cwd(), path: process.cwd(), scheme: "file", toString: () => process.cwd() },
+    subscriptions: [],
+    secrets: {
+      async get() {
+        throw new Error(commandErrorText);
+      },
+    },
+  };
+  extensionModule.activate(commandContext);
+  assert.equal(typeof registeredCommands.get("yetaicmd.openChat"), "function");
+  assert.equal(typeof registeredCommands.get("yetaicmd.showRuntimeStatus"), "function");
+  await registeredCommands.get("yetaicmd.openChat")();
+  await registeredCommands.get("yetaicmd.showRuntimeStatus")();
+  const commandRenderedText = [...errorMessages, ...outputLines].join("\n");
+  assert.match(commandRenderedText, /top command failed/);
+  for (const forbidden of [
+    "local-dev-token",
+    commandRuntimeToken,
+    commandBearerValue,
+    commandProviderKey,
+    commandQuerySecret,
+    commandFragmentSecret,
+    commandPrivatePath,
+    os.homedir(),
+  ]) {
+    assert.equal(commandRenderedText.includes(forbidden), false, `top-level command error leaked ${forbidden}`);
+  }
+  assert.equal(errorMessages.length, 2);
+  assert.equal(outputLines.length, 2);
+  extensionModule.deactivate();
 
   assert.equal(await setStoredSessionToken(fakeContext, "  local-session-token  "), true);
   assert.deepEqual(secretOperations.at(-1), {
