@@ -32,8 +32,7 @@ class YetToolWindowFactoryTest {
         assertContains(html, "const pendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : []")
         assertContains(html, "window.__yetAiPendingHostMessages = pendingHostMessages")
         assertContains(html, "window.__yetAiPendingDiagnostics = pendingDiagnostics")
-        assertContains(html, "if (!frameReady) {")
-        assertContains(html, "pendingHostMessages.push(message)")
+        assertContains(html, "if (!frameReady) return;")
         assertContains(html, "flushPending()")
         assertContains(html, "message.type === \"host.contextSnapshot\"")
         assertFalse(html.contains("isHostMessage(event.data)"))
@@ -59,23 +58,27 @@ class YetToolWindowFactoryTest {
         assertContains(html, "let frameGeneration = 0;")
         assertContains(html, "let currentGuiReadyRequestId;")
         assertContains(html, "let guiReadySequence = 0;")
+        assertContains(html, "let currentGuiReadySequence = 0;")
         assertContains(html, "let acceptedHostReadyRequestId;")
         assertContains(html, "let hostReadyAcceptedForCurrentFrame = false;")
         assertContains(html, "const currentReadyRequestId = () => currentGuiReadyRequestId;")
-        assertContains(html, "const readyFrameGeneration = frameGeneration;")
-        assertContains(html, "const readyRequestId = currentReadyRequestId();")
+        assertContains(html, "const fallbackReadyRequestId = (sequence) => \"gui-ready-\" + frameGeneration + \"-\" + sequence;")
+        assertContains(html, "currentGuiReadySequence === guiReadySequence")
         assertContains(html, "while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift())")
-        assertContains(html, "while (frameReady && readyFrameGeneration === frameGeneration && readyRequestId === currentReadyRequestId() && pendingHostMessages.length > 0) postToFrame(pendingHostMessages.shift())")
         assertContains(html, "pendingHostMessages.length = 0;")
+        assertContains(html, "if (!frameReady) return;")
         assertContains(html, "frameReady = true;")
         assertContains(html, "guiReadySequence += 1;")
-        assertContains(html, "currentGuiReadyRequestId = event.data.requestId === undefined ? \"gui-ready\" : event.data.requestId;")
+        assertContains(html, "currentGuiReadySequence = guiReadySequence;")
+        assertContains(html, "currentGuiReadyRequestId = event.data.requestId === undefined ? fallbackReadyRequestId(currentGuiReadySequence) : event.data.requestId;")
+        assertContains(html, "const readyMessage = event.data.requestId === undefined ? { ...event.data, requestId: currentGuiReadyRequestId } : event.data;")
         assertContains(html, "acceptedHostReadyRequestId = undefined;")
         assertContains(html, "hostReadyAcceptedForCurrentFrame = false;")
         assertContains(html, "flushPending();")
-        assertContains(html, "window.postIntellijMessage(event.data);")
+        assertContains(html, "window.postIntellijMessage(readyMessage);")
         assertContains(html, "frameReady = false;")
         assertContains(html, "frameGeneration += 1;")
+        assertContains(html, "currentGuiReadySequence = 0;")
         assertContains(html, "currentGuiReadyRequestId = undefined;")
         assertContains(html, "acceptedHostReadyRequestId = undefined;")
         assertContains(html, "hostReadyAcceptedForCurrentFrame = false;")
@@ -140,7 +143,7 @@ class YetToolWindowFactoryTest {
         assertContains(html, "payload.cloudRequired === undefined || payload.cloudRequired === false")
         assertContains(html, "if (message.type === \"host.contextSnapshot\") return isContextSnapshotPayload(message.payload)")
         assertContains(html, "if (message.type === \"host.openedFromCommand\") return message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0)")
-        assertContains(html, "const messageMatchesCurrentReady = (message) => frameReady && message.requestId === currentReadyRequestId();")
+        assertContains(html, "const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();")
         assertContains(html, "return hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();")
         assertContains(html, "if (message.type === \"host.ready\") {")
         assertContains(html, "acceptedHostReadyRequestId = message.requestId;")
@@ -227,6 +230,21 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
+    fun readyDeliveryAcceptsUppercaseLocalhostRuntimeUrl() {
+        val sent = mutableListOf<String>()
+
+        JetBrainsReadyMessageDelivery.deliver(
+            settings = RuntimeSettings("http://LOCALHOST:8001/", null, null),
+            requestId = "ready-uppercase-localhost",
+            send = { sent.add(it) },
+            contextSupplier = { null },
+            logContextStatus = {},
+        )
+
+        assertEquals(listOf("host.ready", "host.openedFromCommand"), sent.map(::messageType))
+    }
+
+    @Test
     fun readyDeliveryRejectsMissingRuntimeUrlBatchBeforeCollectingContext() {
         val sent = mutableListOf<String>()
         var contextCollected = false
@@ -275,7 +293,7 @@ class YetToolWindowFactoryTest {
         assertContains(source, "if (disposed) return")
         assertContains(source, "window.__yetAiPendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : []")
         assertContains(source, "window.__yetAiPendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : []")
-        assertContains(source, "window.__yetAiPendingHostMessages.push(message)")
+        assertContains(source, "if (!frameReady) return")
         assertContains(source, "window.__yetAiPendingDiagnostics.push(message)")
         assertContains(source, "private fun isGuiUnloaded(raw: String): Boolean")
         assertContains(source, "guiReadyRequestId = null")
