@@ -72,7 +72,7 @@ Repository-level validation is available from the root:
 npm run check
 ```
 
-Required package-local verification includes the direct first-message smoke. Use `npm run smoke:ide-preview` when validating the full cross-IDE dogfood gate.
+Required package-local verification includes the direct first-message smoke. Use `npm run smoke:ide-preview` when validating the cross-IDE preview gate, or root `npm run smoke:ide-dogfood` for the broader fail-fast closure gate with VS Code compile checks, JetBrains Gradle tests, repository check, and final tracked status output.
 
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"; npm run prepare:vscode-preview && npm run smoke:vscode-installable && npm run smoke:vscode-preview && npm run smoke:vscode-first-message && npm run check

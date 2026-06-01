@@ -186,7 +186,9 @@ export PATH="$HOME/.cargo/bin:$PATH"
 npm run smoke:ide-preview
 ```
 
-`npm run smoke:ide-preview` is the cross-IDE preview gate. It runs these exact local commands in order:
+`npm run smoke:ide-preview` is the cross-IDE preview gate. `npm run smoke:ide-dogfood` is the broader fail-fast closure gate: it runs JetBrains Gradle tests, VS Code compile/engine checks, `smoke:ide-preview`, `npm run check`, and prints tracked status as the final labeled step so later steps cannot mask earlier failures.
+
+`npm run smoke:ide-preview` runs these exact local commands in order:
 
 ```sh
 npm run prepare:vscode-preview

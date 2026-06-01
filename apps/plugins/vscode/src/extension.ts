@@ -59,8 +59,16 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(openChatDisposable, runtimeStatusDisposable, setSessionTokenDisposable, clearSessionTokenDisposable, engineOutput);
 }
 
+const maxCommandErrorLength = 1000;
+const commandErrorTruncationMarker = "… [truncated sanitized command error]";
+
 function sanitizeCommandError(error: unknown, fallback: string): string {
-  return redactRuntimeDiagnosticText(error instanceof Error ? error.message : fallback);
+  const rawMessage = error instanceof Error ? error.message : typeof error === "string" ? error : fallback;
+  const redactedMessage = redactRuntimeDiagnosticText(rawMessage);
+  if (redactedMessage.length <= maxCommandErrorLength) {
+    return redactedMessage;
+  }
+  return `${redactedMessage.slice(0, maxCommandErrorLength - commandErrorTruncationMarker.length)}${commandErrorTruncationMarker}`;
 }
 
 export function deactivate(): void {

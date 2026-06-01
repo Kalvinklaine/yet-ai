@@ -230,6 +230,53 @@ try {
   }
   assert.equal(errorMessages.length, 2);
   assert.equal(outputLines.length, 2);
+
+  const longCommandSecret = "long-command-secret-sentinel";
+  const longCommandErrorText = `long command failed Authorization: Bearer ${longCommandSecret}\n${"safe detail\n".repeat(300)}`;
+  const longCommandContext = {
+    extensionPath: process.cwd(),
+    extensionUri: { fsPath: process.cwd(), path: process.cwd(), scheme: "file", toString: () => process.cwd() },
+    subscriptions: [],
+    secrets: {
+      async get() {
+        throw new Error(longCommandErrorText);
+      },
+    },
+  };
+  extensionModule.activate(longCommandContext);
+  const longErrorStart = errorMessages.length;
+  const longOutputStart = outputLines.length;
+  await registeredCommands.get("yetaicmd.openChat")();
+  const longCommandMessages = [...errorMessages.slice(longErrorStart), ...outputLines.slice(longOutputStart)];
+  assert.equal(longCommandMessages.length, 2);
+  for (const message of longCommandMessages) {
+    assert.equal(message.includes(longCommandSecret), false, "long top-level command error leaked secret");
+    assert.equal(message.length, 1000, "long top-level command error was not capped");
+    assert.equal(message.endsWith("… [truncated sanitized command error]"), true, "long top-level command error was not marked truncated");
+  }
+
+  const nonErrorSecret = "non-error-command-secret-sentinel";
+  const nonErrorContext = {
+    extensionPath: process.cwd(),
+    extensionUri: { fsPath: process.cwd(), path: process.cwd(), scheme: "file", toString: () => process.cwd() },
+    subscriptions: [],
+    secrets: {
+      async get() {
+        throw `non-error command failed Authorization: Bearer ${nonErrorSecret}`;
+      },
+    },
+  };
+  extensionModule.activate(nonErrorContext);
+  const nonErrorStart = errorMessages.length;
+  const nonErrorOutputStart = outputLines.length;
+  await registeredCommands.get("yetaicmd.openChat")();
+  const nonErrorMessages = [...errorMessages.slice(nonErrorStart), ...outputLines.slice(nonErrorOutputStart)];
+  assert.equal(nonErrorMessages.length, 2);
+  for (const message of nonErrorMessages) {
+    assert.match(message, /non-error command failed/);
+    assert.equal(message.includes(nonErrorSecret), false, "non-Error top-level command error leaked secret");
+    assert.ok(message.length <= 1000, "non-Error top-level command error was not bounded");
+  }
   extensionModule.deactivate();
 
   assert.equal(await setStoredSessionToken(fakeContext, "  local-session-token  "), true);
