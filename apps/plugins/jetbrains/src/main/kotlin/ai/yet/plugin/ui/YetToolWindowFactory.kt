@@ -394,6 +394,16 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           }
           sendFrameNonceChallenge();
         };
+        const invalidateFrameAuthority = (reason) => {
+          frameReady = false;
+          currentGuiReadySequence = 0;
+          currentGuiReadyRequestId = undefined;
+          acceptedHostReadyRequestId = undefined;
+          hostReadyAcceptedForCurrentFrame = false;
+          currentFrameNonce = undefined;
+          pendingHostMessages.length = 0;
+        };
+        const isGuiUnloadedMessage = (message) => isPlainObject(message) && hasOnlyKeys(message, ["version", "type", "payload"]) && message.version === bridgeVersion && message.type === "gui.unloaded" && (message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0));
         const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
         const canDeliverHostMessage = (message) => {
           if (!messageMatchesCurrentReady(message)) return false;
@@ -425,7 +435,10 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
               console.log("Yet AI rejected iframe message from unexpected origin");
               return;
             }
-            if (isGuiMessage(event.data)) {
+            if (isGuiUnloadedMessage(event.data)) {
+              invalidateFrameAuthority("gui.unloaded");
+              window.postIntellijMessage(event.data);
+            } else if (isGuiMessage(event.data)) {
               if (frameReady && event.data.payload.frameNonce === currentFrameNonce) return;
               const nextGuiReadySequence = guiReadySequence + 1;
               const nextGuiReadyRequestId = wrapperReadyRequestId(nextGuiReadySequence);
@@ -450,15 +463,9 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         });
         if (frame) {
           frame.addEventListener("load", () => {
-            frameReady = false;
+            invalidateFrameAuthority("frame.load");
             frameGeneration += 1;
             currentFrameWindow = frame.contentWindow;
-            currentGuiReadySequence = 0;
-            currentGuiReadyRequestId = undefined;
-            acceptedHostReadyRequestId = undefined;
-            hostReadyAcceptedForCurrentFrame = false;
-            currentFrameNonce = undefined;
-            pendingHostMessages.length = 0;
             window.postIntellijMessage({ version: bridgeVersion, type: "gui.unloaded", payload: {} });
             markLoaded();
             resetFrameNonceChallenge();

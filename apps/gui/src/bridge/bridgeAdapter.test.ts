@@ -94,6 +94,28 @@ describe("bridgeAdapter", () => {
     adapter.dispose();
   });
 
+  it("sends JetBrains iframe unload notifications to the parent wrapper", () => {
+    const parent = { postMessage: vi.fn() };
+    Object.defineProperty(Document.prototype, "referrer", {
+      configurable: true,
+      get: () => "https://wrapper.example/shell.html",
+    });
+    Object.defineProperty(window, "parent", {
+      configurable: true,
+      value: parent,
+    });
+
+    const adapter = createBridgeAdapter(() => undefined);
+    window.dispatchEvent(new PageTransitionEvent("pagehide"));
+
+    expect(parent.postMessage).toHaveBeenCalledWith({
+      version: bridgeVersion,
+      type: "gui.unloaded",
+      payload: {},
+    }, "https://wrapper.example");
+    adapter.dispose();
+  });
+
   it("accepts host.ready from the captured iframe parent without token logging or storage", () => {
     const token = "iframe-parent-session-token-secret";
     const logs: string[] = [];
