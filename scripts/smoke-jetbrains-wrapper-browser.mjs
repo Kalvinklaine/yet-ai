@@ -212,9 +212,11 @@ try {
     failures.push(`Wrapper did not synthesize a generation-bound ready request id, got ${String(currentReadyRequestId)}.`);
   }
   await assertInvalidRuntimeUrlsRejected(page, bridgeVersion, currentReadyRequestId);
+  await assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocator, bridgeVersion, guiBaseUrl, runtimeBaseUrl, runtimeToken);
   if (failures.length > 0) {
     reportFailures();
   }
+  const activeReadyRequestId = await page.evaluate(() => window.__yetAiCurrentReadyRequestId);
   await page.evaluate(({ version, runtimeUrl, token, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
       version,
@@ -228,7 +230,7 @@ try {
         cloudRequired: false,
       },
     });
-  }, { version: bridgeVersion, runtimeUrl: runtimeBaseUrl, token: runtimeToken, requestId: currentReadyRequestId });
+  }, { version: bridgeVersion, runtimeUrl: runtimeBaseUrl, token: runtimeToken, requestId: activeReadyRequestId });
 
   const runtimeInput = frameLocator.getByLabel("Runtime base URL");
   await page.waitForTimeout(250);
@@ -243,7 +245,7 @@ try {
       requestId,
       payload: {},
     });
-  }, { version: bridgeVersion, requestId: currentReadyRequestId });
+  }, { version: bridgeVersion, requestId: activeReadyRequestId });
   const hostMessagesPostedBeforeInvalidOpened = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
   await page.evaluate(({ version, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
@@ -277,7 +279,7 @@ try {
         cloudRequired: true,
       },
     });
-  }, { version: bridgeVersion, requestId: currentReadyRequestId });
+  }, { version: bridgeVersion, requestId: activeReadyRequestId });
   await page.waitForTimeout(100);
   const hostMessagesPostedAfterInvalidOpened = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
   if (hostMessagesPostedAfterInvalidOpened !== hostMessagesPostedBeforeInvalidOpened) {
@@ -561,6 +563,77 @@ async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeU
   }, { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token, requestId: currentRequestId });
 }
 
+async function assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocator, version, guiUrl, runtimeUrl, token) {
+  await frameLocator.locator("body").evaluate((body, bridgeVersion) => {
+    window.parent.postMessage({
+      version: bridgeVersion,
+      type: "gui.ready",
+      requestId: "same",
+      payload: { supportedBridgeVersion: bridgeVersion },
+    }, document.referrer ? new URL(document.referrer).origin : "*");
+  }, version);
+  await page.waitForTimeout(100);
+  const oldNonce = await page.evaluate(() => window.__yetAiCurrentReadyRequestId);
+  if (!oldNonce || oldNonce === "same") {
+    failures.push(`Wrapper used GUI-supplied requestId instead of authoritative nonce before reload: ${String(oldNonce)}.`);
+  }
+  const beforeUnloadEvents = await page.evaluate(() => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.unloaded").length);
+  await page.locator("iframe[title='Yet AI GUI']").evaluate((frame) => {
+    frame.src = "about:blank";
+  });
+  await page.waitForFunction((count) => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.unloaded").length > count, beforeUnloadEvents, { timeout: 5000 }).catch(() => failures.push("Wrapper did not report iframe unload during repeated requestId smoke."));
+  const beforeStaleCount = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
+  await page.evaluate(({ bridgeVersion, readyUrl, sessionToken }) => {
+    window.__yetAiSendHostMessageToFrame({
+      version: bridgeVersion,
+      type: "host.ready",
+      requestId: "same",
+      payload: {
+        runtimeUrl: readyUrl,
+        sessionToken,
+        productId: "yet-ai",
+        displayName: "Yet AI",
+        cloudRequired: false,
+      },
+    });
+  }, { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token });
+  const afterStaleState = await page.evaluate(() => ({
+    count: window.__yetAiHostMessagesPostedCount,
+    queueLength: window.__yetAiPendingHostMessages.length,
+    guiReadySequence: window.__yetAiGuiReadySequence,
+  }));
+  if (afterStaleState.count !== beforeStaleCount) {
+    failures.push("Wrapper delivered stale same-requestId host.ready during iframe reload.");
+  }
+  if (afterStaleState.queueLength !== 0) {
+    failures.push("Wrapper queued stale same-requestId host.ready during iframe reload.");
+  }
+  await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, url) => {
+    frame.src = `${url}/index.html`;
+  }, guiUrl);
+  await page.waitForFunction((count) => (window.__yetAiGuiReadySequence ?? 0) > count, afterStaleState.guiReadySequence, { timeout: 5000 }).catch(() => failures.push("Wrapper did not observe fresh gui.ready after repeated requestId reload."));
+  await frameLocator.locator("body").evaluate((body, bridgeVersion) => {
+    window.parent.postMessage({
+      version: bridgeVersion,
+      type: "gui.ready",
+      requestId: "same",
+      payload: { supportedBridgeVersion: bridgeVersion },
+    }, document.referrer ? new URL(document.referrer).origin : "*");
+  }, version);
+  await page.waitForTimeout(100);
+  const afterRepeatedReady = await page.evaluate(({ beforeCount, oldRequestId }) => ({
+    currentRequestId: window.__yetAiCurrentReadyRequestId,
+    deliveredSame: window.__yetAiHostMessagesPosted?.slice(beforeCount).some((message) => message?.requestId === "same") === true,
+    deliveredOldNonce: window.__yetAiHostMessagesPosted?.slice(beforeCount).some((message) => message?.requestId === oldRequestId) === true,
+  }), { beforeCount: beforeStaleCount, oldRequestId: oldNonce });
+  if (!afterRepeatedReady.currentRequestId || afterRepeatedReady.currentRequestId === "same" || afterRepeatedReady.currentRequestId === oldNonce) {
+    failures.push("Wrapper did not issue a fresh authoritative nonce for repeated explicit gui.ready requestId after reload.");
+  }
+  if (afterRepeatedReady.deliveredSame || afterRepeatedReady.deliveredOldNonce) {
+    failures.push("Wrapper delivered stale host message after repeated explicit gui.ready requestId across reload.");
+  }
+}
+
 function assertJetBrainsContext(context) {
   if (!context || typeof context !== "object") {
     failures.push("Mock runtime did not receive active context on the enabled-toggle chat command.");
@@ -714,7 +787,7 @@ window.postIntellijMessage = (message) => {
   window.__yetAiBridgeMessages.push(message);
 };
 const currentReadyRequestId = () => currentGuiReadyRequestId;
-const fallbackReadyRequestId = (sequence) => "gui-ready-" + frameGeneration + "-" + sequence;
+const wrapperReadyRequestId = (sequence) => "gui-ready-" + frameGeneration + "-" + sequence;
 const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
 const canDeliverHostMessage = (message) => {
   if (!messageMatchesCurrentReady(message)) return false;
@@ -791,8 +864,8 @@ window.addEventListener("message", (event) => {
       guiReadySequence += 1;
       currentGuiReadySequence = guiReadySequence;
       window.__yetAiGuiReadySequence = guiReadySequence;
-      currentGuiReadyRequestId = event.data.requestId === undefined ? fallbackReadyRequestId(currentGuiReadySequence) : event.data.requestId;
-      const readyMessage = event.data.requestId === undefined ? { ...event.data, requestId: currentGuiReadyRequestId } : event.data;
+      currentGuiReadyRequestId = wrapperReadyRequestId(currentGuiReadySequence);
+      const readyMessage = { ...event.data, requestId: currentGuiReadyRequestId };
       window.__yetAiCurrentReadyRequestId = currentGuiReadyRequestId;
       acceptedHostReadyRequestId = undefined;
       hostReadyAcceptedForCurrentFrame = false;

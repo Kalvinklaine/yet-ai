@@ -362,7 +362,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           return message.payload === undefined || (isPlainObject(message.payload) && hasOnlyKeys(message.payload, ["supportedBridgeVersion"]) && (message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion));
         };
         const currentReadyRequestId = () => currentGuiReadyRequestId;
-        const fallbackReadyRequestId = (sequence) => "gui-ready-" + frameGeneration + "-" + sequence;
+        const wrapperReadyRequestId = (sequence) => "gui-ready-" + frameGeneration + "-" + sequence;
         const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
         const canDeliverHostMessage = (message) => {
           if (!messageMatchesCurrentReady(message)) return false;
@@ -398,8 +398,8 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
               frameReady = true;
               guiReadySequence += 1;
               currentGuiReadySequence = guiReadySequence;
-              currentGuiReadyRequestId = event.data.requestId === undefined ? fallbackReadyRequestId(currentGuiReadySequence) : event.data.requestId;
-              const readyMessage = event.data.requestId === undefined ? { ...event.data, requestId: currentGuiReadyRequestId } : event.data;
+              currentGuiReadyRequestId = wrapperReadyRequestId(currentGuiReadySequence);
+              const readyMessage = { ...event.data, requestId: currentGuiReadyRequestId };
               acceptedHostReadyRequestId = undefined;
               hostReadyAcceptedForCurrentFrame = false;
               flushPending();
