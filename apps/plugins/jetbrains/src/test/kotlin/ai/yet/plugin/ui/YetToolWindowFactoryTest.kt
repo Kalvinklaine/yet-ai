@@ -56,6 +56,7 @@ class YetToolWindowFactoryTest {
 
         assertContains(html, "let frameReady = false")
         assertContains(html, "let frameGeneration = 0;")
+        assertContains(html, "let currentFrameWindow = frame?.contentWindow;")
         assertContains(html, "let currentGuiReadyRequestId;")
         assertContains(html, "let guiReadySequence = 0;")
         assertContains(html, "let currentGuiReadySequence = 0;")
@@ -67,6 +68,8 @@ class YetToolWindowFactoryTest {
         assertContains(html, "const wrapperReadyRequestId = (sequence) => {")
         assertContains(html, "return token === undefined ? undefined : \"gui-ready-\" + frameGeneration + \"-\" + sequence + \"-\" + token;")
         assertContains(html, "currentGuiReadySequence === guiReadySequence")
+        assertContains(html, "frame && currentFrameWindow && frame.contentWindow === currentFrameWindow")
+        assertContains(html, "event.source === currentFrameWindow && event.source === frame?.contentWindow")
         assertContains(html, "while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift())")
         assertContains(html, "pendingHostMessages.length = 0;")
         assertContains(html, "if (!frameReady) return;")
@@ -85,6 +88,7 @@ class YetToolWindowFactoryTest {
         assertContains(html, "window.postIntellijMessage(readyMessage);")
         assertContains(html, "frameReady = false;")
         assertContains(html, "frameGeneration += 1;")
+        assertContains(html, "currentFrameWindow = frame.contentWindow;")
         assertContains(html, "currentGuiReadySequence = 0;")
         assertContains(html, "currentGuiReadyRequestId = undefined;")
         assertContains(html, "acceptedHostReadyRequestId = undefined;")
@@ -134,6 +138,23 @@ class YetToolWindowFactoryTest {
         assertContains(html, "acceptedHostReadyRequestId === currentReadyRequestId()")
         assertFalse(html.contains("\"gui-ready-\" + frameGeneration + \"-\" + sequence;"))
         assertFalse(html.contains("currentGuiReadyRequestId = event.data.requestId"))
+    }
+
+    @Test
+    fun wrapperBindsGuiReadyAndDeliveryToCurrentFrameWindow() {
+        val html = renderHtml(
+            RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
+            "console.log('bridge')",
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+        )
+
+        assertContains(html, "let currentFrameWindow = frame?.contentWindow;")
+        assertContains(html, "if (event.source === currentFrameWindow && event.source === frame?.contentWindow) {")
+        assertContains(html, "frame && currentFrameWindow && frame.contentWindow === currentFrameWindow")
+        assertContains(html, "currentFrameWindow.postMessage(message, frameTargetOrigin);")
+        assertContains(html, "currentFrameWindow = frame.contentWindow;")
+        assertFalse(html.contains("if (event.source === frame?.contentWindow)"))
+        assertFalse(html.contains("frame.contentWindow.postMessage(message, frameTargetOrigin);"))
     }
 
     @Test
