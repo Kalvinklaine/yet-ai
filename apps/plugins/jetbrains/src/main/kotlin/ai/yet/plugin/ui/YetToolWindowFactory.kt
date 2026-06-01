@@ -362,7 +362,16 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           return message.payload === undefined || (isPlainObject(message.payload) && hasOnlyKeys(message.payload, ["supportedBridgeVersion"]) && (message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion));
         };
         const currentReadyRequestId = () => currentGuiReadyRequestId;
-        const wrapperReadyRequestId = (sequence) => "gui-ready-" + frameGeneration + "-" + sequence;
+        const randomReadyToken = () => {
+          if (!globalThis.crypto || typeof globalThis.crypto.getRandomValues !== "function") return undefined;
+          const bytes = new Uint8Array(16);
+          globalThis.crypto.getRandomValues(bytes);
+          return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+        };
+        const wrapperReadyRequestId = (sequence) => {
+          const token = randomReadyToken();
+          return token === undefined ? undefined : "gui-ready-" + frameGeneration + "-" + sequence + "-" + token;
+        };
         const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
         const canDeliverHostMessage = (message) => {
           if (!messageMatchesCurrentReady(message)) return false;
@@ -399,6 +408,12 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
               guiReadySequence += 1;
               currentGuiReadySequence = guiReadySequence;
               currentGuiReadyRequestId = wrapperReadyRequestId(currentGuiReadySequence);
+              if (currentGuiReadyRequestId === undefined) {
+                frameReady = false;
+                currentGuiReadySequence = 0;
+                console.log("Yet AI rejected gui.ready because secure wrapper randomness is unavailable");
+                return;
+              }
               const readyMessage = { ...event.data, requestId: currentGuiReadyRequestId };
               acceptedHostReadyRequestId = undefined;
               hostReadyAcceptedForCurrentFrame = false;

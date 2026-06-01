@@ -62,7 +62,10 @@ class YetToolWindowFactoryTest {
         assertContains(html, "let acceptedHostReadyRequestId;")
         assertContains(html, "let hostReadyAcceptedForCurrentFrame = false;")
         assertContains(html, "const currentReadyRequestId = () => currentGuiReadyRequestId;")
-        assertContains(html, "const wrapperReadyRequestId = (sequence) => \"gui-ready-\" + frameGeneration + \"-\" + sequence;")
+        assertContains(html, "const randomReadyToken = () => {")
+        assertContains(html, "globalThis.crypto.getRandomValues(bytes);")
+        assertContains(html, "const wrapperReadyRequestId = (sequence) => {")
+        assertContains(html, "return token === undefined ? undefined : \"gui-ready-\" + frameGeneration + \"-\" + sequence + \"-\" + token;")
         assertContains(html, "currentGuiReadySequence === guiReadySequence")
         assertContains(html, "while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift())")
         assertContains(html, "pendingHostMessages.length = 0;")
@@ -71,6 +74,8 @@ class YetToolWindowFactoryTest {
         assertContains(html, "guiReadySequence += 1;")
         assertContains(html, "currentGuiReadySequence = guiReadySequence;")
         assertContains(html, "currentGuiReadyRequestId = wrapperReadyRequestId(currentGuiReadySequence);")
+        assertContains(html, "if (currentGuiReadyRequestId === undefined) {")
+        assertContains(html, "Yet AI rejected gui.ready because secure wrapper randomness is unavailable")
         assertContains(html, "const readyMessage = { ...event.data, requestId: currentGuiReadyRequestId };")
         assertFalse(html.contains("currentGuiReadyRequestId = event.data.requestId"))
         assertFalse(html.contains("event.data.requestId === undefined ?"))
@@ -111,6 +116,24 @@ class YetToolWindowFactoryTest {
         assertFalse(html.contains("message.type === \"gui.getHostContext\""))
         assertFalse(html.contains("clipboard"))
         assertFalse(html.contains("executeCommand"))
+    }
+
+    @Test
+    fun wrapperReadyIdUsesRandomTokenAndKeepsStaleMessagesBoundToCurrentReady() {
+        val html = renderHtml(
+            RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
+            "console.log('bridge')",
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+        )
+
+        assertContains(html, "const bytes = new Uint8Array(16);")
+        assertContains(html, "globalThis.crypto.getRandomValues(bytes);")
+        assertContains(html, "byte.toString(16).padStart(2, \"0\")")
+        assertContains(html, "\"gui-ready-\" + frameGeneration + \"-\" + sequence + \"-\" + token")
+        assertContains(html, "message.requestId === currentReadyRequestId()")
+        assertContains(html, "acceptedHostReadyRequestId === currentReadyRequestId()")
+        assertFalse(html.contains("\"gui-ready-\" + frameGeneration + \"-\" + sequence;"))
+        assertFalse(html.contains("currentGuiReadyRequestId = event.data.requestId"))
     }
 
     @Test

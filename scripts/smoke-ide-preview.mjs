@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -17,12 +18,29 @@ const steps = [
   ["Smoke JetBrains first-message preview", "npm", ["run", "smoke:jetbrains-first-message"]],
 ];
 
+validateReferencedPackageScripts();
+
 for (const [label, command, args] of steps) {
   runStep(label, command, args);
 }
 
 console.log("\nCross-IDE preview smoke passed.");
 console.log("Verified VS Code and JetBrains local installable/generated artifacts and first-message preview paths without launching real IDEs, using provider credentials, calling OpenAI/ChatGPT, or contacting hosted Yet AI services.");
+
+function validateReferencedPackageScripts() {
+  const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  const scripts = packageJson.scripts && typeof packageJson.scripts === "object" ? packageJson.scripts : {};
+  const missingScripts = steps
+    .filter(([, command, args]) => command === "npm" && args[0] === "run")
+    .map(([, , args]) => args[1])
+    .filter((scriptName) => typeof scripts[scriptName] !== "string");
+
+  if (missingScripts.length > 0) {
+    console.error("Cross-IDE preview smoke configuration is inconsistent.");
+    console.error(`Missing root package.json scripts: ${missingScripts.join(", ")}`);
+    process.exit(1);
+  }
+}
 
 function runStep(label, command, args) {
   const printable = [command, ...args].join(" ");
