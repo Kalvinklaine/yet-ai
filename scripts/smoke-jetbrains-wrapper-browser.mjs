@@ -43,6 +43,9 @@ let observedRuntimeAuthorization = false;
 let chatCommandRequest;
 let chatCommandRequestCount = 0;
 let chatSubscriptionCount = 0;
+const maxRuntimeRequestBodyBytes = 1024 * 1024;
+
+class RequestBodyTooLargeError extends Error {}
 
 await requireBuiltGui();
 
@@ -237,6 +240,7 @@ try {
   if (runtimeInputValue !== runtimeBaseUrl) {
     failures.push("Iframe GUI did not apply wrapper host.ready runtime settings.");
   }
+  await assertSingleBackslashContextPathRejected(page, bridgeVersion, activeReadyRequestId);
   await page.evaluate(({ version, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
       version,
@@ -404,6 +408,8 @@ try {
   if (chatCommandRequest?.payload && Object.prototype.hasOwnProperty.call(chatCommandRequest.payload, "context")) {
     failures.push("Mock runtime received active context even though the include toggle was disabled.");
   }
+
+  await assertMockRuntimeRejectsBadChatBodies(runtimeBaseUrl);
 
   await page.evaluate(({ version, payload, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
@@ -830,6 +836,58 @@ async function assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocato
   }
 }
 
+async function assertSingleBackslashContextPathRejected(page, version, requestId) {
+  const before = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
+  await page.evaluate(({ bridgeVersion, activeRequestId }) => {
+    window.__yetAiSendHostMessageToFrame({
+      version: bridgeVersion,
+      type: "host.contextSnapshot",
+      requestId: activeRequestId,
+      payload: {
+        kind: "active_editor",
+        source: "jetbrains",
+        file: {
+          displayPath: "src\\Secret.kt",
+          workspaceRelativePath: "src\\Secret.kt",
+          languageId: "kotlin",
+        },
+      },
+    });
+  }, { bridgeVersion: version, activeRequestId: requestId });
+  await page.waitForTimeout(100);
+  const after = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
+  if (after !== before) {
+    failures.push("Wrapper relayed host.contextSnapshot with a single-backslash path.");
+  }
+}
+
+async function assertMockRuntimeRejectsBadChatBodies(baseUrl) {
+  const malformed = await fetch(`${baseUrl}/v1/chats/chat-001/commands`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${runtimeToken}`,
+      "content-type": "application/json",
+    },
+    body: "{not-json",
+  });
+  const malformedText = await malformed.text();
+  if (malformed.status !== 400 || !malformedText.includes("Invalid chat command JSON") || malformedText.includes("not-json")) {
+    failures.push("Mock runtime did not reject malformed chat command JSON with a generic 400 response.");
+  }
+  const oversized = await fetch(`${baseUrl}/v1/chats/chat-001/commands`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${runtimeToken}`,
+      "content-type": "application/json",
+    },
+    body: "x".repeat(maxRuntimeRequestBodyBytes + 1),
+  });
+  const oversizedText = await oversized.text();
+  if (oversized.status !== 413 || !oversizedText.includes("Request body too large") || oversizedText.includes("xxx")) {
+    failures.push("Mock runtime did not reject oversized chat command bodies with a generic 413 response.");
+  }
+}
+
 function assertJetBrainsContext(context) {
   if (!context || typeof context !== "object") {
     failures.push("Mock runtime did not receive active context on the enabled-toggle chat command.");
@@ -1082,6 +1140,7 @@ const requiredLoopbackRuntimeUrl = (value) => {
   }
 };
 const optionalNumber = (value) => value === undefined || (Number.isInteger(value) && value >= 0 && value <= 1000000);
+// This Node template literal emits browser JavaScript, so "\\\\" here becomes the browser-side single-backslash check used by the production wrapper.
 const safePath = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength && !value.startsWith("/") && !value.startsWith("~") && !value.includes("\\\\") && !value.includes(":") && value.split("").every((char) => char >= " ") && value.split("/").every((part) => part !== "." && part !== ".."));
 const isContextFile = (file) => file === undefined || (isPlainObject(file) && hasOnlyKeys(file, ["displayPath", "workspaceRelativePath", "languageId"]) && Object.keys(file).length > 0 && safePath(file.displayPath, 256) && safePath(file.workspaceRelativePath, 512) && (file.languageId === undefined || (typeof file.languageId === "string" && file.languageId.length > 0 && file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(file.languageId))));
 const isContextSelection = (selection) => selection === undefined || (isPlainObject(selection) && hasOnlyKeys(selection, ["startLine", "startCharacter", "endLine", "endCharacter", "text"]) && Object.keys(selection).length > 0 && optionalNumber(selection.startLine) && optionalNumber(selection.startCharacter) && optionalNumber(selection.endLine) && optionalNumber(selection.endCharacter) && optionalString(selection.text, 8000));
@@ -1218,9 +1277,26 @@ async function startMockRuntimeServer() {
     }
     const commandMatch = /^\/v1\/chats\/([^/]+)\/commands$/.exec(requestUrl.pathname);
     if (request.method === "POST" && commandMatch) {
-      const body = await readRequestBody(request);
+      let body;
+      try {
+        body = await readRequestBody(request);
+      } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+          json(response, 413, { error: "Request body too large" });
+          return;
+        }
+        json(response, 400, { error: "Invalid request body" });
+        return;
+      }
+      let parsedBody;
+      try {
+        parsedBody = JSON.parse(body);
+      } catch {
+        json(response, 400, { error: "Invalid chat command JSON" });
+        return;
+      }
       chatCommandRequestCount += 1;
-      chatCommandRequest = JSON.parse(body);
+      chatCommandRequest = parsedBody;
       json(response, 200, {
         accepted: true,
         chatId: decodeURIComponent(commandMatch[1]),
@@ -1301,12 +1377,25 @@ function corsHeaders() {
 function readRequestBody(request) {
   return new Promise((resolve, reject) => {
     let body = "";
+    let bytes = 0;
+    let tooLarge = false;
     request.setEncoding("utf8");
     request.on("data", (chunk) => {
+      if (tooLarge) return;
+      bytes += Buffer.byteLength(chunk, "utf8");
+      if (bytes > maxRuntimeRequestBodyBytes) {
+        tooLarge = true;
+        reject(new RequestBodyTooLargeError());
+        return;
+      }
       body += chunk;
     });
-    request.on("end", () => resolve(body));
-    request.on("error", reject);
+    request.on("end", () => {
+      if (!tooLarge) resolve(body);
+    });
+    request.on("error", (error) => {
+      if (!tooLarge) reject(error);
+    });
   });
 }
 

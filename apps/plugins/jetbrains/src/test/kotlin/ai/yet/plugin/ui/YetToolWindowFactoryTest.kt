@@ -364,9 +364,24 @@ class YetToolWindowFactoryTest {
         assertContains(source, "window.__yetAiPendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : []")
         assertContains(source, "if (!frameReady) return")
         assertContains(source, "window.__yetAiPendingDiagnostics.push(message)")
-        assertContains(source, "private fun isGuiUnloaded(raw: String): Boolean")
+        assertContains(source, "isGuiUnloadedBridgeMessage(raw)")
         assertContains(source, "guiReadyRequestId = null")
         assertContains(source, "disposed = true")
+    }
+
+    @Test
+    fun guiUnloadedBridgeMessageRequiresStrictShape() {
+        assertTrue(isGuiUnloadedBridgeMessage("""{"version":"2026-05-15","type":"gui.unloaded"}"""))
+        assertTrue(isGuiUnloadedBridgeMessage("""{"version":"2026-05-15","type":"gui.unloaded","payload":{}}"""))
+
+        assertFalse(isGuiUnloadedBridgeMessage("""{"version":"2026-05-15","type":"gui.unloaded","payload":null}"""))
+        assertFalse(isGuiUnloadedBridgeMessage("""{"version":"2026-05-15","type":"gui.unloaded","payload":[]}"""))
+        assertFalse(isGuiUnloadedBridgeMessage("""{"version":"2026-05-15","type":"gui.unloaded","payload":{"reason":"reload"}}"""))
+        assertFalse(isGuiUnloadedBridgeMessage("""{"version":"2026-05-14","type":"gui.unloaded","payload":{}}"""))
+        assertFalse(isGuiUnloadedBridgeMessage("""{"version":"2026-05-15","type":"gui.unloaded","payload":{},"extra":true}"""))
+        assertFalse(isGuiUnloadedBridgeMessage("[]"))
+        assertFalse(isGuiUnloadedBridgeMessage("null"))
+        assertFalse(isGuiUnloadedBridgeMessage("not-json"))
     }
 
     @Test
