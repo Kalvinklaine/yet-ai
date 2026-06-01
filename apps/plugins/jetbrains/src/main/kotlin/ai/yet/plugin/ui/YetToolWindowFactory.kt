@@ -90,7 +90,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
     init {
         add(browser.component, BorderLayout.CENTER)
         query.addHandler { raw ->
-            if (isGuiUnloaded(raw)) {
+            if (isGuiUnloadedBridgeMessage(raw)) {
                 guiReadyRequestId = null
                 return@addHandler null
             }
@@ -120,19 +120,6 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
                 }
             }
         }
-    }
-
-    private fun isGuiUnloaded(raw: String): Boolean {
-        val element = try {
-            JsonParser.parseString(raw)
-        } catch (_: RuntimeException) {
-            return false
-        }
-        if (!element.isJsonObject) return false
-        val record = element.asJsonObject
-        return record.keySet().all { it in setOf("version", "type", "payload") } &&
-            record.stringValue("version") == ProductIdentity.bridgeVersion &&
-            record.stringValue("type") == "gui.unloaded"
     }
 
     private fun deliverReadyMessages(settings: RuntimeSettings, requestId: String?) {
@@ -495,6 +482,21 @@ fun buildFrameOrigin(guiDevUrl: String?, packagedGui: PackagedGui?): String = wh
     guiDevUrl != null -> "\"${html(loopbackOrigin(guiDevUrl))}\""
     packagedGui != null -> "\"${html(packagedGui.origin)}\""
     else -> "undefined"
+}
+
+internal fun isGuiUnloadedBridgeMessage(raw: String): Boolean {
+    val element = try {
+        JsonParser.parseString(raw)
+    } catch (_: RuntimeException) {
+        return false
+    }
+    if (!element.isJsonObject) return false
+    val record = element.asJsonObject
+    if (!record.keySet().all { it in setOf("version", "type", "payload") }) return false
+    if (record.stringValue("version") != ProductIdentity.bridgeVersion) return false
+    if (record.stringValue("type") != "gui.unloaded") return false
+    val payload = record.get("payload") ?: return true
+    return payload.isJsonObject && payload.asJsonObject.keySet().isEmpty()
 }
 
 private fun com.google.gson.JsonObject.stringValue(name: String): String? {
