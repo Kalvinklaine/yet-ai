@@ -72,10 +72,10 @@ Repository-level validation is available from the root:
 npm run check
 ```
 
-Required verification for this package:
+Required package-local verification includes the direct first-message smoke. Use `npm run smoke:ide-preview` when validating the full cross-IDE dogfood gate.
 
 ```sh
-export PATH="$HOME/.cargo/bin:$PATH"; npm run prepare:vscode-preview && npm run smoke:vscode-installable && npm run smoke:vscode-preview && npm run check
+export PATH="$HOME/.cargo/bin:$PATH"; npm run prepare:vscode-preview && npm run smoke:vscode-installable && npm run smoke:vscode-preview && npm run smoke:vscode-first-message && npm run check
 ```
 
 ## VS Code dev-preview run guide
