@@ -44,6 +44,10 @@ const CODEX_REDIRECT_URI: &str = "http://127.0.0.1:1455/auth/openai/callback";
 const CODEX_SCOPE: &str = "openid profile email offline_access";
 const CODEX_CONNECTED_MESSAGE: &str = "Experimental Codex-like OpenAI login is connected in local engine storage. This remains experimental/high-risk and is not official public third-party OpenAI OAuth support.";
 const CODEX_EXPIRED_MESSAGE: &str = "Experimental Codex-like OpenAI login expired. Reconnect the account or use the OpenAI API-key fallback.";
+const PROVIDER_AUTH_SESSION_ID_MAX_CHARS: usize = 256;
+const PROVIDER_AUTH_STATE_MAX_CHARS: usize = 512;
+const PROVIDER_AUTH_CODE_MAX_CHARS: usize = 4096;
+const PROVIDER_AUTH_URL_MAX_CHARS: usize = 2048;
 static MOCK_COUNTER: AtomicU64 = AtomicU64::new(1);
 static PROVIDER_AUTH_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 static CODEX_EXCHANGE_IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> =
@@ -344,9 +348,9 @@ pub async fn exchange(
             Some(false),
         ));
     }
-    let session_id = required_value(request.session_id)?;
-    let state_value = required_value(request.state)?;
-    let code = required_value(request.code)?;
+    let session_id = required_value(request.session_id, PROVIDER_AUTH_SESSION_ID_MAX_CHARS)?;
+    let state_value = required_value(request.state, PROVIDER_AUTH_STATE_MAX_CHARS)?;
+    let code = required_value(request.code, PROVIDER_AUTH_CODE_MAX_CHARS)?;
     if provider == "openai" && !code.starts_with("mock-code-") {
         return codex_exchange(config_dir, provider, session_id, state_value, code).await;
     }
@@ -697,8 +701,8 @@ fn validate_experimental_endpoint_url(
     value: &str,
     require_loopback: bool,
 ) -> Result<String, ProviderAuthError> {
-    let value = value.trim();
-    let parsed = reqwest::Url::parse(value).map_err(|_| ProviderAuthError::InvalidRequest)?;
+    let value = validate_required_string(value, PROVIDER_AUTH_URL_MAX_CHARS)?;
+    let parsed = reqwest::Url::parse(&value).map_err(|_| ProviderAuthError::InvalidRequest)?;
     if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
         return Err(ProviderAuthError::InvalidRequest);
     }
@@ -1440,10 +1444,24 @@ fn url_encode(bytes: &[u8]) -> String {
     output
 }
 
-fn required_value(value: Option<String>) -> Result<String, ProviderAuthError> {
-    value
-        .filter(|value| !value.trim().is_empty())
-        .ok_or(ProviderAuthError::InvalidRequest)
+fn required_value(value: Option<String>, max_chars: usize) -> Result<String, ProviderAuthError> {
+    let value = value.ok_or(ProviderAuthError::InvalidRequest)?;
+    validate_required_string(&value, max_chars)
+}
+
+fn validate_required_string(value: &str, max_chars: usize) -> Result<String, ProviderAuthError> {
+    if value.chars().any(is_c0_c1_control) {
+        return Err(ProviderAuthError::InvalidRequest);
+    }
+    let value = value.trim();
+    if value.is_empty() || value.chars().count() > max_chars {
+        return Err(ProviderAuthError::InvalidRequest);
+    }
+    Ok(value.to_string())
+}
+
+fn is_c0_c1_control(value: char) -> bool {
+    matches!(value as u32, 0x00..=0x1f | 0x7f..=0x9f)
 }
 
 fn parse_time(value: &str) -> Result<chrono::DateTime<Utc>, ProviderAuthError> {
