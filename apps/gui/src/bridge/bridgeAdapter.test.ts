@@ -116,6 +116,52 @@ describe("bridgeAdapter", () => {
     adapter.dispose();
   });
 
+  it("rejects invalid JetBrains frame nonce messages without emitting gui.ready", () => {
+    const parent = { postMessage: vi.fn() };
+    Object.defineProperty(Document.prototype, "referrer", {
+      configurable: true,
+      get: () => "https://wrapper.example/shell.html",
+    });
+    Object.defineProperty(window, "parent", {
+      configurable: true,
+      value: parent,
+    });
+
+    const logs: string[] = [];
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    parent.postMessage.mockClear();
+    const base = {
+      version: bridgeVersion,
+      type: "host.frameNonce",
+    };
+    const dispatch = (data: unknown, origin = "https://wrapper.example", source: Window = parent as unknown as Window) => window.dispatchEvent(new MessageEvent("message", {
+      data,
+      origin,
+      source,
+    }));
+
+    for (const message of [
+      { ...base },
+      { ...base, payload: {} },
+      { ...base, payload: { frameNonce: "0123456789abcdef0123456789abcde" } },
+      { ...base, payload: { frameNonce: "0123456789abcdef0123456789abcdef0" } },
+      { ...base, payload: { frameNonce: "0123456789ABCDEF0123456789ABCDEF" } },
+      { ...base, payload: { frameNonce: 123 } },
+      { ...base, payload: { frameNonce: "0123456789abcdef0123456789abcdef", extra: true } },
+    ]) {
+      dispatch(message);
+    }
+    dispatch({ ...base, payload: { frameNonce: "0123456789abcdef0123456789abcdef" } }, "https://attacker.example");
+    dispatch({ ...base, payload: { frameNonce: "0123456789abcdef0123456789abcdef" } }, "https://wrapper.example", { postMessage: vi.fn() } as unknown as Window);
+
+    expect(parent.postMessage).not.toHaveBeenCalled();
+    expect(logs).toContain("Bridge host browser");
+    expect(logs).toContain("Rejected host bridge message from unexpected origin");
+    expect(logs).toContain("Rejected host bridge message from unexpected source");
+    expect(logs.filter((entry) => entry === "Rejected invalid host bridge message")).toHaveLength(7);
+    adapter.dispose();
+  });
+
   it("accepts host.ready from the captured iframe parent without token logging or storage", () => {
     const token = "iframe-parent-session-token-secret";
     const logs: string[] = [];
@@ -480,6 +526,8 @@ describe("bridgeAdapter", () => {
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "a".repeat(129) })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "bad\nrequest" })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "bad\u007frequest" })).toBe(false);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "bad\u0080request" })).toBe(false);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "bad\u009frequest" })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", payload: { supportedBridgeVersion: "1" } })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", payload: { supportedBridgeVersion: bridgeVersion, extra: true } })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", extra: true })).toBe(false);
@@ -495,6 +543,8 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", requestId: "a".repeat(129), payload: {} })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", requestId: "bad\nrequest", payload: {} })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", requestId: "bad\u007frequest", payload: {} })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", requestId: "bad\u0080request", payload: {} })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", requestId: "bad\u009frequest", payload: {} })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: [] })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { sessionToken: 123 } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { cloudRequired: "false" } })).toBe(false);

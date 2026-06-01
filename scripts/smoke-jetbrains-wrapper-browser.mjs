@@ -278,6 +278,17 @@ try {
         cloudRequired: true,
       },
     });
+    window.__yetAiSendHostMessageToFrame({
+      version,
+      type: "host.ready",
+      requestId: "bad\u0080request",
+      payload: {
+        runtimeUrl: "http://127.0.0.1:9012",
+        productId: "yet-ai",
+        displayName: "Yet AI",
+        cloudRequired: false,
+      },
+    });
   }, { version: bridgeVersion, requestId: activeReadyRequestId });
   await page.waitForTimeout(100);
   const hostMessagesPostedAfterInvalidOpened = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
@@ -682,6 +693,10 @@ async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeU
   if (randomFailureState.readySequence !== beforeRandomFailureSequence || randomFailureState.currentRequestId !== undefined) {
     failures.push(`Wrapper mutated readiness state when secure randomness was unavailable for gui.ready: before=${beforeRandomFailureSequence} after=${randomFailureState.readySequence} requestId=${String(randomFailureState.currentRequestId)}.`);
   }
+  const randomFailureDiagnostic = await page.evaluate(() => document.getElementById("yet-ai-shell-status")?.textContent ?? "");
+  if (!randomFailureDiagnostic.includes("Secure browser randomness is unavailable")) {
+    failures.push("Wrapper did not show a bounded shell diagnostic when secure randomness was unavailable.");
+  }
   await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, url) => {
     frame.src = `${url}/index.html`;
   }, guiUrl);
@@ -991,11 +1006,15 @@ const sendFrameNonceChallenge = () => {
     window.setTimeout(sendFrameNonceChallenge, 50);
   }
 };
+const showRandomnessDiagnostic = () => {
+  showDiagnostic("Secure browser randomness is unavailable. Yet AI cannot authorize the embedded GUI bridge until the shell is reloaded in a secure context.");
+};
 const resetFrameNonceChallenge = () => {
   currentFrameNonce = newFrameNonce();
   frameNonceChallengeAttempts = 0;
   if (currentFrameNonce === undefined) {
     console.log("Yet AI cannot create frame nonce because secure wrapper randomness is unavailable");
+    showRandomnessDiagnostic();
     return;
   }
   sendFrameNonceChallenge();
@@ -1044,7 +1063,10 @@ const sendToFrame = (message) => {
 };
 const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const hasOnlyKeys = (record, keys) => Object.keys(record).every((key) => keys.includes(key));
-const isRequestId = (value) => value === undefined || (typeof value === "string" && value.length >= 1 && value.length <= 128 && value.split("").every((char) => char >= " " && char.charCodeAt(0) !== 127));
+const isRequestId = (value) => value === undefined || (typeof value === "string" && value.length >= 1 && value.length <= 128 && value.split("").every((char) => {
+  const code = char.charCodeAt(0);
+  return code >= 0x20 && (code < 0x7f || code > 0x9f);
+}));
 const isFrameNonce = (value) => typeof value === "string" && /^[0-9a-f]{32}$/.test(value);
 const optionalString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length <= maxLength);
 const optionalNonEmptyString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength);
@@ -1093,6 +1115,7 @@ window.addEventListener("message", (event) => {
       const nextGuiReadyRequestId = wrapperReadyRequestId(nextGuiReadySequence);
       if (nextGuiReadyRequestId === undefined) {
         console.log("Yet AI rejected gui.ready because secure wrapper randomness is unavailable");
+        showRandomnessDiagnostic();
         return;
       }
       frameReady = true;
