@@ -343,15 +343,34 @@ try {
     failures.push("Send was not enabled for the JetBrains first-message preview path after safe mock readiness.");
   }
 
-  const contextRequestId = await page.evaluate(() => window.__yetAiCurrentReadyRequestId);
-  await page.evaluate(({ version, payload, requestId }) => {
+  const contextRequestId = await page.evaluate(({ version, runtimeUrl, token, payload }) => {
+    const requestId = window.__yetAiCurrentReadyRequestId;
+    window.__yetAiSendHostMessageToFrame({
+      version,
+      type: "host.ready",
+      requestId,
+      payload: {
+        runtimeUrl,
+        sessionToken: token,
+        productId: "yet-ai",
+        displayName: "Yet AI",
+        cloudRequired: false,
+      },
+    });
+    window.__yetAiSendHostMessageToFrame({
+      version,
+      type: "host.openedFromCommand",
+      requestId,
+      payload: {},
+    });
     window.__yetAiSendHostMessageToFrame({
       version,
       type: "host.contextSnapshot",
       requestId,
       payload,
     });
-  }, { version: bridgeVersion, payload: jetbrainsContextSnapshot, requestId: contextRequestId });
+    return requestId;
+  }, { version: bridgeVersion, runtimeUrl: runtimeBaseUrl, token: runtimeToken, payload: jetbrainsContextSnapshot });
   await frameLocator.getByText("Active editor context", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show attached context preview for JetBrains context."));
   await frameLocator.getByText("jetbrains", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context source label."));
   await frameLocator.getByText("File: src/main/kotlin/ContextSmoke.kt", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show safe JetBrains context file label."));
@@ -513,19 +532,31 @@ async function assertInvalidRuntimeUrlsRejected(page, version, currentReadyReque
 
 async function assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocator, version, guiUrl, runtimeUrl, token) {
   const beforeUnloadEvents = await page.evaluate(() => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.unloaded").length);
+  const oldFrameState = await page.evaluate(() => ({
+    oldWindow: document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow,
+    oldNonce: window.__yetAiCurrentFrameNonce,
+  }));
   await page.locator("iframe[title='Yet AI GUI']").evaluate((frame) => {
     frame.src = "about:blank";
   });
   await page.waitForFunction((count) => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.unloaded").length > count, beforeUnloadEvents, { timeout: 5000 }).catch(() => failures.push("Wrapper did not report iframe unload during old-document gui.ready smoke."));
   const beforeReadySequence = await page.evaluate(() => window.__yetAiGuiReadySequence ?? 0);
   const beforePostedCount = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
-  const staleAttempt = await page.evaluate(({ bridgeVersion, readyUrl, sessionToken }) => new Promise((resolve) => {
-    const oldWindow = document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow;
-    oldWindow?.postMessage({
-      version: bridgeVersion,
-      type: "gui.ready",
-      payload: { supportedBridgeVersion: bridgeVersion },
-    }, "*");
+  const staleAttempt = await page.evaluate(({ bridgeVersion, readyUrl, sessionToken, oldNonce }) => new Promise((resolve) => {
+    const frameWindow = document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow;
+    const currentNonce = window.__yetAiCurrentFrameNonce;
+    const attempts = [undefined, "0".repeat(32), oldNonce].filter((nonce) => nonce !== currentNonce);
+    for (const frameNonce of attempts) {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: {
+          version: bridgeVersion,
+          type: "gui.ready",
+          payload: { supportedBridgeVersion: bridgeVersion, ...(frameNonce === undefined ? {} : { frameNonce }) },
+        },
+        origin: document.querySelector("iframe[title='Yet AI GUI']")?.src ? new URL(document.querySelector("iframe[title='Yet AI GUI']").src).origin : window.location.origin,
+        source: frameWindow,
+      }));
+    }
     window.setTimeout(() => {
       const requestId = window.__yetAiCurrentReadyRequestId;
       window.__yetAiSendHostMessageToFrame({
@@ -545,12 +576,12 @@ async function assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocat
         postedCount: window.__yetAiHostMessagesPostedCount,
       });
     }, 50);
-  }), { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token });
+  }), { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token, oldNonce: oldFrameState.oldNonce });
   if (staleAttempt.readySequence !== beforeReadySequence) {
-    failures.push("Wrapper accepted stale old-document gui.ready from the previous iframe document.");
+    failures.push("Wrapper accepted stale, missing, or wrong-nonce gui.ready through the parent message handler.");
   }
   if (staleAttempt.postedCount !== beforePostedCount) {
-    failures.push("Wrapper allowed stale old-document gui.ready to authorize host delivery.");
+    failures.push("Wrapper allowed rejected stale gui.ready to authorize host delivery.");
   }
   await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, url) => {
     frame.src = `${url}/index.html`;
@@ -630,18 +661,29 @@ async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeU
         cloudRequired: false,
       },
     });
+    window.__yetAiSendHostMessageToFrame({
+      version: bridgeVersion,
+      type: "host.openedFromCommand",
+      requestId,
+      payload: {},
+    });
   }, { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token, requestId: currentRequestId });
 }
 
 async function assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocator, version, guiUrl, runtimeUrl, token) {
-  await frameLocator.locator("body").evaluate((body, bridgeVersion) => {
-    window.parent.postMessage({
-      version: bridgeVersion,
-      type: "gui.ready",
-      requestId: "same",
-      payload: { supportedBridgeVersion: bridgeVersion },
-    }, document.referrer ? new URL(document.referrer).origin : "*");
-  }, version);
+  await page.evaluate(({ bridgeVersion, origin }) => {
+    const frameWindow = document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow;
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version: bridgeVersion,
+        type: "gui.ready",
+        requestId: "same",
+        payload: { supportedBridgeVersion: bridgeVersion, frameNonce: window.__yetAiCurrentFrameNonce },
+      },
+      origin,
+      source: frameWindow,
+    }));
+  }, { bridgeVersion: version, origin: guiUrl });
   await page.waitForTimeout(100);
   const oldNonce = await page.evaluate(() => window.__yetAiCurrentReadyRequestId);
   assertRandomReadyRequestId(oldNonce, "explicit same requestId before reload");
@@ -683,14 +725,19 @@ async function assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocato
     frame.src = `${url}/index.html`;
   }, guiUrl);
   await page.waitForFunction((count) => (window.__yetAiGuiReadySequence ?? 0) > count, afterStaleState.guiReadySequence, { timeout: 5000 }).catch(() => failures.push("Wrapper did not observe fresh gui.ready after repeated requestId reload."));
-  await frameLocator.locator("body").evaluate((body, bridgeVersion) => {
-    window.parent.postMessage({
-      version: bridgeVersion,
-      type: "gui.ready",
-      requestId: "same",
-      payload: { supportedBridgeVersion: bridgeVersion },
-    }, document.referrer ? new URL(document.referrer).origin : "*");
-  }, version);
+  await page.evaluate(({ bridgeVersion, origin }) => {
+    const frameWindow = document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow;
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version: bridgeVersion,
+        type: "gui.ready",
+        requestId: "same",
+        payload: { supportedBridgeVersion: bridgeVersion, frameNonce: window.__yetAiCurrentFrameNonce },
+      },
+      origin,
+      source: frameWindow,
+    }));
+  }, { bridgeVersion: version, origin: guiUrl });
   await page.waitForTimeout(100);
   const afterRepeatedReady = await page.evaluate(({ beforeCount, oldRequestId }) => ({
     currentRequestId: window.__yetAiCurrentReadyRequestId,
@@ -843,6 +890,8 @@ let guiReadySequence = 0;
 let currentGuiReadySequence = 0;
 let acceptedHostReadyRequestId;
 let hostReadyAcceptedForCurrentFrame = false;
+let currentFrameNonce;
+let frameNonceChallengeAttempts = 0;
 let flushingPending = false;
 const pendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : [];
 const pendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : [];
@@ -879,15 +928,34 @@ window.postIntellijMessage = (message) => {
   window.__yetAiBridgeMessages.push(message);
 };
 const currentReadyRequestId = () => currentGuiReadyRequestId;
-const randomReadyToken = () => {
+const randomToken = () => {
   if (!globalThis.crypto || typeof globalThis.crypto.getRandomValues !== "function") return undefined;
   const bytes = new Uint8Array(16);
   globalThis.crypto.getRandomValues(bytes);
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 };
 const wrapperReadyRequestId = (sequence) => {
-  const token = randomReadyToken();
+  const token = randomToken();
   return token === undefined ? undefined : "gui-ready-" + frameGeneration + "-" + sequence + "-" + token;
+};
+const newFrameNonce = () => randomToken();
+const sendFrameNonceChallenge = () => {
+  if (!frame || !currentFrameWindow || frame.contentWindow !== currentFrameWindow || !frameTargetOrigin || currentFrameNonce === undefined) return;
+  currentFrameWindow.postMessage({ version: bridgeVersion, type: "host.frameNonce", payload: { frameNonce: currentFrameNonce } }, frameTargetOrigin);
+  window.__yetAiCurrentFrameNonce = currentFrameNonce;
+  frameNonceChallengeAttempts += 1;
+  if (!frameReady && frameNonceChallengeAttempts < 20) {
+    window.setTimeout(sendFrameNonceChallenge, 50);
+  }
+};
+const resetFrameNonceChallenge = () => {
+  currentFrameNonce = newFrameNonce();
+  frameNonceChallengeAttempts = 0;
+  if (currentFrameNonce === undefined) {
+    console.log("Yet AI cannot create frame nonce because secure wrapper randomness is unavailable");
+    return;
+  }
+  sendFrameNonceChallenge();
 };
 const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
 const canDeliverHostMessage = (message) => {
@@ -950,7 +1018,7 @@ const isHostMessage = (message) => {
 };
 const isGuiMessage = (message) => {
   if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.ready" || !isRequestId(message.requestId)) return false;
-  return message.payload === undefined || (isPlainObject(message.payload) && hasOnlyKeys(message.payload, ["supportedBridgeVersion"]) && (message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion));
+  return isPlainObject(message.payload) && hasOnlyKeys(message.payload, ["supportedBridgeVersion", "frameNonce"]) && (message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion) && message.payload.frameNonce === currentFrameNonce;
 };
 window.__yetAiSendHostMessageToFrame = sendToFrame;
 window.__yetAiWrapperInitialized = true;
@@ -972,7 +1040,7 @@ window.addEventListener("message", (event) => {
         console.log("Yet AI rejected gui.ready because secure wrapper randomness is unavailable");
         return;
       }
-      const readyMessage = { ...event.data, requestId: currentGuiReadyRequestId };
+      const readyMessage = { ...event.data, requestId: currentGuiReadyRequestId, payload: { supportedBridgeVersion: event.data.payload?.supportedBridgeVersion } };
       window.__yetAiCurrentReadyRequestId = currentGuiReadyRequestId;
       acceptedHostReadyRequestId = undefined;
       hostReadyAcceptedForCurrentFrame = false;
@@ -994,9 +1062,11 @@ if (frame) {
     currentGuiReadyRequestId = undefined;
     acceptedHostReadyRequestId = undefined;
     hostReadyAcceptedForCurrentFrame = false;
+    currentFrameNonce = undefined;
     pendingHostMessages.length = 0;
     window.postIntellijMessage({ version: bridgeVersion, type: "gui.unloaded", payload: {} });
     markLoaded();
+    resetFrameNonceChallenge();
   });
 }
 </script>

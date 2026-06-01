@@ -44,27 +44,39 @@ describe("bridgeAdapter", () => {
     adapter.dispose();
   });
 
-  it("sends gui.ready to an iframe parent using the referrer origin when available", () => {
+  it("echoes a JetBrains iframe frame nonce in gui.ready using the referrer origin", () => {
     const logs: string[] = [];
-    const postMessage = vi.fn();
+    const parent = { postMessage: vi.fn() };
     Object.defineProperty(Document.prototype, "referrer", {
       configurable: true,
       get: () => "https://wrapper.example/shell.html",
     });
     Object.defineProperty(window, "parent", {
       configurable: true,
-      value: { postMessage },
+      value: parent,
     });
 
     const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version: bridgeVersion,
+        type: "host.frameNonce",
+        payload: { frameNonce: "0123456789abcdef0123456789abcdef" },
+      },
+      origin: "https://wrapper.example",
+      source: parent as unknown as Window,
+    }));
 
     expect(adapter.host).toBe("browser");
     expect(logs).toContain("Bridge host browser");
     expect(logs).not.toContain("Browser mock sent gui.ready");
-    expect(postMessage).toHaveBeenCalledWith({
+    expect(parent.postMessage).toHaveBeenCalledWith({
       version: bridgeVersion,
       type: "gui.ready",
-      payload: { supportedBridgeVersion: bridgeVersion },
+      payload: {
+        supportedBridgeVersion: bridgeVersion,
+        frameNonce: "0123456789abcdef0123456789abcdef",
+      },
     }, "https://wrapper.example");
     adapter.dispose();
   });
@@ -311,12 +323,7 @@ describe("bridgeAdapter", () => {
   });
 
   it("does not flush wrong-source queued parent messages", () => {
-    const parent = {
-      postMessage: () => window.dispatchEvent(new MessageEvent("message", {
-        data: hostReady(),
-        source: { postMessage: vi.fn() } as unknown as Window,
-      })),
-    };
+    const parent = { postMessage: vi.fn() };
     Object.defineProperty(window, "parent", {
       configurable: true,
       value: parent,
@@ -326,6 +333,18 @@ describe("bridgeAdapter", () => {
     const adapter = createBridgeAdapter((entry) => logs.push(entry));
     const messages: unknown[] = [];
     adapter.subscribe((message) => messages.push(message));
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version: bridgeVersion,
+        type: "host.frameNonce",
+        payload: { frameNonce: "0123456789abcdef0123456789abcdef" },
+      },
+      source: parent as unknown as Window,
+    }));
+    window.dispatchEvent(new MessageEvent("message", {
+      data: hostReady(),
+      source: { postMessage: vi.fn() } as unknown as Window,
+    }));
 
     expect(messages).toHaveLength(0);
     expect(logs).toContain("Rejected host bridge message from unexpected source");
@@ -419,6 +438,7 @@ describe("bridgeAdapter", () => {
   it("validates gui.ready against the strict current schema", () => {
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready" })).toBe(true);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "r1", payload: { supportedBridgeVersion: bridgeVersion } })).toBe(true);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", payload: { supportedBridgeVersion: bridgeVersion, frameNonce: "0123456789abcdef0123456789abcdef" } })).toBe(true);
     expect(isGuiMessage({ version: "", type: "gui.ready" })).toBe(false);
     expect(isGuiMessage({ version: "1", type: "gui.ready" })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "" })).toBe(false);

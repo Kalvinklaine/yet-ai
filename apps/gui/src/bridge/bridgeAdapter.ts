@@ -14,6 +14,14 @@ export type HostMessage = {
   payload?: Record<string, unknown>;
 };
 
+type FrameNonceMessage = {
+  version: string;
+  type: "host.frameNonce";
+  payload: {
+    frameNonce: string;
+  };
+};
+
 export type HostReadyPayload = {
   runtimeUrl?: string;
   sessionToken?: string;
@@ -84,6 +92,7 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
   const handlers = new Set<HostMessageHandler>();
   const pendingMessages: HostMessage[] = [];
   const maxPendingMessages = 8;
+  let jetbrainsFrameNonce: string | undefined;
   const append = (entry: string) => {
     log.push(entry);
     onLog(entry);
@@ -95,19 +104,33 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
   const parentOrigin = parentBridge ? expectedParentOrigin() : undefined;
   const host: BridgeHost = vscode ? "vscode" : postIntellijMessage ? "jetbrains" : "browser";
 
+  const withFrameNonce = (message: GuiMessage): GuiMessage => {
+    if (!parentBridge || jetbrainsFrameNonce === undefined) {
+      return message;
+    }
+    return {
+      ...message,
+      payload: {
+        ...(message.payload ?? {}),
+        frameNonce: jetbrainsFrameNonce,
+      },
+    };
+  };
+
   const post = (message: GuiMessage) => {
-    if (!isGuiMessage(message)) {
+    const outbound = withFrameNonce(message);
+    if (!isGuiMessage(outbound)) {
       append("Rejected invalid GUI bridge message");
       return;
     }
     if (vscode) {
-      vscode.postMessage(message);
+      vscode.postMessage(outbound);
     } else if (postIntellijMessage) {
-      postIntellijMessage(message);
+      postIntellijMessage(outbound);
     } else if (parentBridge) {
-      parentBridge.postMessage(message, parentOrigin ?? "*");
+      parentBridge.postMessage(outbound, parentOrigin ?? "*");
     } else {
-      append(`Browser mock sent ${message.type}`);
+      append(`Browser mock sent ${outbound.type}`);
     }
   };
 
@@ -120,16 +143,25 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
 
   const onMessage = (event: MessageEvent<unknown>) => {
     const message = event.data;
-    if (!isHostMessage(message)) {
-      append("Rejected invalid host bridge message");
-      return;
-    }
     if (parentBridge && event.source !== parentBridge) {
       append("Rejected host bridge message from unexpected source");
       return;
     }
     if (parentBridge && parentOrigin && event.origin !== parentOrigin) {
       append("Rejected host bridge message from unexpected origin");
+      return;
+    }
+    if (parentBridge && isFrameNonceMessage(message)) {
+      jetbrainsFrameNonce = message.payload.frameNonce;
+      post({
+        version: bridgeVersion,
+        type: "gui.ready",
+        payload: { supportedBridgeVersion: bridgeVersion },
+      });
+      return;
+    }
+    if (!isHostMessage(message)) {
+      append("Rejected invalid host bridge message");
       return;
     }
     append(message.type === "host.ready" ? "Host runtime settings received" : `Host message ${message.type}`);
@@ -145,11 +177,13 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
 
   window.addEventListener("message", onMessage);
   append(`Bridge host ${host}`);
-  post({
-    version: bridgeVersion,
-    type: "gui.ready",
-    payload: { supportedBridgeVersion: bridgeVersion },
-  });
+  if (!parentBridge) {
+    post({
+      version: bridgeVersion,
+      type: "gui.ready",
+      payload: { supportedBridgeVersion: bridgeVersion },
+    });
+  }
 
   return {
     host,
@@ -174,6 +208,16 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
     isBoundedRequestId(value.requestId) &&
     isGuiReadyPayload(value.payload)
   );
+}
+
+function isFrameNonceMessage(value: unknown): value is FrameNonceMessage {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["version", "type", "payload"])) {
+    return false;
+  }
+  if (value.version !== bridgeVersion || value.type !== "host.frameNonce" || !isPlainObject(value.payload) || !hasOnlyKeys(value.payload, ["frameNonce"])) {
+    return false;
+  }
+  return typeof value.payload.frameNonce === "string" && /^[0-9a-f]{32}$/.test(value.payload.frameNonce);
 }
 
 export function isHostMessage(value: unknown): value is HostMessage {
@@ -226,7 +270,7 @@ function isGuiReadyPayload(value: unknown): boolean {
   if (value === undefined) {
     return true;
   }
-  return isPlainObject(value) && hasOnlyKeys(value, ["supportedBridgeVersion"]) && (value.supportedBridgeVersion === undefined || value.supportedBridgeVersion === bridgeVersion);
+  return isPlainObject(value) && hasOnlyKeys(value, ["supportedBridgeVersion", "frameNonce"]) && (value.supportedBridgeVersion === undefined || value.supportedBridgeVersion === bridgeVersion) && (value.frameNonce === undefined || (typeof value.frameNonce === "string" && /^[0-9a-f]{32}$/.test(value.frameNonce)));
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
