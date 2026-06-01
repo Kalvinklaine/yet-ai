@@ -2,7 +2,7 @@ export type BridgeHost = "browser" | "vscode" | "jetbrains";
 
 export type GuiMessage = {
   version: string;
-  type: "gui.ready";
+  type: "gui.ready" | "gui.unloaded";
   requestId?: string;
   payload?: Record<string, unknown>;
 };
@@ -106,7 +106,7 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
   const host: BridgeHost = vscode ? "vscode" : postIntellijMessage ? "jetbrains" : "browser";
 
   const withFrameNonce = (message: GuiMessage): GuiMessage => {
-    if (!parentBridge || jetbrainsFrameNonce === undefined) {
+    if (message.type !== "gui.ready" || !parentBridge || jetbrainsFrameNonce === undefined) {
       return message;
     }
     return {
@@ -120,7 +120,7 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
 
   const post = (message: GuiMessage) => {
     const outbound = withFrameNonce(message);
-    if (!isGuiMessage(outbound)) {
+    if (!isGuiMessage(outbound) && !isGuiUnloadedMessage(outbound)) {
       append("Rejected invalid GUI bridge message");
       return;
     }
@@ -179,7 +179,19 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
     handlers.forEach((handler) => handler(message));
   };
 
+  const postUnload = () => {
+    if (parentBridge) {
+      post({
+        version: bridgeVersion,
+        type: "gui.unloaded",
+        payload: {},
+      });
+    }
+  };
+
   window.addEventListener("message", onMessage);
+  window.addEventListener("pagehide", postUnload);
+  window.addEventListener("beforeunload", postUnload);
   append(`Bridge host ${host}`);
   if (!parentBridge) {
     post({
@@ -198,6 +210,8 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
       handlers.clear();
       pendingMessages.splice(0);
       window.removeEventListener("message", onMessage);
+      window.removeEventListener("pagehide", postUnload);
+      window.removeEventListener("beforeunload", postUnload);
     },
   };
 }
@@ -212,6 +226,13 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
     isBoundedRequestId(value.requestId) &&
     isGuiReadyPayload(value.payload)
   );
+}
+
+function isGuiUnloadedMessage(value: unknown): value is GuiMessage {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["version", "type", "payload"])) {
+    return false;
+  }
+  return value.version === bridgeVersion && value.type === "gui.unloaded" && isEmptyPayload(value.payload);
 }
 
 function isFrameNonceMessage(value: unknown): value is FrameNonceMessage {

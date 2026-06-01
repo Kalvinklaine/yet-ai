@@ -536,13 +536,26 @@ async function assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocat
     oldWindow: document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow,
     oldNonce: window.__yetAiCurrentFrameNonce,
   }));
-  await page.locator("iframe[title='Yet AI GUI']").evaluate((frame) => {
-    frame.src = "about:blank";
-  });
-  await page.waitForFunction((count) => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.unloaded").length > count, beforeUnloadEvents, { timeout: 5000 }).catch(() => failures.push("Wrapper did not report iframe unload during old-document gui.ready smoke."));
   const beforeReadySequence = await page.evaluate(() => window.__yetAiGuiReadySequence ?? 0);
   const beforePostedCount = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
-  const staleAttempt = await page.evaluate(({ bridgeVersion, readyUrl, sessionToken, oldNonce }) => new Promise((resolve) => {
+  await page.evaluate(({ bridgeVersion, origin }) => {
+    const frameWindow = document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow;
+    window.dispatchEvent(new MessageEvent("message", {
+      data: { version: bridgeVersion, type: "gui.unloaded", payload: {} },
+      origin,
+      source: frameWindow,
+    }));
+  }, { bridgeVersion: version, origin: guiUrl });
+  await page.waitForFunction((count) => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.unloaded").length > count, beforeUnloadEvents, { timeout: 5000 }).catch(() => failures.push("Wrapper did not report iframe unload during old-document gui.ready smoke."));
+  const afterUnloadState = await page.evaluate(() => ({
+    currentRequestId: window.__yetAiCurrentReadyRequestId,
+    currentNonce: window.__yetAiCurrentFrameNonce,
+    pendingHostMessages: window.__yetAiPendingHostMessages?.length,
+  }));
+  if (afterUnloadState.currentRequestId !== undefined || afterUnloadState.currentNonce !== undefined || afterUnloadState.pendingHostMessages !== 0) {
+    failures.push("Wrapper did not invalidate ready id, frame nonce, and pending host messages on gui.unloaded before iframe load.");
+  }
+  const staleAttempt = await page.evaluate(({ bridgeVersion, readyUrl, sessionToken, oldNonce, origin }) => new Promise((resolve) => {
     const frameWindow = document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow;
     const currentNonce = window.__yetAiCurrentFrameNonce;
     const attempts = [undefined, "0".repeat(32), oldNonce].filter((nonce) => nonce !== currentNonce);
@@ -553,7 +566,7 @@ async function assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocat
           type: "gui.ready",
           payload: { supportedBridgeVersion: bridgeVersion, ...(frameNonce === undefined ? {} : { frameNonce }) },
         },
-        origin: readyUrl,
+        origin,
         source: frameWindow,
       }));
     }
@@ -576,13 +589,17 @@ async function assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocat
         postedCount: window.__yetAiHostMessagesPostedCount,
       });
     }, 50);
-  }), { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token, oldNonce: oldFrameState.oldNonce });
+  }), { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token, oldNonce: oldFrameState.oldNonce, origin: guiUrl });
   if (staleAttempt.readySequence !== beforeReadySequence) {
     failures.push("Wrapper accepted stale, missing, or wrong-nonce gui.ready through the parent message handler.");
   }
   if (staleAttempt.postedCount !== beforePostedCount) {
     failures.push("Wrapper allowed rejected stale gui.ready to authorize host delivery.");
   }
+  await page.locator("iframe[title='Yet AI GUI']").evaluate((frame) => {
+    frame.src = "about:blank";
+  });
+  await page.waitForTimeout(100);
   await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, url) => {
     frame.src = `${url}/index.html`;
   }, guiUrl);
@@ -983,6 +1000,18 @@ const resetFrameNonceChallenge = () => {
   }
   sendFrameNonceChallenge();
 };
+const invalidateFrameAuthority = (reason) => {
+  frameReady = false;
+  currentGuiReadySequence = 0;
+  currentGuiReadyRequestId = undefined;
+  window.__yetAiCurrentReadyRequestId = undefined;
+  acceptedHostReadyRequestId = undefined;
+  hostReadyAcceptedForCurrentFrame = false;
+  currentFrameNonce = undefined;
+  window.__yetAiCurrentFrameNonce = undefined;
+  pendingHostMessages.length = 0;
+};
+const isGuiUnloadedMessage = (message) => isPlainObject(message) && hasOnlyKeys(message, ["version", "type", "payload"]) && message.version === bridgeVersion && message.type === "gui.unloaded" && (message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0));
 const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
 const canDeliverHostMessage = (message) => {
   if (!messageMatchesCurrentReady(message)) return false;
@@ -1055,7 +1084,10 @@ window.addEventListener("message", (event) => {
       console.log("Yet AI rejected iframe message from unexpected origin");
       return;
     }
-    if (isGuiMessage(event.data)) {
+    if (isGuiUnloadedMessage(event.data)) {
+      invalidateFrameAuthority("gui.unloaded");
+      window.postIntellijMessage(event.data);
+    } else if (isGuiMessage(event.data)) {
       if (frameReady && event.data.payload.frameNonce === currentFrameNonce) return;
       const nextGuiReadySequence = guiReadySequence + 1;
       const nextGuiReadyRequestId = wrapperReadyRequestId(nextGuiReadySequence);
@@ -1083,16 +1115,9 @@ window.addEventListener("message", (event) => {
 });
 if (frame) {
   frame.addEventListener("load", () => {
-    frameReady = false;
+    invalidateFrameAuthority("frame.load");
     frameGeneration += 1;
     currentFrameWindow = frame.contentWindow;
-    currentGuiReadySequence = 0;
-    currentGuiReadyRequestId = undefined;
-    window.__yetAiCurrentReadyRequestId = undefined;
-    acceptedHostReadyRequestId = undefined;
-    hostReadyAcceptedForCurrentFrame = false;
-    currentFrameNonce = undefined;
-    pendingHostMessages.length = 0;
     window.postIntellijMessage({ version: bridgeVersion, type: "gui.unloaded", payload: {} });
     markLoaded();
     resetFrameNonceChallenge();
