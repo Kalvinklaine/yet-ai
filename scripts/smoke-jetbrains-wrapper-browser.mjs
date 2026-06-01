@@ -200,19 +200,21 @@ try {
     diagnosticText: document.getElementById("yet-ai-shell-status")?.textContent ?? "",
     diagnosticDisplayedBeforeFlush: window.__yetAiDiagnosticDisplayedBeforeFlush === true,
   }));
-  if (queueStateAfterReady.hostQueue !== 0) {
-    failures.push("Wrapper did not clear the pre-init queued host messages after iframe load/gui.ready.");
+  if (queueStateAfterReady.hostQueue !== 0 || queueStateAfterReady.flushedPreInitHost) {
+    failures.push("Wrapper did not drop the pre-init queued host messages after iframe load/gui.ready.");
   }
   if (queueStateAfterReady.diagnosticQueue !== 0 || !queueStateAfterReady.flushedPreInitDiagnostic || !queueStateAfterReady.diagnosticText.includes("Queued diagnostic before wrapper init") || queueStateAfterReady.diagnosticDisplayedBeforeFlush) {
     failures.push("Wrapper did not prove queued diagnostic adoption and flush without pre-ready direct display.");
   }
   await page.waitForFunction(() => typeof window.__yetAiSendHostMessageToFrame === "function", undefined, { timeout: 5000 }).catch(() => failures.push("Wrapper host-message sender helper was not installed."));
-  await assertInvalidRuntimeUrlsRejected(page, bridgeVersion);
+  const currentReadyRequestId = await page.evaluate(() => window.__yetAiCurrentReadyRequestId);
+  if (!currentReadyRequestId || currentReadyRequestId === "gui-ready") {
+    failures.push(`Wrapper did not synthesize a generation-bound ready request id, got ${String(currentReadyRequestId)}.`);
+  }
+  await assertInvalidRuntimeUrlsRejected(page, bridgeVersion, currentReadyRequestId);
   if (failures.length > 0) {
     reportFailures();
   }
-
-  const readySequenceBeforeRuntime = await page.evaluate(() => window.__yetAiGuiReadySequence ?? 1);
   await page.evaluate(({ version, runtimeUrl, token, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
       version,
@@ -226,7 +228,7 @@ try {
         cloudRequired: false,
       },
     });
-  }, { version: bridgeVersion, runtimeUrl: runtimeBaseUrl, token: runtimeToken, requestId: "gui-ready" });
+  }, { version: bridgeVersion, runtimeUrl: runtimeBaseUrl, token: runtimeToken, requestId: currentReadyRequestId });
 
   const runtimeInput = frameLocator.getByLabel("Runtime base URL");
   await page.waitForTimeout(250);
@@ -234,20 +236,20 @@ try {
   if (runtimeInputValue !== runtimeBaseUrl) {
     failures.push("Iframe GUI did not apply wrapper host.ready runtime settings.");
   }
-  await page.evaluate((version) => {
+  await page.evaluate(({ version, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
       version,
       type: "host.openedFromCommand",
-      requestId: "gui-ready",
+      requestId,
       payload: {},
     });
-  }, bridgeVersion);
+  }, { version: bridgeVersion, requestId: currentReadyRequestId });
   const hostMessagesPostedBeforeInvalidOpened = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
-  await page.evaluate((version) => {
+  await page.evaluate(({ version, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
       version,
       type: "host.openedFromCommand",
-      requestId: "gui-ready",
+      requestId,
       payload: {
         command: "free-form",
       },
@@ -275,7 +277,7 @@ try {
         cloudRequired: true,
       },
     });
-  }, bridgeVersion);
+  }, { version: bridgeVersion, requestId: currentReadyRequestId });
   await page.waitForTimeout(100);
   const hostMessagesPostedAfterInvalidOpened = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
   if (hostMessagesPostedAfterInvalidOpened !== hostMessagesPostedBeforeInvalidOpened) {
@@ -339,7 +341,7 @@ try {
     failures.push("Send was not enabled for the JetBrains first-message preview path after safe mock readiness.");
   }
 
-  const contextRequestId = await page.evaluate(() => "gui-ready");
+  const contextRequestId = await page.evaluate(() => window.__yetAiCurrentReadyRequestId);
   await page.evaluate(({ version, payload, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
       version,
@@ -432,7 +434,7 @@ try {
   await guiServer.close();
 }
 
-async function assertInvalidRuntimeUrlsRejected(page, version) {
+async function assertInvalidRuntimeUrlsRejected(page, version, currentReadyRequestId) {
   const invalidRuntimeUrls = [
     undefined,
     "",
@@ -464,11 +466,11 @@ async function assertInvalidRuntimeUrlsRejected(page, version) {
     failures.push("Wrapper relayed host.ready with a non-loopback, credentialed, queried, fragmented, or non-root runtime URL.");
   }
   const batchBefore = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
-  await page.evaluate((bridgeVersion) => {
+  await page.evaluate(({ bridgeVersion, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
       version: bridgeVersion,
       type: "host.ready",
-      requestId: "gui-ready",
+      requestId,
       payload: {
         runtimeUrl: "http://127.0.0.1/v1",
         productId: "yet-ai",
@@ -479,13 +481,13 @@ async function assertInvalidRuntimeUrlsRejected(page, version) {
     window.__yetAiSendHostMessageToFrame({
       version: bridgeVersion,
       type: "host.openedFromCommand",
-      requestId: "gui-ready",
+      requestId,
       payload: {},
     });
     window.__yetAiSendHostMessageToFrame({
       version: bridgeVersion,
       type: "host.contextSnapshot",
-      requestId: "gui-ready",
+      requestId,
       payload: {
         kind: "active_editor",
         source: "jetbrains",
@@ -494,8 +496,7 @@ async function assertInvalidRuntimeUrlsRejected(page, version) {
         },
       },
     });
-  }, version);
-  await page.waitForTimeout(100);
+  }, { bridgeVersion: version, requestId: currentReadyRequestId });
   const batchAfter = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
   if (batchAfter !== batchBefore) {
     failures.push("Wrapper relayed opened/context messages from a batch whose host.ready runtime URL was invalid.");
@@ -532,8 +533,8 @@ async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeU
   if (afterReloadState.count !== beforeReloadCount) {
     failures.push("Wrapper delivered host.ready after iframe reload before fresh gui.ready.");
   }
-  if (afterReloadState.queueLength !== 1) {
-    failures.push("Wrapper did not queue exactly one stale host.ready after iframe reload before fresh gui.ready.");
+  if (afterReloadState.queueLength !== 0) {
+    failures.push("Wrapper queued stale host.ready after iframe reload before fresh gui.ready.");
   }
   await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, url) => {
     frame.src = `${url}/index.html`;
@@ -543,7 +544,7 @@ async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeU
   if (staleDeliveredAfterFreshReady) {
     failures.push("Wrapper delivered stale old-frame host.ready after fresh gui.ready following reload.");
   }
-  const currentRequestId = await page.evaluate(() => "gui-ready");
+  const currentRequestId = await page.evaluate(() => window.__yetAiCurrentReadyRequestId);
   await page.evaluate(({ bridgeVersion, readyUrl, sessionToken, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
       version: bridgeVersion,
@@ -674,6 +675,7 @@ let frameReady = false;
 let frameGeneration = 0;
 let currentGuiReadyRequestId;
 let guiReadySequence = 0;
+let currentGuiReadySequence = 0;
 let acceptedHostReadyRequestId;
 let hostReadyAcceptedForCurrentFrame = false;
 let flushingPending = false;
@@ -712,7 +714,8 @@ window.postIntellijMessage = (message) => {
   window.__yetAiBridgeMessages.push(message);
 };
 const currentReadyRequestId = () => currentGuiReadyRequestId;
-const messageMatchesCurrentReady = (message) => frameReady && message.requestId === currentReadyRequestId();
+const fallbackReadyRequestId = (sequence) => "gui-ready-" + frameGeneration + "-" + sequence;
+const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
 const canDeliverHostMessage = (message) => {
   if (!messageMatchesCurrentReady(message)) return false;
   if (message.type === "host.ready") return true;
@@ -732,20 +735,14 @@ const postToFrame = (message) => {
   }
 };
 const flushPending = () => {
-  const readyFrameGeneration = frameGeneration;
-  const readyRequestId = currentReadyRequestId();
   flushingPending = true;
   while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift());
-  while (frameReady && readyFrameGeneration === frameGeneration && readyRequestId === currentReadyRequestId() && pendingHostMessages.length > 0) postToFrame(pendingHostMessages.shift());
   pendingHostMessages.length = 0;
   flushingPending = false;
 };
 const sendToFrame = (message) => {
   if (!isHostMessage(message)) return;
-  if (!frameReady) {
-    pendingHostMessages.push(message);
-    return;
-  }
+  if (!frameReady) return;
   postToFrame(message);
 };
 const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -792,14 +789,16 @@ window.addEventListener("message", (event) => {
     if (isGuiMessage(event.data)) {
       frameReady = true;
       guiReadySequence += 1;
+      currentGuiReadySequence = guiReadySequence;
       window.__yetAiGuiReadySequence = guiReadySequence;
-      currentGuiReadyRequestId = event.data.requestId === undefined ? "gui-ready" : event.data.requestId;
+      currentGuiReadyRequestId = event.data.requestId === undefined ? fallbackReadyRequestId(currentGuiReadySequence) : event.data.requestId;
+      const readyMessage = event.data.requestId === undefined ? { ...event.data, requestId: currentGuiReadyRequestId } : event.data;
       window.__yetAiCurrentReadyRequestId = currentGuiReadyRequestId;
       acceptedHostReadyRequestId = undefined;
       hostReadyAcceptedForCurrentFrame = false;
       flushPending();
       window.__yetAiIframeGuiReady = true;
-      window.postIntellijMessage(event.data);
+      window.postIntellijMessage(readyMessage);
     } else {
       console.log("Yet AI rejected invalid iframe GUI bridge message");
     }
@@ -810,6 +809,7 @@ if (frame) {
   frame.addEventListener("load", () => {
     frameReady = false;
     frameGeneration += 1;
+    currentGuiReadySequence = 0;
     currentGuiReadyRequestId = undefined;
     acceptedHostReadyRequestId = undefined;
     hostReadyAcceptedForCurrentFrame = false;

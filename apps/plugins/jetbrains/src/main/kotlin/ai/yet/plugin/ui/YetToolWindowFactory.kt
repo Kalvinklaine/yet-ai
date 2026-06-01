@@ -100,7 +100,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
                 return@addHandler null
             }
             logger.info("Yet AI received gui.ready")
-            val requestId = guiReady.requestId ?: "gui-ready"
+            val requestId = guiReady.requestId
             guiReadyRequestId = requestId
             deliverReadyMessages(latestConnection.settings, requestId)
             null
@@ -115,7 +115,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
             latestConnection = connection
             ApplicationManager.getApplication().invokeLater {
                 if (!disposed) {
-                    guiReadyRequestId?.let { requestId -> deliverReadyMessages(connection.settings, requestId.ifBlank { "gui-ready" }) }
+                    guiReadyRequestId?.let { requestId -> deliverReadyMessages(connection.settings, requestId) }
                     connection.error?.let { error -> sendDiagnostic(error) }
                 }
             }
@@ -201,7 +201,7 @@ object JetBrainsReadyMessageDelivery {
             return false
         }
         val scheme = uri.scheme?.lowercase() ?: return false
-        val host = uri.host?.removeSurrounding("[", "]") ?: return false
+        val host = uri.host?.removeSurrounding("[", "]")?.lowercase() ?: return false
         val path = uri.rawPath ?: ""
         return uri.isAbsolute &&
             (scheme == "http" || scheme == "https") &&
@@ -297,6 +297,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         let frameGeneration = 0;
         let currentGuiReadyRequestId;
         let guiReadySequence = 0;
+        let currentGuiReadySequence = 0;
         let acceptedHostReadyRequestId;
         let hostReadyAcceptedForCurrentFrame = false;
         const pendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : [];
@@ -361,7 +362,8 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           return message.payload === undefined || (isPlainObject(message.payload) && hasOnlyKeys(message.payload, ["supportedBridgeVersion"]) && (message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion));
         };
         const currentReadyRequestId = () => currentGuiReadyRequestId;
-        const messageMatchesCurrentReady = (message) => frameReady && message.requestId === currentReadyRequestId();
+        const fallbackReadyRequestId = (sequence) => "gui-ready-" + frameGeneration + "-" + sequence;
+        const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
         const canDeliverHostMessage = (message) => {
           if (!messageMatchesCurrentReady(message)) return false;
           if (message.type === "host.ready") return true;
@@ -377,18 +379,12 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           }
         };
         const flushPending = () => {
-          const readyFrameGeneration = frameGeneration;
-          const readyRequestId = currentReadyRequestId();
           while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift());
-          while (frameReady && readyFrameGeneration === frameGeneration && readyRequestId === currentReadyRequestId() && pendingHostMessages.length > 0) postToFrame(pendingHostMessages.shift());
           pendingHostMessages.length = 0;
         };
         const sendToFrame = (message) => {
           if (!isHostMessage(message)) return;
-          if (!frameReady) {
-            pendingHostMessages.push(message);
-            return;
-          }
+          if (!frameReady) return;
           postToFrame(message);
         };
         window.__yetAiSendHostMessageToFrame = sendToFrame;
@@ -401,11 +397,13 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
             if (isGuiMessage(event.data)) {
               frameReady = true;
               guiReadySequence += 1;
-              currentGuiReadyRequestId = event.data.requestId === undefined ? "gui-ready" : event.data.requestId;
+              currentGuiReadySequence = guiReadySequence;
+              currentGuiReadyRequestId = event.data.requestId === undefined ? fallbackReadyRequestId(currentGuiReadySequence) : event.data.requestId;
+              const readyMessage = event.data.requestId === undefined ? { ...event.data, requestId: currentGuiReadyRequestId } : event.data;
               acceptedHostReadyRequestId = undefined;
               hostReadyAcceptedForCurrentFrame = false;
               flushPending();
-              window.postIntellijMessage(event.data);
+              window.postIntellijMessage(readyMessage);
             } else {
               console.log("Yet AI rejected invalid iframe GUI bridge message");
             }
@@ -416,6 +414,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           frame.addEventListener("load", () => {
             frameReady = false;
             frameGeneration += 1;
+            currentGuiReadySequence = 0;
             currentGuiReadyRequestId = undefined;
             acceptedHostReadyRequestId = undefined;
             hostReadyAcceptedForCurrentFrame = false;
