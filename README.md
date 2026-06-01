@@ -200,6 +200,15 @@ npm run smoke:jetbrains-gui-browser
 npm run smoke:jetbrains-first-message
 ```
 
+Run the individual packaged-GUI first-message smokes when you are changing only one IDE bridge path:
+
+```sh
+npm run smoke:vscode-first-message
+npm run smoke:jetbrains-first-message
+```
+
+These first-message smokes use loopback mock runtimes/providers and generated local artifacts only. They do not launch real IDEs, use real provider credentials, call OpenAI/ChatGPT, or contact hosted Yet AI services.
+
 Run individual prepare commands when you need one IDE artifact only:
 
 ```sh
@@ -224,7 +233,7 @@ dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip.sha256
 
 All generated VSIX/ZIP files, `.sha256` files, packaged GUI assets, copied engine binaries, Gradle outputs, `apps/gui/dist`, and root `dist/` preview artifacts are ignored/untracked local build outputs and must not be committed.
 
-`npm run smoke:ide-preview` runs `npm run prepare:vscode-preview`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, `npm run smoke:vscode-first-message`, `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, `npm run smoke:jetbrains-preview`, `npm run smoke:jetbrains-gui-browser`, and `npm run smoke:jetbrains-first-message` in order with fail-fast step labels. The underlying prepare commands build/prepare the local engine and `apps/gui`, then publish ignored root dev-preview artifacts under `dist/plugins/vscode/` and `dist/plugins/jetbrains/` with matching `.sha256` checksums. The generated VSIX, ZIP, checksums, GUI assets, extension/plugin output, engine binaries, and root `dist/` artifacts are ignored and must not be committed. This is a local dev-preview/install-from-file and first-message preview flow only: it is not marketplace publication, signing, notarization, a production installer, or a production release, and it requires no provider credentials, hosted Yet AI backend, real OpenAI/ChatGPT calls, or cloud workspace.
+`npm run smoke:ide-preview` runs `npm run prepare:vscode-preview`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, `npm run smoke:vscode-first-message`, `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, `npm run smoke:jetbrains-preview`, `npm run smoke:jetbrains-gui-browser`, and `npm run smoke:jetbrains-first-message` in order with fail-fast step labels. The underlying prepare commands build/prepare the local engine and `apps/gui`, then publish ignored root dev-preview artifacts under `dist/plugins/vscode/` and `dist/plugins/jetbrains/` with matching `.sha256` checksums. The generated VSIX, ZIP, checksums, GUI assets, extension/plugin output, engine binaries, and root `dist/` artifacts are ignored and must not be committed. This is a local dev-preview/install-from-file and first-message preview flow only: it is not marketplace publication, signing, notarization, a production installer, or a production release, and it requires no provider credentials, hosted Yet AI backend, real OpenAI/ChatGPT calls, or cloud workspace. The automated first-message coverage is loopback/mock-only; real OpenAI API-key fallback testing is manual-only and must produce sanitized evidence.
 
 Manual launch paths after preparation:
 
@@ -251,6 +260,8 @@ First-message manual checklist for either IDE:
 8. Send `Say hello in one sentence.` Expected behavior: accepted user message, optional one-shot context prepended by the local runtime, SSE snapshot/start/delta/finish updates, visible assistant response, and engine-owned local history reload without a Yet AI hosted backend, cloud workspace, managed gateway, product credit balance, or Yet AI account.
 
 Safe manual report evidence should be actionable but sanitized. Include command pass/fail results, IDE and OS versions, launch mode, artifact path family, checksum presence/match result, packaged GUI vs placeholder, sanitized runtime status, sanitized provider status, active-context attach/omit choice, and first-message outcome. Never share provider API keys, local runtime session tokens, bearer/Authorization values, auth codes, OAuth access/refresh tokens, PKCE verifiers, cookies, query values, fragment values, private absolute paths, raw provider responses, raw bridge payloads, request bodies, browser storage dumps, terminal scrollback containing secrets, or screenshots that show any of those values.
+
+JetBrains wrapper lifecycle policy is fail-closed across iframe reloads. Non-secret diagnostics that exist before the wrapper is initialized may be held only for the current wrapper setup path, but host messages are delivered to the GUI only after an accepted real `gui.ready` with a wrapper-owned generation/sequence nonce. Messages sent while the frame is unready, for an old generation, or with a stale nonce are dropped rather than replayed into a later frame.
 
 Current baseline subsystem checks are:
 
