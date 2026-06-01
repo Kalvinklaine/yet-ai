@@ -52,6 +52,8 @@ If a lockfile-compatible install is not available in your local workflow, use:
 npm install
 ```
 
+GitHub Actions runs the Yet AI CI workflow for pull requests and pushes to `main`. It is validation-only: it installs root, GUI, and VS Code dependencies with `npm ci`, uses Rust stable, and runs `npm run check`, `cargo check -p yet-lsp`, `cargo test -p yet-lsp`, GUI tests/build, and VS Code compile/engine-connection checks. CI uses local/mock-only checks and must not use secrets, real provider credentials, hosted Yet AI backend services, real IDE launch/JCEF automation, signing, marketplace publication, production installers, artifact release uploads, or real OpenAI/ChatGPT calls. Heavier JetBrains Gradle and IDE dogfood gates remain manual/local unless a separate bounded workflow opts into them.
+
 Run the local smoke test from the root to exercise the engine/provider/chat path without real provider credentials or hosted services:
 
 ```sh
