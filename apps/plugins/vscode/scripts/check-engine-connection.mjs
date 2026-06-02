@@ -16,6 +16,7 @@ let workspaceTextDocuments = [];
 const workspaceOpenDocumentListeners = [];
 const workspaceChangeDocumentListeners = [];
 const workspaceCloseDocumentListeners = [];
+const workspaceConfigurationListeners = [];
 const originalFetch = globalThis.fetch;
 const originalLoad = Module._load;
 const originalSpawn = childProcess.spawn;
@@ -112,6 +113,10 @@ Module._load = function load(request, parent, isMain) {
         },
         onDidCloseTextDocument(callback) {
           workspaceCloseDocumentListeners.push(callback);
+          return { dispose() {} };
+        },
+        onDidChangeConfiguration(callback) {
+          workspaceConfigurationListeners.push(callback);
           return { dispose() {} };
         },
       },
@@ -662,16 +667,20 @@ try {
       child.stdout.emit("data", Buffer.from(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`));
     }
 
-    function delay() {
-      return new Promise((resolve) => setImmediate(resolve));
-    }
-
-    const lspSpawns = [];
-    const lspOutputLines = [];
-    const lspOutput = { appendLine(line) { lspOutputLines.push(line); } };
-    childProcess.spawn = (command, args, options) => {
+    function createMockLspChild() {
       const child = new EventEmitter();
-      child.stdin = { chunks: [], destroyed: false, write(chunk) { this.chunks.push(chunk); return true; } };
+      child.stdin = {
+        chunks: [],
+        destroyed: false,
+        writableEnded: false,
+        write(chunk) {
+          if (this.throwOnWrite) {
+            throw new Error(`stdin closed Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}`);
+          }
+          this.chunks.push(chunk);
+          return true;
+        },
+      };
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
       child.killed = false;
@@ -679,8 +688,25 @@ try {
         child.killed = true;
         child.stdin.destroyed = true;
         child.emit("exit", null, "SIGTERM");
+        child.emit("close", null, "SIGTERM");
         return true;
       };
+      return child;
+    }
+
+    function delay() {
+      return new Promise((resolve) => setImmediate(resolve));
+    }
+
+    function delayMs(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    const lspSpawns = [];
+    const lspOutputLines = [];
+    const lspOutput = { appendLine(line) { lspOutputLines.push(line); } };
+    childProcess.spawn = (command, args, options) => {
+      const child = createMockLspChild();
       lspSpawns.push({ command, args, options, child });
       return child;
     };
@@ -753,13 +779,87 @@ try {
     lspSpawns[0].child.stderr.emit("data", Buffer.from(`stderr Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}`));
     assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticSecret), false, "LSP stderr leaked secret");
     assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticPath), false, "LSP stderr leaked private path");
+    const splitLspSecret = "split-lsp-secret-sentinel";
+    lspSpawns[0].child.stderr.emit("data", Buffer.from("split Authorization: Bear"));
+    lspSpawns[0].child.stderr.emit("data", Buffer.from(`er ${splitLspSecret}\n`));
+    const splitLspText = lspOutputLines.join("\n");
+    assert.equal(splitLspText.includes(splitLspSecret), false, "split LSP stderr leaked secret");
+    assert.equal(splitLspText.includes(`Bearer ${splitLspSecret}`), false, "split LSP stderr leaked bearer secret");
+    lspSpawns[0].child.stdin.throwOnWrite = true;
+    fileDocument.version = 5;
+    workspaceChangeDocumentListeners.at(-1)({ document: fileDocument });
+    assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticSecret), false, "LSP stdin failure leaked secret");
+    assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticPath), false, "LSP stdin failure leaked private path");
+    lspSpawns[0].child.stdin.throwOnWrite = false;
     stopYetAiLspClient(lspOutput);
     lspMessages = takeLspClientMessages(lspSpawns[0].child);
     assert.equal(lspMessages[0].method, "shutdown");
     emitLspResponse(lspSpawns[0].child, lspMessages[0].id, null);
     await delay();
+    assert.equal(lspSpawns[0].child.killed, false, "LSP graceful shutdown killed before exit notification grace");
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages[0].method, "exit");
+    await delayMs(700);
     assert.equal(lspSpawns[0].child.killed, true, "LSP deactivate cleanup did not stop process");
     assert.equal(registeredCompletionProviders[0].disposed, true, "LSP completion provider was not disposed");
+
+    const staleDisposedIndex = registeredCompletionProviders.length - 1;
+    startYetAiLspClient({ ...fakeContext, extensionPath: tempRoot }, { engine: { binaryName: "yet-lsp" } }, lspOutput);
+    assert.equal(lspSpawns.length, 2, "LSP retry after stop did not spawn");
+    lspMessages = takeLspClientMessages(lspSpawns[1].child);
+    emitLspResponse(lspSpawns[1].child, lspMessages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
+    await delay();
+    assert.equal(registeredCompletionProviders.at(-1).disposed, false, "retry completion provider was unexpectedly disposed");
+    lspSpawns[1].child.emit("error", new Error(`async lsp error Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}`));
+    await delay();
+    assert.equal(registeredCompletionProviders.at(-1).disposed, true, "async LSP error did not dispose provider");
+    assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticSecret), false, "async LSP error leaked secret");
+    assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticPath), false, "async LSP error leaked private path");
+    startYetAiLspClient({ ...fakeContext, extensionPath: tempRoot }, { engine: { binaryName: "yet-lsp" } }, lspOutput);
+    assert.equal(lspSpawns.length, 3, "LSP retry after error did not spawn");
+    lspMessages = takeLspClientMessages(lspSpawns[2].child);
+    emitLspResponse(lspSpawns[2].child, lspMessages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
+    await delay();
+    lspSpawns[2].child.emit("close", 7, null);
+    await delay();
+    assert.equal(registeredCompletionProviders.at(-1).disposed, true, "async LSP close did not dispose provider");
+    startYetAiLspClient({ ...fakeContext, extensionPath: tempRoot }, { engine: { binaryName: "yet-lsp" } }, lspOutput);
+    assert.equal(lspSpawns.length, 4, "LSP retry after close did not spawn");
+    lspMessages = takeLspClientMessages(lspSpawns[3].child);
+    emitLspResponse(lspSpawns[3].child, lspMessages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
+    await delay();
+    lspSpawns[3].child.emit("close", 0, null);
+    await delay();
+    assert.equal(registeredCompletionProviders[staleDisposedIndex].disposed, true, "stale LSP provider was not disposed");
+
+    const toggleContext = { ...fakeContext, extensionPath: process.cwd(), extensionUri: { fsPath: process.cwd(), path: process.cwd(), scheme: "file", toString: () => process.cwd() }, subscriptions: [] };
+    configValues = {
+      "lsp.enabled": false,
+      engineBinaryPath: executable,
+    };
+    extensionModule.activate(toggleContext);
+    assert.equal(lspSpawns.length, 4, "disabled activation unexpectedly spawned LSP");
+    configValues = {
+      "lsp.enabled": true,
+      engineBinaryPath: executable,
+    };
+    workspaceConfigurationListeners.at(-1)({ affectsConfiguration(name) { return name === "yetai.lsp.enabled"; } });
+    assert.equal(lspSpawns.length, 5, "LSP setting enable did not spawn client");
+    lspMessages = takeLspClientMessages(lspSpawns[4].child);
+    emitLspResponse(lspSpawns[4].child, lspMessages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
+    await delay();
+    takeLspClientMessages(lspSpawns[4].child);
+    configValues = {
+      "lsp.enabled": false,
+      engineBinaryPath: executable,
+    };
+    workspaceConfigurationListeners.at(-1)({ affectsConfiguration(name) { return name === "yetai.lsp.enabled"; } });
+    lspMessages = takeLspClientMessages(lspSpawns[4].child);
+    assert.equal(lspMessages[0].method, "shutdown", "LSP setting disable did not stop client");
+    emitLspResponse(lspSpawns[4].child, lspMessages[0].id, null);
+    await delay();
+    lspSpawns[4].child.emit("close", 0, null);
+    await delay();
     childProcess.spawn = () => {
       throw new Error(`LSP spawn failed Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}`);
     };

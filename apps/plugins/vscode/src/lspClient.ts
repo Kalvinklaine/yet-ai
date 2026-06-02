@@ -12,11 +12,15 @@ type LspProcess = {
   process: childProcess.ChildProcess;
   binaryPath: string;
   stdoutBuffer: Buffer;
+  stderrLineBuffer: string;
   nextRequestId: number;
   initialized: boolean;
+  stopping: boolean;
+  closed: boolean;
   pending: Map<number, PendingRequest>;
   documents: Map<string, number>;
   disposables: vscode.Disposable[];
+  shutdownTimers: ReturnType<typeof setTimeout>[];
 };
 
 type PendingRequest = {
@@ -38,6 +42,9 @@ const lspDiagnosticTruncationMarker = "… [truncated sanitized LSP diagnostic]"
 const maxLspHeaderBytes = 8 * 1024;
 const maxLspMessageBytes = 512 * 1024;
 const lspRequestTimeoutMs = 5_000;
+const lspShutdownGraceMs = 500;
+const lspForceKillGraceMs = 1_500;
+const maxLspDiagnosticLineBuffer = 8 * 1024;
 const completionLabel = "Yet AI LSP connected";
 
 export function isLspEnabled(): boolean {
@@ -48,7 +55,7 @@ export function startYetAiLspClient(context: vscode.ExtensionContext, identity: 
   if (!isLspEnabled()) {
     return;
   }
-  if (lspProcess && !lspProcess.process.killed) {
+  if (lspProcess && !lspProcess.closed && !lspProcess.process.killed) {
     output.appendLine("Yet AI read-only LSP MVP is already running.");
     return;
   }
@@ -83,11 +90,15 @@ export function startYetAiLspClient(context: vscode.ExtensionContext, identity: 
     process: child,
     binaryPath,
     stdoutBuffer: Buffer.alloc(0),
+    stderrLineBuffer: "",
     nextRequestId: 1,
     initialized: false,
+    stopping: false,
+    closed: false,
     pending: new Map(),
     documents: new Map(),
     disposables: [],
+    shutdownTimers: [],
   };
   lspProcess = client;
   output.appendLine(`Started Yet AI read-only LSP MVP from ${path.basename(binaryPath)}.`);
@@ -101,21 +112,20 @@ export function stopYetAiLspClient(output?: LspOutput): void {
   }
   const current = lspProcess;
   lspProcess = undefined;
-  for (const disposable of current.disposables.splice(0)) {
-    disposable.dispose();
-  }
-  for (const pending of current.pending.values()) {
-    clearTimeout(pending.timer);
-    pending.reject(new Error("LSP client stopped"));
-  }
-  current.pending.clear();
+  current.stopping = true;
+  disposeLspClient(current);
+  rejectPending(current, new Error("LSP client stopped"));
   output?.appendLine("Stopping Yet AI read-only LSP MVP.");
-  if (!current.process.killed) {
-    void sendLspRequest(current, "shutdown", null).catch(() => undefined).finally(() => {
-      sendLspNotification(current, "exit", {});
-      current.process.kill();
-    });
+  if (current.closed || current.process.killed) {
+    return;
   }
+  void sendLspRequest(current, "shutdown", null, output).catch(() => undefined).finally(() => {
+    sendLspNotification(current, "exit", {}, output);
+    if (!current.closed && !current.process.killed) {
+      current.shutdownTimers.push(setTimeout(() => forceKillLspProcess(current), lspShutdownGraceMs));
+    }
+  });
+  current.shutdownTimers.push(setTimeout(() => forceKillLspProcess(current), lspForceKillGraceMs));
 }
 
 export function createLspProcessEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -155,39 +165,44 @@ async function initializeLspClient(client: LspProcess, output: LspOutput): Promi
         },
         workspace: {},
       },
-    });
+    }, output);
     if (initialize.error) {
       output.appendLine(`Yet AI read-only LSP MVP initialize failed: ${sanitizeLspDiagnostic(initialize.error.message, "initialize failed")}`);
       stopYetAiLspClient(output);
       return;
     }
+    if (client.closed || client.stopping) {
+      return;
+    }
     client.initialized = true;
-    sendLspNotification(client, "initialized", {});
+    sendLspNotification(client, "initialized", {}, output);
     registerDocumentSync(client, output);
     output.appendLine("Yet AI read-only LSP MVP initialized for local file document sync and deterministic completion.");
   } catch (error) {
-    output.appendLine(`Yet AI read-only LSP MVP initialize failed: ${sanitizeLspDiagnostic(error, "initialize failed")}`);
-    stopYetAiLspClient(output);
+    if (!client.stopping) {
+      output.appendLine(`Yet AI read-only LSP MVP initialize failed: ${sanitizeLspDiagnostic(error, "initialize failed")}`);
+      stopYetAiLspClient(output);
+    }
   }
 }
 
 function registerDocumentSync(client: LspProcess, output: LspOutput): void {
   for (const document of vscode.workspace.textDocuments ?? []) {
-    syncOpenDocument(client, document);
+    syncOpenDocument(client, document, output);
   }
-  client.disposables.push(vscode.workspace.onDidOpenTextDocument((document) => syncOpenDocument(client, document)));
-  client.disposables.push(vscode.workspace.onDidChangeTextDocument((event) => syncChangedDocument(client, event.document)));
-  client.disposables.push(vscode.workspace.onDidCloseTextDocument((document) => syncClosedDocument(client, document)));
+  client.disposables.push(vscode.workspace.onDidOpenTextDocument((document) => syncOpenDocument(client, document, output)));
+  client.disposables.push(vscode.workspace.onDidChangeTextDocument((event) => syncChangedDocument(client, event.document, output)));
+  client.disposables.push(vscode.workspace.onDidCloseTextDocument((document) => syncClosedDocument(client, document, output)));
   client.disposables.push(vscode.languages.registerCompletionItemProvider({ scheme: "file" }, {
     async provideCompletionItems(document, position) {
       if (!isSupportedDocument(document)) {
         return undefined;
       }
-      syncOpenDocument(client, document);
+      syncOpenDocument(client, document, output);
       const response = await sendLspRequest(client, "textDocument/completion", {
         textDocument: { uri: document.uri.toString() },
         position: { line: position.line, character: position.character },
-      });
+      }, output);
       if (response.error) {
         output.appendLine(`Yet AI read-only LSP MVP completion failed: ${sanitizeLspDiagnostic(response.error.message, "completion failed")}`);
         return undefined;
@@ -197,7 +212,7 @@ function registerDocumentSync(client: LspProcess, output: LspOutput): void {
   }));
 }
 
-function syncOpenDocument(client: LspProcess, document: vscode.TextDocument): void {
+function syncOpenDocument(client: LspProcess, document: vscode.TextDocument, output: LspOutput): void {
   if (!client.initialized || !isSupportedDocument(document)) {
     return;
   }
@@ -207,7 +222,7 @@ function syncOpenDocument(client: LspProcess, document: vscode.TextDocument): vo
     return;
   }
   if (client.documents.has(uri)) {
-    syncChangedDocument(client, document);
+    syncChangedDocument(client, document, output);
     return;
   }
   client.documents.set(uri, version);
@@ -218,16 +233,16 @@ function syncOpenDocument(client: LspProcess, document: vscode.TextDocument): vo
       version,
       text: document.getText(),
     },
-  });
+  }, output);
 }
 
-function syncChangedDocument(client: LspProcess, document: vscode.TextDocument): void {
+function syncChangedDocument(client: LspProcess, document: vscode.TextDocument, output: LspOutput): void {
   if (!client.initialized || !isSupportedDocument(document)) {
     return;
   }
   const uri = document.uri.toString();
   if (!client.documents.has(uri)) {
-    syncOpenDocument(client, document);
+    syncOpenDocument(client, document, output);
     return;
   }
   client.documents.set(uri, document.version);
@@ -237,10 +252,10 @@ function syncChangedDocument(client: LspProcess, document: vscode.TextDocument):
       version: document.version,
     },
     contentChanges: [{ text: document.getText() }],
-  });
+  }, output);
 }
 
-function syncClosedDocument(client: LspProcess, document: vscode.TextDocument): void {
+function syncClosedDocument(client: LspProcess, document: vscode.TextDocument, output: LspOutput): void {
   if (!isSupportedDocument(document)) {
     return;
   }
@@ -250,7 +265,7 @@ function syncClosedDocument(client: LspProcess, document: vscode.TextDocument): 
   }
   sendLspNotification(client, "textDocument/didClose", {
     textDocument: { uri },
-  });
+  }, output);
 }
 
 function isSupportedDocument(document: vscode.TextDocument): boolean {
@@ -281,32 +296,81 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function attachLspDiagnostics(client: LspProcess, output: LspOutput): void {
   const child = client.process;
   child.stdout?.on("data", (chunk: Buffer) => handleLspStdout(client, chunk, output));
-  child.stderr?.on("data", (chunk: Buffer) => {
-    const diagnostic = sanitizeLspDiagnostic(chunk.toString("utf8"), "LSP stderr");
-    if (diagnostic.trim().length > 0) {
-      output.appendLine(`[lsp] ${diagnostic}`);
-    }
-  });
-  child.on("exit", (code, signal) => {
-    output.appendLine(`Yet AI read-only LSP MVP exited with code ${code ?? "null"} and signal ${signal ?? "null"}.`);
-    rejectPending(client, new Error("LSP process exited"));
-    for (const disposable of client.disposables.splice(0)) {
-      disposable.dispose();
-    }
-    if (lspProcess?.process === child) {
-      lspProcess = undefined;
-    }
-  });
+  child.stderr?.on("data", (chunk: Buffer) => appendLspStderr(client, chunk.toString("utf8"), output));
+  child.on("close", (code, signal) => closeLspClient(client, output, `Yet AI read-only LSP MVP exited with code ${code ?? "null"} and signal ${signal ?? "null"}.`, new Error("LSP process exited")));
+  child.on("exit", (code, signal) => closeLspClient(client, output, `Yet AI read-only LSP MVP exited with code ${code ?? "null"} and signal ${signal ?? "null"}.`, new Error("LSP process exited")));
   child.on("error", (error) => {
-    output.appendLine(`Yet AI read-only LSP MVP process error from ${path.basename(client.binaryPath)}: ${sanitizeLspDiagnostic(error, "process error")}`);
-    rejectPending(client, error instanceof Error ? error : new Error("LSP process error"));
-    if (lspProcess?.process === child) {
-      lspProcess = undefined;
-    }
+    closeLspClient(
+      client,
+      output,
+      `Yet AI read-only LSP MVP process error from ${path.basename(client.binaryPath)}: ${sanitizeLspDiagnostic(error, "process error")}`,
+      error instanceof Error ? error : new Error("LSP process error"),
+    );
   });
 }
 
+function closeLspClient(client: LspProcess, output: LspOutput, diagnostic: string, error: Error): void {
+  if (client.closed) {
+    return;
+  }
+  client.closed = true;
+  flushLspStderr(client, output);
+  output.appendLine(diagnostic);
+  rejectPending(client, error);
+  disposeLspClient(client);
+  clearShutdownTimers(client);
+  if (lspProcess?.process === client.process) {
+    lspProcess = undefined;
+  }
+}
+
+function appendLspStderr(client: LspProcess, text: string, output: LspOutput): void {
+  client.stderrLineBuffer += text;
+  let lineEnd = findLineEnd(client.stderrLineBuffer);
+  while (lineEnd !== -1) {
+    const line = client.stderrLineBuffer.slice(0, lineEnd);
+    const nextOffset = client.stderrLineBuffer[lineEnd] === "\r" && client.stderrLineBuffer[lineEnd + 1] === "\n" ? lineEnd + 2 : lineEnd + 1;
+    client.stderrLineBuffer = client.stderrLineBuffer.slice(nextOffset);
+    appendSanitizedLspStderrLine(line, output);
+    lineEnd = findLineEnd(client.stderrLineBuffer);
+  }
+  if (client.stderrLineBuffer.length > maxLspDiagnosticLineBuffer) {
+    appendSanitizedLspStderrLine(client.stderrLineBuffer, output);
+    client.stderrLineBuffer = "";
+  }
+}
+
+function flushLspStderr(client: LspProcess, output: LspOutput): void {
+  if (client.stderrLineBuffer.length === 0) {
+    return;
+  }
+  appendSanitizedLspStderrLine(client.stderrLineBuffer, output);
+  client.stderrLineBuffer = "";
+}
+
+function findLineEnd(text: string): number {
+  const lf = text.indexOf("\n");
+  const cr = text.indexOf("\r");
+  if (lf === -1) {
+    return cr;
+  }
+  if (cr === -1) {
+    return lf;
+  }
+  return Math.min(lf, cr);
+}
+
+function appendSanitizedLspStderrLine(line: string, output: LspOutput): void {
+  const diagnostic = sanitizeLspDiagnostic(line, "LSP stderr");
+  if (diagnostic.trim().length > 0) {
+    output.appendLine(`[lsp] ${diagnostic}`);
+  }
+}
+
 function handleLspStdout(client: LspProcess, chunk: Buffer, output: LspOutput): void {
+  if (client.closed) {
+    return;
+  }
   client.stdoutBuffer = Buffer.concat([client.stdoutBuffer, chunk]);
   if (client.stdoutBuffer.length > maxLspMessageBytes) {
     output.appendLine("Yet AI read-only LSP MVP stdout exceeded bounded parser buffer.");
@@ -367,7 +431,7 @@ function parseContentLength(header: string): number | undefined {
   return undefined;
 }
 
-function sendLspRequest(client: LspProcess, method: string, params: unknown): Promise<LspResponse> {
+function sendLspRequest(client: LspProcess, method: string, params: unknown, output?: LspOutput): Promise<LspResponse> {
   const id = client.nextRequestId;
   client.nextRequestId += 1;
   return new Promise((resolve, reject) => {
@@ -376,12 +440,16 @@ function sendLspRequest(client: LspProcess, method: string, params: unknown): Pr
       reject(new Error(`${method} timed out`));
     }, lspRequestTimeoutMs);
     client.pending.set(id, { resolve, reject, timer });
-    sendLspMessage(client.process, { jsonrpc: "2.0", id, method, params });
+    if (!sendLspMessage(client, { jsonrpc: "2.0", id, method, params }, output)) {
+      clearTimeout(timer);
+      client.pending.delete(id);
+      reject(new Error(`${method} could not be sent`));
+    }
   });
 }
 
-function sendLspNotification(client: LspProcess, method: string, params: unknown): void {
-  sendLspMessage(client.process, { jsonrpc: "2.0", method, params });
+function sendLspNotification(client: LspProcess, method: string, params: unknown, output?: LspOutput): void {
+  sendLspMessage(client, { jsonrpc: "2.0", method, params }, output);
 }
 
 function rejectPending(client: LspProcess, error: Error): void {
@@ -392,14 +460,35 @@ function rejectPending(client: LspProcess, error: Error): void {
   client.pending.clear();
 }
 
-function sendLspMessage(child: childProcess.ChildProcess, message: unknown): void {
-  if (!child.stdin || child.killed || child.stdin.destroyed) {
-    return;
+function disposeLspClient(client: LspProcess): void {
+  for (const disposable of client.disposables.splice(0)) {
+    disposable.dispose();
+  }
+}
+
+function clearShutdownTimers(client: LspProcess): void {
+  for (const timer of client.shutdownTimers.splice(0)) {
+    clearTimeout(timer);
+  }
+}
+
+function forceKillLspProcess(client: LspProcess): void {
+  if (!client.closed && !client.process.killed) {
+    client.process.kill();
+  }
+}
+
+function sendLspMessage(client: LspProcess, message: unknown, output?: LspOutput): boolean {
+  const child = client.process;
+  if (client.closed || !child.stdin || child.killed || child.stdin.destroyed || child.stdin.writableEnded) {
+    return false;
   }
   const body = JSON.stringify(message);
   try {
     child.stdin.write(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`);
-  } catch {
-    return;
+    return true;
+  } catch (error) {
+    output?.appendLine(`Yet AI read-only LSP MVP stdin write failed: ${sanitizeLspDiagnostic(error, "stdin write failed")}`);
+    return false;
   }
 }
