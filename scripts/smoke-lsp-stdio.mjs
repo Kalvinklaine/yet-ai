@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const timeoutMs = 10_000;
+const terminateTimeoutMs = 2_000;
+const killTimeoutMs = 1_000;
 const maxOutputBytes = 64 * 1024;
 const maxFailureText = 4_000;
 const maxHeaderBytes = 8 * 1024;
@@ -86,10 +88,11 @@ try {
 
   console.log("LSP stdio smoke passed.");
 } catch (error) {
+  let cleanupError;
   if (child) {
-    await stopProcess(child);
+    cleanupError = await stopProcess(child);
   }
-  console.error(formatFailure(error));
+  console.error(formatFailure(error, cleanupError));
   process.exit(1);
 } finally {
   if (child) {
@@ -254,17 +257,41 @@ async function waitForExit(expectedCode) {
 
 async function stopProcess(target) {
   if (target.exitCode !== null || target.signalCode !== null) {
-    return;
+    return undefined;
   }
-  target.kill("SIGTERM");
-  const exited = await Promise.race([
-    new Promise((resolve) => target.once("exit", resolve)),
-    delay(2_000).then(() => false)
-  ]);
-  if (exited === false) {
+  try {
+    target.kill("SIGTERM");
+  } catch (error) {
+    return cleanupDiagnostic("SIGTERM", error);
+  }
+  const exited = await waitForProcessExit(target, terminateTimeoutMs);
+  if (exited) {
+    return undefined;
+  }
+  try {
     target.kill("SIGKILL");
-    await new Promise((resolve) => target.once("exit", resolve));
+  } catch (error) {
+    return cleanupDiagnostic("SIGKILL", error);
   }
+  const killed = await waitForProcessExit(target, killTimeoutMs);
+  if (!killed) {
+    return `LSP cleanup timed out ${killTimeoutMs}ms after SIGKILL`;
+  }
+  return undefined;
+}
+
+async function waitForProcessExit(target, ms) {
+  if (target.exitCode !== null || target.signalCode !== null) {
+    return true;
+  }
+  return await Promise.race([
+    new Promise((resolve) => target.once("exit", () => resolve(true))),
+    delay(ms).then(() => false)
+  ]);
+}
+
+function cleanupDiagnostic(signal, error) {
+  return boundedDiagnostic(`LSP cleanup ${signal} failed: ${error?.message ?? error}`);
 }
 
 function lspEnv() {
@@ -286,9 +313,10 @@ function boundedAppend(existing, next) {
   return combined.length > maxOutputBytes ? combined.slice(-maxOutputBytes) : combined;
 }
 
-function formatFailure(error) {
+function formatFailure(error, cleanupError) {
+  const cleanup = cleanupError ? `\nLSP cleanup diagnostic:\n${cleanupError}` : "";
   const output = child ? `\nLSP stderr/stdout tail:\n${child.stderrText}\n${child.stdoutBuffer.toString("utf8")}` : "";
-  return boundedDiagnostic(`LSP stdio smoke failed: ${error?.message ?? error}${output}`);
+  return boundedDiagnostic(`LSP stdio smoke failed: ${error?.message ?? error}${cleanup}${output}`);
 }
 
 function boundedDiagnostic(text) {
