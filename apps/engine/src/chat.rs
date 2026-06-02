@@ -137,12 +137,19 @@ impl ChatRuntime {
         let runtime = self.clone();
         let task_chat_id = chat_id.clone();
         let (start_sender, start_receiver) = oneshot::channel();
-        let replaced = {
+        {
             let mut guard = self.inner.lock().await;
             let state = guard
                 .entry(chat_id.clone())
                 .or_insert_with(|| ChatState::new(&chat_id));
-            let replaced = state.active_stream.take();
+            if let Some(active) = state.active_stream.take() {
+                active.handle.abort();
+                state.push_event(
+                    &chat_id,
+                    "stream_finished",
+                    json!({ "finishReason": "abort" }),
+                );
+            }
             let stream_id = state.next_stream_id;
             state.next_stream_id += 1;
             let handle = tokio::spawn(async move {
@@ -156,37 +163,12 @@ impl ChatRuntime {
                 id: stream_id,
                 handle,
             });
-            replaced
-        };
-        if let Some(active) = replaced {
-            active.handle.abort();
-            self.push_event(
-                &chat_id,
-                "stream_finished",
-                json!({ "finishReason": "abort" }),
-            )
-            .await;
         }
         let _ = start_sender.send(());
     }
 
     pub async fn accept_abort(&self, chat_id: &str) {
-        let active = {
-            let mut guard = self.inner.lock().await;
-            let state = guard
-                .entry(chat_id.to_string())
-                .or_insert_with(|| ChatState::new(chat_id));
-            state.active_stream.take()
-        };
-        if let Some(active) = active {
-            active.handle.abort();
-            self.push_event(
-                chat_id,
-                "stream_finished",
-                json!({ "finishReason": "abort" }),
-            )
-            .await;
-        }
+        self.abort_active_stream(chat_id).await;
     }
 
     pub async fn subscribe(
@@ -217,22 +199,6 @@ impl ChatRuntime {
         snapshot_stream.chain(replay_stream).chain(live_stream)
     }
 
-    async fn push_event(&self, chat_id: &str, event_type: &str, payload: serde_json::Value) {
-        let mut guard = self.inner.lock().await;
-        let state = guard
-            .entry(chat_id.to_string())
-            .or_insert_with(|| ChatState::new(chat_id));
-        let event = ChatEvent {
-            seq: state.next_seq,
-            event_type: event_type.to_string(),
-            chat_id: chat_id.to_string(),
-            payload,
-        };
-        state.next_seq += 1;
-        state.events.push(event.clone());
-        let _ = state.sender.send(event);
-    }
-
     async fn push_stream_event(
         &self,
         chat_id: &str,
@@ -251,15 +217,47 @@ impl ChatRuntime {
         {
             return false;
         }
-        let event = ChatEvent {
-            seq: state.next_seq,
-            event_type: event_type.to_string(),
-            chat_id: chat_id.to_string(),
-            payload,
+        state.push_event(chat_id, event_type, payload);
+        true
+    }
+
+    async fn claim_stream_terminal_event(
+        &self,
+        chat_id: &str,
+        stream_id: u64,
+        event_type: &str,
+        payload: serde_json::Value,
+    ) -> bool {
+        let mut guard = self.inner.lock().await;
+        let Some(state) = guard.get_mut(chat_id) else {
+            return false;
         };
-        state.next_seq += 1;
-        state.events.push(event.clone());
-        let _ = state.sender.send(event);
+        if !state
+            .active_stream
+            .as_ref()
+            .is_some_and(|active| active.id == stream_id)
+        {
+            return false;
+        }
+        state.active_stream = None;
+        state.push_event(chat_id, event_type, payload);
+        true
+    }
+
+    async fn abort_active_stream(&self, chat_id: &str) -> bool {
+        let mut guard = self.inner.lock().await;
+        let state = guard
+            .entry(chat_id.to_string())
+            .or_insert_with(|| ChatState::new(chat_id));
+        let Some(active) = state.active_stream.take() else {
+            return false;
+        };
+        active.handle.abort();
+        state.push_event(
+            chat_id,
+            "stream_finished",
+            json!({ "finishReason": "abort" }),
+        );
         true
     }
 
@@ -312,7 +310,7 @@ impl ChatRuntime {
                         Some(ChatMessageStatus::Complete),
                     )
                     .await;
-                self.push_stream_event(
+                self.claim_stream_terminal_event(
                     &chat_id,
                     stream_id,
                     "stream_finished",
@@ -330,7 +328,7 @@ impl ChatRuntime {
                         Some(ChatMessageStatus::Error),
                     )
                     .await;
-                self.push_stream_event(
+                self.claim_stream_terminal_event(
                     &chat_id,
                     stream_id,
                     "error",
@@ -339,7 +337,6 @@ impl ChatRuntime {
                 .await;
             }
         }
-        self.clear_active_stream(&chat_id, stream_id).await;
     }
 
     async fn append_history_message(
@@ -380,19 +377,6 @@ impl ChatRuntime {
                 .as_ref()
                 .is_some_and(|active| active.id == stream_id)
         })
-    }
-
-    async fn clear_active_stream(&self, chat_id: &str, stream_id: u64) {
-        let mut guard = self.inner.lock().await;
-        if let Some(state) = guard.get_mut(chat_id) {
-            if state
-                .active_stream
-                .as_ref()
-                .is_some_and(|active| active.id == stream_id)
-            {
-                state.active_stream = None;
-            }
-        }
     }
 
     async fn stream_provider(
@@ -645,6 +629,18 @@ impl ChatState {
             active_stream: None,
             next_stream_id: 1,
         }
+    }
+
+    fn push_event(&mut self, chat_id: &str, event_type: &str, payload: serde_json::Value) {
+        let event = ChatEvent {
+            seq: self.next_seq,
+            event_type: event_type.to_string(),
+            chat_id: chat_id.to_string(),
+            payload,
+        };
+        self.next_seq += 1;
+        self.events.push(event.clone());
+        let _ = self.sender.send(event);
     }
 }
 

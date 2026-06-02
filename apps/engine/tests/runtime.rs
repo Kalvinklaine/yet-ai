@@ -8561,6 +8561,119 @@ async fn chat_immediate_abort_after_user_message_reliably_aborts_active_stream()
 }
 
 #[tokio::test]
+async fn chat_late_abort_after_stop_does_not_emit_duplicate_abort_terminal() {
+    let api_key = "sk-late-abort-secret-abcd";
+    let (base_url, auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"done\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    send_user_message_with_content(app.clone(), "chat-late-abort-after-stop", "finish first").await;
+    let loaded = wait_for_chat_messages(app.clone(), "chat-late-abort-after-stop", 2).await;
+    assert_eq!(loaded["messages"][1]["content"], "done");
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    send_abort(
+        app.clone(),
+        "chat-late-abort-after-stop",
+        "req-late-abort-after-stop",
+    )
+    .await;
+
+    let text = sse_text_from(
+        app,
+        "/v1/chats/subscribe?chat_id=chat-late-abort-after-stop",
+    )
+    .await;
+    let events = sse_json_events(&text);
+    let stop_count = events
+        .iter()
+        .filter(|event| {
+            event["type"] == "stream_finished" && event["payload"]["finishReason"] == "stop"
+        })
+        .count();
+    let abort_count = events
+        .iter()
+        .filter(|event| {
+            event["type"] == "stream_finished" && event["payload"]["finishReason"] == "abort"
+        })
+        .count();
+    assert_eq!(stop_count, 1);
+    assert_eq!(abort_count, 0);
+    assert!(!text.contains(api_key));
+    assert_sanitized_sse_error(&text);
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer sk-late-abort-secret-abcd",
+        "late abort after stop",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn chat_replacement_after_completed_stream_does_not_abort_completed_stream() {
+    let api_key = "sk-replacement-after-stop-secret-abcd";
+    let (base_url, mut auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"done\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    send_user_message_with_content(app.clone(), "chat-replacement-after-stop", "first prompt")
+        .await;
+    let loaded = wait_for_chat_messages(app.clone(), "chat-replacement-after-stop", 2).await;
+    assert_eq!(loaded["messages"][1]["content"], "done");
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    send_user_message_with_content(app.clone(), "chat-replacement-after-stop", "second prompt")
+        .await;
+    let loaded = wait_for_chat_messages(app.clone(), "chat-replacement-after-stop", 4).await;
+    assert_eq!(loaded["messages"][3]["content"], "done");
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let text = sse_text_from(
+        app,
+        "/v1/chats/subscribe?chat_id=chat-replacement-after-stop",
+    )
+    .await;
+    let events = sse_json_events(&text);
+    let stop_count = events
+        .iter()
+        .filter(|event| {
+            event["type"] == "stream_finished" && event["payload"]["finishReason"] == "stop"
+        })
+        .count();
+    let abort_count = events
+        .iter()
+        .filter(|event| {
+            event["type"] == "stream_finished" && event["payload"]["finishReason"] == "abort"
+        })
+        .count();
+    assert_eq!(stop_count, 2);
+    assert_eq!(abort_count, 0);
+    assert!(!text.contains(api_key));
+    assert_sanitized_sse_error(&text);
+    let first = auth_receiver.recv().await.unwrap();
+    let second = auth_receiver.recv().await.unwrap();
+    assert_stored_secret(
+        first.as_deref(),
+        "Bearer sk-replacement-after-stop-secret-abcd",
+    );
+    assert_stored_secret(
+        second.as_deref(),
+        "Bearer sk-replacement-after-stop-secret-abcd",
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), auth_receiver.recv())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
 async fn chat_same_chat_replacement_aborts_old_stream_without_stale_terminal_effects() {
     let api_key = "sk-replacement-secret-abcd";
     let (base_url, auth_receiver, first_seen_receiver, release_first_sender) =
