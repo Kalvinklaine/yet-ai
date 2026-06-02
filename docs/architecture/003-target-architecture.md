@@ -164,7 +164,7 @@ apps/
   gui/                 # React webview UI and design system, bundled for IDE hosts
   plugins/
     vscode/            # VS Code extension host, engine launcher, webview bridge, LSP client
-    jetbrains/         # JetBrains plugin host, engine launcher, JCEF bridge, LSP client
+    jetbrains/         # JetBrains plugin host, engine launcher, JCEF bridge; LSP client deferred
 product/
   identity.json        # Product identity source of truth
   identity.schema.json # Identity validation schema

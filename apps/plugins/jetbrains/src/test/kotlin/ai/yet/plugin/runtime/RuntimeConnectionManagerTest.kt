@@ -207,11 +207,29 @@ class RuntimeConnectionManagerTest {
         )
 
         assertTrue(diagnostics.contains("Launch mode: connect"), diagnostics)
-        assertTrue(diagnostics.contains("Runtime URL: http://127.0.0.1:8123/runtime"), diagnostics)
+        assertTrue(diagnostics.contains("Runtime URL: http://127.0.0.1:8123"), diagnostics)
         listOf("user", "password", "url-secret", "token-fragment", "runtime-secret", "Authorization").forEach { secret ->
             assertFalse(diagnostics.contains(secret), diagnostics)
         }
         assertTrue(diagnostics.contains("[redacted]"), diagnostics)
+    }
+
+    @Test
+    fun diagnosticsRuntimeUrlShowsOnlyOrigin() {
+        val cases = mapOf(
+            "http://127.0.0.1:8123/runtime?access_token=url-secret#token-fragment" to "http://127.0.0.1:8123",
+            "http://user:password@localhost:8123/private/auth.json?api_key=url-secret#refresh_token=fragment-secret" to "http://localhost:8123",
+            "https://[::1]:8443/Users/alice/.codex/auth.json?token=query-secret#secret-fragment" to "https://[::1]:8443",
+        )
+
+        cases.forEach { (input, expected) ->
+            val sanitized = sanitizeRuntimeUrlForDiagnostics(input)
+
+            assertEquals(expected, sanitized)
+            listOf("runtime", "user", "password", "auth.json", ".codex", "alice", "url-secret", "query-secret", "fragment-secret", "secret-fragment").forEach { privateValue ->
+                assertFalse(sanitized.contains(privateValue), sanitized)
+            }
+        }
     }
 
     @Test
