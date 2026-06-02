@@ -11,6 +11,11 @@ const registeredCommands = new Map();
 const errorMessages = [];
 const informationMessages = [];
 const outputLines = [];
+const registeredCompletionProviders = [];
+let workspaceTextDocuments = [];
+const workspaceOpenDocumentListeners = [];
+const workspaceChangeDocumentListeners = [];
+const workspaceCloseDocumentListeners = [];
 const originalFetch = globalThis.fetch;
 const originalLoad = Module._load;
 const originalSpawn = childProcess.spawn;
@@ -28,6 +33,26 @@ Module._load = function load(request, parent, isMain) {
         },
       },
       ViewColumn: { Beside: 2 },
+      CompletionItemKind: { Text: 1 },
+      CompletionItem: class CompletionItem {
+        constructor(label, kind) {
+          this.label = label;
+          this.kind = kind;
+        }
+      },
+      CompletionList: class CompletionList {
+        constructor(items, isIncomplete) {
+          this.items = items;
+          this.isIncomplete = isIncomplete;
+        }
+      },
+      languages: {
+        registerCompletionItemProvider(selector, provider) {
+          const registration = { selector, provider, disposed: false };
+          registeredCompletionProviders.push(registration);
+          return { dispose() { registration.disposed = true; } };
+        },
+      },
       commands: {
         registerCommand(command, callback) {
           registeredCommands.set(command, callback);
@@ -67,6 +92,7 @@ Module._load = function load(request, parent, isMain) {
         },
       },
       workspace: {
+        get textDocuments() { return workspaceTextDocuments; },
         getConfiguration() {
           return {
             get(key, defaultValue) {
@@ -76,6 +102,18 @@ Module._load = function load(request, parent, isMain) {
         },
         getWorkspaceFolder() { return undefined; },
         asRelativePath(uri) { return uri.fsPath ?? uri.path ?? String(uri); },
+        onDidOpenTextDocument(callback) {
+          workspaceOpenDocumentListeners.push(callback);
+          return { dispose() {} };
+        },
+        onDidChangeTextDocument(callback) {
+          workspaceChangeDocumentListeners.push(callback);
+          return { dispose() {} };
+        },
+        onDidCloseTextDocument(callback) {
+          workspaceCloseDocumentListeners.push(callback);
+          return { dispose() {} };
+        },
       },
     };
   }
@@ -587,17 +625,59 @@ try {
     assert.equal(lspDiagnostic.length, 1000, "LSP diagnostic was not bounded");
     assert.equal(lspDiagnostic.endsWith("… [truncated sanitized LSP diagnostic]"), true);
 
+    function createTextDocument(uri, text, version = 1, languageId = "rust") {
+      return {
+        uri,
+        languageId,
+        version,
+        isClosed: false,
+        isUntitled: false,
+        getText() { return text; },
+      };
+    }
+
+    function takeLspClientMessages(child) {
+      const text = child.stdin.chunks.join("");
+      child.stdin.chunks = [];
+      const messages = [];
+      let offset = 0;
+      while (offset < text.length) {
+        const headerEnd = text.indexOf("\r\n\r\n", offset);
+        if (headerEnd === -1) {
+          break;
+        }
+        const header = text.slice(offset, headerEnd);
+        const lengthLine = header.split("\r\n").find((line) => line.toLowerCase().startsWith("content-length:"));
+        const length = Number(lengthLine?.split(":")[1]?.trim());
+        const bodyStart = headerEnd + 4;
+        const bodyEnd = bodyStart + length;
+        messages.push(JSON.parse(text.slice(bodyStart, bodyEnd)));
+        offset = bodyEnd;
+      }
+      return messages;
+    }
+
+    function emitLspResponse(child, id, result) {
+      const body = JSON.stringify({ jsonrpc: "2.0", id, result });
+      child.stdout.emit("data", Buffer.from(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`));
+    }
+
+    function delay() {
+      return new Promise((resolve) => setImmediate(resolve));
+    }
+
     const lspSpawns = [];
     const lspOutputLines = [];
     const lspOutput = { appendLine(line) { lspOutputLines.push(line); } };
     childProcess.spawn = (command, args, options) => {
       const child = new EventEmitter();
-      child.stdin = { chunks: [], write(chunk) { this.chunks.push(chunk); return true; } };
+      child.stdin = { chunks: [], destroyed: false, write(chunk) { this.chunks.push(chunk); return true; } };
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
       child.killed = false;
       child.kill = () => {
         child.killed = true;
+        child.stdin.destroyed = true;
         child.emit("exit", null, "SIGTERM");
         return true;
       };
@@ -609,14 +689,19 @@ try {
       "lsp.enabled": false,
       engineBinaryPath: executable,
     };
+    workspaceTextDocuments = [createTextDocument({ scheme: "file", toString: () => "file:///workspace/disabled.rs" }, "fn disabled() {}")];
     startYetAiLspClient({ ...fakeContext, extensionPath: tempRoot }, { engine: { binaryName: "yet-lsp" } }, lspOutput);
     assert.equal(lspSpawns.length, 0, "disabled LSP setting launched a process");
+    assert.equal(registeredCompletionProviders.length, 0, "disabled LSP setting registered completion provider");
 
     configValues = {
       "lsp.enabled": true,
       engineBinaryPath: executable,
       sessionToken: "legacy-lsp-token-must-not-be-used",
     };
+    const fileDocument = createTextDocument({ scheme: "file", toString: () => "file:///workspace/enabled.rs" }, "fn enabled() {}", 3);
+    const virtualDocument = createTextDocument({ scheme: "untitled", toString: () => "untitled:virtual" }, "fn virtual_doc() {}", 1);
+    workspaceTextDocuments = [fileDocument, virtualDocument];
     startYetAiLspClient({ ...fakeContext, extensionPath: tempRoot }, { engine: { binaryName: "yet-lsp" } }, lspOutput);
     assert.equal(lspSpawns.length, 1);
     assert.equal(lspSpawns[0].command, executable);
@@ -624,20 +709,57 @@ try {
     assert.equal(lspSpawns[0].options.env.YET_AI_AUTH_TOKEN, undefined);
     assert.equal(lspSpawns[0].options.env.OPENAI_API_KEY, undefined);
     assert.equal(lspSpawns[0].options.env.Authorization, undefined);
-    const lspStdin = lspSpawns[0].child.stdin.chunks.join("");
-    assert.match(lspStdin, /"method":"initialize"/);
-    assert.match(lspStdin, /"didOpen":true/);
-    assert.match(lspStdin, /"completion"/);
-    assert.match(lspStdin, /"method":"initialized"/);
+    let lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 1);
+    assert.equal(lspMessages[0].method, "initialize");
+    assert.equal(lspMessages[0].params.capabilities.textDocument.synchronization.didOpen, true);
+    assert.equal(typeof lspMessages[0].params.capabilities.textDocument.completion, "object");
     assert.ok(lspOutputLines.some((line) => line.includes("Started Yet AI read-only LSP MVP from yet-lsp-executable.")));
+    emitLspResponse(lspSpawns[0].child, lspMessages[0].id, {
+      capabilities: { textDocumentSync: 1, completionProvider: { triggerCharacters: [] } },
+      serverInfo: { name: "Yet AI LSP" },
+    });
+    await delay();
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages[0].method, "initialized");
+    assert.equal(lspMessages[1].method, "textDocument/didOpen");
+    assert.equal(lspMessages[1].params.textDocument.uri, "file:///workspace/enabled.rs");
+    assert.equal(lspMessages.some((message) => JSON.stringify(message).includes("untitled:virtual")), false, "LSP synced a virtual document");
+    assert.equal(registeredCompletionProviders.length, 1);
+    assert.deepEqual(registeredCompletionProviders[0].selector, { scheme: "file" });
+    const completionsPromise = registeredCompletionProviders[0].provider.provideCompletionItems(fileDocument, { line: 0, character: 3 });
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 1);
+    assert.equal(lspMessages[0].method, "textDocument/completion");
+    assert.equal(lspMessages[0].params.textDocument.uri, "file:///workspace/enabled.rs");
+    emitLspResponse(lspSpawns[0].child, lspMessages[0].id, {
+      isIncomplete: false,
+      items: [{ label: "Yet AI LSP connected", detail: "Local read-only LSP status" }],
+    });
+    const completions = await completionsPromise;
+    assert.equal(completions.items.length, 1);
+    assert.equal(completions.items[0].label, "Yet AI LSP connected");
+    assert.equal(completions.items[0].detail, "Local read-only LSP status");
+    assert.equal(await registeredCompletionProviders[0].provider.provideCompletionItems(virtualDocument, { line: 0, character: 1 }), undefined);
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 0, "virtual document completion sent LSP traffic");
+    fileDocument.version = 4;
+    workspaceChangeDocumentListeners.at(-1)({ document: fileDocument });
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages[0].method, "textDocument/didChange");
+    workspaceCloseDocumentListeners.at(-1)(fileDocument);
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages[0].method, "textDocument/didClose");
     lspSpawns[0].child.stderr.emit("data", Buffer.from(`stderr Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}`));
     assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticSecret), false, "LSP stderr leaked secret");
     assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticPath), false, "LSP stderr leaked private path");
     stopYetAiLspClient(lspOutput);
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages[0].method, "shutdown");
+    emitLspResponse(lspSpawns[0].child, lspMessages[0].id, null);
+    await delay();
     assert.equal(lspSpawns[0].child.killed, true, "LSP deactivate cleanup did not stop process");
-    assert.match(lspSpawns[0].child.stdin.chunks.join(""), /"method":"shutdown"/);
-    assert.match(lspSpawns[0].child.stdin.chunks.join(""), /"method":"exit"/);
-
+    assert.equal(registeredCompletionProviders[0].disposed, true, "LSP completion provider was not disposed");
     childProcess.spawn = () => {
       throw new Error(`LSP spawn failed Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}`);
     };
