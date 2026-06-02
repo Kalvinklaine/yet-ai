@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { clearStoredSessionToken, collectRuntimeDiagnostics, formatRuntimeDiagnostics, prepareEngineConnection, redactRuntimeDiagnosticText, setStoredSessionToken, stopLaunchedEngine } from "./engineConnection";
-import { assertExtensionIdentity, clearSessionTokenCommand, extensionCommand, loadProductIdentity, runtimeStatusCommand, setSessionTokenCommand } from "./identity";
+import { assertExtensionIdentity, clearSessionTokenCommand, configurationPrefix, extensionCommand, loadProductIdentity, runtimeStatusCommand, setSessionTokenCommand } from "./identity";
 import { openYetAiWebview } from "./webview";
 import { startYetAiLspClient, stopYetAiLspClient } from "./lspClient";
 
@@ -58,7 +58,21 @@ export function activate(context: vscode.ExtensionContext): void {
     void vscode.window.showInformationMessage("Yet AI local runtime session token cleared from SecretStorage.");
   });
 
-  context.subscriptions.push(openChatDisposable, runtimeStatusDisposable, setSessionTokenDisposable, clearSessionTokenDisposable, engineOutput);
+  const lspConfigurationDisposable = vscode.workspace.onDidChangeConfiguration((event) => {
+    if (!event.affectsConfiguration(`${configurationPrefix}.lsp.enabled`)) {
+      return;
+    }
+    if (engineOutput === undefined) {
+      return;
+    }
+    if (vscode.workspace.getConfiguration(configurationPrefix).get<boolean>("lsp.enabled", false)) {
+      startYetAiLspClient(context, identity, engineOutput);
+    } else {
+      stopYetAiLspClient(engineOutput);
+    }
+  });
+
+  context.subscriptions.push(openChatDisposable, runtimeStatusDisposable, setSessionTokenDisposable, clearSessionTokenDisposable, lspConfigurationDisposable, engineOutput);
 }
 
 const maxCommandErrorLength = 1000;
