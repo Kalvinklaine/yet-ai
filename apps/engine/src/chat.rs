@@ -221,13 +221,7 @@ impl ChatRuntime {
         true
     }
 
-    async fn claim_stream_terminal_event(
-        &self,
-        chat_id: &str,
-        stream_id: u64,
-        event_type: &str,
-        payload: serde_json::Value,
-    ) -> bool {
+    async fn claim_stream_terminal_ownership(&self, chat_id: &str, stream_id: u64) -> bool {
         let mut guard = self.inner.lock().await;
         let Some(state) = guard.get_mut(chat_id) else {
             return false;
@@ -240,8 +234,20 @@ impl ChatRuntime {
             return false;
         }
         state.active_stream = None;
-        state.push_event(chat_id, event_type, payload);
         true
+    }
+
+    async fn push_terminal_event(
+        &self,
+        chat_id: &str,
+        event_type: &str,
+        payload: serde_json::Value,
+    ) {
+        let mut guard = self.inner.lock().await;
+        let state = guard
+            .entry(chat_id.to_string())
+            .or_insert_with(|| ChatState::new(chat_id));
+        state.push_event(chat_id, event_type, payload);
     }
 
     async fn abort_active_stream(&self, chat_id: &str) -> bool {
@@ -301,36 +307,26 @@ impl ChatRuntime {
         }
         match result {
             Ok(assistant_content) => {
-                let _ = self
-                    .append_history_message(
-                        &config_dir,
-                        &chat_id,
-                        ChatMessageRole::Assistant,
-                        assistant_content,
-                        Some(ChatMessageStatus::Complete),
-                    )
-                    .await;
-                self.claim_stream_terminal_event(
+                self.persist_terminal_history_and_event(
+                    &config_dir,
                     &chat_id,
                     stream_id,
+                    ChatMessageRole::Assistant,
+                    assistant_content,
+                    ChatMessageStatus::Complete,
                     "stream_finished",
                     json!({ "finishReason": "stop" }),
                 )
                 .await;
             }
             Err(error) => {
-                let _ = self
-                    .append_history_message(
-                        &config_dir,
-                        &chat_id,
-                        ChatMessageRole::Error,
-                        error.client_message().to_string(),
-                        Some(ChatMessageStatus::Error),
-                    )
-                    .await;
-                self.claim_stream_terminal_event(
+                self.persist_terminal_history_and_event(
+                    &config_dir,
                     &chat_id,
                     stream_id,
+                    ChatMessageRole::Error,
+                    error.client_message().to_string(),
+                    ChatMessageStatus::Error,
                     "error",
                     json!({ "code": error.code(), "message": error.client_message() }),
                 )
@@ -352,6 +348,31 @@ impl ChatRuntime {
         chat_history::append_message(config_dir, chat_id, role, content, status)
             .await
             .map(|_| ())
+    }
+
+    async fn persist_terminal_history_and_event(
+        &self,
+        config_dir: &std::path::Path,
+        chat_id: &str,
+        stream_id: u64,
+        role: ChatMessageRole,
+        content: String,
+        status: ChatMessageStatus,
+        event_type: &str,
+        payload: serde_json::Value,
+    ) -> bool {
+        let lock = self.history_lock(chat_id).await;
+        let _guard = lock.lock().await;
+        if !self
+            .claim_stream_terminal_ownership(chat_id, stream_id)
+            .await
+        {
+            return false;
+        }
+        let _ =
+            chat_history::append_message(config_dir, chat_id, role, content, Some(status)).await;
+        self.push_terminal_event(chat_id, event_type, payload).await;
+        true
     }
 
     async fn snapshot_event(&self, config_dir: &std::path::Path, chat_id: &str) -> ChatEvent {
