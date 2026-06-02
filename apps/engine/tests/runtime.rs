@@ -422,7 +422,7 @@ async fn assert_first_auth_and_no_immediate_extra_auth(
 
 async fn assert_no_observed_auth(mut auth_receiver: mpsc::Receiver<Option<String>>) {
     assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(50), auth_receiver.recv())
+        tokio::time::timeout(std::time::Duration::from_millis(200), auth_receiver.recv())
             .await
             .is_err()
     );
@@ -6810,6 +6810,21 @@ async fn provider_secret_chat_deleted_key_does_not_call_provider() {
 
     send_user_message_with_content(app.clone(), "chat-provider-secret-deleted", "hello deleted")
         .await;
+    let loaded = wait_for_chat_messages(app.clone(), "chat-provider-secret-deleted", 2).await;
+    assert_eq!(loaded["messages"][0]["role"], "user");
+    assert_eq!(loaded["messages"][0]["content"], "hello deleted");
+    assert_eq!(loaded["messages"][1]["role"], "error");
+    assert_eq!(loaded["messages"][1]["status"], "error");
+    assert_eq!(
+        loaded["messages"][1]["content"],
+        "Provider credentials were rejected."
+    );
+    let loaded_text = loaded.to_string();
+    assert_sanitized_sse_error(&loaded_text);
+    assert!(!loaded_text.contains(api_key));
+    assert!(!loaded_text.contains("provider-deleted-chat-secret"));
+    assert!(!loaded_text.contains("provider-secret-chat-deleted"));
+
     let text = sse_text_from(
         app,
         "/v1/chats/subscribe?chat_id=chat-provider-secret-deleted",
@@ -6818,8 +6833,14 @@ async fn provider_secret_chat_deleted_key_does_not_call_provider() {
     let events = sse_json_events(&text);
     let error = find_error_event(&events);
     assert_eq!(error["payload"]["code"], "provider_unauthorized");
+    assert_eq!(
+        error["payload"]["message"],
+        "Provider credentials were rejected."
+    );
     assert_sanitized_sse_error(&text);
     assert!(!text.contains(api_key));
+    assert!(!text.contains("provider-deleted-chat-secret"));
+    assert!(!text.contains("provider-secret-chat-deleted"));
     assert_no_observed_auth(auth_receiver).await;
 }
 
