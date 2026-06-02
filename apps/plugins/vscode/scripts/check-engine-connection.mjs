@@ -672,6 +672,10 @@ try {
       child.stdout.emit("data", Buffer.from(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`));
     }
 
+    function emitRawLspStdout(child, text) {
+      child.stdout.emit("data", Buffer.from(text));
+    }
+
     function createMockLspChild() {
       const child = new EventEmitter();
       child.stdin = {
@@ -689,11 +693,16 @@ try {
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
       child.killed = false;
-      child.kill = () => {
+      child.killSignals = [];
+      child.closeOnKill = true;
+      child.kill = (signal = "SIGTERM") => {
+        child.killSignals.push(signal);
         child.killed = true;
         child.stdin.destroyed = true;
-        child.emit("exit", null, "SIGTERM");
-        child.emit("close", null, "SIGTERM");
+        if (child.closeOnKill) {
+          child.emit("exit", null, signal);
+          child.emit("close", null, signal);
+        }
         return true;
       };
       return child;
@@ -875,7 +884,7 @@ try {
     assert.equal(lspSpawns[0].child.killed, false, "LSP graceful shutdown killed before exit notification grace");
     lspMessages = takeLspClientMessages(lspSpawns[0].child);
     assert.equal(lspMessages[0].method, "exit");
-    await delayMs(700);
+    await delayMs(1200);
     assert.equal(lspSpawns[0].child.killed, true, "LSP deactivate cleanup did not stop process");
     await directStopPromise;
     assert.equal(directStopResolved, true, "LSP stop did not resolve after process close");
@@ -910,6 +919,83 @@ try {
     await delay();
     assert.equal(registeredCompletionProviders[staleDisposedIndex].disposed, true, "stale LSP provider was not disposed");
 
+    function startInitializedLsp() {
+      startYetAiLspClient({ ...fakeContext, extensionPath: tempRoot }, { engine: { binaryName: "yet-lsp" } }, lspOutput);
+      const spawn = lspSpawns.at(-1);
+      const messages = takeLspClientMessages(spawn.child);
+      emitLspResponse(spawn.child, messages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
+      return spawn;
+    }
+
+    async function assertFatalParserRetry(rawStdout, expectedDiagnostic, label) {
+      const spawnCountBefore = lspSpawns.length;
+      const providerCountBefore = registeredCompletionProviders.length;
+      const spawn = startInitializedLsp();
+      assert.equal(lspSpawns.length, spawnCountBefore + 1, `${label} did not spawn setup client`);
+      await delay();
+      const activeProvider = registeredCompletionProviders.at(-1);
+      assert.equal(activeProvider.disposed, false, `${label} setup provider disposed before fatal parser case`);
+      emitRawLspStdout(spawn.child, rawStdout);
+      await delay();
+      assert.equal(activeProvider.disposed, true, `${label} fatal parser error did not dispose provider`);
+      assert.ok(spawn.child.killSignals.length >= 1, `${label} fatal parser error did not terminate child`);
+      assert.ok(lspOutputLines.some((line) => line.includes(expectedDiagnostic)), `${label} missing fatal diagnostic`);
+      startYetAiLspClient({ ...fakeContext, extensionPath: tempRoot }, { engine: { binaryName: "yet-lsp" } }, lspOutput);
+      assert.equal(lspSpawns.length, spawnCountBefore + 2, `${label} retry after fatal parser error did not spawn`);
+      assert.equal(registeredCompletionProviders.length, providerCountBefore + 1, `${label} retry should not register before initialize`);
+      const retrySpawn = lspSpawns.at(-1);
+      const retryMessages = takeLspClientMessages(retrySpawn.child);
+      emitLspResponse(retrySpawn.child, retryMessages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
+      await delay();
+      assert.equal(registeredCompletionProviders.length, providerCountBefore + 2, `${label} retry did not initialize provider`);
+      retrySpawn.child.emit("close", 0, null);
+      await delay();
+    }
+
+    await assertFatalParserRetry("Content-Length: 1\r\n\r\n{", "stdout JSON parse failed", "invalid JSON");
+    await assertFatalParserRetry("Content-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n{}", "invalid bounded content length", "missing content length");
+    await assertFatalParserRetry("Content-Length: 524289\r\n\r\n", "invalid bounded content length", "oversized content length");
+    await assertFatalParserRetry("x".repeat(8 * 1024 + 1), "stdout header exceeded bounded parser buffer", "oversized header");
+    await assertFatalParserRetry("x".repeat(512 * 1024 + 1), "stdout exceeded bounded parser buffer", "oversized stdout");
+
+    const pendingFatalSpawn = startInitializedLsp();
+    await delay();
+    takeLspClientMessages(pendingFatalSpawn.child);
+    const pendingFatalCompletion = registeredCompletionProviders.at(-1).provider.provideCompletionItems(fileDocument, { line: 0, character: 1 });
+    lspMessages = takeLspClientMessages(pendingFatalSpawn.child);
+    assert.equal(lspMessages[0].method, "textDocument/completion", "pending fatal parser case did not request completion");
+    emitRawLspStdout(pendingFatalSpawn.child, "Content-Length: 1\r\n\r\n{");
+    await assert.rejects(pendingFatalCompletion, /LSP stdout invalid JSON/, "pending completion did not reject on fatal parser error");
+
+    const hardKillSpawn = startInitializedLsp();
+    await delay();
+    takeLspClientMessages(hardKillSpawn.child);
+    hardKillSpawn.child.closeOnKill = false;
+    const hardKillStop = stopYetAiLspClient(lspOutput);
+    lspMessages = takeLspClientMessages(hardKillSpawn.child);
+    assert.equal(lspMessages[0].method, "shutdown", "hard-kill stop did not send shutdown");
+    emitLspResponse(hardKillSpawn.child, lspMessages[0].id, null);
+    await delayMs(1200);
+    assert.equal(hardKillSpawn.child.killSignals.includes("SIGTERM"), true, "bounded stop did not attempt SIGTERM");
+    assert.equal(hardKillSpawn.child.killSignals.includes("SIGKILL"), false, "bounded stop attempted hard kill before grace elapsed");
+    await delayMs(700);
+    assert.equal(hardKillSpawn.child.killSignals.includes("SIGKILL"), true, "bounded stop did not attempt hard kill");
+    hardKillSpawn.child.emit("close", null, "SIGKILL");
+    await hardKillStop;
+
+    const fallbackSpawn = startInitializedLsp();
+    await delay();
+    takeLspClientMessages(fallbackSpawn.child);
+    fallbackSpawn.child.closeOnKill = false;
+    const fallbackStop = stopYetAiLspClient(lspOutput);
+    lspMessages = takeLspClientMessages(fallbackSpawn.child);
+    assert.equal(lspMessages[0].method, "shutdown", "fallback stop did not send shutdown");
+    await fallbackStop;
+    assert.equal(fallbackSpawn.child.killSignals.includes("SIGTERM"), true, "fallback stop did not attempt SIGTERM");
+    assert.equal(fallbackSpawn.child.killSignals.includes("SIGKILL"), true, "fallback stop did not attempt SIGKILL");
+    assert.ok(lspOutputLines.some((line) => line.includes("bounded kill fallback without process close")), "fallback stop did not report bounded fallback");
+
+    const toggleSpawnStart = lspSpawns.length;
     const toggleContext = { ...fakeContext, extensionPath: process.cwd(), extensionUri: { fsPath: process.cwd(), path: process.cwd(), scheme: "file", toString: () => process.cwd() }, subscriptions: [] };
     configValues = {
       "lsp.enabled": false,
@@ -917,25 +1003,26 @@ try {
     };
     extensionModule.activate(toggleContext);
     await delay();
-    assert.equal(lspSpawns.length, 4, "disabled activation unexpectedly spawned LSP");
+    assert.equal(lspSpawns.length, toggleSpawnStart, "disabled activation unexpectedly spawned LSP");
     configValues = {
       "lsp.enabled": true,
       engineBinaryPath: executable,
     };
     workspaceConfigurationListeners.at(-1)({ affectsConfiguration(name) { return name === "yetai.lsp.enabled"; } });
     await delay();
-    assert.equal(lspSpawns.length, 5, "LSP setting enable did not spawn client");
-    lspMessages = takeLspClientMessages(lspSpawns[4].child);
-    emitLspResponse(lspSpawns[4].child, lspMessages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
+    assert.equal(lspSpawns.length, toggleSpawnStart + 1, "LSP setting enable did not spawn client");
+    const toggleStopChild = lspSpawns[toggleSpawnStart].child;
+    lspMessages = takeLspClientMessages(toggleStopChild);
+    emitLspResponse(toggleStopChild, lspMessages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
     await delay();
-    takeLspClientMessages(lspSpawns[4].child);
+    takeLspClientMessages(toggleStopChild);
     configValues = {
       "lsp.enabled": false,
       engineBinaryPath: executable,
     };
     workspaceConfigurationListeners.at(-1)({ affectsConfiguration(name) { return name === "yetai.lsp.enabled"; } });
     await delay();
-    lspMessages = takeLspClientMessages(lspSpawns[4].child);
+    lspMessages = takeLspClientMessages(toggleStopChild);
     assert.equal(lspMessages[0].method, "shutdown", "LSP setting disable did not stop client");
     configValues = {
       "lsp.enabled": true,
@@ -943,30 +1030,33 @@ try {
     };
     workspaceConfigurationListeners.at(-1)({ affectsConfiguration(name) { return name === "yetai.lsp.enabled"; } });
     await delay();
-    assert.equal(lspSpawns.length, 5, "serialized LSP enable spawned before prior stop completed");
-    emitLspResponse(lspSpawns[4].child, lspMessages[0].id, null);
+    assert.equal(lspSpawns.length, toggleSpawnStart + 1, "serialized LSP enable spawned before prior stop completed");
+    emitLspResponse(toggleStopChild, lspMessages[0].id, null);
     await delay();
-    lspSpawns[4].child.emit("close", 0, null);
+    toggleStopChild.emit("close", 0, null);
     await delay();
-    assert.equal(lspSpawns.length, 6, "serialized LSP enable did not spawn after prior stop completed");
-    lspMessages = takeLspClientMessages(lspSpawns[5].child);
-    emitLspResponse(lspSpawns[5].child, lspMessages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
+    assert.equal(lspSpawns.length, toggleSpawnStart + 2, "serialized LSP enable did not spawn after prior stop completed");
+    const deactivateChild = lspSpawns[toggleSpawnStart + 1].child;
+    lspMessages = takeLspClientMessages(deactivateChild);
+    emitLspResponse(deactivateChild, lspMessages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
     await delay();
-    takeLspClientMessages(lspSpawns[5].child);
+    takeLspClientMessages(deactivateChild);
+    deactivateChild.closeOnKill = false;
     const deactivatePromise = extensionModule.deactivate();
     let deactivateResolved = false;
     deactivatePromise.then(() => {
       deactivateResolved = true;
     });
     await delay();
-    lspMessages = takeLspClientMessages(lspSpawns[5].child);
+    lspMessages = takeLspClientMessages(deactivateChild);
     assert.equal(lspMessages[0].method, "shutdown", "deactivate did not begin LSP stop");
     assert.equal(deactivateResolved, false, "deactivate resolved before LSP stop completed");
-    emitLspResponse(lspSpawns[5].child, lspMessages[0].id, null);
+    emitLspResponse(deactivateChild, lspMessages[0].id, null);
     await delay();
-    lspSpawns[5].child.emit("close", 0, null);
     await deactivatePromise;
     assert.equal(deactivateResolved, true, "deactivate did not await LSP stop completion");
+    assert.equal(deactivateChild.killSignals.includes("SIGTERM"), true, "deactivate did not attempt bounded SIGTERM");
+    assert.equal(deactivateChild.killSignals.includes("SIGKILL"), true, "deactivate did not attempt bounded SIGKILL");
     childProcess.spawn = () => {
       throw new Error(`LSP spawn failed Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}`);
     };
