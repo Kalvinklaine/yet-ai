@@ -6685,6 +6685,112 @@ async fn provider_secret_chat_first_access_uses_stored_key_over_inline_key() {
 }
 
 #[tokio::test]
+async fn provider_secret_chat_whitespace_stored_key_fails_closed_before_request() {
+    let paths = test_storage_paths();
+    let (base_url, auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"unsafe\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-provider-whitespace-chat-secret-abcd";
+    configure_openai_provider_with_id(
+        app.clone(),
+        "provider-secret-chat-whitespace",
+        base_url,
+        api_key,
+        "gpt-test",
+    )
+    .await;
+    FileSecretStore::new(&paths.config_dir)
+        .put_secret(
+            "provider-secret-chat-whitespace",
+            SecretKind::ApiKey,
+            "   \n\t  ",
+        )
+        .await
+        .unwrap();
+
+    send_user_message_with_content(
+        app.clone(),
+        "chat-provider-secret-whitespace",
+        "prompt-marker-provider-secret-whitespace",
+    )
+    .await;
+    let loaded = wait_for_chat_messages(app.clone(), "chat-provider-secret-whitespace", 2).await;
+    assert_eq!(loaded["messages"][1]["role"], "error");
+    assert_eq!(
+        loaded["messages"][1]["content"],
+        "Provider credentials were rejected."
+    );
+    assert_sanitized_sse_error(&loaded.to_string());
+    assert!(!loaded.to_string().contains(api_key));
+
+    let text = sse_text_from(
+        app,
+        "/v1/chats/subscribe?chat_id=chat-provider-secret-whitespace",
+    )
+    .await;
+    let events = sse_json_events(&text);
+    let error = find_error_event(&events);
+    assert_eq!(error["payload"]["code"], "provider_unauthorized");
+    assert_eq!(
+        error["payload"]["message"],
+        "Provider credentials were rejected."
+    );
+    assert_sanitized_sse_error(&text);
+    assert!(!text.contains(api_key));
+    assert!(!text.contains("provider-whitespace-chat-secret"));
+    assert_no_observed_auth(auth_receiver).await;
+}
+
+#[tokio::test]
+async fn provider_secret_chat_deleted_key_does_not_call_provider() {
+    let paths = test_storage_paths();
+    let (base_url, auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"unsafe\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-provider-deleted-chat-secret-abcd";
+    configure_openai_provider_with_id(
+        app.clone(),
+        "provider-secret-chat-deleted",
+        base_url,
+        api_key,
+        "gpt-test",
+    )
+    .await;
+    FileSecretStore::new(&paths.config_dir)
+        .delete_secret("provider-secret-chat-deleted", SecretKind::ApiKey)
+        .await
+        .unwrap();
+
+    send_user_message_with_content(app.clone(), "chat-provider-secret-deleted", "hello deleted")
+        .await;
+    let text = sse_text_from(
+        app,
+        "/v1/chats/subscribe?chat_id=chat-provider-secret-deleted",
+    )
+    .await;
+    let events = sse_json_events(&text);
+    let error = find_error_event(&events);
+    assert_eq!(error["payload"]["code"], "model_not_configured");
+    assert_sanitized_sse_error(&text);
+    assert!(!text.contains(api_key));
+    assert_no_observed_auth(auth_receiver).await;
+}
+
+#[tokio::test]
 async fn provider_secret_corrupt_store_with_inline_key_fails_safely() {
     let paths = test_storage_paths();
     let app = app(AppState::with_storage_paths(
