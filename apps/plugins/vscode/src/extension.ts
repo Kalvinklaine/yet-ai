@@ -5,12 +5,13 @@ import { openYetAiWebview } from "./webview";
 import { startYetAiLspClient, stopYetAiLspClient } from "./lspClient";
 
 let engineOutput: vscode.OutputChannel | undefined;
+let lspLifecycleOperation: Promise<void> = Promise.resolve();
 
 export function activate(context: vscode.ExtensionContext): void {
   const identity = loadProductIdentity(context.extensionPath);
   assertExtensionIdentity(identity);
   engineOutput = vscode.window.createOutputChannel("Yet AI Runtime");
-  startYetAiLspClient(context, identity, engineOutput);
+  void syncLspClientToConfiguration(context, identity, engineOutput);
 
   const openChatDisposable = vscode.commands.registerCommand(extensionCommand, async () => {
     try {
@@ -65,11 +66,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (engineOutput === undefined) {
       return;
     }
-    if (vscode.workspace.getConfiguration(configurationPrefix).get<boolean>("lsp.enabled", false)) {
-      startYetAiLspClient(context, identity, engineOutput);
-    } else {
-      stopYetAiLspClient(engineOutput);
-    }
+    void syncLspClientToConfiguration(context, identity, engineOutput);
   });
 
   context.subscriptions.push(openChatDisposable, runtimeStatusDisposable, setSessionTokenDisposable, clearSessionTokenDisposable, lspConfigurationDisposable, engineOutput);
@@ -87,7 +84,24 @@ function sanitizeCommandError(error: unknown, fallback: string): string {
   return `${redactedMessage.slice(0, maxCommandErrorLength - commandErrorTruncationMarker.length)}${commandErrorTruncationMarker}`;
 }
 
-export function deactivate(): void {
-  stopYetAiLspClient(engineOutput);
+function syncLspClientToConfiguration(context: vscode.ExtensionContext, identity: ReturnType<typeof loadProductIdentity>, output: vscode.OutputChannel): Promise<void> {
+  return enqueueLspLifecycle(async () => {
+    if (vscode.workspace.getConfiguration(configurationPrefix).get<boolean>("lsp.enabled", false)) {
+      startYetAiLspClient(context, identity, output);
+    } else {
+      await stopYetAiLspClient(output);
+    }
+  });
+}
+
+function enqueueLspLifecycle(operation: () => Promise<void>): Promise<void> {
+  lspLifecycleOperation = lspLifecycleOperation.then(operation, operation);
+  return lspLifecycleOperation;
+}
+
+export async function deactivate(): Promise<void> {
+  await enqueueLspLifecycle(async () => {
+    await stopYetAiLspClient(engineOutput);
+  });
   stopLaunchedEngine(engineOutput);
 }

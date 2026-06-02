@@ -128,6 +128,10 @@ Module._load = function load(request, parent, isMain) {
 try {
   const extensionModule = await import("../out/extension.js");
 
+  const packageManifest = JSON.parse(fs.readFileSync(path.resolve("package.json"), "utf8"));
+  assert.equal(packageManifest.contributes.configuration.properties["yetai.lsp.enabled"].default, false);
+  assert.ok(packageManifest.activationEvents.includes("onStartupFinished"), "manifest lacks a non-chat activation path for opt-in LSP startup");
+
   const {
     createLspProcessEnvironment,
     sanitizeLspDiagnostic,
@@ -327,7 +331,7 @@ try {
     assert.equal(message.includes(nonErrorSecret), false, "non-Error top-level command error leaked secret");
     assert.ok(message.length <= 1000, "non-Error top-level command error was not bounded");
   }
-  extensionModule.deactivate();
+  await extensionModule.deactivate();
 
   assert.equal(await setStoredSessionToken(fakeContext, "  local-session-token  "), true);
   assert.deepEqual(secretOperations.at(-1), {
@@ -791,9 +795,15 @@ try {
     assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticSecret), false, "LSP stdin failure leaked secret");
     assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticPath), false, "LSP stdin failure leaked private path");
     lspSpawns[0].child.stdin.throwOnWrite = false;
-    stopYetAiLspClient(lspOutput);
+    const directStopPromise = stopYetAiLspClient(lspOutput);
+    let directStopResolved = false;
+    directStopPromise.then(() => {
+      directStopResolved = true;
+    });
     lspMessages = takeLspClientMessages(lspSpawns[0].child);
     assert.equal(lspMessages[0].method, "shutdown");
+    await delay();
+    assert.equal(directStopResolved, false, "LSP stop resolved before process close");
     emitLspResponse(lspSpawns[0].child, lspMessages[0].id, null);
     await delay();
     assert.equal(lspSpawns[0].child.killed, false, "LSP graceful shutdown killed before exit notification grace");
@@ -801,6 +811,8 @@ try {
     assert.equal(lspMessages[0].method, "exit");
     await delayMs(700);
     assert.equal(lspSpawns[0].child.killed, true, "LSP deactivate cleanup did not stop process");
+    await directStopPromise;
+    assert.equal(directStopResolved, true, "LSP stop did not resolve after process close");
     assert.equal(registeredCompletionProviders[0].disposed, true, "LSP completion provider was not disposed");
 
     const staleDisposedIndex = registeredCompletionProviders.length - 1;
@@ -838,12 +850,14 @@ try {
       engineBinaryPath: executable,
     };
     extensionModule.activate(toggleContext);
+    await delay();
     assert.equal(lspSpawns.length, 4, "disabled activation unexpectedly spawned LSP");
     configValues = {
       "lsp.enabled": true,
       engineBinaryPath: executable,
     };
     workspaceConfigurationListeners.at(-1)({ affectsConfiguration(name) { return name === "yetai.lsp.enabled"; } });
+    await delay();
     assert.equal(lspSpawns.length, 5, "LSP setting enable did not spawn client");
     lspMessages = takeLspClientMessages(lspSpawns[4].child);
     emitLspResponse(lspSpawns[4].child, lspMessages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
@@ -854,12 +868,39 @@ try {
       engineBinaryPath: executable,
     };
     workspaceConfigurationListeners.at(-1)({ affectsConfiguration(name) { return name === "yetai.lsp.enabled"; } });
+    await delay();
     lspMessages = takeLspClientMessages(lspSpawns[4].child);
     assert.equal(lspMessages[0].method, "shutdown", "LSP setting disable did not stop client");
+    configValues = {
+      "lsp.enabled": true,
+      engineBinaryPath: executable,
+    };
+    workspaceConfigurationListeners.at(-1)({ affectsConfiguration(name) { return name === "yetai.lsp.enabled"; } });
+    await delay();
+    assert.equal(lspSpawns.length, 5, "serialized LSP enable spawned before prior stop completed");
     emitLspResponse(lspSpawns[4].child, lspMessages[0].id, null);
     await delay();
     lspSpawns[4].child.emit("close", 0, null);
     await delay();
+    assert.equal(lspSpawns.length, 6, "serialized LSP enable did not spawn after prior stop completed");
+    lspMessages = takeLspClientMessages(lspSpawns[5].child);
+    emitLspResponse(lspSpawns[5].child, lspMessages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
+    await delay();
+    takeLspClientMessages(lspSpawns[5].child);
+    const deactivatePromise = extensionModule.deactivate();
+    let deactivateResolved = false;
+    deactivatePromise.then(() => {
+      deactivateResolved = true;
+    });
+    await delay();
+    lspMessages = takeLspClientMessages(lspSpawns[5].child);
+    assert.equal(lspMessages[0].method, "shutdown", "deactivate did not begin LSP stop");
+    assert.equal(deactivateResolved, false, "deactivate resolved before LSP stop completed");
+    emitLspResponse(lspSpawns[5].child, lspMessages[0].id, null);
+    await delay();
+    lspSpawns[5].child.emit("close", 0, null);
+    await deactivatePromise;
+    assert.equal(deactivateResolved, true, "deactivate did not await LSP stop completion");
     childProcess.spawn = () => {
       throw new Error(`LSP spawn failed Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}`);
     };
