@@ -383,16 +383,42 @@ Contract rules:
 - Streaming deltas should be typed and append-only where possible.
 - Tool confirmation and IDE tool execution pause the runtime until a command resolves the pause.
 
-### LSP usage
+### Read-only LSP code-intelligence MVP boundary
 
-Yet AI should use LSP only where native editor integration benefits from an editor protocol:
+Yet AI should use LSP only where native editor integration benefits from an editor protocol. The first LSP MVP is explicitly read-only, local-first, and non-privileged. It exists to prove bounded document lifecycle handling and deterministic editor status/completion behavior before any provider-backed or workspace-mutating intelligence is approved.
 
-- code completion.
-- code lens or code vision.
-- active document and workspace notifications.
-- lightweight diagnostics/status notifications if needed.
+Allowed current LSP surfaces are limited to:
 
-Chat, provider configuration, tool confirmations, and large structured UI state should stay on HTTP and SSE. If an early milestone does not include completion or code-lens, LSP can be deferred while the engine still uses HTTP for chat.
+- `initialize`
+- `initialized`
+- `shutdown`
+- `exit`
+- `textDocument/didOpen`
+- `textDocument/didChange`
+- `textDocument/didClose`
+- deterministic `textDocument/completion` or equivalent status proof that uses only the in-memory document state already supplied by the editor
+
+The MVP must not implement or imply production completions, code lens/code vision, diagnostics from providers, JetBrains full LSP parity, tools, edits, tasks, knowledge, agents, or autonomous indexing. Provider-backed completion on keystrokes, code lens/code vision, richer diagnostics, JetBrains LSP wiring, workspace symbol/indexing behavior, and any production agent behavior remain later follow-up scope unless a separate card implements and verifies them.
+
+Forbidden until separate approval:
+
+- workspace edits, file writes, file deletes, or apply-patch behavior;
+- shell execution, tool execution, IDE tool execution, task execution, git operations, or integration calls;
+- autonomous workspace indexing, arbitrary file reads, recursive directory scans, or reading documents that were not supplied through approved LSP document notifications;
+- provider-backed completions or model calls triggered by keystrokes;
+- production background agent behavior, task-board mutation, or hidden workspace mutation;
+- returning raw provider secrets, local runtime tokens, credential paths, private absolute paths, raw document bodies, or unbounded logs through LSP responses, progress, diagnostics, or docs.
+
+Safety constraints:
+
+- LSP runs as a local process or loopback/local IPC surface launched or connected by an IDE host; it must not require a hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, or cloud workspace.
+- The LSP server may retain only bounded in-memory text for documents that the editor explicitly opens or changes during the session. Document count, document size, completion item count, diagnostic/status payload size, and cache lifetime must be bounded.
+- Supported URI schemes must be allowlisted. The MVP should accept normal local editor document schemes needed by the IDE host and reject or ignore unsupported remote, virtual, credential-bearing, or malformed URIs with sanitized diagnostics.
+- Logs, traces, progress messages, completion labels/details, and diagnostics must be sanitized and bounded. They must not include raw unbounded document bodies, provider responses, prompts, secrets, bearer tokens, Authorization values, cookies, API keys, OAuth tokens, PKCE verifiers, private absolute paths, or credential filenames.
+- Completion/status output must be deterministic and derived from safe synthetic rules or the bounded in-memory document state. It must not call providers, local model runtimes, hosted services, or tool/integration endpoints.
+- LSP state must remain separate from HTTP/SSE chat state except for shared local process configuration and product identity. Chat, provider configuration, tool confirmations, and large structured UI state stay on HTTP and SSE.
+
+Future LSP changes should verify the narrow surface before merging. Documentation-only or contract-only LSP changes should run `npm run check`. Engine LSP protocol changes should run at least `export PATH="$HOME/.cargo/bin:$PATH"; cargo check -p yet-lsp && cargo test -p yet-lsp lsp && npm run check && git status --short` once the focused Rust LSP tests exist. IDE LSP client wiring should additionally run the affected plugin compile/check command and the relevant local smoke, without real provider credentials, hosted Yet AI services, cloud workspace dependency, or production release claims.
 
 ### IDE to GUI postMessage bridge
 
