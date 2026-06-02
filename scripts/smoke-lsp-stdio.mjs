@@ -130,9 +130,11 @@ async function isFile(file) {
 }
 
 function startLsp(binary) {
+  const env = lspEnv();
+  assertNoSecretEnv(env);
   const lsp = spawn(binary, ["--lsp-stdio"], {
     cwd: root,
-    env: lspEnv(),
+    env,
     stdio: ["pipe", "pipe", "pipe"]
   });
   lsp.stdoutBuffer = Buffer.alloc(0);
@@ -295,9 +297,32 @@ function cleanupDiagnostic(signal, error) {
 }
 
 function lspEnv() {
-  const env = cargoEnv();
-  delete env.YET_AI_AUTH_TOKEN;
+  const env = {};
+  for (const key of ["PATH", "Path", "SystemRoot", "WINDIR"]) {
+    if (process.env[key]) {
+      env[key] = process.env[key];
+    }
+  }
   return env;
+}
+
+function assertNoSecretEnv(env) {
+  const forbiddenKeys = [
+    "YET_AI_AUTH_TOKEN",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GITHUB_TOKEN",
+    "AWS_SECRET_ACCESS_KEY",
+    "GOOGLE_API_KEY",
+    "AZURE_OPENAI_API_KEY",
+    "Authorization"
+  ];
+  for (const key of forbiddenKeys) {
+    assert(!(key in env), `LSP smoke child env includes ${key}`);
+  }
+  for (const key of Object.keys(env)) {
+    assert(!/(token|secret|api[_-]?key|authorization|cookie|password|credential)/i.test(key), `LSP smoke child env includes secret-like key ${key}`);
+  }
 }
 
 function cargoEnv() {
