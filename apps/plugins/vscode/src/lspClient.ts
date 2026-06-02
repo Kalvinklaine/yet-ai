@@ -21,6 +21,7 @@ type LspProcess = {
   documents: Map<string, number>;
   disposables: vscode.Disposable[];
   shutdownTimers: ReturnType<typeof setTimeout>[];
+  stopResolvers: Array<() => void>;
 };
 
 type PendingRequest = {
@@ -99,6 +100,7 @@ export function startYetAiLspClient(context: vscode.ExtensionContext, identity: 
     documents: new Map(),
     disposables: [],
     shutdownTimers: [],
+    stopResolvers: [],
   };
   lspProcess = client;
   output.appendLine(`Started Yet AI read-only LSP MVP from ${path.basename(binaryPath)}.`);
@@ -106,26 +108,34 @@ export function startYetAiLspClient(context: vscode.ExtensionContext, identity: 
   void initializeLspClient(client, output);
 }
 
-export function stopYetAiLspClient(output?: LspOutput): void {
+export function stopYetAiLspClient(output?: LspOutput): Promise<void> {
   if (!lspProcess) {
-    return;
+    return Promise.resolve();
   }
   const current = lspProcess;
   lspProcess = undefined;
+  const stopped = new Promise<void>((resolve) => {
+    current.stopResolvers.push(resolve);
+  });
   current.stopping = true;
   disposeLspClient(current);
   rejectPending(current, new Error("LSP client stopped"));
   output?.appendLine("Stopping Yet AI read-only LSP MVP.");
   if (current.closed || current.process.killed) {
-    return;
+    resolveLspStop(current);
+    return stopped;
   }
   void sendLspRequest(current, "shutdown", null, output).catch(() => undefined).finally(() => {
+    if (current.closed) {
+      return;
+    }
     sendLspNotification(current, "exit", {}, output);
     if (!current.closed && !current.process.killed) {
       current.shutdownTimers.push(setTimeout(() => forceKillLspProcess(current), lspShutdownGraceMs));
     }
   });
   current.shutdownTimers.push(setTimeout(() => forceKillLspProcess(current), lspForceKillGraceMs));
+  return stopped;
 }
 
 export function createLspProcessEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -319,8 +329,15 @@ function closeLspClient(client: LspProcess, output: LspOutput, diagnostic: strin
   rejectPending(client, error);
   disposeLspClient(client);
   clearShutdownTimers(client);
+  resolveLspStop(client);
   if (lspProcess?.process === client.process) {
     lspProcess = undefined;
+  }
+}
+
+function resolveLspStop(client: LspProcess): void {
+  for (const resolve of client.stopResolvers.splice(0)) {
+    resolve();
   }
 }
 
