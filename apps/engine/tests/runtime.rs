@@ -505,6 +505,34 @@ async fn start_slow_mock_provider() -> (
     )
 }
 
+async fn start_terminal_ordering_mock_provider() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    tokio::spawn(async move {
+        let handler = move |_request: axum::http::Request<Body>| {
+            let requests = requests.clone();
+            async move {
+                let request_index = requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let content = if request_index == 0 { "old" } else { "new" };
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "text/event-stream")],
+                    format!(
+                        "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{content}\"}}}}]}}\n\ndata: [DONE]\n\n"
+                    ),
+                )
+                    .into_response()
+            }
+        };
+        let app = axum::Router::new()
+            .route("/chat/completions", axum::routing::post(handler.clone()))
+            .route("/v1/chat/completions", axum::routing::post(handler));
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://{address}")
+}
+
 async fn start_replacement_mock_provider() -> (
     String,
     mpsc::Receiver<Option<String>>,
@@ -8552,6 +8580,12 @@ async fn chat_immediate_abort_after_user_message_reliably_aborts_active_stream()
     let _ = continue_sender.send(());
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
+    let loaded = wait_for_chat_messages(app.clone(), "chat-immediate-abort-race", 1).await;
+    let messages = loaded["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["role"], "user");
+    assert_eq!(messages[0]["content"], "abort immediately");
+    assert_eq!(messages[0]["status"], "complete");
     let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-immediate-abort-race").await;
     let events = sse_json_events(&text);
     assert!(events
@@ -8563,6 +8597,40 @@ async fn chat_immediate_abort_after_user_message_reliably_aborts_active_stream()
     assert!(!text.contains(api_key));
     assert_sanitized_sse_error(&text);
     assert_no_observed_auth(auth_receiver).await;
+}
+
+#[tokio::test]
+async fn chat_terminal_event_precedes_new_same_chat_stream_started() {
+    let api_key = "sk-terminal-order-secret-abcd";
+    let base_url = start_terminal_ordering_mock_provider().await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    send_user_message_with_content(app.clone(), "chat-terminal-ordering", "old prompt").await;
+    let loaded = wait_for_chat_messages(app.clone(), "chat-terminal-ordering", 2).await;
+    assert_eq!(loaded["messages"][1]["content"], "old");
+    send_user_message_with_content(app.clone(), "chat-terminal-ordering", "new prompt").await;
+    let loaded = wait_for_chat_messages(app.clone(), "chat-terminal-ordering", 4).await;
+    assert_eq!(loaded["messages"][3]["content"], "new");
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-terminal-ordering").await;
+    let events = sse_json_events(&text);
+    let first_stop = events
+        .iter()
+        .position(|event| {
+            event["type"] == "stream_finished" && event["payload"]["finishReason"] == "stop"
+        })
+        .expect("old stream should emit stop before replacement starts");
+    let second_started = events
+        .iter()
+        .enumerate()
+        .filter(|(_, event)| event["type"] == "stream_started")
+        .nth(1)
+        .map(|(index, _)| index)
+        .expect("new stream should start");
+    assert!(first_stop < second_started);
+    assert!(!text.contains(api_key));
+    assert_sanitized_sse_error(&text);
 }
 
 #[tokio::test]

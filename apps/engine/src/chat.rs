@@ -134,8 +134,12 @@ impl ChatRuntime {
         content: String,
         context: Option<ChatContext>,
     ) {
+        let lock = self.history_lock(&chat_id).await;
+        let _history_guard = lock.lock().await;
         let runtime = self.clone();
+        let task_config_dir = config_dir.clone();
         let task_chat_id = chat_id.clone();
+        let task_content = content.clone();
         let (start_sender, start_receiver) = oneshot::channel();
         {
             let mut guard = self.inner.lock().await;
@@ -155,7 +159,13 @@ impl ChatRuntime {
             let handle = tokio::spawn(async move {
                 if start_receiver.await.is_ok() {
                     runtime
-                        .run_stream(config_dir, task_chat_id, stream_id, content, context)
+                        .run_stream(
+                            task_config_dir,
+                            task_chat_id,
+                            stream_id,
+                            task_content,
+                            context,
+                        )
                         .await;
                 }
             });
@@ -164,6 +174,14 @@ impl ChatRuntime {
                 handle,
             });
         }
+        let _ = chat_history::append_message(
+            &config_dir,
+            &chat_id,
+            ChatMessageRole::User,
+            content,
+            Some(ChatMessageStatus::Complete),
+        )
+        .await;
         let _ = start_sender.send(());
     }
 
@@ -251,6 +269,8 @@ impl ChatRuntime {
     }
 
     async fn abort_active_stream(&self, chat_id: &str) -> bool {
+        let lock = self.history_lock(chat_id).await;
+        let _history_guard = lock.lock().await;
         let mut guard = self.inner.lock().await;
         let state = guard
             .entry(chat_id.to_string())
@@ -290,15 +310,6 @@ impl ChatRuntime {
             return;
         }
         let prompt = assemble_provider_prompt(&content, context.as_ref());
-        let _ = self
-            .append_history_message(
-                &config_dir,
-                &chat_id,
-                ChatMessageRole::User,
-                content.clone(),
-                Some(ChatMessageStatus::Complete),
-            )
-            .await;
         let result = self
             .stream_provider(&config_dir, &chat_id, stream_id, &prompt)
             .await;
@@ -333,21 +344,6 @@ impl ChatRuntime {
                 .await;
             }
         }
-    }
-
-    async fn append_history_message(
-        &self,
-        config_dir: &std::path::Path,
-        chat_id: &str,
-        role: ChatMessageRole,
-        content: String,
-        status: Option<ChatMessageStatus>,
-    ) -> Result<(), chat_history::ChatHistoryError> {
-        let lock = self.history_lock(chat_id).await;
-        let _guard = lock.lock().await;
-        chat_history::append_message(config_dir, chat_id, role, content, status)
-            .await
-            .map(|_| ())
     }
 
     async fn persist_terminal_history_and_event(
