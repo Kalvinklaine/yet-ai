@@ -398,7 +398,9 @@ Allowed current LSP surfaces are limited to:
 - `textDocument/didClose`
 - deterministic `textDocument/completion` or equivalent status proof that uses only the in-memory document state already supplied by the editor
 
-The MVP must not implement or imply production completions, code lens/code vision, diagnostics from providers, JetBrains full LSP parity, tools, edits, tasks, knowledge, agents, or autonomous indexing. Provider-backed completion on keystrokes, code lens/code vision, richer diagnostics, JetBrains LSP wiring, workspace symbol/indexing behavior, and any production agent behavior remain later follow-up scope unless a separate card implements and verifies them.
+The MVP must not implement or imply production completions, code lens/code vision, diagnostics from providers, JetBrains full LSP parity, tools, edits, tasks, knowledge, agents, or autonomous indexing. Provider-backed completion on keystrokes, code lens/code vision, richer diagnostics, workspace symbol/indexing behavior, and any production agent behavior remain later follow-up scope unless a separate card implements and verifies them.
+
+JetBrains LSP client wiring is explicitly deferred for this MVP sprint. The current JetBrains plugin has a tested HTTP runtime launcher, JCEF GUI host, sanitized runtime diagnostics, and bounded active-context bridge, but it has no reviewed IntelliJ LSP client lifecycle or smoke-covered `yet-lsp --lsp-stdio` path. A follow-up must choose the exact IntelliJ APIs, keep the LSP process and HTTP runtime lifecycle clear, define document count/size and URI-scheme policy, add sanitized diagnostics, and verify Gradle plus JetBrains smoke coverage before claiming JetBrains LSP support.
 
 Forbidden until separate approval:
 
