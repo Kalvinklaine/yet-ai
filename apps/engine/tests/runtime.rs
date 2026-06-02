@@ -505,6 +505,71 @@ async fn start_slow_mock_provider() -> (
     )
 }
 
+async fn start_replacement_mock_provider() -> (
+    String,
+    mpsc::Receiver<Option<String>>,
+    oneshot::Receiver<()>,
+    oneshot::Sender<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (auth_sender, auth_receiver) = mpsc::channel(8);
+    let (first_seen_sender, first_seen_receiver) = oneshot::channel();
+    let (release_first_sender, release_first_receiver) = oneshot::channel();
+    let first_seen_sender = std::sync::Arc::new(std::sync::Mutex::new(Some(first_seen_sender)));
+    let release_first_receiver =
+        std::sync::Arc::new(std::sync::Mutex::new(Some(release_first_receiver)));
+    let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    tokio::spawn(async move {
+        let handler = move |request: axum::http::Request<Body>| {
+            let auth_sender = auth_sender.clone();
+            let first_seen_sender = first_seen_sender.clone();
+            let release_first_receiver = release_first_receiver.clone();
+            let requests = requests.clone();
+            async move {
+                let auth = request
+                    .headers()
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                let _ = auth_sender.send(auth.clone()).await;
+                let request_index = requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if request_index == 0 {
+                    if let Some(sender) = first_seen_sender.lock().unwrap().take() {
+                        let _ = sender.send(());
+                    }
+                    let receiver = release_first_receiver.lock().unwrap().take();
+                    if let Some(receiver) = receiver {
+                        let _ = receiver.await;
+                    }
+                    return (
+                        StatusCode::OK,
+                        [(header::CONTENT_TYPE, "text/event-stream")],
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"old\"}}]}\n\ndata: [DONE]\n\n",
+                    )
+                        .into_response();
+                }
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "text/event-stream")],
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"new\"}}]}\n\ndata: [DONE]\n\n",
+                )
+                    .into_response()
+            }
+        };
+        let app = axum::Router::new()
+            .route("/chat/completions", axum::routing::post(handler.clone()))
+            .route("/v1/chat/completions", axum::routing::post(handler));
+        axum::serve(listener, app).await.unwrap();
+    });
+    (
+        format!("http://{address}"),
+        auth_receiver,
+        first_seen_receiver,
+        release_first_sender,
+    )
+}
+
 async fn start_mock_codex_token_endpoint() -> (String, oneshot::Receiver<Value>) {
     start_mock_codex_token_endpoint_with(1800).await
 }
@@ -2645,7 +2710,8 @@ async fn provider_auth_exchange_rejects_invalid_strings_before_token_call_and_st
         .await;
         assert_eq!(status, StatusCode::OK);
         let session_id = start["sessionId"].as_str().unwrap().to_string();
-        let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap()).to_string();
+        let state =
+            state_from_authorization_url(start["authorizationUrl"].as_str().unwrap()).to_string();
         let mut exchange = json!({
             "sessionId": session_id,
             "state": state,
@@ -2674,9 +2740,11 @@ async fn provider_auth_exchange_rejects_invalid_strings_before_token_call_and_st
         assert!(!text.contains("bad-code"));
         assert!(!text.contains("codex-code-invalid-input-secret"));
         assert_provider_auth_response_has_no_codex_secrets(&body);
-        assert!(tokio::time::timeout(std::time::Duration::from_millis(100), token_body_receiver)
-            .await
-            .is_err());
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), token_body_receiver)
+                .await
+                .is_err()
+        );
         let (status, pending) = json_response_from(
             app,
             authed_request(
@@ -4010,9 +4078,15 @@ async fn agent_progress_valid_local_source_returns_populated_list() {
     assert_eq!(body["generatedAt"], "2026-05-31T10:00:02Z");
     assert_eq!(body["snapshots"].as_array().unwrap().len(), 1);
     assert_eq!(body["snapshots"][0]["runId"], "run-1");
-    assert_eq!(body["snapshots"][0]["lastHeartbeatAt"], "2026-05-31T10:00:01Z");
+    assert_eq!(
+        body["snapshots"][0]["lastHeartbeatAt"],
+        "2026-05-31T10:00:01Z"
+    );
     assert_eq!(body["snapshots"][0]["heartbeatAgeMs"], 5);
-    assert_eq!(body["snapshots"][0]["lastToolOutputAt"], "2026-05-31T10:00:00Z");
+    assert_eq!(
+        body["snapshots"][0]["lastToolOutputAt"],
+        "2026-05-31T10:00:00Z"
+    );
     assert_eq!(body["snapshots"][0]["toolOutputAgeMs"], 1005);
     assert_eq!(
         body["snapshots"][0]["currentTool"]["label"],
@@ -4208,11 +4282,7 @@ async fn agent_progress_final_file_symlink_is_rejected_without_raw_echo() {
 
     let (status, body) = agent_progress_response_for_paths(paths.clone()).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_agent_progress_error_is_sanitized(
-        &body,
-        &["run-1", &outside.to_string_lossy()],
-        &paths,
-    );
+    assert_agent_progress_error_is_sanitized(&body, &["run-1", &outside.to_string_lossy()], &paths);
 }
 
 #[cfg(unix)]
@@ -4240,11 +4310,7 @@ async fn agent_progress_parent_directory_symlink_is_rejected_without_raw_echo() 
 
     let (status, body) = agent_progress_response_for_paths(paths.clone()).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_agent_progress_error_is_sanitized(
-        &body,
-        &["run-2", &outside.to_string_lossy()],
-        &paths,
-    );
+    assert_agent_progress_error_is_sanitized(&body, &["run-2", &outside.to_string_lossy()], &paths);
 }
 
 #[tokio::test]
@@ -4352,7 +4418,10 @@ async fn agent_progress_accepts_schema_aligned_card_and_generic_run_event_ids() 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["snapshots"][0]["cardId"], "T-386");
     assert_eq!(body["snapshots"][0]["runId"], "run.386");
-    assert_eq!(body["snapshots"][0]["recentEvents"][0]["eventId"], "event.386");
+    assert_eq!(
+        body["snapshots"][0]["recentEvents"][0]["eventId"],
+        "event.386"
+    );
     assert_eq!(body["snapshots"][1]["cardId"], "T_386");
 }
 
@@ -4401,13 +4470,16 @@ async fn agent_progress_rejects_over_cap_snapshots_before_truncation() {
 async fn agent_progress_rejects_over_cap_recent_events_before_truncation() {
     let paths = test_storage_paths();
     let mut snapshot = valid_agent_progress_snapshot(1, yet_lsp::agent_progress::MAX_RECENT_EVENTS);
-    snapshot["recentEvents"].as_array_mut().unwrap().push(json!({
-        "eventId": "event-unsafe-hidden",
-        "timestamp": "2026-05-31T10:00:01Z",
-        "phase": "editing",
-        "status": "running",
-        "message": "Bearer hidden token /Users/example/.codex/auth.json"
-    }));
+    snapshot["recentEvents"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "eventId": "event-unsafe-hidden",
+            "timestamp": "2026-05-31T10:00:01Z",
+            "phase": "editing",
+            "status": "running",
+            "message": "Bearer hidden token /Users/example/.codex/auth.json"
+        }));
     write_agent_progress_source(
         &paths,
         &json!({
@@ -4435,7 +4507,9 @@ async fn agent_progress_rejects_over_cap_recent_events_before_truncation() {
 async fn agent_progress_accepts_exact_snapshot_and_recent_event_caps() {
     let paths = test_storage_paths();
     let snapshots = (0..yet_lsp::agent_progress::MAX_SNAPSHOTS)
-        .map(|index| valid_agent_progress_snapshot(index, yet_lsp::agent_progress::MAX_RECENT_EVENTS))
+        .map(|index| {
+            valid_agent_progress_snapshot(index, yet_lsp::agent_progress::MAX_RECENT_EVENTS)
+        })
         .collect::<Vec<_>>();
     write_agent_progress_source(
         &paths,
@@ -8337,6 +8411,112 @@ async fn abort_cancels_active_provider_stream_without_later_deltas() {
     .await;
     assert!(!text.contains(api_key));
     assert_sanitized_sse_error(&text);
+}
+
+#[tokio::test]
+async fn chat_immediate_abort_after_user_message_reliably_aborts_active_stream() {
+    let api_key = "sk-immediate-abort-secret-abcd";
+    let (base_url, auth_receiver, first_receiver, continue_sender) =
+        start_slow_mock_provider().await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    send_user_message_with_content(
+        app.clone(),
+        "chat-immediate-abort-race",
+        "abort immediately",
+    )
+    .await;
+    send_abort(
+        app.clone(),
+        "chat-immediate-abort-race",
+        "req-immediate-abort",
+    )
+    .await;
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(150), first_receiver)
+            .await
+            .is_err()
+    );
+    let _ = continue_sender.send(());
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-immediate-abort-race").await;
+    let events = sse_json_events(&text);
+    assert!(events
+        .iter()
+        .any(|event| event["type"] == "stream_finished"
+            && event["payload"]["finishReason"] == "abort"));
+    assert!(!events.iter().any(|event| event["type"] == "stream_delta"));
+    assert!(!events.iter().any(|event| event["type"] == "error"));
+    assert!(!text.contains(api_key));
+    assert_sanitized_sse_error(&text);
+    assert_no_observed_auth(auth_receiver).await;
+}
+
+#[tokio::test]
+async fn chat_same_chat_replacement_aborts_old_stream_without_stale_terminal_effects() {
+    let api_key = "sk-replacement-secret-abcd";
+    let (base_url, auth_receiver, first_seen_receiver, release_first_sender) =
+        start_replacement_mock_provider().await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    send_user_message_with_content(app.clone(), "chat-replacement-race", "old prompt").await;
+    tokio::time::timeout(std::time::Duration::from_secs(2), first_seen_receiver)
+        .await
+        .expect("first provider request should be observed")
+        .expect("first provider request signal should be sent");
+    send_user_message_with_content(app.clone(), "chat-replacement-race", "new prompt").await;
+    let _ = release_first_sender.send(());
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-replacement-race").await;
+    let events = sse_json_events(&text);
+    assert!(events
+        .iter()
+        .any(|event| event["type"] == "stream_finished"
+            && event["payload"]["finishReason"] == "abort"));
+    assert!(events
+        .iter()
+        .any(|event| event["type"] == "stream_delta"
+            && event["payload"]["delta"]["content"] == "new"));
+    assert!(!events
+        .iter()
+        .any(|event| event["type"] == "stream_delta"
+            && event["payload"]["delta"]["content"] == "old"));
+    let stop_count = events
+        .iter()
+        .filter(|event| {
+            event["type"] == "stream_finished" && event["payload"]["finishReason"] == "stop"
+        })
+        .count();
+    assert_eq!(stop_count, 1);
+    let abort_count = events
+        .iter()
+        .filter(|event| {
+            event["type"] == "stream_finished" && event["payload"]["finishReason"] == "abort"
+        })
+        .count();
+    assert_eq!(abort_count, 1);
+    assert!(!events.iter().any(|event| event["type"] == "error"));
+    assert!(!text.contains(api_key));
+    assert_sanitized_sse_error(&text);
+    let mut first_auth = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        let mut auth_receiver = auth_receiver;
+        let first = auth_receiver.recv().await.unwrap();
+        let second = auth_receiver.recv().await.unwrap();
+        (first, second, auth_receiver)
+    })
+    .await
+    .expect("replacement should observe two provider requests");
+    assert_stored_secret(first_auth.0.as_deref(), "Bearer sk-replacement-secret-abcd");
+    assert_stored_secret(first_auth.1.as_deref(), "Bearer sk-replacement-secret-abcd");
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), first_auth.2.recv())
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
