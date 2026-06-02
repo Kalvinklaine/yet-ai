@@ -8690,6 +8690,19 @@ async fn chat_same_chat_replacement_aborts_old_stream_without_stale_terminal_eff
     let _ = release_first_sender.send(());
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
+    let loaded = wait_for_chat_messages(app.clone(), "chat-replacement-race", 3).await;
+    let messages = loaded["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages[0]["role"], "user");
+    assert_eq!(messages[0]["content"], "old prompt");
+    assert_eq!(messages[1]["role"], "user");
+    assert_eq!(messages[1]["content"], "new prompt");
+    assert_eq!(messages[2]["role"], "assistant");
+    assert_eq!(messages[2]["content"], "new");
+    assert!(!messages
+        .iter()
+        .any(|message| message["role"] == "assistant" && message["content"] == "old"));
+
     let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-replacement-race").await;
     let events = sse_json_events(&text);
     assert!(events
