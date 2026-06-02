@@ -28,7 +28,11 @@ async fn lsp_initialize_shutdown_over_stdio() {
     assert_eq!(responses.len(), 2);
     assert_eq!(responses[0]["id"], 1);
     assert_eq!(responses[0]["result"]["serverInfo"]["name"], "Yet AI LSP");
-    assert_eq!(responses[0]["result"]["capabilities"]["textDocumentSync"], 1);
+    assert_eq!(
+        responses[0]["result"]["capabilities"]["textDocumentSync"],
+        1
+    );
+    assert!(responses[0]["result"]["capabilities"]["completionProvider"].is_object());
     assert_eq!(responses[1], json!({"jsonrpc":"2.0","id":2,"result":null}));
 }
 
@@ -53,7 +57,10 @@ fn lsp_did_open_change_close_cache_lifecycle() {
         "params":{"textDocument":{"uri":uri,"version":2},"contentChanges":[{"text":"fn main() { println!(\"ok\"); }"}]}
     }));
     assert_eq!(server.document_count(), 1);
-    assert_eq!(server.document_text(uri), Some("fn main() { println!(\"ok\"); }"));
+    assert_eq!(
+        server.document_text(uri),
+        Some("fn main() { println!(\"ok\"); }")
+    );
 
     server.handle_message(json!({
         "jsonrpc":"2.0",
@@ -93,6 +100,105 @@ fn lsp_unsupported_and_oversized_documents_fail_safe() {
 }
 
 #[test]
+fn lsp_completion_returns_deterministic_local_status() {
+    let mut server = initialized_server();
+    let uri = "file:///workspace/src/main.rs";
+    server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":uri,"languageId":"rust","version":1,"text":"fn main() {}"}}
+    }));
+
+    let (response, control) = server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "id":2,
+        "method":"textDocument/completion",
+        "params":{"textDocument":{"uri":uri},"position":{"line":0,"character":3}}
+    }));
+
+    assert_eq!(control, LspControl::Continue);
+    let response = response.unwrap();
+    assert_eq!(response["id"], 2);
+    assert_eq!(response["result"]["isIncomplete"], false);
+    let items = response["result"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["label"], "Yet AI LSP connected");
+    assert_eq!(items[0]["detail"], "Local read-only LSP status");
+    assert!(items[0].get("documentation").is_none());
+}
+
+#[test]
+fn lsp_completion_returns_empty_for_closed_unknown_unsupported_and_invalid_documents() {
+    let mut server = initialized_server();
+    let uri = "file:///workspace/src/main.rs";
+    server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":uri,"text":"fn main() {}"}}
+    }));
+
+    assert_empty_completion(&mut server, "https://example.test/private.rs", 0, 0);
+    assert_empty_completion(&mut server, "file:///workspace/src/main.rs", 2, 0);
+    assert_empty_completion(&mut server, "file:///workspace/missing.rs", 0, 0);
+
+    server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "method":"textDocument/didClose",
+        "params":{"textDocument":{"uri":uri}}
+    }));
+    assert_empty_completion(&mut server, uri, 0, 0);
+}
+
+#[test]
+fn lsp_completion_returns_empty_for_oversized_or_binary_like_cached_content() {
+    let mut server = initialized_server();
+    let oversized_uri = "file:///workspace/src/oversized.rs";
+    server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":oversized_uri,"text":"safe"}}
+    }));
+    let oversized = "x".repeat(257 * 1024);
+    server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "method":"textDocument/didChange",
+        "params":{"textDocument":{"uri":oversized_uri},"contentChanges":[{"text":oversized}]}
+    }));
+    assert_empty_completion(&mut server, oversized_uri, 0, 0);
+
+    let binary_uri = "file:///workspace/src/binary.rs";
+    server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":binary_uri,"text":"safe\u{0000}body"}}
+    }));
+    assert_empty_completion(&mut server, binary_uri, 0, 0);
+}
+
+#[test]
+fn lsp_completion_does_not_require_provider_configuration_or_secrets() {
+    let mut server = initialized_server();
+    let uri = "file:///workspace/src/no_provider.rs";
+    server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":uri,"text":"fn local() {}"}}
+    }));
+
+    let (response, _) = server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "id":9,
+        "method":"textDocument/completion",
+        "params":{"textDocument":{"uri":uri},"position":{"line":0,"character":2}}
+    }));
+
+    assert_eq!(
+        response.unwrap()["result"]["items"][0]["label"],
+        "Yet AI LSP connected"
+    );
+}
+
+#[test]
 fn lsp_document_count_is_bounded_and_shutdown_clears_state() {
     let mut server = initialized_server();
     for index in 0..40 {
@@ -120,6 +226,20 @@ fn lsp_default_http_mode_flag_is_unaffected() {
     assert!(!lsp_stdio_requested(Vec::<&str>::new()));
     assert!(!lsp_stdio_requested(["--help"]));
     assert!(lsp_stdio_requested(["--lsp-stdio"]));
+}
+
+fn assert_empty_completion(server: &mut LspServer, uri: &str, line: u64, character: u64) {
+    let (response, control) = server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "id":7,
+        "method":"textDocument/completion",
+        "params":{"textDocument":{"uri":uri},"position":{"line":line,"character":character}}
+    }));
+    assert_eq!(control, LspControl::Continue);
+    assert_eq!(
+        response.unwrap()["result"],
+        json!({"isIncomplete":false,"items":[]})
+    );
 }
 
 fn initialized_server() -> LspServer {
