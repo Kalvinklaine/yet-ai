@@ -25,9 +25,25 @@ The VS Code plugin can optionally start the current read-only LSP MVP. It is dis
 "yetai.lsp.enabled": true
 ```
 
-When enabled, the extension discovers the same prepared `yet-lsp` binary used by the chat runtime and starts a separate process with `--lsp-stdio`. This LSP process is independent from the HTTP chat runtime: it does not receive the local runtime Session token, provider keys, auth headers, provider settings, `YET_AI_AUTH_TOKEN`, or `YET_AI_HTTP_PORT`. The extension sends only minimal read-only client capabilities for document open/change/close synchronization and completion status probing, then stops the process on extension deactivate.
+When enabled, the extension discovers the same prepared `yet-lsp` binary used by the chat runtime and starts a separate process with `--lsp-stdio`. This LSP process is independent from the HTTP chat runtime: it does not receive the local runtime Session token, provider keys, auth headers, provider settings, `YET_AI_AUTH_TOKEN`, or `YET_AI_HTTP_PORT`.
 
-The MVP server currently keeps only bounded in-memory `file://` documents provided by VS Code and can return the deterministic local status completion `Yet AI LSP connected` for safe cached documents. It does not read arbitrary files, index workspaces, call providers or local models on keystrokes, edit files, apply workspace edits, run shell/tools, start background agents, or require any hosted Yet AI backend. Missing binaries, non-executable binaries, process errors, and crashes are reported only through bounded sanitized `Yet AI Runtime` output diagnostics.
+The client implements a minimal VS Code document/completion path over stdio JSON-RPC. It reads and bounds server stdout, waits for the `initialize` response, sends `initialized`, synchronizes only supported local `file` text documents with open/change/close notifications, and registers a `file`-scheme completion provider. The deterministic completion proof returns the local status item `Yet AI LSP connected` from cached document state. Non-file, untitled, virtual, and remote documents are not synchronized or queried by this MVP.
+
+The MVP server currently keeps only bounded in-memory `file://` documents provided by VS Code and can return the deterministic local status completion `Yet AI LSP connected` for safe cached documents. It does not read arbitrary files, index workspaces, call providers or local models on keystrokes, edit files, apply workspace edits, run shell/tools, start background agents, or require any hosted Yet AI backend. Missing binaries, non-executable binaries, process errors, crashes, parse failures, and timeouts are reported only through bounded sanitized `Yet AI Runtime` output diagnostics.
+
+Package-local deterministic coverage for this path is included in:
+
+```sh
+cd apps/plugins/vscode
+npm run compile
+npm run check:engine-connection
+```
+
+Root spawned-engine coverage is available with:
+
+```sh
+npm run smoke:lsp-stdio
+```
 
 From the repository root, run the single dev-preview preparation command:
 
