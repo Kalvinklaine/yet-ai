@@ -6686,6 +6686,29 @@ async fn provider_secret_chat_first_access_uses_stored_key_over_inline_key() {
 
 #[tokio::test]
 async fn provider_secret_chat_whitespace_stored_key_fails_closed_before_request() {
+    provider_secret_chat_blank_stored_key_fails_closed_before_request(
+        "   \n\t  ",
+        "chat-provider-secret-whitespace",
+        "provider-secret-chat-whitespace",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn provider_secret_chat_empty_stored_key_fails_closed_before_request() {
+    provider_secret_chat_blank_stored_key_fails_closed_before_request(
+        "",
+        "chat-provider-secret-empty",
+        "provider-secret-chat-empty",
+    )
+    .await;
+}
+
+async fn provider_secret_chat_blank_stored_key_fails_closed_before_request(
+    stored_key: &str,
+    chat_id: &str,
+    provider_id: &str,
+) {
     let paths = test_storage_paths();
     let (base_url, auth_receiver) = start_mock_provider(
         StatusCode::OK,
@@ -6697,31 +6720,17 @@ async fn provider_secret_chat_whitespace_stored_key_fails_closed_before_request(
         AuthToken::new(TEST_TOKEN).unwrap(),
         paths.clone(),
     ));
-    let api_key = "sk-provider-whitespace-chat-secret-abcd";
-    configure_openai_provider_with_id(
-        app.clone(),
-        "provider-secret-chat-whitespace",
-        base_url,
-        api_key,
-        "gpt-test",
-    )
-    .await;
+    let api_key = "sk-provider-blank-chat-secret-abcd";
+    configure_openai_provider_with_id(app.clone(), provider_id, base_url, api_key, "gpt-test")
+        .await;
     FileSecretStore::new(&paths.config_dir)
-        .put_secret(
-            "provider-secret-chat-whitespace",
-            SecretKind::ApiKey,
-            "   \n\t  ",
-        )
+        .put_secret(provider_id, SecretKind::ApiKey, stored_key)
         .await
         .unwrap();
 
-    send_user_message_with_content(
-        app.clone(),
-        "chat-provider-secret-whitespace",
-        "prompt-marker-provider-secret-whitespace",
-    )
-    .await;
-    let loaded = wait_for_chat_messages(app.clone(), "chat-provider-secret-whitespace", 2).await;
+    send_user_message_with_content(app.clone(), chat_id, "prompt-marker-provider-secret-blank")
+        .await;
+    let loaded = wait_for_chat_messages(app.clone(), chat_id, 2).await;
     assert_eq!(loaded["messages"][1]["role"], "error");
     assert_eq!(
         loaded["messages"][1]["content"],
@@ -6730,11 +6739,7 @@ async fn provider_secret_chat_whitespace_stored_key_fails_closed_before_request(
     assert_sanitized_sse_error(&loaded.to_string());
     assert!(!loaded.to_string().contains(api_key));
 
-    let text = sse_text_from(
-        app,
-        "/v1/chats/subscribe?chat_id=chat-provider-secret-whitespace",
-    )
-    .await;
+    let text = sse_text_from(app, &format!("/v1/chats/subscribe?chat_id={chat_id}")).await;
     let events = sse_json_events(&text);
     let error = find_error_event(&events);
     assert_eq!(error["payload"]["code"], "provider_unauthorized");
@@ -6744,7 +6749,7 @@ async fn provider_secret_chat_whitespace_stored_key_fails_closed_before_request(
     );
     assert_sanitized_sse_error(&text);
     assert!(!text.contains(api_key));
-    assert!(!text.contains("provider-whitespace-chat-secret"));
+    assert!(!text.contains("provider-blank-chat-secret"));
     assert_no_observed_auth(auth_receiver).await;
 }
 
@@ -6784,7 +6789,7 @@ async fn provider_secret_chat_deleted_key_does_not_call_provider() {
     .await;
     let events = sse_json_events(&text);
     let error = find_error_event(&events);
-    assert_eq!(error["payload"]["code"], "model_not_configured");
+    assert_eq!(error["payload"]["code"], "provider_unauthorized");
     assert_sanitized_sse_error(&text);
     assert!(!text.contains(api_key));
     assert_no_observed_auth(auth_receiver).await;

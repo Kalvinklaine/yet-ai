@@ -607,20 +607,28 @@ async fn select_chat_provider(config_dir: &std::path::Path) -> Result<ChatProvid
         .await
         .map_err(|_| ChatError::ProviderConfig)?;
     let mut saw_enabled_openai_compatible = false;
+    let mut saw_missing_credentials_capable_model = false;
     for provider in providers
         .into_iter()
         .filter(|provider| provider.enabled && provider.kind == ProviderKind::OpenAiCompatible)
     {
         saw_enabled_openai_compatible = true;
-        if let Some(model) = provider.models.into_iter().find(|model| {
-            model.readiness.status == ModelReadinessStatus::Ready
-                && model.capabilities.chat
-                && model.capabilities.streaming
-        }) {
-            return Ok(ChatProvider::OpenAiCompatible {
-                provider_id: provider.id,
-                model: model.id,
-            });
+        for model in provider.models {
+            if !model.capabilities.chat || !model.capabilities.streaming {
+                continue;
+            }
+            match model.readiness.status {
+                ModelReadinessStatus::Ready => {
+                    return Ok(ChatProvider::OpenAiCompatible {
+                        provider_id: provider.id,
+                        model: model.id,
+                    });
+                }
+                ModelReadinessStatus::MissingCredentials => {
+                    saw_missing_credentials_capable_model = true;
+                }
+                _ => {}
+            }
         }
     }
     match provider_auth::refresh_experimental_codex_chat_auth_if_needed(config_dir).await {
@@ -628,7 +636,9 @@ async fn select_chat_provider(config_dir: &std::path::Path) -> Result<ChatProvid
         Ok(None) | Err(provider_auth::ProviderAuthError::InvalidRequest) => {}
         Err(_) => return Err(ChatError::ProviderConfig),
     }
-    if saw_enabled_openai_compatible {
+    if saw_missing_credentials_capable_model {
+        Err(ChatError::Unauthorized)
+    } else if saw_enabled_openai_compatible {
         Err(ChatError::NoModel)
     } else {
         Err(ChatError::NoProvider)
