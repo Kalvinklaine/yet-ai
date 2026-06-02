@@ -374,7 +374,9 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function attachLspDiagnostics(client: LspProcess, output: LspOutput): void {
   const child = client.process;
   child.stdout?.on("data", (chunk: Buffer) => handleLspStdout(client, chunk, output));
+  child.stdout?.on("error", (error: Error) => handleLspStdoutError(client, output, error));
   child.stderr?.on("data", (chunk: Buffer) => appendLspStderr(client, chunk.toString("utf8"), output));
+  child.stderr?.on("error", (error: Error) => handleLspStderrError(client, output, error));
   child.stdin?.on("error", (error) => handleLspStdinError(client, output, error));
   child.on("close", (code, signal) => closeLspClient(client, output, `Yet AI read-only LSP MVP exited with code ${code ?? "null"} and signal ${signal ?? "null"}.`, new Error("LSP process exited")));
   child.on("exit", (_code, _signal) => {
@@ -410,12 +412,37 @@ function closeLspClient(client: LspProcess, output: LspOutput, diagnostic: strin
 }
 
 function handleLspStdinError(client: LspProcess, output: LspOutput, error: Error): void {
-  closeLspClient(
+  closeAndTerminateLspClient(
     client,
     output,
     `Yet AI read-only LSP MVP stdin error: ${sanitizeLspDiagnostic(error, "stdin error")}`,
     error instanceof Error ? error : new Error("LSP stdin error"),
   );
+}
+
+function handleLspStdoutError(client: LspProcess, output: LspOutput, error: Error): void {
+  closeAndTerminateLspClient(
+    client,
+    output,
+    `Yet AI read-only LSP MVP stdout error: ${sanitizeLspDiagnostic(error, "stdout error")}`,
+    error instanceof Error ? error : new Error("LSP stdout error"),
+  );
+}
+
+function handleLspStderrError(client: LspProcess, output: LspOutput, error: Error): void {
+  closeAndTerminateLspClient(
+    client,
+    output,
+    `Yet AI read-only LSP MVP stderr error: ${sanitizeLspDiagnostic(error, "stderr error")}`,
+    error instanceof Error ? error : new Error("LSP stderr error"),
+  );
+}
+
+function closeAndTerminateLspClient(client: LspProcess, output: LspOutput, diagnostic: string, error: Error): void {
+  client.stopping = true;
+  closeLspClient(client, output, diagnostic, error);
+  terminateLspProcess(client, "SIGTERM");
+  terminateLspProcess(client, "SIGKILL");
 }
 
 function resolveLspStop(client: LspProcess): void {
@@ -425,29 +452,41 @@ function resolveLspStop(client: LspProcess): void {
 }
 
 function appendLspStderr(client: LspProcess, text: string, output: LspOutput): void {
-  client.stderrLineBuffer += text;
-  let lineEnd = findLineEnd(client.stderrLineBuffer);
-  while (lineEnd !== -1) {
-    const nextOffset = client.stderrLineBuffer[lineEnd] === "\r" && client.stderrLineBuffer[lineEnd + 1] === "\n" ? lineEnd + 2 : lineEnd + 1;
-    if (!client.stderrDiscardingOversizedLine) {
-      appendSanitizedLspStderrLine(client.stderrLineBuffer.slice(0, lineEnd), output);
+  let offset = 0;
+  while (offset < text.length) {
+    const lineEnd = findLineEnd(text.slice(offset));
+    if (lineEnd === -1) {
+      appendLspStderrFragment(client, text.slice(offset), output);
+      return;
     }
+    const absoluteLineEnd = offset + lineEnd;
+    appendLspStderrFragment(client, text.slice(offset, absoluteLineEnd), output);
+    if (!client.stderrDiscardingOversizedLine) {
+      appendSanitizedLspStderrLine(client.stderrLineBuffer, output);
+    }
+    client.stderrLineBuffer = "";
     client.stderrDiscardingOversizedLine = false;
-    client.stderrLineBuffer = client.stderrLineBuffer.slice(nextOffset);
-    lineEnd = findLineEnd(client.stderrLineBuffer);
+    offset = text[absoluteLineEnd] === "\r" && text[absoluteLineEnd + 1] === "\n" ? absoluteLineEnd + 2 : absoluteLineEnd + 1;
   }
-  if (!client.stderrDiscardingOversizedLine && client.stderrLineBuffer.length > maxLspDiagnosticLineBuffer) {
+}
+
+function appendLspStderrFragment(client: LspProcess, fragment: string, output: LspOutput): void {
+  if (fragment.length === 0 || client.stderrDiscardingOversizedLine) {
+    return;
+  }
+  if (client.stderrLineBuffer.length + fragment.length > maxLspDiagnosticLineBuffer) {
     output.appendLine("[lsp] [redacted oversized LSP stderr line]");
     client.stderrLineBuffer = "";
     client.stderrDiscardingOversizedLine = true;
-  } else if (client.stderrDiscardingOversizedLine && client.stderrLineBuffer.length > maxLspDiagnosticLineBuffer) {
-    client.stderrLineBuffer = "";
+    return;
   }
+  client.stderrLineBuffer += fragment;
 }
 
 function flushLspStderr(client: LspProcess, output: LspOutput): void {
   if (client.stderrDiscardingOversizedLine) {
     client.stderrLineBuffer = "";
+    client.stderrDiscardingOversizedLine = false;
     return;
   }
   if (client.stderrLineBuffer.length === 0) {
@@ -527,10 +566,7 @@ function failLspProtocol(client: LspProcess, output: LspOutput, diagnostic: stri
   client.stdoutBuffer = Buffer.alloc(0);
   client.stderrLineBuffer = "";
   client.stderrDiscardingOversizedLine = false;
-  client.stopping = true;
-  closeLspClient(client, output, diagnostic, error);
-  terminateLspProcess(client, "SIGTERM");
-  terminateLspProcess(client, "SIGKILL");
+  closeAndTerminateLspClient(client, output, diagnostic, error);
 }
 
 function parseContentLength(header: string): number | undefined {
@@ -626,7 +662,7 @@ function sendLspMessage(client: LspProcess, message: unknown, output?: LspOutput
     });
     return true;
   } catch (error) {
-    output?.appendLine(`Yet AI read-only LSP MVP stdin write failed: ${sanitizeLspDiagnostic(error, "stdin write failed")}`);
+    handleLspStdinError(client, output ?? { appendLine() {} }, error instanceof Error ? error : new Error("stdin write failed"));
     return false;
   }
 }
