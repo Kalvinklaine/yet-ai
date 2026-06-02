@@ -124,7 +124,7 @@ To run the read-only LSP stdio mode locally:
 cargo run -p yet-lsp -- --lsp-stdio
 ```
 
-This mode speaks LSP over stdin/stdout, does not start the HTTP loopback server, does not require `YET_AI_AUTH_TOKEN`, and keeps only bounded in-memory `file://` document text supplied by the editor until close, shutdown, or exit. Its completion capability currently returns only a deterministic local status item for safe cached documents and safe empty results for unsupported inputs; it does not perform production AI completion, provider calls, file reads, indexing, tools, or workspace mutation.
+This mode speaks LSP over Tokio stdin/stdout, does not start the HTTP loopback server, does not require `YET_AI_AUTH_TOKEN`, and keeps only bounded in-memory `file://` document text supplied by the editor until close, shutdown, or exit. The stdio transport uses Tokio's portable `io-std` handles rather than Unix-only raw file descriptor wrapping. Its completion capability currently returns only a deterministic local status item for safe cached documents and safe empty results for unsupported inputs; it does not perform production AI completion, provider calls, file reads, indexing, tools, or workspace mutation.
 
 To verify the spawned-binary stdio path without an IDE:
 
