@@ -12,6 +12,7 @@ const MAX_UPDATE_BYTES: usize = 256 * 1024;
 const MAX_URI_BYTES: usize = 512;
 const MAX_HEADER_BYTES: usize = 8 * 1024;
 const MAX_MESSAGE_BYTES: usize = 512 * 1024;
+const COMPLETION_LABEL: &str = "Yet AI LSP connected";
 
 #[derive(Debug, Default)]
 pub struct LspServer {
@@ -73,7 +74,10 @@ impl LspServer {
                             id,
                             json!({
                                 "capabilities": {
-                                    "textDocumentSync": 1
+                                    "textDocumentSync": 1,
+                                    "completionProvider": {
+                                        "triggerCharacters": []
+                                    }
                                 },
                                 "serverInfo": {
                                     "name": "Yet AI LSP",
@@ -110,6 +114,10 @@ impl LspServer {
                 self.did_close(params);
                 (None, LspControl::Continue)
             }
+            "textDocument/completion" => (
+                id.map(|id| success_response(id, self.completion(params))),
+                LspControl::Continue,
+            ),
             _ => (
                 id.map(|id| error_response(id, -32601, "lsp method not supported")),
                 LspControl::Continue,
@@ -172,6 +180,32 @@ impl LspServer {
             return;
         };
         self.documents.remove(uri);
+    }
+
+    fn completion(&self, params: &Value) -> Value {
+        let Some(uri) = params
+            .get("textDocument")
+            .and_then(|document| valid_file_uri(document.get("uri")))
+        else {
+            return empty_completion();
+        };
+        let Some(text) = self.documents.get(uri) else {
+            return empty_completion();
+        };
+        if text.len() > MAX_DOCUMENT_BYTES || has_binary_like_content(text) {
+            return empty_completion();
+        }
+        if !valid_position(params.get("position"), text) {
+            return empty_completion();
+        }
+        json!({
+            "isIncomplete": false,
+            "items": [{
+                "label": COMPLETION_LABEL,
+                "kind": 1,
+                "detail": "Local read-only LSP status"
+            }]
+        })
     }
 }
 
@@ -245,6 +279,34 @@ fn valid_file_uri(value: Option<&Value>) -> Option<&str> {
         return None;
     }
     Some(uri)
+}
+
+fn valid_position(value: Option<&Value>, text: &str) -> bool {
+    let Some(position) = value else {
+        return false;
+    };
+    let Some(line) = position.get("line").and_then(Value::as_u64) else {
+        return false;
+    };
+    let Some(character) = position.get("character").and_then(Value::as_u64) else {
+        return false;
+    };
+    let Some(line_text) = text.lines().nth(line as usize) else {
+        return false;
+    };
+    character <= line_text.chars().count() as u64
+}
+
+fn has_binary_like_content(text: &str) -> bool {
+    text.bytes()
+        .any(|byte| byte == 0 || (byte < 0x09) || (byte > 0x0d && byte < 0x20))
+}
+
+fn empty_completion() -> Value {
+    json!({
+        "isIncomplete": false,
+        "items": []
+    })
 }
 
 fn success_response(id: Value, result: Value) -> Value {
