@@ -13,6 +13,7 @@
     "planner:scheduler:tick": "node scripts/planner-scheduler-tick.mjs",
     "smoke:planner-resume": "node scripts/smoke-planner-resume.mjs",
     "smoke:planner-no-idle": "node scripts/smoke-planner-no-idle.mjs",
+    "smoke:lsp-stdio": "node scripts/smoke-lsp-stdio.mjs",
     "smoke:local": "node scripts/smoke-local.mjs",
     "smoke:provider-errors": "node scripts/smoke-provider-errors.mjs",
     "smoke:provider-secret-migration": "node scripts/smoke-provider-secret-migration.mjs",
