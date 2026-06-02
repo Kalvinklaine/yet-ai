@@ -135,7 +135,7 @@ impl LspServer {
         let Some(text) = document.get("text").and_then(Value::as_str) else {
             return;
         };
-        if text.len() > MAX_DOCUMENT_BYTES {
+        if text.len() > MAX_DOCUMENT_BYTES || has_binary_like_content(text) {
             self.documents.remove(uri);
             return;
         }
@@ -165,7 +165,10 @@ impl LspServer {
         else {
             return;
         };
-        if text.len() > MAX_UPDATE_BYTES || text.len() > MAX_DOCUMENT_BYTES {
+        if text.len() > MAX_UPDATE_BYTES
+            || text.len() > MAX_DOCUMENT_BYTES
+            || has_binary_like_content(text)
+        {
             self.documents.remove(uri);
             return;
         }
@@ -269,10 +272,36 @@ fn valid_position(value: Option<&Value>, text: &str) -> bool {
     let Some(character) = position.get("character").and_then(Value::as_u64) else {
         return false;
     };
-    let Some(line_text) = text.lines().nth(line as usize) else {
+    let Some(line_text) = line_text_at(text, line as usize) else {
         return false;
     };
-    character <= line_text.chars().count() as u64
+    character <= utf16_visible_line_len(line_text) as u64
+}
+
+fn line_text_at(text: &str, target: usize) -> Option<&str> {
+    let mut line = 0;
+    let mut start = 0;
+    for (index, byte) in text.bytes().enumerate() {
+        if byte == b'\n' {
+            if line == target {
+                return Some(strip_line_cr(&text[start..index]));
+            }
+            line += 1;
+            start = index + 1;
+        }
+    }
+    if line == target {
+        return Some(strip_line_cr(&text[start..]));
+    }
+    None
+}
+
+fn strip_line_cr(line: &str) -> &str {
+    line.strip_suffix('\r').unwrap_or(line)
+}
+
+fn utf16_visible_line_len(line: &str) -> usize {
+    line.encode_utf16().count()
 }
 
 fn has_binary_like_content(text: &str) -> bool {
