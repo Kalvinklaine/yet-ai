@@ -242,8 +242,7 @@ fun sanitizeRuntimeUrlForDiagnostics(value: String): String {
     val scheme = uri.scheme ?: return redactLogText(value.trim(), "")
     val host = uri.host?.let { if (it == "::1") "[::1]" else it } ?: "unknown-host"
     val port = if (uri.port >= 0) ":${uri.port}" else ""
-    val path = uri.rawPath?.takeIf { it.isNotBlank() } ?: ""
-    return "$scheme://$host$port$path"
+    return "$scheme://$host$port"
 }
 
 fun describeEngineBinaryStatus(settings: RuntimeSettings): String = when (settings.launchMode) {
