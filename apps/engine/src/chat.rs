@@ -727,6 +727,18 @@ async fn openai_compatible_stream(
     stream_id: u64,
     content: &str,
 ) -> Result<String, ChatError> {
+    let api_key = if provider.auth.auth_type == AuthType::ApiKey {
+        Some(
+            provider
+                .auth
+                .api_key
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or(ChatError::Unauthorized)?,
+        )
+    } else {
+        None
+    };
     let url = chat_completions_url(&provider.base_url)?;
     let mut request = client
         .post(url)
@@ -736,15 +748,8 @@ async fn openai_compatible_stream(
             "stream": true,
             "messages": [{ "role": "user", "content": content }]
         }));
-    if provider.auth.auth_type == AuthType::ApiKey {
-        if let Some(api_key) = provider
-            .auth
-            .api_key
-            .as_deref()
-            .filter(|value| !value.is_empty())
-        {
-            request = request.bearer_auth(api_key);
-        }
+    if let Some(api_key) = api_key {
+        request = request.bearer_auth(api_key);
     }
     collect_openai_compatible_stream(runtime, chat_id, stream_id, request).await
 }
