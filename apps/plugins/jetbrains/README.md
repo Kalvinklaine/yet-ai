@@ -201,6 +201,14 @@ Manual local preview:
 
 No autonomous file reads/indexing, privileged workspace edits, IDE tools, shell/tool execution, provider adapters, or provider credential persistence are implemented in this shell.
 
+## JetBrains LSP MVP boundary
+
+JetBrains LSP client wiring is deferred for this MVP sprint. This plugin currently verifies the local runtime through HTTP `/v1/ping`, hosts the GUI in JCEF, and sends bounded active editor/selection context through the non-privileged bridge. It does not start `yet-lsp --lsp-stdio`, register an IntelliJ LSP client, advertise JetBrains completions, or attach document lifecycle notifications to the engine LSP server.
+
+The decision is intentional rather than a support claim. Current JetBrains code has a tested HTTP launcher and JCEF bridge, but no established, reviewed, and smoke-covered IntelliJ LSP client lifecycle in this repository. A minimal guarded setting would still need JetBrains API selection, project-scoped lifecycle ownership, stdio process supervision separate from the HTTP runtime process, workspace/document URI policy, completion registration behavior, sanitized diagnostics, and Gradle tests plus JetBrains smoke coverage. That is broader than this documentation decision and risks misleading parity claims.
+
+For this LSP foundation sprint, validate the read-only engine LSP boundary and VS Code opt-in LSP path first. A later JetBrains LSP card may add an off-by-default read-only path only after it defines the exact IntelliJ APIs, process ownership, document size/count bounds, supported URI schemes, completion trigger behavior, teardown rules, and local-only verification gate. Until that follow-up lands, JetBrains dev-preview guidance remains chat/runtime/active-context only.
+
 Current GUI-to-host receive policy is deny-by-default. The Kotlin/JCEF bridge accepts only strict `gui.ready` from the GUI. Future GUI messages `gui.openFile`, `gui.revealRange`, `gui.applyWorkspaceEditRequest`, `gui.executeIdeTool`, `gui.copyText`, `gui.showNotification`, and `gui.getHostContext` are not allowlisted and must not call IntelliJ platform APIs. Enabling any privileged message later requires strict schemas, request/response correlation, exact iframe origin/source checks where available, user confirmation for risky operations, sanitized audit/logging, least-privilege allowlists, and no silent workspace mutation. Tools, tasks, knowledge, shell execution, file edits/apply patch, autonomous indexing, and background autonomy remain disabled in this milestone.
 
 ## Runtime diagnostics and restart
@@ -264,7 +272,7 @@ Notes:
 
 - The plugin shell is a dev-preview MVP, not production-ready.
 - No marketplace packaging, signed/notarized engine bundle, or production installer is complete.
-- The local launcher is an MVP: it sets token and HTTP port environment variables only, reads `/v1/ping`, and does not add LSP/completion wiring.
+- The local launcher is an MVP: it sets token and HTTP port environment variables only, reads `/v1/ping`, and does not add LSP/completion wiring. JetBrains LSP client wiring is explicitly deferred for this sprint until the IntelliJ API path, stdio lifecycle, document bounds, URI policy, diagnostics, and smoke coverage are designed and verified.
 - The bridge currently accepts only `gui.ready` from the GUI and emits `host.ready`, `host.openedFromCommand`, and non-privileged active editor/selection `host.contextSnapshot` messages.
 - Settings use JetBrains application state for non-secret local runtime/debug URLs only. The local session token uses JetBrains PasswordSafe.
 - Packaged GUI assets are generated build output from `apps/gui/dist`; they are copied into Gradle build resources but are not committed and this is not a final release packaging flow.
