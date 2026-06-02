@@ -70,6 +70,11 @@
           "type": "string",
           "default": "",
           "description": "Optional absolute path to the local yet-lsp engine binary. When set with auto or launch mode, the extension starts it with a per-session token."
+        },
+        "yetai.lsp.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Opt in to the read-only Yet AI LSP MVP. When enabled, the extension starts yet-lsp --lsp-stdio as a separate process from the HTTP chat runtime."
         }
       }
     },

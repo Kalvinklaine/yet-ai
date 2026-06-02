@@ -17,6 +17,18 @@ VS Code command palette commands:
 - `Yet AI: Set Local Runtime Session Token` stores the manual local runtime session token in VS Code SecretStorage for `connect` mode or other manual debug connections. This token is not a provider API key.
 - `Yet AI: Clear Local Runtime Session Token` removes the SecretStorage token.
 
+## Read-only LSP MVP
+
+The VS Code plugin can optionally start the current read-only LSP MVP. It is disabled by default. Enable it only for local development with:
+
+```json
+"yetai.lsp.enabled": true
+```
+
+When enabled, the extension discovers the same prepared `yet-lsp` binary used by the chat runtime and starts a separate process with `--lsp-stdio`. This LSP process is independent from the HTTP chat runtime: it does not receive the local runtime Session token, provider keys, auth headers, provider settings, `YET_AI_AUTH_TOKEN`, or `YET_AI_HTTP_PORT`. The extension sends only minimal read-only client capabilities for document open/change/close synchronization and completion status probing, then stops the process on extension deactivate.
+
+The MVP server currently keeps only bounded in-memory `file://` documents provided by VS Code and can return the deterministic local status completion `Yet AI LSP connected` for safe cached documents. It does not read arbitrary files, index workspaces, call providers or local models on keystrokes, edit files, apply workspace edits, run shell/tools, start background agents, or require any hosted Yet AI backend. Missing binaries, non-executable binaries, process errors, and crashes are reported only through bounded sanitized `Yet AI Runtime` output diagnostics.
+
 From the repository root, run the single dev-preview preparation command:
 
 ```sh
@@ -317,6 +329,7 @@ Use `Yet AI: Show Runtime Status` to write sanitized local runtime diagnostics t
   - `yetai.guiDevUrl`, optional loopback GUI dev server URL.
   - `yetai.launchMode`, one of `auto`, `connect`, or `launch`.
   - `yetai.engineBinaryPath`, optional absolute path to `yet-lsp`.
+  - `yetai.lsp.enabled`, default `false`, opt-in read-only LSP MVP over a separate `yet-lsp --lsp-stdio` process.
 
 `runtimeUrl` and `guiDevUrl` are restricted to loopback `http` or `https` URLs without userinfo, query, or fragment before the webview opens. `runtimeUrl` must use `http` with an explicit nonzero port when `auto` or `launch` starts the bundled local engine; `connect` may use `https` only for an externally managed loopback runtime. The manual local runtime `sessionToken` is a sensitive local runtime credential, not a provider secret. It is stored in VS Code SecretStorage through the command palette, passed only in the trusted `host.ready` bridge path needed by the GUI runtime client, is not logged, and is not rendered in the placeholder UI. The legacy `yetai.sessionToken` setting remains a deprecated dev-preview fallback only when SecretStorage has no token; raw provider secrets must never be stored in extension settings or SecretStorage by this plugin.
 
@@ -355,7 +368,7 @@ Current GUI-to-host receive policy is deny-by-default. The extension accepts onl
 - A local ignored root VSIX dev-preview artifact is available through `npm run prepare:vscode-preview`, but no marketplace publication, signed/notarized engine bundle, or production installer is complete.
 - Runtime health recovery after a crashed launched process is limited to retrying the command.
 - Packaged GUI assets and the root VSIX are supported through the documented `npm run prepare:vscode-preview` flow, but generated assets are not committed and this is not a final release packaging flow.
-- No LSP client, completions, tools, privileged workspace edits, IDE tools, file mutation, shell actions, or provider actions are implemented.
+- The LSP client is an opt-in read-only MVP only. Production AI completions, code actions, diagnostics, code lens, tools, privileged workspace edits, IDE tools, file mutation, shell actions, provider calls, and background agent actions are not implemented.
 - Current chat support is limited to the local provider/chat MVP exposed by the engine and GUI.
 - Legacy `yetai.sessionToken` remains only as a deprecated dev-preview fallback for existing local setups.
 

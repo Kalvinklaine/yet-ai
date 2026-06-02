@@ -86,6 +86,13 @@ try {
   const extensionModule = await import("../out/extension.js");
 
   const {
+    createLspProcessEnvironment,
+    sanitizeLspDiagnostic,
+    startYetAiLspClient,
+    stopYetAiLspClient,
+  } = await import("../out/lspClient.js");
+
+  const {
     collectRuntimeDiagnostics,
     createEngineLogRedactor,
     findEngineBinary,
@@ -557,6 +564,94 @@ try {
       );
       assert.equal(findEngineBinary(executable, tempRoot, "yet-lsp"), executable);
     }
+
+    const lspSecretEnv = createLspProcessEnvironment({
+      PATH: "/usr/bin",
+      YET_AI_AUTH_TOKEN: "lsp-env-session-token-sentinel",
+      OPENAI_API_KEY: "sk-lsp-env-provider-secret-sentinel",
+      Authorization: "Bearer lsp-env-bearer-sentinel",
+    });
+    assert.equal(lspSecretEnv.PATH, "/usr/bin");
+    assert.equal(Object.hasOwn(lspSecretEnv, "YET_AI_AUTH_TOKEN"), false);
+    assert.equal(Object.hasOwn(lspSecretEnv, "OPENAI_API_KEY"), false);
+    assert.equal(Object.hasOwn(lspSecretEnv, "Authorization"), false);
+
+    const lspDiagnosticSecret = "lsp-diagnostic-secret-sentinel";
+    const lspDiagnosticPath = path.join(os.homedir(), "Library", "Application Support", "yet-ai", "lsp.log");
+    const lspDiagnostic = sanitizeLspDiagnostic(
+      `LSP failed Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}\n${"safe detail\n".repeat(300)}`,
+      "fallback",
+    );
+    assert.equal(lspDiagnostic.includes(lspDiagnosticSecret), false, "LSP diagnostic leaked secret");
+    assert.equal(lspDiagnostic.includes(lspDiagnosticPath), false, "LSP diagnostic leaked private path");
+    assert.equal(lspDiagnostic.length, 1000, "LSP diagnostic was not bounded");
+    assert.equal(lspDiagnostic.endsWith("… [truncated sanitized LSP diagnostic]"), true);
+
+    const lspSpawns = [];
+    const lspOutputLines = [];
+    const lspOutput = { appendLine(line) { lspOutputLines.push(line); } };
+    childProcess.spawn = (command, args, options) => {
+      const child = new EventEmitter();
+      child.stdin = { chunks: [], write(chunk) { this.chunks.push(chunk); return true; } };
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.killed = false;
+      child.kill = () => {
+        child.killed = true;
+        child.emit("exit", null, "SIGTERM");
+        return true;
+      };
+      lspSpawns.push({ command, args, options, child });
+      return child;
+    };
+
+    configValues = {
+      "lsp.enabled": false,
+      engineBinaryPath: executable,
+    };
+    startYetAiLspClient({ ...fakeContext, extensionPath: tempRoot }, { engine: { binaryName: "yet-lsp" } }, lspOutput);
+    assert.equal(lspSpawns.length, 0, "disabled LSP setting launched a process");
+
+    configValues = {
+      "lsp.enabled": true,
+      engineBinaryPath: executable,
+      sessionToken: "legacy-lsp-token-must-not-be-used",
+    };
+    startYetAiLspClient({ ...fakeContext, extensionPath: tempRoot }, { engine: { binaryName: "yet-lsp" } }, lspOutput);
+    assert.equal(lspSpawns.length, 1);
+    assert.equal(lspSpawns[0].command, executable);
+    assert.deepEqual(lspSpawns[0].args, ["--lsp-stdio"]);
+    assert.equal(lspSpawns[0].options.env.YET_AI_AUTH_TOKEN, undefined);
+    assert.equal(lspSpawns[0].options.env.OPENAI_API_KEY, undefined);
+    assert.equal(lspSpawns[0].options.env.Authorization, undefined);
+    const lspStdin = lspSpawns[0].child.stdin.chunks.join("");
+    assert.match(lspStdin, /"method":"initialize"/);
+    assert.match(lspStdin, /"didOpen":true/);
+    assert.match(lspStdin, /"completion"/);
+    assert.match(lspStdin, /"method":"initialized"/);
+    assert.ok(lspOutputLines.some((line) => line.includes("Started Yet AI read-only LSP MVP from yet-lsp-executable.")));
+    lspSpawns[0].child.stderr.emit("data", Buffer.from(`stderr Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}`));
+    assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticSecret), false, "LSP stderr leaked secret");
+    assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticPath), false, "LSP stderr leaked private path");
+    stopYetAiLspClient(lspOutput);
+    assert.equal(lspSpawns[0].child.killed, true, "LSP deactivate cleanup did not stop process");
+    assert.match(lspSpawns[0].child.stdin.chunks.join(""), /"method":"shutdown"/);
+    assert.match(lspSpawns[0].child.stdin.chunks.join(""), /"method":"exit"/);
+
+    childProcess.spawn = () => {
+      throw new Error(`LSP spawn failed Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}`);
+    };
+    configValues = {
+      "lsp.enabled": true,
+      engineBinaryPath: executable,
+    };
+    const lspFailureOutput = [];
+    startYetAiLspClient({ ...fakeContext, extensionPath: tempRoot }, { engine: { binaryName: "yet-lsp" } }, { appendLine(line) { lspFailureOutput.push(line); } });
+    const lspFailureText = lspFailureOutput.join("\n");
+    assert.match(lspFailureText, /failed to start from yet-lsp-executable/);
+    assert.equal(lspFailureText.includes(lspDiagnosticSecret), false, "LSP spawn failure leaked secret");
+    assert.equal(lspFailureText.includes(lspDiagnosticPath), false, "LSP spawn failure leaked private path");
+    childProcess.spawn = originalSpawn;
 
     configValues = {
       runtimeUrl: "http://127.0.0.1:8001",

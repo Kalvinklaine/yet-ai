@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { clearStoredSessionToken, collectRuntimeDiagnostics, formatRuntimeDiagnostics, prepareEngineConnection, redactRuntimeDiagnosticText, setStoredSessionToken, stopLaunchedEngine } from "./engineConnection";
 import { assertExtensionIdentity, clearSessionTokenCommand, extensionCommand, loadProductIdentity, runtimeStatusCommand, setSessionTokenCommand } from "./identity";
 import { openYetAiWebview } from "./webview";
+import { startYetAiLspClient, stopYetAiLspClient } from "./lspClient";
 
 let engineOutput: vscode.OutputChannel | undefined;
 
@@ -9,6 +10,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const identity = loadProductIdentity(context.extensionPath);
   assertExtensionIdentity(identity);
   engineOutput = vscode.window.createOutputChannel("Yet AI Runtime");
+  startYetAiLspClient(context, identity, engineOutput);
 
   const openChatDisposable = vscode.commands.registerCommand(extensionCommand, async () => {
     try {
@@ -72,5 +74,6 @@ function sanitizeCommandError(error: unknown, fallback: string): string {
 }
 
 export function deactivate(): void {
+  stopYetAiLspClient(engineOutput);
   stopLaunchedEngine(engineOutput);
 }
