@@ -45,7 +45,9 @@ const maxLspMessageBytes = 512 * 1024;
 const maxDocumentBytes = 256 * 1024;
 const lspRequestTimeoutMs = 5_000;
 const lspShutdownGraceMs = 500;
-const lspForceKillGraceMs = 1_500;
+const lspTerminateGraceMs = 1_000;
+const lspHardKillGraceMs = 1_500;
+const lspFinalFallbackGraceMs = 2_000;
 const maxLspDiagnosticLineBuffer = 8 * 1024;
 const completionLabel = "Yet AI LSP connected";
 
@@ -57,7 +59,7 @@ export function startYetAiLspClient(context: vscode.ExtensionContext, identity: 
   if (!isLspEnabled()) {
     return;
   }
-  if (lspProcess && !lspProcess.closed && !lspProcess.process.killed) {
+  if (lspProcess && !lspProcess.closed) {
     output.appendLine("Yet AI read-only LSP MVP is already running.");
     return;
   }
@@ -114,6 +116,7 @@ export function stopYetAiLspClient(output?: LspOutput): Promise<void> {
     return Promise.resolve();
   }
   const current = lspProcess;
+  const stopOutput = output ?? { appendLine() {} };
   lspProcess = undefined;
   const stopped = new Promise<void>((resolve) => {
     current.stopResolvers.push(resolve);
@@ -121,21 +124,24 @@ export function stopYetAiLspClient(output?: LspOutput): Promise<void> {
   current.stopping = true;
   disposeLspClient(current);
   rejectPending(current, new Error("LSP client stopped"));
-  output?.appendLine("Stopping Yet AI read-only LSP MVP.");
-  if (current.closed || current.process.killed) {
+  stopOutput.appendLine("Stopping Yet AI read-only LSP MVP.");
+  if (current.closed) {
     resolveLspStop(current);
     return stopped;
   }
-  void sendLspRequest(current, "shutdown", null, output).catch(() => undefined).finally(() => {
-    if (current.closed) {
+  let exitSent = false;
+  const sendExit = () => {
+    if (current.closed || exitSent) {
       return;
     }
+    exitSent = true;
     sendLspNotification(current, "exit", {}, output);
-    if (!current.closed && !current.process.killed) {
-      current.shutdownTimers.push(setTimeout(() => forceKillLspProcess(current), lspShutdownGraceMs));
-    }
-  });
-  current.shutdownTimers.push(setTimeout(() => forceKillLspProcess(current), lspForceKillGraceMs));
+  };
+  void sendLspRequest(current, "shutdown", null, stopOutput).catch(() => undefined).finally(sendExit);
+  current.shutdownTimers.push(setTimeout(sendExit, lspShutdownGraceMs));
+  current.shutdownTimers.push(setTimeout(() => terminateLspProcess(current, "SIGTERM"), lspTerminateGraceMs));
+  current.shutdownTimers.push(setTimeout(() => terminateLspProcess(current, "SIGKILL"), lspHardKillGraceMs));
+  current.shutdownTimers.push(setTimeout(() => finalizeUnclosedLspProcess(current, stopOutput), lspFinalFallbackGraceMs));
   return stopped;
 }
 
@@ -379,6 +385,7 @@ function closeLspClient(client: LspProcess, output: LspOutput, diagnostic: strin
     return;
   }
   client.closed = true;
+  client.stdoutBuffer = Buffer.alloc(0);
   flushLspStderr(client, output);
   output.appendLine(diagnostic);
   rejectPending(client, error);
@@ -445,24 +452,21 @@ function handleLspStdout(client: LspProcess, chunk: Buffer, output: LspOutput): 
   }
   client.stdoutBuffer = Buffer.concat([client.stdoutBuffer, chunk]);
   if (client.stdoutBuffer.length > maxLspMessageBytes) {
-    output.appendLine("Yet AI read-only LSP MVP stdout exceeded bounded parser buffer.");
-    rejectPending(client, new Error("LSP stdout exceeded bounded parser buffer"));
+    failLspProtocol(client, output, "Yet AI read-only LSP MVP stdout exceeded bounded parser buffer.", new Error("LSP stdout exceeded bounded parser buffer"));
     return;
   }
   while (client.stdoutBuffer.length > 0) {
     const headerEnd = client.stdoutBuffer.indexOf("\r\n\r\n");
     if (headerEnd === -1) {
       if (client.stdoutBuffer.length > maxLspHeaderBytes) {
-        output.appendLine("Yet AI read-only LSP MVP stdout header exceeded bounded parser buffer.");
-        rejectPending(client, new Error("LSP stdout header exceeded bounded parser buffer"));
+        failLspProtocol(client, output, "Yet AI read-only LSP MVP stdout header exceeded bounded parser buffer.", new Error("LSP stdout header exceeded bounded parser buffer"));
       }
       return;
     }
     const header = client.stdoutBuffer.subarray(0, headerEnd).toString("utf8");
     const length = parseContentLength(header);
     if (length === undefined || length > maxLspMessageBytes) {
-      output.appendLine("Yet AI read-only LSP MVP stdout message had invalid bounded content length.");
-      rejectPending(client, new Error("LSP stdout invalid content length"));
+      failLspProtocol(client, output, "Yet AI read-only LSP MVP stdout message had invalid bounded content length.", new Error("LSP stdout invalid content length"));
       return;
     }
     const bodyStart = headerEnd + 4;
@@ -483,11 +487,19 @@ function handleLspStdout(client: LspProcess, chunk: Buffer, output: LspOutput): 
         }
       }
     } catch (error) {
-      output.appendLine(`Yet AI read-only LSP MVP stdout JSON parse failed: ${sanitizeLspDiagnostic(error, "invalid JSON")}`);
-      rejectPending(client, new Error("LSP stdout invalid JSON"));
+      failLspProtocol(client, output, `Yet AI read-only LSP MVP stdout JSON parse failed: ${sanitizeLspDiagnostic(error, "invalid JSON")}`, new Error("LSP stdout invalid JSON"));
       return;
     }
   }
+}
+
+function failLspProtocol(client: LspProcess, output: LspOutput, diagnostic: string, error: Error): void {
+  client.stdoutBuffer = Buffer.alloc(0);
+  client.stderrLineBuffer = "";
+  client.stopping = true;
+  closeLspClient(client, output, diagnostic, error);
+  terminateLspProcess(client, "SIGTERM");
+  terminateLspProcess(client, "SIGKILL");
 }
 
 function parseContentLength(header: string): number | undefined {
@@ -544,15 +556,28 @@ function clearShutdownTimers(client: LspProcess): void {
   }
 }
 
-function forceKillLspProcess(client: LspProcess): void {
-  if (!client.closed && !client.process.killed) {
-    client.process.kill();
+function terminateLspProcess(client: LspProcess, signal: NodeJS.Signals): void {
+  try {
+    if (process.platform === "win32") {
+      client.process.kill();
+    } else {
+      client.process.kill(signal);
+    }
+  } catch {
   }
+}
+
+function finalizeUnclosedLspProcess(client: LspProcess, output: LspOutput): void {
+  if (client.closed) {
+    return;
+  }
+  terminateLspProcess(client, "SIGKILL");
+  closeLspClient(client, output, "Yet AI read-only LSP MVP stop completed after bounded kill fallback without process close.", new Error("LSP process did not close after bounded stop"));
 }
 
 function sendLspMessage(client: LspProcess, message: unknown, output?: LspOutput): boolean {
   const child = client.process;
-  if (client.closed || !child.stdin || child.killed || child.stdin.destroyed || child.stdin.writableEnded) {
+  if (client.closed || !child.stdin || child.stdin.destroyed || child.stdin.writableEnded) {
     return false;
   }
   const body = JSON.stringify(message);
