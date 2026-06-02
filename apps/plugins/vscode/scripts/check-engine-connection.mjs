@@ -637,11 +637,12 @@ try {
     function createTextDocument(uri, text, version = 1, languageId = "rust") {
       return {
         uri,
+        text,
         languageId,
         version,
         isClosed: false,
         isUntitled: false,
-        getText() { return text; },
+        getText() { return this.text; },
       };
     }
 
@@ -773,7 +774,72 @@ try {
     assert.equal(await registeredCompletionProviders[0].provider.provideCompletionItems(virtualDocument, { line: 0, character: 1 }), undefined);
     lspMessages = takeLspClientMessages(lspSpawns[0].child);
     assert.equal(lspMessages.length, 0, "virtual document completion sent LSP traffic");
+    const oversizedDocumentText = "a".repeat(256 * 1024 + 1);
+    const oversizedDocument = createTextDocument({ scheme: "file", toString: () => "file:///workspace/oversized.rs" }, oversizedDocumentText, 1);
+    workspaceOpenDocumentListeners.at(-1)(oversizedDocument);
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 0, "oversized document open sent LSP traffic");
+    assert.equal(await registeredCompletionProviders[0].provider.provideCompletionItems(oversizedDocument, { line: 0, character: 0 }), undefined);
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 0, "oversized document completion sent LSP traffic");
+    oversizedDocument.version = 2;
+    workspaceChangeDocumentListeners.at(-1)({ document: oversizedDocument });
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 0, "oversized skipped document change sent LSP traffic");
+
+    const binaryDocumentText = "safe prefix\u0000binary suffix";
+    const binaryDocument = createTextDocument({ scheme: "file", toString: () => "file:///workspace/binary.rs" }, binaryDocumentText, 1);
+    workspaceOpenDocumentListeners.at(-1)(binaryDocument);
+    assert.equal(lspSpawns[0].child.stdin.chunks.join("").includes(binaryDocumentText), false, "binary-like document body was written to LSP stdin");
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 0, "binary-like document open sent LSP traffic");
+    assert.equal(await registeredCompletionProviders[0].provider.provideCompletionItems(binaryDocument, { line: 0, character: 0 }), undefined);
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 0, "binary-like document completion sent LSP traffic");
+
+    const transitionDocument = createTextDocument({ scheme: "file", toString: () => "file:///workspace/transition.rs" }, "fn transition() {}", 1);
+    workspaceOpenDocumentListeners.at(-1)(transitionDocument);
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages[0].method, "textDocument/didOpen");
+    transitionDocument.text = "unsafe\u0000transition";
+    transitionDocument.version = 2;
+    workspaceChangeDocumentListeners.at(-1)({ document: transitionDocument });
+    assert.equal(lspSpawns[0].child.stdin.chunks.join("").includes(transitionDocument.text), false, "unsafe changed document body was written to LSP stdin");
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 1, "unsafe synced document transition did not send exactly one LSP message");
+    assert.equal(lspMessages[0].method, "textDocument/didClose");
+    assert.equal(JSON.stringify(lspMessages[0]).includes("unsafe"), false, "unsafe transition close included document body");
+
+    const skippedThenSafeDocument = createTextDocument({ scheme: "file", toString: () => "file:///workspace/skipped-then-safe.rs" }, "\u0000", 1);
+    workspaceOpenDocumentListeners.at(-1)(skippedThenSafeDocument);
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 0, "initially skipped document sent LSP traffic");
+    skippedThenSafeDocument.text = "fn now_safe() {}";
+    skippedThenSafeDocument.version = 2;
+    workspaceChangeDocumentListeners.at(-1)({ document: skippedThenSafeDocument });
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 1, "previously skipped safe document did not sync");
+    assert.equal(lspMessages[0].method, "textDocument/didOpen");
+    assert.equal(lspMessages[0].params.textDocument.text, "fn now_safe() {}");
+    const skippedThenSafeCompletions = registeredCompletionProviders[0].provider.provideCompletionItems(skippedThenSafeDocument, { line: 0, character: 3 });
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 1, "previously skipped safe document completion did not send request");
+    assert.equal(lspMessages[0].method, "textDocument/completion");
+    emitLspResponse(lspSpawns[0].child, lspMessages[0].id, { isIncomplete: false, items: [] });
+    await skippedThenSafeCompletions;
+
+    const hugeUri = `file:///workspace/${"u".repeat(600 * 1024)}.rs`;
+    const hugeUriDocument = createTextDocument({ scheme: "file", toString: () => hugeUri }, "fn safe_body() {}", 1);
+    workspaceOpenDocumentListeners.at(-1)(hugeUriDocument);
+    assert.equal(lspSpawns[0].child.stdin.chunks.join("").includes("fn safe_body() {}"), false, "oversized outbound LSP message was written to stdin");
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 0, "oversized outbound LSP message produced framed traffic");
+
     fileDocument.version = 4;
+    fileDocument.text = "fn enabled_again() {}";
+    workspaceChangeDocumentListeners.at(-1)({ document: fileDocument });
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages[0].method, "textDocument/didChange", "subsequent safe document did not continue syncing");
     workspaceChangeDocumentListeners.at(-1)({ document: fileDocument });
     lspMessages = takeLspClientMessages(lspSpawns[0].child);
     assert.equal(lspMessages[0].method, "textDocument/didChange");

@@ -42,6 +42,7 @@ const maxLspDiagnosticLength = 1000;
 const lspDiagnosticTruncationMarker = "… [truncated sanitized LSP diagnostic]";
 const maxLspHeaderBytes = 8 * 1024;
 const maxLspMessageBytes = 512 * 1024;
+const maxDocumentBytes = 256 * 1024;
 const lspRequestTimeoutMs = 5_000;
 const lspShutdownGraceMs = 500;
 const lspForceKillGraceMs = 1_500;
@@ -205,14 +206,18 @@ function registerDocumentSync(client: LspProcess, output: LspOutput): void {
   client.disposables.push(vscode.workspace.onDidCloseTextDocument((document) => syncClosedDocument(client, document, output)));
   client.disposables.push(vscode.languages.registerCompletionItemProvider({ scheme: "file" }, {
     async provideCompletionItems(document, position) {
-      if (!isSupportedDocument(document)) {
+      if (!isEligibleDocument(client, document, output)) {
         return undefined;
       }
       syncOpenDocument(client, document, output);
+      if (!client.documents.has(document.uri.toString())) {
+        return undefined;
+      }
       const response = await sendLspRequest(client, "textDocument/completion", {
         textDocument: { uri: document.uri.toString() },
         position: { line: position.line, character: position.character },
       }, output);
+
       if (response.error) {
         output.appendLine(`Yet AI read-only LSP MVP completion failed: ${sanitizeLspDiagnostic(response.error.message, "completion failed")}`);
         return undefined;
@@ -223,7 +228,7 @@ function registerDocumentSync(client: LspProcess, output: LspOutput): void {
 }
 
 function syncOpenDocument(client: LspProcess, document: vscode.TextDocument, output: LspOutput): void {
-  if (!client.initialized || !isSupportedDocument(document)) {
+  if (!client.initialized || !isEligibleDocument(client, document, output)) {
     return;
   }
   const uri = document.uri.toString();
@@ -235,15 +240,18 @@ function syncOpenDocument(client: LspProcess, document: vscode.TextDocument, out
     syncChangedDocument(client, document, output);
     return;
   }
+  const text = document.getText();
   client.documents.set(uri, version);
-  sendLspNotification(client, "textDocument/didOpen", {
+  if (!sendLspNotification(client, "textDocument/didOpen", {
     textDocument: {
       uri,
       languageId: document.languageId,
       version,
-      text: document.getText(),
+      text,
     },
-  }, output);
+  }, output)) {
+    client.documents.delete(uri);
+  }
 }
 
 function syncChangedDocument(client: LspProcess, document: vscode.TextDocument, output: LspOutput): void {
@@ -251,18 +259,30 @@ function syncChangedDocument(client: LspProcess, document: vscode.TextDocument, 
     return;
   }
   const uri = document.uri.toString();
+  if (!isSafeDocumentText(document.getText())) {
+    syncUnsafeDocument(client, uri, output);
+    return;
+  }
   if (!client.documents.has(uri)) {
     syncOpenDocument(client, document, output);
     return;
   }
+  const text = document.getText();
+  const previousVersion = client.documents.get(uri);
   client.documents.set(uri, document.version);
-  sendLspNotification(client, "textDocument/didChange", {
+  if (!sendLspNotification(client, "textDocument/didChange", {
     textDocument: {
       uri,
       version: document.version,
     },
-    contentChanges: [{ text: document.getText() }],
-  }, output);
+    contentChanges: [{ text }],
+  }, output)) {
+    if (previousVersion === undefined) {
+      client.documents.delete(uri);
+    } else {
+      client.documents.set(uri, previousVersion);
+    }
+  }
 }
 
 function syncClosedDocument(client: LspProcess, document: vscode.TextDocument, output: LspOutput): void {
@@ -278,8 +298,43 @@ function syncClosedDocument(client: LspProcess, document: vscode.TextDocument, o
   }, output);
 }
 
+function syncUnsafeDocument(client: LspProcess, uri: string, output: LspOutput): void {
+  if (!client.documents.delete(uri) || !client.initialized) {
+    return;
+  }
+  sendLspNotification(client, "textDocument/didClose", {
+    textDocument: { uri },
+  }, output);
+}
+
+function isEligibleDocument(client: LspProcess, document: vscode.TextDocument, output: LspOutput): boolean {
+  if (!isSupportedDocument(document)) {
+    return false;
+  }
+  const text = document.getText();
+  if (isSafeDocumentText(text)) {
+    return true;
+  }
+  syncUnsafeDocument(client, document.uri.toString(), output);
+  return false;
+}
+
 function isSupportedDocument(document: vscode.TextDocument): boolean {
   return document.uri.scheme === "file" && !document.isClosed && !document.isUntitled;
+}
+
+function isSafeDocumentText(text: string): boolean {
+  return Buffer.byteLength(text, "utf8") <= maxDocumentBytes && !hasBinaryLikeContent(text);
+}
+
+function hasBinaryLikeContent(text: string): boolean {
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code === 0 || code < 0x09 || (code > 0x0d && code < 0x20)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function toCompletionList(result: unknown): vscode.CompletionList | undefined {
@@ -465,8 +520,8 @@ function sendLspRequest(client: LspProcess, method: string, params: unknown, out
   });
 }
 
-function sendLspNotification(client: LspProcess, method: string, params: unknown, output?: LspOutput): void {
-  sendLspMessage(client, { jsonrpc: "2.0", method, params }, output);
+function sendLspNotification(client: LspProcess, method: string, params: unknown, output?: LspOutput): boolean {
+  return sendLspMessage(client, { jsonrpc: "2.0", method, params }, output);
 }
 
 function rejectPending(client: LspProcess, error: Error): void {
@@ -501,8 +556,14 @@ function sendLspMessage(client: LspProcess, message: unknown, output?: LspOutput
     return false;
   }
   const body = JSON.stringify(message);
+  const bodyBytes = Buffer.byteLength(body, "utf8");
+  if (bodyBytes > maxLspMessageBytes) {
+    output?.appendLine("Yet AI read-only LSP MVP skipped oversized outbound LSP message.");
+    return false;
+  }
+
   try {
-    child.stdin.write(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`);
+    child.stdin.write(`Content-Length: ${bodyBytes}\r\n\r\n${body}`);
     return true;
   } catch (error) {
     output?.appendLine(`Yet AI read-only LSP MVP stdin write failed: ${sanitizeLspDiagnostic(error, "stdin write failed")}`);
