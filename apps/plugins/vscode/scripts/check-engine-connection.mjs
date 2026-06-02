@@ -678,30 +678,37 @@ try {
 
     function createMockLspChild() {
       const child = new EventEmitter();
-      child.stdin = {
+      const stdin = new EventEmitter();
+      Object.assign(stdin, {
         chunks: [],
         destroyed: false,
         writableEnded: false,
-        write(chunk) {
+        write(chunk, callback) {
           if (this.throwOnWrite) {
             throw new Error(`stdin closed Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}`);
           }
           this.chunks.push(chunk);
+          if (this.callbackErrorOnWrite && typeof callback === "function") {
+            setImmediate(() => callback(new Error(`stdin callback Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}`)));
+          } else if (typeof callback === "function") {
+            setImmediate(() => callback());
+          }
           return true;
         },
-      };
+      });
+      child.stdin = stdin;
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
       child.killed = false;
       child.killSignals = [];
       child.closeOnKill = true;
-      child.kill = (signal = "SIGTERM") => {
+      child.kill = (signal) => {
         child.killSignals.push(signal);
         child.killed = true;
         child.stdin.destroyed = true;
         if (child.closeOnKill) {
-          child.emit("exit", null, signal);
-          child.emit("close", null, signal);
+          child.emit("exit", null, signal ?? "SIGTERM");
+          child.emit("close", null, signal ?? "SIGTERM");
         }
         return true;
       };
@@ -714,6 +721,22 @@ try {
 
     function delayMs(ms) {
       return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function assertKillAttempted(child, signal, message) {
+      if (process.platform === "win32") {
+        assert.equal(child.killSignals.includes(undefined), true, message);
+      } else {
+        assert.equal(child.killSignals.includes(signal), true, message);
+      }
+    }
+
+    function assertKillNotAttempted(child, signal, message) {
+      if (process.platform === "win32") {
+        assert.equal(child.killSignals.length, 0, message);
+      } else {
+        assert.equal(child.killSignals.includes(signal), false, message);
+      }
     }
 
     const lspSpawns = [];
@@ -864,6 +887,17 @@ try {
     const splitLspText = lspOutputLines.join("\n");
     assert.equal(splitLspText.includes(splitLspSecret), false, "split LSP stderr leaked secret");
     assert.equal(splitLspText.includes(`Bearer ${splitLspSecret}`), false, "split LSP stderr leaked bearer secret");
+    const oversizedLspSecret = "oversized-lsp-secret-sentinel";
+    const oversizedLspPath = path.join(os.homedir(), "Library", "Application Support", "yet-ai", "oversized-lsp.log");
+    lspSpawns[0].child.stderr.emit("data", Buffer.from(`oversized Authorization: Bearer ${oversizedLspSecret.slice(0, 10)}`));
+    lspSpawns[0].child.stderr.emit("data", Buffer.from(`${oversizedLspSecret.slice(10)} ${oversizedLspPath} ${"x".repeat(9 * 1024)}`));
+    lspSpawns[0].child.stderr.emit("data", Buffer.from("\nlater safe stderr line\n"));
+    const oversizedLspText = lspOutputLines.join("\n");
+    assert.equal(oversizedLspText.includes(oversizedLspSecret), false, "oversized LSP stderr leaked split secret");
+    assert.equal(oversizedLspText.includes(oversizedLspPath), false, "oversized LSP stderr leaked private path");
+    assert.equal(oversizedLspText.includes(os.homedir()), false, "oversized LSP stderr leaked home path");
+    assert.equal(oversizedLspText.includes("[redacted oversized LSP stderr line]"), true, "oversized LSP stderr did not use generic marker");
+    assert.equal(oversizedLspText.includes("later safe stderr line"), true, "LSP stderr did not resume after oversized line discard");
     lspSpawns[0].child.stdin.throwOnWrite = true;
     fileDocument.version = 5;
     workspaceChangeDocumentListeners.at(-1)({ document: fileDocument });
@@ -890,32 +924,56 @@ try {
     assert.equal(directStopResolved, true, "LSP stop did not resolve after process close");
     assert.equal(registeredCompletionProviders[0].disposed, true, "LSP completion provider was not disposed");
 
-    const staleDisposedIndex = registeredCompletionProviders.length - 1;
     startYetAiLspClient({ ...fakeContext, extensionPath: tempRoot }, { engine: { binaryName: "yet-lsp" } }, lspOutput);
-    assert.equal(lspSpawns.length, 2, "LSP retry after stop did not spawn");
+    assert.equal(lspSpawns.length, 2, "LSP retry after direct stop did not spawn for stdin async error case");
     lspMessages = takeLspClientMessages(lspSpawns[1].child);
     emitLspResponse(lspSpawns[1].child, lspMessages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
     await delay();
+    assert.equal(registeredCompletionProviders.at(-1).disposed, false, "stdin async error setup provider unexpectedly disposed");
+    lspSpawns[1].child.stdin.emit("error", new Error(`async stdin Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}`));
+    await delay();
+    assert.equal(registeredCompletionProviders.at(-1).disposed, true, "async stdin error did not dispose provider");
+    assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticSecret), false, "async stdin error leaked secret");
+    assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticPath), false, "async stdin error leaked private path");
+    startYetAiLspClient({ ...fakeContext, extensionPath: tempRoot }, { engine: { binaryName: "yet-lsp" } }, lspOutput);
+    assert.equal(lspSpawns.length, 3, "LSP retry after stdin async error did not spawn");
+    lspMessages = takeLspClientMessages(lspSpawns[2].child);
+    emitLspResponse(lspSpawns[2].child, lspMessages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
+    await delay();
+    lspSpawns[2].child.stdin.callbackErrorOnWrite = true;
+    fileDocument.version = 6;
+    workspaceChangeDocumentListeners.at(-1)({ document: fileDocument });
+    await delay();
+    assert.equal(registeredCompletionProviders.at(-1).disposed, true, "stdin write callback error did not dispose provider");
+    assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticSecret), false, "stdin write callback error leaked secret");
+    assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticPath), false, "stdin write callback error leaked private path");
+
+    const staleDisposedIndex = registeredCompletionProviders.length - 1;
+    startYetAiLspClient({ ...fakeContext, extensionPath: tempRoot }, { engine: { binaryName: "yet-lsp" } }, lspOutput);
+    const retryAfterStopSpawn = lspSpawns.at(-1);
+    lspMessages = takeLspClientMessages(retryAfterStopSpawn.child);
+    emitLspResponse(retryAfterStopSpawn.child, lspMessages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
+    await delay();
     assert.equal(registeredCompletionProviders.at(-1).disposed, false, "retry completion provider was unexpectedly disposed");
-    lspSpawns[1].child.emit("error", new Error(`async lsp error Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}`));
+    retryAfterStopSpawn.child.emit("error", new Error(`async lsp error Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}`));
     await delay();
     assert.equal(registeredCompletionProviders.at(-1).disposed, true, "async LSP error did not dispose provider");
     assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticSecret), false, "async LSP error leaked secret");
     assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticPath), false, "async LSP error leaked private path");
     startYetAiLspClient({ ...fakeContext, extensionPath: tempRoot }, { engine: { binaryName: "yet-lsp" } }, lspOutput);
-    assert.equal(lspSpawns.length, 3, "LSP retry after error did not spawn");
-    lspMessages = takeLspClientMessages(lspSpawns[2].child);
-    emitLspResponse(lspSpawns[2].child, lspMessages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
+    const retryAfterErrorSpawn = lspSpawns.at(-1);
+    lspMessages = takeLspClientMessages(retryAfterErrorSpawn.child);
+    emitLspResponse(retryAfterErrorSpawn.child, lspMessages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
     await delay();
-    lspSpawns[2].child.emit("close", 7, null);
+    retryAfterErrorSpawn.child.emit("close", 7, null);
     await delay();
     assert.equal(registeredCompletionProviders.at(-1).disposed, true, "async LSP close did not dispose provider");
     startYetAiLspClient({ ...fakeContext, extensionPath: tempRoot }, { engine: { binaryName: "yet-lsp" } }, lspOutput);
-    assert.equal(lspSpawns.length, 4, "LSP retry after close did not spawn");
-    lspMessages = takeLspClientMessages(lspSpawns[3].child);
-    emitLspResponse(lspSpawns[3].child, lspMessages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
+    const retryAfterCloseSpawn = lspSpawns.at(-1);
+    lspMessages = takeLspClientMessages(retryAfterCloseSpawn.child);
+    emitLspResponse(retryAfterCloseSpawn.child, lspMessages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
     await delay();
-    lspSpawns[3].child.emit("close", 0, null);
+    retryAfterCloseSpawn.child.emit("close", 0, null);
     await delay();
     assert.equal(registeredCompletionProviders[staleDisposedIndex].disposed, true, "stale LSP provider was not disposed");
 
@@ -965,7 +1023,34 @@ try {
     lspMessages = takeLspClientMessages(pendingFatalSpawn.child);
     assert.equal(lspMessages[0].method, "textDocument/completion", "pending fatal parser case did not request completion");
     emitRawLspStdout(pendingFatalSpawn.child, "Content-Length: 1\r\n\r\n{");
-    await assert.rejects(pendingFatalCompletion, /LSP stdout invalid JSON/, "pending completion did not reject on fatal parser error");
+    assert.equal(await pendingFatalCompletion, undefined, "pending completion did not fail safe on fatal parser error");
+    assert.ok(lspOutputLines.some((line) => line.includes("completion unavailable")), "pending fatal completion did not log fail-safe diagnostic");
+
+    const closedCompletionSpawn = startInitializedLsp();
+    await delay();
+    const closedCompletionProvider = registeredCompletionProviders.at(-1).provider;
+    closedCompletionSpawn.child.emit("close", 0, null);
+    await delay();
+    assert.equal(await closedCompletionProvider.provideCompletionItems(fileDocument, { line: 0, character: 1 }), undefined, "closed completion did not fail safe");
+
+    const stoppedCompletionSpawn = startInitializedLsp();
+    await delay();
+    const stoppedCompletionProvider = registeredCompletionProviders.at(-1).provider;
+    void stopYetAiLspClient(lspOutput);
+    await delay();
+    assert.equal(await stoppedCompletionProvider.provideCompletionItems(fileDocument, { line: 0, character: 1 }), undefined, "stopped completion did not fail safe");
+    stoppedCompletionSpawn.child.emit("close", 0, null);
+    await delay();
+
+    const timeoutCompletionSpawn = startInitializedLsp();
+    await delay();
+    takeLspClientMessages(timeoutCompletionSpawn.child);
+    const timeoutCompletionPromise = registeredCompletionProviders.at(-1).provider.provideCompletionItems(fileDocument, { line: 0, character: 1 });
+    lspMessages = takeLspClientMessages(timeoutCompletionSpawn.child);
+    assert.equal(lspMessages[0].method, "textDocument/completion", "timeout completion did not request completion");
+    assert.equal(await timeoutCompletionPromise, undefined, "timeout completion did not fail safe");
+    timeoutCompletionSpawn.child.emit("close", 0, null);
+    await delay();
 
     const hardKillSpawn = startInitializedLsp();
     await delay();
@@ -976,10 +1061,10 @@ try {
     assert.equal(lspMessages[0].method, "shutdown", "hard-kill stop did not send shutdown");
     emitLspResponse(hardKillSpawn.child, lspMessages[0].id, null);
     await delayMs(1200);
-    assert.equal(hardKillSpawn.child.killSignals.includes("SIGTERM"), true, "bounded stop did not attempt SIGTERM");
-    assert.equal(hardKillSpawn.child.killSignals.includes("SIGKILL"), false, "bounded stop attempted hard kill before grace elapsed");
+    assertKillAttempted(hardKillSpawn.child, "SIGTERM", "bounded stop did not attempt SIGTERM");
+    assertKillNotAttempted(hardKillSpawn.child, "SIGKILL", "bounded stop attempted hard kill before grace elapsed");
     await delayMs(700);
-    assert.equal(hardKillSpawn.child.killSignals.includes("SIGKILL"), true, "bounded stop did not attempt hard kill");
+    assertKillAttempted(hardKillSpawn.child, "SIGKILL", "bounded stop did not attempt hard kill");
     hardKillSpawn.child.emit("close", null, "SIGKILL");
     await hardKillStop;
 
@@ -991,8 +1076,8 @@ try {
     lspMessages = takeLspClientMessages(fallbackSpawn.child);
     assert.equal(lspMessages[0].method, "shutdown", "fallback stop did not send shutdown");
     await fallbackStop;
-    assert.equal(fallbackSpawn.child.killSignals.includes("SIGTERM"), true, "fallback stop did not attempt SIGTERM");
-    assert.equal(fallbackSpawn.child.killSignals.includes("SIGKILL"), true, "fallback stop did not attempt SIGKILL");
+    assertKillAttempted(fallbackSpawn.child, "SIGTERM", "fallback stop did not attempt SIGTERM");
+    assertKillAttempted(fallbackSpawn.child, "SIGKILL", "fallback stop did not attempt SIGKILL");
     assert.ok(lspOutputLines.some((line) => line.includes("bounded kill fallback without process close")), "fallback stop did not report bounded fallback");
 
     const toggleSpawnStart = lspSpawns.length;
@@ -1055,8 +1140,8 @@ try {
     await delay();
     await deactivatePromise;
     assert.equal(deactivateResolved, true, "deactivate did not await LSP stop completion");
-    assert.equal(deactivateChild.killSignals.includes("SIGTERM"), true, "deactivate did not attempt bounded SIGTERM");
-    assert.equal(deactivateChild.killSignals.includes("SIGKILL"), true, "deactivate did not attempt bounded SIGKILL");
+    assertKillAttempted(deactivateChild, "SIGTERM", "deactivate did not attempt bounded SIGTERM");
+    assertKillAttempted(deactivateChild, "SIGKILL", "deactivate did not attempt bounded SIGKILL");
     childProcess.spawn = () => {
       throw new Error(`LSP spawn failed Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}`);
     };
