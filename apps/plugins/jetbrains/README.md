@@ -203,11 +203,49 @@ No autonomous file reads/indexing, privileged workspace edits, IDE tools, shell/
 
 ## JetBrains LSP MVP boundary
 
-JetBrains LSP client wiring is deferred for this MVP sprint. This plugin currently verifies the local runtime through HTTP `/v1/ping`, hosts the GUI in JCEF, and sends bounded active editor/selection context through the non-privileged bridge. It does not start `yet-lsp --lsp-stdio`, register an IntelliJ LSP client, advertise JetBrains completions, or attach document lifecycle notifications to the engine LSP server.
+JetBrains LSP client wiring is deferred. This plugin currently verifies the local runtime through HTTP `/v1/ping`, hosts the GUI in JCEF, and sends bounded active editor/selection context through the non-privileged bridge. It does not start `yet-lsp --lsp-stdio`, register an IntelliJ LSP client, advertise JetBrains completions, or attach document lifecycle notifications to the engine LSP server.
 
-The decision is intentional rather than a support claim. Current JetBrains code has a tested HTTP launcher and JCEF bridge, but no established, reviewed, and smoke-covered IntelliJ LSP client lifecycle in this repository. A minimal guarded setting would still need JetBrains API selection, project-scoped lifecycle ownership, stdio process supervision separate from the HTTP runtime process, workspace/document URI policy, completion registration behavior, sanitized diagnostics, and Gradle tests plus JetBrains smoke coverage. That is broader than this documentation decision and risks misleading parity claims.
+### Feasibility decision
 
-For this LSP foundation sprint, validate the read-only engine LSP boundary and VS Code opt-in LSP path first. A later JetBrains LSP card may add an off-by-default read-only path only after it defines the exact IntelliJ APIs, process ownership, document size/count bounds, supported URI schemes, completion trigger behavior, teardown rules, and local-only verification gate. Until that follow-up lands, JetBrains dev-preview guidance remains chat/runtime/active-context only.
+The read-only JetBrains LSP path is feasible as a future off-by-default implementation, but it is not implemented or claimed in this repository today. The likely IntelliJ Platform path is the platform LSP API used by current IDE builds, with a project-scoped server support provider and server descriptor that starts an external stdio process. Candidate API surfaces to verify in a follow-up are the IntelliJ `com.intellij.platform.lsp.api` server support/descriptor classes, editor/file applicability hooks, and completion integration supplied by the platform LSP client. If those APIs are unavailable or incompatible in the selected IDE baseline, the fallback candidate is a custom IntelliJ completion/document-listener integration backed by `lsp4j`, but that would be broader and should be treated as a separate design rather than native LSP support.
+
+Current Gradle targets IntelliJ IDEA Community `2024.3.7`, `sinceBuild = 243`, and bundles only `com.intellij.java`. A follow-up implementation will likely need either an IntelliJ Platform bundled plugin/module dependency for LSP support, such as the platform LSP module exposed by the selected IDE build, or a platform version/baseline adjustment if the LSP API is not available to third-party plugins at build time. No Gradle dependency or platform version change is made in this recovery card. The first implementation card must prove the exact dependency coordinates, plugin.xml dependency needs, and minimum supported IDE build with Gradle tests before enabling any setting.
+
+### Future process and lifecycle boundary
+
+Future JetBrains LSP launch must remain separate from the HTTP runtime connector. The existing `RuntimeConnectionManager` owns `connect`/`launch`/`auto` HTTP runtime behavior, `YET_AI_AUTH_TOKEN`, `YET_AI_HTTP_PORT`, PasswordSafe debug session tokens, `/v1/ping`, runtime diagnostics, and restart. A JetBrains LSP client should start a different `yet-lsp --lsp-stdio` process through a dedicated project-scoped LSP service or platform descriptor. It must not reuse the HTTP launched `Process`, must not call `/v1/ping` as LSP readiness, and must not stop or restart the chat runtime when the LSP client stops.
+
+The LSP process environment must be deliberately minimal. It should inherit only non-secret process basics needed to locate the binary and run the process, and must not pass `YET_AI_AUTH_TOKEN`, `YET_AI_HTTP_PORT`, local runtime session tokens, bearer or Authorization values, provider API keys, OAuth tokens, cookies, provider settings, GUI bootstrap payloads, or PasswordSafe values. The engine LSP stdio mode does not require a runtime token and must remain local-only.
+
+Lifecycle ownership should be project-scoped and opt-in. The future setting should default to disabled, start only when a project is open and a supported local file editor/document is active, supervise stdout/stdin/stderr without blocking the IDE, redact bounded stderr diagnostics, send graceful shutdown/exit where supported, and dispose the LSP process on project close, plugin unload, IDE shutdown, or setting disable. Process crashes or missing binaries should surface only sanitized diagnostics and should not affect chat/runtime/active-context behavior.
+
+### Read-only document and URI policy
+
+The future JetBrains LSP path may send only editor-supplied local document lifecycle notifications to `yet-lsp --lsp-stdio`: initialize/initialized, didOpen, didChange, didClose, completion status proof, shutdown, and exit. It must not read arbitrary files, recursively scan workspaces, index projects, inspect VFS files that were not opened through the approved editor path, or request provider-backed completions on keystrokes.
+
+The first implementation should allow only normal local `file://` documents that the IntelliJ editor has opened and that satisfy size/count bounds already compatible with the engine LSP MVP. Unsupported schemes and remote, virtual, malformed, credential-bearing, oversized, binary-like, closed, or unknown documents should produce no completion result or only sanitized diagnostics. LSP state must remain bounded in memory and be cleared on close, shutdown, process exit, or project disposal.
+
+The JetBrains client must not enable workspace edits, file writes, file deletes, apply-patch behavior, code actions that mutate files, shell/tool execution, IDE tool execution, task execution, git operations, autonomous indexing, arbitrary file reads, or background agent behavior. Completion/status output is limited to deterministic local status proof over the in-memory document supplied by the editor until a separate approved card implements richer behavior.
+
+### Verification required before support can be claimed
+
+A future implementation cannot claim JetBrains LSP support until all of these pass with local/mock-only inputs:
+
+- Gradle compile/tests proving the selected IntelliJ LSP API, plugin dependency, default-disabled setting, supported IDE baseline, process descriptor, and disposal behavior.
+- Tests or smoke coverage proving `yet-lsp --lsp-stdio` is launched as a separate process from the HTTP runtime with `--lsp-stdio` and without runtime/provider secrets in environment or bridge payloads.
+- Tests proving only allowlisted local `file://` documents are synchronized, document size/count limits are enforced, didClose clears state, unsupported URI schemes are ignored or rejected safely, and completion returns only the deterministic local status proof.
+- Diagnostics tests proving missing binary, process error, stderr, unsupported API, and shutdown failures are redacted, bounded, and do not include provider secrets, local runtime tokens, private paths, raw document bodies, raw bridge payloads, or unbounded logs.
+- A JetBrains smoke or deterministic harness proving the opt-in setting does not change existing chat/runtime/JCEF/active-context behavior when disabled and does not require provider credentials, OpenAI/ChatGPT calls, a hosted Yet AI backend, a cloud workspace, signing, marketplace publication, or a real IDE launch in CI.
+
+The minimum future implementation card outline is:
+
+1. Confirm the IntelliJ LSP API and Gradle/plugin dependency for IDEA Community `2024.3.x` or document the exact platform blocker.
+2. Add an off-by-default JetBrains read-only LSP setting and a project-scoped LSP service/descriptor that starts `yet-lsp --lsp-stdio` separately from `RuntimeConnectionManager`.
+3. Restrict document sync to bounded local `file://` editor documents and deterministic completion/status proof only.
+4. Add sanitized lifecycle diagnostics and graceful disposal without touching HTTP runtime state.
+5. Add Gradle tests plus a local smoke/harness proving launch args, no-secret environment, read-only URI/document policy, completion proof, and disabled-by-default behavior.
+
+If the platform LSP API is unavailable to this plugin baseline or requires an unsupported IDE version, the blocker is explicit: do not implement JetBrains LSP until the minimum JetBrains platform version and dependency contract are raised intentionally, or until a separate custom non-native LSP design is approved.
 
 Current GUI-to-host receive policy is deny-by-default. The Kotlin/JCEF bridge accepts only strict `gui.ready` from the GUI. Future GUI messages `gui.openFile`, `gui.revealRange`, `gui.applyWorkspaceEditRequest`, `gui.executeIdeTool`, `gui.copyText`, `gui.showNotification`, and `gui.getHostContext` are not allowlisted and must not call IntelliJ platform APIs. Enabling any privileged message later requires strict schemas, request/response correlation, exact iframe origin/source checks where available, user confirmation for risky operations, sanitized audit/logging, least-privilege allowlists, and no silent workspace mutation. Tools, tasks, knowledge, shell execution, file edits/apply patch, autonomous indexing, and background autonomy remain disabled in this milestone.
 
