@@ -176,6 +176,77 @@ fn lsp_completion_returns_empty_for_oversized_or_binary_like_cached_content() {
 }
 
 #[test]
+fn lsp_completion_uses_utf16_positions_after_non_bmp_characters() {
+    let mut server = initialized_server();
+    let uri = "file:///workspace/src/emoji.rs";
+    server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":uri,"text":"let smile = \"😀\";"}}
+    }));
+
+    assert_status_completion(&mut server, uri, 0, 15);
+    assert_empty_completion(&mut server, uri, 0, 18);
+}
+
+#[test]
+fn lsp_completion_accepts_trailing_newline_final_empty_line() {
+    let mut server = initialized_server();
+    let uri = "file:///workspace/src/trailing.rs";
+    server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":uri,"text":"foo\n"}}
+    }));
+
+    assert_status_completion(&mut server, uri, 1, 0);
+    assert_empty_completion(&mut server, uri, 1, 1);
+}
+
+#[test]
+fn lsp_completion_handles_crlf_lines_without_counting_carriage_return() {
+    let mut server = initialized_server();
+    let uri = "file:///workspace/src/crlf.rs";
+    server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":uri,"text":"foo\r\nbar"}}
+    }));
+
+    assert_status_completion(&mut server, uri, 0, 3);
+    assert_empty_completion(&mut server, uri, 0, 4);
+    assert_status_completion(&mut server, uri, 1, 3);
+}
+
+#[test]
+fn lsp_binary_like_documents_are_not_retained_on_open_or_change() {
+    let mut server = initialized_server();
+    let open_uri = "file:///workspace/src/open-binary.rs";
+    server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":open_uri,"text":"safe\u{0000}body"}}
+    }));
+    assert_eq!(server.document_text(open_uri), None);
+    assert_empty_completion(&mut server, open_uri, 0, 0);
+
+    let change_uri = "file:///workspace/src/change-binary.rs";
+    server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":change_uri,"text":"safe"}}
+    }));
+    assert_eq!(server.document_text(change_uri), Some("safe"));
+    server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "method":"textDocument/didChange",
+        "params":{"textDocument":{"uri":change_uri},"contentChanges":[{"text":"unsafe\u{0001}body"}]}
+    }));
+    assert_eq!(server.document_text(change_uri), None);
+    assert_empty_completion(&mut server, change_uri, 0, 0);
+}
+
+#[test]
 fn lsp_completion_does_not_require_provider_configuration_or_secrets() {
     let mut server = initialized_server();
     let uri = "file:///workspace/src/no_provider.rs";
@@ -240,6 +311,21 @@ fn assert_empty_completion(server: &mut LspServer, uri: &str, line: u64, charact
         response.unwrap()["result"],
         json!({"isIncomplete":false,"items":[]})
     );
+}
+
+fn assert_status_completion(server: &mut LspServer, uri: &str, line: u64, character: u64) {
+    let (response, control) = server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "id":8,
+        "method":"textDocument/completion",
+        "params":{"textDocument":{"uri":uri},"position":{"line":line,"character":character}}
+    }));
+    assert_eq!(control, LspControl::Continue);
+    let response = response.unwrap();
+    assert_eq!(response["result"]["isIncomplete"], false);
+    let items = response["result"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["label"], "Yet AI LSP connected");
 }
 
 fn initialized_server() -> LspServer {
