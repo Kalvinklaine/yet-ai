@@ -3,6 +3,7 @@ pub mod chat;
 pub mod chat_history;
 pub mod http;
 pub mod identity;
+pub mod lsp;
 pub mod provider_auth;
 pub mod providers;
 pub mod secret_store;
