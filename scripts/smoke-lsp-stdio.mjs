@@ -20,8 +20,9 @@ try {
   const binary = await findOrBuildBinary();
   child = startLsp(binary);
 
+  const initializedResponse = response(1);
   send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { capabilities: {} } });
-  const initialized = await response(1);
+  const initialized = await initializedResponse;
   assert(initialized.result?.serverInfo?.name === "Yet AI LSP", "initialize did not return Yet AI LSP serverInfo");
   assert(initialized.result?.capabilities?.textDocumentSync === 1, "initialize did not return textDocumentSync capability");
   assert(typeof initialized.result?.capabilities?.completionProvider === "object", "initialize did not return completionProvider capability");
@@ -39,6 +40,7 @@ try {
       }
     }
   });
+  const completionResponse = response(2);
   send({
     jsonrpc: "2.0",
     id: 2,
@@ -48,7 +50,7 @@ try {
       position: { line: 0, character: 3 }
     }
   });
-  const completion = await response(2);
+  const completion = await completionResponse;
   const items = completion.result?.items;
   assert(Array.isArray(items), "completion result did not include items");
   assert(items.length === 1, "completion result did not include exactly one status item");
@@ -56,6 +58,7 @@ try {
   assert(items[0]?.detail === "Local read-only LSP status", "completion result did not include deterministic status detail");
 
   send({ jsonrpc: "2.0", method: "textDocument/didClose", params: { textDocument: { uri: documentUri } } });
+  const closedCompletionResponse = response(3);
   send({
     jsonrpc: "2.0",
     id: 3,
@@ -65,16 +68,18 @@ try {
       position: { line: 0, character: 3 }
     }
   });
-  const closedCompletion = await response(3);
+  const closedCompletion = await closedCompletionResponse;
   assert(Array.isArray(closedCompletion.result?.items), "closed-document completion did not return items");
   assert(closedCompletion.result.items.length === 0, "closed-document completion did not return an empty result");
 
+  const unsupportedResponse = response(4);
   send({ jsonrpc: "2.0", id: 4, method: "workspace/symbol", params: { query: "smoke" } });
-  const unsupported = await response(4);
+  const unsupported = await unsupportedResponse;
   assert(unsupported.error?.code === -32601, "unsupported probe did not return method-not-supported error");
 
+  const shutdownResponse = response(5);
   send({ jsonrpc: "2.0", id: 5, method: "shutdown", params: {} });
-  const shutdown = await response(5);
+  const shutdown = await shutdownResponse;
   assert(shutdown.result === null, "shutdown did not return null result");
   send({ jsonrpc: "2.0", method: "exit", params: {} });
   await waitForExit(0);
@@ -98,9 +103,6 @@ async function findOrBuildBinary() {
   const binaryName = identity.engine.binaryName;
   const binaryFileName = process.platform === "win32" ? `${binaryName}.exe` : binaryName;
   const binary = path.join(root, "target", "debug", binaryFileName);
-  if (await isFile(binary)) {
-    return binary;
-  }
   const result = spawnSync("cargo", ["build", "-p", crateName], {
     cwd: root,
     env: cargoEnv(),

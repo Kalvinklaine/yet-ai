@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use serde_json::{json, Value};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub type Stdin = tokio::fs::File;
-pub type Stdout = tokio::fs::File;
+pub type Stdin = tokio::io::Stdin;
+pub type Stdout = tokio::io::Stdout;
 
 const MAX_DOCUMENTS: usize = 32;
 const MAX_DOCUMENT_BYTES: usize = 256 * 1024;
@@ -221,34 +221,12 @@ pub async fn run_lsp_stdio() -> std::io::Result<()> {
     run_lsp(stdio_stdin()?, stdio_stdout()?).await
 }
 
-#[cfg(unix)]
 fn stdio_stdin() -> std::io::Result<Stdin> {
-    use std::os::fd::FromRawFd;
-    let file = unsafe { std::fs::File::from_raw_fd(libc::STDIN_FILENO) };
-    Ok(tokio::fs::File::from_std(file))
+    Ok(tokio::io::stdin())
 }
 
-#[cfg(unix)]
 fn stdio_stdout() -> std::io::Result<Stdout> {
-    use std::os::fd::FromRawFd;
-    let file = unsafe { std::fs::File::from_raw_fd(libc::STDOUT_FILENO) };
-    Ok(tokio::fs::File::from_std(file))
-}
-
-#[cfg(not(unix))]
-fn stdio_stdin() -> std::io::Result<Stdin> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "lsp stdio mode is not supported on this platform",
-    ))
-}
-
-#[cfg(not(unix))]
-fn stdio_stdout() -> std::io::Result<Stdout> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "lsp stdio mode is not supported on this platform",
-    ))
+    Ok(tokio::io::stdout())
 }
 
 pub async fn run_lsp<R, W>(mut reader: R, mut writer: W) -> std::io::Result<()>
@@ -395,5 +373,6 @@ where
     writer
         .write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes())
         .await?;
-    writer.write_all(&body).await
+    writer.write_all(&body).await?;
+    writer.flush().await
 }
