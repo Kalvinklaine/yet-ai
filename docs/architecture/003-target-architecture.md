@@ -424,7 +424,7 @@ Safety constraints:
 - Completion/status output must be deterministic and derived from safe synthetic rules or the bounded in-memory document state. It must not call providers, local model runtimes, hosted services, or tool/integration endpoints.
 - LSP state must remain separate from HTTP/SSE chat state except for shared local process configuration and product identity. Chat, provider configuration, tool confirmations, and large structured UI state stay on HTTP and SSE.
 
-Future LSP changes should verify the narrow surface before merging. Documentation-only or contract-only LSP changes should run `npm run check`. Engine LSP protocol changes should run at least `export PATH="$HOME/.cargo/bin:$PATH"; cargo check -p yet-lsp && cargo test -p yet-lsp lsp && npm run check && git status --short` once the focused Rust LSP tests exist. IDE LSP client wiring should additionally run the affected plugin compile/check command and the relevant local smoke, without real provider credentials, hosted Yet AI services, cloud workspace dependency, or production release claims.
+Future LSP changes should verify the narrow surface before merging. Documentation-only or contract-only LSP changes should run `npm run check`. Engine LSP protocol changes should run at least `export PATH="$HOME/.cargo/bin:$PATH"; cargo check -p yet-lsp && cargo test -p yet-lsp lsp && npm run smoke:lsp-stdio && npm run check && git status --short`. IDE LSP client wiring should additionally run the affected plugin compile/check command and the relevant local smoke, without real provider credentials, hosted Yet AI services, cloud workspace dependency, or production release claims.
 
 ### IDE to GUI postMessage bridge
 
@@ -512,8 +512,8 @@ flowchart TD
     User --> JB[JetBrains plugin]
     VSC --> GUI[Yet AI React webview]
     JB --> GUI
-    VSC <-->|optional LSP| Engine[apps/engine yet-lsp]
-    JB <-->|optional LSP| Engine
+    VSC <-->|opt-in read-only LSP MVP| Engine[apps/engine yet-lsp]
+    JB -.->|future/deferred LSP| Engine
     GUI <-->|HTTP REST| Engine
     GUI <-->|SSE chat events| Engine
     GUI <-->|postMessage bridge| VSC
@@ -531,8 +531,8 @@ The approved near-term implementation sequence is local-first and incremental. F
 
 ### 1. Local runtime skeleton — MVP baseline complete
 
-- Implemented a minimal Rust local runtime with `/v1/ping`, `/v1/caps`, loopback binding, bearer-token authentication, identity-aware storage names, and SSE chat plumbing.
-- Remaining work: production launch lifecycle, stronger CORS/origin policy, optional LSP, shutdown/lifecycle hardening, and packaging.
+- Implemented a minimal Rust local runtime with `/v1/ping`, `/v1/caps`, loopback binding, bearer-token authentication, identity-aware storage names, SSE chat plumbing, and a separate read-only stdio LSP MVP for bounded editor-supplied document lifecycle plus deterministic local completion/status proof.
+- Remaining work: production launch lifecycle, production packaging, provider-backed completions, richer LSP diagnostics/code-lens, tools, indexing, agents, and privileged workspace policies.
 
 ### 2. Provider registry, configuration, and secret redaction — MVP baseline complete
 
@@ -551,8 +551,8 @@ The approved near-term implementation sequence is local-first and incremental. F
 
 ### 5. VS Code local runtime host — MVP baseline complete
 
-- Implemented identity-checked extension metadata, bundled identity loading for local package routes, strict loopback runtime/dev URL validation, packaged GUI asset loading, webview shell, safe bootstrap serialization, exact-origin dev iframe forwarding, MVP local runtime `connect`/`launch`/`auto` modes, SecretStorage for manual connect-mode runtime tokens, ephemeral launch-mode tokens delivered through `host.ready`, bounded active editor/selection context snapshots, `/v1/ping` health check, redacted runtime diagnostics/logs, cleanup on deactivate, narrow `gui.ready`/`host.ready` bridge handling, and a local ignored root dev-preview VSIX plus checksum validated by installable and workspace smokes.
-- Remaining work: marketplace publication flow, signing/notarization decisions, production installer, deeper extension-host lifecycle tests, LSP wiring, and privileged IDE action policies.
+- Implemented identity-checked extension metadata, bundled identity loading for local package routes, strict loopback runtime/dev URL validation, packaged GUI asset loading, webview shell, safe bootstrap serialization, exact-origin dev iframe forwarding, MVP local runtime `connect`/`launch`/`auto` modes, SecretStorage for manual connect-mode runtime tokens, ephemeral launch-mode tokens delivered through `host.ready`, bounded active editor/selection context snapshots, `/v1/ping` health check, redacted runtime diagnostics/logs, cleanup on deactivate, narrow `gui.ready`/`host.ready` bridge handling, an off-by-default read-only stdio LSP client for bounded local `file` document sync and deterministic completion/status proof, and a local ignored root dev-preview VSIX plus checksum validated by installable and workspace smokes.
+- Remaining work: marketplace publication flow, signing/notarization decisions, production installer, deeper extension-host lifecycle tests, production LSP features such as provider-backed completions/diagnostics/code-lens, and privileged IDE action policies.
 
 ### 6. JetBrains local runtime host — MVP baseline complete
 
