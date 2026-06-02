@@ -126,6 +126,16 @@ cargo run -p yet-lsp -- --lsp-stdio
 
 This mode speaks LSP over stdin/stdout, does not start the HTTP loopback server, does not require `YET_AI_AUTH_TOKEN`, and keeps only bounded in-memory `file://` document text supplied by the editor until close, shutdown, or exit. Its completion capability currently returns only a deterministic local status item for safe cached documents and safe empty results for unsupported inputs; it does not perform production AI completion, provider calls, file reads, indexing, tools, or workspace mutation.
 
+To verify the spawned-binary stdio path without an IDE:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+cargo build -p yet-lsp
+npm run smoke:lsp-stdio
+```
+
+The smoke starts `target/debug/yet-lsp --lsp-stdio` without a runtime auth token, sends bounded framed LSP messages, verifies the deterministic local status completion, checks closed-document empty completion and an unsupported method error, then shuts the child down cleanly.
+
 
 VS Code and JetBrains dev-preview launchers can also start `yet-lsp` in `launch` or `auto` mode. They pass a generated per-session token through `YET_AI_AUTH_TOKEN`, pass the configured HTTP port through `YET_AI_HTTP_PORT`, and verify readiness with `GET /v1/ping`. `connect` mode is for an already running loopback engine.
 
