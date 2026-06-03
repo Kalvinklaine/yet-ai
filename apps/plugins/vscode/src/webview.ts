@@ -229,6 +229,9 @@ export async function validateWorkspaceEditBeforeApply(request: ApplyWorkspaceEd
     if (!document || document.isUntitled) {
       return undefined;
     }
+    if (hasOverlappingTextReplacements(fileEdit.textReplacements)) {
+      return undefined;
+    }
     for (const textReplacement of fileEdit.textReplacements) {
       if (!isRangeWithinDocument(textReplacement.range, document)) {
         return undefined;
@@ -336,6 +339,23 @@ function isRangeWithinDocument(range: ApplyWorkspaceTextReplacement["range"], do
     return false;
   }
   return range.start.character <= document.lineAt(range.start.line).text.length && range.end.character <= document.lineAt(range.end.line).text.length;
+}
+
+function hasOverlappingTextReplacements(textReplacements: ApplyWorkspaceTextReplacement[]): boolean {
+  const sorted = [...textReplacements].sort((left, right) => comparePositions(left.range.start, right.range.start));
+  for (let index = 1; index < sorted.length; index += 1) {
+    if (comparePositions(sorted[index - 1].range.end, sorted[index].range.start) > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function comparePositions(left: ApplyWorkspacePosition, right: ApplyWorkspacePosition): number {
+  if (left.line !== right.line) {
+    return left.line - right.line;
+  }
+  return left.character - right.character;
 }
 
 function isStrictRange(value: unknown): value is ApplyWorkspaceTextReplacement["range"] {
@@ -711,7 +731,7 @@ function sanitizeSafePath(value: string | undefined, maxLength: number): string 
 }
 
 function hasSecretLikeText(value: string): boolean {
-  return /(?:authorization|bearer\s+|sessiontoken|session[_-]?token|api[_-]?key|secret|sk-[A-Za-z0-9_-]+)/i.test(value);
+  return /(?:authorization|bearer\s+|sessiontoken|session[_-]?token|api[_-]?key|secret|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value);
 }
 
 function hasBinaryLikeText(value: string): boolean {

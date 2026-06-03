@@ -508,15 +508,19 @@ function optionalBoundedInteger(value: unknown, min: number, max: number): boole
 }
 
 function safeSummary(value: unknown): boolean {
-  return typeof value === "string" && value.length > 0 && value.length <= 1000 && !unsafeDisplayText(value) && !hasPrivatePathLikeText(value);
+  return typeof value === "string" && value.length > 0 && value.length <= 1000 && !unsafeDisplayText(value) && !hasPrivatePathLikeText(value) && !hasKeyLikeSecretText(value);
 }
 
 function safeMessage(value: unknown): boolean {
-  return typeof value === "string" && value.length > 0 && value.length <= 1000 && !unsafeDisplayText(value) && !hasPrivatePathLikeText(value);
+  return typeof value === "string" && value.length > 0 && value.length <= 1000 && !unsafeDisplayText(value) && !hasPrivatePathLikeText(value) && !hasKeyLikeSecretText(value);
 }
 
 function hasPrivatePathLikeText(value: string): boolean {
   return /(?:\/Users\/|\/home\/|\/tmp\/|\/var\/|\/Volumes\/|\/Private\/|~[\/\\]|[A-Za-z]:[\/\\])/.test(value);
+}
+
+function hasKeyLikeSecretText(value: string): boolean {
+  return /(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}/.test(value);
 }
 
 function unsafeDisplayText(value: string): boolean {

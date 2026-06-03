@@ -17,6 +17,8 @@ const oversizedProposal = createProposal({ replacement: { replacementText: "x".r
 const leakProposal = createProposal({ summary: `Review sanitized marker ${secretMarkers[0]}.`, replacement: { replacementText: `const label = "${secretMarkers[1]}";` } });
 const invalidPathProposals = [
   ["traversal", "../private/secret.ts"],
+  ["empty-segment", "src//main.ts"],
+  ["trailing-slash", "src/"],
   ["backslash", "src\\main.ts"],
   ["url-like", "https://example.invalid/src/main.ts"],
   ["encoded-traversal", "src/%2e%2e/private.ts"],
@@ -121,7 +123,7 @@ try {
       version: bridgeVersion,
       type: "host.applyWorkspaceEditResult",
       requestId: "gui-edit-proposal-leak",
-      payload: { status: "failed", message: `Raw ${secretMarkers[2]} ${secretMarkers[3]}`, cloudRequired: false, appliedEditCount: 0, affectedFiles: [] },
+      payload: { status: "failed", message: `Raw ${secretMarkers[2]} ${secretMarkers[3]} ${secretMarkers[4]}`, cloudRequired: false, appliedEditCount: 0, affectedFiles: [] },
     },
   });
   await expectVisible(page, "[redacted]");
@@ -334,7 +336,7 @@ function isPosition(position) {
 }
 
 function safeRelativePath(value) {
-  return typeof value === "string" && value.length > 0 && value.length <= 512 && !value.startsWith("/") && !value.startsWith("~") && !value.includes("%") && !value.includes("\\") && !value.includes(":") && !value.includes("?") && !value.includes("#") && /^[^\u0000-\u001f\u007f-\u009f]+$/.test(value) && value.split("/").every((part) => part !== "." && part !== "..");
+  return typeof value === "string" && value.length > 0 && value.length <= 512 && !value.startsWith("/") && !value.startsWith("~") && !value.includes("%") && !value.includes("\\") && !value.includes(":") && !value.includes("?") && !value.includes("#") && /^[^\u0000-\u001f\u007f-\u009f]+$/.test(value) && value.split("/").every((part) => part.length > 0 && part !== "." && part !== "..");
 }
 
 function result(requestId, status, message) {
