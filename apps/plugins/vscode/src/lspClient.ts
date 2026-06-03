@@ -141,8 +141,8 @@ export function stopYetAiLspClient(output?: LspOutput): Promise<void> {
   };
   void sendLspRequest(current, "shutdown", null, stopOutput).catch(() => undefined).finally(sendExit);
   current.shutdownTimers.push(setTimeout(sendExit, lspShutdownGraceMs));
-  current.shutdownTimers.push(setTimeout(() => terminateLspProcess(current, "SIGTERM"), lspTerminateGraceMs));
-  current.shutdownTimers.push(setTimeout(() => terminateLspProcess(current, "SIGKILL"), lspHardKillGraceMs));
+  current.shutdownTimers.push(setTimeout(() => terminateLspProcess(current, "SIGTERM", stopOutput), lspTerminateGraceMs));
+  current.shutdownTimers.push(setTimeout(() => terminateLspProcess(current, "SIGKILL", stopOutput), lspHardKillGraceMs));
   current.shutdownTimers.push(setTimeout(() => finalizeUnclosedLspProcess(current, stopOutput), lspFinalFallbackGraceMs));
   return stopped;
 }
@@ -375,7 +375,7 @@ function attachLspDiagnostics(client: LspProcess, output: LspOutput): void {
   const child = client.process;
   child.stdout?.on("data", (chunk: Buffer) => handleLspStdout(client, chunk, output));
   child.stdout?.on("error", (error: Error) => handleLspStdoutError(client, output, error));
-  child.stderr?.on("data", (chunk: Buffer) => appendLspStderr(client, chunk.toString("utf8"), output));
+  child.stderr?.on("data", (chunk: Buffer | string) => appendLspStderrChunk(client, chunk, output));
   child.stderr?.on("error", (error: Error) => handleLspStderrError(client, output, error));
   child.stdin?.on("error", (error) => handleLspStdinError(client, output, error));
   child.on("close", (code, signal) => closeLspClient(client, output, `Yet AI read-only LSP MVP exited with code ${code ?? "null"} and signal ${signal ?? "null"}.`, new Error("LSP process exited")));
@@ -441,13 +441,29 @@ function handleLspStderrError(client: LspProcess, output: LspOutput, error: Erro
 function closeAndTerminateLspClient(client: LspProcess, output: LspOutput, diagnostic: string, error: Error): void {
   client.stopping = true;
   closeLspClient(client, output, diagnostic, error);
-  terminateLspProcess(client, "SIGTERM");
-  terminateLspProcess(client, "SIGKILL");
+  terminateLspProcess(client, "SIGTERM", output);
+  terminateLspProcess(client, "SIGKILL", output);
 }
 
 function resolveLspStop(client: LspProcess): void {
   for (const resolve of client.stopResolvers.splice(0)) {
     resolve();
+  }
+}
+
+function appendLspStderrChunk(client: LspProcess, chunk: Buffer | string, output: LspOutput): void {
+  if (typeof chunk === "string") {
+    appendLspStderrString(client, chunk, output);
+    return;
+  }
+  for (let offset = 0; offset < chunk.length; offset += maxLspDiagnosticLineBuffer) {
+    appendLspStderrString(client, chunk.subarray(offset, offset + maxLspDiagnosticLineBuffer).toString("utf8"), output);
+  }
+}
+
+function appendLspStderrString(client: LspProcess, text: string, output: LspOutput): void {
+  for (let offset = 0; offset < text.length; offset += maxLspDiagnosticLineBuffer) {
+    appendLspStderr(client, text.slice(offset, offset + maxLspDiagnosticLineBuffer), output);
   }
 }
 
@@ -519,11 +535,11 @@ function handleLspStdout(client: LspProcess, chunk: Buffer, output: LspOutput): 
   if (client.closed) {
     return;
   }
-  client.stdoutBuffer = Buffer.concat([client.stdoutBuffer, chunk]);
-  if (client.stdoutBuffer.length > maxLspMessageBytes) {
+  if (chunk.length > maxLspMessageBytes || client.stdoutBuffer.length > maxLspMessageBytes - chunk.length) {
     failLspProtocol(client, output, "Yet AI read-only LSP MVP stdout exceeded bounded parser buffer.", new Error("LSP stdout exceeded bounded parser buffer"));
     return;
   }
+  client.stdoutBuffer = Buffer.concat([client.stdoutBuffer, chunk]);
   while (client.stdoutBuffer.length > 0) {
     const headerEnd = client.stdoutBuffer.indexOf("\r\n\r\n");
     if (headerEnd === -1) {
@@ -623,14 +639,14 @@ function clearShutdownTimers(client: LspProcess): void {
   }
 }
 
-function terminateLspProcess(client: LspProcess, signal: NodeJS.Signals): void {
+function terminateLspProcess(client: LspProcess, signal: NodeJS.Signals, output?: LspOutput): void {
   try {
-    if (process.platform === "win32") {
-      client.process.kill();
-    } else {
-      client.process.kill(signal);
+    const killed = process.platform === "win32" ? client.process.kill() : client.process.kill(signal);
+    if (!killed) {
+      output?.appendLine(`Yet AI read-only LSP MVP ${signal} termination was not accepted by the process.`);
     }
-  } catch {
+  } catch (error) {
+    output?.appendLine(`Yet AI read-only LSP MVP ${signal} termination failed: ${sanitizeLspDiagnostic(error, "termination failed")}`);
   }
 }
 
@@ -638,7 +654,7 @@ function finalizeUnclosedLspProcess(client: LspProcess, output: LspOutput): void
   if (client.closed) {
     return;
   }
-  terminateLspProcess(client, "SIGKILL");
+  terminateLspProcess(client, "SIGKILL", output);
   closeLspClient(client, output, "Yet AI read-only LSP MVP stop completed after bounded kill fallback without process close.", new Error("LSP process did not close after bounded stop"));
 }
 
