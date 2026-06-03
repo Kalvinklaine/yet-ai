@@ -12,6 +12,8 @@ const errorMessages = [];
 const informationMessages = [];
 const outputLines = [];
 const registeredCompletionProviders = [];
+const registeredHoverProviders = [];
+const registeredDocumentSymbolProviders = [];
 let workspaceTextDocuments = [];
 const workspaceOpenDocumentListeners = [];
 const workspaceChangeDocumentListeners = [];
@@ -35,10 +37,37 @@ Module._load = function load(request, parent, isMain) {
       },
       ViewColumn: { Beside: 2 },
       CompletionItemKind: { Text: 1 },
+      SymbolKind: { Function: 12, Class: 5, Property: 7 },
       CompletionItem: class CompletionItem {
         constructor(label, kind) {
           this.label = label;
           this.kind = kind;
+        }
+      },
+      Position: class Position {
+        constructor(line, character) {
+          this.line = line;
+          this.character = character;
+        }
+      },
+      Range: class Range {
+        constructor(start, end) {
+          this.start = start;
+          this.end = end;
+        }
+      },
+      Hover: class Hover {
+        constructor(contents) {
+          this.contents = contents;
+        }
+      },
+      DocumentSymbol: class DocumentSymbol {
+        constructor(name, detail, kind, range, selectionRange) {
+          this.name = name;
+          this.detail = detail;
+          this.kind = kind;
+          this.range = range;
+          this.selectionRange = selectionRange;
         }
       },
       CompletionList: class CompletionList {
@@ -48,6 +77,16 @@ Module._load = function load(request, parent, isMain) {
         }
       },
       languages: {
+        registerHoverProvider(selector, provider) {
+          const registration = { selector, provider, disposed: false };
+          registeredHoverProviders.push(registration);
+          return { dispose() { registration.disposed = true; } };
+        },
+        registerDocumentSymbolProvider(selector, provider) {
+          const registration = { selector, provider, disposed: false };
+          registeredDocumentSymbolProviders.push(registration);
+          return { dispose() { registration.disposed = true; } };
+        },
         registerCompletionItemProvider(selector, provider) {
           const registration = { selector, provider, disposed: false };
           registeredCompletionProviders.push(registration);
@@ -672,6 +711,11 @@ try {
       child.stdout.emit("data", Buffer.from(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`));
     }
 
+    function emitLspErrorResponse(child, id, message) {
+      const body = JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32603, message } });
+      child.stdout.emit("data", Buffer.from(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`));
+    }
+
     function emitRawLspStdout(child, text) {
       child.stdout.emit("data", Buffer.from(text));
     }
@@ -762,6 +806,8 @@ try {
     startYetAiLspClient({ ...fakeContext, extensionPath: tempRoot }, { engine: { binaryName: "yet-lsp" } }, lspOutput);
     assert.equal(lspSpawns.length, 0, "disabled LSP setting launched a process");
     assert.equal(registeredCompletionProviders.length, 0, "disabled LSP setting registered completion provider");
+    assert.equal(registeredHoverProviders.length, 0, "disabled LSP setting registered hover provider");
+    assert.equal(registeredDocumentSymbolProviders.length, 0, "disabled LSP setting registered document symbol provider");
 
     configValues = {
       "lsp.enabled": true,
@@ -783,6 +829,8 @@ try {
     assert.equal(lspMessages[0].method, "initialize");
     assert.equal(lspMessages[0].params.capabilities.textDocument.synchronization.didOpen, true);
     assert.equal(typeof lspMessages[0].params.capabilities.textDocument.completion, "object");
+    assert.equal(typeof lspMessages[0].params.capabilities.textDocument.hover, "object");
+    assert.equal(typeof lspMessages[0].params.capabilities.textDocument.documentSymbol, "object");
     assert.ok(lspOutputLines.some((line) => line.includes("Started Yet AI read-only LSP MVP from yet-lsp-executable.")));
     emitLspResponse(lspSpawns[0].child, lspMessages[0].id, {
       capabilities: { textDocumentSync: 1, completionProvider: { triggerCharacters: [] } },
@@ -794,7 +842,11 @@ try {
     assert.equal(lspMessages[1].method, "textDocument/didOpen");
     assert.equal(lspMessages[1].params.textDocument.uri, "file:///workspace/enabled.rs");
     assert.equal(lspMessages.some((message) => JSON.stringify(message).includes("untitled:virtual")), false, "LSP synced a virtual document");
+    assert.equal(registeredHoverProviders.length, 1);
+    assert.equal(registeredDocumentSymbolProviders.length, 1);
     assert.equal(registeredCompletionProviders.length, 1);
+    assert.deepEqual(registeredHoverProviders[0].selector, { scheme: "file" });
+    assert.deepEqual(registeredDocumentSymbolProviders[0].selector, { scheme: "file" });
     assert.deepEqual(registeredCompletionProviders[0].selector, { scheme: "file" });
     const completionsPromise = registeredCompletionProviders[0].provider.provideCompletionItems(fileDocument, { line: 0, character: 3 });
     lspMessages = takeLspClientMessages(lspSpawns[0].child);
@@ -809,17 +861,57 @@ try {
     assert.equal(completions.items.length, 1);
     assert.equal(completions.items[0].label, "Yet AI LSP connected");
     assert.equal(completions.items[0].detail, "Local read-only LSP status");
-    assert.equal(await registeredCompletionProviders[0].provider.provideCompletionItems(virtualDocument, { line: 0, character: 1 }), undefined);
+    const hoverPromise = registeredHoverProviders[0].provider.provideHover(fileDocument, { line: 0, character: 3 });
     lspMessages = takeLspClientMessages(lspSpawns[0].child);
-    assert.equal(lspMessages.length, 0, "virtual document completion sent LSP traffic");
+    assert.equal(lspMessages.length, 1);
+    assert.equal(lspMessages[0].method, "textDocument/hover");
+    assert.deepEqual(lspMessages[0].params.position, { line: 0, character: 3 });
+    emitLspResponse(lspSpawns[0].child, lspMessages[0].id, {
+      contents: { kind: "plaintext", value: "Yet AI read-only LSP: local document is connected." },
+    });
+    const hover = await hoverPromise;
+    assert.equal(hover.contents, "Yet AI read-only LSP: local document is connected.");
+    const symbolsPromise = registeredDocumentSymbolProviders[0].provider.provideDocumentSymbols(fileDocument);
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 1);
+    assert.equal(lspMessages[0].method, "textDocument/documentSymbol");
+    emitLspResponse(lspSpawns[0].child, lspMessages[0].id, [{
+      name: "enabled",
+      kind: 12,
+      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 15 } },
+      selectionRange: { start: { line: 0, character: 3 }, end: { line: 0, character: 10 } },
+    }]);
+    const symbols = await symbolsPromise;
+    assert.equal(symbols.length, 1);
+    assert.equal(symbols[0].name, "enabled");
+    assert.equal(symbols[0].kind, 12);
+    assert.equal(symbols[0].range.start.line, 0);
+    assert.equal(symbols[0].range.start.character, 0);
+    assert.equal(symbols[0].selectionRange.end.line, 0);
+    assert.equal(symbols[0].selectionRange.end.character, 10);
+    const invalidHoverPromise = registeredHoverProviders[0].provider.provideHover(fileDocument, { line: 0, character: 3 });
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    emitLspResponse(lspSpawns[0].child, lspMessages[0].id, null);
+    assert.equal(await invalidHoverPromise, undefined, "invalid hover response did not fail safe");
+    const invalidSymbolsPromise = registeredDocumentSymbolProviders[0].provider.provideDocumentSymbols(fileDocument);
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    emitLspResponse(lspSpawns[0].child, lspMessages[0].id, { items: [] });
+    assert.equal(await invalidSymbolsPromise, undefined, "invalid document symbol response did not fail safe");
+    assert.equal(await registeredCompletionProviders[0].provider.provideCompletionItems(virtualDocument, { line: 0, character: 1 }), undefined);
+    assert.equal(await registeredHoverProviders[0].provider.provideHover(virtualDocument, { line: 0, character: 1 }), undefined);
+    assert.equal(await registeredDocumentSymbolProviders[0].provider.provideDocumentSymbols(virtualDocument), undefined);
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 0, "virtual document providers sent LSP traffic");
     const oversizedDocumentText = "a".repeat(256 * 1024 + 1);
     const oversizedDocument = createTextDocument({ scheme: "file", toString: () => "file:///workspace/oversized.rs" }, oversizedDocumentText, 1);
     workspaceOpenDocumentListeners.at(-1)(oversizedDocument);
     lspMessages = takeLspClientMessages(lspSpawns[0].child);
     assert.equal(lspMessages.length, 0, "oversized document open sent LSP traffic");
     assert.equal(await registeredCompletionProviders[0].provider.provideCompletionItems(oversizedDocument, { line: 0, character: 0 }), undefined);
+    assert.equal(await registeredHoverProviders[0].provider.provideHover(oversizedDocument, { line: 0, character: 0 }), undefined);
+    assert.equal(await registeredDocumentSymbolProviders[0].provider.provideDocumentSymbols(oversizedDocument), undefined);
     lspMessages = takeLspClientMessages(lspSpawns[0].child);
-    assert.equal(lspMessages.length, 0, "oversized document completion sent LSP traffic");
+    assert.equal(lspMessages.length, 0, "oversized document providers sent LSP traffic");
     oversizedDocument.version = 2;
     workspaceChangeDocumentListeners.at(-1)({ document: oversizedDocument });
     lspMessages = takeLspClientMessages(lspSpawns[0].child);
@@ -832,8 +924,10 @@ try {
     lspMessages = takeLspClientMessages(lspSpawns[0].child);
     assert.equal(lspMessages.length, 0, "binary-like document open sent LSP traffic");
     assert.equal(await registeredCompletionProviders[0].provider.provideCompletionItems(binaryDocument, { line: 0, character: 0 }), undefined);
+    assert.equal(await registeredHoverProviders[0].provider.provideHover(binaryDocument, { line: 0, character: 0 }), undefined);
+    assert.equal(await registeredDocumentSymbolProviders[0].provider.provideDocumentSymbols(binaryDocument), undefined);
     lspMessages = takeLspClientMessages(lspSpawns[0].child);
-    assert.equal(lspMessages.length, 0, "binary-like document completion sent LSP traffic");
+    assert.equal(lspMessages.length, 0, "binary-like document providers sent LSP traffic");
 
     const transitionDocument = createTextDocument({ scheme: "file", toString: () => "file:///workspace/transition.rs" }, "fn transition() {}", 1);
     workspaceOpenDocumentListeners.at(-1)(transitionDocument);
@@ -847,6 +941,10 @@ try {
     assert.equal(lspMessages.length, 1, "unsafe synced document transition did not send exactly one LSP message");
     assert.equal(lspMessages[0].method, "textDocument/didClose");
     assert.equal(JSON.stringify(lspMessages[0]).includes("unsafe"), false, "unsafe transition close included document body");
+    assert.equal(await registeredHoverProviders[0].provider.provideHover(transitionDocument, { line: 0, character: 0 }), undefined);
+    assert.equal(await registeredDocumentSymbolProviders[0].provider.provideDocumentSymbols(transitionDocument), undefined);
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 0, "unsafe transitioned document hover/symbols sent LSP traffic");
 
     const skippedThenSafeDocument = createTextDocument({ scheme: "file", toString: () => "file:///workspace/skipped-then-safe.rs" }, "\u0000", 1);
     workspaceOpenDocumentListeners.at(-1)(skippedThenSafeDocument);
@@ -865,6 +963,25 @@ try {
     assert.equal(lspMessages[0].method, "textDocument/completion");
     emitLspResponse(lspSpawns[0].child, lspMessages[0].id, { isIncomplete: false, items: [] });
     await skippedThenSafeCompletions;
+    const skippedThenSafeHover = registeredHoverProviders[0].provider.provideHover(skippedThenSafeDocument, { line: 0, character: 3 });
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 1, "previously skipped safe document hover did not send request");
+    assert.equal(lspMessages[0].method, "textDocument/hover");
+    emitLspResponse(lspSpawns[0].child, lspMessages[0].id, { contents: "safe hover" });
+    assert.equal((await skippedThenSafeHover).contents, "safe hover");
+
+    const hoverFailurePromise = registeredHoverProviders[0].provider.provideHover(skippedThenSafeDocument, { line: 0, character: 3 });
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages[0].method, "textDocument/hover");
+    emitLspErrorResponse(lspSpawns[0].child, lspMessages[0].id, `hover failed Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}`);
+    assert.equal(await hoverFailurePromise, undefined, "hover LSP error did not fail safe");
+    const symbolFailurePromise = registeredDocumentSymbolProviders[0].provider.provideDocumentSymbols(skippedThenSafeDocument);
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages[0].method, "textDocument/documentSymbol");
+    emitLspErrorResponse(lspSpawns[0].child, lspMessages[0].id, `symbols failed Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}`);
+    assert.deepEqual(await symbolFailurePromise, [], "document symbol LSP error did not fail safe");
+    assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticSecret), false, "hover/symbol failure leaked secret");
+    assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticPath), false, "hover/symbol failure leaked private path");
 
     const hugeUri = `file:///workspace/${"u".repeat(600 * 1024)}.rs`;
     const hugeUriDocument = createTextDocument({ scheme: "file", toString: () => hugeUri }, "fn safe_body() {}", 1);
@@ -940,6 +1057,8 @@ try {
     assert.equal(lspSpawns[1].child.killed, true, "LSP deactivate cleanup did not stop process");
     await directStopPromise;
     assert.equal(directStopResolved, true, "LSP stop did not resolve after process close");
+    assert.equal(registeredHoverProviders[0].disposed, true, "LSP hover provider was not disposed");
+    assert.equal(registeredDocumentSymbolProviders[0].disposed, true, "LSP document symbol provider was not disposed");
     assert.equal(registeredCompletionProviders[0].disposed, true, "LSP completion provider was not disposed");
 
     startYetAiLspClient({ ...fakeContext, extensionPath: tempRoot }, { engine: { binaryName: "yet-lsp" } }, lspOutput);
