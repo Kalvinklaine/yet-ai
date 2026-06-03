@@ -396,7 +396,7 @@ npm run compile
 npm run check:webview-safety
 ```
 
-If a root `npm run smoke:vscode-edit-proposal` command is added later, include it in the VS Code edit-proposal gate.
+Include root `npm run smoke:vscode-edit-proposal` in the VS Code edit-proposal gate.
 
 ## Current limitations
 

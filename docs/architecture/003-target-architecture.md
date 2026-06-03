@@ -468,7 +468,7 @@ Bridge security rules:
 - GUI requests for workspace edits, IDE tool execution, shell-like actions, or file mutation require host and/or engine policy checks plus user confirmation where appropriate.
 - Keep safe UI messages (theme, active file, notifications) conceptually separate from privileged messages (edits, tool results, filesystem actions).
 
-Confirmed edit-proposal changes should verify the affected contracts, GUI preview, and VS Code host checks. Contract/docs-only changes can use `npm run check`. GUI changes should include `cd apps/gui && npm test && npm run typecheck`. VS Code host apply changes should include `cd apps/plugins/vscode && npm run compile && npm run check:webview-safety`. If a root `npm run smoke:vscode-edit-proposal` command is added later, it should be part of the same focused gate. These checks are local/mock-only and must not use real provider credentials, hosted Yet AI services, shell/tools/tasks/git, arbitrary workspace indexing, or production release flows.
+Confirmed edit-proposal changes should verify the affected contracts, GUI preview, and VS Code host checks. Contract/docs-only changes can use `npm run check`. GUI changes should include `cd apps/gui && npm test && npm run typecheck`. VS Code host apply changes should include `cd apps/plugins/vscode && npm run compile && npm run check:webview-safety`. Include root `npm run smoke:vscode-edit-proposal` in the same focused gate for confirmed edit-proposal smoke coverage. These checks are local/mock-only and must not use real provider credentials, hosted Yet AI services, shell/tools/tasks/git, arbitrary workspace indexing, or production release flows.
 
 ### Config and storage resolution
 
