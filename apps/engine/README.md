@@ -124,7 +124,7 @@ To run the read-only LSP stdio mode locally:
 cargo run -p yet-lsp -- --lsp-stdio
 ```
 
-This mode speaks LSP over Tokio stdin/stdout, does not start the HTTP loopback server, does not require `YET_AI_AUTH_TOKEN`, and keeps only bounded in-memory `file://` document text supplied by the editor until close, shutdown, or exit. The stdio transport uses Tokio's portable `io-std` handles rather than Unix-only raw file descriptor wrapping. Its completion capability currently returns only a deterministic local status item for safe cached documents and safe empty results for unsupported inputs; it does not perform production AI completion, provider calls, file reads, indexing, tools, or workspace mutation.
+This mode speaks LSP over Tokio stdin/stdout, does not start the HTTP loopback server, does not require `YET_AI_AUTH_TOKEN`, and keeps only bounded in-memory `file://` document text supplied by the editor until close, shutdown, or exit. The stdio transport uses Tokio's portable `io-std` handles rather than Unix-only raw file descriptor wrapping. Its implemented read-only code-intelligence proofs return a deterministic local status completion, bounded hover status text, and bounded document symbols for safe cached documents, with safe empty or null results for unsupported inputs; it does not perform production AI completion, provider calls, file reads, indexing, tools, or workspace mutation.
 
 To verify the spawned-binary stdio path without an IDE:
 
@@ -134,7 +134,7 @@ cargo build -p yet-lsp
 npm run smoke:lsp-stdio
 ```
 
-The smoke starts `target/debug/yet-lsp --lsp-stdio` without a runtime auth token, sends bounded framed LSP messages, verifies the deterministic local status completion, checks closed-document empty completion and an unsupported method error, then shuts the child down cleanly.
+The smoke starts `target/debug/yet-lsp --lsp-stdio` without a runtime auth token, sends bounded framed LSP messages, verifies the deterministic local status completion, hover status, and bounded document-symbol responses, checks closed-document empty completion and an unsupported method error, then shuts the child down cleanly.
 
 
 VS Code and JetBrains dev-preview launchers can also start `yet-lsp` in `launch` or `auto` mode. They pass a generated per-session token through `YET_AI_AUTH_TOKEN`, pass the configured HTTP port through `YET_AI_HTTP_PORT`, and verify readiness with `GET /v1/ping`. `connect` mode is for an already running loopback engine.
@@ -186,7 +186,7 @@ For `openai-compatible`, `baseUrl` may point either at an API root or directly a
 
 - This is a development MVP, not a production-ready runtime.
 - IDE launchers can start or connect to the runtime for local preview, but no signed/notarized engine bundle, marketplace packaging, or production installer is complete.
-- No full agent autonomy, indexing, tool registry execution, file mutation, shell execution, integrations, production LSP completion/code-lens, provider-backed completions, tools, tasks, knowledge, or file edits are complete. The current LSP surface is limited to the implemented read-only stdio document lifecycle and deterministic local status/completion proof, with opt-in VS Code wiring only.
+- No full agent autonomy, indexing, tool registry execution, file mutation, shell execution, integrations, production LSP completion/code-lens, provider-backed completions, tools, tasks, knowledge, or file edits are complete. The current LSP surface is limited to the implemented read-only stdio document lifecycle plus deterministic local completion and hover status proofs and bounded document-symbol support, with opt-in VS Code wiring only.
 - OpenAI-compatible streaming covers the first narrow local provider/chat path only; readiness metadata does not perform dynamic provider discovery, enable tool execution, or implement production model catalog synchronization. Broader provider quirks, retries, cancellation semantics, and production OAuth remain follow-up work.
 - OS credential storage is preferred only where the platform service is available and usable. The protected-file backend remains the documented fallback for disabled-primary policy and safe fallback reads after an empty healthy primary lookup, while primary-unavailable reads, transient primary write/delete failures, and keychain read unavailability return sanitized errors instead of silently succeeding through fallback. This is not cloud sync, hosted custody, enterprise secret management, or a production compliance guarantee.
 

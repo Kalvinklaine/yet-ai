@@ -52,6 +52,9 @@ const lspFinalFallbackGraceMs = 2_000;
 const maxLspDiagnosticLineBuffer = 8 * 1024;
 const completionLabel = "Yet AI LSP connected";
 const maxHoverContentLength = 1000;
+const maxDocumentSymbols = 64;
+const maxDocumentSymbolNameLength = 80;
+const maxLspPositionValue = 1_000_000;
 
 export function isLspEnabled(): boolean {
   return vscode.workspace.getConfiguration(configurationPrefix).get<boolean>("lsp.enabled", false);
@@ -462,21 +465,22 @@ function capHoverContent(value: string): string | undefined {
 }
 
 function toDocumentSymbols(result: unknown): vscode.DocumentSymbol[] | undefined {
-  if (!Array.isArray(result)) {
+  if (!Array.isArray(result) || result.length > maxDocumentSymbols) {
     return undefined;
   }
   const symbols: vscode.DocumentSymbol[] = [];
   for (const item of result) {
     const symbol = toDocumentSymbol(item);
-    if (symbol) {
-      symbols.push(symbol);
+    if (!symbol) {
+      return undefined;
     }
+    symbols.push(symbol);
   }
   return symbols;
 }
 
 function toDocumentSymbol(item: unknown): vscode.DocumentSymbol | undefined {
-  if (!isObject(item) || typeof item.name !== "string" || item.name.length === 0) {
+  if (!isObject(item) || typeof item.name !== "string" || item.name.length === 0 || item.name.length > maxDocumentSymbolNameLength) {
     return undefined;
   }
   const range = toRange(item.range);
@@ -493,10 +497,14 @@ function toRange(value: unknown): vscode.Range | undefined {
   }
   const start = toPosition(value.start);
   const end = toPosition(value.end);
-  if (!start || !end) {
+  if (!start || !end || isPositionAfter(start, end)) {
     return undefined;
   }
   return new vscode.Range(start, end);
+}
+
+function isPositionAfter(start: vscode.Position, end: vscode.Position): boolean {
+  return start.line > end.line || (start.line === end.line && start.character > end.character);
 }
 
 function toPosition(value: unknown): vscode.Position | undefined {
@@ -507,12 +515,12 @@ function toPosition(value: unknown): vscode.Position | undefined {
 }
 
 function isSafePositionNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= maxLspPositionValue;
 }
 
 function toSymbolKind(value: unknown): vscode.SymbolKind {
   if (typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 26) {
-    return value as vscode.SymbolKind;
+    return (value - 1) as vscode.SymbolKind;
   }
   return vscode.SymbolKind.Property;
 }

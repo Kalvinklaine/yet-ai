@@ -37,7 +37,7 @@ Module._load = function load(request, parent, isMain) {
       },
       ViewColumn: { Beside: 2 },
       CompletionItemKind: { Text: 1 },
-      SymbolKind: { Function: 12, Class: 5, Property: 7 },
+      SymbolKind: { Function: 11, Class: 4, Property: 6, Struct: 22 },
       CompletionItem: class CompletionItem {
         constructor(label, kind) {
           this.label = label;
@@ -875,16 +875,32 @@ try {
     lspMessages = takeLspClientMessages(lspSpawns[0].child);
     assert.equal(lspMessages.length, 1);
     assert.equal(lspMessages[0].method, "textDocument/documentSymbol");
-    emitLspResponse(lspSpawns[0].child, lspMessages[0].id, [{
-      name: "enabled",
-      kind: 12,
-      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 15 } },
-      selectionRange: { start: { line: 0, character: 3 }, end: { line: 0, character: 10 } },
-    }]);
+    emitLspResponse(lspSpawns[0].child, lspMessages[0].id, [
+      {
+        name: "enabled",
+        kind: 12,
+        range: { start: { line: 0, character: 0 }, end: { line: 0, character: 15 } },
+        selectionRange: { start: { line: 0, character: 3 }, end: { line: 0, character: 10 } },
+      },
+      {
+        name: "EnabledClass",
+        kind: 5,
+        range: { start: { line: 1, character: 0 }, end: { line: 1, character: 20 } },
+        selectionRange: { start: { line: 1, character: 6 }, end: { line: 1, character: 18 } },
+      },
+      {
+        name: "EnabledStruct",
+        kind: 23,
+        range: { start: { line: 2, character: 0 }, end: { line: 2, character: 21 } },
+        selectionRange: { start: { line: 2, character: 7 }, end: { line: 2, character: 20 } },
+      },
+    ]);
     const symbols = await symbolsPromise;
-    assert.equal(symbols.length, 1);
+    assert.equal(symbols.length, 3);
     assert.equal(symbols[0].name, "enabled");
-    assert.equal(symbols[0].kind, 12);
+    assert.equal(symbols[0].kind, 11);
+    assert.equal(symbols[1].kind, 4);
+    assert.equal(symbols[2].kind, 22);
     assert.equal(symbols[0].range.start.line, 0);
     assert.equal(symbols[0].range.start.character, 0);
     assert.equal(symbols[0].selectionRange.end.line, 0);
@@ -897,6 +913,25 @@ try {
     lspMessages = takeLspClientMessages(lspSpawns[0].child);
     emitLspResponse(lspSpawns[0].child, lspMessages[0].id, { items: [] });
     assert.equal(await invalidSymbolsPromise, undefined, "invalid document symbol response did not fail safe");
+    async function assertInvalidDocumentSymbolsFailSafe(result, message) {
+      const invalidPromise = registeredDocumentSymbolProviders[0].provider.provideDocumentSymbols(fileDocument);
+      lspMessages = takeLspClientMessages(lspSpawns[0].child);
+      assert.equal(lspMessages[0].method, "textDocument/documentSymbol");
+      emitLspResponse(lspSpawns[0].child, lspMessages[0].id, result);
+      assert.equal(await invalidPromise, undefined, message);
+    }
+
+    const safeSymbolResponse = {
+      name: "safe_symbol",
+      kind: 12,
+      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 10 } },
+      selectionRange: { start: { line: 0, character: 3 }, end: { line: 0, character: 10 } },
+    };
+    await assertInvalidDocumentSymbolsFailSafe(Array.from({ length: 65 }, () => safeSymbolResponse), "oversized document symbol response did not fail safe");
+    await assertInvalidDocumentSymbolsFailSafe([{ ...safeSymbolResponse, name: "a".repeat(81) }], "overlong document symbol name did not fail safe");
+    await assertInvalidDocumentSymbolsFailSafe([{ ...safeSymbolResponse, range: { start: { line: -1, character: 0 }, end: { line: 0, character: 10 } } }], "negative document symbol range did not fail safe");
+    await assertInvalidDocumentSymbolsFailSafe([{ ...safeSymbolResponse, range: { start: { line: 0.5, character: 0 }, end: { line: 0, character: 10 } } }], "non-integer document symbol range did not fail safe");
+    await assertInvalidDocumentSymbolsFailSafe([{ ...safeSymbolResponse, selectionRange: { start: { line: 0, character: 0 }, end: { line: 1_000_001, character: 0 } } }], "absurd document symbol range did not fail safe");
     assert.equal(await registeredCompletionProviders[0].provider.provideCompletionItems(virtualDocument, { line: 0, character: 1 }), undefined);
     assert.equal(await registeredHoverProviders[0].provider.provideHover(virtualDocument, { line: 0, character: 1 }), undefined);
     assert.equal(await registeredDocumentSymbolProviders[0].provider.provideDocumentSymbols(virtualDocument), undefined);
