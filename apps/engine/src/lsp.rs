@@ -314,7 +314,10 @@ fn valid_position(value: Option<&Value>, text: &str) -> bool {
     let Some(character) = position.get("character").and_then(Value::as_u64) else {
         return false;
     };
-    let Some(line_text) = line_text_at(text, line as usize) else {
+    let Ok(line) = usize::try_from(line) else {
+        return false;
+    };
+    let Some(line_text) = line_text_at(text, line) else {
         return false;
     };
     character <= utf16_visible_line_len(line_text) as u64
@@ -348,7 +351,7 @@ fn utf16_visible_line_len(line: &str) -> usize {
 
 fn extract_document_symbols(text: &str) -> Vec<Value> {
     let mut symbols = Vec::new();
-    for (line_number, line) in visible_lines(text).into_iter().enumerate() {
+    for (line_number, line) in visible_lines(text).enumerate() {
         if symbols.len() >= MAX_SYMBOLS {
             break;
         }
@@ -374,17 +377,22 @@ fn extract_document_symbols(text: &str) -> Vec<Value> {
     symbols
 }
 
-fn visible_lines(text: &str) -> Vec<&str> {
-    let mut lines = Vec::new();
+fn visible_lines(text: &str) -> impl Iterator<Item = &str> {
     let mut start = 0;
-    for (index, byte) in text.bytes().enumerate() {
-        if byte == b'\n' {
-            lines.push(strip_line_cr(&text[start..index]));
-            start = index + 1;
+    let mut finished = false;
+    std::iter::from_fn(move || {
+        if finished {
+            return None;
         }
-    }
-    lines.push(strip_line_cr(&text[start..]));
-    lines
+        if let Some(offset) = text[start..].bytes().position(|byte| byte == b'\n') {
+            let end = start + offset;
+            let line = strip_line_cr(&text[start..end]);
+            start = end + 1;
+            return Some(line);
+        }
+        finished = true;
+        Some(strip_line_cr(&text[start..]))
+    })
 }
 
 fn extract_symbol_from_line(line: &str) -> Option<(&str, u64, usize)> {
