@@ -13,8 +13,16 @@ const secretMarkers = [
   "C:\\Users\\Alice\\private\\yet-ai-secret.ts",
 ];
 const safeProposal = createProposal();
-const oversizedProposal = createProposal({ edit: { replacementText: "x".repeat(8193) }, summary: "Oversized replacement rejected locally." });
-const unsafePathProposal = createProposal({ edit: { workspaceRelativePath: "../private/secret.ts" }, summary: "Unsafe path rejected locally." });
+const oversizedProposal = createProposal({ replacement: { replacementText: "x".repeat(8193) }, summary: "Oversized replacement rejected locally." });
+const leakProposal = createProposal({ summary: `Review sanitized marker ${secretMarkers[0]}.`, replacement: { replacementText: `const label = "${secretMarkers[1]}";` } });
+const invalidPathProposals = [
+  ["traversal", "../private/secret.ts"],
+  ["backslash", "src\\main.ts"],
+  ["url-like", "https://example.invalid/src/main.ts"],
+  ["encoded-traversal", "src/%2e%2e/private.ts"],
+  ["posix-absolute", "/tmp/yet-ai/private.ts"],
+  ["drive-letter", "C:\\Users\\Alice\\workspace\\main.ts"],
+].map(([name, workspaceRelativePath]) => [name, createProposal({ edit: { workspaceRelativePath }, summary: "Unsafe path rejected locally." })]);
 const failures = [];
 const consoleMessages = [];
 const hostResults = [];
@@ -36,16 +44,16 @@ try {
   page.on("console", (message) => {
     const text = message.text();
     consoleMessages.push(text);
-    assertNoLeak(text, "browser console");
+    collectNoLeak(text, "browser console");
   });
   page.on("pageerror", (error) => failures.push(`Page JavaScript error: ${sanitize(error.message)}`));
 
   await page.setContent(harnessHtml(), { waitUntil: "domcontentloaded" });
-  await page.evaluate(({ version, proposal, oversized, unsafe }) => {
+  await page.evaluate(({ version, proposal, oversized, leak }) => {
     window.__yetAiLoadProposal(version, proposal);
     window.__yetAiOversizedProposal = oversized;
-    window.__yetAiUnsafeProposal = unsafe;
-  }, { version: bridgeVersion, proposal: safeProposal, oversized: oversizedProposal, unsafe: unsafePathProposal });
+    window.__yetAiLeakProposal = leak;
+  }, { version: bridgeVersion, proposal: safeProposal, oversized: oversizedProposal, leak: leakProposal });
 
   await expectVisible(page, "Confirmed edit proposal");
   await expectVisible(page, "preview only");
@@ -61,7 +69,9 @@ try {
 
   await page.getByRole("button", { name: "Request host apply after review" }).click();
   const acceptedRequest = await waitForApplyRequest(page, 1);
+  assertApplyRequestShape(acceptedRequest, "accepted request");
   const acceptedResult = await handleApplyWorkspaceEditRequest(acceptedRequest, { confirmed: true });
+  assertHostResultShape(acceptedResult, "accepted result");
   hostResults.push(acceptedResult);
   await dispatchHostResult(page, acceptedRequest.requestId, acceptedResult);
   await expectVisible(page, "Applied 1 edit to 1 file.");
@@ -74,7 +84,9 @@ try {
   await page.evaluate(({ version, proposal }) => window.__yetAiLoadProposal(version, proposal), { version: bridgeVersion, proposal: safeProposal });
   await page.getByRole("button", { name: "Request host apply after review" }).click();
   const deniedRequest = await waitForApplyRequest(page, 2);
+  assertApplyRequestShape(deniedRequest, "denied request");
   const deniedResult = await handleApplyWorkspaceEditRequest(deniedRequest, { confirmed: false });
+  assertHostResultShape(deniedResult, "denied result");
   hostResults.push(deniedResult);
   await dispatchHostResult(page, deniedRequest.requestId, deniedResult);
   await expectVisible(page, "Host confirmation denied the edit request.");
@@ -83,20 +95,45 @@ try {
     failures.push("Denied host confirmation mutated the controlled temp fixture.");
   }
 
-  const unsafeResult = await handleApplyWorkspaceEditRequest(createApplyRequest("unsafe-path", unsafePathProposal), { confirmed: true });
-  hostResults.push(unsafeResult);
-  if (unsafeResult.payload.status !== "rejected") {
-    failures.push("Unsafe workspace-relative path was not rejected.");
+  for (const [name, proposal] of invalidPathProposals) {
+    const unsafeResult = await handleApplyWorkspaceEditRequest(createApplyRequest(`unsafe-path-${name}`, proposal), { confirmed: true });
+    assertHostResultShape(unsafeResult, `unsafe path result ${name}`);
+    hostResults.push(unsafeResult);
+    if (unsafeResult.payload.status !== "rejected") {
+      failures.push(`Unsafe workspace-relative path variant was not rejected: ${name}.`);
+    }
   }
   const oversizedResult = await handleApplyWorkspaceEditRequest(createApplyRequest("oversized-edit", oversizedProposal), { confirmed: true });
+  assertHostResultShape(oversizedResult, "oversized result");
   hostResults.push(oversizedResult);
   if (oversizedResult.payload.status !== "rejected") {
     failures.push("Oversized edit was not rejected.");
   }
 
-  const visibleState = await page.evaluate(() => [document.body.innerText, JSON.stringify(window.__yetAiBridgeMessages ?? []), JSON.stringify(window.__yetAiHostResults ?? []), safeStorageLength("localStorage"), safeStorageLength("sessionStorage")].join("\n"));
-  assertNoLeak(visibleState, "browser-visible text, bridge messages, or storage");
-  assertNoLeak(JSON.stringify(hostResults), "host result payloads");
+  const hostResultCountBeforeLeak = await page.evaluate(() => (window.__yetAiHostResults ?? []).length);
+  await page.evaluate(({ version, proposal, rawMessage }) => {
+    window.__yetAiLoadProposal(version, proposal);
+    window.dispatchEvent(new MessageEvent("message", { data: rawMessage }));
+  }, {
+    version: bridgeVersion,
+    proposal: leakProposal,
+    rawMessage: {
+      version: bridgeVersion,
+      type: "host.applyWorkspaceEditResult",
+      requestId: "gui-edit-proposal-leak",
+      payload: { status: "failed", message: `Raw ${secretMarkers[2]} ${secretMarkers[3]}`, cloudRequired: false, appliedEditCount: 0, affectedFiles: [] },
+    },
+  });
+  await expectVisible(page, "[redacted]");
+  const hostResultCountAfterLeak = await page.evaluate(() => (window.__yetAiHostResults ?? []).length);
+  if (hostResultCountAfterLeak !== hostResultCountBeforeLeak) {
+    failures.push("Unsafe raw host result was not rejected before browser-visible capture.");
+  }
+
+  const visibleState = await page.evaluate(() => [document.body.innerText, JSON.stringify(window.__yetAiBridgeMessages ?? []), JSON.stringify(window.__yetAiHostResults ?? []), storageSnapshot("localStorage"), storageSnapshot("sessionStorage")].join("\n"));
+  assertNoLeak(visibleState, "browser-visible text, bridge messages, host results, localStorage, or sessionStorage");
+  assertNoLeak(JSON.stringify(hostResults), "captured host result payloads");
+  assertNoLeak(consoleMessages.join("\n"), "console output");
   assertBoundedOutput(visibleState, "browser-visible state");
   assertBoundedOutput(consoleMessages.join("\n"), "browser console output");
 
@@ -105,7 +142,7 @@ try {
   }
 
   console.log("VS Code edit-proposal smoke passed.");
-  console.log("Verified preview-only rendering, explicit apply emission, accepted and denied host confirmations, unsafe path rejection, oversized edit rejection, temp-fixture cleanup, loopback-free browser harness, and browser-visible redaction.");
+  console.log("Verified contract-shaped textReplacements, explicit apply emission, accepted and denied host confirmations, unsafe path variants, oversized edit rejection, sanitized leak handling, temp-fixture cleanup, and loopback-free browser harness.");
   console.log("No OpenAI, ChatGPT, hosted Yet AI service, real provider credential, VS Code launch, shell/tool/task/git execution, or real workspace mutation was used.");
 } finally {
   await browser?.close().catch(() => undefined);
@@ -125,15 +162,19 @@ async function requireChromium() {
 
 function createProposal(overrides = {}) {
   const editOverrides = overrides.edit ?? {};
-  const { edit: _edit, ...payloadOverrides } = overrides;
+  const replacementOverrides = overrides.replacement ?? {};
+  const { edit: _edit, replacement: _replacement, ...payloadOverrides } = overrides;
   return {
     requiresUserConfirmation: true,
     summary: "Replace one visible editor line after user review.",
     cloudRequired: false,
     edits: [{
       workspaceRelativePath: "src/main.ts",
-      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 23 } },
-      replacementText: "const label = \"After\";",
+      textReplacements: [{
+        range: { start: { line: 0, character: 0 }, end: { line: 0, character: 23 } },
+        replacementText: "const label = \"After\";",
+        ...replacementOverrides,
+      }],
       ...editOverrides,
     }],
     ...payloadOverrides,
@@ -157,8 +198,18 @@ function harnessHtml() {
       for (const pattern of secretPatterns) text = text.replace(pattern, "[redacted]");
       return text.slice(0, 1000);
     }
-    function safeStorageLength(name) {
-      try { return window[name].length; } catch { return 0; }
+    function storageSnapshot(name) {
+      try {
+        const storage = window[name];
+        const entries = [];
+        for (let index = 0; index < storage.length; index += 1) {
+          const key = storage.key(index);
+          entries.push([sanitize(key), sanitize(storage.getItem(key))]);
+        }
+        return JSON.stringify(entries).slice(0, 2000);
+      } catch {
+        return "[]";
+      }
     }
     function renderProposal(version, proposal) {
       const root = document.getElementById("root");
@@ -176,12 +227,14 @@ function harnessHtml() {
       const summary = document.createElement("p");
       summary.textContent = sanitize(proposal.summary);
       const stats = document.createElement("p");
-      stats.textContent = "Files: " + new Set(proposal.edits.map((edit) => edit.workspaceRelativePath)).size + " · Text edits: " + proposal.edits.length;
+      stats.textContent = "Files: " + new Set(proposal.edits.map((edit) => edit.workspaceRelativePath)).size + " · Text edits: " + proposal.edits.reduce((count, edit) => count + edit.textReplacements.length, 0);
       const list = document.createElement("ul");
       for (const edit of proposal.edits) {
-        const item = document.createElement("li");
-        item.textContent = sanitize(edit.workspaceRelativePath) + " → " + sanitize(edit.replacementText);
-        list.append(item);
+        for (const replacement of edit.textReplacements) {
+          const item = document.createElement("li");
+          item.textContent = sanitize(edit.workspaceRelativePath) + " → " + sanitize(replacement.replacementText);
+          list.append(item);
+        }
       }
       const button = document.createElement("button");
       button.type = "button";
@@ -195,12 +248,20 @@ function harnessHtml() {
       root.append(section);
     }
     function isProposal(value) {
-      return value && value.requiresUserConfirmation === true && value.cloudRequired === false && typeof value.summary === "string" && Array.isArray(value.edits) && value.edits.length > 0 && value.edits.length <= 8;
+      return value && value.requiresUserConfirmation === true && value.cloudRequired === false && typeof value.summary === "string" && Array.isArray(value.edits) && value.edits.length > 0 && value.edits.length <= 4 && value.edits.every((edit) => typeof edit.workspaceRelativePath === "string" && Array.isArray(edit.textReplacements) && edit.textReplacements.length > 0 && edit.textReplacements.every((replacement) => replacement && replacement.range && typeof replacement.replacementText === "string"));
+    }
+    function isHostResult(message) {
+      if (!message || message.version !== "${bridgeVersion}" || message.type !== "host.applyWorkspaceEditResult" || typeof message.requestId !== "string") return false;
+      const payload = message.payload;
+      if (!payload || payload.cloudRequired !== false || !["applied", "denied", "rejected", "failed"].includes(payload.status) || typeof payload.message !== "string" || payload.message.length === 0 || payload.message.length > 1000) return false;
+      if (/authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|provider[_-]?response|raw[_-]?prompt|file[_-]?content/i.test(payload.message)) return false;
+      if (/(?:\\/Users\\/|\\/home\\/|\\/tmp\\/|\\/var\\/|\\/Volumes\\/|\\/Private\\/|[A-Za-z]:\\\\|~[/\\\\])/.test(payload.message)) return false;
+      return payload.appliedEditCount === undefined || Number.isInteger(payload.appliedEditCount);
     }
     window.__yetAiLoadProposal = renderProposal;
     window.addEventListener("message", (event) => {
       const message = event.data;
-      if (!message || message.version !== "${bridgeVersion}" || message.type !== "host.applyWorkspaceEditResult" || !message.payload) return;
+      if (!isHostResult(message)) return;
       window.__yetAiHostResults.push(message);
       const target = document.getElementById("apply-result");
       if (!target) return;
@@ -218,18 +279,19 @@ async function handleApplyWorkspaceEditRequest(message, options) {
     return result(message?.requestId, "rejected", "Invalid edit request.");
   }
   const edit = message.payload.edits[0];
+  const replacement = edit.textReplacements[0];
   if (!options.confirmed) {
     return result(message.requestId, "denied", "Host confirmation denied.");
   }
   const target = path.join(workspaceRoot, edit.workspaceRelativePath);
   const relative = path.relative(workspaceRoot, target);
-  if (relative.startsWith("..") || path.isAbsolute(relative) || edit.workspaceRelativePath.includes("\\") || edit.workspaceRelativePath.startsWith("/")) {
+  if (!safeRelativePath(edit.workspaceRelativePath) || relative.startsWith("..") || path.isAbsolute(relative)) {
     return result(message.requestId, "rejected", "Unsafe workspace path rejected.");
   }
-  if (edit.replacementText.length > 8192) {
+  if (replacement.replacementText.length > 8192) {
     return result(message.requestId, "rejected", "Oversized edit rejected.");
   }
-  if (edit.range.start.line > edit.range.end.line || (edit.range.start.line === edit.range.end.line && edit.range.start.character > edit.range.end.character)) {
+  if (replacement.range.start.line > replacement.range.end.line || (replacement.range.start.line === replacement.range.end.line && replacement.range.start.character > replacement.range.end.character)) {
     return result(message.requestId, "rejected", "Invalid edit range rejected.");
   }
   if (edit.workspaceRelativePath !== "src/main.ts") {
@@ -237,17 +299,17 @@ async function handleApplyWorkspaceEditRequest(message, options) {
   }
   const current = await readFile(target, "utf8");
   const lines = current.split("\n");
-  const line = lines[edit.range.start.line];
-  if (typeof line !== "string" || edit.range.end.line !== edit.range.start.line || edit.range.end.character > line.length) {
+  const line = lines[replacement.range.start.line];
+  if (typeof line !== "string" || replacement.range.end.line !== replacement.range.start.line || replacement.range.end.character > line.length) {
     return result(message.requestId, "rejected", "Range outside fixture rejected.");
   }
-  lines[edit.range.start.line] = line.slice(0, edit.range.start.character) + edit.replacementText + line.slice(edit.range.end.character);
+  lines[replacement.range.start.line] = line.slice(0, replacement.range.start.character) + replacement.replacementText + line.slice(replacement.range.end.character);
   await writeFile(target, lines.join("\n"));
   return {
     version: bridgeVersion,
     type: "host.applyWorkspaceEditResult",
     requestId: message.requestId,
-    payload: { status: "applied", message: "Applied confirmed edit.", appliedEditCount: 1, affectedFiles: [edit.workspaceRelativePath] },
+    payload: { status: "applied", message: "Applied confirmed edit.", cloudRequired: false, appliedEditCount: 1, affectedFiles: [edit.workspaceRelativePath] },
   };
 }
 
@@ -256,7 +318,11 @@ function isApplyRequest(message) {
   const payload = message.payload;
   if (!payload || payload.requiresUserConfirmation !== true || payload.cloudRequired !== false || !Array.isArray(payload.edits) || payload.edits.length !== 1) return false;
   const edit = payload.edits[0];
-  return typeof payload.summary === "string" && typeof edit?.workspaceRelativePath === "string" && isRange(edit.range) && typeof edit.replacementText === "string";
+  return typeof payload.summary === "string" && typeof edit?.workspaceRelativePath === "string" && Array.isArray(edit.textReplacements) && edit.textReplacements.length === 1 && isTextReplacement(edit.textReplacements[0]) && edit.range === undefined && edit.replacementText === undefined;
+}
+
+function isTextReplacement(replacement) {
+  return isRange(replacement?.range) && typeof replacement.replacementText === "string";
 }
 
 function isRange(range) {
@@ -267,8 +333,12 @@ function isPosition(position) {
   return Number.isInteger(position?.line) && position.line >= 0 && Number.isInteger(position?.character) && position.character >= 0;
 }
 
+function safeRelativePath(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= 512 && !value.startsWith("/") && !value.startsWith("~") && !value.includes("%") && !value.includes("\\") && !value.includes(":") && !value.includes("?") && !value.includes("#") && /^[^\u0000-\u001f\u007f-\u009f]+$/.test(value) && value.split("/").every((part) => part !== "." && part !== "..");
+}
+
 function result(requestId, status, message) {
-  return { version: bridgeVersion, type: "host.applyWorkspaceEditResult", requestId: String(requestId ?? "unknown"), payload: { status, message, appliedEditCount: 0, affectedFiles: [] } };
+  return { version: bridgeVersion, type: "host.applyWorkspaceEditResult", requestId: String(requestId ?? "unknown"), payload: { status, message, cloudRequired: false, appliedEditCount: 0, affectedFiles: [] } };
 }
 
 function createApplyRequest(requestId, payload) {
@@ -297,6 +367,38 @@ async function expectVisible(page, text) {
   }
 }
 
+function assertApplyRequestShape(message, source) {
+  if (!isApplyRequest(message)) {
+    failures.push(`${source} did not use the strict textReplacements apply request shape.`);
+    return;
+  }
+  const edit = message.payload.edits[0];
+  if (Object.hasOwn(edit, "range") || Object.hasOwn(edit, "replacementText")) {
+    failures.push(`${source} used obsolete flat range/replacementText fields.`);
+  }
+  if (!Array.isArray(edit.textReplacements) || !isTextReplacement(edit.textReplacements[0])) {
+    failures.push(`${source} did not include valid textReplacements.`);
+  }
+}
+
+function assertHostResultShape(message, source) {
+  if (!message || message.version !== bridgeVersion || message.type !== "host.applyWorkspaceEditResult" || typeof message.requestId !== "string") {
+    failures.push(`${source} did not return a correlated host.applyWorkspaceEditResult.`);
+    return;
+  }
+  if (!message.payload || message.payload.cloudRequired !== false) {
+    failures.push(`${source} omitted required cloudRequired: false.`);
+  }
+}
+
+function collectNoLeak(value, source) {
+  try {
+    assertNoLeak(value, source);
+  } catch (error) {
+    failures.push(sanitize(messageOf(error)));
+  }
+}
+
 function assertNoLeak(value, source) {
   const text = String(value);
   for (const marker of secretMarkers) {
@@ -317,7 +419,7 @@ function sanitize(value) {
   for (const marker of secretMarkers) {
     text = text.split(marker).join("[redacted]");
   }
-  return text.replace(/Bearer\s+\S+/gi, "Bearer [redacted]").replace(/sk-[A-Za-z0-9_-]{8,}/g, "[redacted]").replace(/\/Users\/[^\s]+/g, "[redacted]").slice(0, 1000);
+  return text.replace(/Bearer\s+\S+/gi, "Bearer [redacted]").replace(/sk-[A-Za-z0-9_-]{8,}/g, "[redacted]").replace(/access_token=[A-Za-z0-9_-]+/gi, "access_token=[redacted]").replace(/\/Users\/[^\s]+/g, "[redacted]").replace(/C:\\Users\\[^\s]+/g, "[redacted]").slice(0, 1000);
 }
 
 function messageOf(error) {
