@@ -61,8 +61,8 @@ for (const forbidden of ["sessionToken", "connection.sessionToken"]) {
   }
 }
 
-if (!/const isBoundedRequestId = \(value\) => value === undefined \|\| \(typeof value === "string" && value\.length > 0 && value\.length <= 128\);/.test(renderWebviewHtmlSource)) {
-  throw new Error("VS Code webview wrapper must enforce bounded non-empty gui.ready requestId values.");
+if (!/const isBoundedRequestId = \(value\) => value === undefined \|\| \(typeof value === "string" && value\.length > 0 && value\.length <= 128 && !\/\[\\u0000-\\u001f\\u007f-\\u009f\]\/\.test\(value\)\);/.test(renderWebviewHtmlSource)) {
+  throw new Error("VS Code webview wrapper must enforce bounded non-empty control-free gui.ready requestId values.");
 }
 
 if (!/Object\.keys\(message\)\.every\(\(key\) => key === "version" \|\| key === "type" \|\| key === "requestId" \|\| key === "payload"\)/.test(renderWebviewHtmlSource)) {
@@ -308,6 +308,20 @@ const rejectedPrivilegedGuiMessages = [
 
 const validApplyWorkspaceEditRequest = createApplyWorkspaceEditRequest();
 const invalidApplyWorkspaceEditRequests = [
+  createApplyWorkspaceEditRequest({ summary: "Update /Users/alice/project/src/main.ts." }),
+  createApplyWorkspaceEditRequest({ summary: "Update /home/alice/project/src/main.ts." }),
+  createApplyWorkspaceEditRequest({ summary: "Update /tmp/project/src/main.ts." }),
+  createApplyWorkspaceEditRequest({ summary: "Update /var/project/src/main.ts." }),
+  createApplyWorkspaceEditRequest({ summary: "Update /Volumes/work/project/src/main.ts." }),
+  createApplyWorkspaceEditRequest({ summary: "Update /Private/work/project/src/main.ts." }),
+  createApplyWorkspaceEditRequest({ summary: "Update ~/project/src/main.ts." }),
+  createApplyWorkspaceEditRequest({ summary: "Update C:/Users/alice/project/src/main.ts." }),
+  createApplyWorkspaceEditRequest({ summary: "Update C:\\Users\\alice\\project\\src\\main.ts." }),
+  createApplyWorkspaceEditRequest({ workspaceRelativePath: "src//main.ts" }),
+  createApplyWorkspaceEditRequest({ workspaceRelativePath: "src/" }),
+  createApplyWorkspaceEditRequest({ workspaceRelativePath: "/src/main.ts" }),
+  createApplyWorkspaceEditRequest({ workspaceRelativePath: "./src/main.ts" }),
+  { ...acceptedGuiReadyMessage, requestId: "bad\nrequest" },
   createApplyWorkspaceEditRequest({ omitConfirmation: true }),
   createApplyWorkspaceEditRequest({ workspaceRelativePath: "../src/main.ts" }),
   createApplyWorkspaceEditRequest({ workspaceRelativePath: "src\\main.ts" }),
@@ -325,9 +339,9 @@ for (const message of rejectedPrivilegedGuiMessages) {
   }
   assert.equal(isGuiMessage(message), false, `VS Code host must reject disabled GUI bridge message: ${message.type}`);
 }
-for (const message of invalidApplyWorkspaceEditRequests) {
-  assert.equal(isGuiMessage(message), false, "VS Code host must reject malformed or unsafe apply requests.");
-}
+invalidApplyWorkspaceEditRequests.forEach((message, index) => {
+  assert.equal(isGuiMessage(message), false, `VS Code host must reject malformed or unsafe apply requests at index ${index}.`);
+});
 const hostReady = createHostReady(identity, connection, "valid-gui-ready-request");
 const workspaceRoot = path.join(os.tmpdir(), "yet-ai-safe-workspace");
 fakeVscode.workspace.getWorkspaceFolder = (uri) => uri.fsPath.startsWith(workspaceRoot) ? { uri: { fsPath: workspaceRoot } } : undefined;
@@ -408,6 +422,18 @@ assert.equal(sanitizedResult.payload.message, "Edit request status changed.");
 assert.equal(sanitizedResult.payload.cloudRequired, false);
 assert.equal(sanitizedResult.payload.appliedEditCount, 64);
 assert.deepEqual(sanitizedResult.payload.affectedFiles, ["src/main.ts", "src/second.ts", "src/third.ts", "src/fourth.ts"]);
+for (const privateResultMessage of [
+  "Failed at /home/alice/project/src/main.ts.",
+  "Failed at /tmp/project/src/main.ts.",
+  "Failed at /var/project/src/main.ts.",
+  "Failed at /Volumes/work/project/src/main.ts.",
+  "Failed at /Private/work/project/src/main.ts.",
+  "Failed at ~/project/src/main.ts.",
+  "Failed at C:/Users/alice/project/src/main.ts.",
+  "Failed at C:\\Users\\alice\\project\\src\\main.ts.",
+]) {
+  assert.equal(createApplyWorkspaceEditResult("req-private-result", "failed", privateResultMessage).payload.message, "Edit request status changed.");
+}
 assertNoSecretSentinels(JSON.stringify(sanitizedResult), fakeSecretValues, "VS Code apply edit sanitized result");
 assertNoAbsolutePath(JSON.stringify(sanitizedResult), "VS Code apply edit sanitized result");
 
@@ -580,7 +606,7 @@ function createApplyWorkspaceEditRequest(overrides = {}) {
   const range = overrides.range ?? { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } };
   const payload = {
     requiresUserConfirmation: true,
-    summary: "Update greeting text.",
+    summary: overrides.summary ?? "Update greeting text.",
     cloudRequired: false,
     edits: [
       {
@@ -673,6 +699,29 @@ async function assertApplyWorkspaceEditBehavior() {
   assert.equal(webviewMessages.at(-1).payload.status, "rejected");
   assert.equal(warningCalls, 0);
   assert.equal(applyCalls, 0);
+
+  const secondWorkspaceRoot = path.join(os.tmpdir(), "yet-ai-safe-workspace-second");
+  fakeVscode.workspace.workspaceFolders = [
+    { uri: { fsPath: workspaceRoot, scheme: "file", path: workspaceRoot } },
+    { uri: { fsPath: secondWorkspaceRoot, scheme: "file", path: secondWorkspaceRoot } },
+  ];
+  fakeVscode.workspace.fs.stat = (uri) => {
+    if (uri.fsPath === existingPath || uri.fsPath === path.join(secondWorkspaceRoot, "src", "main.ts")) {
+      return Promise.resolve({ type: fakeVscode.FileType.File });
+    }
+    return Promise.reject(new Error("missing"));
+  };
+  await handleApplyWorkspaceEditRequest(testWebview, createApplyWorkspaceEditRequest());
+  assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+  assert.equal(warningCalls, 0);
+  assert.equal(applyCalls, 0);
+  fakeVscode.workspace.workspaceFolders = [{ uri: { fsPath: workspaceRoot, scheme: "file", path: workspaceRoot } }];
+  fakeVscode.workspace.fs.stat = (uri) => {
+    if (uri.fsPath === existingPath) {
+      return Promise.resolve({ type: fakeVscode.FileType.File });
+    }
+    return Promise.reject(new Error("missing"));
+  };
 
   confirmation = undefined;
   await handleApplyWorkspaceEditRequest(testWebview, createApplyWorkspaceEditRequest());

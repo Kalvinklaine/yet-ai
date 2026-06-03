@@ -496,7 +496,7 @@ function safePath(value: unknown, maxLength: number): boolean {
   if (/^[^\u0000-\u001f\u007f-\u009f]+$/.test(value) === false) {
     return false;
   }
-  return value.split("/").every((part) => part !== "." && part !== "..");
+  return value.split("/").every((part) => part.length > 0 && part !== "." && part !== "..");
 }
 
 function optionalLanguageId(value: unknown): boolean {
@@ -508,11 +508,15 @@ function optionalBoundedInteger(value: unknown, min: number, max: number): boole
 }
 
 function safeSummary(value: unknown): boolean {
-  return typeof value === "string" && value.length > 0 && value.length <= 1000 && !unsafeDisplayText(value);
+  return typeof value === "string" && value.length > 0 && value.length <= 1000 && !unsafeDisplayText(value) && !hasPrivatePathLikeText(value);
 }
 
 function safeMessage(value: unknown): boolean {
-  return typeof value === "string" && value.length > 0 && value.length <= 1000 && !unsafeDisplayText(value) && !/(?:\/Users\/|\/home\/|\/tmp\/|\/var\/|\/Volumes\/|\/Private\/|[A-Za-z]:\\\\|~[/\\\\])/.test(value);
+  return typeof value === "string" && value.length > 0 && value.length <= 1000 && !unsafeDisplayText(value) && !hasPrivatePathLikeText(value);
+}
+
+function hasPrivatePathLikeText(value: string): boolean {
+  return /(?:\/Users\/|\/home\/|\/tmp\/|\/var\/|\/Volumes\/|\/Private\/|~[\/\\]|[A-Za-z]:[\/\\])/.test(value);
 }
 
 function unsafeDisplayText(value: string): boolean {

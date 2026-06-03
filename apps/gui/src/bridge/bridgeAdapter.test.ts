@@ -21,6 +21,10 @@ import hostContextSnapshotUnknownFieldMessage from "../../../../packages/contrac
 import hostOpenedFromCommandPayloadMessage from "../../../../packages/contracts/examples-invalid/bridge/host-opened-from-command-payload.json";
 import guiApplyWorkspaceEditMissingConfirmationMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-apply-workspace-edit-missing-confirmation.json";
 import guiApplyWorkspaceEditReversedRangeMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-apply-workspace-edit-reversed-range.json";
+import guiApplyWorkspaceEditPrivatePathSummaryMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-apply-workspace-edit-private-path-summary.json";
+import guiApplyWorkspaceEditDrivePathSummaryMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-apply-workspace-edit-drive-path-summary.json";
+import guiApplyWorkspaceEditEmptySegmentPathMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-apply-workspace-edit-empty-segment-path.json";
+import guiApplyWorkspaceEditTrailingSlashPathMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-apply-workspace-edit-trailing-slash-path.json";
 import hostApplyWorkspaceEditResultSecretMessage from "../../../../packages/contracts/examples-invalid/bridge/host-apply-workspace-edit-result-secret-message.json";
 
 const bridgeVersion = "2026-05-15";
@@ -349,52 +353,35 @@ describe("bridgeAdapter", () => {
     expect(isApplyWorkspaceEditPayload(message.payload)).toBe(true);
   });
 
-  it("rejects missing or undefined apply workspace edit paths", () => {
+  it("rejects missing, undefined, or non-canonical apply workspace edit paths", () => {
     const invalidMessages = [
-      {
-        version: bridgeVersion,
-        type: "gui.applyWorkspaceEditRequest",
-        requestId: "req-apply-edit-missing-path-001",
-        payload: {
-          requiresUserConfirmation: true,
-          summary: "Missing path.",
-          cloudRequired: false,
-          edits: [
-            {
-              textReplacements: [
-                {
-                  range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } },
-                  replacementText: "x",
-                },
-              ],
-            },
-          ],
-        },
-      },
-      {
-        version: bridgeVersion,
-        type: "gui.applyWorkspaceEditRequest",
-        requestId: "req-apply-edit-undefined-path-001",
-        payload: {
-          requiresUserConfirmation: true,
-          summary: "Undefined path.",
-          cloudRequired: false,
-          edits: [
-            {
-              workspaceRelativePath: undefined,
-              textReplacements: [
-                {
-                  range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } },
-                  replacementText: "x",
-                },
-              ],
-            },
-          ],
-        },
-      },
+      applyEditMessage({ requestId: "req-apply-edit-missing-path-001", summary: "Missing path.", fileEdit: { workspaceRelativePath: undefined } }),
+      applyEditMessage({ requestId: "req-apply-edit-undefined-path-001", summary: "Undefined path.", fileEdit: { workspaceRelativePath: undefined } }),
+      applyEditMessage({ requestId: "req-apply-edit-empty-segment-001", fileEdit: { workspaceRelativePath: "src//main.ts" } }),
+      applyEditMessage({ requestId: "req-apply-edit-trailing-slash-001", fileEdit: { workspaceRelativePath: "src/" } }),
+      applyEditMessage({ requestId: "req-apply-edit-leading-slash-001", fileEdit: { workspaceRelativePath: "/src/main.ts" } }),
+      applyEditMessage({ requestId: "req-apply-edit-dot-segment-001", fileEdit: { workspaceRelativePath: "./src/main.ts" } }),
     ];
 
     for (const message of invalidMessages) {
+      expect(isGuiMessage(message)).toBe(false);
+      expect(isApplyWorkspaceEditPayload(message.payload)).toBe(false);
+    }
+  });
+
+  it("rejects apply workspace edit summaries with raw private absolute paths", () => {
+    for (const summary of [
+      "Update reviewed text in /Users/alice/project/src/main.ts.",
+      "Update reviewed text in /home/alice/project/src/main.ts.",
+      "Update reviewed text in /tmp/project/src/main.ts.",
+      "Update reviewed text in /var/project/src/main.ts.",
+      "Update reviewed text in /Volumes/work/project/src/main.ts.",
+      "Update reviewed text in /Private/work/project/src/main.ts.",
+      "Update reviewed text in ~/project/src/main.ts.",
+      "Update reviewed text in C:/Users/alice/project/src/main.ts.",
+      "Update reviewed text in C:\\Users\\alice\\project\\src\\main.ts.",
+    ]) {
+      const message = applyEditMessage({ summary });
       expect(isGuiMessage(message)).toBe(false);
       expect(isApplyWorkspaceEditPayload(message.payload)).toBe(false);
     }
@@ -633,6 +620,10 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage(hostContextSnapshotUnknownFieldMessage)).toBe(false);
     expect(isGuiMessage(guiApplyWorkspaceEditMissingConfirmationMessage)).toBe(false);
     expect(isGuiMessage(guiApplyWorkspaceEditReversedRangeMessage)).toBe(false);
+    expect(isGuiMessage(guiApplyWorkspaceEditPrivatePathSummaryMessage)).toBe(false);
+    expect(isGuiMessage(guiApplyWorkspaceEditDrivePathSummaryMessage)).toBe(false);
+    expect(isGuiMessage(guiApplyWorkspaceEditEmptySegmentPathMessage)).toBe(false);
+    expect(isGuiMessage(guiApplyWorkspaceEditTrailingSlashPathMessage)).toBe(false);
     expect(isApplyWorkspaceEditResultPayload(hostApplyWorkspaceEditResultSecretMessage.payload)).toBe(false);
     expect(isHostMessage(hostApplyWorkspaceEditResultSecretMessage)).toBe(false);
 
@@ -758,6 +749,31 @@ describe("bridgeAdapter", () => {
     adapter.dispose();
   });
 });
+
+function applyEditMessage(options: { requestId?: string; summary?: string; fileEdit?: Record<string, unknown> } = {}) {
+  return {
+    version: bridgeVersion,
+    type: "gui.applyWorkspaceEditRequest",
+    requestId: options.requestId ?? "req-apply-edit-test-001",
+    payload: {
+      requiresUserConfirmation: true,
+      summary: options.summary ?? "Update reviewed text.",
+      cloudRequired: false,
+      edits: [
+        {
+          workspaceRelativePath: "src/main.ts",
+          textReplacements: [
+            {
+              range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } },
+              replacementText: "x",
+            },
+          ],
+          ...(options.fileEdit ?? {}),
+        },
+      ],
+    },
+  };
+}
 
 function hostReady(payload: Record<string, unknown> = {}) {
   return {

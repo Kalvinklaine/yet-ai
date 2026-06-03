@@ -316,18 +316,19 @@ function parseApplyWorkspaceEditRequest(message: GuiMessage): ApplyWorkspaceEdit
 
 async function resolveExistingWorkspaceFile(workspaceRelativePath: string, workspaceFolders: readonly vscode.WorkspaceFolder[]): Promise<vscode.Uri | undefined> {
   const segments = workspaceRelativePath.split("/");
+  const matches: vscode.Uri[] = [];
   for (const workspaceFolder of workspaceFolders) {
     const uri = vscode.Uri.joinPath(workspaceFolder.uri, ...segments);
     try {
       const stat = await vscode.workspace.fs.stat(uri);
       if (stat.type === vscode.FileType.File) {
-        return uri;
+        matches.push(uri);
       }
     } catch {
       continue;
     }
   }
-  return undefined;
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function isRangeWithinDocument(range: ApplyWorkspaceTextReplacement["range"], document: vscode.TextDocument): boolean {
@@ -496,7 +497,7 @@ const frameTargetOrigin = bootstrap.guiDevOrigin;
 let latestHostReady;
 let frameReady = false;
 const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
-const isBoundedRequestId = (value) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 128);
+const isBoundedRequestId = (value) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 128 && !/[\u0000-\u001f\u007f-\u009f]/.test(value));
 const isStrictGuiReadyPayload = (payload) => {
   if (payload === undefined) {
     return true;
@@ -701,7 +702,8 @@ function sanitizeSafePath(value: string | undefined, maxLength: number): string 
     normalized.includes("#") ||
     /[\u0000-\u001f\u007f-\u009f]/.test(normalized) ||
     /(?:^|\/)\.\.?(?:\/|$)/.test(normalized) ||
-    hasSecretLikeText(normalized)
+    hasSecretLikeText(normalized) ||
+    normalized.split("/").some((segment) => segment.length === 0)
   ) {
     return undefined;
   }
@@ -741,7 +743,7 @@ export function createNonce(): string {
 }
 
 function isBoundedRequestId(value: unknown): boolean {
-  return value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 128);
+  return value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 128 && !/[\u0000-\u001f\u007f-\u009f]/.test(value));
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -764,7 +766,7 @@ function hasOnlyKeys(record: Record<string, unknown>, allowedKeys: string[]): bo
 }
 
 function hasPrivatePathLikeText(value: string): boolean {
-  return /(?:\/Users\/|\/Private\/|[A-Za-z]:\\|~[\/\\])/.test(value);
+  return /(?:\/Users\/|\/home\/|\/tmp\/|\/var\/|\/Volumes\/|\/Private\/|~[\/\\]|[A-Za-z]:[\/\\])/.test(value);
 }
 
 function createRequestId(): string {
