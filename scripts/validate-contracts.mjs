@@ -203,7 +203,11 @@ const invalidMappings = [
     "gui-apply-workspace-edit-create-field.json",
     "gui-apply-workspace-edit-delete-field.json",
     "gui-apply-workspace-edit-rename-field.json",
-    "gui-apply-workspace-edit-secret-summary.json"
+    "gui-apply-workspace-edit-secret-summary.json",
+    "gui-apply-workspace-edit-private-path-summary.json",
+    "gui-apply-workspace-edit-drive-path-summary.json",
+    "gui-apply-workspace-edit-empty-segment-path.json",
+    "gui-apply-workspace-edit-trailing-slash-path.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/gui-message.schema.json"
