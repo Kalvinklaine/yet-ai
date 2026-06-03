@@ -3995,6 +3995,87 @@ describe("edit proposal preview", () => {
     expect(container?.querySelector(".edit-proposal-card")).toBeNull();
   });
 
+  it("fail-closes a stale apply when latest chat messages replace a valid proposal with invalid content", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const encoder = new TextEncoder();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/v1/chats/subscribe?chat_id=")) {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            sseController = controller;
+          },
+          cancel() {},
+        });
+        return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+      }
+      return mockRuntimeResponse(input, init, {
+        ...readyRuntimeOptions(),
+        chats: [chatSummary("chat-001", "Dynamic invalid proposal chat", 1)],
+        chatThreads: { "chat-001": chatThread("chat-001", "Dynamic invalid proposal chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    expect(findButton("Request host apply after review")).toBeDefined();
+    const staleRequestId = editProposalRequestId();
+    await act(async () => {
+      setTextareaValue(chatInput(), "open dynamic proposal stream");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({
+        seq: 1,
+        type: "snapshot",
+        chatId: "chat-001",
+        payload: {
+          messages: [
+            chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal)),
+            chatMessage("chat-001", "assistant-2", "assistant", JSON.stringify({ ...proposal, requiresUserConfirmation: false })),
+          ],
+        },
+      })}\n\n`));
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent ?? "").not.toContain("Confirmed edit proposal");
+    expect(container?.textContent ?? "").not.toContain("Request host apply after review");
+    expect(container?.querySelector(".edit-proposal-card")).toBeNull();
+
+    await act(async () => {
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({
+        seq: 2,
+        type: "snapshot",
+        chatId: "chat-001",
+        payload: {
+          messages: [chatMessage("chat-001", "assistant-2", "assistant", JSON.stringify({ ...proposal, requiresUserConfirmation: false }))],
+        },
+      })}\n\n`));
+      await Promise.resolve();
+    });
+    await dispatchHostApplyResult(staleRequestId, {
+      status: "applied",
+      message: "Stale dynamic apply result.",
+      cloudRequired: false,
+      appliedEditCount: 1,
+      affectedFiles: ["src/example.ts"],
+    });
+
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+    expect(container?.textContent ?? "").not.toContain("Stale dynamic apply result.");
+  });
+
   it("shows only matching pending host apply results and ignores unsolicited or stale results", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
