@@ -704,6 +704,12 @@ try {
       child.closeOnKill = true;
       child.kill = (signal) => {
         child.killSignals.push(signal);
+        if (child.killThrows) {
+          throw new Error(`kill failed Authorization: Bearer ${lspDiagnosticSecret} ${lspDiagnosticPath}`);
+        }
+        if (child.killReturnValue === false) {
+          return false;
+        }
         child.killed = true;
         child.stdin.destroyed = true;
         if (child.closeOnKill) {
@@ -1054,6 +1060,17 @@ try {
     await assertFatalParserRetry("x".repeat(8 * 1024 + 1), "stdout header exceeded bounded parser buffer", "oversized header");
     await assertFatalParserRetry("x".repeat(512 * 1024 + 1), "stdout exceeded bounded parser buffer", "oversized stdout");
 
+    const preConcatSpawn = startInitializedLsp();
+    await delay();
+    const preConcatProvider = registeredCompletionProviders.at(-1);
+    emitRawLspStdout(preConcatSpawn.child, `Content-Length: ${512 * 1024}\r\n\r\n`);
+    await delay();
+    emitRawLspStdout(preConcatSpawn.child, "x".repeat(512 * 1024 + 1));
+    await delay();
+    assert.equal(preConcatProvider.disposed, true, "oversized stdout chunk did not fail before concat allocation");
+    assert.ok(preConcatSpawn.child.killSignals.length >= 1, "oversized stdout chunk did not terminate child");
+    assert.ok(lspOutputLines.some((line) => line.includes("stdout exceeded bounded parser buffer")), "oversized stdout chunk missing diagnostic");
+
     const pendingFatalSpawn = startInitializedLsp();
     await delay();
     takeLspClientMessages(pendingFatalSpawn.child);
@@ -1117,6 +1134,34 @@ try {
     assertKillAttempted(fallbackSpawn.child, "SIGTERM", "fallback stop did not attempt SIGTERM");
     assertKillAttempted(fallbackSpawn.child, "SIGKILL", "fallback stop did not attempt SIGKILL");
     assert.ok(lspOutputLines.some((line) => line.includes("bounded kill fallback without process close")), "fallback stop did not report bounded fallback");
+
+    const killFalseSpawn = startInitializedLsp();
+    await delay();
+    takeLspClientMessages(killFalseSpawn.child);
+    killFalseSpawn.child.closeOnKill = false;
+    killFalseSpawn.child.killReturnValue = false;
+    const killFalseStop = stopYetAiLspClient(lspOutput);
+    lspMessages = takeLspClientMessages(killFalseSpawn.child);
+    emitLspResponse(killFalseSpawn.child, lspMessages[0].id, null);
+    await killFalseStop;
+    const killFalseText = lspOutputLines.join("\n");
+    assert.equal(killFalseText.includes(lspDiagnosticSecret), false, "kill false diagnostic leaked secret");
+    assert.equal(killFalseText.includes(lspDiagnosticPath), false, "kill false diagnostic leaked private path");
+    assert.ok(lspOutputLines.some((line) => line.includes("termination was not accepted")), "kill false was not diagnosed");
+
+    const killThrowSpawn = startInitializedLsp();
+    await delay();
+    takeLspClientMessages(killThrowSpawn.child);
+    killThrowSpawn.child.closeOnKill = false;
+    killThrowSpawn.child.killThrows = true;
+    const killThrowStop = stopYetAiLspClient(lspOutput);
+    lspMessages = takeLspClientMessages(killThrowSpawn.child);
+    emitLspResponse(killThrowSpawn.child, lspMessages[0].id, null);
+    await killThrowStop;
+    const killThrowText = lspOutputLines.join("\n");
+    assert.equal(killThrowText.includes(lspDiagnosticSecret), false, "kill throw diagnostic leaked secret");
+    assert.equal(killThrowText.includes(lspDiagnosticPath), false, "kill throw diagnostic leaked private path");
+    assert.ok(lspOutputLines.some((line) => line.includes("termination failed")), "kill throw was not diagnosed");
 
     const toggleSpawnStart = lspSpawns.length;
     const toggleContext = { ...fakeContext, extensionPath: process.cwd(), extensionUri: { fsPath: process.cwd(), path: process.cwd(), scheme: "file", toString: () => process.cwd() }, subscriptions: [] };

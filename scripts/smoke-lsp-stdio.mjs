@@ -140,10 +140,13 @@ function startLsp(binary) {
   lsp.stdoutBuffer = Buffer.alloc(0);
   lsp.stderrText = "";
   lsp.pending = new Map();
+  lsp.stdin.on("error", (error) => throwPending(new Error(`LSP stdin stream error: ${boundedDiagnostic(error?.message ?? error)}`)));
   lsp.stdout.on("data", (chunk) => handleStdout(chunk));
+  lsp.stdout.on("error", (error) => throwPending(new Error(`LSP stdout stream error: ${boundedDiagnostic(error?.message ?? error)}`)));
   lsp.stderr.on("data", (chunk) => {
     lsp.stderrText = boundedAppend(lsp.stderrText, chunk.toString("utf8"));
   });
+  lsp.stderr.on("error", (error) => throwPending(new Error(`LSP stderr stream error: ${boundedDiagnostic(error?.message ?? error)}`)));
   lsp.on("exit", (code, signal) => {
     for (const { reject, timer } of lsp.pending.values()) {
       clearTimeout(timer);
