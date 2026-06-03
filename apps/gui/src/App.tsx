@@ -260,9 +260,11 @@ export function App() {
   const [pendingApplyRequestId, setPendingApplyRequestId] = useState<string | null>(null);
   const bridgeAdapterRef = useRef<BridgeAdapter | null>(null);
   const editProposalCounterRef = useRef(0);
+  const editProposalApplyCounterRef = useRef(0);
   const editProposalIdentityRef = useRef<{ requestId: string; sourceMessageId: string; payloadKey: string } | null>(null);
   const chatViewMessagesRef = useRef<ChatViewMessage[]>([]);
   const pendingApplyRequestIdRef = useRef<string | null>(null);
+  const pendingApplyProposalRequestIdRef = useRef<string | null>(null);
   const attachedContextRef = useRef<typeof attachedContext>(null);
   const agentProgressAttemptRef = useRef(0);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -334,6 +336,7 @@ export function App() {
   const clearEditProposalState = useCallback(() => {
     editProposalIdentityRef.current = null;
     pendingApplyRequestIdRef.current = null;
+    pendingApplyProposalRequestIdRef.current = null;
     setEditProposal(null);
     setApplyResult(null);
     setPendingApplyRequestId(null);
@@ -444,6 +447,7 @@ export function App() {
           return;
         }
         pendingApplyRequestIdRef.current = null;
+        pendingApplyProposalRequestIdRef.current = null;
         setPendingApplyRequestId(null);
         setApplyResult({ requestId, payload: message.payload as ApplyWorkspaceEditResultPayload });
       }
@@ -1119,6 +1123,7 @@ export function App() {
     }
     const requestId = pendingApplyRequestIdRef.current;
     pendingApplyRequestIdRef.current = null;
+    pendingApplyProposalRequestIdRef.current = null;
     setPendingApplyRequestId(null);
     addTimeline(`Edit proposal pending apply cleared ${requestId}`);
   }, [addTimeline]);
@@ -1131,16 +1136,19 @@ export function App() {
       clearEditProposalState();
       return;
     }
-    pendingApplyRequestIdRef.current = editProposal.requestId;
-    setPendingApplyRequestId(editProposal.requestId);
+    editProposalApplyCounterRef.current += 1;
+    const applyRequestId = `gui-edit-proposal-apply-${editProposalApplyCounterRef.current}`;
+    pendingApplyRequestIdRef.current = applyRequestId;
+    pendingApplyProposalRequestIdRef.current = editProposal.requestId;
+    setPendingApplyRequestId(applyRequestId);
     setApplyResult(null);
     bridgeAdapterRef.current?.post({
       version: "2026-05-15",
       type: "gui.applyWorkspaceEditRequest",
-      requestId: editProposal.requestId,
+      requestId: applyRequestId,
       payload: editProposal.payload,
     });
-    addTimeline(`Edit proposal apply requested ${editProposal.requestId}`);
+    addTimeline(`Edit proposal apply requested ${applyRequestId}`);
   }, [addTimeline, bridgeHost, clearEditProposalState, editProposal]);
 
   useEffect(() => {
@@ -1151,8 +1159,9 @@ export function App() {
     }
     setEditProposal((current) => current?.requestId === proposal.requestId ? current : proposal);
     setApplyResult((current) => current?.requestId === proposal.requestId ? current : null);
-    if (pendingApplyRequestIdRef.current && pendingApplyRequestIdRef.current !== proposal.requestId) {
+    if (pendingApplyRequestIdRef.current && pendingApplyProposalRequestIdRef.current !== proposal.requestId) {
       pendingApplyRequestIdRef.current = null;
+      pendingApplyProposalRequestIdRef.current = null;
       setPendingApplyRequestId(null);
     }
   }, [chatView.messages, clearEditProposalState]);
@@ -1909,7 +1918,7 @@ function EditProposalPanel({ proposal, result, host, pendingRequestId, onApply, 
         <strong>Confirmed edit proposal</strong>
         <span className="badge warn">preview only</span>
       </div>
-      {proposal ? <EditProposalPreview proposal={proposal} host={host} pending={pendingRequestId === proposal.requestId} onApply={onApply} onCancelPending={onCancelPending} /> : <span className="subtle">No valid bounded edit proposal is available.</span>}
+      {proposal ? <EditProposalPreview proposal={proposal} host={host} pending={pendingRequestId !== null} onApply={onApply} onCancelPending={onCancelPending} /> : <span className="subtle">No valid bounded edit proposal is available.</span>}
       {result && <ApplyResultPreview result={result} />}
     </section>
   );
@@ -1947,10 +1956,10 @@ function EditProposalPreview({ proposal, host, pending, onApply, onCancelPending
       ) : (
         <div className="row">
           <button type="button" onClick={onApply} disabled={pending}>{pending ? "Host apply pending…" : "Request host apply after review"}</button>
-          {pending && <button type="button" onClick={onCancelPending}>Cancel pending host apply</button>}
+          {pending && <button type="button" onClick={onCancelPending}>Clear pending apply state</button>}
         </div>
       )}
-      <span className="subtle">The GUI never edits files directly. The host must confirm and apply any workspace mutation.</span>
+      <span className="subtle">The GUI never edits files directly. The host must confirm and apply any workspace mutation. Clearing pending state only lets the GUI ignore an old host result; it does not close an already-open VS Code confirmation dialog.</span>
     </div>
   );
 }

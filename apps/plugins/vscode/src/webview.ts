@@ -76,6 +76,7 @@ type ValidatedWorkspaceFileEdit = {
 type ApplyWorkspaceEditStatus = "applied" | "denied" | "rejected" | "failed";
 
 const applyWorkspaceEditConfirmationLabel = "Apply edits";
+const maxForwardedApplyWorkspaceEditMessageBytes = 65536;
 
 export function openYetAiWebview(
   context: vscode.ExtensionContext,
@@ -764,7 +765,7 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
     hasOnlyKeys(record, ["version", "type", "requestId", "payload"]) &&
     record.version === bridgeVersion &&
     ((record.type === "gui.ready" && isBoundedRequestId(record.requestId) && isGuiReadyPayload(record.payload)) ||
-      (record.type === "gui.applyWorkspaceEditRequest" && parseApplyWorkspaceEditRequest(record as GuiMessage) !== undefined))
+      (record.type === "gui.applyWorkspaceEditRequest" && isBoundedForwardedApplyWorkspaceEditMessage(record) && parseApplyWorkspaceEditRequest(record as GuiMessage) !== undefined))
   );
 }
 
@@ -778,8 +779,17 @@ export function isInvalidApplyWorkspaceEditRequestMessage(value: unknown): value
     record.version === bridgeVersion &&
     record.type === "gui.applyWorkspaceEditRequest" &&
     isRequiredRequestId(record.requestId) &&
+    isBoundedForwardedApplyWorkspaceEditMessage(record) &&
     parseApplyWorkspaceEditRequest(record as GuiMessage) === undefined
   );
+}
+
+function isBoundedForwardedApplyWorkspaceEditMessage(value: Record<string, unknown>): boolean {
+  try {
+    return Buffer.byteLength(JSON.stringify(value), "utf8") <= maxForwardedApplyWorkspaceEditMessageBytes;
+  } catch {
+    return false;
+  }
 }
 
 export function createNonce(): string {

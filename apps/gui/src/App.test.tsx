@@ -3868,7 +3868,7 @@ describe("edit proposal preview", () => {
     const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
     expect(applyCalls).toHaveLength(1);
     expect(applyCalls[0][0]).toMatchObject({ version: bridgeVersion, type: "gui.applyWorkspaceEditRequest", payload: proposal });
-    expect(applyCalls[0][0].requestId).toMatch(/^gui-edit-proposal-/);
+    expect(applyCalls[0][0].requestId).toMatch(/^gui-edit-proposal-apply-\d+$/);
   });
 
   it("clears proposal apply state synchronously on direct chat id changes", async () => {
@@ -3893,7 +3893,7 @@ describe("edit proposal preview", () => {
       findButton("Request host apply after review").click();
     });
     const oldRequestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
-    expect(oldRequestId).toMatch(/^gui-edit-proposal-/);
+    expect(oldRequestId).toMatch(/^gui-edit-proposal-apply-\d+$/);
 
     await act(async () => {
       setInputValue(chatIdInput(), "chat-002");
@@ -3974,7 +3974,7 @@ describe("edit proposal preview", () => {
     expect(findButton("Host apply pending…").disabled).toBe(true);
 
     await act(async () => {
-      findButton("Cancel pending host apply").click();
+      findButton("Clear pending apply state").click();
     });
 
     expect(findButton("Request host apply after review").disabled).toBe(false);
@@ -3988,6 +3988,59 @@ describe("edit proposal preview", () => {
       affectedFiles: ["src/example.ts"],
     });
     expect(container?.textContent ?? "").not.toContain("Stale canceled apply result.");
+  });
+
+  it("uses a fresh apply attempt id after clearing pending state and ignores the stale first result", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Retry proposal chat", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Retry proposal chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Request host apply after review").click();
+    });
+    const firstApplyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
+    const firstRequestId = firstApplyCalls[firstApplyCalls.length - 1]?.[0].requestId;
+    expect(firstRequestId).toMatch(/^gui-edit-proposal-apply-\d+$/);
+
+    await act(async () => {
+      findButton("Clear pending apply state").click();
+    });
+    await act(async () => {
+      findButton("Request host apply after review").click();
+    });
+    const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
+    const secondRequestId = applyCalls[applyCalls.length - 1]?.[0].requestId;
+    expect(applyCalls).toHaveLength(2);
+    expect(secondRequestId).toMatch(/^gui-edit-proposal-apply-\d+$/);
+    expect(secondRequestId).not.toBe(firstRequestId);
+
+    await dispatchHostApplyResult(firstRequestId, {
+      status: "applied",
+      message: "Stale first apply result.",
+      cloudRequired: false,
+      appliedEditCount: 1,
+      affectedFiles: ["src/example.ts"],
+    });
+    expect(container?.textContent ?? "").not.toContain("Stale first apply result.");
+    expect(findButton("Host apply pending…").disabled).toBe(true);
+
+    await dispatchHostApplyResult(secondRequestId, {
+      status: "applied",
+      message: "Second apply result displayed.",
+      cloudRequired: false,
+      appliedEditCount: 1,
+      affectedFiles: ["src/example.ts"],
+    });
+    expect(container?.textContent ?? "").toContain("Second apply result displayed.");
   });
 
   it("rejects invalid proposal objects before rendering or sending", async () => {
