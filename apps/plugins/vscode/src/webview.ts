@@ -219,8 +219,13 @@ export async function validateWorkspaceEditBeforeApply(request: ApplyWorkspaceEd
   }
 
   const files: ValidatedWorkspaceFileEdit[] = [];
+  const seenWorkspaceRelativePaths = new Set<string>();
   let editCount = 0;
   for (const fileEdit of request.edits) {
+    if (seenWorkspaceRelativePaths.has(fileEdit.workspaceRelativePath)) {
+      return undefined;
+    }
+    seenWorkspaceRelativePaths.add(fileEdit.workspaceRelativePath);
     const uri = await resolveExistingWorkspaceFile(fileEdit.workspaceRelativePath, workspaceFolders);
     if (!uri) {
       return undefined;

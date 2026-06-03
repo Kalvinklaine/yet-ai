@@ -1068,7 +1068,7 @@ export function App() {
   };
 
   const submitEditProposal = useCallback(() => {
-    if (!editProposal || bridgeHost === "browser") {
+    if (!editProposal || bridgeHost !== "vscode") {
       return;
     }
     bridgeAdapterRef.current?.post({
@@ -1839,8 +1839,8 @@ function EditProposalPreview({ proposal, host, onApply }: { proposal: EditPropos
           </article>
         ))}
       </div>
-      {host === "browser" ? (
-        <div className="readiness-card warn" role="status">Browser preview mode cannot apply workspace edits. Open this GUI from VS Code or JetBrains, then review and confirm there.</div>
+      {host !== "vscode" ? (
+        <div className="readiness-card warn" role="status">This MVP can apply workspace edits only from VS Code. Browser and JetBrains preview mode cannot request apply yet.</div>
       ) : (
         <button type="button" onClick={onApply}>Request host apply after review</button>
       )}

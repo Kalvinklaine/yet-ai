@@ -717,6 +717,18 @@ async function assertApplyWorkspaceEditBehavior() {
   assert.equal(warningCalls, 0);
   assert.equal(applyCalls, 0);
 
+  await handleApplyWorkspaceEditRequest(testWebview, createApplyWorkspaceEditRequest({
+    payload: {
+      edits: [
+        { workspaceRelativePath: "src/main.ts", textReplacements: [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } }, replacementText: "hello" }] },
+        { workspaceRelativePath: "src/main.ts", textReplacements: [{ range: { start: { line: 0, character: 6 }, end: { line: 0, character: 11 } }, replacementText: "world" }] },
+      ],
+    },
+  }));
+  assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+  assert.equal(warningCalls, 0);
+  assert.equal(applyCalls, 0);
+
   const secondWorkspaceRoot = path.join(os.tmpdir(), "yet-ai-safe-workspace-second");
   fakeVscode.workspace.workspaceFolders = [
     { uri: { fsPath: workspaceRoot, scheme: "file", path: workspaceRoot } },
