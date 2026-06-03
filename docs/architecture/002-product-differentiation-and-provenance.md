@@ -1,6 +1,6 @@
 # 002 Product Differentiation and Provenance
 
-Yet AI is an architecture-inspired independent implementation, not a fork or rename of any external project. This audit separates product identity surfaces from reusable architecture patterns so implementation can proceed safely: define identity, scaffold clean components, preserve useful contracts where intentional, and redesign the user experience independently.
+Yet AI is a standalone local-first AI coding assistant and IDE agent plugin product. This audit separates product identity surfaces from implementation and packaging surfaces so development can proceed safely: define identity, scaffold clean components, preserve intentional contracts, and design the user experience for Yet AI.
 
 ## Classification rules
 
@@ -51,11 +51,11 @@ Freeze these values before public release. If a placeholder is still present, do
 
 ## Non-goals
 
-- No broad copy-and-rename as the first implementation step. That hides architecture decisions, preserves unwanted coupling, and can miss marketplace/storage/legal surfaces.
+- No broad copy-and-rename as an implementation step. That hides architecture decisions, preserves unwanted coupling, and can miss marketplace/storage/legal surfaces.
 - No automatic import of secrets, provider credentials, trajectories, task state, privacy settings, telemetry IDs, or local indexes from external products.
 - No claim of binary, plugin, or marketplace compatibility with any external product unless a future product requirement explicitly defines and tests that compatibility.
 - No reuse of external icons, screenshots, marketplace copy, support links, or visual design as Yet AI final design.
 
 ## Legal and attribution reminder
 
-This audit is not legal advice. External implementations can inform architecture, but any later code, asset, documentation, icon, or configuration copied from outside the repository must preserve applicable license terms, copyright notices, attribution, and third-party dependency obligations. Keep provenance records for copied or adapted files and generate a NOTICE or attribution file before distribution if required by the copied material's license.
+This audit is not legal advice. Any approved code, asset, documentation, icon, or configuration copied from outside the repository must preserve applicable license terms, copyright notices, attribution, and third-party dependency obligations. Keep provenance records for copied or adapted files and generate a NOTICE or attribution file before distribution if required by the copied material's license.

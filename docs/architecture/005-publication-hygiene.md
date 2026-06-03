@@ -7,7 +7,7 @@ This document defines public repository hygiene before the first GitHub publicat
 - Public tracked files must remain free of external project identifiers unless future license or provenance obligations require explicit attribution for copied code or assets.
 - Keep private reference notes only in ignored local files or directories, such as `AGENTS.local.md`, `.local/`, or `.agent-local/`.
 - Do not include external product names, vendor names, repository URLs, binary names, package names, marketplace IDs, support URLs, or storage paths in public docs, examples, scripts, comments, generated files, or ignore rules.
-- Use neutral wording such as `external reference project`, `reference implementation`, or `external architecture reference` when a public document needs to discuss the general concept.
+- Use generic wording such as `third-party code`, `third-party assets`, or `unapproved third-party material` when a public document needs to discuss provenance or license risk.
 - Keep Yet AI product-sensitive values centralized in `product/identity.json` where practical.
 
 ## License and provenance exception

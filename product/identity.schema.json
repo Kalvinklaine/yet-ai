@@ -24,7 +24,7 @@
         "displayName": { "type": "string", "minLength": 1 },
         "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
         "shortName": { "type": "string", "minLength": 1 },
-        "strategy": { "type": "string", "enum": ["architecture-inspired-rebuild"] },
+        "strategy": { "type": "string", "enum": ["standalone-local-first"] },
         "description": { "type": "string", "minLength": 1 }
       }
     },

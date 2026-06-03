@@ -1,8 +1,8 @@
 # 003 Target Architecture
 
-Yet AI is a new product inspired by the external reference project's proven engine, GUI, and IDE plugin split. The goal is not to clone the external reference project's implementation or UI. The target is an independent local AI coding assistant with its own product identity, storage, packaging, visual language, interaction design, and release surfaces.
+Yet AI is a standalone local-first AI coding assistant and IDE agent plugin product. The target is a product with its own local runtime, GUI, IDE plugins, product identity, storage, packaging, visual language, interaction design, and release surfaces.
 
-This document defines the target architecture and implementation roadmap. It should guide scaffolding and migration decisions, but it does not require copying all the external reference project code now. Physical folder layout can be introduced gradually as each subsystem becomes real.
+This document defines the target architecture and implementation roadmap. It should guide scaffolding and migration decisions. Physical folder layout can be introduced gradually as each subsystem becomes real.
 
 ## Implemented local baseline
 
@@ -57,7 +57,7 @@ Reference inspection found a useful pattern in the external implementation: prov
 
 Future GUI-facing auth status should stay sanitized. Candidate state fields are non-secret values such as `type`, `configured`, `status`, `authSource`, `expiresAt`, `accountLabel`, `scopes`, `supportsRefresh`, `lastError`, and `redacted`. Raw access tokens, refresh tokens, API keys, authorization codes, PKCE verifiers, cookies, browser profiles, credential file paths, and other provider secret material must never be GUI-owned, returned by provider status, capability, or model endpoints, or written to GUI/browser storage; logs must omit them as well.
 
-Secret storage is an engine boundary. The current composite provider secret store centralizes put/get/delete by provider id and secret kind for API keys, OAuth access tokens, OAuth refresh tokens, and auth metadata. In production builds, the primary backend is OS credential storage where the platform keychain service is available; the protected-file backend under user config is used when keychain access is disabled by build/policy or for safe fallback reads after an empty healthy primary lookup. Keychain reads are bounded and can return sanitized unavailable status, while keychain writes and deletes wait for the blocking operation to complete rather than reporting timeout while a late mutation may still land. Transient primary write/delete failures, locked-keychain read unavailability, verification mismatches, and fallback cleanup failures are not fallback-success conditions: they return sanitized storage errors so old primary values cannot later shadow newer fallback state. Primary-unavailable reads fail closed instead of returning potentially stale fallback records; fallback reads are allowed when the primary is explicitly disabled by build/policy. Debug/test builds use a disabled primary and the protected-file fallback so CI and local automation do not depend on a real keychain. Keychain put-if-absent uses an in-process lock and read-back verification, which protects one local runtime process but is not a cross-process keychain lock. This is intentionally narrower than the external reference implementation's provider config patching and OAuth refresh machinery: Yet AI keeps the abstraction separate, avoids credential import from other tools, and stores only Yet AI-owned provider credentials.
+Secret storage is an engine boundary. The current composite provider secret store centralizes put/get/delete by provider id and secret kind for API keys, OAuth access tokens, OAuth refresh tokens, and auth metadata. In production builds, the primary backend is OS credential storage where the platform keychain service is available; the protected-file backend under user config is used when keychain access is disabled by build/policy or for safe fallback reads after an empty healthy primary lookup. Keychain reads are bounded and can return sanitized unavailable status, while keychain writes and deletes wait for the blocking operation to complete rather than reporting timeout while a late mutation may still land. Transient primary write/delete failures, locked-keychain read unavailability, verification mismatches, and fallback cleanup failures are not fallback-success conditions: they return sanitized storage errors so old primary values cannot later shadow newer fallback state. Primary-unavailable reads fail closed instead of returning potentially stale fallback records; fallback reads are allowed when the primary is explicitly disabled by build/policy. Debug/test builds use a disabled primary and the protected-file fallback so CI and local automation do not depend on a real keychain. Keychain put-if-absent uses an in-process lock and read-back verification, which protects one local runtime process but is not a cross-process keychain lock. Yet AI keeps the abstraction separate, avoids credential import from other tools, and stores only Yet AI-owned provider credentials.
 
 Legacy inline API-key migration is implemented for provider configs. When normal provider/model/test/chat access encounters `providers.d/{id}.json` with `auth.apiKey`, the engine writes that value into the secret store first using atomic create-if-absent semantics, then rewrites the provider config without the raw field. Existing or newer stored secrets win over stale inline values, so migration never overwrites the store. If the secret store cannot be safely written or read, access fails with sanitized errors and does not fall back to using or exposing the inline key. If config scrubbing fails after a successful secret-store write, the stored secret is retained and later access can retry cleanup; the inline value is not used as fallback and is not returned to clients. Until cleanup succeeds, the operation may surface only a sanitized migration error.
 
@@ -150,7 +150,7 @@ The focused smokes include bounded overflow scenarios for context-window failure
 - Treat Yet AI as local-first BYOK: the IDE plugin starts or connects to a local runtime on the user's machine, and core chat, completion, agent, settings, and project workflows must not require a hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, or cloud workspace.
 - Send model and embedding requests directly from the local runtime to configured hosted providers or local runtimes. Yet AI does not proxy normal provider traffic through a required product cloud.
 - Keep IDE plugins thin: they should start or connect to the engine, host the webview, bridge IDE events, and expose native editor integrations.
-- Build a new UI and design system for Yet AI instead of recreating the external reference project's screens, navigation, typography, copy, or visual hierarchy.
+- Build Yet AI's own UI and design system, including screens, navigation, typography, copy, and visual hierarchy.
 - Use `product/identity.json` as the product identity source for names, IDs, directories, binary names, package names, and marketplace metadata.
 - Introduce folders and packages only when they are needed. Documentation and contracts can exist before code.
 - Preserve explicit contracts between subsystems so each can be built and tested independently.
@@ -178,7 +178,7 @@ Alternative names such as `packages/gui`, `crates/engine`, or top-level `plugins
 
 1. Keep documentation and identity files first.
 2. Add empty or minimal subsystem scaffolds only when a phase needs buildable code.
-3. Avoid a bulk import or global rename of the external reference project as the default implementation path.
+3. Avoid bulk imports or global renames as an implementation path.
 4. Add shared scripts after at least two subsystems need the same workflow.
 
 ## Subsystem boundaries
@@ -205,7 +205,7 @@ Provider settings and credentials are local runtime state. The engine stores sec
 The GUI is the webview app packaged into IDE hosts and optionally served standalone in development. It should own:
 
 - Yet AI chat experience, settings, onboarding, provider setup, tool confirmations, and future task/knowledge surfaces.
-- a new UI and design system distinct from the external reference project, including layout, component language, empty states, icons, colors, and motion.
+- a Yet AI UI and design system, including layout, component language, empty states, icons, colors, and motion.
 - typed HTTP client contracts for engine REST endpoints.
 - an SSE chat subscription client with reconnect and snapshot recovery semantics.
 - an IDE bridge adapter for VS Code, JetBrains, and browser development mode.
@@ -472,7 +472,7 @@ Confirmed edit-proposal changes should verify the affected contracts, GUI previe
 
 ### Config and storage resolution
 
-Yet AI must isolate storage from the external reference project and from other products.
+Yet AI must isolate storage from other products.
 
 Target directories from `product/identity.json`:
 
@@ -625,10 +625,10 @@ Each subsystem should be independently buildable and testable.
 
 ### Risks
 
-- Copying too much external reference code too early can preserve unwanted branding, storage paths, UX assumptions, and hidden product coupling.
+- Copying unapproved third-party code can preserve unwanted branding, storage paths, UX assumptions, and hidden product coupling.
 - Designing contracts too narrowly can block JetBrains or VS Code requirements later.
-- Deferring storage isolation can leak or mix data with the external reference project installations.
-- Recreating the external reference project UI directly would conflict with the goal of a new UI and product experience.
+- Deferring storage isolation can leak or mix data with other product installations.
+- Reusing another product's UI directly would conflict with the goal of a Yet AI product experience.
 - Adding providers, tools, and integrations before confirmation policy is clear can create safety and trust issues.
 - Maintaining separate VS Code and JetBrains bridges can drift without shared typed bridge fixtures.
 
@@ -640,7 +640,7 @@ Each subsystem should be independently buildable and testable.
 - Which provider is first for real chat streaming.
 - Which IDE plugin is implemented first beyond a shell.
 - Which parts of `product/identity.json` remain temporary before marketplace packaging.
-- Whether any external reference code is selectively imported later, and under what audit and rewrite rules.
+- Whether any third-party code is approved later, and under what audit and rewrite rules.
 
 ## Architecture foundation status
 
@@ -648,7 +648,7 @@ The architecture foundation is sufficient for the current MVP baseline because:
 
 - the repo structure and subsystem boundaries are documented.
 - HTTP, SSE, LSP, postMessage, storage, provider, and integration contracts are described.
-- the roadmap avoids requiring a full external reference copy now.
+- the roadmap avoids requiring bulk third-party source imports.
 - the plan explicitly prioritizes Yet AI's new UI and design system.
 - each implemented subsystem has an independent build and test strategy.
 
