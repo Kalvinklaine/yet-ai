@@ -3871,6 +3871,42 @@ describe("edit proposal preview", () => {
     expect(applyCalls[0][0].requestId).toMatch(/^gui-edit-proposal-/);
   });
 
+  it("keeps proposal request id stable across unrelated chat view updates and prevents duplicate apply while pending", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Stable proposal chat", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Stable proposal chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+      sseEvents: [],
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const initialRequestId = editProposalRequestId();
+    await act(async () => {
+      setTextareaValue(chatInput(), "cause unrelated chat update");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(editProposalRequestId()).toBe(initialRequestId);
+    const applyButton = findButton("Request host apply after review");
+    await act(async () => {
+      applyButton.click();
+      applyButton.click();
+    });
+
+    expect(findButton("Host apply pending…").disabled).toBe(true);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(1);
+  });
+
   it("rejects invalid proposal objects before rendering or sending", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
@@ -3891,12 +3927,68 @@ describe("edit proposal preview", () => {
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
 
-  it("renders sanitized host apply results and rejects unsafe result messages", async () => {
-    mockRuntimeResponses(readyRuntimeOptions());
+  it("clears a stale valid proposal when an invalid latest assistant proposal replaces it", async () => {
+    const proposal = safeEditProposalPayload();
+    const invalidProposal = { ...proposal, requiresUserConfirmation: false };
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Invalid latest proposal chat", 2)],
+      chatThreads: {
+        "chat-001": chatThread("chat-001", "Invalid latest proposal chat", [
+          chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal)),
+          chatMessage("chat-001", "assistant-2", "assistant", JSON.stringify(invalidProposal)),
+        ]),
+      },
+    });
+
     renderApp();
     await flushAsync();
+    await flushAsync();
 
-    await dispatchHostApplyResult({
+    expect(container?.textContent ?? "").not.toContain("Confirmed edit proposal");
+    expect(container?.querySelector(".edit-proposal-card")).toBeNull();
+  });
+
+  it("shows only matching pending host apply results and ignores unsolicited or stale results", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Correlated proposal chat", 1), chatSummary("chat-002", "Other chat", 1)],
+      chatThreads: {
+        "chat-001": chatThread("chat-001", "Correlated proposal chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]),
+        "chat-002": chatThread("chat-002", "Other chat", []),
+      },
+    });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    await dispatchHostApplyResult("gui-edit-proposal-999", {
+      status: "applied",
+      message: "Unsolicited apply result.",
+      cloudRequired: false,
+      appliedEditCount: 1,
+      affectedFiles: ["src/example.ts"],
+    });
+    expect(container?.textContent ?? "").not.toContain("Unsolicited apply result.");
+
+    await act(async () => {
+      findButton("Request host apply after review").click();
+    });
+    const requestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
+
+    await dispatchHostApplyResult("gui-edit-proposal-999", {
+      status: "failed",
+      message: "Mismatched apply result.",
+      cloudRequired: false,
+      appliedEditCount: 0,
+      affectedFiles: [],
+    });
+    expect(container?.textContent ?? "").not.toContain("Mismatched apply result.");
+
+    await dispatchHostApplyResult(requestId, {
       status: "applied",
       message: "Applied after user confirmation.",
       cloudRequired: false,
@@ -3909,7 +4001,7 @@ describe("edit proposal preview", () => {
     expect(text).toContain("Applied after user confirmation.");
     expect(text).toContain("src/example.ts");
 
-    await dispatchHostApplyResult({
+    await dispatchHostApplyResult(requestId, {
       status: "failed",
       message: "Authorization Bearer unsafe-secret",
       cloudRequired: false,
@@ -3920,6 +4012,20 @@ describe("edit proposal preview", () => {
     text = container?.textContent ?? "";
     expect(text).toContain("Applied after user confirmation.");
     expect(text).not.toContain("unsafe-secret");
+
+    await act(async () => {
+      setInputValue(chatIdInput(), "chat-002");
+      await Promise.resolve();
+    });
+    expect(container?.textContent ?? "").not.toContain("Host apply result");
+    await dispatchHostApplyResult(requestId, {
+      status: "applied",
+      message: "Stale result after chat switch.",
+      cloudRequired: false,
+      appliedEditCount: 1,
+      affectedFiles: ["src/example.ts"],
+    });
+    expect(container?.textContent ?? "").not.toContain("Stale result after chat switch.");
   });
 });
 
@@ -3957,13 +4063,13 @@ async function dispatchHostContextSnapshot(payload: Record<string, unknown>) {
   });
 }
 
-async function dispatchHostApplyResult(payload: Record<string, unknown>) {
+async function dispatchHostApplyResult(requestId: string | undefined, payload: Record<string, unknown>) {
   await act(async () => {
     window.dispatchEvent(new MessageEvent("message", {
       data: {
         version: bridgeVersion,
         type: "host.applyWorkspaceEditResult",
-        requestId: "gui-edit-proposal-1",
+        requestId,
         payload,
       },
     }));
@@ -3977,6 +4083,12 @@ function renderApp() {
   act(() => {
     root?.render(<App />);
   });
+}
+
+function editProposalRequestId(): string {
+  const match = (container?.textContent ?? "").match(/Request: (gui-edit-proposal-\d+)/);
+  expect(match).not.toBeNull();
+  return match?.[1] ?? "";
 }
 
 type MockRuntimeOptions = {
