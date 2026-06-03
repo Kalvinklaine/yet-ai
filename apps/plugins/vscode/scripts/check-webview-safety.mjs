@@ -237,6 +237,7 @@ const acceptedGuiReadyMessage = {
     supportedBridgeVersion: "2026-05-15",
   },
 };
+const rejectedControlCharGuiReadyMessage = { ...acceptedGuiReadyMessage, requestId: "bad\nrequest" };
 const rejectedPrivilegedGuiMessages = [
   {
     version: "2026-05-15",
@@ -317,6 +318,8 @@ const invalidApplyWorkspaceEditRequests = [
   createApplyWorkspaceEditRequest({ summary: "Update ~/project/src/main.ts." }),
   createApplyWorkspaceEditRequest({ summary: "Update C:/Users/alice/project/src/main.ts." }),
   createApplyWorkspaceEditRequest({ summary: "Update C:\\Users\\alice\\project\\src\\main.ts." }),
+  createApplyWorkspaceEditRequest({ summary: "Update sk-abcdefghijklmnopqrstuvwxyz." }),
+  createApplyWorkspaceEditRequest({ summary: "Update sk-proj-abcdefghijklmnopqrstuvwxyz." }),
   createApplyWorkspaceEditRequest({ workspaceRelativePath: "src//main.ts" }),
   createApplyWorkspaceEditRequest({ workspaceRelativePath: "src/" }),
   createApplyWorkspaceEditRequest({ workspaceRelativePath: "/src/main.ts" }),
@@ -332,6 +335,7 @@ const invalidApplyWorkspaceEditRequests = [
 ];
 
 assert.equal(isGuiMessage(acceptedGuiReadyMessage), true);
+assert.equal(isGuiMessage(rejectedControlCharGuiReadyMessage), false, "VS Code host must reject gui.ready with control-char requestId.");
 assert.equal(isGuiMessage(validApplyWorkspaceEditRequest), true, "VS Code host should accept strict confirmed apply requests.");
 for (const message of rejectedPrivilegedGuiMessages) {
   if (message.type === "gui.applyWorkspaceEditRequest") {
@@ -431,6 +435,8 @@ for (const privateResultMessage of [
   "Failed at ~/project/src/main.ts.",
   "Failed at C:/Users/alice/project/src/main.ts.",
   "Failed at C:\\Users\\alice\\project\\src\\main.ts.",
+  "Failed with sk-abcdefghijklmnopqrstuvwxyz.",
+  "Failed with sk-proj-abcdefghijklmnopqrstuvwxyz.",
 ]) {
   assert.equal(createApplyWorkspaceEditResult("req-private-result", "failed", privateResultMessage).payload.message, "Edit request status changed.");
 }
@@ -604,6 +610,12 @@ function createFakeSelection(startLine, startCharacter, endLine, endCharacter) {
 
 function createApplyWorkspaceEditRequest(overrides = {}) {
   const range = overrides.range ?? { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } };
+  const textReplacements = overrides.textReplacements ?? [
+    {
+      range,
+      replacementText: overrides.replacementText ?? "hello",
+    },
+  ];
   const payload = {
     requiresUserConfirmation: true,
     summary: overrides.summary ?? "Update greeting text.",
@@ -611,12 +623,7 @@ function createApplyWorkspaceEditRequest(overrides = {}) {
     edits: [
       {
         workspaceRelativePath: overrides.workspaceRelativePath ?? "src/main.ts",
-        textReplacements: [
-          {
-            range,
-            replacementText: overrides.replacementText ?? "hello",
-          },
-        ],
+        textReplacements,
       },
     ],
     ...(overrides.payload ?? {}),
@@ -696,6 +703,16 @@ async function assertApplyWorkspaceEditBehavior() {
   assert.equal(applyCalls, 0);
 
   await handleApplyWorkspaceEditRequest(testWebview, createApplyWorkspaceEditRequest({ replacementText: "x".repeat(8193) }));
+  assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+  assert.equal(warningCalls, 0);
+  assert.equal(applyCalls, 0);
+
+  await handleApplyWorkspaceEditRequest(testWebview, createApplyWorkspaceEditRequest({
+    textReplacements: [
+      { range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } }, replacementText: "hello" },
+      { range: { start: { line: 0, character: 3 }, end: { line: 0, character: 7 } }, replacementText: "wave" },
+    ],
+  }));
   assert.equal(webviewMessages.at(-1).payload.status, "rejected");
   assert.equal(warningCalls, 0);
   assert.equal(applyCalls, 0);

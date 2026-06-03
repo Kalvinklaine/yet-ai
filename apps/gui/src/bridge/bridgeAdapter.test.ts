@@ -387,6 +387,17 @@ describe("bridgeAdapter", () => {
     }
   });
 
+  it("rejects apply workspace edit summaries with key-like secret values", () => {
+    for (const summary of [
+      "Update reviewed text near sk-abcdefghijklmnopqrstuvwxyz.",
+      "Update reviewed text near sk-proj-abcdefghijklmnopqrstuvwxyz.",
+    ]) {
+      const message = applyEditMessage({ summary });
+      expect(isGuiMessage(message)).toBe(false);
+      expect(isApplyWorkspaceEditPayload(message.payload)).toBe(false);
+    }
+  });
+
   it("rejects undefined affected files in apply workspace edit results", () => {
     const message = {
       version: bridgeVersion,
@@ -421,6 +432,29 @@ describe("bridgeAdapter", () => {
 
     expect(isApplyWorkspaceEditResultPayload(message.payload)).toBe(false);
     expect(isHostMessage(message)).toBe(false);
+  });
+
+  it("rejects apply workspace edit result messages with key-like secret values", () => {
+    for (const resultMessage of [
+      "Failed while applying sk-abcdefghijklmnopqrstuvwxyz.",
+      "Failed while applying sk-proj-abcdefghijklmnopqrstuvwxyz.",
+    ]) {
+      const message = {
+        version: bridgeVersion,
+        type: "host.applyWorkspaceEditResult",
+        requestId: "req-apply-edit-001",
+        payload: {
+          status: "failed",
+          message: resultMessage,
+          cloudRequired: false,
+          appliedEditCount: 0,
+          affectedFiles: ["src/example.ts"],
+        },
+      };
+
+      expect(isApplyWorkspaceEditResultPayload(message.payload)).toBe(false);
+      expect(isHostMessage(message)).toBe(false);
+    }
   });
 
   it("rejects invalid apply workspace edit requests before posting", () => {
