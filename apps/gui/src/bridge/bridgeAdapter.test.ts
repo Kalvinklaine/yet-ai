@@ -25,7 +25,9 @@ import guiApplyWorkspaceEditPrivatePathSummaryMessage from "../../../../packages
 import guiApplyWorkspaceEditDrivePathSummaryMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-apply-workspace-edit-drive-path-summary.json";
 import guiApplyWorkspaceEditEmptySegmentPathMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-apply-workspace-edit-empty-segment-path.json";
 import guiApplyWorkspaceEditTrailingSlashPathMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-apply-workspace-edit-trailing-slash-path.json";
+import guiApplyWorkspaceEditKeyLikeSummaryMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-apply-workspace-edit-key-like-summary.json";
 import hostApplyWorkspaceEditResultSecretMessage from "../../../../packages/contracts/examples-invalid/bridge/host-apply-workspace-edit-result-secret-message.json";
+import hostApplyWorkspaceEditResultKeyLikeMessage from "../../../../packages/contracts/examples-invalid/bridge/host-apply-workspace-edit-result-key-like-message.json";
 
 const bridgeVersion = "2026-05-15";
 const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
@@ -354,8 +356,10 @@ describe("bridgeAdapter", () => {
   });
 
   it("rejects missing, undefined, or non-canonical apply workspace edit paths", () => {
+    const missingPathMessage = applyEditMessage({ requestId: "req-apply-edit-missing-path-001", summary: "Missing path." });
+    delete (missingPathMessage.payload.edits[0] as Record<string, unknown>).workspaceRelativePath;
     const invalidMessages = [
-      applyEditMessage({ requestId: "req-apply-edit-missing-path-001", summary: "Missing path.", fileEdit: { workspaceRelativePath: undefined } }),
+      missingPathMessage,
       applyEditMessage({ requestId: "req-apply-edit-undefined-path-001", summary: "Undefined path.", fileEdit: { workspaceRelativePath: undefined } }),
       applyEditMessage({ requestId: "req-apply-edit-empty-segment-001", fileEdit: { workspaceRelativePath: "src//main.ts" } }),
       applyEditMessage({ requestId: "req-apply-edit-trailing-slash-001", fileEdit: { workspaceRelativePath: "src/" } }),
@@ -658,8 +662,11 @@ describe("bridgeAdapter", () => {
     expect(isGuiMessage(guiApplyWorkspaceEditDrivePathSummaryMessage)).toBe(false);
     expect(isGuiMessage(guiApplyWorkspaceEditEmptySegmentPathMessage)).toBe(false);
     expect(isGuiMessage(guiApplyWorkspaceEditTrailingSlashPathMessage)).toBe(false);
+    expect(isGuiMessage(guiApplyWorkspaceEditKeyLikeSummaryMessage)).toBe(false);
     expect(isApplyWorkspaceEditResultPayload(hostApplyWorkspaceEditResultSecretMessage.payload)).toBe(false);
     expect(isHostMessage(hostApplyWorkspaceEditResultSecretMessage)).toBe(false);
+    expect(isApplyWorkspaceEditResultPayload(hostApplyWorkspaceEditResultKeyLikeMessage.payload)).toBe(false);
+    expect(isHostMessage(hostApplyWorkspaceEditResultKeyLikeMessage)).toBe(false);
 
     const logs: string[] = [];
     const messages: unknown[] = [];

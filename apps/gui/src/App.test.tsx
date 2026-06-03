@@ -3816,10 +3816,34 @@ describe("edit proposal preview", () => {
     expect(text).toContain("Files: 1");
     expect(text).toContain("Text edits: 1");
     expect(text).toContain("const label = \"Yet AI\";");
-    expect(text).toContain("Browser preview mode cannot apply workspace edits");
+    expect(text).toContain("This MVP can apply workspace edits only from VS Code");
     expect(Array.from(container?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Request host apply after review")).toBe(false);
     expect(browserStorageDump()).toContain("sentinel");
     expect(browserStorageDump()).not.toContain("Replace one visible editor line");
+  });
+
+
+  it("renders JetBrains proposal preview without apply emission", async () => {
+    const postIntellijMessage = vi.fn();
+    window.postIntellijMessage = postIntellijMessage;
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "JetBrains edit proposal chat", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "JetBrains edit proposal chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Confirmed edit proposal");
+    expect(text).toContain("Replace one visible editor line after user review.");
+    expect(text).toContain("src/example.ts");
+    expect(text).toContain("This MVP can apply workspace edits only from VS Code");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Request host apply after review")).toBe(false);
+    expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
 
   it("emits an apply request only after explicit user click in a privileged host", async () => {

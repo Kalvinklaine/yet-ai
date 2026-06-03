@@ -204,6 +204,7 @@ const invalidMappings = [
     "gui-apply-workspace-edit-delete-field.json",
     "gui-apply-workspace-edit-rename-field.json",
     "gui-apply-workspace-edit-secret-summary.json",
+    "gui-apply-workspace-edit-key-like-summary.json",
     "gui-apply-workspace-edit-private-path-summary.json",
     "gui-apply-workspace-edit-drive-path-summary.json",
     "gui-apply-workspace-edit-empty-segment-path.json",
@@ -215,6 +216,7 @@ const invalidMappings = [
   ...[
     "host-apply-workspace-edit-result-private-path.json",
     "host-apply-workspace-edit-result-secret-message.json",
+    "host-apply-workspace-edit-result-key-like-message.json",
     "host-apply-workspace-edit-result-unknown-status.json",
     "host-apply-workspace-edit-result-traversal-path.json"
   ].map((fileName) => [

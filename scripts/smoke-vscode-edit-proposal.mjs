@@ -14,7 +14,8 @@ const secretMarkers = [
 ];
 const safeProposal = createProposal();
 const oversizedProposal = createProposal({ replacement: { replacementText: "x".repeat(8193) }, summary: "Oversized replacement rejected locally." });
-const leakProposal = createProposal({ summary: `Review sanitized marker ${secretMarkers[0]}.`, replacement: { replacementText: `const label = "${secretMarkers[1]}";` } });
+const unsafeSummaryProposal = createProposal({ summary: `Review sanitized marker ${secretMarkers[0]}.` });
+const leakProposal = createProposal({ summary: "Review sanitized replacement marker.", replacement: { replacementText: `const label = "${secretMarkers[1]}";` } });
 const invalidPathProposals = [
   ["traversal", "../private/secret.ts"],
   ["empty-segment", "src//main.ts"],
@@ -50,7 +51,11 @@ try {
   });
   page.on("pageerror", (error) => failures.push(`Page JavaScript error: ${sanitize(error.message)}`));
 
-  await page.setContent(harnessHtml(), { waitUntil: "domcontentloaded" });
+  await page.setContent(harnessHtml(), { waitUntil: "load" });
+  if (await page.evaluate(() => typeof window.__yetAiLoadProposal !== "function")) {
+    failures.push("Inline edit proposal harness did not initialize.");
+    reportFailures();
+  }
   await page.evaluate(({ version, proposal, oversized, leak }) => {
     window.__yetAiLoadProposal(version, proposal);
     window.__yetAiOversizedProposal = oversized;
@@ -112,6 +117,29 @@ try {
     failures.push("Oversized edit was not rejected.");
   }
 
+  await page.evaluate(({ version, proposal }) => window.__yetAiLoadProposal(version, proposal), { version: bridgeVersion, proposal: unsafeSummaryProposal });
+  const unsafeSummaryText = await page.evaluate(() => document.body.innerText);
+  if (!unsafeSummaryText.includes("No valid edit proposal.") || unsafeSummaryText.includes("Confirmed edit proposal")) {
+    failures.push("Unsafe key-like proposal summary rendered a proposal card.");
+  }
+
+  const hostResultCountBeforeUnsafeResult = await page.evaluate(() => (window.__yetAiHostResults ?? []).length);
+  await page.evaluate(({ version, rawMessage }) => {
+    window.dispatchEvent(new MessageEvent("message", { data: rawMessage }));
+  }, {
+    version: bridgeVersion,
+    rawMessage: {
+      version: bridgeVersion,
+      type: "host.applyWorkspaceEditResult",
+      requestId: "gui-edit-proposal-unsafe-result",
+      payload: { status: "failed", message: `Failed ${secretMarkers[0]}`, cloudRequired: false, appliedEditCount: 0, affectedFiles: [] },
+    },
+  });
+  const hostResultCountAfterUnsafeResult = await page.evaluate(() => (window.__yetAiHostResults ?? []).length);
+  if (hostResultCountAfterUnsafeResult !== hostResultCountBeforeUnsafeResult) {
+    failures.push("Unsafe key-like host result was captured or rendered.");
+  }
+
   const hostResultCountBeforeLeak = await page.evaluate(() => (window.__yetAiHostResults ?? []).length);
   await page.evaluate(({ version, proposal, rawMessage }) => {
     window.__yetAiLoadProposal(version, proposal);
@@ -123,7 +151,7 @@ try {
       version: bridgeVersion,
       type: "host.applyWorkspaceEditResult",
       requestId: "gui-edit-proposal-leak",
-      payload: { status: "failed", message: `Raw ${secretMarkers[2]} ${secretMarkers[3]} ${secretMarkers[4]}`, cloudRequired: false, appliedEditCount: 0, affectedFiles: [] },
+      payload: { status: "failed", message: `Raw ${secretMarkers[0]} ${secretMarkers[2]} ${secretMarkers[3]} ${secretMarkers[4]}`, cloudRequired: false, appliedEditCount: 0, affectedFiles: [] },
     },
   });
   await expectVisible(page, "[redacted]");
@@ -190,7 +218,7 @@ function harnessHtml() {
 <body>
   <main id="root" aria-label="Yet AI edit proposal smoke"></main>
   <script>
-    const secretPatterns = [/Bearer\\s+\\S+/gi, /sk-[A-Za-z0-9_-]{8,}/g, /access_token=[A-Za-z0-9_-]+/gi, /\\/Users\\/[^\\s]+/g, /C:\\\\Users\\\\[^\\s]+/g];
+    const secretPatterns = [new RegExp("Bearer\\\\s+\\\\S+", "gi"), new RegExp("sk-[A-Za-z0-9_-]{8,}", "g"), new RegExp("access_token=[A-Za-z0-9_-]+", "gi")];
     window.__yetAiBridgeMessages = [];
     window.__yetAiHostResults = [];
     window.acquireVsCodeApi = () => ({ postMessage(message) { window.__yetAiBridgeMessages.push(message); } });
@@ -250,14 +278,37 @@ function harnessHtml() {
       root.append(section);
     }
     function isProposal(value) {
-      return value && value.requiresUserConfirmation === true && value.cloudRequired === false && typeof value.summary === "string" && Array.isArray(value.edits) && value.edits.length > 0 && value.edits.length <= 4 && value.edits.every((edit) => typeof edit.workspaceRelativePath === "string" && Array.isArray(edit.textReplacements) && edit.textReplacements.length > 0 && edit.textReplacements.every((replacement) => replacement && replacement.range && typeof replacement.replacementText === "string"));
+      return value && value.requiresUserConfirmation === true && value.cloudRequired === false && safeSummary(value.summary) && Array.isArray(value.edits) && value.edits.length > 0 && value.edits.length <= 4 && value.edits.every((edit) => safeRelativePath(edit.workspaceRelativePath) && Array.isArray(edit.textReplacements) && edit.textReplacements.length > 0 && edit.textReplacements.length <= 16 && edit.textReplacements.every((replacement) => replacement && isRange(replacement.range) && typeof replacement.replacementText === "string" && replacement.replacementText.length <= 8192));
+    }
+    function safeSummary(value) {
+      return typeof value === "string" && value.length > 0 && value.length <= 1000 && !/authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|provider[_-]?response|raw[_-]?prompt|file[_-]?content/i.test(value) && !/(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}/.test(value) && !hasPrivatePathLikeText(value);
+    }
+    function hasPrivatePathLikeText(value) {
+      return value.includes("/Users/") || value.includes("/home/") || value.includes("/tmp/") || value.includes("/var/") || value.includes("/Volumes/") || value.includes("/Private/") || value.includes("~/") || value.includes(String.fromCharCode(126, 92)) || /[A-Za-z]:[\\/]/.test(value);
+    }
+    function safeRelativePath(value) {
+      return typeof value === "string" && value.length > 0 && value.length <= 512 && !value.startsWith("/") && !value.startsWith("~") && !value.includes("%") && !value.includes(String.fromCharCode(92)) && !value.includes(":") && !value.includes("?") && !value.includes("#") && !hasControlCharacter(value) && value.split("/").every((part) => part.length > 0 && part !== "." && part !== "..");
+    }
+    function hasControlCharacter(value) {
+      for (let index = 0; index < value.length; index += 1) {
+        const code = value.charCodeAt(index);
+        if (code <= 31 || (code >= 127 && code <= 159)) return true;
+      }
+      return false;
+    }
+    function isRange(range) {
+      return isPosition(range?.start) && isPosition(range?.end) && (range.end.line > range.start.line || (range.end.line === range.start.line && range.end.character >= range.start.character));
+    }
+    function isPosition(position) {
+      return Number.isInteger(position?.line) && position.line >= 0 && Number.isInteger(position?.character) && position.character >= 0;
     }
     function isHostResult(message) {
       if (!message || message.version !== "${bridgeVersion}" || message.type !== "host.applyWorkspaceEditResult" || typeof message.requestId !== "string") return false;
       const payload = message.payload;
       if (!payload || payload.cloudRequired !== false || !["applied", "denied", "rejected", "failed"].includes(payload.status) || typeof payload.message !== "string" || payload.message.length === 0 || payload.message.length > 1000) return false;
       if (/authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|provider[_-]?response|raw[_-]?prompt|file[_-]?content/i.test(payload.message)) return false;
-      if (/(?:\\/Users\\/|\\/home\\/|\\/tmp\\/|\\/var\\/|\\/Volumes\\/|\\/Private\\/|[A-Za-z]:\\\\|~[/\\\\])/.test(payload.message)) return false;
+      if (/(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}/.test(payload.message)) return false;
+      if (hasPrivatePathLikeText(payload.message)) return false;
       return payload.appliedEditCount === undefined || Number.isInteger(payload.appliedEditCount);
     }
     window.__yetAiLoadProposal = renderProposal;
