@@ -51,6 +51,7 @@ const lspHardKillGraceMs = 1_500;
 const lspFinalFallbackGraceMs = 2_000;
 const maxLspDiagnosticLineBuffer = 8 * 1024;
 const completionLabel = "Yet AI LSP connected";
+const maxHoverContentLength = 1000;
 
 export function isLspEnabled(): boolean {
   return vscode.workspace.getConfiguration(configurationPrefix).get<boolean>("lsp.enabled", false);
@@ -181,6 +182,12 @@ async function initializeLspClient(client: LspProcess, output: LspOutput): Promi
           completion: {
             dynamicRegistration: false,
           },
+          hover: {
+            dynamicRegistration: false,
+          },
+          documentSymbol: {
+            dynamicRegistration: false,
+          },
         },
         workspace: {},
       },
@@ -212,6 +219,57 @@ function registerDocumentSync(client: LspProcess, output: LspOutput): void {
   client.disposables.push(vscode.workspace.onDidOpenTextDocument((document) => syncOpenDocument(client, document, output)));
   client.disposables.push(vscode.workspace.onDidChangeTextDocument((event) => syncChangedDocument(client, event.document, output)));
   client.disposables.push(vscode.workspace.onDidCloseTextDocument((document) => syncClosedDocument(client, document, output)));
+  client.disposables.push(vscode.languages.registerHoverProvider({ scheme: "file" }, {
+    async provideHover(document, position) {
+      if (!isEligibleDocument(client, document, output)) {
+        return undefined;
+      }
+      syncOpenDocument(client, document, output);
+      if (!client.documents.has(document.uri.toString())) {
+        return undefined;
+      }
+      try {
+        const response = await sendLspRequest(client, "textDocument/hover", {
+          textDocument: { uri: document.uri.toString() },
+          position: { line: position.line, character: position.character },
+        }, output);
+
+        if (response.error) {
+          output.appendLine(`Yet AI read-only LSP MVP hover failed: ${sanitizeLspDiagnostic(response.error.message, "hover failed")}`);
+          return undefined;
+        }
+        return toHover(response.result);
+      } catch (error) {
+        output.appendLine(`Yet AI read-only LSP MVP hover unavailable: ${sanitizeLspDiagnostic(error, "hover unavailable")}`);
+        return undefined;
+      }
+    },
+  }));
+  client.disposables.push(vscode.languages.registerDocumentSymbolProvider({ scheme: "file" }, {
+    async provideDocumentSymbols(document) {
+      if (!isEligibleDocument(client, document, output)) {
+        return undefined;
+      }
+      syncOpenDocument(client, document, output);
+      if (!client.documents.has(document.uri.toString())) {
+        return undefined;
+      }
+      try {
+        const response = await sendLspRequest(client, "textDocument/documentSymbol", {
+          textDocument: { uri: document.uri.toString() },
+        }, output);
+
+        if (response.error) {
+          output.appendLine(`Yet AI read-only LSP MVP document symbols failed: ${sanitizeLspDiagnostic(response.error.message, "document symbols failed")}`);
+          return [];
+        }
+        return toDocumentSymbols(response.result);
+      } catch (error) {
+        output.appendLine(`Yet AI read-only LSP MVP document symbols unavailable: ${sanitizeLspDiagnostic(error, "document symbols unavailable")}`);
+        return undefined;
+      }
+    },
+  }));
   client.disposables.push(vscode.languages.registerCompletionItemProvider({ scheme: "file" }, {
     async provideCompletionItems(document, position) {
       if (!isEligibleDocument(client, document, output)) {
@@ -365,6 +423,98 @@ function toCompletionList(result: unknown): vscode.CompletionList | undefined {
       return completionItem;
     });
   return new vscode.CompletionList(items, Boolean(result.isIncomplete));
+}
+
+function toHover(result: unknown): vscode.Hover | undefined {
+  if (!isObject(result)) {
+    return undefined;
+  }
+  const text = hoverContentsToString(result.contents);
+  if (!text) {
+    return undefined;
+  }
+  return new vscode.Hover(text);
+}
+
+function hoverContentsToString(contents: unknown): string | undefined {
+  if (typeof contents === "string") {
+    return capHoverContent(contents);
+  }
+  if (Array.isArray(contents)) {
+    const parts = contents.map(hoverContentsToString).filter((part): part is string => typeof part === "string" && part.length > 0);
+    return capHoverContent(parts.join("\n"));
+  }
+  if (!isObject(contents)) {
+    return undefined;
+  }
+  const value = contents.value;
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  return capHoverContent(value);
+}
+
+function capHoverContent(value: string): string | undefined {
+  if (value.length === 0) {
+    return undefined;
+  }
+  return value.length <= maxHoverContentLength ? value : value.slice(0, maxHoverContentLength);
+}
+
+function toDocumentSymbols(result: unknown): vscode.DocumentSymbol[] | undefined {
+  if (!Array.isArray(result)) {
+    return undefined;
+  }
+  const symbols: vscode.DocumentSymbol[] = [];
+  for (const item of result) {
+    const symbol = toDocumentSymbol(item);
+    if (symbol) {
+      symbols.push(symbol);
+    }
+  }
+  return symbols;
+}
+
+function toDocumentSymbol(item: unknown): vscode.DocumentSymbol | undefined {
+  if (!isObject(item) || typeof item.name !== "string" || item.name.length === 0) {
+    return undefined;
+  }
+  const range = toRange(item.range);
+  const selectionRange = toRange(item.selectionRange);
+  if (!range || !selectionRange) {
+    return undefined;
+  }
+  return new vscode.DocumentSymbol(item.name, "", toSymbolKind(item.kind), range, selectionRange);
+}
+
+function toRange(value: unknown): vscode.Range | undefined {
+  if (!isObject(value)) {
+    return undefined;
+  }
+  const start = toPosition(value.start);
+  const end = toPosition(value.end);
+  if (!start || !end) {
+    return undefined;
+  }
+  return new vscode.Range(start, end);
+}
+
+function toPosition(value: unknown): vscode.Position | undefined {
+  if (!isObject(value) || !isSafePositionNumber(value.line) || !isSafePositionNumber(value.character)) {
+    return undefined;
+  }
+  return new vscode.Position(value.line, value.character);
+}
+
+function isSafePositionNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER;
+}
+
+function toSymbolKind(value: unknown): vscode.SymbolKind {
+  if (typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 26) {
+    return value as vscode.SymbolKind;
+  }
+  return vscode.SymbolKind.Property;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
