@@ -374,9 +374,21 @@ The wrapper sends strict `gui.ready` with a bounded request id and `supportedBri
 
 In GUI dev mode the wrapper embeds only loopback GUI URLs, computes the exact dev origin, forwards iframe messages only after checking `event.origin`, and sends iframe `postMessage` calls with that exact `targetOrigin` rather than `*`.
 
-No privileged workspace edits, IDE tools, shell actions, autonomous file reads/indexing, or provider actions are implemented in this shell. Active editor/selection context is sent only as a bounded prompt attachment after GUI preview/opt-in.
+The only implemented privileged workspace action is the confirmed edit-proposal MVP described below. IDE tools, shell actions, autonomous file reads/indexing, provider actions, and all other privileged GUI-to-host requests are not implemented in this shell. Active editor/selection context is sent only as a bounded prompt attachment after GUI preview/opt-in.
 
-Current GUI-to-host receive policy is deny-by-default. The extension accepts only strict `gui.ready` from the webview. Future GUI messages `gui.openFile`, `gui.revealRange`, `gui.applyWorkspaceEditRequest`, `gui.executeIdeTool`, `gui.copyText`, `gui.showNotification`, and `gui.getHostContext` are not allowlisted and must not call VS Code APIs. Enabling any privileged message later requires strict schemas, bounded request correlation, exact webview origin/source checks, user confirmation for risky operations, sanitized audit/logging, least-privilege allowlists, and no silent workspace mutation. Tools, tasks, knowledge, shell execution, file edits/apply patch, autonomous indexing, and background autonomy remain disabled in this milestone.
+Current GUI-to-host receive policy remains deny-by-default except for `gui.ready` and the first confirmed edit-proposal MVP message, `gui.applyWorkspaceEditRequest`. The extension accepts apply requests only when they satisfy the strict bounded contract: exact bridge version, bounded request id, `requiresUserConfirmation: true`, optional `cloudRequired: false`, safe summary text, and text replacement edits for existing workspace-relative files. It rejects absolute paths, traversal, backslashes, URL-like paths, reversed or oversized ranges, oversized replacement text, create/delete/rename-like payloads, and unsafe result text. After the GUI preview and explicit GUI apply click, VS Code still asks the user to confirm before it creates and applies a `WorkspaceEdit`. The host replies with a correlated sanitized `host.applyWorkspaceEditResult` such as applied, denied, rejected, or failed.
+
+Other GUI messages `gui.openFile`, `gui.revealRange`, `gui.executeIdeTool`, `gui.copyText`, `gui.showNotification`, and `gui.getHostContext` are not allowlisted and must not call VS Code APIs. JetBrains apply support is not implemented by this VS Code path. The confirmed edit-proposal MVP is local-only and has no Yet AI cloud requirement; it does not allow autonomous edits, model-triggered apply, provider tool execution, shell/tools/tasks/git, file create/delete/rename, arbitrary file reads/indexing, or silent workspace mutation. Tools, tasks, knowledge, shell execution, unconfirmed file edits/apply patch, autonomous indexing, and background autonomy remain disabled in this milestone.
+
+Focused package-local coverage for this boundary is:
+
+```sh
+cd apps/plugins/vscode
+npm run compile
+npm run check:webview-safety
+```
+
+If a root `npm run smoke:vscode-edit-proposal` command is added later, include it in the VS Code edit-proposal gate.
 
 ## Current limitations
 
