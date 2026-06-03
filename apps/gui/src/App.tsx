@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBridgeAdapter, isApplyWorkspaceEditPayload, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
@@ -687,6 +687,17 @@ export function App() {
     void loadChatThread(nextChatId);
   }, [abortActiveStream, clearEditProposalState, loadChatThread]);
 
+  const updateDirectChatId = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const nextChatId = event.target.value;
+    if (nextChatId !== chatIdRef.current) {
+      abortActiveStream("SSE stopped and abort requested before changing chat id");
+      setChatInput("");
+      clearEditProposalState();
+      setChatView(resetChatViewState(nextChatId));
+    }
+    setChatId(nextChatId);
+  }, [abortActiveStream, clearEditProposalState]);
+
   const deleteCurrentChat = useCallback(async (targetChatId: string) => {
     const targetSettings = settingsRef.current;
     const targetRevision = settingsRevisionRef.current;
@@ -1031,10 +1042,11 @@ export function App() {
     setAttachedContext(null);
     setIncludeAttachedContext(false);
     setAttachedContextStatus(null);
+    clearEditProposalState();
     if (activeChatSummary) {
       void loadChatThread(chatId);
     }
-  }, [abortActiveStream, activeChatSummary?.chatId, chatId, loadChatThread]);
+  }, [abortActiveStream, activeChatSummary?.chatId, chatId, clearEditProposalState, loadChatThread]);
 
   useEffect(() => () => {
     abortActiveStream("SSE stopped and abort requested on cleanup", { finalizeStreaming: false, addTimelineEntry: false, reportAbortErrors: false });
@@ -1348,7 +1360,7 @@ export function App() {
             <div className="form-grid">
               <label>
                 Chat id
-                <input value={chatId} onChange={(event) => setChatId(event.target.value)} />
+                <input value={chatId} onChange={updateDirectChatId} />
               </label>
             </div>
             <div className="chat-panel" aria-label="Chat messages">

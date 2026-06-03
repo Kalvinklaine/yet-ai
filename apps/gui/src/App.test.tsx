@@ -3871,6 +3871,52 @@ describe("edit proposal preview", () => {
     expect(applyCalls[0][0].requestId).toMatch(/^gui-edit-proposal-/);
   });
 
+  it("clears proposal apply state synchronously on direct chat id changes", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Edit proposal chat", 1), chatSummary("chat-002", "Other chat", 0)],
+      chatThreads: {
+        "chat-001": chatThread("chat-001", "Edit proposal chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]),
+        "chat-002": chatThread("chat-002", "Other chat", []),
+      },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    expect(findButton("Request host apply after review")).toBeDefined();
+    await act(async () => {
+      findButton("Request host apply after review").click();
+    });
+    const oldRequestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
+    expect(oldRequestId).toMatch(/^gui-edit-proposal-/);
+
+    await act(async () => {
+      setInputValue(chatIdInput(), "chat-002");
+    });
+
+    let text = container?.textContent ?? "";
+    expect(text).not.toContain("Confirmed edit proposal");
+    expect(text).not.toContain("Request host apply after review");
+    expect(text).not.toContain(oldRequestId);
+
+    await dispatchHostApplyResult(oldRequestId, {
+      status: "applied",
+      message: "Stale direct chat id result.",
+      cloudRequired: false,
+      appliedEditCount: 1,
+      affectedFiles: ["src/example.ts"],
+    });
+
+    text = container?.textContent ?? "";
+    expect(text).not.toContain("Host apply result");
+    expect(text).not.toContain("Stale direct chat id result.");
+  });
+
   it("keeps proposal request id stable across unrelated chat view updates and prevents duplicate apply while pending", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
