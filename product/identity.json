@@ -4,8 +4,8 @@
     "displayName": "Yet AI",
     "id": "yet-ai",
     "shortName": "Yet",
-    "strategy": "architecture-inspired-rebuild",
-    "description": "Temporary product identity contract for a new Yet AI architecture-inspired independent implementation, not a fork or rename of any external project."
+    "strategy": "standalone-local-first",
+    "description": "Temporary product identity contract for Yet AI, a local-first AI coding assistant and IDE agent plugin product."
   },
   "storage": {
     "projectDir": ".yet-ai",

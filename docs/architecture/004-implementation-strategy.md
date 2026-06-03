@@ -1,12 +1,12 @@
 # 004 Implementation Strategy
 
-Yet AI should use external architecture references as guidance, not as a fork. The user preference is explicit: build a similar kind of product with different design and UI, taking the main structure and runtime ideas without starting from a direct repository copy.
+Yet AI should be implemented as a standalone local-first AI coding assistant and IDE agent plugin product with its own design, UI, runtime, storage, packaging, and release surfaces.
 
 ## Decision context
 
 The earlier architecture package established these constraints:
 
-- External reference implementations demonstrate useful subsystem boundaries: local engine, webview GUI, VS Code plugin, JetBrains plugin, HTTP/SSE chat contracts, optional LSP integration, provider/tool registries, local storage, and local-first BYOK operation.
+- Useful subsystem boundaries are local engine, webview GUI, VS Code plugin, JetBrains plugin, HTTP/SSE chat contracts, optional LSP integration, provider/tool registries, local storage, and local-first BYOK operation.
 - Yet AI has its own identity in `product/identity.json`: `Yet AI`, `yet-ai`, `yet-lsp`, `yet-ai-chat-js`, `.yet-ai`, `yetai`, and `ai.yet.plugin` placeholders.
 - The target architecture prioritizes a new UI and design system, isolated storage, independent plugin IDs, and explicit runtime contracts.
 - A broad copy-and-rename would preserve hidden coupling across storage, package metadata, UI wording, marketplace identity, update paths, and legal attribution surfaces.
@@ -54,9 +54,9 @@ A vendor reference means keeping external source available inside or beside the 
 
 **Recommendation**: avoid in the public repository unless a future task explicitly approves it with license/provenance rules.
 
-### 3. Architecture-inspired clean scaffold
+### 3. Clean local-first scaffold
 
-A clean scaffold means creating Yet AI packages from scratch around the chosen architecture: `apps/engine`, `apps/gui`, `apps/plugins/vscode`, `apps/plugins/jetbrains`, `product`, `docs`, and `scripts`. External implementations remain references, not production source.
+A clean scaffold means creating Yet AI packages around its chosen local-first subsystem boundaries: `apps/engine`, `apps/gui`, `apps/plugins/vscode`, `apps/plugins/jetbrains`, `product`, `docs`, and `scripts`. Unapproved third-party implementations are not production source.
 
 **Advantages**
 
@@ -97,7 +97,7 @@ The hybrid path starts with the clean scaffold and permits selective copying or 
 
 ## Default recommendation
 
-Use an architecture-inspired clean scaffold as the default path, with a controlled hybrid option for selective module reuse later. Yet AI should not start as a full fork or full copy of any external project.
+Use a clean local-first scaffold as the default path, with a controlled option for approved third-party module use later. Yet AI should not start as a full fork or full copy of any external project.
 
 The implementation path is local-first BYOK. Core workflows must run through the local runtime started or reached by the IDE plugin, without requiring a Yet AI account, hosted Yet AI backend, managed model gateway, product credit balance, or cloud workspace. The local runtime owns provider adapters, stores credentials locally, and sends requests directly to configured hosted providers or local model runtimes.
 
@@ -106,7 +106,7 @@ Future Yet AI cloud services are allowed only as optional extensions, such as an
 This path balances product differentiation and practical delivery:
 
 - It honors the goal that Yet AI is independent.
-- It preserves proven architecture patterns without inheriting external branding or storage.
+- It preserves intentional architecture patterns without inheriting third-party branding or storage.
 - It enables a new UI/design from the beginning.
 - It leaves room to reuse difficult, non-visual implementation pieces later when the benefit outweighs coupling and attribution cost.
 
@@ -138,13 +138,13 @@ Agent progress observability is currently contracts plus local deterministic uti
 
 Current real-provider implementation is API-key/OpenAI-compatible direct access only. It does not implement ChatGPT account login, OpenAI OAuth, token refresh, callback handling, or production disconnect/revoke behavior. The engine now exposes provider-auth `start`, `status`, `exchange`, and `disconnect` endpoints as sanitized local skeleton contracts for `openai` and `openai-compatible`; default real-provider start/exchange return login unavailable and do not call external providers. Provider-auth pending/session state is local engine-owned state. Pending state uses hardened local storage for the dev-preview/mock and experimental paths, while raw provider secrets, tokens, authorization codes, PKCE verifiers, cookies, browser profiles, and credential file paths remain outside GUI ownership and GUI-facing responses. New API keys and experimental OAuth access/refresh/metadata records are stored through the engine composite secret store, not provider config JSON. Production builds prefer OS credential storage where the platform service is available and use protected files under user config only when the primary is disabled by policy or for safe fallback reads after an empty healthy primary lookup; debug/test automation deliberately uses the fallback path. Keychain reads are bounded and can return sanitized unavailable status, while keychain writes and deletes wait for completion rather than relying on timeout assumptions about late side effects. Transient primary write/delete failures, locked-keychain read unavailability, read-back mismatches, primary-unavailable reads, and fallback cleanup failures return sanitized errors instead of silently succeeding through fallback. Existing fallback records migrate to keychain only after verified write/read-back, cleanup is retried on later healthy primary reads, keychain values win only when the primary read is healthy, and disconnect/delete attempts both backends without hiding real primary cleanup failures. The keychain put-if-absent lock is in-process only and is paired with read-back verification; it is not a cross-process lock. Legacy inline `auth.apiKey` values are migrated on normal provider/model/test/chat access by atomically creating the missing secret-store record before scrubbing config; an existing stored secret wins over stale inline values, and unsafe secret-store failures return sanitized errors without inline fallback. Provider create stores API-key material with put-if-absent before config creation and rolls back on config failure; provider delete cleans API-key material before config deletion and can retry cleanup when config is already missing; provider update rolls explicit secret state changes back if config persistence fails where rollback succeeds; metadata-only provider updates avoid credential reads and writes. The local mock OAuth/PKCE harness is only for contract and smoke tests. The GUI can render login-first provider-auth statuses and open only safe authorization URLs, but current real-provider use remains the API-key fallback.
 
-External reference inspection for OpenAI/Codex auth found this architecture shape:
+Provider-auth design keeps this architecture shape:
 
 - The OpenAI API-key provider remains a normal direct provider path.
 - The OpenAI Codex account path uses an OAuth authorization-code flow with PKCE against OpenAI auth endpoints, opens a browser URL, uses a loopback callback when available, supports manual/device-style GUI states, and exchanges tokens in the engine.
 - Tokens are engine/provider configuration state. Provider settings expose sanitized flags such as auth status, source, connected state, whether an API key is ready, and short diagnostics; raw access tokens, refresh tokens, and API keys are not GUI-facing settings.
 - Refresh is engine-owned. Permanent refresh failures clear stored OAuth access/refresh token material and require login again. Disconnect is exposed as a provider OAuth logout action from the GUI to the engine.
-- The implementation also contains risky surfaces that should not be copied as a default: fallback reads of another CLI's credentials, ChatGPT backend endpoints for usage/model access, provider-specific account headers, and provider-client identifiers that may not be appropriate for Yet AI without explicit compliance review.
+- Risky surfaces must not be copied as a default: fallback reads of another CLI's credentials, ChatGPT backend endpoints for usage/model access, provider-specific account headers, and provider-client identifiers that may not be appropriate for Yet AI without explicit compliance review.
 
 Yet AI should implement a safer staged strategy:
 
@@ -193,9 +193,9 @@ Use `npm run check:agent-progress` for reducer/state/report assertions, `npm run
 
 Future production wiring should attach event emission to explicit runner lifecycle hooks after runner authority and task-board integration are designed. Hooks should report queued, reading context, editing, running commands, waiting for tool output, verifying, finishing, done, failed, or stuck states using only sanitized operational fields: ids, phase/status, tool label/kind, elapsed and heartbeat ages, stuck reason, recent summaries, attempt counts, and bounded sanitized output tails. They should not expose prompts, chain-of-thought, raw provider responses, raw file contents, provider credentials, OAuth tokens, cookies, local runtime session tokens, credential paths, private absolute paths, shell scripts, patch payloads, or workspace file bodies. Progress reporting must not become a backdoor for shell authority, tool execution, file edits, git merges, workspace mutation, provider calls, cloud sync, or hosted Yet AI services. Local-first BYOK remains mandatory.
 
-## Criteria for acceptable external module copying
+## Criteria for acceptable third-party module copying
 
-Copying or substantially adapting external code is acceptable only when all of these criteria are met:
+Copying or substantially adapting third-party code is acceptable only when all of these criteria are met:
 
 1. **Interface first**: the Yet AI public interface is already defined for the area, such as HTTP/SSE event shape, storage API, provider adapter trait, tool contract, or IDE bridge message.
 2. **Identity isolation**: the module has been audited for product names, package paths, storage directories, URLs, marketplace IDs, telemetry/support links, icons, screenshots, and UI copy.
@@ -208,16 +208,16 @@ Copying or substantially adapting external code is acceptable only when all of t
 9. **No marketplace coupling**: the module cannot depend on external VS Code or JetBrains extension IDs, command prefixes, configuration namespaces, package namespaces, or update IDs.
 10. **Review checkpoint**: the decision is approved in an architecture note or implementation card before the copy happens.
 
-Good early candidates for possible later reuse are low-level, non-visual logic with stable boundaries, such as protocol serialization helpers, SSE sequence tests, provider adapter patterns, AST/indexing utilities, or tool policy mechanics. Poor candidates are external GUI shells, plugin marketplace manifests, icons, resource bundles, storage path code, release workflows, and user-facing copy.
+Good early candidates for possible later approved reuse are low-level, non-visual logic with stable boundaries, such as protocol serialization helpers, SSE sequence tests, provider adapter patterns, AST/indexing utilities, or tool policy mechanics. Poor candidates are third-party GUI shells, plugin marketplace manifests, icons, resource bundles, storage path code, release workflows, and user-facing copy.
 
 ## Practical implementation policy
 
-- Start each subsystem empty or minimal; do not import external source as the first step.
-- Keep external reference material out of production packages unless a specific implementation card approves a copy.
+- Start each subsystem empty or minimal; do not import third-party source as the first step.
+- Keep unapproved third-party material out of production packages unless a specific implementation card approves a copy.
 - Prefer writing thin contracts and tests before adding complex behavior.
 - Use `product/identity.json` to validate names, package IDs, storage roots, and plugin metadata.
 - Preserve local-first BYOK boundaries: provider adapters and credentials belong to the local runtime, GUI renders sanitized setup/status, and plugins launch or connect to the runtime without duplicating provider logic.
-- Keep vendor/reference material out of build outputs and product archives by default.
+- Keep unapproved third-party material out of build outputs and product archives by default.
 - Keep public tracked files free of external project identifiers; private comparison notes belong only in ignored local files.
 - When in doubt, preserve the architecture pattern and rewrite the implementation in Yet AI style.
 
@@ -238,4 +238,4 @@ Every follow-up card must keep the no-required-cloud contract intact: core chat,
 
 ## Current decision
 
-The default implementation strategy is: architecture-inspired clean scaffold first, hybrid selective reuse later only when justified. Full fork/copy is rejected as the default because Yet AI needs independent identity, storage, packaging, and new UI/design from the start.
+The default implementation strategy is: clean local-first scaffold first, approved selective reuse later only when justified. Full fork/copy is rejected because Yet AI needs independent identity, storage, packaging, and new UI/design from the start.

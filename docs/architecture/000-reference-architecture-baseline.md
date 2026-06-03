@@ -1,6 +1,6 @@
-# 000 Reference Architecture Baseline
+# 000 Subsystem Architecture Baseline
 
-This document records the external architecture patterns that are useful for Yet AI without naming or copying any external implementation. Yet AI should use these notes as a conceptual baseline for its own independent code, identity, packaging, UI, and storage.
+This document records the subsystem patterns that are useful for Yet AI as a standalone local-first product. Yet AI should use these notes as a baseline for its own code, identity, packaging, UI, and storage.
 
 ## Scope
 
@@ -117,7 +117,7 @@ Do not copy these values. Define Yet AI equivalents in `product/identity.json` o
 
 ## Implementation guidance
 
-- Use the subsystem split as a reference: local engine, web GUI, VS Code host plugin, JetBrains host plugin, and local state.
+- Use the subsystem split: local engine, web GUI, VS Code host plugin, JetBrains host plugin, and local state.
 - Define identity before scaffolding packages.
 - Keep runtime contracts explicit: commands, SSE events, optional LSP lifecycle, IDE bridge, tool confirmations, and provider capabilities.
 - Prefer a clean scaffold that adopts architecture patterns intentionally.

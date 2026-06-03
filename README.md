@@ -1,10 +1,10 @@
 # Yet AI
 
-Yet AI is an architecture-inspired independent AI coding assistant for IDEs. The repository now has a buildable local MVP foundation: a Rust local runtime, provider registry, OpenAI-compatible streaming path, React/Vite GUI shell, VS Code webview host shell, JetBrains JCEF host shell, and typed contracts between them.
+Yet AI is a local-first AI coding assistant and IDE agent plugin product for developer IDEs. The repository now has a buildable local MVP foundation: a Rust local runtime, provider registry, OpenAI-compatible streaming path, React/Vite GUI shell, VS Code webview host shell, JetBrains JCEF host shell, and typed contracts between them.
 
 ## Current status
 
-- Approach: independent architecture-inspired rebuild, not a fork or rename of any external project.
+- Approach: standalone local-first product with its own runtime, UI, IDE plugins, storage, packaging, and release surfaces.
 - Baseline: buildable MVP scaffolds exist for the engine, GUI, VS Code plugin, and JetBrains plugin. They are suitable for local development and contract hardening, not production release.
 - IDE preview status: VS Code and JetBrains shells can use packaged GUI assets generated from `apps/gui/dist`, or a loopback GUI dev server, and both support MVP local runtime `connect`, `launch`, and `auto` workflows for `yet-lsp`. `npm run prepare:vscode-preview` also publishes a local ignored VS Code dev-preview artifact at `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix` with a matching `.sha256` checksum for install-from-file smoke testing.
 - Product-sensitive values should be centralized in `product/identity.json` where practical. Temporary identity placeholders remain until final product IDs, publishers, domains, and marketplace metadata are approved.
@@ -410,7 +410,7 @@ Run these when changing the corresponding subsystem. The required verification f
 Start here:
 
 - `docs/README.md` — documentation layout and contribution rules.
-- `docs/architecture/000-reference-architecture-baseline.md` — external architecture baseline and product-sensitive surfaces to avoid copying blindly.
+- `docs/architecture/000-reference-architecture-baseline.md` — standalone subsystem baseline and product-sensitive surfaces.
 - `docs/architecture/001-product-identity.md` — identity contract based on `product/identity.json`.
 - `docs/architecture/002-product-differentiation-and-provenance.md` — differentiation, provenance, and publication safety rules.
 - `docs/architecture/003-target-architecture.md` — target Yet AI architecture, subsystem boundaries, contracts, and roadmap.
@@ -419,4 +419,4 @@ Start here:
 
 ## Agent guidance
 
-Future agents must read `AGENTS.md` before changing the repository. Important rules: keep public tracked files free of external project identifiers, use local ignored files for private reference notes, avoid broad product renames unless requested, avoid large external code copies without explicit task approval, preserve license and attribution if code or assets are copied later, and keep changes incremental with verification commands.
+Future agents must read `AGENTS.md` before changing the repository. Important rules: keep public tracked files free of external project identifiers, use local ignored files for private notes, avoid broad product renames unless requested, avoid unapproved third-party code or asset copies, preserve license and attribution if code or assets are approved later, and keep changes incremental with verification commands.

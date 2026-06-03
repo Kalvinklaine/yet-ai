@@ -1,16 +1,16 @@
 # Yet AI Agent Instructions
 
-Yet AI is an architecture-inspired independent implementation of an AI coding assistant for developer IDEs. The repository must present Yet AI as its own product with its own identity, UI, packaging, storage, and runtime contracts.
+Yet AI is a local-first AI coding assistant and IDE agent plugin product for developer IDEs. The repository must present Yet AI as its own product with its own identity, UI, packaging, storage, and runtime contracts.
 
 ## Core rules for future agents
 
 - Do not perform broad product renames unless a task explicitly asks for one.
-- Do not copy large code blocks from external reference implementations without explicit approval in the task.
+- Do not copy unapproved third-party code or assets into the product.
 - Keep product-sensitive values centralized in `product/identity.json` where practical: names, IDs, package names, binary names, storage dirs, marketplace metadata, URLs, and publishers.
 - Preserve the local-first BYOK contract: core Yet AI workflows must not require a hosted Yet AI backend, account, managed model gateway, product credit balance, or cloud workspace.
 - Keep provider settings and credentials local-only. Raw provider secrets must not be persisted by GUI code or returned through GUI-facing responses after save.
 - Temporary identity placeholders are acceptable until final product IDs, publishers, domains, support links, and marketplace accounts are finalized.
-- If external code or assets are copied later, check license and attribution requirements first, then preserve required notices and provenance intentionally.
+- If third-party code or assets are approved for use later, check license and attribution requirements first, then preserve required notices and provenance intentionally.
 - Keep public tracked files free of external project identifiers. Use ignored local-only files for private reference notes, such as `AGENTS.local.md`, `.local/`, or `.agent-local/`.
 - Do not add external project names to ignore rules, public docs, scripts, examples, or generated files.
 - Make incremental, testable changes. Every task should have a clear verification command and avoid mixing unrelated changes.
@@ -32,7 +32,7 @@ Long-term project boundaries are described in `docs/architecture/003-target-arch
 
 Read these before architecture or scaffold work:
 
-- `docs/architecture/000-reference-architecture-baseline.md` — external architecture baseline and product-sensitive surfaces.
+- `docs/architecture/000-reference-architecture-baseline.md` — standalone subsystem baseline and product-sensitive surfaces.
 - `docs/architecture/001-product-identity.md` — Yet AI identity contract and maintenance rule.
 - `docs/architecture/002-product-differentiation-and-provenance.md` — differentiation, provenance, and publication safety rules.
 - `docs/architecture/003-target-architecture.md` — target boundaries, contracts, and phased roadmap.
