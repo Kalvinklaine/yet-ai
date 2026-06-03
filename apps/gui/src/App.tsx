@@ -80,6 +80,8 @@ type AgentProgressState = {
 type EditProposalState = {
   requestId: string;
   payload: ApplyWorkspaceEditPayload;
+  sourceMessageId: string;
+  payloadKey: string;
 };
 
 type ApplyResultState = {
@@ -255,8 +257,11 @@ export function App() {
   const activeStreamRef = useRef<ActiveStream | null>(null);
   const [editProposal, setEditProposal] = useState<EditProposalState | null>(null);
   const [applyResult, setApplyResult] = useState<ApplyResultState | null>(null);
+  const [pendingApplyRequestId, setPendingApplyRequestId] = useState<string | null>(null);
   const bridgeAdapterRef = useRef<BridgeAdapter | null>(null);
   const editProposalCounterRef = useRef(0);
+  const editProposalIdentityRef = useRef<{ requestId: string; sourceMessageId: string; payloadKey: string } | null>(null);
+  const pendingApplyRequestIdRef = useRef<string | null>(null);
   const attachedContextRef = useRef<typeof attachedContext>(null);
   const agentProgressAttemptRef = useRef(0);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -323,6 +328,14 @@ export function App() {
     setTimeline((current) => [entry, ...current].slice(0, 80));
   }, []);
 
+  const clearEditProposalState = useCallback(() => {
+    editProposalIdentityRef.current = null;
+    pendingApplyRequestIdRef.current = null;
+    setEditProposal(null);
+    setApplyResult(null);
+    setPendingApplyRequestId(null);
+  }, []);
+
   const abortActiveStream = useCallback((timelineMessage: string, options: AbortActiveStreamOptions = {}) => {
     const { finalizeStreaming = true, addTimelineEntry = true, reportAbortErrors = true } = options;
     const activeStream = activeStreamRef.current;
@@ -374,7 +387,8 @@ export function App() {
     setAttachedContext(null);
     setIncludeAttachedContext(false);
     setAttachedContextStatus(null);
-  }, [abortActiveStream]);
+    clearEditProposalState();
+  }, [abortActiveStream, clearEditProposalState]);
 
   const updateRuntimeSettings = useCallback((nextSettings: RuntimeSettings) => {
     const changed = settingsRef.current.baseUrl !== nextSettings.baseUrl || settingsRef.current.token !== nextSettings.token;
@@ -422,7 +436,13 @@ export function App() {
         setIncludeAttachedContext(hasUsableAttachedContext(nextContext));
         setAttachedContextStatus(null);
       } else if (message.type === "host.applyWorkspaceEditResult") {
-        setApplyResult({ requestId: message.requestId ?? "unknown", payload: message.payload as ApplyWorkspaceEditResultPayload });
+        const requestId = message.requestId ?? "unknown";
+        if (requestId !== pendingApplyRequestIdRef.current) {
+          return;
+        }
+        pendingApplyRequestIdRef.current = null;
+        setPendingApplyRequestId(null);
+        setApplyResult({ requestId, payload: message.payload as ApplyWorkspaceEditResultPayload });
       }
     });
     return () => {
@@ -647,12 +667,13 @@ export function App() {
       setAttachedContext(null);
       setIncludeAttachedContext(false);
       setAttachedContextStatus(null);
+      clearEditProposalState();
     } else {
       setChatHistoryError(result.error);
       setChatHistoryRevision(targetRevision);
     }
     setChatHistoryLoading(false);
-  }, [abortActiveStream, isCurrentRefresh]);
+  }, [abortActiveStream, clearEditProposalState, isCurrentRefresh]);
 
   const selectChat = useCallback((nextChatId: string) => {
     if (nextChatId === chatIdRef.current) {
@@ -660,10 +681,11 @@ export function App() {
     }
     abortActiveStream("SSE stopped and abort requested before switching chats");
     setChatInput("");
+    clearEditProposalState();
     setChatId(nextChatId);
     setChatView(resetChatViewState(nextChatId));
     void loadChatThread(nextChatId);
-  }, [abortActiveStream, loadChatThread]);
+  }, [abortActiveStream, clearEditProposalState, loadChatThread]);
 
   const deleteCurrentChat = useCallback(async (targetChatId: string) => {
     const targetSettings = settingsRef.current;
@@ -695,6 +717,7 @@ export function App() {
         setAttachedContext(null);
         setIncludeAttachedContext(false);
         setAttachedContextStatus(null);
+        clearEditProposalState();
       }
     } else {
       setChatHistoryError(result.error);
@@ -702,7 +725,7 @@ export function App() {
     }
     setDeletingChatId(null);
     setChatHistoryLoading(false);
-  }, [abortActiveStream, chatSummaries, isCurrentRefresh]);
+  }, [abortActiveStream, chatSummaries, clearEditProposalState, isCurrentRefresh]);
 
   const connect = useCallback(async () => {
     if (runtimeRefreshInFlightRef.current) {
@@ -1068,23 +1091,34 @@ export function App() {
   };
 
   const submitEditProposal = useCallback(() => {
-    if (!editProposal || bridgeHost !== "vscode") {
+    if (!editProposal || bridgeHost !== "vscode" || pendingApplyRequestIdRef.current) {
       return;
     }
+    pendingApplyRequestIdRef.current = editProposal.requestId;
+    setPendingApplyRequestId(editProposal.requestId);
+    setApplyResult(null);
     bridgeAdapterRef.current?.post({
       version: "2026-05-15",
       type: "gui.applyWorkspaceEditRequest",
       requestId: editProposal.requestId,
       payload: editProposal.payload,
     });
-    setApplyResult(null);
     addTimeline(`Edit proposal apply requested ${editProposal.requestId}`);
   }, [addTimeline, bridgeHost, editProposal]);
 
   useEffect(() => {
-    const proposal = latestEditProposalFromMessages(chatView.messages, editProposalCounterRef);
-    setEditProposal((current) => proposal && (!current || current.requestId !== proposal.requestId || current.payload.summary !== proposal.payload.summary) ? proposal : current);
-  }, [chatView.messages]);
+    const proposal = latestEditProposalFromMessages(chatView.messages, editProposalCounterRef, editProposalIdentityRef);
+    if (!proposal) {
+      clearEditProposalState();
+      return;
+    }
+    setEditProposal((current) => current?.requestId === proposal.requestId ? current : proposal);
+    setApplyResult((current) => current?.requestId === proposal.requestId ? current : null);
+    if (pendingApplyRequestIdRef.current && pendingApplyRequestIdRef.current !== proposal.requestId) {
+      pendingApplyRequestIdRef.current = null;
+      setPendingApplyRequestId(null);
+    }
+  }, [chatView.messages, clearEditProposalState]);
 
   const submitChat = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1321,7 +1355,7 @@ export function App() {
               {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect()} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} />)}
               {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
             </div>
-            <EditProposalPanel proposal={editProposal} result={applyResult} host={bridgeHost} onApply={submitEditProposal} />
+            <EditProposalPanel proposal={editProposal} result={applyResult} host={bridgeHost} pendingRequestId={pendingApplyRequestId} onApply={submitEditProposal} />
             <form className="stack chat-composer" onSubmit={(event) => void submitChat(event)}>
               <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} />
               <textarea ref={chatInputRef} value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
@@ -1700,18 +1734,30 @@ function formatEditRange(range: { start: { line: number; character: number }; en
   return `${range.start.line}:${range.start.character}-${range.end.line}:${range.end.character}`;
 }
 
-function latestEditProposalFromMessages(messages: ChatViewMessage[], counterRef: { current: number }): EditProposalState | null {
+function latestEditProposalFromMessages(messages: ChatViewMessage[], counterRef: { current: number }, identityRef: { current: { requestId: string; sourceMessageId: string; payloadKey: string } | null }): EditProposalState | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index].role !== "assistant") {
+    const message = messages[index];
+    if (message.role !== "assistant") {
       continue;
     }
-    const payload = extractEditProposal(messages[index].content);
-    if (payload) {
-      counterRef.current += 1;
-      return { requestId: `gui-edit-proposal-${counterRef.current}`, payload };
+    const payload = extractEditProposal(message.content);
+    if (!payload) {
+      return null;
     }
+    const payloadKey = stableEditProposalPayloadKey(payload);
+    if (identityRef.current?.sourceMessageId === message.id && identityRef.current.payloadKey === payloadKey) {
+      return { requestId: identityRef.current.requestId, payload, sourceMessageId: message.id, payloadKey };
+    }
+    counterRef.current += 1;
+    const requestId = `gui-edit-proposal-${counterRef.current}`;
+    identityRef.current = { requestId, sourceMessageId: message.id, payloadKey };
+    return { requestId, payload, sourceMessageId: message.id, payloadKey };
   }
   return null;
+}
+
+function stableEditProposalPayloadKey(payload: ApplyWorkspaceEditPayload): string {
+  return JSON.stringify(payload);
 }
 
 function extractEditProposal(content: string): ApplyWorkspaceEditPayload | null {
@@ -1796,7 +1842,7 @@ function ChatBubble({ message }: { message: ChatViewMessage }) {
   );
 }
 
-function EditProposalPanel({ proposal, result, host, onApply }: { proposal: EditProposalState | null; result: ApplyResultState | null; host: BridgeHost; onApply: () => void }) {
+function EditProposalPanel({ proposal, result, host, pendingRequestId, onApply }: { proposal: EditProposalState | null; result: ApplyResultState | null; host: BridgeHost; pendingRequestId: string | null; onApply: () => void }) {
   if (!proposal && !result) {
     return null;
   }
@@ -1806,13 +1852,13 @@ function EditProposalPanel({ proposal, result, host, onApply }: { proposal: Edit
         <strong>Confirmed edit proposal</strong>
         <span className="badge warn">preview only</span>
       </div>
-      {proposal ? <EditProposalPreview proposal={proposal} host={host} onApply={onApply} /> : <span className="subtle">No valid bounded edit proposal is available.</span>}
+      {proposal ? <EditProposalPreview proposal={proposal} host={host} pending={pendingRequestId === proposal.requestId} onApply={onApply} /> : <span className="subtle">No valid bounded edit proposal is available.</span>}
       {result && <ApplyResultPreview result={result} />}
     </section>
   );
 }
 
-function EditProposalPreview({ proposal, host, onApply }: { proposal: EditProposalState; host: BridgeHost; onApply: () => void }) {
+function EditProposalPreview({ proposal, host, pending, onApply }: { proposal: EditProposalState; host: BridgeHost; pending: boolean; onApply: () => void }) {
   const files = proposal.payload.edits;
   const editCount = files.reduce((count, file) => count + file.textReplacements.length, 0);
   return (
@@ -1842,7 +1888,7 @@ function EditProposalPreview({ proposal, host, onApply }: { proposal: EditPropos
       {host !== "vscode" ? (
         <div className="readiness-card warn" role="status">This MVP can apply workspace edits only from VS Code. Browser and JetBrains preview mode cannot request apply yet.</div>
       ) : (
-        <button type="button" onClick={onApply}>Request host apply after review</button>
+        <button type="button" onClick={onApply} disabled={pending}>{pending ? "Host apply pending…" : "Request host apply after review"}</button>
       )}
       <span className="subtle">The GUI never edits files directly. The host must confirm and apply any workspace mutation.</span>
     </div>
