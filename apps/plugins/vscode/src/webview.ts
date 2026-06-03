@@ -355,11 +355,20 @@ function isRangeWithinDocument(range: ApplyWorkspaceTextReplacement["range"], do
 function hasOverlappingTextReplacements(textReplacements: ApplyWorkspaceTextReplacement[]): boolean {
   const sorted = [...textReplacements].sort((left, right) => comparePositions(left.range.start, right.range.start));
   for (let index = 1; index < sorted.length; index += 1) {
-    if (comparePositions(sorted[index - 1].range.end, sorted[index].range.start) > 0) {
+    const previous = sorted[index - 1];
+    const current = sorted[index];
+    if (comparePositions(previous.range.start, current.range.start) === 0 && (isZeroLengthRange(previous.range) || isZeroLengthRange(current.range))) {
+      return true;
+    }
+    if (comparePositions(previous.range.end, current.range.start) > 0) {
       return true;
     }
   }
   return false;
+}
+
+function isZeroLengthRange(range: ApplyWorkspaceTextReplacement["range"]): boolean {
+  return comparePositions(range.start, range.end) === 0;
 }
 
 function comparePositions(left: ApplyWorkspacePosition, right: ApplyWorkspacePosition): number {
@@ -750,7 +759,7 @@ function sanitizeSafePath(value: string | undefined, maxLength: number): string 
 }
 
 function hasSecretLikeText(value: string): boolean {
-  return /(?:authorization|bearer\s+|sessiontoken|session[_-]?token|api[_-]?key|secret|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}|(?:^|[^A-Za-z0-9_-])(?:cookie|token|password|provider[_-]?response|raw[_-]?prompt|file[_-]?content|private[_-]?path)(?:[^A-Za-z0-9_-]|$))/i.test(value);
+  return /(?:authorization|bearer\s+|sessiontoken|session[_-]?token|access[_-]?token|refresh[_-]?token|id[_-]?token|auth[_-]?token|provider[_-]?token|api[_-]?key|secret|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}|(?:^|[^A-Za-z0-9_-])(?:cookie|token|password|provider[_-]?response|raw[_-]?prompt|file[_-]?content|private[_-]?path)(?:[^A-Za-z0-9_-]|$))/i.test(value);
 }
 
 function hasBinaryLikeText(value: string): boolean {

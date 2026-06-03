@@ -334,6 +334,18 @@ const invalidApplyWorkspaceEditRequests = [
   createApplyWorkspaceEditRequest({ summary: "Update C:\\Users\\alice\\project\\src\\main.ts." }),
   createApplyWorkspaceEditRequest({ summary: "Update sk-abcdefghijklmnopqrstuvwxyz." }),
   createApplyWorkspaceEditRequest({ summary: "Update sk-proj-abcdefghijklmnopqrstuvwxyz." }),
+  createApplyWorkspaceEditRequest({ summary: "Update access_token handling." }),
+  createApplyWorkspaceEditRequest({ summary: "Update refresh_token handling." }),
+  createApplyWorkspaceEditRequest({ summary: "Update id_token handling." }),
+  createApplyWorkspaceEditRequest({ summary: "Update authToken handling." }),
+  createApplyWorkspaceEditRequest({ summary: "Update providerToken handling." }),
+  createApplyWorkspaceEditRequest({ summary: "Update Cookie handling." }),
+  createApplyWorkspaceEditRequest({ summary: "Update cookie handling." }),
+  createApplyWorkspaceEditRequest({ summary: "Update password handling." }),
+  createApplyWorkspaceEditRequest({ summary: "Update provider_response handling." }),
+  createApplyWorkspaceEditRequest({ summary: "Update raw_prompt handling." }),
+  createApplyWorkspaceEditRequest({ summary: "Update file_content handling." }),
+  createApplyWorkspaceEditRequest({ summary: "Update private_path handling." }),
   createApplyWorkspaceEditRequest({ workspaceRelativePath: "src//main.ts" }),
   createApplyWorkspaceEditRequest({ workspaceRelativePath: "src/" }),
   createApplyWorkspaceEditRequest({ workspaceRelativePath: "/src/main.ts" }),
@@ -456,6 +468,12 @@ for (const privateResultMessage of [
   "Failed at C:\\Users\\alice\\project\\src\\main.ts.",
   "Failed with sk-abcdefghijklmnopqrstuvwxyz.",
   "Failed with sk-proj-abcdefghijklmnopqrstuvwxyz.",
+  "Failed with access_token value.",
+  "Failed with refresh_token value.",
+  "Failed with id_token value.",
+  "Failed with authToken value.",
+  "Failed with providerToken value.",
+  "Failed with Cookie value.",
   "Failed with cookie value.",
   "Failed with standalone token value.",
   "Failed with password value.",
@@ -737,6 +755,26 @@ async function assertApplyWorkspaceEditBehavior() {
     textReplacements: [
       { range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } }, replacementText: "hello" },
       { range: { start: { line: 0, character: 3 }, end: { line: 0, character: 7 } }, replacementText: "wave" },
+    ],
+  }));
+  assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+  assert.equal(warningCalls, 0);
+  assert.equal(applyCalls, 0);
+
+  await handleApplyWorkspaceEditRequest(testWebview, createApplyWorkspaceEditRequest({
+    textReplacements: [
+      { range: { start: { line: 0, character: 5 }, end: { line: 0, character: 5 } }, replacementText: "!" },
+      { range: { start: { line: 0, character: 5 }, end: { line: 0, character: 5 } }, replacementText: "?" },
+    ],
+  }));
+  assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+  assert.equal(warningCalls, 0);
+  assert.equal(applyCalls, 0);
+
+  await handleApplyWorkspaceEditRequest(testWebview, createApplyWorkspaceEditRequest({
+    textReplacements: [
+      { range: { start: { line: 0, character: 5 }, end: { line: 0, character: 5 } }, replacementText: "!" },
+      { range: { start: { line: 0, character: 5 }, end: { line: 0, character: 7 } }, replacementText: "wa" },
     ],
   }));
   assert.equal(webviewMessages.at(-1).payload.status, "rejected");
