@@ -256,10 +256,13 @@ function harnessHtml() {
       }
     }
     let pendingRequestId = null;
+    let applyAttempt = 0;
     function renderProposal(version, proposal) {
+      pendingRequestId = null;
       const root = document.getElementById("root");
       root.innerHTML = "";
       if (!isProposal(proposal)) {
+        pendingRequestId = null;
         root.textContent = "No valid edit proposal.";
         return;
       }
@@ -286,7 +289,8 @@ function harnessHtml() {
       button.textContent = "Request host apply after review";
       button.addEventListener("click", () => {
         if (pendingRequestId) return;
-        pendingRequestId = "gui-edit-proposal-smoke-" + Date.now();
+        applyAttempt += 1;
+        pendingRequestId = "gui-edit-proposal-apply-smoke-" + applyAttempt;
         button.disabled = true;
         button.textContent = "Host apply pending…";
         vscode.postMessage({ version, type: "gui.applyWorkspaceEditRequest", requestId: pendingRequestId, payload: proposal });
