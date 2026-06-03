@@ -37,6 +37,12 @@ type LspResponse = {
   error?: { message?: string };
 };
 
+type LspServerCapabilities = {
+  completion: boolean;
+  hover: boolean;
+  documentSymbol: boolean;
+};
+
 let lspProcess: LspProcess | undefined;
 
 const maxLspDiagnosticLength = 1000;
@@ -44,6 +50,7 @@ const lspDiagnosticTruncationMarker = "… [truncated sanitized LSP diagnostic]"
 const maxLspHeaderBytes = 8 * 1024;
 const maxLspMessageBytes = 512 * 1024;
 const maxDocumentBytes = 256 * 1024;
+const maxUriBytes = 512;
 const lspRequestTimeoutMs = 5_000;
 const lspShutdownGraceMs = 500;
 const lspTerminateGraceMs = 1_000;
@@ -203,10 +210,11 @@ async function initializeLspClient(client: LspProcess, output: LspOutput): Promi
     if (client.closed || client.stopping) {
       return;
     }
+    const capabilities = readLspServerCapabilities(initialize.result);
     client.initialized = true;
     sendLspNotification(client, "initialized", {}, output);
-    registerDocumentSync(client, output);
-    output.appendLine("Yet AI read-only LSP MVP initialized for local file document sync and deterministic completion.");
+    registerDocumentSync(client, output, capabilities);
+    output.appendLine("Yet AI read-only LSP MVP initialized for local file document sync, deterministic completion, hover, and document symbols.");
   } catch (error) {
     if (!client.stopping) {
       output.appendLine(`Yet AI read-only LSP MVP initialize failed: ${sanitizeLspDiagnostic(error, "initialize failed")}`);
@@ -215,90 +223,105 @@ async function initializeLspClient(client: LspProcess, output: LspOutput): Promi
   }
 }
 
-function registerDocumentSync(client: LspProcess, output: LspOutput): void {
+function readLspServerCapabilities(result: unknown): LspServerCapabilities {
+  const capabilities: Record<string, unknown> = isObject(result) && isObject(result.capabilities) ? result.capabilities : {};
+  return {
+    completion: isObject(capabilities.completionProvider),
+    hover: capabilities.hoverProvider === true,
+    documentSymbol: capabilities.documentSymbolProvider === true,
+  };
+}
+
+function registerDocumentSync(client: LspProcess, output: LspOutput, capabilities: LspServerCapabilities): void {
   for (const document of vscode.workspace.textDocuments ?? []) {
     syncOpenDocument(client, document, output);
   }
   client.disposables.push(vscode.workspace.onDidOpenTextDocument((document) => syncOpenDocument(client, document, output)));
   client.disposables.push(vscode.workspace.onDidChangeTextDocument((event) => syncChangedDocument(client, event.document, output)));
   client.disposables.push(vscode.workspace.onDidCloseTextDocument((document) => syncClosedDocument(client, document, output)));
-  client.disposables.push(vscode.languages.registerHoverProvider({ scheme: "file" }, {
-    async provideHover(document, position) {
-      if (!isEligibleDocument(client, document, output)) {
-        return undefined;
-      }
-      syncOpenDocument(client, document, output);
-      if (!client.documents.has(document.uri.toString())) {
-        return undefined;
-      }
-      try {
-        const response = await sendLspRequest(client, "textDocument/hover", {
-          textDocument: { uri: document.uri.toString() },
-          position: { line: position.line, character: position.character },
-        }, output);
-
-        if (response.error) {
-          output.appendLine(`Yet AI read-only LSP MVP hover failed: ${sanitizeLspDiagnostic(response.error.message, "hover failed")}`);
+  if (capabilities.hover) {
+    client.disposables.push(vscode.languages.registerHoverProvider({ scheme: "file" }, {
+      async provideHover(document, position) {
+        if (!isEligibleDocument(client, document, output)) {
           return undefined;
         }
-        return toHover(response.result);
-      } catch (error) {
-        output.appendLine(`Yet AI read-only LSP MVP hover unavailable: ${sanitizeLspDiagnostic(error, "hover unavailable")}`);
-        return undefined;
-      }
-    },
-  }));
-  client.disposables.push(vscode.languages.registerDocumentSymbolProvider({ scheme: "file" }, {
-    async provideDocumentSymbols(document) {
-      if (!isEligibleDocument(client, document, output)) {
-        return undefined;
-      }
-      syncOpenDocument(client, document, output);
-      if (!client.documents.has(document.uri.toString())) {
-        return undefined;
-      }
-      try {
-        const response = await sendLspRequest(client, "textDocument/documentSymbol", {
-          textDocument: { uri: document.uri.toString() },
-        }, output);
-
-        if (response.error) {
-          output.appendLine(`Yet AI read-only LSP MVP document symbols failed: ${sanitizeLspDiagnostic(response.error.message, "document symbols failed")}`);
-          return [];
-        }
-        return toDocumentSymbols(response.result);
-      } catch (error) {
-        output.appendLine(`Yet AI read-only LSP MVP document symbols unavailable: ${sanitizeLspDiagnostic(error, "document symbols unavailable")}`);
-        return undefined;
-      }
-    },
-  }));
-  client.disposables.push(vscode.languages.registerCompletionItemProvider({ scheme: "file" }, {
-    async provideCompletionItems(document, position) {
-      if (!isEligibleDocument(client, document, output)) {
-        return undefined;
-      }
-      syncOpenDocument(client, document, output);
-      if (!client.documents.has(document.uri.toString())) {
-        return undefined;
-      }
-      try {
-        const response = await sendLspRequest(client, "textDocument/completion", {
-          textDocument: { uri: document.uri.toString() },
-          position: { line: position.line, character: position.character },
-        }, output);
-
-        if (response.error) {
-          output.appendLine(`Yet AI read-only LSP MVP completion failed: ${sanitizeLspDiagnostic(response.error.message, "completion failed")}`);
+        syncOpenDocument(client, document, output);
+        if (!client.documents.has(document.uri.toString())) {
           return undefined;
         }
-        return toCompletionList(response.result);
-      } catch (error) {
-        output.appendLine(`Yet AI read-only LSP MVP completion unavailable: ${sanitizeLspDiagnostic(error, "completion unavailable")}`);
-        return undefined;
-      }
-    },
-  }));
+        try {
+          const response = await sendLspRequest(client, "textDocument/hover", {
+            textDocument: { uri: document.uri.toString() },
+            position: { line: position.line, character: position.character },
+          }, output);
+
+          if (response.error) {
+            output.appendLine(`Yet AI read-only LSP MVP hover failed: ${sanitizeLspDiagnostic(response.error.message, "hover failed")}`);
+            return undefined;
+          }
+          return toHover(response.result);
+        } catch (error) {
+          output.appendLine(`Yet AI read-only LSP MVP hover unavailable: ${sanitizeLspDiagnostic(error, "hover unavailable")}`);
+          return undefined;
+        }
+      },
+    }));
+  }
+  if (capabilities.documentSymbol) {
+    client.disposables.push(vscode.languages.registerDocumentSymbolProvider({ scheme: "file" }, {
+      async provideDocumentSymbols(document) {
+        if (!isEligibleDocument(client, document, output)) {
+          return undefined;
+        }
+        syncOpenDocument(client, document, output);
+        if (!client.documents.has(document.uri.toString())) {
+          return undefined;
+        }
+        try {
+          const response = await sendLspRequest(client, "textDocument/documentSymbol", {
+            textDocument: { uri: document.uri.toString() },
+          }, output);
+
+          if (response.error) {
+            output.appendLine(`Yet AI read-only LSP MVP document symbols failed: ${sanitizeLspDiagnostic(response.error.message, "document symbols failed")}`);
+            return [];
+          }
+          return toDocumentSymbols(response.result);
+        } catch (error) {
+          output.appendLine(`Yet AI read-only LSP MVP document symbols unavailable: ${sanitizeLspDiagnostic(error, "document symbols unavailable")}`);
+          return undefined;
+        }
+      },
+    }));
+  }
+  if (capabilities.completion) {
+    client.disposables.push(vscode.languages.registerCompletionItemProvider({ scheme: "file" }, {
+      async provideCompletionItems(document, position) {
+        if (!isEligibleDocument(client, document, output)) {
+          return undefined;
+        }
+        syncOpenDocument(client, document, output);
+        if (!client.documents.has(document.uri.toString())) {
+          return undefined;
+        }
+        try {
+          const response = await sendLspRequest(client, "textDocument/completion", {
+            textDocument: { uri: document.uri.toString() },
+            position: { line: position.line, character: position.character },
+          }, output);
+
+          if (response.error) {
+            output.appendLine(`Yet AI read-only LSP MVP completion failed: ${sanitizeLspDiagnostic(response.error.message, "completion failed")}`);
+            return undefined;
+          }
+          return toCompletionList(response.result);
+        } catch (error) {
+          output.appendLine(`Yet AI read-only LSP MVP completion unavailable: ${sanitizeLspDiagnostic(error, "completion unavailable")}`);
+          return undefined;
+        }
+      },
+    }));
+  }
 }
 
 function syncOpenDocument(client: LspProcess, document: vscode.TextDocument, output: LspOutput): void {
@@ -329,7 +352,7 @@ function syncOpenDocument(client: LspProcess, document: vscode.TextDocument, out
 }
 
 function syncChangedDocument(client: LspProcess, document: vscode.TextDocument, output: LspOutput): void {
-  if (!client.initialized || !isSupportedDocument(document)) {
+  if (!client.initialized || !isSupportedDocument(document) || !isSafeDocumentUri(document)) {
     return;
   }
   const uri = document.uri.toString();
@@ -385,6 +408,10 @@ function isEligibleDocument(client: LspProcess, document: vscode.TextDocument, o
   if (!isSupportedDocument(document)) {
     return false;
   }
+  if (!isSafeDocumentUri(document)) {
+    syncUnsafeDocument(client, document.uri.toString(), output);
+    return false;
+  }
   const text = document.getText();
   if (isSafeDocumentText(text)) {
     return true;
@@ -395,6 +422,10 @@ function isEligibleDocument(client: LspProcess, document: vscode.TextDocument, o
 
 function isSupportedDocument(document: vscode.TextDocument): boolean {
   return document.uri.scheme === "file" && !document.isClosed && !document.isUntitled;
+}
+
+function isSafeDocumentUri(document: vscode.TextDocument): boolean {
+  return Buffer.byteLength(document.uri.toString(), "utf8") <= maxUriBytes;
 }
 
 function isSafeDocumentText(text: string): boolean {
@@ -488,6 +519,9 @@ function toDocumentSymbol(item: unknown): vscode.DocumentSymbol | undefined {
   if (!range || !selectionRange) {
     return undefined;
   }
+  if (!isRangeContained(range, selectionRange)) {
+    return undefined;
+  }
   return new vscode.DocumentSymbol(item.name, "", toSymbolKind(item.kind), range, selectionRange);
 }
 
@@ -501,6 +535,10 @@ function toRange(value: unknown): vscode.Range | undefined {
     return undefined;
   }
   return new vscode.Range(start, end);
+}
+
+function isRangeContained(range: vscode.Range, selectionRange: vscode.Range): boolean {
+  return !isPositionAfter(range.start, selectionRange.start) && !isPositionAfter(selectionRange.end, range.end);
 }
 
 function isPositionAfter(start: vscode.Position, end: vscode.Position): boolean {
