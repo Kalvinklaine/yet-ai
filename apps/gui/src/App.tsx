@@ -261,6 +261,7 @@ export function App() {
   const bridgeAdapterRef = useRef<BridgeAdapter | null>(null);
   const editProposalCounterRef = useRef(0);
   const editProposalIdentityRef = useRef<{ requestId: string; sourceMessageId: string; payloadKey: string } | null>(null);
+  const chatViewMessagesRef = useRef<ChatViewMessage[]>([]);
   const pendingApplyRequestIdRef = useRef<string | null>(null);
   const attachedContextRef = useRef<typeof attachedContext>(null);
   const agentProgressAttemptRef = useRef(0);
@@ -269,6 +270,7 @@ export function App() {
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
   settingsRef.current = settings;
   chatIdRef.current = chatId;
+  chatViewMessagesRef.current = chatView.messages;
   attachedContextRef.current = attachedContext;
   const runtimeDataCurrent = runtimeDataRevision === settingsRevision;
   const providerDataCurrent = providerDataRevision === settingsRevision;
@@ -323,6 +325,7 @@ export function App() {
   const chatModelStatus = apiKeyReadiness.model ? modelStatusText(apiKeyReadiness.model, apiKeyReadiness.provider) : null;
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
   const currentAttachedContext = attachedContext?.settingsRevision === settingsRevision && attachedContext.chatId === chatId ? attachedContext.payload : null;
+  const activeEditProposal = editProposalMatchesCurrentMessages(chatView.messages, editProposal) ? editProposal : null;
 
   const addTimeline = useCallback((entry: string) => {
     setTimeline((current) => [entry, ...current].slice(0, 80));
@@ -610,10 +613,18 @@ export function App() {
       setChatHistoryRevision(revision);
       const currentChat = chatIdRef.current;
       if (summaries.length > 0 && !summaries.some((summary) => summary.chatId === currentChat)) {
-        setChatId(summaries[0].chatId);
+        const nextChatId = summaries[0].chatId;
+        clearEditProposalState();
+        setChatInput("");
+        setChatView(resetChatViewState(nextChatId));
+        setChatId(nextChatId);
       }
       if (summaries.length === 0 && currentChat !== "chat-001") {
-        setChatId("chat-001");
+        const nextChatId = "chat-001";
+        clearEditProposalState();
+        setChatInput("");
+        setChatView(resetChatViewState(nextChatId));
+        setChatId(nextChatId);
       }
     } else {
       setChatSummaries([]);
@@ -621,7 +632,7 @@ export function App() {
       setChatHistoryRevision(revision);
     }
     setChatHistoryLoading(false);
-  }, [isCurrentRefresh]);
+  }, [clearEditProposalState, isCurrentRefresh]);
 
   const loadChatThread = useCallback(async (targetChatId: string, targetSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
     const attempt = chatHistoryAttemptRef.current + 1;
@@ -1106,6 +1117,10 @@ export function App() {
     if (!editProposal || bridgeHost !== "vscode" || pendingApplyRequestIdRef.current) {
       return;
     }
+    if (!editProposalMatchesCurrentMessages(chatViewMessagesRef.current, editProposal)) {
+      clearEditProposalState();
+      return;
+    }
     pendingApplyRequestIdRef.current = editProposal.requestId;
     setPendingApplyRequestId(editProposal.requestId);
     setApplyResult(null);
@@ -1116,7 +1131,7 @@ export function App() {
       payload: editProposal.payload,
     });
     addTimeline(`Edit proposal apply requested ${editProposal.requestId}`);
-  }, [addTimeline, bridgeHost, editProposal]);
+  }, [addTimeline, bridgeHost, clearEditProposalState, editProposal]);
 
   useEffect(() => {
     const proposal = latestEditProposalFromMessages(chatView.messages, editProposalCounterRef, editProposalIdentityRef);
@@ -1367,7 +1382,7 @@ export function App() {
               {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect()} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} />)}
               {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
             </div>
-            <EditProposalPanel proposal={editProposal} result={applyResult} host={bridgeHost} pendingRequestId={pendingApplyRequestId} onApply={submitEditProposal} />
+            <EditProposalPanel proposal={activeEditProposal} result={activeEditProposal ? applyResult : null} host={bridgeHost} pendingRequestId={pendingApplyRequestId} onApply={submitEditProposal} />
             <form className="stack chat-composer" onSubmit={(event) => void submitChat(event)}>
               <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} />
               <textarea ref={chatInputRef} value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
@@ -1764,6 +1779,26 @@ function latestEditProposalFromMessages(messages: ChatViewMessage[], counterRef:
     const requestId = `gui-edit-proposal-${counterRef.current}`;
     identityRef.current = { requestId, sourceMessageId: message.id, payloadKey };
     return { requestId, payload, sourceMessageId: message.id, payloadKey };
+  }
+  return null;
+}
+
+function editProposalMatchesCurrentMessages(messages: ChatViewMessage[], proposal: EditProposalState | null): boolean {
+  if (!proposal) {
+    return false;
+  }
+  const latest = latestValidEditProposalIdentityFromMessages(messages);
+  return latest?.sourceMessageId === proposal.sourceMessageId && latest.payloadKey === proposal.payloadKey;
+}
+
+function latestValidEditProposalIdentityFromMessages(messages: ChatViewMessage[]): { sourceMessageId: string; payloadKey: string } | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== "assistant") {
+      continue;
+    }
+    const payload = extractEditProposal(message.content);
+    return payload ? { sourceMessageId: message.id, payloadKey: stableEditProposalPayloadKey(payload) } : null;
   }
   return null;
 }
