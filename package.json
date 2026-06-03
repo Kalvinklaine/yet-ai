@@ -24,6 +24,7 @@
     "smoke:vscode-preview": "node scripts/smoke-vscode-preview.mjs",
     "smoke:vscode-installable": "node scripts/smoke-vscode-installable.mjs",
     "smoke:vscode-first-message": "node scripts/smoke-vscode-first-message.mjs",
+    "smoke:vscode-edit-proposal": "node scripts/smoke-vscode-edit-proposal.mjs",
     "smoke:jetbrains-preview": "node scripts/smoke-jetbrains-preview.mjs",
     "smoke:jetbrains-installable": "node scripts/smoke-jetbrains-installable.mjs",
     "smoke:jetbrains-gui-browser": "node scripts/smoke-jetbrains-gui-browser.mjs",
