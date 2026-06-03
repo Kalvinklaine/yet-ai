@@ -12,7 +12,10 @@ const MAX_UPDATE_BYTES: usize = 256 * 1024;
 const MAX_URI_BYTES: usize = 512;
 const MAX_HEADER_BYTES: usize = 8 * 1024;
 const MAX_MESSAGE_BYTES: usize = 512 * 1024;
+const MAX_SYMBOLS: usize = 64;
+const MAX_SYMBOL_NAME_UTF16: usize = 80;
 const COMPLETION_LABEL: &str = "Yet AI LSP connected";
+const HOVER_STATUS: &str = "Yet AI read-only LSP: local document is connected.";
 
 #[derive(Debug, Default)]
 pub struct LspServer {
@@ -75,6 +78,8 @@ impl LspServer {
                             json!({
                                 "capabilities": {
                                     "textDocumentSync": 1,
+                                    "hoverProvider": true,
+                                    "documentSymbolProvider": true,
                                     "completionProvider": {
                                         "triggerCharacters": []
                                     }
@@ -116,6 +121,14 @@ impl LspServer {
             }
             "textDocument/completion" => (
                 id.map(|id| success_response(id, self.completion(params))),
+                LspControl::Continue,
+            ),
+            "textDocument/hover" => (
+                id.map(|id| success_response(id, self.hover(params))),
+                LspControl::Continue,
+            ),
+            "textDocument/documentSymbol" => (
+                id.map(|id| success_response(id, self.document_symbols(params))),
                 LspControl::Continue,
             ),
             _ => (
@@ -186,18 +199,9 @@ impl LspServer {
     }
 
     fn completion(&self, params: &Value) -> Value {
-        let Some(uri) = params
-            .get("textDocument")
-            .and_then(|document| valid_file_uri(document.get("uri")))
-        else {
+        let Some(text) = self.request_document_text(params) else {
             return empty_completion();
         };
-        let Some(text) = self.documents.get(uri) else {
-            return empty_completion();
-        };
-        if text.len() > MAX_DOCUMENT_BYTES || has_binary_like_content(text) {
-            return empty_completion();
-        }
         if !valid_position(params.get("position"), text) {
             return empty_completion();
         }
@@ -209,6 +213,44 @@ impl LspServer {
                 "detail": "Local read-only LSP status"
             }]
         })
+    }
+
+    fn hover(&self, params: &Value) -> Value {
+        let Some(text) = self.request_document_text(params) else {
+            return Value::Null;
+        };
+        if !valid_position(params.get("position"), text) {
+            return Value::Null;
+        }
+        json!({
+            "contents": {
+                "kind": "plaintext",
+                "value": HOVER_STATUS
+            }
+        })
+    }
+
+    fn document_symbols(&self, params: &Value) -> Value {
+        let Some(text) = self.request_document_text(params) else {
+            return json!([]);
+        };
+        json!(extract_document_symbols(text))
+    }
+
+    fn request_document_text(&self, params: &Value) -> Option<&str> {
+        let Some(uri) = params
+            .get("textDocument")
+            .and_then(|document| valid_file_uri(document.get("uri")))
+        else {
+            return None;
+        };
+        let Some(text) = self.documents.get(uri) else {
+            return None;
+        };
+        if text.len() > MAX_DOCUMENT_BYTES || has_binary_like_content(text) {
+            return None;
+        }
+        Some(text)
     }
 }
 
@@ -302,6 +344,108 @@ fn strip_line_cr(line: &str) -> &str {
 
 fn utf16_visible_line_len(line: &str) -> usize {
     line.encode_utf16().count()
+}
+
+fn extract_document_symbols(text: &str) -> Vec<Value> {
+    let mut symbols = Vec::new();
+    for (line_number, line) in visible_lines(text).into_iter().enumerate() {
+        if symbols.len() >= MAX_SYMBOLS {
+            break;
+        }
+        let Some((name, kind, name_start)) = extract_symbol_from_line(line) else {
+            continue;
+        };
+        let end_character = utf16_visible_line_len(line);
+        let selection_start = utf16_visible_line_len(&line[..name_start]);
+        let selection_end = selection_start + utf16_visible_line_len(name);
+        symbols.push(json!({
+            "name": cap_symbol_name(name),
+            "kind": kind,
+            "range": {
+                "start": {"line": line_number, "character": 0},
+                "end": {"line": line_number, "character": end_character}
+            },
+            "selectionRange": {
+                "start": {"line": line_number, "character": selection_start},
+                "end": {"line": line_number, "character": selection_end}
+            }
+        }));
+    }
+    symbols
+}
+
+fn visible_lines(text: &str) -> Vec<&str> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    for (index, byte) in text.bytes().enumerate() {
+        if byte == b'\n' {
+            lines.push(strip_line_cr(&text[start..index]));
+            start = index + 1;
+        }
+    }
+    lines.push(strip_line_cr(&text[start..]));
+    lines
+}
+
+fn extract_symbol_from_line(line: &str) -> Option<(&str, u64, usize)> {
+    let trimmed = line.trim_start();
+    let base = line.len() - trimmed.len();
+    for (keyword, kind) in [
+        ("fn", 12),
+        ("function", 12),
+        ("class", 5),
+        ("struct", 23),
+        ("enum", 10),
+        ("interface", 11),
+        ("const", 14),
+        ("let", 13),
+        ("var", 13),
+    ] {
+        let Some(rest) = keyword_rest(trimmed, keyword) else {
+            continue;
+        };
+        let name_offset = rest.len() - rest.trim_start().len();
+        let rest = rest.trim_start();
+        let name_len = rest
+            .char_indices()
+            .take_while(|(_, character)| is_symbol_name_char(*character))
+            .map(|(index, character)| index + character.len_utf8())
+            .last()
+            .unwrap_or(0);
+        if name_len == 0 {
+            return None;
+        }
+        return Some((&rest[..name_len], kind, base + keyword.len() + name_offset));
+    }
+    None
+}
+
+fn keyword_rest<'a>(line: &'a str, keyword: &str) -> Option<&'a str> {
+    let rest = line.strip_prefix(keyword)?;
+    if rest
+        .chars()
+        .next()
+        .is_some_and(|character| is_symbol_name_char(character))
+    {
+        return None;
+    }
+    Some(rest)
+}
+
+fn is_symbol_name_char(character: char) -> bool {
+    character == '_' || character == '$' || character.is_ascii_alphanumeric()
+}
+
+fn cap_symbol_name(name: &str) -> String {
+    name.encode_utf16()
+        .take(MAX_SYMBOL_NAME_UTF16)
+        .map(|unit| {
+            char::decode_utf16([unit])
+                .next()
+                .unwrap()
+                .unwrap_or('\u{fffd}')
+        })
+        .collect()
 }
 
 fn has_binary_like_content(text: &str) -> bool {
