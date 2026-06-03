@@ -381,7 +381,7 @@ export function isApplyWorkspaceEditResultPayload(value: unknown): value is Appl
 }
 
 function isFileTextEdits(value: unknown): value is WorkspaceFileTextEdits {
-  if (!isPlainObject(value) || !hasOnlyKeys(value, ["workspaceRelativePath", "textReplacements"]) || !safeRelativePath(value.workspaceRelativePath)) {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["workspaceRelativePath", "textReplacements"]) || !requiredSafeRelativePath(value.workspaceRelativePath)) {
     return false;
   }
   return Array.isArray(value.textReplacements) && value.textReplacements.length >= 1 && value.textReplacements.length <= 16 && value.textReplacements.every(isTextReplacement);
@@ -406,7 +406,7 @@ function isEditPosition(value: unknown): value is WorkspaceEditPosition {
 }
 
 function isOptionalAffectedFiles(value: unknown): boolean {
-  return value === undefined || (Array.isArray(value) && value.length <= 4 && value.every((item) => safeRelativePath(item)));
+  return value === undefined || (Array.isArray(value) && value.length <= 4 && value.every((item) => requiredSafeRelativePath(item)));
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -482,7 +482,11 @@ function safeDisplayPath(value: unknown): boolean {
 }
 
 function safeRelativePath(value: unknown): boolean {
-  return value === undefined || safePath(value, 512);
+  return value === undefined || requiredSafeRelativePath(value);
+}
+
+function requiredSafeRelativePath(value: unknown): boolean {
+  return safePath(value, 512);
 }
 
 function safePath(value: unknown, maxLength: number): boolean {
@@ -508,7 +512,7 @@ function safeSummary(value: unknown): boolean {
 }
 
 function safeMessage(value: unknown): boolean {
-  return typeof value === "string" && value.length > 0 && value.length <= 1000 && !unsafeDisplayText(value) && !/\/Users\/|\/Private\/|[A-Za-z]:\\\\|~[/\\\\]/.test(value);
+  return typeof value === "string" && value.length > 0 && value.length <= 1000 && !unsafeDisplayText(value) && !/(?:\/Users\/|\/home\/|\/tmp\/|\/var\/|\/Volumes\/|\/Private\/|[A-Za-z]:\\\\|~[/\\\\])/.test(value);
 }
 
 function unsafeDisplayText(value: string): boolean {
