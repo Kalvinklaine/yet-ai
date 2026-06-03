@@ -833,7 +833,12 @@ try {
     assert.equal(typeof lspMessages[0].params.capabilities.textDocument.documentSymbol, "object");
     assert.ok(lspOutputLines.some((line) => line.includes("Started Yet AI read-only LSP MVP from yet-lsp-executable.")));
     emitLspResponse(lspSpawns[0].child, lspMessages[0].id, {
-      capabilities: { textDocumentSync: 1, completionProvider: { triggerCharacters: [] } },
+      capabilities: {
+        textDocumentSync: 1,
+        completionProvider: { triggerCharacters: [] },
+        hoverProvider: true,
+        documentSymbolProvider: true,
+      },
       serverInfo: { name: "Yet AI LSP" },
     });
     await delay();
@@ -845,6 +850,7 @@ try {
     assert.equal(registeredHoverProviders.length, 1);
     assert.equal(registeredDocumentSymbolProviders.length, 1);
     assert.equal(registeredCompletionProviders.length, 1);
+    assert.ok(lspOutputLines.some((line) => line.includes("deterministic completion, hover, and document symbols")), "LSP initialization log did not mention completion, hover, and document symbols");
     assert.deepEqual(registeredHoverProviders[0].selector, { scheme: "file" });
     assert.deepEqual(registeredDocumentSymbolProviders[0].selector, { scheme: "file" });
     assert.deepEqual(registeredCompletionProviders[0].selector, { scheme: "file" });
@@ -932,6 +938,8 @@ try {
     await assertInvalidDocumentSymbolsFailSafe([{ ...safeSymbolResponse, range: { start: { line: -1, character: 0 }, end: { line: 0, character: 10 } } }], "negative document symbol range did not fail safe");
     await assertInvalidDocumentSymbolsFailSafe([{ ...safeSymbolResponse, range: { start: { line: 0.5, character: 0 }, end: { line: 0, character: 10 } } }], "non-integer document symbol range did not fail safe");
     await assertInvalidDocumentSymbolsFailSafe([{ ...safeSymbolResponse, selectionRange: { start: { line: 0, character: 0 }, end: { line: 1_000_001, character: 0 } } }], "absurd document symbol range did not fail safe");
+    await assertInvalidDocumentSymbolsFailSafe([{ ...safeSymbolResponse, selectionRange: { start: { line: 0, character: 11 }, end: { line: 0, character: 12 } } }], "selection range outside symbol range did not fail safe");
+    await assertInvalidDocumentSymbolsFailSafe([{ ...safeSymbolResponse, selectionRange: { start: { line: 0, character: 0 }, end: { line: 0, character: 11 } } }], "selection range ending outside symbol range did not fail safe");
     assert.equal(await registeredCompletionProviders[0].provider.provideCompletionItems(virtualDocument, { line: 0, character: 1 }), undefined);
     assert.equal(await registeredHoverProviders[0].provider.provideHover(virtualDocument, { line: 0, character: 1 }), undefined);
     assert.equal(await registeredDocumentSymbolProviders[0].provider.provideDocumentSymbols(virtualDocument), undefined);
@@ -1068,11 +1076,19 @@ try {
     assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticSecret), false, "LSP stdin failure leaked secret");
     assert.equal(lspOutputLines.join("\n").includes(lspDiagnosticPath), false, "LSP stdin failure leaked private path");
 
+    const providerCountsBeforeMissingCapabilities = {
+      completion: registeredCompletionProviders.length,
+      hover: registeredHoverProviders.length,
+      documentSymbol: registeredDocumentSymbolProviders.length,
+    };
     startYetAiLspClient({ ...fakeContext, extensionPath: tempRoot }, { engine: { binaryName: "yet-lsp" } }, lspOutput);
     assert.equal(lspSpawns.length, 2, "LSP retry after sync stdin write error did not spawn");
     lspMessages = takeLspClientMessages(lspSpawns[1].child);
     emitLspResponse(lspSpawns[1].child, lspMessages[0].id, { capabilities: { textDocumentSync: 1, completionProvider: {} } });
     await delay();
+    assert.equal(registeredCompletionProviders.length, providerCountsBeforeMissingCapabilities.completion + 1, "completion provider was not registered for advertised completion capability");
+    assert.equal(registeredHoverProviders.length, providerCountsBeforeMissingCapabilities.hover, "hover provider registered without advertised hover capability");
+    assert.equal(registeredDocumentSymbolProviders.length, providerCountsBeforeMissingCapabilities.documentSymbol, "document symbol provider registered without advertised document symbol capability");
     takeLspClientMessages(lspSpawns[1].child);
     const directStopPromise = stopYetAiLspClient(lspOutput);
     let directStopResolved = false;
