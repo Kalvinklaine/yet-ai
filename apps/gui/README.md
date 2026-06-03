@@ -56,7 +56,7 @@ cd apps/gui && npm test && npm run typecheck
 cd ../plugins/vscode && npm run check:webview-safety
 ```
 
-If a root `npm run smoke:vscode-edit-proposal` command is added later, include it with this focused gate.
+Include root `npm run smoke:vscode-edit-proposal` with this focused gate for confirmed edit-proposal smoke coverage.
 
 Manual IDE packaged-asset preview flows:
 
