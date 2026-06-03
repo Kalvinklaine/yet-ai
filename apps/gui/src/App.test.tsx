@@ -3950,7 +3950,29 @@ describe("edit proposal preview", () => {
     });
 
     expect(findButton("Host apply pending…").disabled).toBe(true);
-    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(1);
+    const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
+    expect(applyCalls).toHaveLength(1);
+
+    await dispatchHostApplyResult(applyCalls[0][0].requestId, {
+      status: "applied",
+      message: "Stable proposal result displayed.",
+      cloudRequired: false,
+      appliedEditCount: 1,
+      affectedFiles: ["src/example.ts"],
+    });
+    expect(container?.textContent ?? "").toContain("Stable proposal result displayed.");
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "cause another unrelated chat update");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(editProposalRequestId()).toBe(initialRequestId);
+    expect(container?.textContent ?? "").toContain("Stable proposal result displayed.");
   });
 
   it("allows explicit pending apply cancel without emitting another request or accepting stale results", async () => {

@@ -22,6 +22,8 @@ const requiredSnippets = [
   "frame.contentWindow.postMessage(message, frameTargetOrigin)",
   "event.origin !== frameTargetOrigin",
   "isFrameGuiMessage(event.data)",
+  "new TextEncoder().encode(JSON.stringify(value)).length <= maxForwardedApplyWorkspaceEditMessageBytes",
+  "message.type === \"gui.applyWorkspaceEditRequest\" && isBoundedRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)",
   "latestHostReady = event.data",
   "host.contextSnapshot",
   "createHostContextSnapshot(message.requestId)",
@@ -70,6 +72,14 @@ if (!/const isBoundedRequestId = \(value\) => value === undefined \|\| \(typeof 
 
 if (!/Object\.keys\(message\)\.every\(\(key\) => key === "version" \|\| key === "type" \|\| key === "requestId" \|\| key === "payload"\)/.test(renderWebviewHtmlSource)) {
   throw new Error("VS Code webview wrapper must reject gui.ready messages with extra top-level fields.");
+}
+
+if (!renderWebviewHtmlSource.includes("new TextEncoder().encode(JSON.stringify(value)).length <= maxForwardedApplyWorkspaceEditMessageBytes")) {
+  throw new Error("VS Code webview wrapper rendered JS must enforce serialized size before forwarding iframe apply requests.");
+}
+
+if (!renderWebviewHtmlSource.includes("message.type === \"gui.applyWorkspaceEditRequest\" && isBoundedRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)")) {
+  throw new Error("VS Code webview wrapper rendered JS must apply the serialized-size guard to iframe apply requests.");
 }
 
 const disabledGuiMessageTypes = [
@@ -446,6 +456,13 @@ for (const privateResultMessage of [
   "Failed at C:\\Users\\alice\\project\\src\\main.ts.",
   "Failed with sk-abcdefghijklmnopqrstuvwxyz.",
   "Failed with sk-proj-abcdefghijklmnopqrstuvwxyz.",
+  "Failed with cookie value.",
+  "Failed with standalone token value.",
+  "Failed with password value.",
+  "Failed with provider_response details.",
+  "Failed with raw_prompt details.",
+  "Failed with file_content details.",
+  "Failed with private_path details.",
 ]) {
   assert.equal(createApplyWorkspaceEditResult("req-private-result", "failed", privateResultMessage).payload.message, "Edit request status changed.");
 }
