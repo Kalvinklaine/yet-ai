@@ -1,0 +1,12 @@
+{
+  "version": "2026-05-15",
+  "type": "host.applyWorkspaceEditResult",
+  "requestId": "req-apply-edit-invalid-result-001",
+  "payload": {
+    "status": "failed",
+    "message": "Failed near /Users/person/project/src/example.ts",
+    "cloudRequired": false,
+    "appliedEditCount": 0,
+    "affectedFiles": []
+  }
+}

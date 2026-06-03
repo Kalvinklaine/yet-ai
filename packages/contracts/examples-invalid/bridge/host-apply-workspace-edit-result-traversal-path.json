@@ -1,0 +1,14 @@
+{
+  "version": "2026-05-15",
+  "type": "host.applyWorkspaceEditResult",
+  "requestId": "req-apply-edit-invalid-result-001",
+  "payload": {
+    "status": "failed",
+    "message": "Edit failed safely.",
+    "cloudRequired": false,
+    "appliedEditCount": 0,
+    "affectedFiles": [
+      "../secret.txt"
+    ]
+  }
+}
