@@ -70,7 +70,10 @@ const mappings = [
   ["packages/contracts/examples/bridge/host-ready-message.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-opened-from-command-message.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-context-snapshot-message.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
-  ["packages/contracts/examples/bridge/gui-ready-message.json", "packages/contracts/schemas/bridge/gui-message.schema.json"]
+  ["packages/contracts/examples/bridge/host-apply-workspace-edit-result-applied.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
+  ["packages/contracts/examples/bridge/host-apply-workspace-edit-result-denied.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
+  ["packages/contracts/examples/bridge/gui-ready-message.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
+  ["packages/contracts/examples/bridge/gui-apply-workspace-edit-request-message.json", "packages/contracts/schemas/bridge/gui-message.schema.json"]
 ].map(([examplePath, schemaPath]) => [normalizeContractPath(examplePath), normalizeContractPath(schemaPath)]);
 
 const invalidMappings = [
@@ -186,6 +189,34 @@ const invalidMappings = [
     "packages/contracts/examples-invalid/bridge/gui-get-host-context-message.json",
     "packages/contracts/schemas/bridge/gui-message.schema.json"
   ],
+  ...[
+    "gui-apply-workspace-edit-missing-confirmation.json",
+    "gui-apply-workspace-edit-absolute-path.json",
+    "gui-apply-workspace-edit-traversal-path.json",
+    "gui-apply-workspace-edit-backslash-path.json",
+    "gui-apply-workspace-edit-url-path.json",
+    "gui-apply-workspace-edit-reversed-range.json",
+    "gui-apply-workspace-edit-huge-replacement.json",
+    "gui-apply-workspace-edit-too-many-files.json",
+    "gui-apply-workspace-edit-too-many-edits.json",
+    "gui-apply-workspace-edit-total-replacement-too-large.json",
+    "gui-apply-workspace-edit-create-field.json",
+    "gui-apply-workspace-edit-delete-field.json",
+    "gui-apply-workspace-edit-rename-field.json",
+    "gui-apply-workspace-edit-secret-summary.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/bridge/${fileName}`,
+    "packages/contracts/schemas/bridge/gui-message.schema.json"
+  ]),
+  ...[
+    "host-apply-workspace-edit-result-private-path.json",
+    "host-apply-workspace-edit-result-secret-message.json",
+    "host-apply-workspace-edit-result-unknown-status.json",
+    "host-apply-workspace-edit-result-traversal-path.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/bridge/${fileName}`,
+    "packages/contracts/schemas/bridge/host-message.schema.json"
+  ]),
   [
     "packages/contracts/examples-invalid/bridge/host-opened-from-command-payload.json",
     "packages/contracts/schemas/bridge/host-message.schema.json"
@@ -631,7 +662,34 @@ function collectInvalidMappingCoverageFailures(exampleFiles, schemaFiles) {
   return failures;
 }
 
-const ajv = new Ajv({ allErrors: true, strict: true });
+const ajv = new Ajv({ allErrors: true, strict: true, $data: true });
+
+ajv.addKeyword({
+  keyword: "maxTotalReplacementText",
+  type: "object",
+  schemaType: "number",
+  validate(limit, payload) {
+    if (!Array.isArray(payload?.edits)) {
+      return true;
+    }
+    let total = 0;
+    for (const fileEdit of payload.edits) {
+      if (!Array.isArray(fileEdit?.textReplacements)) {
+        continue;
+      }
+      for (const replacement of fileEdit.textReplacements) {
+        if (typeof replacement?.replacementText === "string") {
+          total += replacement.replacementText.length;
+          if (total > limit) {
+            return false;
+          }
+        }
+      }
+    }
+    return true;
+  }
+});
+
 addFormats(ajv);
 
 const failures = [];

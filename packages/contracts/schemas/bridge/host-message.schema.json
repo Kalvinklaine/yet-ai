@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.yet-ai.example/contracts/bridge/host-message.schema.json",
   "title": "IDE Host to GUI Message",
-  "description": "Current non-privileged host bootstrap and active editor context messages only. Tool results, file actions, shell-like actions, workspace mutation, and IDE tool execution remain disabled until strict schemas, policy, request correlation, and confirmation are implemented.",
+  "description": "Strict host bootstrap, active editor context, and sanitized confirmed edit proposal results only. Tool results, file actions, shell-like actions, unconfirmed workspace mutation, and IDE tool execution remain disabled until strict schemas, policy, request correlation, and confirmation are implemented.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "type"],
@@ -13,29 +13,39 @@
     },
     "type": {
       "type": "string",
-      "enum": ["host.ready", "host.openedFromCommand", "host.contextSnapshot"]
+      "enum": ["host.ready", "host.openedFromCommand", "host.contextSnapshot", "host.applyWorkspaceEditResult"]
     },
     "requestId": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 128
+      "$ref": "#/$defs/requestId"
     },
     "payload": {
       "type": "object"
     }
   },
   "$defs": {
+    "requestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+    },
     "safeRelativePath": {
       "type": "string",
       "minLength": 1,
       "maxLength": 512,
-      "pattern": "^(?!/)(?!~)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)\\.\\.?(?:/|$))[^\\u0000-\\u001f]+$"
+      "pattern": "^(?!/)(?!~)(?!.*%)(?!.*\\\\)(?!.*:)(?!.*[?#])(?!.*(?:^|/)\\.\\.?(?:/|$))[^\\u0000-\\u001f\\u007f-\\u009f]+$"
     },
     "safeDisplayPath": {
       "type": "string",
       "minLength": 1,
       "maxLength": 256,
-      "pattern": "^(?!/)(?!~)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)\\.\\.?(?:/|$))[^\\u0000-\\u001f]+$"
+      "pattern": "^(?!/)(?!~)(?!.*%)(?!.*\\\\)(?!.*:)(?!.*[?#])(?!.*(?:^|/)\\.\\.?(?:/|$))[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+    },
+    "safeMessage": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^(?!.*(?:[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Pp][Aa][Tt][Hh]|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][_-]?[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Rr][Aa][Ww][_-]?[Pp][Rr][Oo][Mm][Pp][Tt]|[Ff][Ii][Ll][Ee][_-]?[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|/[Uu][Ss][Ee][Rr][Ss]/|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee]/|[A-Za-z]:\\\\|~[/\\\\])).*$"
     },
     "activeEditorContext": {
       "type": "object",
@@ -98,6 +108,36 @@
               "type": "string",
               "maxLength": 8000
             }
+          }
+        }
+      }
+    },
+    "applyWorkspaceEditResultPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "message", "cloudRequired"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["applied", "denied", "rejected", "failed"]
+        },
+        "message": {
+          "$ref": "#/$defs/safeMessage"
+        },
+        "cloudRequired": {
+          "type": "boolean",
+          "const": false
+        },
+        "appliedEditCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64
+        },
+        "affectedFiles": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/safeRelativePath"
           }
         }
       }
@@ -178,6 +218,27 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/activeEditorContext"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "host.applyWorkspaceEditResult"
+          }
+        },
+        "required": ["type"]
+      },
+      "then": {
+        "required": ["requestId", "payload"],
+        "properties": {
+          "requestId": {
+            "$ref": "#/$defs/requestId"
+          },
+          "payload": {
+            "$ref": "#/$defs/applyWorkspaceEditResultPayload"
           }
         }
       }
