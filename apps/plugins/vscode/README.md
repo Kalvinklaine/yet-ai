@@ -92,6 +92,14 @@ npm run smoke:vscode-first-message
 
 The first-message smoke uses a loopback mock runtime/provider with fake credentials and validates packaged GUI bootstrap, provider-required gating, active-context delivery, streamed assistant rendering, and no token/key leakage. It does not launch VS Code, use real provider credentials, call OpenAI/ChatGPT, or contact hosted Yet AI services.
 
+Run the confirmed edit-proposal smoke directly when changing the VS Code apply-edit bridge or GUI edit proposal preview:
+
+```sh
+npm run smoke:vscode-edit-proposal
+```
+
+The edit-proposal smoke uses an inline browser harness and a controlled temporary fixture to validate preview-only rendering, explicit user-triggered apply request emission, accepted and denied host confirmation results, unsafe path rejection, oversized edit rejection, cleanup, and no secret/private-path leakage. It does not launch VS Code, use providers, call hosted services, run shell/tools/tasks/git, or mutate the real workspace.
+
 `npm run smoke:vscode-installable` checks that `dist/plugins/vscode/` contains exactly one current `yet-ai-vscode-<version>-dev-preview.vsix`, validates its `.sha256` checksum, safe archive paths, package metadata, command/activation/configuration surfaces, bundled product identity, packaged GUI local JS/CSS references, and copied engine binary. `npm run smoke:vscode-preview` checks the copied `yet-lsp` binary, packaged GUI `media/gui/index.html`, bundled `out/product/identity.json`, compiled `out/extension.js`, manifest `main`, copied GUI asset references, and obvious stale-artifact mtimes against existing GUI dist and VS Code source files. If preparation has not been run or generated artifacts are stale, the smokes fail with the artifact and the command to run.
 
 Repository-level validation is available from the root:
