@@ -86,6 +86,7 @@ type EditProposalState = {
 
 type ApplyResultState = {
   requestId: string;
+  proposalRequestId: string | null;
   payload: ApplyWorkspaceEditResultPayload;
 };
 
@@ -446,10 +447,11 @@ export function App() {
         if (requestId !== pendingApplyRequestIdRef.current) {
           return;
         }
+        const proposalRequestId = pendingApplyProposalRequestIdRef.current;
         pendingApplyRequestIdRef.current = null;
         pendingApplyProposalRequestIdRef.current = null;
         setPendingApplyRequestId(null);
-        setApplyResult({ requestId, payload: message.payload as ApplyWorkspaceEditResultPayload });
+        setApplyResult({ requestId, proposalRequestId, payload: message.payload as ApplyWorkspaceEditResultPayload });
       }
     });
     return () => {
@@ -1158,7 +1160,7 @@ export function App() {
       return;
     }
     setEditProposal((current) => current?.requestId === proposal.requestId ? current : proposal);
-    setApplyResult((current) => current?.requestId === proposal.requestId ? current : null);
+    setApplyResult((current) => current?.proposalRequestId === proposal.requestId ? current : null);
     if (pendingApplyRequestIdRef.current && pendingApplyProposalRequestIdRef.current !== proposal.requestId) {
       pendingApplyRequestIdRef.current = null;
       pendingApplyProposalRequestIdRef.current = null;

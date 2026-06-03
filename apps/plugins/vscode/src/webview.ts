@@ -525,17 +525,25 @@ const bootstrap = ${bootstrap};
 window.yetAiBootstrap = bootstrap;
 const frame = document.querySelector("iframe");
 const frameTargetOrigin = bootstrap.guiDevOrigin;
+const maxForwardedApplyWorkspaceEditMessageBytes = ${maxForwardedApplyWorkspaceEditMessageBytes};
 let latestHostReady;
 let frameReady = false;
 const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const isBoundedRequestId = (value) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 128 && !/[\u0000-\u001f\u007f-\u009f]/.test(value));
+const isBoundedForwardedApplyWorkspaceEditMessage = (value) => {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).length <= maxForwardedApplyWorkspaceEditMessageBytes;
+  } catch {
+    return false;
+  }
+};
 const isStrictGuiReadyPayload = (payload) => {
   if (payload === undefined) {
     return true;
   }
   return isPlainObject(payload) && Object.keys(payload).every((key) => key === "supportedBridgeVersion") && (payload.supportedBridgeVersion === undefined || payload.supportedBridgeVersion === bootstrap.bridgeVersion);
 };
-const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && ((message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload)) || (message.type === "gui.applyWorkspaceEditRequest" && isBoundedRequestId(message.requestId)));
+const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && ((message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload)) || (message.type === "gui.applyWorkspaceEditRequest" && isBoundedRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)));
 const isHostMessage = (message) => isPlainObject(message) && message.version === bootstrap.bridgeVersion && (message.type === "host.ready" || message.type === "host.openedFromCommand" || message.type === "host.contextSnapshot" || message.type === "host.applyWorkspaceEditResult");
 const sendToFrame = (message) => {
   if (frame && frame.contentWindow && frameTargetOrigin) {
@@ -742,7 +750,7 @@ function sanitizeSafePath(value: string | undefined, maxLength: number): string 
 }
 
 function hasSecretLikeText(value: string): boolean {
-  return /(?:authorization|bearer\s+|sessiontoken|session[_-]?token|api[_-]?key|secret|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value);
+  return /(?:authorization|bearer\s+|sessiontoken|session[_-]?token|api[_-]?key|secret|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}|(?:^|[^A-Za-z0-9_-])(?:cookie|token|password|provider[_-]?response|raw[_-]?prompt|file[_-]?content|private[_-]?path)(?:[^A-Za-z0-9_-]|$))/i.test(value);
 }
 
 function hasBinaryLikeText(value: string): boolean {
