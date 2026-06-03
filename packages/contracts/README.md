@@ -43,7 +43,7 @@ npm run validate:contracts
 npm run check
 ```
 
-If implementation behavior changes with the contract, also run the affected GUI and VS Code checks, including `cd apps/plugins/vscode && npm run check:webview-safety`; include root `npm run smoke:vscode-edit-proposal` if that command is added later.
+If implementation behavior changes with the contract, also run the affected GUI and VS Code checks, including `cd apps/plugins/vscode && npm run check:webview-safety` and root `npm run smoke:vscode-edit-proposal` for confirmed edit-proposal smoke coverage.
 
 `GET /v1/caps` includes a minimal local runtime signal: `runtime.mode = "local"`, `runtime.cloudRequired = false`, and `runtime.providerAccess = "direct"`. This records the product contract that Yet AI core runs through the local runtime and does not require a hosted Yet AI backend or managed model gateway.
 
@@ -196,7 +196,7 @@ npm run check
 ## Security expectations
 
 - Every privileged bridge message must be schema-validated and policy-checked by future implementations before it can trigger file edits, IDE tool execution, shell-like behavior, workspace mutation, or privileged host actions.
-- Current bridge schemas are strict only for `gui.ready`, `host.ready`, `host.openedFromCommand`, and non-privileged `host.contextSnapshot`; privileged GUI/plugin messages including file open/reveal, workspace edits, IDE tool execution, clipboard, notifications, and host context requests remain disabled until strict schemas, policy, request correlation, and confirmation are implemented.
+- Current bridge schemas are strict for `gui.ready`, `host.ready`, `host.openedFromCommand`, non-privileged `host.contextSnapshot`, confirmed `gui.applyWorkspaceEditRequest`, and sanitized `host.applyWorkspaceEditResult`; other privileged GUI/plugin messages including file open/reveal, IDE tool execution, clipboard, notifications, and host context requests remain disabled until strict schemas, policy, request correlation, and confirmation are implemented.
 - Current chat command schemas are strict only for non-privileged `user_message` with optional bounded active editor context and `abort`; tool decisions, IDE tool results, parameter changes, message mutation, regeneration, file edits, shell-like actions, and workspace mutation remain disabled until schema, policy, request correlation where needed, and confirmation are implemented.
 - Receivers should validate every engine HTTP request, engine HTTP response, SSE event, and bridge message at subsystem boundaries.
 - Bridge receivers must verify host/source/origin where the platform supports it and correlate request-response messages with outstanding requests.

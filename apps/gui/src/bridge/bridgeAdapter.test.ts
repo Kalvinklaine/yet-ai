@@ -318,6 +318,124 @@ describe("bridgeAdapter", () => {
     adapter.dispose();
   });
 
+  it("accepts valid apply workspace edit proposals with multiple text replacements", () => {
+    const message = {
+      version: bridgeVersion,
+      type: "gui.applyWorkspaceEditRequest",
+      requestId: "req-apply-edit-multiple-001",
+      payload: {
+        requiresUserConfirmation: true,
+        summary: "Replace two reviewed ranges.",
+        cloudRequired: false,
+        edits: [
+          {
+            workspaceRelativePath: "src/example.ts",
+            textReplacements: [
+              {
+                range: { start: { line: 4, character: 2 }, end: { line: 4, character: 18 } },
+                replacementText: "const label = \"Yet AI\";",
+              },
+              {
+                range: { start: { line: 6, character: 0 }, end: { line: 6, character: 12 } },
+                replacementText: "export {};",
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    expect(isGuiMessage(message)).toBe(true);
+    expect(isApplyWorkspaceEditPayload(message.payload)).toBe(true);
+  });
+
+  it("rejects missing or undefined apply workspace edit paths", () => {
+    const invalidMessages = [
+      {
+        version: bridgeVersion,
+        type: "gui.applyWorkspaceEditRequest",
+        requestId: "req-apply-edit-missing-path-001",
+        payload: {
+          requiresUserConfirmation: true,
+          summary: "Missing path.",
+          cloudRequired: false,
+          edits: [
+            {
+              textReplacements: [
+                {
+                  range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } },
+                  replacementText: "x",
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        version: bridgeVersion,
+        type: "gui.applyWorkspaceEditRequest",
+        requestId: "req-apply-edit-undefined-path-001",
+        payload: {
+          requiresUserConfirmation: true,
+          summary: "Undefined path.",
+          cloudRequired: false,
+          edits: [
+            {
+              workspaceRelativePath: undefined,
+              textReplacements: [
+                {
+                  range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } },
+                  replacementText: "x",
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ];
+
+    for (const message of invalidMessages) {
+      expect(isGuiMessage(message)).toBe(false);
+      expect(isApplyWorkspaceEditPayload(message.payload)).toBe(false);
+    }
+  });
+
+  it("rejects undefined affected files in apply workspace edit results", () => {
+    const message = {
+      version: bridgeVersion,
+      type: "host.applyWorkspaceEditResult",
+      requestId: "req-apply-edit-001",
+      payload: {
+        status: "applied",
+        message: "Applied after user confirmation.",
+        cloudRequired: false,
+        appliedEditCount: 1,
+        affectedFiles: [undefined],
+      },
+    };
+
+    expect(isApplyWorkspaceEditResultPayload(message.payload)).toBe(false);
+    expect(isHostMessage(message)).toBe(false);
+  });
+
+  it("rejects apply workspace edit results with raw POSIX private paths", () => {
+    const message = {
+      version: bridgeVersion,
+      type: "host.applyWorkspaceEditResult",
+      requestId: "req-apply-edit-001",
+      payload: {
+        status: "failed",
+        message: "Failed while applying /home/alice/project/src/private.ts.",
+        cloudRequired: false,
+        appliedEditCount: 0,
+        affectedFiles: ["src/example.ts"],
+      },
+    };
+
+    expect(isApplyWorkspaceEditResultPayload(message.payload)).toBe(false);
+    expect(isHostMessage(message)).toBe(false);
+  });
+
   it("rejects invalid apply workspace edit requests before posting", () => {
     const logs: string[] = [];
     const postMessage = vi.fn();
