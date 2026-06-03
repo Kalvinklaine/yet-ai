@@ -11,6 +11,7 @@ const bootstrapSource = extractSection("const bootstrap = serializeScriptJson({"
 const requiredSnippets = [
   "record.version === bridgeVersion",
   "record.type === \"gui.ready\"",
+  "record.type === \"gui.applyWorkspaceEditRequest\"",
   "hasOnlyKeys(record, [\"version\", \"type\", \"requestId\", \"payload\"])",
   "hasOnlyKeys(record, [\"supportedBridgeVersion\"])",
   "record.supportedBridgeVersion === undefined || record.supportedBridgeVersion === bridgeVersion",
@@ -71,7 +72,6 @@ if (!/Object\.keys\(message\)\.every\(\(key\) => key === "version" \|\| key === 
 const disabledGuiMessageTypes = [
   "gui.openFile",
   "gui.revealRange",
-  "gui.applyWorkspaceEditRequest",
   "gui.executeIdeTool",
   "gui.copyText",
   "gui.showNotification",
@@ -85,11 +85,9 @@ for (const type of disabledGuiMessageTypes) {
 
 const privilegedVscodeApiSnippets = [
   "vscode.window.showTextDocument",
-  "vscode.workspace.applyEdit",
   "vscode.commands.executeCommand",
   "vscode.env.clipboard",
   "vscode.window.showInformationMessage",
-  "vscode.window.showWarningMessage",
   "vscode.window.showErrorMessage",
   "vscode.window.createTerminal",
   "vscode.workspace.fs.writeFile",
@@ -115,18 +113,58 @@ const fakeVscode = {
   },
   window: {
     activeTextEditor: undefined,
+    showWarningMessage() {
+      return Promise.resolve(undefined);
+    },
   },
   workspace: {
+    workspaceFolders: undefined,
+    fs: {
+      stat() {
+        return Promise.reject(new Error("missing"));
+      },
+    },
     getWorkspaceFolder() {
       return undefined;
     },
     asRelativePath(uri) {
       return uri.fsPath;
     },
+    openTextDocument() {
+      return Promise.reject(new Error("missing"));
+    },
+    applyEdit() {
+      return Promise.resolve(false);
+    },
+  },
+  FileType: {
+    File: 1,
+  },
+  Position: class Position {
+    constructor(line, character) {
+      this.line = line;
+      this.character = character;
+    }
+  },
+  Range: class Range {
+    constructor(start, end) {
+      this.start = start;
+      this.end = end;
+    }
+  },
+  WorkspaceEdit: class WorkspaceEdit {
+    constructor() {
+      this.replacements = [];
+    }
+    replace(uri, range, replacementText) {
+      this.replacements.push({ uri, range, replacementText });
+    }
   },
 };
 let createHostReady;
 let createHostContextSnapshot;
+let createApplyWorkspaceEditResult;
+let handleApplyWorkspaceEditRequest;
 let isGuiMessage;
 let renderWebviewHtml;
 try {
@@ -136,7 +174,7 @@ try {
     }
     return originalLoad.call(this, request, parent, isMain);
   };
-  ({ createHostReady, createHostContextSnapshot, isGuiMessage, renderWebviewHtml } = await import("../out/webview.js"));
+  ({ createHostReady, createHostContextSnapshot, createApplyWorkspaceEditResult, handleApplyWorkspaceEditRequest, isGuiMessage, renderWebviewHtml } = await import("../out/webview.js"));
 } finally {
   Module._load = originalLoad;
 }
@@ -268,9 +306,27 @@ const rejectedPrivilegedGuiMessages = [
   },
 ];
 
+const validApplyWorkspaceEditRequest = createApplyWorkspaceEditRequest();
+const invalidApplyWorkspaceEditRequests = [
+  createApplyWorkspaceEditRequest({ omitConfirmation: true }),
+  createApplyWorkspaceEditRequest({ workspaceRelativePath: "../src/main.ts" }),
+  createApplyWorkspaceEditRequest({ workspaceRelativePath: "src\\main.ts" }),
+  createApplyWorkspaceEditRequest({ workspaceRelativePath: "https://example.invalid/main.ts" }),
+  createApplyWorkspaceEditRequest({ replacementText: "x".repeat(8193) }),
+  createApplyWorkspaceEditRequest({ range: { start: { line: 2, character: 0 }, end: { line: 1, character: 0 } } }),
+  createApplyWorkspaceEditRequest({ requestId: undefined }),
+];
+
 assert.equal(isGuiMessage(acceptedGuiReadyMessage), true);
+assert.equal(isGuiMessage(validApplyWorkspaceEditRequest), true, "VS Code host should accept strict confirmed apply requests.");
 for (const message of rejectedPrivilegedGuiMessages) {
+  if (message.type === "gui.applyWorkspaceEditRequest") {
+    continue;
+  }
   assert.equal(isGuiMessage(message), false, `VS Code host must reject disabled GUI bridge message: ${message.type}`);
+}
+for (const message of invalidApplyWorkspaceEditRequests) {
+  assert.equal(isGuiMessage(message), false, "VS Code host must reject malformed or unsafe apply requests.");
 }
 const hostReady = createHostReady(identity, connection, "valid-gui-ready-request");
 const workspaceRoot = path.join(os.tmpdir(), "yet-ai-safe-workspace");
@@ -335,6 +391,25 @@ assertNoSecretSentinels(JSON.stringify(secretContextSnapshot), fakeSecretValues,
 assert.equal(outsideContextSnapshot.payload.file.displayPath, "outside.ts");
 assert.equal(outsideContextSnapshot.payload.file.workspaceRelativePath, undefined);
 assertNoAbsolutePath(JSON.stringify(outsideContextSnapshot), "VS Code outside-workspace active context snapshot");
+
+await assertApplyWorkspaceEditBehavior();
+
+const sanitizedResult = createApplyWorkspaceEditResult(
+  "req-apply-edit-result-sanitize",
+  "failed",
+  "Failed at /Users/example/private/secret.ts with Authorization Bearer fake-session-token-webview-behavioral-sentinel",
+  999,
+  ["src/main.ts", "../private.ts", "src/second.ts", "src/third.ts", "src/fourth.ts", "src/fifth.ts"],
+);
+assert.equal(sanitizedResult.type, "host.applyWorkspaceEditResult");
+assert.equal(sanitizedResult.requestId, "req-apply-edit-result-sanitize");
+assert.equal(sanitizedResult.payload.status, "failed");
+assert.equal(sanitizedResult.payload.message, "Edit request status changed.");
+assert.equal(sanitizedResult.payload.cloudRequired, false);
+assert.equal(sanitizedResult.payload.appliedEditCount, 64);
+assert.deepEqual(sanitizedResult.payload.affectedFiles, ["src/main.ts", "src/second.ts", "src/third.ts", "src/fourth.ts"]);
+assertNoSecretSentinels(JSON.stringify(sanitizedResult), fakeSecretValues, "VS Code apply edit sanitized result");
+assertNoAbsolutePath(JSON.stringify(sanitizedResult), "VS Code apply edit sanitized result");
 
 assertNoSecretSentinels(html, fakeSecretValues, "VS Code behavioral webview render");
 assertRequiredSafetyStructure(html, "VS Code behavioral webview render");
@@ -499,6 +574,121 @@ function createFakeSelection(startLine, startCharacter, endLine, endCharacter) {
     start: { line: startLine, character: startCharacter },
     end: { line: endLine, character: endCharacter },
   };
+}
+
+function createApplyWorkspaceEditRequest(overrides = {}) {
+  const range = overrides.range ?? { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } };
+  const payload = {
+    requiresUserConfirmation: true,
+    summary: "Update greeting text.",
+    cloudRequired: false,
+    edits: [
+      {
+        workspaceRelativePath: overrides.workspaceRelativePath ?? "src/main.ts",
+        textReplacements: [
+          {
+            range,
+            replacementText: overrides.replacementText ?? "hello",
+          },
+        ],
+      },
+    ],
+    ...(overrides.payload ?? {}),
+  };
+  if (overrides.omitConfirmation) {
+    delete payload.requiresUserConfirmation;
+  }
+  return {
+    version: "2026-05-15",
+    type: "gui.applyWorkspaceEditRequest",
+    requestId: Object.hasOwn(overrides, "requestId") ? overrides.requestId : "req-apply-edit-valid-001",
+    payload,
+  };
+}
+
+async function assertApplyWorkspaceEditBehavior() {
+  const existingPath = path.join(workspaceRoot, "src", "main.ts");
+  const webviewMessages = [];
+  const testWebview = {
+    postMessage(message) {
+      webviewMessages.push(message);
+      return Promise.resolve(true);
+    },
+  };
+  let confirmation = undefined;
+  let applyCalls = 0;
+  let warningCalls = 0;
+
+  fakeVscode.workspace.workspaceFolders = [{ uri: { fsPath: workspaceRoot, scheme: "file", path: workspaceRoot } }];
+  fakeVscode.workspace.fs.stat = (uri) => {
+    if (uri.fsPath === existingPath) {
+      return Promise.resolve({ type: fakeVscode.FileType.File });
+    }
+    return Promise.reject(new Error("missing"));
+  };
+  fakeVscode.workspace.openTextDocument = (uri) => {
+    if (uri.fsPath !== existingPath) {
+      return Promise.reject(new Error("missing"));
+    }
+    return Promise.resolve({
+      isUntitled: false,
+      lineCount: 1,
+      lineAt(line) {
+        assert.equal(line, 0);
+        return { text: "hello world" };
+      },
+    });
+  };
+  fakeVscode.window.showWarningMessage = (message, options, action) => {
+    warningCalls += 1;
+    assert.equal(options.modal, true);
+    assert.equal(action, "Apply edits");
+    assert.equal(message.includes("Yet AI wants to apply 1 confirmed text edit"), true);
+    return Promise.resolve(confirmation);
+  };
+  fakeVscode.workspace.applyEdit = (workspaceEdit) => {
+    applyCalls += 1;
+    assert.equal(workspaceEdit.replacements.length, 1);
+    assert.equal(workspaceEdit.replacements[0].uri.fsPath, existingPath);
+    assert.equal(workspaceEdit.replacements[0].replacementText, "hello");
+    return Promise.resolve(true);
+  };
+
+  await handleApplyWorkspaceEditRequest(testWebview, createApplyWorkspaceEditRequest({ workspaceRelativePath: "../src/main.ts" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+  assert.equal(warningCalls, 0);
+  assert.equal(applyCalls, 0);
+
+  await handleApplyWorkspaceEditRequest(testWebview, createApplyWorkspaceEditRequest({ workspaceRelativePath: "src/missing.ts" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+  assert.equal(warningCalls, 0);
+  assert.equal(applyCalls, 0);
+
+  await handleApplyWorkspaceEditRequest(testWebview, createApplyWorkspaceEditRequest({ range: { start: { line: 0, character: 7 }, end: { line: 0, character: 2 } } }));
+  assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+  assert.equal(warningCalls, 0);
+  assert.equal(applyCalls, 0);
+
+  await handleApplyWorkspaceEditRequest(testWebview, createApplyWorkspaceEditRequest({ replacementText: "x".repeat(8193) }));
+  assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+  assert.equal(warningCalls, 0);
+  assert.equal(applyCalls, 0);
+
+  confirmation = undefined;
+  await handleApplyWorkspaceEditRequest(testWebview, createApplyWorkspaceEditRequest());
+  assert.equal(webviewMessages.at(-1).payload.status, "denied");
+  assert.equal(warningCalls, 1);
+  assert.equal(applyCalls, 0);
+
+  confirmation = "Apply edits";
+  await handleApplyWorkspaceEditRequest(testWebview, createApplyWorkspaceEditRequest());
+  assert.equal(webviewMessages.at(-1).payload.status, "applied");
+  assert.equal(webviewMessages.at(-1).payload.appliedEditCount, 1);
+  assert.deepEqual(webviewMessages.at(-1).payload.affectedFiles, ["src/main.ts"]);
+  assert.equal(warningCalls, 2);
+  assert.equal(applyCalls, 1);
+
+  fakeVscode.workspace.workspaceFolders = undefined;
 }
 
 function assertNoAbsolutePath(value, label) {
