@@ -49,6 +49,15 @@ npm run smoke:gui-runtime-e2e
 
 For docs-only updates, the repository gate remains `npm run check && git status --short` from the root.
 
+When changing confirmed edit proposal preview/review behavior, run the GUI tests and the VS Code host safety check:
+
+```sh
+cd apps/gui && npm test && npm run typecheck
+cd ../plugins/vscode && npm run check:webview-safety
+```
+
+If a root `npm run smoke:vscode-edit-proposal` command is added later, include it with this focused gate.
+
 Manual IDE packaged-asset preview flows:
 
 ```sh
@@ -147,7 +156,9 @@ Login/account-based GPT first-message UX is now more visible in the GUI as a gui
 
 The current GUI command/bridge surface is deliberately small. Chat submission sends only strict `user_message` commands with user-visible content and optional bounded active editor context; Stop sends no-op-safe `abort`. The GUI does not send `regenerate`, `update_message`, `remove_message`, `set_params`, `tool_decision`, or `ide_tool_result`, and those future command types remain disabled until strict schemas, request correlation, policy checks, sanitized audit/logging, least-privilege allowlists, and user confirmation are in place.
 
-The GUI-to-host bridge currently sends only strict `gui.ready`. The GUI does not request `gui.openFile`, `gui.revealRange`, `gui.applyWorkspaceEditRequest`, `gui.executeIdeTool`, `gui.copyText`, `gui.showNotification`, or `gui.getHostContext`; those future privileged actions remain disabled and rejected by host receive paths. Before any such action is enabled, it needs strict schemas, host origin/source checks, request/response correlation, explicit user confirmation for risky effects, sanitized logs/audits, least-privilege host allowlists, and no silent workspace mutation. Tools, tasks, knowledge, shell execution, file edits/apply patch, autonomous file reads/indexing, and background autonomy remain unavailable in this milestone.
+The GUI-to-host bridge sends strict `gui.ready` and, for the first confirmed edit-proposal MVP, strict `gui.applyWorkspaceEditRequest`. The GUI can extract only bounded edit proposals that satisfy the shared contract, render them as preview/review UI, and send an apply request only after an explicit user click. It does not auto-apply proposals, persist raw proposal data in browser storage, read workspace files, call providers, or trigger tools. Requests require `requiresUserConfirmation: true`, `cloudRequired: false`, safe summaries, request correlation, and text replacements for existing workspace-relative files only. The GUI renders only sanitized correlated `host.applyWorkspaceEditResult` messages from the host.
+
+The GUI does not request `gui.openFile`, `gui.revealRange`, `gui.executeIdeTool`, `gui.copyText`, `gui.showNotification`, or `gui.getHostContext`; those future privileged actions remain disabled and rejected by host receive paths. JetBrains apply support is not implemented in this milestone. The edit-proposal MVP does not allow autonomous edits, model-triggered apply, provider tool execution, shell/tools/tasks/git, file create/delete/rename, arbitrary file reads/indexing, or unconfirmed workspace mutation. Tools, tasks, knowledge, shell execution, file edits beyond confirmed bounded VS Code text replacements, autonomous file reads/indexing, and background autonomy remain unavailable in this milestone.
 
 ## Chat panel
 
