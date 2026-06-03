@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createBridgeAdapter, isGuiMessage, isHostMessage } from "./bridgeAdapter";
+import { createBridgeAdapter, isApplyWorkspaceEditPayload, isApplyWorkspaceEditResultPayload, isGuiMessage, isHostMessage } from "./bridgeAdapter";
 import guiReadyMessage from "../../../../packages/contracts/examples/bridge/gui-ready-message.json";
 import hostOpenedFromCommandMessage from "../../../../packages/contracts/examples/bridge/host-opened-from-command-message.json";
 import hostContextSnapshotMessage from "../../../../packages/contracts/examples/bridge/host-context-snapshot-message.json";
 import hostReadyMessage from "../../../../packages/contracts/examples/bridge/host-ready-message.json";
+import guiApplyWorkspaceEditRequestValidMessage from "../../../../packages/contracts/examples/bridge/gui-apply-workspace-edit-request-message.json";
+import hostApplyWorkspaceEditResultAppliedMessage from "../../../../packages/contracts/examples/bridge/host-apply-workspace-edit-result-applied.json";
+import hostApplyWorkspaceEditResultDeniedMessage from "../../../../packages/contracts/examples/bridge/host-apply-workspace-edit-result-denied.json";
 import guiApplyWorkspaceEditRequestMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-apply-workspace-edit-request-message.json";
 import guiCopyTextMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-copy-text-message.json";
 import guiExecuteIdeToolMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-execute-ide-tool-message.json";
@@ -16,6 +19,9 @@ import hostContextSnapshotAbsolutePathMessage from "../../../../packages/contrac
 import hostContextSnapshotPrivilegedCommandMessage from "../../../../packages/contracts/examples-invalid/bridge/host-context-snapshot-privileged-command.json";
 import hostContextSnapshotUnknownFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-context-snapshot-unknown-field.json";
 import hostOpenedFromCommandPayloadMessage from "../../../../packages/contracts/examples-invalid/bridge/host-opened-from-command-payload.json";
+import guiApplyWorkspaceEditMissingConfirmationMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-apply-workspace-edit-missing-confirmation.json";
+import guiApplyWorkspaceEditReversedRangeMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-apply-workspace-edit-reversed-range.json";
+import hostApplyWorkspaceEditResultSecretMessage from "../../../../packages/contracts/examples-invalid/bridge/host-apply-workspace-edit-result-secret-message.json";
 
 const bridgeVersion = "2026-05-15";
 const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
@@ -297,6 +303,39 @@ describe("bridgeAdapter", () => {
     adapter.dispose();
   });
 
+  it("posts valid apply workspace edit requests only through explicit adapter.post", () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+
+    const adapter = createBridgeAdapter(() => undefined);
+    postMessage.mockClear();
+    adapter.post(guiApplyWorkspaceEditRequestValidMessage as never);
+
+    expect(isGuiMessage(guiApplyWorkspaceEditRequestValidMessage)).toBe(true);
+    expect(isApplyWorkspaceEditPayload(guiApplyWorkspaceEditRequestValidMessage.payload)).toBe(true);
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith(guiApplyWorkspaceEditRequestValidMessage);
+    adapter.dispose();
+  });
+
+  it("rejects invalid apply workspace edit requests before posting", () => {
+    const logs: string[] = [];
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    postMessage.mockClear();
+
+    for (const message of [guiApplyWorkspaceEditMissingConfirmationMessage, guiApplyWorkspaceEditReversedRangeMessage]) {
+      expect(isGuiMessage(message)).toBe(false);
+      adapter.post(message as never);
+    }
+
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(logs.filter((entry) => entry === "Rejected invalid GUI bridge message")).toHaveLength(2);
+    adapter.dispose();
+  });
+
   it("posts accepted gui.ready through adapter.post", () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
@@ -448,6 +487,9 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage(hostReadyMessage)).toBe(true);
     expect(isHostMessage(hostOpenedFromCommandMessage)).toBe(true);
     expect(isHostMessage(hostContextSnapshotMessage)).toBe(true);
+    expect(isGuiMessage(guiApplyWorkspaceEditRequestValidMessage)).toBe(true);
+    expect(isHostMessage(hostApplyWorkspaceEditResultAppliedMessage)).toBe(true);
+    expect(isHostMessage(hostApplyWorkspaceEditResultDeniedMessage)).toBe(true);
 
     const logs: string[] = [];
     const messages: unknown[] = [];
@@ -471,6 +513,10 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage(hostContextSnapshotAbsolutePathMessage)).toBe(false);
     expect(isHostMessage(hostContextSnapshotPrivilegedCommandMessage)).toBe(false);
     expect(isHostMessage(hostContextSnapshotUnknownFieldMessage)).toBe(false);
+    expect(isGuiMessage(guiApplyWorkspaceEditMissingConfirmationMessage)).toBe(false);
+    expect(isGuiMessage(guiApplyWorkspaceEditReversedRangeMessage)).toBe(false);
+    expect(isApplyWorkspaceEditResultPayload(hostApplyWorkspaceEditResultSecretMessage.payload)).toBe(false);
+    expect(isHostMessage(hostApplyWorkspaceEditResultSecretMessage)).toBe(false);
 
     const logs: string[] = [];
     const messages: unknown[] = [];

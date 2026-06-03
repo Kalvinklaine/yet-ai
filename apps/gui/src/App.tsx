@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createBridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload } from "./bridge/bridgeAdapter";
+import { createBridgeAdapter, isApplyWorkspaceEditPayload, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
@@ -75,6 +75,16 @@ type AgentProgressState = {
   state: "not_checked" | "loading" | "ready" | "error";
   response: AgentProgressListResponse | null;
   error: RuntimeError | null;
+};
+
+type EditProposalState = {
+  requestId: string;
+  payload: ApplyWorkspaceEditPayload;
+};
+
+type ApplyResultState = {
+  requestId: string;
+  payload: ApplyWorkspaceEditResultPayload;
 };
 
 type FirstMessageAction =
@@ -243,6 +253,10 @@ export function App() {
   const [providerAuthDataRevision, setProviderAuthDataRevision] = useState<number | null>(null);
   const [agentProgress, setAgentProgress] = useState<AgentProgressState>({ state: "not_checked", response: null, error: null });
   const activeStreamRef = useRef<ActiveStream | null>(null);
+  const [editProposal, setEditProposal] = useState<EditProposalState | null>(null);
+  const [applyResult, setApplyResult] = useState<ApplyResultState | null>(null);
+  const bridgeAdapterRef = useRef<BridgeAdapter | null>(null);
+  const editProposalCounterRef = useRef(0);
   const attachedContextRef = useRef<typeof attachedContext>(null);
   const agentProgressAttemptRef = useRef(0);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -397,6 +411,7 @@ export function App() {
 
   useEffect(() => {
     const adapter = createBridgeAdapter((entry) => setBridgeLog((current) => [entry, ...current].slice(0, 20)));
+    bridgeAdapterRef.current = adapter;
     setBridgeHost(adapter.host);
     adapter.subscribe((message) => {
       if (message.type === "host.ready") {
@@ -406,9 +421,14 @@ export function App() {
         setAttachedContext({ payload: nextContext, settingsRevision: settingsRevisionRef.current, chatId: chatIdRef.current });
         setIncludeAttachedContext(hasUsableAttachedContext(nextContext));
         setAttachedContextStatus(null);
+      } else if (message.type === "host.applyWorkspaceEditResult") {
+        setApplyResult({ requestId: message.requestId ?? "unknown", payload: message.payload as ApplyWorkspaceEditResultPayload });
       }
     });
-    return () => adapter.dispose();
+    return () => {
+      bridgeAdapterRef.current = null;
+      adapter.dispose();
+    };
   }, [applyHostReady]);
 
   const appendChatError = useCallback((message: string) => {
@@ -1047,12 +1067,32 @@ export function App() {
     }
   };
 
+  const submitEditProposal = useCallback(() => {
+    if (!editProposal || bridgeHost === "browser") {
+      return;
+    }
+    bridgeAdapterRef.current?.post({
+      version: "2026-05-15",
+      type: "gui.applyWorkspaceEditRequest",
+      requestId: editProposal.requestId,
+      payload: editProposal.payload,
+    });
+    setApplyResult(null);
+    addTimeline(`Edit proposal apply requested ${editProposal.requestId}`);
+  }, [addTimeline, bridgeHost, editProposal]);
+
+  useEffect(() => {
+    const proposal = latestEditProposalFromMessages(chatView.messages, editProposalCounterRef);
+    setEditProposal((current) => proposal && (!current || current.requestId !== proposal.requestId || current.payload.summary !== proposal.payload.summary) ? proposal : current);
+  }, [chatView.messages]);
+
   const submitChat = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const content = chatInput.trim();
     if (!content) {
       return;
     }
+
     const targetSettings = settingsRef.current;
     const targetRevision = settingsRevisionRef.current;
     const targetChatId = chatIdRef.current;
@@ -1281,6 +1321,7 @@ export function App() {
               {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect()} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} />)}
               {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
             </div>
+            <EditProposalPanel proposal={editProposal} result={applyResult} host={bridgeHost} onApply={submitEditProposal} />
             <form className="stack chat-composer" onSubmit={(event) => void submitChat(event)}>
               <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} />
               <textarea ref={chatInputRef} value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
@@ -1647,6 +1688,54 @@ function boundedContextPreview(text: string): string {
   return sanitizeDisplayText(bounded);
 }
 
+function boundedReplacementPreview(text: string): string {
+  if (!text) {
+    return "Empty replacement text.";
+  }
+  const limit = 320;
+  return sanitizeDisplayText(text.length > limit ? `${text.slice(0, limit)}…` : text);
+}
+
+function formatEditRange(range: { start: { line: number; character: number }; end: { line: number; character: number } }): string {
+  return `${range.start.line}:${range.start.character}-${range.end.line}:${range.end.character}`;
+}
+
+function latestEditProposalFromMessages(messages: ChatViewMessage[], counterRef: { current: number }): EditProposalState | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role !== "assistant") {
+      continue;
+    }
+    const payload = extractEditProposal(messages[index].content);
+    if (payload) {
+      counterRef.current += 1;
+      return { requestId: `gui-edit-proposal-${counterRef.current}`, payload };
+    }
+  }
+  return null;
+}
+
+function extractEditProposal(content: string): ApplyWorkspaceEditPayload | null {
+  const parsed = parseFirstJsonObject(content);
+  if (!parsed) {
+    return null;
+  }
+  const candidate = asRecord(parsed)?.type === "gui.applyWorkspaceEditRequest" ? asRecord(parsed)?.payload : parsed;
+  return isApplyWorkspaceEditPayload(candidate) ? candidate : null;
+}
+
+function parseFirstJsonObject(content: string): unknown | null {
+  const start = content.indexOf("{");
+  const end = content.lastIndexOf("}");
+  if (start < 0 || end <= start || end - start > 50000) {
+    return null;
+  }
+  try {
+    return JSON.parse(content.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
 function formatSelectionRange(selection: HostContextSnapshotPayload["selection"]): string {
   if (!selection) {
     return "unknown range";
@@ -1703,6 +1792,70 @@ function ChatBubble({ message }: { message: ChatViewMessage }) {
     <div className={`chat-bubble ${message.role}`}>
       <strong>{message.role === "user" ? "You" : message.role === "assistant" ? "Yet AI" : "Error"}</strong>
       <span>{message.content || (message.status === "streaming" ? "…" : "")}</span>
+    </div>
+  );
+}
+
+function EditProposalPanel({ proposal, result, host, onApply }: { proposal: EditProposalState | null; result: ApplyResultState | null; host: BridgeHost; onApply: () => void }) {
+  if (!proposal && !result) {
+    return null;
+  }
+  return (
+    <section className="edit-proposal-card stack" aria-label="Edit proposal preview">
+      <div className="row">
+        <strong>Confirmed edit proposal</strong>
+        <span className="badge warn">preview only</span>
+      </div>
+      {proposal ? <EditProposalPreview proposal={proposal} host={host} onApply={onApply} /> : <span className="subtle">No valid bounded edit proposal is available.</span>}
+      {result && <ApplyResultPreview result={result} />}
+    </section>
+  );
+}
+
+function EditProposalPreview({ proposal, host, onApply }: { proposal: EditProposalState; host: BridgeHost; onApply: () => void }) {
+  const files = proposal.payload.edits;
+  const editCount = files.reduce((count, file) => count + file.textReplacements.length, 0);
+  return (
+    <div className="stack">
+      <span>{sanitizeDisplayText(proposal.payload.summary)}</span>
+      <div className="edit-proposal-grid">
+        <span>Request: {sanitizeDisplayText(proposal.requestId)}</span>
+        <span>Files: {files.length}</span>
+        <span>Text edits: {editCount}</span>
+        <span>Cloud required: false</span>
+      </div>
+      <div className="stack">
+        {files.map((file) => (
+          <article className="edit-file-card stack" key={file.workspaceRelativePath}>
+            <strong>{sanitizeDisplayText(file.workspaceRelativePath)}</strong>
+            <span>{file.textReplacements.length} replacement{file.textReplacements.length === 1 ? "" : "s"}</span>
+            {file.textReplacements.slice(0, 4).map((replacement, index) => (
+              <div className="edit-replacement-preview" key={`${file.workspaceRelativePath}:${index}`}>
+                <span>Range {formatEditRange(replacement.range)} · replacement characters {replacement.replacementText.length}</span>
+                <pre>{boundedReplacementPreview(replacement.replacementText)}</pre>
+              </div>
+            ))}
+            {file.textReplacements.length > 4 && <span className="subtle">{file.textReplacements.length - 4} more replacements hidden.</span>}
+          </article>
+        ))}
+      </div>
+      {host === "browser" ? (
+        <div className="readiness-card warn" role="status">Browser preview mode cannot apply workspace edits. Open this GUI from VS Code or JetBrains, then review and confirm there.</div>
+      ) : (
+        <button type="button" onClick={onApply}>Request host apply after review</button>
+      )}
+      <span className="subtle">The GUI never edits files directly. The host must confirm and apply any workspace mutation.</span>
+    </div>
+  );
+}
+
+function ApplyResultPreview({ result }: { result: ApplyResultState }) {
+  return (
+    <div className={`apply-result-card ${result.payload.status}`} role="status">
+      <strong>Host apply result: {sanitizeDisplayText(result.payload.status)}</strong>
+      <span>{sanitizeDisplayText(result.payload.message)}</span>
+      <span>Request: {sanitizeDisplayText(result.requestId)} · applied edits: {result.payload.appliedEditCount ?? 0} · cloud required: false</span>
+      {result.payload.affectedFiles && result.payload.affectedFiles.length > 0 && <span>Affected files: {result.payload.affectedFiles.map((file) => sanitizeDisplayText(file)).join(", ")}</span>}
     </div>
   );
 }
