@@ -1,17 +1,52 @@
 export type BridgeHost = "browser" | "vscode" | "jetbrains";
 
+export type WorkspaceEditPosition = {
+  line: number;
+  character: number;
+};
+
+export type WorkspaceEditRange = {
+  start: WorkspaceEditPosition;
+  end: WorkspaceEditPosition;
+};
+
+export type WorkspaceTextReplacement = {
+  range: WorkspaceEditRange;
+  replacementText: string;
+};
+
+export type WorkspaceFileTextEdits = {
+  workspaceRelativePath: string;
+  textReplacements: WorkspaceTextReplacement[];
+};
+
+export type ApplyWorkspaceEditPayload = {
+  requiresUserConfirmation: true;
+  summary: string;
+  cloudRequired?: false;
+  edits: WorkspaceFileTextEdits[];
+};
+
+export type ApplyWorkspaceEditResultPayload = {
+  status: "applied" | "denied" | "rejected" | "failed";
+  message: string;
+  cloudRequired: false;
+  appliedEditCount?: number;
+  affectedFiles?: string[];
+};
+
 export type GuiMessage = {
   version: string;
-  type: "gui.ready" | "gui.unloaded";
+  type: "gui.ready" | "gui.unloaded" | "gui.applyWorkspaceEditRequest";
   requestId?: string;
-  payload?: Record<string, unknown>;
+  payload?: Record<string, unknown> | ApplyWorkspaceEditPayload;
 };
 
 export type HostMessage = {
   version: string;
-  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot";
+  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.applyWorkspaceEditResult";
   requestId?: string;
-  payload?: Record<string, unknown>;
+  payload?: Record<string, unknown> | ApplyWorkspaceEditResultPayload;
 };
 
 type FrameNonceMessage = {
@@ -73,6 +108,11 @@ const hostMessageTypes = new Set<HostMessage["type"]>([
   "host.ready",
   "host.openedFromCommand",
   "host.contextSnapshot",
+  "host.applyWorkspaceEditResult",
+]);
+const guiMessageTypes = new Set<GuiMessage["type"]>([
+  "gui.ready",
+  "gui.applyWorkspaceEditRequest",
 ]);
 
 function expectedParentOrigin(): string | undefined {
@@ -220,12 +260,13 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
   if (!isPlainObject(value) || !hasOnlyKeys(value, ["version", "type", "requestId", "payload"])) {
     return false;
   }
-  return (
-    value.version === bridgeVersion &&
-    value.type === "gui.ready" &&
-    isBoundedRequestId(value.requestId) &&
-    isGuiReadyPayload(value.payload)
-  );
+  if (value.version !== bridgeVersion || typeof value.type !== "string" || !guiMessageTypes.has(value.type as GuiMessage["type"]) || !isBoundedRequestId(value.requestId)) {
+    return false;
+  }
+  if (value.type === "gui.ready") {
+    return isGuiReadyPayload(value.payload);
+  }
+  return value.type === "gui.applyWorkspaceEditRequest" && typeof value.requestId === "string" && isApplyWorkspaceEditPayload(value.payload);
 }
 
 function isGuiUnloadedMessage(value: unknown): value is GuiMessage {
@@ -263,6 +304,9 @@ export function isHostMessage(value: unknown): value is HostMessage {
   if (value.type === "host.contextSnapshot") {
     return isHostContextSnapshotPayload(value.payload);
   }
+  if (value.type === "host.applyWorkspaceEditResult") {
+    return typeof value.requestId === "string" && isApplyWorkspaceEditResultPayload(value.payload);
+  }
   return value.type !== "host.openedFromCommand" || isEmptyPayload(value.payload);
 }
 
@@ -296,6 +340,73 @@ function isGuiReadyPayload(value: unknown): boolean {
     return true;
   }
   return isPlainObject(value) && hasOnlyKeys(value, ["supportedBridgeVersion", "frameNonce"]) && (value.supportedBridgeVersion === undefined || value.supportedBridgeVersion === bridgeVersion) && (value.frameNonce === undefined || (typeof value.frameNonce === "string" && /^[0-9a-f]{32}$/.test(value.frameNonce)));
+}
+
+export function isApplyWorkspaceEditPayload(value: unknown): value is ApplyWorkspaceEditPayload {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["requiresUserConfirmation", "summary", "cloudRequired", "edits"])) {
+    return false;
+  }
+  if (value.requiresUserConfirmation !== true || !safeSummary(value.summary) || (value.cloudRequired !== undefined && value.cloudRequired !== false)) {
+    return false;
+  }
+  if (!Array.isArray(value.edits) || value.edits.length < 1 || value.edits.length > 4) {
+    return false;
+  }
+  let totalReplacementText = 0;
+  for (const fileEdit of value.edits) {
+    if (!isFileTextEdits(fileEdit)) {
+      return false;
+    }
+    for (const replacement of fileEdit.textReplacements) {
+      totalReplacementText += replacement.replacementText.length;
+      if (totalReplacementText > 32768) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+export function isApplyWorkspaceEditResultPayload(value: unknown): value is ApplyWorkspaceEditResultPayload {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["status", "message", "cloudRequired", "appliedEditCount", "affectedFiles"])) {
+    return false;
+  }
+  return (
+    (value.status === "applied" || value.status === "denied" || value.status === "rejected" || value.status === "failed") &&
+    safeMessage(value.message) &&
+    value.cloudRequired === false &&
+    optionalBoundedInteger(value.appliedEditCount, 0, 64) &&
+    isOptionalAffectedFiles(value.affectedFiles)
+  );
+}
+
+function isFileTextEdits(value: unknown): value is WorkspaceFileTextEdits {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["workspaceRelativePath", "textReplacements"]) || !safeRelativePath(value.workspaceRelativePath)) {
+    return false;
+  }
+  return Array.isArray(value.textReplacements) && value.textReplacements.length >= 1 && value.textReplacements.length <= 16 && value.textReplacements.every(isTextReplacement);
+}
+
+function isTextReplacement(value: unknown): value is WorkspaceTextReplacement {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["range", "replacementText"])) {
+    return false;
+  }
+  return isEditRange(value.range) && typeof value.replacementText === "string" && value.replacementText.length <= 8192;
+}
+
+function isEditRange(value: unknown): value is WorkspaceEditRange {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["start", "end"]) || !isEditPosition(value.start) || !isEditPosition(value.end)) {
+    return false;
+  }
+  return value.end.line > value.start.line || (value.end.line === value.start.line && value.end.character >= value.start.character);
+}
+
+function isEditPosition(value: unknown): value is WorkspaceEditPosition {
+  return isPlainObject(value) && hasOnlyKeys(value, ["line", "character"]) && Number.isInteger(value.line) && Number.isInteger(value.character) && optionalBoundedInteger(value.line, 0, 1000000) && optionalBoundedInteger(value.character, 0, 1000000);
+}
+
+function isOptionalAffectedFiles(value: unknown): boolean {
+  return value === undefined || (Array.isArray(value) && value.length <= 4 && value.every((item) => safeRelativePath(item)));
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -375,10 +486,10 @@ function safeRelativePath(value: unknown): boolean {
 }
 
 function safePath(value: unknown, maxLength: number): boolean {
-  if (typeof value !== "string" || value.length === 0 || value.length > maxLength || value.startsWith("/") || value.startsWith("~") || value.includes("\\") || value.includes(":")) {
+  if (typeof value !== "string" || value.length === 0 || value.length > maxLength || value.startsWith("/") || value.startsWith("~") || value.includes("%") || value.includes("\\") || value.includes(":") || value.includes("?") || value.includes("#")) {
     return false;
   }
-  if (/^[^\u0000-\u001f]+$/.test(value) === false) {
+  if (/^[^\u0000-\u001f\u007f-\u009f]+$/.test(value) === false) {
     return false;
   }
   return value.split("/").every((part) => part !== "." && part !== "..");
@@ -390,4 +501,16 @@ function optionalLanguageId(value: unknown): boolean {
 
 function optionalBoundedInteger(value: unknown, min: number, max: number): boolean {
   return value === undefined || (Number.isInteger(value) && (value as number) >= min && (value as number) <= max);
+}
+
+function safeSummary(value: unknown): boolean {
+  return typeof value === "string" && value.length > 0 && value.length <= 1000 && !unsafeDisplayText(value);
+}
+
+function safeMessage(value: unknown): boolean {
+  return typeof value === "string" && value.length > 0 && value.length <= 1000 && !unsafeDisplayText(value) && !/\/Users\/|\/Private\/|[A-Za-z]:\\\\|~[/\\\\]/.test(value);
+}
+
+function unsafeDisplayText(value: string): boolean {
+  return /authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|provider[_-]?response|raw[_-]?prompt|file[_-]?content/i.test(value);
 }

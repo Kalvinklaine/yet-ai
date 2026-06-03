@@ -3795,6 +3795,110 @@ describe("chat panel", () => {
   });
 });
 
+describe("edit proposal preview", () => {
+  it("renders a bounded proposal in browser mode without auto-applying or writing browser storage", async () => {
+    localStorage.setItem("sentinel", "keep");
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Edit proposal chat", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Edit proposal chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Confirmed edit proposal");
+    expect(text).toContain("Replace one visible editor line after user review.");
+    expect(text).toContain("src/example.ts");
+    expect(text).toContain("Files: 1");
+    expect(text).toContain("Text edits: 1");
+    expect(text).toContain("const label = \"Yet AI\";");
+    expect(text).toContain("Browser preview mode cannot apply workspace edits");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Request host apply after review")).toBe(false);
+    expect(browserStorageDump()).toContain("sentinel");
+    expect(browserStorageDump()).not.toContain("Replace one visible editor line");
+  });
+
+  it("emits an apply request only after explicit user click in a privileged host", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Edit proposal chat", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Edit proposal chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+    await act(async () => {
+      findButton("Request host apply after review").click();
+    });
+
+    const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
+    expect(applyCalls).toHaveLength(1);
+    expect(applyCalls[0][0]).toMatchObject({ version: bridgeVersion, type: "gui.applyWorkspaceEditRequest", payload: proposal });
+    expect(applyCalls[0][0].requestId).toMatch(/^gui-edit-proposal-/);
+  });
+
+  it("rejects invalid proposal objects before rendering or sending", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const invalidProposal = { ...safeEditProposalPayload(), requiresUserConfirmation: false };
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Invalid proposal chat", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Invalid proposal chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(invalidProposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).not.toContain("Confirmed edit proposal");
+    expect(text).not.toContain("Request host apply after review");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+  });
+
+  it("renders sanitized host apply results and rejects unsafe result messages", async () => {
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+
+    await dispatchHostApplyResult({
+      status: "applied",
+      message: "Applied after user confirmation.",
+      cloudRequired: false,
+      appliedEditCount: 1,
+      affectedFiles: ["src/example.ts"],
+    });
+
+    let text = container?.textContent ?? "";
+    expect(text).toContain("Host apply result: applied");
+    expect(text).toContain("Applied after user confirmation.");
+    expect(text).toContain("src/example.ts");
+
+    await dispatchHostApplyResult({
+      status: "failed",
+      message: "Authorization Bearer unsafe-secret",
+      cloudRequired: false,
+      appliedEditCount: 0,
+      affectedFiles: [],
+    });
+
+    text = container?.textContent ?? "";
+    expect(text).toContain("Applied after user confirmation.");
+    expect(text).not.toContain("unsafe-secret");
+  });
+});
+
 async function dispatchHostReady(payload: { runtimeUrl: string; sessionToken?: string }) {
   await act(async () => {
     window.dispatchEvent(new MessageEvent("message", {
@@ -3824,6 +3928,19 @@ async function dispatchHostContextSnapshot(payload: Record<string, unknown>) {
           source: "vscode",
           ...payload,
         },
+      },
+    }));
+  });
+}
+
+async function dispatchHostApplyResult(payload: Record<string, unknown>) {
+  await act(async () => {
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version: bridgeVersion,
+        type: "host.applyWorkspaceEditResult",
+        requestId: "gui-edit-proposal-1",
+        payload,
       },
     }));
   });
@@ -3966,6 +4083,25 @@ function chatThread(chatId: string, title: string, messages: unknown[]) {
     createdAt: "2026-05-29T07:15:00Z",
     updatedAt: "2026-05-29T07:16:30Z",
     messages,
+  };
+}
+
+function safeEditProposalPayload() {
+  return {
+    requiresUserConfirmation: true,
+    summary: "Replace one visible editor line after user review.",
+    cloudRequired: false,
+    edits: [
+      {
+        workspaceRelativePath: "src/example.ts",
+        textReplacements: [
+          {
+            range: { start: { line: 4, character: 2 }, end: { line: 4, character: 18 } },
+            replacementText: "const label = \"Yet AI\";",
+          },
+        ],
+      },
+    ],
   };
 }
 
