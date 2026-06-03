@@ -158,6 +158,34 @@ fn lsp_completion_returns_empty_for_closed_unknown_unsupported_and_invalid_docum
 }
 
 #[test]
+fn lsp_completion_and_hover_fail_safe_for_oversized_numeric_line_positions() {
+    let mut server = initialized_server();
+    let uri = "file:///workspace/src/main.rs";
+    server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":uri,"text":"fn main() {}"}}
+    }));
+
+    assert_empty_completion(&mut server, uri, 4_294_967_296, 0);
+    assert_null_hover(&mut server, uri, 4_294_967_296, 0);
+}
+
+#[test]
+fn lsp_completion_and_hover_fail_safe_for_max_numeric_line_positions() {
+    let mut server = initialized_server();
+    let uri = "file:///workspace/src/main.rs";
+    server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":uri,"text":"fn main() {}"}}
+    }));
+
+    assert_empty_completion(&mut server, uri, u64::MAX, 0);
+    assert_null_hover(&mut server, uri, u64::MAX, 0);
+}
+
+#[test]
 fn lsp_completion_returns_empty_for_oversized_or_binary_like_cached_content() {
     let mut server = initialized_server();
     let oversized_uri = "file:///workspace/src/oversized.rs";
@@ -410,6 +438,7 @@ fn lsp_document_symbols_caps_count_and_name_length() {
     let symbols = document_symbols(&mut server, uri);
     assert_eq!(symbols.len(), 64);
     assert_eq!(symbols[0]["name"].as_str().unwrap().len(), 80);
+    assert_eq!(symbols[63]["name"], "name_62");
 }
 
 #[test]
