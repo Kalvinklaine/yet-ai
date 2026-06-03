@@ -95,6 +95,11 @@ export function openYetAiWebview(
   panel.webview.html = renderWebviewHtml(panel.webview, context.extensionUri, identity, connection);
   panel.webview.onDidReceiveMessage((message: unknown) => {
     if (!isGuiMessage(message)) {
+      if (isInvalidApplyWorkspaceEditRequestMessage(message)) {
+        const requestId = (message as { requestId: string }).requestId;
+        void panel.webview.postMessage(createApplyWorkspaceEditResult(requestId, "rejected", "Edit request rejected by host policy."));
+        return;
+      }
       console.log("Yet AI rejected invalid GUI bridge message");
       return;
     }
@@ -760,6 +765,20 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
     record.version === bridgeVersion &&
     ((record.type === "gui.ready" && isBoundedRequestId(record.requestId) && isGuiReadyPayload(record.payload)) ||
       (record.type === "gui.applyWorkspaceEditRequest" && parseApplyWorkspaceEditRequest(record as GuiMessage) !== undefined))
+  );
+}
+
+export function isInvalidApplyWorkspaceEditRequestMessage(value: unknown): value is GuiMessage & { requestId: string } {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    hasOnlyKeys(record, ["version", "type", "requestId", "payload"]) &&
+    record.version === bridgeVersion &&
+    record.type === "gui.applyWorkspaceEditRequest" &&
+    isRequiredRequestId(record.requestId) &&
+    parseApplyWorkspaceEditRequest(record as GuiMessage) === undefined
   );
 }
 

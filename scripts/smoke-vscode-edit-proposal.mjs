@@ -77,11 +77,25 @@ try {
   await page.getByRole("button", { name: "Request host apply after review" }).click();
   const acceptedRequest = await waitForApplyRequest(page, 1);
   assertApplyRequestShape(acceptedRequest, "accepted request");
+  await page.getByRole("button", { name: "Host apply pending…" }).click({ trial: true }).catch(() => undefined);
+  await page.getByRole("button", { name: "Host apply pending…" }).click({ force: true }).catch(() => undefined);
+  const pendingDoubleClickCount = (await bridgeMessages(page)).filter((message) => message.type === "gui.applyWorkspaceEditRequest").length;
+  if (pendingDoubleClickCount !== 1) {
+    failures.push("Double-click/pending apply emitted more than one request.");
+  }
+  await dispatchHostResult(page, "gui-edit-proposal-mismatch", result("gui-edit-proposal-mismatch", "failed", "Mismatched pending result ignored."));
+  if ((await page.evaluate(() => document.body.innerText)).includes("Mismatched pending result ignored.")) {
+    failures.push("Mismatched host result was displayed while a different request was pending.");
+  }
   const acceptedResult = await handleApplyWorkspaceEditRequest(acceptedRequest, { confirmed: true });
   assertHostResultShape(acceptedResult, "accepted result");
   hostResults.push(acceptedResult);
   await dispatchHostResult(page, acceptedRequest.requestId, acceptedResult);
   await expectVisible(page, "Applied 1 edit to 1 file.");
+  await dispatchHostResult(page, acceptedRequest.requestId, result(acceptedRequest.requestId, "failed", "Stale second result ignored."));
+  if ((await page.evaluate(() => document.body.innerText)).includes("Stale second result ignored.")) {
+    failures.push("Stale second matching host result replaced the completed pending result.");
+  }
   const editedFixture = await readFile(fixturePath, "utf8");
   if (editedFixture !== "const label = \"After\";\n") {
     failures.push("Accepted host confirmation did not apply the controlled temp fixture edit.");
@@ -241,6 +255,7 @@ function harnessHtml() {
         return "[]";
       }
     }
+    let pendingRequestId = null;
     function renderProposal(version, proposal) {
       const root = document.getElementById("root");
       root.innerHTML = "";
@@ -270,7 +285,11 @@ function harnessHtml() {
       button.type = "button";
       button.textContent = "Request host apply after review";
       button.addEventListener("click", () => {
-        vscode.postMessage({ version, type: "gui.applyWorkspaceEditRequest", requestId: "gui-edit-proposal-smoke-" + Date.now(), payload: proposal });
+        if (pendingRequestId) return;
+        pendingRequestId = "gui-edit-proposal-smoke-" + Date.now();
+        button.disabled = true;
+        button.textContent = "Host apply pending…";
+        vscode.postMessage({ version, type: "gui.applyWorkspaceEditRequest", requestId: pendingRequestId, payload: proposal });
       });
       const result = document.createElement("p");
       result.id = "apply-result";
@@ -315,9 +334,16 @@ function harnessHtml() {
     window.addEventListener("message", (event) => {
       const message = event.data;
       if (!isHostResult(message)) return;
+      if (message.requestId !== pendingRequestId) return;
+      pendingRequestId = null;
       window.__yetAiHostResults.push(message);
       const target = document.getElementById("apply-result");
       if (!target) return;
+      const button = document.querySelector("button");
+      if (button) {
+        button.disabled = false;
+        button.textContent = "Request host apply after review";
+      }
       if (message.payload.status === "applied") target.textContent = "Applied " + message.payload.appliedEditCount + " edit to " + message.payload.affectedFiles.length + " file.";
       else if (message.payload.status === "denied") target.textContent = "Host confirmation denied the edit request.";
       else target.textContent = "Host rejected the edit request.";

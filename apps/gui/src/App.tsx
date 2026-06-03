@@ -1113,6 +1113,16 @@ export function App() {
     }
   };
 
+  const cancelPendingEditProposalApply = useCallback(() => {
+    if (!pendingApplyRequestIdRef.current) {
+      return;
+    }
+    const requestId = pendingApplyRequestIdRef.current;
+    pendingApplyRequestIdRef.current = null;
+    setPendingApplyRequestId(null);
+    addTimeline(`Edit proposal pending apply cleared ${requestId}`);
+  }, [addTimeline]);
+
   const submitEditProposal = useCallback(() => {
     if (!editProposal || bridgeHost !== "vscode" || pendingApplyRequestIdRef.current) {
       return;
@@ -1382,7 +1392,7 @@ export function App() {
               {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect()} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} />)}
               {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
             </div>
-            <EditProposalPanel proposal={activeEditProposal} result={activeEditProposal ? applyResult : null} host={bridgeHost} pendingRequestId={pendingApplyRequestId} onApply={submitEditProposal} />
+            <EditProposalPanel proposal={activeEditProposal} result={activeEditProposal ? applyResult : null} host={bridgeHost} pendingRequestId={pendingApplyRequestId} onApply={submitEditProposal} onCancelPending={cancelPendingEditProposalApply} />
             <form className="stack chat-composer" onSubmit={(event) => void submitChat(event)}>
               <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} />
               <textarea ref={chatInputRef} value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
@@ -1889,7 +1899,7 @@ function ChatBubble({ message }: { message: ChatViewMessage }) {
   );
 }
 
-function EditProposalPanel({ proposal, result, host, pendingRequestId, onApply }: { proposal: EditProposalState | null; result: ApplyResultState | null; host: BridgeHost; pendingRequestId: string | null; onApply: () => void }) {
+function EditProposalPanel({ proposal, result, host, pendingRequestId, onApply, onCancelPending }: { proposal: EditProposalState | null; result: ApplyResultState | null; host: BridgeHost; pendingRequestId: string | null; onApply: () => void; onCancelPending: () => void }) {
   if (!proposal && !result) {
     return null;
   }
@@ -1899,13 +1909,13 @@ function EditProposalPanel({ proposal, result, host, pendingRequestId, onApply }
         <strong>Confirmed edit proposal</strong>
         <span className="badge warn">preview only</span>
       </div>
-      {proposal ? <EditProposalPreview proposal={proposal} host={host} pending={pendingRequestId === proposal.requestId} onApply={onApply} /> : <span className="subtle">No valid bounded edit proposal is available.</span>}
+      {proposal ? <EditProposalPreview proposal={proposal} host={host} pending={pendingRequestId === proposal.requestId} onApply={onApply} onCancelPending={onCancelPending} /> : <span className="subtle">No valid bounded edit proposal is available.</span>}
       {result && <ApplyResultPreview result={result} />}
     </section>
   );
 }
 
-function EditProposalPreview({ proposal, host, pending, onApply }: { proposal: EditProposalState; host: BridgeHost; pending: boolean; onApply: () => void }) {
+function EditProposalPreview({ proposal, host, pending, onApply, onCancelPending }: { proposal: EditProposalState; host: BridgeHost; pending: boolean; onApply: () => void; onCancelPending: () => void }) {
   const files = proposal.payload.edits;
   const editCount = files.reduce((count, file) => count + file.textReplacements.length, 0);
   return (
@@ -1935,7 +1945,10 @@ function EditProposalPreview({ proposal, host, pending, onApply }: { proposal: E
       {host !== "vscode" ? (
         <div className="readiness-card warn" role="status">This MVP can apply workspace edits only from VS Code. Browser and JetBrains preview mode cannot request apply yet.</div>
       ) : (
-        <button type="button" onClick={onApply} disabled={pending}>{pending ? "Host apply pending…" : "Request host apply after review"}</button>
+        <div className="row">
+          <button type="button" onClick={onApply} disabled={pending}>{pending ? "Host apply pending…" : "Request host apply after review"}</button>
+          {pending && <button type="button" onClick={onCancelPending}>Cancel pending host apply</button>}
+        </div>
       )}
       <span className="subtle">The GUI never edits files directly. The host must confirm and apply any workspace mutation.</span>
     </div>

@@ -3953,6 +3953,43 @@ describe("edit proposal preview", () => {
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(1);
   });
 
+  it("allows explicit pending apply cancel without emitting another request or accepting stale results", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Cancelable proposal chat", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Cancelable proposal chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Request host apply after review").click();
+    });
+    const requestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
+    expect(findButton("Host apply pending…").disabled).toBe(true);
+
+    await act(async () => {
+      findButton("Cancel pending host apply").click();
+    });
+
+    expect(findButton("Request host apply after review").disabled).toBe(false);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(1);
+
+    await dispatchHostApplyResult(requestId, {
+      status: "applied",
+      message: "Stale canceled apply result.",
+      cloudRequired: false,
+      appliedEditCount: 1,
+      affectedFiles: ["src/example.ts"],
+    });
+    expect(container?.textContent ?? "").not.toContain("Stale canceled apply result.");
+  });
+
   it("rejects invalid proposal objects before rendering or sending", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });

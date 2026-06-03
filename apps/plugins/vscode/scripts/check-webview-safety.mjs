@@ -165,6 +165,7 @@ let createHostReady;
 let createHostContextSnapshot;
 let createApplyWorkspaceEditResult;
 let handleApplyWorkspaceEditRequest;
+let isInvalidApplyWorkspaceEditRequestMessage;
 let isGuiMessage;
 let renderWebviewHtml;
 try {
@@ -174,7 +175,7 @@ try {
     }
     return originalLoad.call(this, request, parent, isMain);
   };
-  ({ createHostReady, createHostContextSnapshot, createApplyWorkspaceEditResult, handleApplyWorkspaceEditRequest, isGuiMessage, renderWebviewHtml } = await import("../out/webview.js"));
+  ({ createHostReady, createHostContextSnapshot, createApplyWorkspaceEditResult, handleApplyWorkspaceEditRequest, isInvalidApplyWorkspaceEditRequestMessage, isGuiMessage, renderWebviewHtml } = await import("../out/webview.js"));
 } finally {
   Module._load = originalLoad;
 }
@@ -346,6 +347,11 @@ for (const message of rejectedPrivilegedGuiMessages) {
 invalidApplyWorkspaceEditRequests.forEach((message, index) => {
   assert.equal(isGuiMessage(message), false, `VS Code host must reject malformed or unsafe apply requests at index ${index}.`);
 });
+assert.equal(isInvalidApplyWorkspaceEditRequestMessage(validApplyWorkspaceEditRequest), false, "VS Code host must not classify valid apply requests as invalid correlated rejections.");
+assert.equal(isInvalidApplyWorkspaceEditRequestMessage(invalidApplyWorkspaceEditRequests[0]), true, "VS Code host real receive path must identify malformed apply requests for correlated rejection.");
+assert.equal(isInvalidApplyWorkspaceEditRequestMessage({ ...invalidApplyWorkspaceEditRequests[0], requestId: "bad\nrequest" }), false, "VS Code host must not correlate invalid apply requests with unsafe request ids.");
+assert.equal(isInvalidApplyWorkspaceEditRequestMessage(rejectedPrivilegedGuiMessages[0]), false, "VS Code host must not route other invalid GUI message types through apply rejection.");
+assert.equal(createApplyWorkspaceEditResult(invalidApplyWorkspaceEditRequests[0].requestId, "rejected", "Edit request rejected by host policy.").requestId, invalidApplyWorkspaceEditRequests[0].requestId, "VS Code host correlated malformed apply rejection must preserve safe request id.");
 const hostReady = createHostReady(identity, connection, "valid-gui-ready-request");
 const workspaceRoot = path.join(os.tmpdir(), "yet-ai-safe-workspace");
 fakeVscode.workspace.getWorkspaceFolder = (uri) => uri.fsPath.startsWith(workspaceRoot) ? { uri: { fsPath: workspaceRoot } } : undefined;
