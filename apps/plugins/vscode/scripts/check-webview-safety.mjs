@@ -322,6 +322,32 @@ const rejectedPrivilegedGuiMessages = [
 ];
 
 const validApplyWorkspaceEditRequest = createApplyWorkspaceEditRequest();
+const unsafeEditTextSamples = [
+  "Authorization handling",
+  "bearer handling",
+  "setCookie handling",
+  "cookieValue handling",
+  "apiKey handling",
+  "api-key handling",
+  "client_token handling",
+  "csrf_token handling",
+  "oauthToken handling",
+  "xToken handling",
+  "access_token handling",
+  "refresh_token handling",
+  "secret handling",
+  "password handling",
+  "private_path handling",
+  "private-path handling",
+  "provider_response handling",
+  "provider-response handling",
+  "raw_prompt handling",
+  "raw-prompt handling",
+  "file_content handling",
+  "file-content handling",
+  "sk-abcdefghijklmnopqrstuvwxyz handling",
+  "sk-proj-abcdefghijklmnopqrstuvwxyz handling",
+];
 const invalidApplyWorkspaceEditRequests = [
   createApplyWorkspaceEditRequest({ summary: "Update /Users/alice/project/src/main.ts." }),
   createApplyWorkspaceEditRequest({ summary: "Update /home/alice/project/src/main.ts." }),
@@ -346,6 +372,7 @@ const invalidApplyWorkspaceEditRequests = [
   createApplyWorkspaceEditRequest({ summary: "Update raw_prompt handling." }),
   createApplyWorkspaceEditRequest({ summary: "Update file_content handling." }),
   createApplyWorkspaceEditRequest({ summary: "Update private_path handling." }),
+  ...unsafeEditTextSamples.map((sample) => createApplyWorkspaceEditRequest({ summary: `Update ${sample}.` })),
   createApplyWorkspaceEditRequest({ workspaceRelativePath: "src//main.ts" }),
   createApplyWorkspaceEditRequest({ workspaceRelativePath: "src/" }),
   createApplyWorkspaceEditRequest({ workspaceRelativePath: "/src/main.ts" }),
@@ -481,6 +508,7 @@ for (const privateResultMessage of [
   "Failed with raw_prompt details.",
   "Failed with file_content details.",
   "Failed with private_path details.",
+  ...unsafeEditTextSamples.map((sample) => `Failed with ${sample}.`),
 ]) {
   assert.equal(createApplyWorkspaceEditResult("req-private-result", "failed", privateResultMessage).payload.message, "Edit request status changed.");
 }

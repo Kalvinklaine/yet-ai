@@ -759,7 +759,7 @@ function sanitizeSafePath(value: string | undefined, maxLength: number): string 
 }
 
 function hasSecretLikeText(value: string): boolean {
-  return /(?:authorization|bearer\s+|sessiontoken|session[_-]?token|access[_-]?token|refresh[_-]?token|id[_-]?token|auth[_-]?token|provider[_-]?token|api[_-]?key|secret|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}|(?:^|[^A-Za-z0-9_-])(?:cookie|token|password|provider[_-]?response|raw[_-]?prompt|file[_-]?content|private[_-]?path)(?:[^A-Za-z0-9_-]|$))/i.test(value);
+  return /(?:authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|provider[_-]?response|raw[_-]?prompt|file[_-]?content|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value);
 }
 
 function hasBinaryLikeText(value: string): boolean {
