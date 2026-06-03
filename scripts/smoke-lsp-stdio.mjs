@@ -23,14 +23,16 @@ try {
   child = startLsp(binary);
 
   const initializedResponse = response(1);
-  send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { capabilities: {} } });
+  await send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { capabilities: {} } });
   const initialized = await initializedResponse;
   assert(initialized.result?.serverInfo?.name === "Yet AI LSP", "initialize did not return Yet AI LSP serverInfo");
   assert(initialized.result?.capabilities?.textDocumentSync === 1, "initialize did not return textDocumentSync capability");
   assert(typeof initialized.result?.capabilities?.completionProvider === "object", "initialize did not return completionProvider capability");
+  assert(initialized.result?.capabilities?.hoverProvider === true, "initialize did not return hoverProvider capability");
+  assert(initialized.result?.capabilities?.documentSymbolProvider === true, "initialize did not return documentSymbolProvider capability");
 
-  send({ jsonrpc: "2.0", method: "initialized", params: {} });
-  send({
+  await send({ jsonrpc: "2.0", method: "initialized", params: {} });
+  await send({
     jsonrpc: "2.0",
     method: "textDocument/didOpen",
     params: {
@@ -42,8 +44,9 @@ try {
       }
     }
   });
+
   const completionResponse = response(2);
-  send({
+  await send({
     jsonrpc: "2.0",
     id: 2,
     method: "textDocument/completion",
@@ -59,11 +62,42 @@ try {
   assert(items[0]?.label === completionLabel, "completion result did not include deterministic status label");
   assert(items[0]?.detail === "Local read-only LSP status", "completion result did not include deterministic status detail");
 
-  send({ jsonrpc: "2.0", method: "textDocument/didClose", params: { textDocument: { uri: documentUri } } });
-  const closedCompletionResponse = response(3);
-  send({
+  const hoverResponse = response(3);
+  await send({
     jsonrpc: "2.0",
     id: 3,
+    method: "textDocument/hover",
+    params: {
+      textDocument: { uri: documentUri },
+      position: { line: 0, character: 3 }
+    }
+  });
+  const hover = await hoverResponse;
+  assert(hover.result?.contents?.kind === "plaintext", "hover result did not include plaintext contents");
+  assert(
+    hover.result?.contents?.value === "Yet AI read-only LSP: local document is connected.",
+    "hover result did not include deterministic local status"
+  );
+
+  const documentSymbolResponse = response(4);
+  await send({
+    jsonrpc: "2.0",
+    id: 4,
+    method: "textDocument/documentSymbol",
+    params: {
+      textDocument: { uri: documentUri }
+    }
+  });
+  const documentSymbol = await documentSymbolResponse;
+  const symbols = documentSymbol.result;
+  assert(Array.isArray(symbols), "documentSymbol result was not an array");
+  assert(symbols.some((symbol) => symbol?.name === "main" && symbol?.kind === 12), "documentSymbol result did not include safe function-like symbol");
+
+  await send({ jsonrpc: "2.0", method: "textDocument/didClose", params: { textDocument: { uri: documentUri } } });
+  const closedCompletionResponse = response(5);
+  await send({
+    jsonrpc: "2.0",
+    id: 5,
     method: "textDocument/completion",
     params: {
       textDocument: { uri: documentUri },
@@ -74,16 +108,16 @@ try {
   assert(Array.isArray(closedCompletion.result?.items), "closed-document completion did not return items");
   assert(closedCompletion.result.items.length === 0, "closed-document completion did not return an empty result");
 
-  const unsupportedResponse = response(4);
-  send({ jsonrpc: "2.0", id: 4, method: "workspace/symbol", params: { query: "smoke" } });
+  const unsupportedResponse = response(6);
+  await send({ jsonrpc: "2.0", id: 6, method: "workspace/symbol", params: { query: "smoke" } });
   const unsupported = await unsupportedResponse;
   assert(unsupported.error?.code === -32601, "unsupported probe did not return method-not-supported error");
 
-  const shutdownResponse = response(5);
-  send({ jsonrpc: "2.0", id: 5, method: "shutdown", params: {} });
+  const shutdownResponse = response(7);
+  await send({ jsonrpc: "2.0", id: 7, method: "shutdown", params: {} });
   const shutdown = await shutdownResponse;
   assert(shutdown.result === null, "shutdown did not return null result");
-  send({ jsonrpc: "2.0", method: "exit", params: {} });
+  await send({ jsonrpc: "2.0", method: "exit", params: {} });
   await waitForExit(0);
 
   console.log("LSP stdio smoke passed.");
@@ -140,68 +174,91 @@ function startLsp(binary) {
   lsp.stdoutBuffer = Buffer.alloc(0);
   lsp.stderrText = "";
   lsp.pending = new Map();
-  lsp.stdin.on("error", (error) => throwPending(new Error(`LSP stdin stream error: ${boundedDiagnostic(error?.message ?? error)}`)));
+  lsp.fatalError = undefined;
+  lsp.stdin.on("error", (error) => setFatal(`LSP stdin stream error: ${error?.message ?? error}`));
   lsp.stdout.on("data", (chunk) => handleStdout(chunk));
-  lsp.stdout.on("error", (error) => throwPending(new Error(`LSP stdout stream error: ${boundedDiagnostic(error?.message ?? error)}`)));
+  lsp.stdout.on("error", (error) => setFatal(`LSP stdout stream error: ${error?.message ?? error}`));
   lsp.stderr.on("data", (chunk) => {
     lsp.stderrText = boundedAppend(lsp.stderrText, chunk.toString("utf8"));
   });
-  lsp.stderr.on("error", (error) => throwPending(new Error(`LSP stderr stream error: ${boundedDiagnostic(error?.message ?? error)}`)));
+  lsp.stderr.on("error", (error) => setFatal(`LSP stderr stream error: ${error?.message ?? error}`));
   lsp.on("exit", (code, signal) => {
-    for (const { reject, timer } of lsp.pending.values()) {
-      clearTimeout(timer);
-      reject(new Error(`LSP process exited before response; code=${code ?? "none"} signal=${signal ?? "none"}`));
+    if (lsp.pending.size > 0) {
+      setFatal(`LSP process exited before response; code=${code ?? "none"} signal=${signal ?? "none"}`);
     }
-    lsp.pending.clear();
   });
-  lsp.on("error", (error) => {
-    for (const { reject, timer } of lsp.pending.values()) {
-      clearTimeout(timer);
-      reject(error);
-    }
-    lsp.pending.clear();
-  });
+  lsp.on("error", (error) => setFatal(`LSP process error: ${error?.message ?? error}`));
   return lsp;
 }
 
-function send(message) {
+async function send(message) {
+  assertNoFatal();
   assert(child.exitCode === null && child.signalCode === null, "cannot send message to exited LSP process");
   const body = Buffer.from(JSON.stringify(message), "utf8");
-  child.stdin.write(Buffer.concat([Buffer.from(`Content-Length: ${body.length}\r\n\r\n`, "utf8"), body]));
+  const header = Buffer.from(`Content-Length: ${body.length}\r\n\r\n`, "utf8");
+  await new Promise((resolve, reject) => {
+    child.stdin.write(Buffer.concat([header, body]), (error) => {
+      if (error) {
+        setFatal(`LSP stdin write error: ${error?.message ?? error}`);
+        reject(fatalError());
+        return;
+      }
+      try {
+        assertNoFatal();
+        resolve();
+      } catch (fatal) {
+        reject(fatal);
+      }
+    });
+  });
 }
 
 function response(id) {
+  assertNoFatal();
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       child.pending.delete(id);
-      reject(new Error(`timed out waiting for LSP response id ${id}`));
+      reject(fatalError() ?? new Error(`timed out waiting for LSP response id ${id}`));
     }, timeoutMs);
     child.pending.set(id, { resolve, reject, timer });
+    if (child.fatalError) {
+      rejectPending();
+    }
   });
 }
 
 function handleStdout(chunk) {
-  child.stdoutBuffer = Buffer.concat([child.stdoutBuffer, chunk]);
-  if (child.stdoutBuffer.length > maxOutputBytes) {
-    throwPending(new Error("LSP stdout exceeded bounded smoke buffer"));
+  if (child.fatalError) {
     return;
   }
+  if (child.stdoutBuffer.length + chunk.length > maxOutputBytes) {
+    setFatal("LSP stdout exceeded bounded smoke buffer");
+    return;
+  }
+  child.stdoutBuffer = Buffer.concat([child.stdoutBuffer, chunk]);
   while (child.stdoutBuffer.length > 0) {
     const headerEnd = child.stdoutBuffer.indexOf("\r\n\r\n");
     if (headerEnd === -1) {
       if (child.stdoutBuffer.length > maxHeaderBytes) {
-        throwPending(new Error("LSP response header exceeded bounded smoke buffer"));
+        setFatal("LSP response header exceeded bounded smoke buffer");
       }
       return;
     }
     const header = child.stdoutBuffer.subarray(0, headerEnd).toString("utf8");
     const length = parseContentLength(header);
+    if (child.fatalError) {
+      return;
+    }
     if (length > maxMessageBytes) {
-      throwPending(new Error("LSP response body exceeded bounded smoke buffer"));
+      setFatal("LSP response body exceeded bounded smoke buffer");
       return;
     }
     const bodyStart = headerEnd + 4;
     const bodyEnd = bodyStart + length;
+    if (bodyEnd > maxOutputBytes) {
+      setFatal("LSP response frame exceeded bounded smoke buffer");
+      return;
+    }
     if (child.stdoutBuffer.length < bodyEnd) {
       return;
     }
@@ -211,7 +268,7 @@ function handleStdout(chunk) {
     try {
       parsed = JSON.parse(body);
     } catch {
-      throwPending(new Error("LSP response body was not valid JSON"));
+      setFatal("LSP response body was not valid JSON");
       return;
     }
     const pending = child.pending.get(parsed.id);
@@ -233,11 +290,29 @@ function parseContentLength(header) {
       }
     }
   }
-  throwPending(new Error("LSP response omitted Content-Length"));
+  setFatal("LSP response omitted Content-Length");
   return 0;
 }
 
-function throwPending(error) {
+function setFatal(message) {
+  if (!child.fatalError) {
+    child.fatalError = new Error(boundedDiagnostic(message));
+  }
+  rejectPending();
+}
+
+function fatalError() {
+  return child?.fatalError;
+}
+
+function assertNoFatal() {
+  if (child?.fatalError) {
+    throw child.fatalError;
+  }
+}
+
+function rejectPending() {
+  const error = child.fatalError;
   for (const { reject, timer } of child.pending.values()) {
     clearTimeout(timer);
     reject(error);
@@ -246,6 +321,7 @@ function throwPending(error) {
 }
 
 async function waitForExit(expectedCode) {
+  assertNoFatal();
   if (child.exitCode !== null) {
     assert(child.exitCode === expectedCode, `LSP process exited with code ${child.exitCode}`);
     return;
@@ -254,6 +330,7 @@ async function waitForExit(expectedCode) {
     new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal }))),
     delay(timeoutMs).then(() => ({ timeout: true }))
   ]);
+  assertNoFatal();
   if (result.timeout) {
     throw new Error("LSP process did not exit after shutdown/exit");
   }
