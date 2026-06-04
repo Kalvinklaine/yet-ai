@@ -399,6 +399,7 @@ npm run check:webview-safety
 ```
 
 Include root `npm run smoke:vscode-edit-proposal` in the VS Code edit-proposal gate.
+Include root `npm run smoke:vscode-wrapper-browser` after `npm run prepare:vscode-preview` for deterministic packaged-GUI bridge coverage without launching real VS Code. That focused smoke serves `apps/plugins/vscode/media/gui`, installs a VS Code-like `acquireVsCodeApi` browser harness, verifies `gui.ready`, trusted `host.ready`, strict `gui.ideActionRequest` for `getContextSnapshot`, correlated `host.ideActionProgress`/`host.ideActionResult` rendering in `Agent activity · IDE actions`, rejection/non-rendering of an invalid secret-like host result, loopback-only networking, and absence of runtime/provider secret markers in DOM, storage, console, and smoke output.
 
 ## Current limitations
 

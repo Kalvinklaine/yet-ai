@@ -22,6 +22,7 @@
     "smoke:ide-preview": "node scripts/smoke-ide-preview.mjs",
     "smoke:ide-dogfood": "node scripts/smoke-ide-dogfood.mjs",
     "smoke:vscode-preview": "node scripts/smoke-vscode-preview.mjs",
+    "smoke:vscode-wrapper-browser": "node scripts/smoke-vscode-wrapper-browser.mjs",
     "smoke:vscode-installable": "node scripts/smoke-vscode-installable.mjs",
     "smoke:vscode-first-message": "node scripts/smoke-vscode-first-message.mjs",
     "smoke:vscode-edit-proposal": "node scripts/smoke-vscode-edit-proposal.mjs",
