@@ -85,7 +85,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 npm run smoke:ide-preview
 ```
 
-It runs `npm run prepare:vscode-preview`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, `npm run smoke:vscode-first-message`, `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, `npm run smoke:jetbrains-preview`, `npm run smoke:jetbrains-gui-browser`, and `npm run smoke:jetbrains-first-message` in order. It is local-only, uses ignored preview artifacts and loopback first-message mocks, and does not launch real IDEs or call real providers.
+It runs `npm run prepare:vscode-preview`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, `npm run smoke:vscode-wrapper-browser`, `npm run smoke:vscode-first-message`, `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, `npm run smoke:jetbrains-preview`, `npm run smoke:jetbrains-gui-browser`, and `npm run smoke:jetbrains-first-message` in order. It is local-only, uses ignored preview artifacts, includes the VS Code controlled action wrapper browser smoke, uses loopback first-message mocks, and does not launch real IDEs or call real providers.
 
 Run the VS Code first-message smoke directly when changing only the VS Code packaged GUI or bridge bootstrap path:
 
@@ -114,7 +114,7 @@ npm run check
 Required package-local verification includes the direct first-message smoke. Use `npm run smoke:ide-preview` when validating the cross-IDE preview gate, or root `npm run smoke:ide-dogfood` for the broader fail-fast closure gate with VS Code compile checks, JetBrains Gradle tests, repository check, and final tracked status output.
 
 ```sh
-export PATH="$HOME/.cargo/bin:$PATH"; npm run prepare:vscode-preview && npm run smoke:vscode-installable && npm run smoke:vscode-preview && npm run smoke:vscode-first-message && npm run check
+export PATH="$HOME/.cargo/bin:$PATH"; npm run prepare:vscode-preview && npm run smoke:vscode-installable && npm run smoke:vscode-preview && npm run smoke:vscode-wrapper-browser && npm run smoke:vscode-first-message && npm run check
 ```
 
 ## VS Code dev-preview run guide
@@ -128,6 +128,7 @@ This is the nearest hands-on path for trying the local-first VS Code dev preview
    npm run prepare:vscode-preview
    npm run smoke:vscode-installable
    npm run smoke:vscode-preview
+   npm run smoke:vscode-wrapper-browser
    ```
 
 2. Open the extension workspace and start an Extension Development Host:

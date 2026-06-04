@@ -10,6 +10,7 @@ const steps = [
   ["Prepare VS Code dev-preview", "npm", ["run", "prepare:vscode-preview"]],
   ["Smoke VS Code installable artifact", "npm", ["run", "smoke:vscode-installable"]],
   ["Smoke VS Code generated preview", "npm", ["run", "smoke:vscode-preview"]],
+  ["Smoke VS Code controlled action wrapper browser", "npm", ["run", "smoke:vscode-wrapper-browser"]],
   ["Smoke VS Code first-message preview", "npm", ["run", "smoke:vscode-first-message"]],
   ["Prepare JetBrains dev-preview", "npm", ["run", "prepare:jetbrains-preview"]],
   ["Smoke JetBrains installable artifact", "npm", ["run", "smoke:jetbrains-installable"]],
@@ -25,7 +26,7 @@ for (const [label, command, args] of steps) {
 }
 
 console.log("\nCross-IDE preview smoke passed.");
-console.log("Verified VS Code and JetBrains local installable/generated artifacts and first-message preview paths without launching real IDEs, using provider credentials, calling OpenAI/ChatGPT, or contacting hosted Yet AI services.");
+console.log("Verified VS Code and JetBrains local installable/generated artifacts, VS Code controlled action wrapper browser path, and first-message preview paths without launching real IDEs, using provider credentials, calling OpenAI/ChatGPT, or contacting hosted Yet AI services.");
 
 function validateReferencedPackageScripts() {
   const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
