@@ -1,0 +1,9 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.ideActionRequest",
+  "requestId": "req-ide-action-edit-001",
+  "payload": {
+    "action": "edit",
+    "workspaceRelativePath": "src/example.ts"
+  }
+}

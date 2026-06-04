@@ -1,0 +1,9 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.ideActionRequest",
+  "requestId": "req-ide-action-open-001",
+  "payload": {
+    "action": "openWorkspaceFile",
+    "workspaceRelativePath": "src/example.ts"
+  }
+}

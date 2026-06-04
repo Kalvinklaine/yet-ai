@@ -72,8 +72,14 @@ const mappings = [
   ["packages/contracts/examples/bridge/host-context-snapshot-message.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-apply-workspace-edit-result-applied.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-apply-workspace-edit-result-denied.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
+  ["packages/contracts/examples/bridge/host-ide-action-result-succeeded.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
+  ["packages/contracts/examples/bridge/host-ide-action-result-rejected.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
+  ["packages/contracts/examples/bridge/host-ide-action-progress.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-ready-message.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
-  ["packages/contracts/examples/bridge/gui-apply-workspace-edit-request-message.json", "packages/contracts/schemas/bridge/gui-message.schema.json"]
+  ["packages/contracts/examples/bridge/gui-apply-workspace-edit-request-message.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
+  ["packages/contracts/examples/bridge/gui-ide-action-request-get-context-snapshot.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
+  ["packages/contracts/examples/bridge/gui-ide-action-request-open-workspace-file.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
+  ["packages/contracts/examples/bridge/gui-ide-action-request-reveal-workspace-range.json", "packages/contracts/schemas/bridge/gui-message.schema.json"]
 ].map(([examplePath, schemaPath]) => [normalizeContractPath(examplePath), normalizeContractPath(schemaPath)]);
 
 const invalidMappings = [
@@ -190,6 +196,17 @@ const invalidMappings = [
     "packages/contracts/schemas/bridge/gui-message.schema.json"
   ],
   ...[
+    "gui-ide-action-request-shell-action.json",
+    "gui-ide-action-request-tool-action.json",
+    "gui-ide-action-request-git-action.json",
+    "gui-ide-action-request-task-action.json",
+    "gui-ide-action-request-edit-action.json",
+    "gui-ide-action-request-absolute-path.json",
+    "gui-ide-action-request-traversal-path.json",
+    "gui-ide-action-request-extra-payload-field.json",
+    "gui-ide-action-request-missing-request-id.json",
+    "gui-ide-action-request-oversized-request-id.json",
+    "gui-ide-action-request-oversized-path.json",
     "gui-apply-workspace-edit-missing-confirmation.json",
     "gui-apply-workspace-edit-absolute-path.json",
     "gui-apply-workspace-edit-traversal-path.json",
@@ -214,6 +231,10 @@ const invalidMappings = [
     "packages/contracts/schemas/bridge/gui-message.schema.json"
   ]),
   ...[
+    "host-ide-action-result-missing-request-id.json",
+    "host-ide-action-progress-missing-request-id.json",
+    "host-ide-action-result-secret-message.json",
+    "host-ide-action-result-secret-field.json",
     "host-apply-workspace-edit-result-private-path.json",
     "host-apply-workspace-edit-result-secret-message.json",
     "host-apply-workspace-edit-result-key-like-message.json",

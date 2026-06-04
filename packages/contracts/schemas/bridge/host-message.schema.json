@@ -2,10 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.yet-ai.example/contracts/bridge/host-message.schema.json",
   "title": "IDE Host to GUI Message",
-  "description": "Strict host bootstrap, active editor context, and sanitized confirmed edit proposal results only. Tool results, file actions, shell-like actions, unconfirmed workspace mutation, and IDE tool execution remain disabled until strict schemas, policy, request correlation, and confirmation are implemented.",
+  "description": "Strict host bootstrap, active editor context, current sanitized controlled IDE action progress/results, and confirmed edit proposal results only. Controlled IDE action messages are local-only read/context/navigation status messages and must not expose secrets, private absolute paths, raw contents, shell output, git output, task output, provider responses, or arbitrary payloads.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "type"],
+  "required": [
+    "version",
+    "type"
+  ],
   "properties": {
     "version": {
       "type": "string",
@@ -13,7 +16,14 @@
     },
     "type": {
       "type": "string",
-      "enum": ["host.ready", "host.openedFromCommand", "host.contextSnapshot", "host.applyWorkspaceEditResult"]
+      "enum": [
+        "host.ready",
+        "host.openedFromCommand",
+        "host.contextSnapshot",
+        "host.ideActionProgress",
+        "host.ideActionResult",
+        "host.applyWorkspaceEditResult"
+      ]
     },
     "requestId": {
       "$ref": "#/$defs/requestId"
@@ -50,7 +60,10 @@
     "activeEditorContext": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "source"],
+      "required": [
+        "kind",
+        "source"
+      ],
       "properties": {
         "kind": {
           "type": "string",
@@ -58,7 +71,11 @@
         },
         "source": {
           "type": "string",
-          "enum": ["vscode", "jetbrains", "browser"]
+          "enum": [
+            "vscode",
+            "jetbrains",
+            "browser"
+          ]
         },
         "file": {
           "type": "object",
@@ -115,11 +132,20 @@
     "applyWorkspaceEditResultPayload": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "message", "cloudRequired"],
+      "required": [
+        "status",
+        "message",
+        "cloudRequired"
+      ],
       "properties": {
         "status": {
           "type": "string",
-          "enum": ["applied", "denied", "rejected", "failed"]
+          "enum": [
+            "applied",
+            "denied",
+            "rejected",
+            "failed"
+          ]
         },
         "message": {
           "$ref": "#/$defs/safeMessage"
@@ -141,6 +167,218 @@
           }
         }
       }
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "line",
+        "character"
+      ],
+      "properties": {
+        "line": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "character": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        }
+      }
+    },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/position"
+        },
+        "end": {
+          "$ref": "#/$defs/position"
+        }
+      },
+      "allOf": [
+        {
+          "properties": {
+            "end": {
+              "type": "object",
+              "properties": {
+                "line": {
+                  "type": "integer",
+                  "minimum": {
+                    "$data": "2/start/line"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "start": {
+                "type": "object",
+                "properties": {
+                  "line": true
+                },
+                "required": [
+                  "line"
+                ]
+              },
+              "end": {
+                "type": "object",
+                "properties": {
+                  "line": {
+                    "type": "integer",
+                    "const": {
+                      "$data": "2/start/line"
+                    }
+                  }
+                },
+                "required": [
+                  "line"
+                ]
+              }
+            },
+            "required": [
+              "start",
+              "end"
+            ]
+          },
+          "then": {
+            "properties": {
+              "end": {
+                "type": "object",
+                "properties": {
+                  "character": {
+                    "type": "integer",
+                    "minimum": {
+                      "$data": "2/start/character"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ideActionType": {
+      "type": "string",
+      "enum": [
+        "getContextSnapshot",
+        "openWorkspaceFile",
+        "revealWorkspaceRange"
+      ]
+    },
+    "ideActionResultPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "message",
+        "cloudRequired"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "succeeded",
+            "rejected",
+            "unavailable",
+            "failed"
+          ]
+        },
+        "message": {
+          "$ref": "#/$defs/safeMessage"
+        },
+        "cloudRequired": {
+          "type": "boolean",
+          "const": false
+        },
+        "action": {
+          "$ref": "#/$defs/ideActionType"
+        },
+        "workspaceRelativePath": {
+          "$ref": "#/$defs/safeRelativePath"
+        },
+        "range": {
+          "$ref": "#/$defs/range"
+        },
+        "context": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "vscode",
+                "jetbrains",
+                "browser"
+              ]
+            },
+            "hasActiveEditor": {
+              "type": "boolean"
+            },
+            "workspaceFolderCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            }
+          }
+        }
+      }
+    },
+    "ideActionProgressPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase",
+        "status",
+        "summary",
+        "cloudRequired"
+      ],
+      "properties": {
+        "phase": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "checkingPolicy",
+            "running",
+            "completed"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "inProgress",
+            "succeeded",
+            "rejected",
+            "unavailable",
+            "failed"
+          ]
+        },
+        "summary": {
+          "$ref": "#/$defs/safeMessage"
+        },
+        "cloudRequired": {
+          "type": "boolean",
+          "const": false
+        },
+        "action": {
+          "$ref": "#/$defs/ideActionType"
+        },
+        "workspaceRelativePath": {
+          "$ref": "#/$defs/safeRelativePath"
+        }
+      }
     }
   },
   "allOf": [
@@ -151,10 +389,14 @@
             "const": "host.ready"
           }
         },
-        "required": ["type"]
+        "required": [
+          "type"
+        ]
       },
       "then": {
-        "required": ["payload"],
+        "required": [
+          "payload"
+        ],
         "properties": {
           "payload": {
             "type": "object",
@@ -192,7 +434,9 @@
             "const": "host.openedFromCommand"
           }
         },
-        "required": ["type"]
+        "required": [
+          "type"
+        ]
       },
       "then": {
         "properties": {
@@ -211,10 +455,14 @@
             "const": "host.contextSnapshot"
           }
         },
-        "required": ["type"]
+        "required": [
+          "type"
+        ]
       },
       "then": {
-        "required": ["payload"],
+        "required": [
+          "payload"
+        ],
         "properties": {
           "payload": {
             "$ref": "#/$defs/activeEditorContext"
@@ -226,13 +474,70 @@
       "if": {
         "properties": {
           "type": {
+            "const": "host.ideActionProgress"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "requestId",
+          "payload"
+        ],
+        "properties": {
+          "requestId": {
+            "$ref": "#/$defs/requestId"
+          },
+          "payload": {
+            "$ref": "#/$defs/ideActionProgressPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "host.ideActionResult"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "requestId",
+          "payload"
+        ],
+        "properties": {
+          "requestId": {
+            "$ref": "#/$defs/requestId"
+          },
+          "payload": {
+            "$ref": "#/$defs/ideActionResultPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
             "const": "host.applyWorkspaceEditResult"
           }
         },
-        "required": ["type"]
+        "required": [
+          "type"
+        ]
       },
       "then": {
-        "required": ["requestId", "payload"],
+        "required": [
+          "requestId",
+          "payload"
+        ],
         "properties": {
           "requestId": {
             "$ref": "#/$defs/requestId"

@@ -1,0 +1,11 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-ide-action-open-002",
+  "payload": {
+    "status": "rejected",
+    "message": "Request rejected by local IDE policy.",
+    "cloudRequired": false,
+    "action": "openWorkspaceFile"
+  }
+}

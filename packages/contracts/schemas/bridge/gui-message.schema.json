@@ -2,10 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.yet-ai.example/contracts/bridge/gui-message.schema.json",
   "title": "GUI to IDE Host Message",
-  "description": "Strict GUI readiness plus future/current confirmed edit proposal messages only. File open/reveal, unconfirmed workspace edits, notifications, context requests, shell-like actions, tasks, git, and IDE tool execution remain disabled until strict schemas, policy, request correlation, and confirmation are implemented.",
+  "description": "Strict GUI readiness, current read-only/navigation controlled IDE action requests, and confirmed edit proposal messages only. Controlled IDE actions are local-only read/context/navigation requests and do not grant writes, shell-like actions, tasks, git, arbitrary tools, or autonomous file reads.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "type"],
+  "required": [
+    "version",
+    "type"
+  ],
   "properties": {
     "version": {
       "type": "string",
@@ -13,7 +16,11 @@
     },
     "type": {
       "type": "string",
-      "enum": ["gui.ready", "gui.applyWorkspaceEditRequest"]
+      "enum": [
+        "gui.ready",
+        "gui.ideActionRequest",
+        "gui.applyWorkspaceEditRequest"
+      ]
     },
     "requestId": {
       "$ref": "#/$defs/requestId"
@@ -44,7 +51,10 @@
     "position": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["line", "character"],
+      "required": [
+        "line",
+        "character"
+      ],
       "properties": {
         "line": {
           "type": "integer",
@@ -61,7 +71,10 @@
     "range": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["start", "end"],
+      "required": [
+        "start",
+        "end"
+      ],
       "properties": {
         "start": {
           "$ref": "#/$defs/position"
@@ -94,7 +107,9 @@
                 "properties": {
                   "line": true
                 },
-                "required": ["line"]
+                "required": [
+                  "line"
+                ]
               },
               "end": {
                 "type": "object",
@@ -106,10 +121,15 @@
                     }
                   }
                 },
-                "required": ["line"]
+                "required": [
+                  "line"
+                ]
               }
             },
-            "required": ["start", "end"]
+            "required": [
+              "start",
+              "end"
+            ]
           },
           "then": {
             "properties": {
@@ -132,7 +152,10 @@
     "textReplacement": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["range", "replacementText"],
+      "required": [
+        "range",
+        "replacementText"
+      ],
       "properties": {
         "range": {
           "$ref": "#/$defs/range"
@@ -146,7 +169,10 @@
     "fileTextEdits": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["workspaceRelativePath", "textReplacements"],
+      "required": [
+        "workspaceRelativePath",
+        "textReplacements"
+      ],
       "properties": {
         "workspaceRelativePath": {
           "$ref": "#/$defs/safeRelativePath"
@@ -165,7 +191,11 @@
       "type": "object",
       "additionalProperties": false,
       "maxTotalReplacementText": 32768,
-      "required": ["requiresUserConfirmation", "summary", "edits"],
+      "required": [
+        "requiresUserConfirmation",
+        "summary",
+        "edits"
+      ],
       "properties": {
         "requiresUserConfirmation": {
           "type": "boolean",
@@ -187,6 +217,66 @@
           }
         }
       }
+    },
+    "ideActionType": {
+      "type": "string",
+      "enum": [
+        "getContextSnapshot",
+        "openWorkspaceFile",
+        "revealWorkspaceRange"
+      ]
+    },
+    "ideActionRequestPayload": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "action"
+          ],
+          "properties": {
+            "action": {
+              "const": "getContextSnapshot"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "action",
+            "workspaceRelativePath"
+          ],
+          "properties": {
+            "action": {
+              "const": "openWorkspaceFile"
+            },
+            "workspaceRelativePath": {
+              "$ref": "#/$defs/safeRelativePath"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "action",
+            "workspaceRelativePath",
+            "range"
+          ],
+          "properties": {
+            "action": {
+              "const": "revealWorkspaceRange"
+            },
+            "workspaceRelativePath": {
+              "$ref": "#/$defs/safeRelativePath"
+            },
+            "range": {
+              "$ref": "#/$defs/range"
+            }
+          }
+        }
+      ]
     }
   },
   "allOf": [
@@ -197,7 +287,9 @@
             "const": "gui.ready"
           }
         },
-        "required": ["type"]
+        "required": [
+          "type"
+        ]
       },
       "then": {
         "properties": {
@@ -218,13 +310,44 @@
       "if": {
         "properties": {
           "type": {
+            "const": "gui.ideActionRequest"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "requestId",
+          "payload"
+        ],
+        "properties": {
+          "requestId": {
+            "$ref": "#/$defs/requestId"
+          },
+          "payload": {
+            "$ref": "#/$defs/ideActionRequestPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
             "const": "gui.applyWorkspaceEditRequest"
           }
         },
-        "required": ["type"]
+        "required": [
+          "type"
+        ]
       },
       "then": {
-        "required": ["requestId", "payload"],
+        "required": [
+          "requestId",
+          "payload"
+        ],
         "properties": {
           "requestId": {
             "$ref": "#/$defs/requestId"
