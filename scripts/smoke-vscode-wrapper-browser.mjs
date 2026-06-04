@@ -18,6 +18,22 @@ const authorizationSentinel = `Authorization: Bearer ${runtimeToken}`;
 const rejectedSecretMessage = `Invalid host result must not render ${providerKey}`;
 const progressSummary = "IDE action policy check started.";
 const resultMessage = "Context snapshot delivered.";
+const proposalAssistantMessageId = "assistant-proposal-message-001";
+const proposalSummary = "Reveal the reviewed workspace range.";
+const proposalPath = "src/example.ts";
+const proposalRange = { start: { line: 4, character: 2 }, end: { line: 4, character: 8 } };
+const proposalProgressSummary = "IDE proposal navigation started.";
+const proposalResultMessage = "Workspace range revealed from proposal.";
+const assistantIdeActionProposal = {
+  type: "assistant.ideActionProposal",
+  version: bridgeVersion,
+  requiresUserConfirmation: true,
+  cloudRequired: false,
+  summary: proposalSummary,
+  action: "revealWorkspaceRange",
+  workspaceRelativePath: proposalPath,
+  range: proposalRange,
+};
 const failures = [];
 const consoleMessages = [];
 let observedRuntimeAuthorization = false;
@@ -97,12 +113,61 @@ try {
   await expectVisibleText(page, "bridge vscode", "VS Code bridge mode badge");
   await expectAttachedText(page, "VS Code controlled actions", "controlled action availability");
 
+  await expectVisibleText(page, "Read-only IDE action proposal", "assistant read-only IDE action proposal card");
+  await expectVisibleText(page, proposalSummary, "assistant proposal summary");
+  await expectVisibleText(page, "Reveal workspace range", "assistant proposal action label");
+  await expectVisibleText(page, `Path: ${proposalPath}`, "assistant proposal workspace-relative path");
+  await expectVisibleText(page, "Range: 4:2-4:8", "assistant proposal range");
+
+  const proposalPreClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
+  if (proposalPreClickIdeRequestCount !== 0) failures.push("Assistant IDE action proposal auto-posted gui.ideActionRequest before explicit confirmation.");
+
+  const runProposalButton = page.getByRole("button", { name: "Run read-only IDE action", exact: true });
+  await runProposalButton.waitFor({ state: "visible", timeout: 10_000 });
+  if (await runProposalButton.isDisabled()) failures.push("Run read-only IDE action button was disabled before any proposal request was pending.");
+  await runProposalButton.click();
+
+  const proposalIdeRequest = await waitForGuiMessageAfter(page, "gui.ideActionRequest", proposalPreClickIdeRequestCount);
+  if (!proposalIdeRequest) {
+    failures.push("Clicking Run read-only IDE action did not send gui.ideActionRequest.");
+  } else {
+    const expectedProposalPayload = { action: "revealWorkspaceRange", workspaceRelativePath: proposalPath, range: proposalRange };
+    if (proposalIdeRequest.version !== bridgeVersion) failures.push("Proposal IDE action request used the wrong bridge version.");
+    if (typeof proposalIdeRequest.requestId !== "string" || !/^gui-ide-proposal-action-\d+$/.test(proposalIdeRequest.requestId)) {
+      failures.push("Proposal IDE action request id was not GUI-owned with the expected prefix.");
+    }
+    if (proposalIdeRequest.requestId === proposalAssistantMessageId) failures.push("Proposal IDE action request reused an assistant message/request id.");
+    if (!deepEqual(proposalIdeRequest.payload, expectedProposalPayload)) failures.push("Proposal IDE action request payload did not match the strict assistant proposal action/path/range.");
+    if (hasForbiddenPrivilegedKeys(proposalIdeRequest.payload)) failures.push("Proposal IDE action request payload contained shell/edit/tool/git/task-like fields.");
+  }
+
+  const proposalRequestId = proposalIdeRequest?.requestId ?? "gui-ide-proposal-action-missing";
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.ideActionProgress",
+    requestId: proposalRequestId,
+    payload: { phase: "running", status: "inProgress", summary: proposalProgressSummary, cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: proposalPath },
+  });
+  await expectVisibleText(page, "Reveal range: inProgress", "correlated proposal IDE action progress");
+  await expectVisibleText(page, proposalProgressSummary, "proposal IDE action progress summary");
+
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.ideActionResult",
+    requestId: proposalRequestId,
+    payload: { status: "succeeded", message: proposalResultMessage, cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: proposalPath, range: proposalRange },
+  });
+  await expectVisibleText(page, "Reveal range: succeeded", "correlated proposal IDE action result");
+  await expectVisibleText(page, proposalResultMessage, "proposal IDE action result message");
+  await expectVisibleText(page, `Path: ${proposalPath}`, "proposal IDE action result path");
+  await expectVisibleText(page, "Range: 4:2-4:8", "proposal IDE action result range");
+
   const getContextButton = page.getByRole("button", { name: "Get IDE context", exact: true });
   await getContextButton.waitFor({ state: "visible", timeout: 10_000 });
   if (await getContextButton.isDisabled()) failures.push("Get IDE context button was disabled in VS Code host mode.");
+  const manualPreClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
   await getContextButton.click();
-
-  const ideRequest = await waitForGuiMessage(page, "gui.ideActionRequest");
+  const ideRequest = await waitForGuiMessageAfter(page, "gui.ideActionRequest", manualPreClickIdeRequestCount);
   if (!ideRequest) {
     failures.push("Clicking Get IDE context did not send gui.ideActionRequest.");
   } else {
@@ -152,7 +217,7 @@ try {
 
   if (failures.length > 0) reportFailures();
   console.log("VS Code wrapper browser smoke passed.");
-  console.log("Verified packaged VS Code GUI assets in a VS Code-like browser bridge, gui.ready, trusted host.ready, controlled getContextSnapshot request, correlated progress/result rendering, loopback-only networking, invalid host-result rejection, and secret redaction.");
+  console.log("Verified packaged VS Code GUI assets in a VS Code-like browser bridge, gui.ready, trusted host.ready, assistant read-only IDE action proposal rendering without auto-post, explicit proposal confirmation with GUI-owned strict request, manual controlled getContextSnapshot request, correlated progress/result rendering, loopback-only networking, invalid host-result rejection, and secret redaction.");
   console.log("No real VS Code launch, provider credentials, OpenAI/ChatGPT calls, hosted Yet AI service, or non-loopback provider call was used.");
 } finally {
   await browser?.close().catch(() => undefined);
@@ -203,6 +268,15 @@ async function waitForGuiMessage(page, type) {
   return await page.evaluate((messageType) => window.__yetAiVsCodeMessages.find((message) => message?.type === messageType), type);
 }
 
+async function waitForGuiMessageAfter(page, type, previousCount) {
+  await page.waitForFunction(({ messageType, count }) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).length > count, { messageType: type, count: previousCount }, { timeout: 10_000 });
+  return await page.evaluate(({ messageType, count }) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).at(count), { messageType: type, count: previousCount });
+}
+
+async function getGuiMessageCount(page, type) {
+  return await page.evaluate((messageType) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).length, type);
+}
+
 async function dispatchHostMessage(page, message) {
   await page.evaluate((hostMessage) => {
     window.__yetAiHostMessages.push(hostMessage);
@@ -243,12 +317,30 @@ async function startMockRuntimeServer() {
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/chats") {
-      json(response, 200, { chats: [] });
+      json(response, 200, { chats: [mockProposalChatSummary()] });
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === "/v1/chats/chat-001") {
+      json(response, 200, mockProposalChatThread());
       return;
     }
     json(response, 404, { error: "Not found" });
   });
   return listen(server);
+}
+
+function mockProposalChatSummary() {
+  return { chatId: "chat-001", title: "VS Code proposal smoke", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), messageCount: 1 };
+}
+
+function mockProposalChatThread() {
+  return {
+    chatId: "chat-001",
+    title: "VS Code proposal smoke",
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+    messages: [{ id: proposalAssistantMessageId, chatId: "chat-001", role: "assistant", content: JSON.stringify(assistantIdeActionProposal), createdAt: new Date(0).toISOString(), status: "complete" }],
+  };
 }
 
 async function startStaticServer(staticRoot) {
@@ -348,6 +440,20 @@ function contentType(filePath) {
 
 function assertNoSecretLeak(text, source) {
   if (containsSecret(text)) throw new Error(`Secret marker leaked through ${source}.`);
+}
+
+function deepEqual(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function hasForbiddenPrivilegedKeys(value) {
+  const forbidden = new Set(["shell", "command", "edit", "edits", "tool", "tools", "git", "task", "tasks", "applyWorkspaceEdit", "execute", "executeCommand"]);
+  const visit = (current) => {
+    if (!current || typeof current !== "object") return false;
+    if (Array.isArray(current)) return current.some(visit);
+    return Object.entries(current).some(([key, nested]) => forbidden.has(key) || visit(nested));
+  };
+  return visit(value);
 }
 
 function containsSecret(text) {
