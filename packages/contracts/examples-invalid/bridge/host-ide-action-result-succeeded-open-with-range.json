@@ -1,0 +1,22 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-open-with-range",
+  "payload": {
+    "status": "succeeded",
+    "message": "Opened workspace file.",
+    "cloudRequired": false,
+    "action": "openWorkspaceFile",
+    "workspaceRelativePath": "src/example.ts",
+    "range": {
+      "start": {
+        "line": 0,
+        "character": 0
+      },
+      "end": {
+        "line": 0,
+        "character": 1
+      }
+    }
+  }
+}

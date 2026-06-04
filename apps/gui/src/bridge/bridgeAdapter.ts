@@ -359,9 +359,9 @@ export function isHostReadyPayload(value: unknown): value is HostReadyPayload {
   }
   return (
     optionalLoopbackRuntimeUrl(value.runtimeUrl) &&
-    optionalString(value.sessionToken, 4096, 1) &&
-    optionalNonEmptyString(value.productId, 256) &&
-    optionalNonEmptyString(value.displayName, 256) &&
+    optionalSessionToken(value.sessionToken) &&
+    optionalProductId(value.productId) &&
+    optionalDisplayName(value.displayName) &&
     (value.cloudRequired === undefined || value.cloudRequired === false)
   );
 }
@@ -478,8 +478,13 @@ export function isIdeActionResultPayload(value: unknown): value is IdeActionResu
     safeRelativePath(value.workspaceRelativePath) &&
     (value.range === undefined || isEditRange(value.range)) &&
     isOptionalIdeActionContext(value.context) &&
-    hasRequiredSuccessfulActionMetadata(value)
+    hasRequiredSuccessfulActionMetadata(value) &&
+    hasRequiredSuccessfulResultMetadata(value)
   );
+}
+
+function hasRequiredSuccessfulResultMetadata(value: Record<string, unknown>): boolean {
+  return value.status !== "succeeded" || value.action !== "getContextSnapshot" || isIdeActionContext(value.context);
 }
 
 function hasRequiredSuccessfulActionMetadata(value: Record<string, unknown>): boolean {
@@ -487,12 +492,12 @@ function hasRequiredSuccessfulActionMetadata(value: Record<string, unknown>): bo
     return true;
   }
   if (value.action === "openWorkspaceFile") {
-    return requiredSafeRelativePath(value.workspaceRelativePath);
+    return requiredSafeRelativePath(value.workspaceRelativePath) && value.range === undefined;
   }
   if (value.action === "revealWorkspaceRange") {
     return requiredSafeRelativePath(value.workspaceRelativePath) && isEditRange(value.range);
   }
-  return value.action === "getContextSnapshot";
+  return value.action === "getContextSnapshot" && value.workspaceRelativePath === undefined && value.range === undefined && ("context" in value ? isIdeActionContext(value.context) : true);
 }
 
 function optionalIdeActionType(value: unknown): boolean {
@@ -503,6 +508,10 @@ function isOptionalIdeActionContext(value: unknown): boolean {
   if (value === undefined) {
     return true;
   }
+  return isIdeActionContext(value);
+}
+
+function isIdeActionContext(value: unknown): boolean {
   if (!isPlainObject(value) || !hasOnlyKeys(value, ["source", "hasActiveEditor", "workspaceFolderCount"])) {
     return false;
   }
@@ -562,6 +571,18 @@ function isEmptyPayload(value: unknown): boolean {
 
 function optionalString(value: unknown, maxLength: number, minLength = 0): boolean {
   return value === undefined || (typeof value === "string" && value.length >= minLength && value.length <= maxLength);
+}
+
+function optionalSessionToken(value: unknown): boolean {
+  return value === undefined || (typeof value === "string" && value.length >= 1 && value.length <= 4096 && /^[!-~]+$/.test(value));
+}
+
+function optionalProductId(value: unknown): boolean {
+  return value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value));
+}
+
+function optionalDisplayName(value: unknown): boolean {
+  return value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,127}$/.test(value));
 }
 
 function optionalNonEmptyString(value: unknown, maxLength: number): boolean {

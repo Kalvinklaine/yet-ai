@@ -1,0 +1,11 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-context-missing-context",
+  "payload": {
+    "status": "succeeded",
+    "message": "Captured context.",
+    "cloudRequired": false,
+    "action": "getContextSnapshot"
+  }
+}

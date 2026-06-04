@@ -38,7 +38,7 @@ Chat history contracts are for local engine-owned conversation persistence only.
 
 Positive example payloads live under `examples/` and should stay small, stable, and free of secrets or local paths. Negative examples live under `examples-invalid/` and intentionally demonstrate payloads that must fail a mapped schema without using real secrets or local paths.
 
-Range ordering constraints use Ajv `$data` references (for example, to ensure an end position is not before its start position). Repository contract validation therefore requires Ajv configured with `$data: true`; validators without `$data` support may compile these schemas incorrectly or miss ordering checks.
+Range ordering constraints use Ajv `$data` references (for example, to ensure an end position is not before its start position). Repository contract validation therefore requires Ajv configured with `$data: true`; validators without `$data` support may compile these schemas incorrectly or miss ordering checks. The confirmed edit proposal schema also uses the repository-specific custom Ajv keyword `maxTotalReplacementText` to cap aggregate replacement text across all file edits; any local contract validator must register that keyword with the same summing behavior before compiling schemas.
 
 Confirmed edit proposal contract changes should run:
 

@@ -1,0 +1,26 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-context-path-range",
+  "payload": {
+    "status": "succeeded",
+    "message": "Captured context.",
+    "cloudRequired": false,
+    "action": "getContextSnapshot",
+    "workspaceRelativePath": "src/example.ts",
+    "range": {
+      "start": {
+        "line": 0,
+        "character": 0
+      },
+      "end": {
+        "line": 0,
+        "character": 1
+      }
+    },
+    "context": {
+      "source": "vscode",
+      "hasActiveEditor": false
+    }
+  }
+}

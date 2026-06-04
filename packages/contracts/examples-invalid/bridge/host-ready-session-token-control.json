@@ -1,0 +1,12 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ready",
+  "requestId": "bridge-req-001",
+  "payload": {
+    "productId": "yet-ai",
+    "displayName": "Yet AI",
+    "runtimeUrl": "http://127.0.0.1:8001",
+    "sessionToken": "token\nvalue",
+    "cloudRequired": false
+  }
+}
