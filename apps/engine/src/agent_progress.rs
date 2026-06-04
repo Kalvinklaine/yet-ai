@@ -150,6 +150,8 @@ pub struct AgentProgressEvent {
     pub heartbeat: Option<AgentProgressHeartbeat>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_tail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ide_action: Option<AgentProgressIdeAction>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -160,6 +162,33 @@ pub struct AgentProgressHeartbeat {
     pub last_tool_output_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attempt: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentProgressIdeAction {
+    pub request_id: String,
+    pub action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_relative_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<AgentProgressRange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentProgressRange {
+    pub start: AgentProgressPosition,
+    pub end: AgentProgressPosition,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentProgressPosition {
+    pub line: u64,
+    pub character: u64,
 }
 
 #[derive(Debug, Error)]
@@ -487,6 +516,58 @@ fn validate_event(event: &AgentProgressEvent) -> Result<(), AgentProgressError> 
     if let Some(output_tail) = &event.output_tail {
         validate_safe_string(output_tail, 0, 2000)?;
     }
+    if let Some(ide_action) = &event.ide_action {
+        validate_ide_action(ide_action)?;
+    }
+    Ok(())
+}
+
+fn validate_ide_action(action: &AgentProgressIdeAction) -> Result<(), AgentProgressError> {
+    validate_id(&action.request_id, 128)?;
+    validate_enum(&action.action, &["getContextSnapshot", "openWorkspaceFile", "revealWorkspaceRange"])?;
+    if let Some(path) = &action.workspace_relative_path {
+        validate_safe_relative_path(path)?;
+    }
+    if let Some(range) = &action.range {
+        validate_position(&range.start)?;
+        validate_position(&range.end)?;
+        if range.end.line < range.start.line
+            || (range.end.line == range.start.line && range.end.character < range.start.character)
+        {
+            return Err(AgentProgressError::Unavailable);
+        }
+    }
+    if let Some(source) = &action.source {
+        validate_enum(source, &["vscode", "jetbrains", "browser", "engine"])?;
+    }
+    Ok(())
+}
+
+fn validate_position(position: &AgentProgressPosition) -> Result<(), AgentProgressError> {
+    if position.line > 1_000_000 || position.character > 1_000_000 {
+        return Err(AgentProgressError::Unavailable);
+    }
+    Ok(())
+}
+
+fn validate_safe_relative_path(value: &str) -> Result<(), AgentProgressError> {
+    if value.is_empty()
+        || value.chars().count() > 512
+        || value.starts_with('/')
+        || value.starts_with('~')
+        || value.starts_with('.')
+        || value.ends_with('/')
+        || value.contains("..")
+        || value.contains("//")
+        || value.contains('\\')
+        || value.contains(':')
+        || value.contains('%')
+        || value.contains('?')
+        || value.contains('#')
+        || value.chars().any(|ch| ch.is_control())
+    {
+        return Err(AgentProgressError::Unavailable);
+    }
     Ok(())
 }
 
@@ -654,6 +735,9 @@ fn contains_unsafe_text(value: &str) -> bool {
         "credential",
         "/users/",
         "/home/",
+        "/tmp/",
+        "/var/",
+        "/volumes/",
         "/private/",
         "~/",
         ".codex/auth.json",

@@ -567,7 +567,7 @@ function isSafeSummary(value: unknown): value is string {
 }
 
 function isRequiredRequestId(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= 128 && !/[\u0000-\u001f\u007f-\u009f]/.test(value);
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value);
 }
 
 function sanitizeApplyWorkspaceEditResultMessage(value: string): string {
@@ -711,8 +711,8 @@ const maxForwardedIdeActionMessageBytes = ${maxForwardedIdeActionMessageBytes};
 let latestHostReady;
 let frameReady = false;
 const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
-const isBoundedRequestId = (value) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 128 && !/[\u0000-\u001f\u007f-\u009f]/.test(value));
-const isRequiredRequestId = (value) => typeof value === "string" && value.length > 0 && value.length <= 128 && !/[\u0000-\u001f\u007f-\u009f]/.test(value);
+const isBoundedRequestId = (value) => value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value));
+const isRequiredRequestId = (value) => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value);
 const isBoundedForwardedApplyWorkspaceEditMessage = (value) => {
   try {
     return new TextEncoder().encode(JSON.stringify(value)).length <= maxForwardedApplyWorkspaceEditMessageBytes;
@@ -1023,7 +1023,7 @@ export function createNonce(): string {
 }
 
 function isBoundedRequestId(value: unknown): boolean {
-  return value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 128 && !/[\u0000-\u001f\u007f-\u009f]/.test(value));
+  return value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value));
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

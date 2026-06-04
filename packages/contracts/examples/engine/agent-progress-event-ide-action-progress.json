@@ -17,5 +17,21 @@
     "lastHeartbeatAt": "2026-05-29T15:10:00Z",
     "attempt": 1
   },
-  "outputTail": "IDE host reported bounded progress for request ide-action-42."
+  "outputTail": "IDE host reported bounded progress for request ide-action-42.",
+  "ideAction": {
+    "requestId": "ide-action-42",
+    "action": "revealWorkspaceRange",
+    "workspaceRelativePath": "src/main.ts",
+    "range": {
+      "start": {
+        "line": 10,
+        "character": 0
+      },
+      "end": {
+        "line": 10,
+        "character": 12
+      }
+    },
+    "source": "vscode"
+  }
 }

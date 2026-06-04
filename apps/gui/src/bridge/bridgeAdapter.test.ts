@@ -512,6 +512,8 @@ describe("bridgeAdapter", () => {
       { version: bridgeVersion, type: "gui.unknown", requestId: "unknown-secret-id", payload: { text: "secret payload" } },
       { version: bridgeVersion, type: "gui.ready", requestId: "", payload: { supportedBridgeVersion: bridgeVersion } },
       { version: bridgeVersion, type: "gui.ready", requestId: "a".repeat(129), payload: { supportedBridgeVersion: bridgeVersion } },
+      { version: bridgeVersion, type: "gui.ready", requestId: "../secret", payload: { supportedBridgeVersion: bridgeVersion } },
+      { version: bridgeVersion, type: "gui.ready", requestId: "sk-secret/request", payload: { supportedBridgeVersion: bridgeVersion } },
     ];
 
     for (const message of invalidMessages) {
@@ -751,6 +753,8 @@ describe("bridgeAdapter", () => {
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "bad\u007frequest" })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "bad\u0080request" })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "bad\u009frequest" })).toBe(false);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "../secret" })).toBe(false);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "sk-secret/request" })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", payload: { supportedBridgeVersion: "1" } })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", payload: { supportedBridgeVersion: bridgeVersion, extra: true } })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", extra: true })).toBe(false);
@@ -758,6 +762,7 @@ describe("bridgeAdapter", () => {
 
   it("rejects unknown, disabled, or invalid host messages", () => {
     expect(isHostMessage({ version: bridgeVersion, type: "host.themeChanged", requestId: "r1", payload: { theme: "dark" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.openedFromCommand", requestId: "opened-001", payload: {} })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.openedFromCommand", payload: { action: "edit" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.unknown" })).toBe(false);
     expect(isHostMessage({ version: "", type: "host.ready", payload: {} })).toBe(false);

@@ -4014,7 +4014,17 @@ fn valid_agent_progress_event() -> Value {
             "lastHeartbeatAt": "2026-05-31T10:00:01Z",
             "attempt": 1
         },
-        "outputTail": "Awaiting host-mediated IDE action result."
+        "outputTail": "Awaiting host-mediated IDE action result.",
+        "ideAction": {
+            "requestId": "ide-action-42",
+            "action": "revealWorkspaceRange",
+            "workspaceRelativePath": "src/main.ts",
+            "range": {
+                "start": { "line": 10, "character": 0 },
+                "end": { "line": 10, "character": 12 }
+            },
+            "source": "vscode"
+        }
     })
 }
 
@@ -4061,8 +4071,10 @@ async fn agent_progress_event_rejects_unsafe_or_oversized_metadata_without_raw_e
     let mut oversized_event = valid_agent_progress_event();
     oversized_event["eventId"] = json!("ide-action-evt-oversized");
     oversized_event["outputTail"] = json!("x".repeat(2001));
+    let mut tmp_path_event = valid_agent_progress_event();
+    tmp_path_event["message"] = json!("Opened /tmp/secret.log");
 
-    for event in [unsafe_event, oversized_event] {
+    for event in [unsafe_event, oversized_event, tmp_path_event] {
         let (status, body) = json_response(authed_request(
             Method::POST,
             "/v1/agent-progress/events",
@@ -4076,6 +4088,43 @@ async fn agent_progress_event_rejects_unsafe_or_oversized_metadata_without_raw_e
         assert!(!text.contains("/users/example"));
         assert!(!text.contains("bearer token"));
         assert!(!text.contains(&"x".repeat(64)));
+    }
+}
+
+#[tokio::test]
+async fn agent_progress_event_rejects_invalid_ide_action_metadata() {
+    for mut event in [
+        {
+            let mut event = valid_agent_progress_event();
+            event["ideAction"].as_object_mut().unwrap().remove("requestId");
+            event
+        },
+        {
+            let mut event = valid_agent_progress_event();
+            event["ideAction"]["action"] = json!("executeShell");
+            event
+        },
+        {
+            let mut event = valid_agent_progress_event();
+            event["ideAction"]["workspaceRelativePath"] = json!("/var/log/secret.txt");
+            event
+        },
+        {
+            let mut event = valid_agent_progress_event();
+            event["ideAction"]["workspaceRelativePath"] = json!("../secret.txt");
+            event
+        },
+    ] {
+        event["eventId"] = json!(format!("ide-action-invalid-{}", event["ideAction"].to_string().len()));
+        let (status, body) = json_response(authed_request(
+            Method::POST,
+            "/v1/agent-progress/events",
+            Body::from(event.to_string()),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let error = body["error"].as_str().unwrap_or_default();
+        assert!(matches!(error, "agent progress unavailable" | "invalid request body"));
     }
 }
 

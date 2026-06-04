@@ -207,6 +207,8 @@ const invalidMappings = [
     "gui-ide-action-request-extra-payload-field.json",
     "gui-ide-action-request-missing-request-id.json",
     "gui-ide-action-request-oversized-request-id.json",
+    "gui-ready-secret-request-id.json",
+    "gui-ready-traversal-request-id.json",
     "gui-ide-action-request-oversized-path.json",
     "gui-apply-workspace-edit-missing-confirmation.json",
     "gui-apply-workspace-edit-absolute-path.json",
@@ -236,6 +238,9 @@ const invalidMappings = [
     "host-ide-action-progress-missing-request-id.json",
     "host-ide-action-result-secret-message.json",
     "host-ide-action-result-secret-field.json",
+    "host-ide-action-result-traversal-request-id.json",
+    "host-ide-action-progress-secret-summary.json",
+    "host-ide-action-progress-extra-api-key.json",
     "host-apply-workspace-edit-result-private-path.json",
     "host-apply-workspace-edit-result-secret-message.json",
     "host-apply-workspace-edit-result-key-like-message.json",
@@ -245,6 +250,10 @@ const invalidMappings = [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/host-message.schema.json"
   ]),
+  [
+    "packages/contracts/examples-invalid/bridge/host-opened-from-command-request-id.json",
+    "packages/contracts/schemas/bridge/host-message.schema.json"
+  ],
   [
     "packages/contracts/examples-invalid/bridge/host-opened-from-command-payload.json",
     "packages/contracts/schemas/bridge/host-message.schema.json"
@@ -385,6 +394,16 @@ const invalidMappings = [
     "packages/contracts/examples-invalid/engine/agent-progress-event-secret-like-message.json",
     "packages/contracts/schemas/engine/agent-progress-event.schema.json"
   ],
+  ...[
+    "agent-progress-event-ide-action-missing-request-id.json",
+    "agent-progress-event-ide-action-bad-action.json",
+    "agent-progress-event-ide-action-absolute-path.json",
+    "agent-progress-event-ide-action-traversal-path.json",
+    "agent-progress-event-tmp-path-message.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/agent-progress-event.schema.json"
+  ]),
   [
     "packages/contracts/examples-invalid/engine/agent-progress-snapshot-huge-output-tail.json",
     "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"

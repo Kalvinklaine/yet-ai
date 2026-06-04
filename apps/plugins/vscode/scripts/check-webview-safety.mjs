@@ -76,8 +76,8 @@ for (const forbidden of ["sessionToken", "connection.sessionToken"]) {
   }
 }
 
-if (!/const isBoundedRequestId = \(value\) => value === undefined \|\| \(typeof value === "string" && value\.length > 0 && value\.length <= 128 && !\/\[\\u0000-\\u001f\\u007f-\\u009f\]\/\.test\(value\)\);/.test(renderWebviewHtmlSource)) {
-  throw new Error("VS Code webview wrapper must enforce bounded non-empty control-free gui.ready requestId values.");
+if (!renderWebviewHtmlSource.includes('const isBoundedRequestId = (value) => value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value));')) {
+  throw new Error("VS Code webview wrapper must enforce path/secret-safe bounded gui.ready requestId values.");
 }
 
 if (!/Object\.keys\(message\)\.every\(\(key\) => key === "version" \|\| key === "type" \|\| key === "requestId" \|\| key === "payload"\)/.test(renderWebviewHtmlSource)) {

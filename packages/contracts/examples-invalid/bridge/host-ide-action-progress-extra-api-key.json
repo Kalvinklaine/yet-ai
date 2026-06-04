@@ -1,0 +1,13 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionProgress",
+  "requestId": "ide-action-42",
+  "payload": {
+    "phase": "running",
+    "status": "inProgress",
+    "summary": "IDE action progress safe.",
+    "cloudRequired": false,
+    "action": "openWorkspaceFile",
+    "apiKey": "sk-secret-value"
+  }
+}
