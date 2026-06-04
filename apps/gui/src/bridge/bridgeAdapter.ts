@@ -60,7 +60,7 @@ export type IdeActionResultPayload = {
   workspaceRelativePath?: string;
   range?: WorkspaceEditRange;
   context?: {
-    source?: BridgeHost;
+    source?: "vscode";
     hasActiveEditor?: boolean;
     workspaceFolderCount?: number;
   };
@@ -447,12 +447,23 @@ export function isIdeActionProgressPayload(value: unknown): value is IdeActionPr
     (value.phase === "queued" || value.phase === "checkingPolicy" || value.phase === "running" || value.phase === "completed") &&
     (value.status === "pending" || value.status === "inProgress" || value.status === "succeeded" || value.status === "rejected" || value.status === "unavailable" || value.status === "failed") &&
     safeMessage(value.summary) &&
+    isIdeActionProgressPhaseStatus(value.phase, value.status) &&
     value.cloudRequired === false &&
     optionalIdeActionType(value.action) &&
     safeRelativePath(value.workspaceRelativePath) &&
     (value.range === undefined || isEditRange(value.range)) &&
     hasRequiredSuccessfulActionMetadata(value)
   );
+}
+
+function isIdeActionProgressPhaseStatus(phase: unknown, status: unknown): boolean {
+  if (phase === "queued") {
+    return status === "pending";
+  }
+  if (phase === "checkingPolicy" || phase === "running") {
+    return status === "inProgress";
+  }
+  return phase === "completed" && (status === "succeeded" || status === "rejected" || status === "unavailable" || status === "failed");
 }
 
 export function isIdeActionResultPayload(value: unknown): value is IdeActionResultPayload {

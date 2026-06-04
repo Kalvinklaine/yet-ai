@@ -229,6 +229,7 @@ const invalidMappings = [
     "gui-apply-workspace-edit-secret-summary.json",
     "gui-apply-workspace-edit-key-like-summary.json",
     "gui-apply-workspace-edit-private-path-summary.json",
+    "gui-apply-workspace-edit-bare-private-root-summary.json",
     "gui-apply-workspace-edit-drive-path-summary.json",
     "gui-apply-workspace-edit-empty-segment-path.json",
     "gui-apply-workspace-edit-trailing-slash-path.json"
@@ -260,7 +261,10 @@ const invalidMappings = [
     "host-ide-action-result-succeeded-missing-action.json",
     "host-ide-action-progress-succeeded-missing-action.json",
     "host-ide-action-result-succeeded-context-browser-source.json",
-    "host-ide-action-progress-succeeded-open-missing-path.json"
+    "host-ide-action-progress-succeeded-open-missing-path.json",
+    "host-ide-action-progress-completed-in-progress.json",
+    "host-ide-action-progress-running-succeeded.json",
+    "host-ide-action-result-bare-private-root-message.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/host-message.schema.json"
@@ -279,6 +283,10 @@ const invalidMappings = [
   ],
   [
     "packages/contracts/examples-invalid/bridge/host-context-snapshot-absolute-path.json",
+    "packages/contracts/schemas/bridge/host-message.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/bridge/host-context-snapshot-secret-like-display-path.json",
     "packages/contracts/schemas/bridge/host-message.schema.json"
   ],
   [

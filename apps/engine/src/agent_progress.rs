@@ -580,9 +580,7 @@ fn validate_safe_relative_path(value: &str) -> Result<(), AgentProgressError> {
         || value.chars().count() > 512
         || value.starts_with('/')
         || value.starts_with('~')
-        || value.starts_with('.')
         || value.ends_with('/')
-        || value.contains("..")
         || value.contains("//")
         || value.contains('\\')
         || value.contains(':')
@@ -593,7 +591,10 @@ fn validate_safe_relative_path(value: &str) -> Result<(), AgentProgressError> {
     {
         return Err(AgentProgressError::Unavailable);
     }
-    if value.split('/').any(is_secret_like_path_segment) {
+    if value
+        .split('/')
+        .any(|segment| segment == "." || segment == ".." || is_secret_like_path_segment(segment))
+    {
         return Err(AgentProgressError::Unavailable);
     }
     Ok(())
@@ -756,9 +757,7 @@ fn validate_request_id(value: &str, max_length: usize) -> Result<(), AgentProgre
 }
 
 fn validate_card_id(value: &str) -> Result<(), AgentProgressError> {
-    if value.is_empty() || value.len() > 64 {
-        return Err(AgentProgressError::Unavailable);
-    }
+    validate_request_id(value, 64)?;
     let mut chars = value.chars();
     let Some(first) = chars.next() else {
         return Err(AgentProgressError::Unavailable);
@@ -879,13 +878,19 @@ fn contains_unsafe_text(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{contains_unsafe_text, validate_safe_relative_path};
+    use super::{contains_unsafe_text, validate_card_id, validate_safe_relative_path};
 
     #[test]
     fn agent_progress_safe_relative_path_rejects_secret_like_segments() {
         assert!(validate_safe_relative_path("src/main.rs").is_ok());
         assert!(validate_safe_relative_path("docs/navigation-notes.md").is_ok());
+        assert!(validate_safe_relative_path(".github/workflows/test.yml").is_ok());
+        assert!(validate_safe_relative_path("src/.well-known/config.json").is_ok());
         for path in [
+            ".",
+            "..",
+            "src/./main.rs",
+            "src/../main.rs",
             "src/access_token.txt",
             "src/api-key.json",
             "credentials/config.json",
@@ -893,6 +898,14 @@ mod tests {
             "src/sk-proj-abcdef1234567890.txt",
         ] {
             assert!(validate_safe_relative_path(path).is_err(), "{path} should be rejected");
+        }
+    }
+
+    #[test]
+    fn agent_progress_card_id_rejects_secret_like_markers() {
+        assert!(validate_card_id("CARD-123_ok").is_ok());
+        for card_id in ["token-card", "AuthorizationBearerFake", "sk-proj-abcdef1234567890"] {
+            assert!(validate_card_id(card_id).is_err(), "{card_id} should be rejected");
         }
     }
 

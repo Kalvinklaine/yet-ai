@@ -27,6 +27,7 @@ const requiredSnippets = [
   "frame.contentWindow.postMessage(message, frameTargetOrigin)",
   "event.origin !== frameTargetOrigin",
   "isFrameGuiMessage(event.data)",
+  "const hasSecretRequestIdMarker = (value) => /authorization|bearer|api[_-]?key|token|secret|access[_-]?token|sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value);",
   "new TextEncoder().encode(JSON.stringify(value)).length <= maxForwardedApplyWorkspaceEditMessageBytes",
   "message.type === \"gui.ideActionRequest\" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)",
   "message.type === \"gui.applyWorkspaceEditRequest\" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)",
@@ -76,7 +77,7 @@ for (const forbidden of ["sessionToken", "connection.sessionToken"]) {
   }
 }
 
-if (!renderWebviewHtmlSource.includes('const isBoundedRequestId = (value) => value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value));')) {
+if (!renderWebviewHtmlSource.includes('const isBoundedRequestId = (value) => value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value) && !hasSecretRequestIdMarker(value));')) {
   throw new Error("VS Code webview wrapper must enforce path/secret-safe bounded gui.ready requestId values.");
 }
 
@@ -90,6 +91,10 @@ if (!renderWebviewHtmlSource.includes("new TextEncoder().encode(JSON.stringify(v
 
 if (!renderWebviewHtmlSource.includes("message.type === \"gui.ideActionRequest\" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)")) {
   throw new Error("VS Code webview wrapper rendered JS must require requestId and apply serialized-size guard to iframe IDE action requests.");
+}
+
+if (!renderWebviewHtmlSource.includes("!hasSecretRequestIdMarker(value)")) {
+  throw new Error("VS Code webview wrapper rendered JS must reject secret-like request IDs.");
 }
 
 if (!renderWebviewHtmlSource.includes("message.type === \"gui.applyWorkspaceEditRequest\" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)")) {
