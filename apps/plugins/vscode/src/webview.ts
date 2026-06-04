@@ -86,6 +86,8 @@ type ApplyWorkspaceEditStatus = "applied" | "denied" | "rejected" | "failed";
 
 const applyWorkspaceEditConfirmationLabel = "Apply edits";
 const maxForwardedApplyWorkspaceEditMessageBytes = 65536;
+const maxForwardedIdeActionMessageBytes = 8192;
+const maxControlledIdeActionFileBytes = 2 * 1024 * 1024;
 const inFlightIdeActionRequestIds = new Set<string>();
 
 export function openYetAiWebview(
@@ -106,6 +108,11 @@ export function openYetAiWebview(
   panel.webview.html = renderWebviewHtml(panel.webview, context.extensionUri, identity, connection);
   panel.webview.onDidReceiveMessage((message: unknown) => {
     if (!isGuiMessage(message)) {
+      if (isInvalidIdeActionRequestMessage(message)) {
+        const requestId = (message as { requestId: string }).requestId;
+        void panel.webview.postMessage(createIdeActionResult(requestId, "rejected", "IDE action rejected by host policy."));
+        return;
+      }
       if (isInvalidApplyWorkspaceEditRequestMessage(message)) {
         const requestId = (message as { requestId: string }).requestId;
         void panel.webview.postMessage(createApplyWorkspaceEditResult(requestId, "rejected", "Edit request rejected by host policy."));
@@ -174,7 +181,7 @@ export function createApplyWorkspaceEditResult(
     requestId,
     payload: {
       status,
-      message: sanitizeResultMessage(message),
+      message: sanitizeApplyWorkspaceEditResultMessage(message),
       cloudRequired: false,
       appliedEditCount: clampAppliedEditCount(appliedEditCount),
       affectedFiles: affectedFiles.map((file) => sanitizeRelativePath(file, 512)).filter((file): file is string => file !== undefined).slice(0, 4),
@@ -193,7 +200,7 @@ export function createIdeActionProgress(
   const payload: Record<string, unknown> = {
     phase,
     status,
-    summary: sanitizeResultMessage(summary),
+    summary: sanitizeIdeActionStatusMessage(summary),
     cloudRequired: false,
   };
   if (action) {
@@ -214,7 +221,7 @@ export function createIdeActionResult(
 ): HostMessage {
   const payload: Record<string, unknown> = {
     status,
-    message: sanitizeResultMessage(message),
+    message: sanitizeIdeActionStatusMessage(message),
     cloudRequired: false,
   };
   if (metadata.action) {
@@ -269,7 +276,7 @@ async function runIdeActionRequest(request: IdeActionRequest): Promise<HostMessa
   if (!workspaceFolders || workspaceFolders.length === 0) {
     return createIdeActionResult(request.requestId, "unavailable", "Workspace is unavailable.", { action: request.action, workspaceRelativePath: request.workspaceRelativePath });
   }
-  const uri = await resolveExistingWorkspaceFile(request.workspaceRelativePath, workspaceFolders);
+  const uri = await resolveExistingWorkspaceFile(request.workspaceRelativePath, workspaceFolders, maxControlledIdeActionFileBytes);
   if (!uri) {
     return createIdeActionResult(request.requestId, "rejected", "Workspace file rejected by host policy.", { action: request.action, workspaceRelativePath: request.workspaceRelativePath });
   }
@@ -486,14 +493,14 @@ export function parseIdeActionRequest(message: GuiMessage): IdeActionRequest | u
   return undefined;
 }
 
-async function resolveExistingWorkspaceFile(workspaceRelativePath: string, workspaceFolders: readonly vscode.WorkspaceFolder[]): Promise<vscode.Uri | undefined> {
+async function resolveExistingWorkspaceFile(workspaceRelativePath: string, workspaceFolders: readonly vscode.WorkspaceFolder[], maxFileBytes?: number): Promise<vscode.Uri | undefined> {
   const segments = workspaceRelativePath.split("/");
   const matches: vscode.Uri[] = [];
   for (const workspaceFolder of workspaceFolders) {
     const uri = vscode.Uri.joinPath(workspaceFolder.uri, ...segments);
     try {
       const stat = await vscode.workspace.fs.stat(uri);
-      if (stat.type === vscode.FileType.File) {
+      if (stat.type === vscode.FileType.File && (maxFileBytes === undefined || stat.size <= maxFileBytes)) {
         matches.push(uri);
       }
     } catch {
@@ -563,9 +570,16 @@ function isRequiredRequestId(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 128 && !/[\u0000-\u001f\u007f-\u009f]/.test(value);
 }
 
-function sanitizeResultMessage(value: string): string {
+function sanitizeApplyWorkspaceEditResultMessage(value: string): string {
   if (value.length === 0 || value.length > 1000 || hasSecretLikeText(value) || hasPrivatePathLikeText(value) || hasBinaryLikeText(value)) {
     return "Edit request status changed.";
+  }
+  return value;
+}
+
+function sanitizeIdeActionStatusMessage(value: string): string {
+  if (value.length === 0 || value.length > 1000 || hasSecretLikeText(value) || hasPrivatePathLikeText(value) || hasBinaryLikeText(value)) {
+    return "IDE action status changed.";
   }
   return value;
 }
@@ -693,13 +707,22 @@ window.yetAiBootstrap = bootstrap;
 const frame = document.querySelector("iframe");
 const frameTargetOrigin = bootstrap.guiDevOrigin;
 const maxForwardedApplyWorkspaceEditMessageBytes = ${maxForwardedApplyWorkspaceEditMessageBytes};
+const maxForwardedIdeActionMessageBytes = ${maxForwardedIdeActionMessageBytes};
 let latestHostReady;
 let frameReady = false;
 const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const isBoundedRequestId = (value) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 128 && !/[\u0000-\u001f\u007f-\u009f]/.test(value));
+const isRequiredRequestId = (value) => typeof value === "string" && value.length > 0 && value.length <= 128 && !/[\u0000-\u001f\u007f-\u009f]/.test(value);
 const isBoundedForwardedApplyWorkspaceEditMessage = (value) => {
   try {
     return new TextEncoder().encode(JSON.stringify(value)).length <= maxForwardedApplyWorkspaceEditMessageBytes;
+  } catch {
+    return false;
+  }
+};
+const isBoundedForwardedIdeActionMessage = (value) => {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).length <= maxForwardedIdeActionMessageBytes;
   } catch {
     return false;
   }
@@ -714,7 +737,7 @@ const isStrictSafeRelativePath = (value) => typeof value === "string" && value.l
 const isStrictPosition = (value) => isPlainObject(value) && Object.keys(value).every((key) => key === "line" || key === "character") && Number.isInteger(value.line) && Number.isInteger(value.character) && value.line >= 0 && value.line <= 1000000 && value.character >= 0 && value.character <= 1000000;
 const isStrictRange = (value) => isPlainObject(value) && Object.keys(value).every((key) => key === "start" || key === "end") && isStrictPosition(value.start) && isStrictPosition(value.end) && (value.end.line > value.start.line || (value.end.line === value.start.line && value.end.character >= value.start.character));
 const isStrictIdeActionPayload = (payload) => isPlainObject(payload) && ((Object.keys(payload).every((key) => key === "action") && payload.action === "getContextSnapshot") || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath") && payload.action === "openWorkspaceFile" && isStrictSafeRelativePath(payload.workspaceRelativePath)) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath" || key === "range") && payload.action === "revealWorkspaceRange" && isStrictSafeRelativePath(payload.workspaceRelativePath) && isStrictRange(payload.range)));
-const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && ((message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload)) || (message.type === "gui.ideActionRequest" && isBoundedRequestId(message.requestId) && isStrictIdeActionPayload(message.payload)) || (message.type === "gui.applyWorkspaceEditRequest" && isBoundedRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)));
+const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && ((message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload)) || (message.type === "gui.ideActionRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)) || (message.type === "gui.applyWorkspaceEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)));
 const isHostMessage = (message) => isPlainObject(message) && message.version === bootstrap.bridgeVersion && (message.type === "host.ready" || message.type === "host.openedFromCommand" || message.type === "host.contextSnapshot" || message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult");
 const sendToFrame = (message) => {
   if (frame && frame.contentWindow && frameTargetOrigin) {
@@ -964,9 +987,32 @@ export function isInvalidApplyWorkspaceEditRequestMessage(value: unknown): value
   );
 }
 
+export function isInvalidIdeActionRequestMessage(value: unknown): value is GuiMessage & { requestId: string } {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    hasOnlyKeys(record, ["version", "type", "requestId", "payload"]) &&
+    record.version === bridgeVersion &&
+    record.type === "gui.ideActionRequest" &&
+    isRequiredRequestId(record.requestId) &&
+    isBoundedForwardedIdeActionMessage(record) &&
+    parseIdeActionRequest(record as GuiMessage) === undefined
+  );
+}
+
 function isBoundedForwardedApplyWorkspaceEditMessage(value: Record<string, unknown>): boolean {
   try {
     return Buffer.byteLength(JSON.stringify(value), "utf8") <= maxForwardedApplyWorkspaceEditMessageBytes;
+  } catch {
+    return false;
+  }
+}
+
+function isBoundedForwardedIdeActionMessage(value: Record<string, unknown>): boolean {
+  try {
+    return Buffer.byteLength(JSON.stringify(value), "utf8") <= maxForwardedIdeActionMessageBytes;
   } catch {
     return false;
   }

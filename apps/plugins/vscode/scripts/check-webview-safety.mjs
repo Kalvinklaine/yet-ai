@@ -14,8 +14,12 @@ const requiredSnippets = [
   "record.type === \"gui.ideActionRequest\"",
   "record.type === \"gui.applyWorkspaceEditRequest\"",
   "const maxForwardedApplyWorkspaceEditMessageBytes = 65536;",
+  "const maxForwardedIdeActionMessageBytes = 8192;",
+  "const maxControlledIdeActionFileBytes = 2 * 1024 * 1024;",
   "isBoundedForwardedApplyWorkspaceEditMessage(record)",
+  "isBoundedForwardedIdeActionMessage(record)",
   "Buffer.byteLength(JSON.stringify(value), \"utf8\") <= maxForwardedApplyWorkspaceEditMessageBytes",
+  "Buffer.byteLength(JSON.stringify(value), \"utf8\") <= maxForwardedIdeActionMessageBytes",
   "hasOnlyKeys(record, [\"version\", \"type\", \"requestId\", \"payload\"])",
   "hasOnlyKeys(record, [\"supportedBridgeVersion\"])",
   "record.supportedBridgeVersion === undefined || record.supportedBridgeVersion === bridgeVersion",
@@ -24,12 +28,15 @@ const requiredSnippets = [
   "event.origin !== frameTargetOrigin",
   "isFrameGuiMessage(event.data)",
   "new TextEncoder().encode(JSON.stringify(value)).length <= maxForwardedApplyWorkspaceEditMessageBytes",
-  "message.type === \"gui.applyWorkspaceEditRequest\" && isBoundedRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)",
+  "message.type === \"gui.ideActionRequest\" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)",
+  "message.type === \"gui.applyWorkspaceEditRequest\" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)",
   "latestHostReady = event.data",
   "host.contextSnapshot",
   "host.ideActionProgress",
   "host.ideActionResult",
   "createHostContextSnapshot(message.requestId)",
+  "isInvalidIdeActionRequestMessage(message)",
+  "createIdeActionResult(requestId, \"rejected\", \"IDE action rejected by host policy.\")",
   "console.log(\"Yet AI rejected invalid GUI bridge message\")",
   "replayHostReady();",
   "crypto.randomBytes(24).toString(\"base64url\")",
@@ -81,8 +88,24 @@ if (!renderWebviewHtmlSource.includes("new TextEncoder().encode(JSON.stringify(v
   throw new Error("VS Code webview wrapper rendered JS must enforce serialized size before forwarding iframe apply requests.");
 }
 
-if (!renderWebviewHtmlSource.includes("message.type === \"gui.applyWorkspaceEditRequest\" && isBoundedRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)")) {
-  throw new Error("VS Code webview wrapper rendered JS must apply the serialized-size guard to iframe apply requests.");
+if (!renderWebviewHtmlSource.includes("message.type === \"gui.ideActionRequest\" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)")) {
+  throw new Error("VS Code webview wrapper rendered JS must require requestId and apply serialized-size guard to iframe IDE action requests.");
+}
+
+if (!renderWebviewHtmlSource.includes("message.type === \"gui.applyWorkspaceEditRequest\" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)")) {
+  throw new Error("VS Code webview wrapper rendered JS must require requestId and apply the serialized-size guard to iframe apply requests.");
+}
+
+const ideActionRunSource = extractSection("async function runIdeActionRequest", "function toVscodeRange");
+if (!ideActionRunSource.includes("resolveExistingWorkspaceFile(request.workspaceRelativePath, workspaceFolders, maxControlledIdeActionFileBytes)")) {
+  throw new Error("Controlled IDE navigation must resolve files with a max-size guard before openTextDocument.");
+}
+if (ideActionRunSource.indexOf("maxControlledIdeActionFileBytes") > ideActionRunSource.indexOf("vscode.workspace.openTextDocument(uri)")) {
+  throw new Error("Controlled IDE navigation file-size guard must appear before openTextDocument.");
+}
+
+if (!source.includes("return \"IDE action status changed.\";") || extractSection("export function createIdeActionProgress", "export async function handleIdeActionRequest").includes("Edit request status changed.")) {
+  throw new Error("IDE action status/result sanitizer fallback must not be edit-specific.");
 }
 
 const disabledGuiMessageTypes = [
@@ -226,6 +249,7 @@ let handleIdeActionRequest;
 let parseIdeActionRequest;
 let createIdeActionResult;
 let isInvalidApplyWorkspaceEditRequestMessage;
+let isInvalidIdeActionRequestMessage;
 let isGuiMessage;
 let renderWebviewHtml;
 try {
@@ -235,7 +259,7 @@ try {
     }
     return originalLoad.call(this, request, parent, isMain);
   };
-  ({ createHostReady, createHostContextSnapshot, createApplyWorkspaceEditResult, handleApplyWorkspaceEditRequest, handleIdeActionRequest, parseIdeActionRequest, createIdeActionResult, isInvalidApplyWorkspaceEditRequestMessage, isGuiMessage, renderWebviewHtml } = await import("../out/webview.js"));
+  ({ createHostReady, createHostContextSnapshot, createApplyWorkspaceEditResult, handleApplyWorkspaceEditRequest, handleIdeActionRequest, parseIdeActionRequest, createIdeActionResult, isInvalidApplyWorkspaceEditRequestMessage, isInvalidIdeActionRequestMessage, isGuiMessage, renderWebviewHtml } = await import("../out/webview.js"));
 } finally {
   Module._load = originalLoad;
 }
@@ -476,6 +500,12 @@ assert.equal(isInvalidApplyWorkspaceEditRequestMessage(invalidApplyWorkspaceEdit
 assert.equal(isInvalidApplyWorkspaceEditRequestMessage({ ...invalidApplyWorkspaceEditRequests[0], requestId: "bad\nrequest" }), false, "VS Code host must not correlate invalid apply requests with unsafe request ids.");
 assert.equal(isInvalidApplyWorkspaceEditRequestMessage(rejectedPrivilegedGuiMessages[0]), false, "VS Code host must not route other invalid GUI message types through apply rejection.");
 assert.equal(createApplyWorkspaceEditResult(invalidApplyWorkspaceEditRequests[0].requestId, "rejected", "Edit request rejected by host policy.").requestId, invalidApplyWorkspaceEditRequests[0].requestId, "VS Code host correlated malformed apply rejection must preserve safe request id.");
+assert.equal(isInvalidIdeActionRequestMessage(validIdeActionRequests[0]), false, "VS Code host must not classify valid IDE action requests as invalid correlated rejections.");
+assert.equal(isInvalidIdeActionRequestMessage(invalidIdeActionRequests[0]), true, "VS Code host real receive path must identify malformed IDE action requests for correlated rejection.");
+assert.equal(isInvalidIdeActionRequestMessage(invalidIdeActionRequests.at(-1)), false, "VS Code host must not correlate invalid IDE action requests without required request ids.");
+assert.equal(isInvalidIdeActionRequestMessage({ ...invalidIdeActionRequests[0], requestId: "bad\nrequest" }), false, "VS Code host must not correlate invalid IDE action requests with unsafe request ids.");
+assert.equal(isInvalidIdeActionRequestMessage(validApplyWorkspaceEditRequest), false, "VS Code host must not route apply requests through IDE action rejection.");
+assert.equal(createIdeActionResult(invalidIdeActionRequests[0].requestId, "rejected", "IDE action rejected by host policy.").requestId, invalidIdeActionRequests[0].requestId, "VS Code host correlated malformed IDE action rejection must preserve safe request id.");
 const hostReady = createHostReady(identity, connection, "valid-gui-ready-request");
 const workspaceRoot = path.join(os.tmpdir(), "yet-ai-safe-workspace");
 fakeVscode.workspace.getWorkspaceFolder = (uri) => uri.fsPath.startsWith(workspaceRoot) ? { uri: { fsPath: workspaceRoot } } : undefined;
@@ -584,7 +614,7 @@ for (const privateResultMessage of [
   ...unsafeEditTextSamples.map((sample) => `Failed with ${sample}.`),
 ]) {
   assert.equal(createApplyWorkspaceEditResult("req-private-result", "failed", privateResultMessage).payload.message, "Edit request status changed.");
-  assert.equal(createIdeActionResult("req-private-result", "failed", privateResultMessage).payload.message, "Edit request status changed.");
+  assert.equal(createIdeActionResult("req-private-result", "failed", privateResultMessage).payload.message, "IDE action status changed.");
 }
 assertNoSecretSentinels(JSON.stringify(sanitizedResult), fakeSecretValues, "VS Code apply edit sanitized result");
 assertNoAbsolutePath(JSON.stringify(sanitizedResult), "VS Code apply edit sanitized result");
@@ -813,7 +843,7 @@ async function assertIdeActionBehavior() {
   fakeVscode.__shownDocuments = [];
   fakeVscode.__revealedRanges = [];
   fakeVscode.workspace.workspaceFolders = [{ uri: { fsPath: workspaceRoot, scheme: "file", path: workspaceRoot } }];
-  fakeVscode.workspace.fs.stat = (uri) => uri.fsPath === existingPath ? Promise.resolve({ type: fakeVscode.FileType.File }) : Promise.reject(new Error("missing"));
+  fakeVscode.workspace.fs.stat = (uri) => uri.fsPath === existingPath ? Promise.resolve({ type: fakeVscode.FileType.File, size: 1024 }) : Promise.reject(new Error("missing"));
   fakeVscode.workspace.openTextDocument = (uri) => {
     if (uri.fsPath !== existingPath) {
       return Promise.reject(new Error("missing"));
@@ -842,6 +872,19 @@ async function assertIdeActionBehavior() {
 
   await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "openWorkspaceFile", workspaceRelativePath: "src/missing.ts" }));
   assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+
+  let openTextDocumentCalls = 0;
+  const originalOpenTextDocument = fakeVscode.workspace.openTextDocument;
+  fakeVscode.workspace.fs.stat = (uri) => uri.fsPath === existingPath ? Promise.resolve({ type: fakeVscode.FileType.File, size: (2 * 1024 * 1024) + 1 }) : Promise.reject(new Error("missing"));
+  fakeVscode.workspace.openTextDocument = (uri) => {
+    openTextDocumentCalls += 1;
+    return originalOpenTextDocument(uri);
+  };
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "openWorkspaceFile", workspaceRelativePath: "src/main.ts" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+  assert.equal(openTextDocumentCalls, 0, "Controlled IDE action oversized files must be rejected before openTextDocument.");
+  fakeVscode.workspace.fs.stat = (uri) => uri.fsPath === existingPath ? Promise.resolve({ type: fakeVscode.FileType.File, size: 1024 }) : Promise.reject(new Error("missing"));
+  fakeVscode.workspace.openTextDocument = originalOpenTextDocument;
 
   await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "revealWorkspaceRange", workspaceRelativePath: "src/main.ts", range: { start: { line: 0, character: 8 }, end: { line: 0, character: 2 } } }));
   assert.equal(webviewMessages.at(-1).payload.status, "rejected");
@@ -885,7 +928,7 @@ async function assertApplyWorkspaceEditBehavior() {
   fakeVscode.workspace.workspaceFolders = [{ uri: { fsPath: workspaceRoot, scheme: "file", path: workspaceRoot } }];
   fakeVscode.workspace.fs.stat = (uri) => {
     if (uri.fsPath === existingPath) {
-      return Promise.resolve({ type: fakeVscode.FileType.File });
+      return Promise.resolve({ type: fakeVscode.FileType.File, size: 1024 });
     }
     return Promise.reject(new Error("missing"));
   };
@@ -986,7 +1029,7 @@ async function assertApplyWorkspaceEditBehavior() {
   ];
   fakeVscode.workspace.fs.stat = (uri) => {
     if (uri.fsPath === existingPath || uri.fsPath === path.join(secondWorkspaceRoot, "src", "main.ts")) {
-      return Promise.resolve({ type: fakeVscode.FileType.File });
+      return Promise.resolve({ type: fakeVscode.FileType.File, size: 1024 });
     }
     return Promise.reject(new Error("missing"));
   };
@@ -997,7 +1040,7 @@ async function assertApplyWorkspaceEditBehavior() {
   fakeVscode.workspace.workspaceFolders = [{ uri: { fsPath: workspaceRoot, scheme: "file", path: workspaceRoot } }];
   fakeVscode.workspace.fs.stat = (uri) => {
     if (uri.fsPath === existingPath) {
-      return Promise.resolve({ type: fakeVscode.FileType.File });
+      return Promise.resolve({ type: fakeVscode.FileType.File, size: 1024 });
     }
     return Promise.reject(new Error("missing"));
   };
