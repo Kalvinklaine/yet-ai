@@ -237,7 +237,32 @@ export function createIdeActionResult(
   if (metadata.context) {
     payload.context = { ...metadata.context, source: "vscode" };
   }
+  hardenIdeActionResultPayload(payload);
   return { version: bridgeVersion, type: "host.ideActionResult", requestId, payload };
+}
+
+function hardenIdeActionResultPayload(payload: Record<string, unknown>): void {
+  if (payload.status !== "succeeded") {
+    return;
+  }
+  if (payload.action === "getContextSnapshot") {
+    delete payload.workspaceRelativePath;
+    delete payload.range;
+    if (!isIdeActionContextMetadata(payload.context)) {
+      payload.context = createIdeActionContextMetadata();
+    }
+  }
+  if (payload.action === "openWorkspaceFile") {
+    delete payload.range;
+  }
+}
+
+function isIdeActionContextMetadata(value: unknown): value is Record<string, unknown> {
+  return isPlainRecord(value) &&
+    hasOnlyKeys(value, ["source", "hasActiveEditor", "workspaceFolderCount"]) &&
+    (value.source === undefined || value.source === "vscode") &&
+    (value.hasActiveEditor === undefined || typeof value.hasActiveEditor === "boolean") &&
+    (value.workspaceFolderCount === undefined || (Number.isInteger(value.workspaceFolderCount) && typeof value.workspaceFolderCount === "number" && value.workspaceFolderCount >= 0 && value.workspaceFolderCount <= 100));
 }
 
 export async function handleIdeActionRequest(webview: vscode.Webview, message: GuiMessage): Promise<void> {

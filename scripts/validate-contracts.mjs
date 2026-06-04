@@ -255,8 +255,17 @@ const invalidMappings = [
     "host-ready-non-loopback-runtime-url.json",
     "host-ready-runtime-url-missing-port.json",
     "host-ready-empty-session-token.json",
+    "host-ready-oversized-product-id.json",
+    "host-ready-control-display-name.json",
+    "host-ready-session-token-whitespace.json",
+    "host-ready-session-token-control.json",
     "host-ide-action-result-succeeded-open-missing-path.json",
+    "host-ide-action-result-succeeded-open-with-range.json",
+    "host-ide-action-result-succeeded-context-missing-context.json",
+    "host-ide-action-result-succeeded-context-with-path-range.json",
     "host-ide-action-progress-succeeded-reveal-missing-range.json",
+    "host-ide-action-progress-succeeded-context-with-path.json",
+    "host-ide-action-progress-succeeded-open-with-range.json",
     "host-ide-action-result-secret-like-relative-path.json",
     "host-ide-action-result-succeeded-missing-action.json",
     "host-ide-action-progress-succeeded-missing-action.json",
@@ -422,6 +431,8 @@ const invalidMappings = [
     "agent-progress-event-ide-action-bad-action.json",
     "agent-progress-event-ide-action-absolute-path.json",
     "agent-progress-event-ide-action-traversal-path.json",
+    "agent-progress-event-offset-timestamp.json",
+    "agent-progress-event-sk-secret-message.json",
     "agent-progress-event-tmp-path-message.json",
     "agent-progress-event-ide-action-access-token-request-id.json",
     "agent-progress-event-ide-action-get-context-with-path-range.json",
@@ -435,6 +446,9 @@ const invalidMappings = [
     "agent-progress-event-secret-id.json",
     "agent-progress-event-secret-like-relative-path.json",
     "agent-progress-event-bare-tmp-path-message.json",
+    "agent-progress-event-bare-users-path-message.json",
+    "agent-progress-event-bare-home-path-message.json",
+    "agent-progress-event-bare-private-path-message.json",
     "agent-progress-event-etc-path-message.json",
     "agent-progress-event-windows-drive-slash-message.json"
   ].map((fileName) => [
@@ -491,6 +505,9 @@ const invalidMappings = [
     "agent-progress-snapshot-volumes-path-message.json",
     "agent-progress-snapshot-mixed-case-private-path-message.json",
     "agent-progress-snapshot-bare-tmp-path-message.json",
+    "agent-progress-snapshot-bare-users-path-message.json",
+    "agent-progress-snapshot-bare-home-path-message.json",
+    "agent-progress-snapshot-bare-private-path-message.json",
     "agent-progress-snapshot-etc-path-message.json",
     "agent-progress-snapshot-opt-path-message.json",
     "agent-progress-snapshot-mnt-path-message.json",
@@ -499,6 +516,10 @@ const invalidMappings = [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
   ]),
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-snapshot-sk-proj-message.json",
+    "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
+  ],
   [
     "packages/contracts/examples-invalid/engine/agent-progress-list-done-overflow-recovery.json",
     "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
@@ -541,6 +562,9 @@ const invalidMappings = [
     "agent-progress-list-volumes-path-message.json",
     "agent-progress-list-mixed-case-private-path-message.json",
     "agent-progress-list-bare-tmp-path-message.json",
+    "agent-progress-list-bare-users-path-message.json",
+    "agent-progress-list-bare-home-path-message.json",
+    "agent-progress-list-bare-private-path-message.json",
     "agent-progress-list-etc-path-message.json",
     "agent-progress-list-opt-path-message.json",
     "agent-progress-list-mnt-path-message.json",
@@ -549,6 +573,10 @@ const invalidMappings = [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
   ]),
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-list-sk-secret-tail.json",
+    "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
+  ],
   [
     "packages/contracts/examples-invalid/engine/agent-progress-list-cloud-required.json",
     "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"

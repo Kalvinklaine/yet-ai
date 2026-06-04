@@ -822,7 +822,9 @@ fn contains_unsafe_text(value: &str) -> bool {
         "pkce",
         "refresh",
         "credential",
+        "/users",
         "/users/",
+        "/home",
         "/home/",
         "/tmp",
         "/tmp/",
@@ -848,6 +850,12 @@ fn contains_unsafe_text(value: &str) -> bool {
         if lower.contains(marker) {
             return true;
         }
+    }
+    if lower
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'))
+        .any(|part| part.starts_with("sk-") && part.len() >= 11)
+    {
+        return true;
     }
     let normalized = lower
         .chars()
@@ -921,6 +929,11 @@ mod tests {
             "Read /mnt",
             "Opened C:/Users/Alice/file.txt",
             "Opened C:\\Users\\Alice\\file.txt",
+            "Opened /Users",
+            "Opened /home",
+            "Opened /Private",
+            "Received sk-abcdefghijkl secret-shaped value",
+            "Received sk-proj-abcdefghijkl secret-shaped value",
         ] {
             assert!(contains_unsafe_text(text), "{text} should be rejected");
         }
