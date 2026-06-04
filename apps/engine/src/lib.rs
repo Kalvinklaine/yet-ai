@@ -15,6 +15,7 @@ use std::path::PathBuf;
 
 use axum::Router;
 
+use crate::agent_progress::AgentProgressRuntime;
 use crate::chat::ChatRuntime;
 
 pub use identity::ProductIdentity;
@@ -27,6 +28,7 @@ pub struct AppState {
     pub auth_token: AuthToken,
     pub storage_paths: StoragePaths,
     pub chat_runtime: ChatRuntime,
+    pub agent_progress_runtime: AgentProgressRuntime,
 }
 
 impl AppState {
@@ -38,6 +40,7 @@ impl AppState {
             auth_token,
             storage_paths,
             chat_runtime: ChatRuntime::new(),
+            agent_progress_runtime: AgentProgressRuntime::new(),
         }
     }
 
@@ -51,6 +54,7 @@ impl AppState {
             auth_token,
             storage_paths,
             chat_runtime: ChatRuntime::new(),
+            agent_progress_runtime: AgentProgressRuntime::new(),
         }
     }
 }
