@@ -1,0 +1,10 @@
+{
+  "protocolVersion": "2026-05-29",
+  "eventId": "evt-T269-invalid-long-message",
+  "runId": "run-T269-invalid",
+  "cardId": "T269",
+  "timestamp": "2026-05-29T15:15:00Z",
+  "phase": "waiting_for_tool",
+  "status": "running",
+  "message": "This progress message is intentionally longer than the bounded contract limit for agent progress event messages so the endpoint contract rejects unbounded observability text before it can become a transport for raw prompts, provider responses, file content, command output, or other sensitive local-first data that does not belong in progress metadata."
+}

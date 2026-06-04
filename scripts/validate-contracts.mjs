@@ -30,6 +30,7 @@ const mappings = [
   ["packages/contracts/examples/engine/agent-progress-event-stuck-heartbeat.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-event-failed-command.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-event-done.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
+  ["packages/contracts/examples/engine/agent-progress-event-ide-action-progress.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-snapshot-healthy-command.json", "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-snapshot-stuck-heartbeat.json", "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-snapshot-failed-command.json", "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"],
@@ -354,6 +355,34 @@ const invalidMappings = [
   ],
   [
     "packages/contracts/examples-invalid/engine/agent-progress-event-private-path.json",
+    "packages/contracts/schemas/engine/agent-progress-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-event-extra-field.json",
+    "packages/contracts/schemas/engine/agent-progress-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-event-raw-content-fields.json",
+    "packages/contracts/schemas/engine/agent-progress-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-event-ide-command-fields.json",
+    "packages/contracts/schemas/engine/agent-progress-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-event-oversized-id.json",
+    "packages/contracts/schemas/engine/agent-progress-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-event-oversized-message.json",
+    "packages/contracts/schemas/engine/agent-progress-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-event-oversized-path-label.json",
+    "packages/contracts/schemas/engine/agent-progress-event.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-event-secret-like-message.json",
     "packages/contracts/schemas/engine/agent-progress-event.schema.json"
   ],
   [
