@@ -424,6 +424,34 @@ pre,
   border-color: #cdd8ff;
 }
 
+.ide-actions-card {
+  border: 1px solid #cdd8ff;
+  border-radius: 16px;
+  padding: 14px;
+  background: #fbfcff;
+}
+
+.ide-action-status {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #e2e7f0;
+  border-radius: 14px;
+  padding: 12px;
+  background: #fff;
+}
+
+.ide-action-status.succeeded {
+  border-color: #bce8cc;
+  background: #f4fbf7;
+}
+
+.ide-action-status.rejected,
+.ide-action-status.unavailable,
+.ide-action-status.failed {
+  border-color: #ffe2a3;
+  background: #fffaf0;
+}
+
 .agent-progress-empty,
 .agent-progress-status,
 .agent-progress-run {

@@ -1870,6 +1870,95 @@ describe("host.ready runtime bootstrap", () => {
 });
 
 describe("active editor attached context", () => {
+  it("renders Agent activity IDE actions panel in browser mode without privileged posting", async () => {
+    const postMessage = vi.fn();
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Agent activity · IDE actions");
+    expect(container?.textContent).toContain("browser unsupported");
+    expect(container?.textContent).toContain("No controlled IDE action requested yet.");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Get IDE context");
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  it("marks JetBrains controlled IDE actions preview-only and does not send requests", async () => {
+    const postIntellijMessage = vi.fn();
+    window.postIntellijMessage = postIntellijMessage;
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("JetBrains preview-only");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Get IDE context");
+    expect(postIntellijMessage.mock.calls.some(([message]) => message?.type === "gui.ideActionRequest")).toBe(false);
+  });
+
+  it("sends unique bounded VS Code IDE action requests and blocks pending duplicate clicks", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Get IDE context").click();
+    });
+    await act(async () => {
+      findButton("IDE action pending…").click();
+    });
+
+    const ideActionMessages = postMessage.mock.calls.map(([message]) => message).filter((message) => message.type === "gui.ideActionRequest");
+    expect(ideActionMessages).toHaveLength(1);
+    expect(ideActionMessages[0]).toEqual({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "gui-ide-action-1", payload: { action: "getContextSnapshot" } });
+    expect(ideActionMessages[0].requestId.length).toBeLessThanOrEqual(128);
+    expect(container?.textContent).toContain("Get IDE context: pending");
+  });
+
+  it("correlates VS Code IDE action progress and result while ignoring stale results", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    await dispatchHostContextSnapshot({
+      file: { displayPath: "src/main.ts", workspaceRelativePath: "src/main.ts", languageId: "typescript" },
+      selection: { startLine: 2, startCharacter: 1, endLine: 2, endCharacter: 5, text: "main" },
+    });
+    await act(async () => {
+      findButton("Reveal range").click();
+    });
+    await dispatchHostIdeActionProgress("gui-ide-action-1", { phase: "running", status: "inProgress", summary: "Revealing workspace range.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/main.ts" });
+    await dispatchHostIdeActionResult("stale-ide-action", { status: "failed", message: "Stale result ignored.", cloudRequired: false, action: "revealWorkspaceRange" });
+    await dispatchHostIdeActionResult("gui-ide-action-1", { status: "succeeded", message: "Revealed workspace range.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/main.ts", range: { start: { line: 2, character: 1 }, end: { line: 2, character: 5 } } });
+
+    const ideActionMessages = postMessage.mock.calls.map(([message]) => message).filter((message) => message.type === "gui.ideActionRequest");
+    expect(ideActionMessages[0].payload).toEqual({ action: "revealWorkspaceRange", workspaceRelativePath: "src/main.ts", range: { start: { line: 2, character: 1 }, end: { line: 2, character: 5 } } });
+    expect(container?.textContent).toContain("Reveal range: succeeded");
+    expect(container?.textContent).toContain("Revealed workspace range.");
+    expect(container?.textContent).toContain("Ignored stale IDE action result.");
+    expect(container?.textContent).not.toContain("Stale result ignored.");
+  });
+
+  it("rejects malicious IDE action results before App renders unsafe payload", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Get IDE context").click();
+    });
+    await dispatchHostIdeActionResult("gui-ide-action-1", { status: "succeeded", message: "Opened /Users/alice/private/file.ts", cloudRequired: false, action: "getContextSnapshot", privatePath: "/Users/alice/private/file.ts" });
+
+    expect(container?.textContent).toContain("Get IDE context: pending");
+    expect(container?.textContent).toContain("Rejected invalid host bridge message");
+    expect(container?.textContent).not.toContain("/Users/alice");
+  });
+
   it("renders valid host.contextSnapshot preview with default include toggle", async () => {
     mockRuntimeResponses();
     renderApp();
@@ -4308,6 +4397,32 @@ async function dispatchHostApplyResult(requestId: string | undefined, payload: R
       data: {
         version: bridgeVersion,
         type: "host.applyWorkspaceEditResult",
+        requestId,
+        payload,
+      },
+    }));
+  });
+}
+
+async function dispatchHostIdeActionProgress(requestId: string | undefined, payload: Record<string, unknown>) {
+  await act(async () => {
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version: bridgeVersion,
+        type: "host.ideActionProgress",
+        requestId,
+        payload,
+      },
+    }));
+  });
+}
+
+async function dispatchHostIdeActionResult(requestId: string | undefined, payload: Record<string, unknown>) {
+  await act(async () => {
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version: bridgeVersion,
+        type: "host.ideActionResult",
         requestId,
         payload,
       },

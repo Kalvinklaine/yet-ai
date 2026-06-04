@@ -35,18 +35,48 @@ export type ApplyWorkspaceEditResultPayload = {
   affectedFiles?: string[];
 };
 
+export type IdeActionType = "getContextSnapshot" | "openWorkspaceFile" | "revealWorkspaceRange";
+
+export type IdeActionRequestPayload =
+  | { action: "getContextSnapshot" }
+  | { action: "openWorkspaceFile"; workspaceRelativePath: string }
+  | { action: "revealWorkspaceRange"; workspaceRelativePath: string; range: WorkspaceEditRange };
+
+export type IdeActionProgressPayload = {
+  phase: "queued" | "checkingPolicy" | "running" | "completed";
+  status: "pending" | "inProgress" | "succeeded" | "rejected" | "unavailable" | "failed";
+  summary: string;
+  cloudRequired: false;
+  action?: IdeActionType;
+  workspaceRelativePath?: string;
+};
+
+export type IdeActionResultPayload = {
+  status: "succeeded" | "rejected" | "unavailable" | "failed";
+  message: string;
+  cloudRequired: false;
+  action?: IdeActionType;
+  workspaceRelativePath?: string;
+  range?: WorkspaceEditRange;
+  context?: {
+    source?: BridgeHost;
+    hasActiveEditor?: boolean;
+    workspaceFolderCount?: number;
+  };
+};
+
 export type GuiMessage = {
   version: string;
-  type: "gui.ready" | "gui.unloaded" | "gui.applyWorkspaceEditRequest";
+  type: "gui.ready" | "gui.unloaded" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest";
   requestId?: string;
-  payload?: Record<string, unknown> | ApplyWorkspaceEditPayload;
+  payload?: Record<string, unknown> | IdeActionRequestPayload | ApplyWorkspaceEditPayload;
 };
 
 export type HostMessage = {
   version: string;
-  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.applyWorkspaceEditResult";
+  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult";
   requestId?: string;
-  payload?: Record<string, unknown> | ApplyWorkspaceEditResultPayload;
+  payload?: Record<string, unknown> | IdeActionProgressPayload | IdeActionResultPayload | ApplyWorkspaceEditResultPayload;
 };
 
 type FrameNonceMessage = {
@@ -108,10 +138,13 @@ const hostMessageTypes = new Set<HostMessage["type"]>([
   "host.ready",
   "host.openedFromCommand",
   "host.contextSnapshot",
+  "host.ideActionProgress",
+  "host.ideActionResult",
   "host.applyWorkspaceEditResult",
 ]);
 const guiMessageTypes = new Set<GuiMessage["type"]>([
   "gui.ready",
+  "gui.ideActionRequest",
   "gui.applyWorkspaceEditRequest",
 ]);
 
@@ -266,6 +299,9 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
   if (value.type === "gui.ready") {
     return isGuiReadyPayload(value.payload);
   }
+  if (value.type === "gui.ideActionRequest") {
+    return typeof value.requestId === "string" && isIdeActionRequestPayload(value.payload);
+  }
   return value.type === "gui.applyWorkspaceEditRequest" && typeof value.requestId === "string" && isApplyWorkspaceEditPayload(value.payload);
 }
 
@@ -306,6 +342,12 @@ export function isHostMessage(value: unknown): value is HostMessage {
   }
   if (value.type === "host.applyWorkspaceEditResult") {
     return typeof value.requestId === "string" && isApplyWorkspaceEditResultPayload(value.payload);
+  }
+  if (value.type === "host.ideActionProgress") {
+    return typeof value.requestId === "string" && isIdeActionProgressPayload(value.payload);
+  }
+  if (value.type === "host.ideActionResult") {
+    return typeof value.requestId === "string" && isIdeActionResultPayload(value.payload);
   }
   return value.type !== "host.openedFromCommand" || isEmptyPayload(value.payload);
 }
@@ -378,6 +420,67 @@ export function isApplyWorkspaceEditResultPayload(value: unknown): value is Appl
     optionalBoundedInteger(value.appliedEditCount, 0, 64) &&
     isOptionalAffectedFiles(value.affectedFiles)
   );
+}
+
+export function isIdeActionRequestPayload(value: unknown): value is IdeActionRequestPayload {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["action", "workspaceRelativePath", "range"])) {
+    return false;
+  }
+  if (value.action === "getContextSnapshot") {
+    return hasOnlyKeys(value, ["action"]);
+  }
+  if (value.action === "openWorkspaceFile") {
+    return hasOnlyKeys(value, ["action", "workspaceRelativePath"]) && requiredSafeRelativePath(value.workspaceRelativePath);
+  }
+  if (value.action === "revealWorkspaceRange") {
+    return hasOnlyKeys(value, ["action", "workspaceRelativePath", "range"]) && requiredSafeRelativePath(value.workspaceRelativePath) && isEditRange(value.range);
+  }
+  return false;
+}
+
+export function isIdeActionProgressPayload(value: unknown): value is IdeActionProgressPayload {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["phase", "status", "summary", "cloudRequired", "action", "workspaceRelativePath"])) {
+    return false;
+  }
+  return (
+    (value.phase === "queued" || value.phase === "checkingPolicy" || value.phase === "running" || value.phase === "completed") &&
+    (value.status === "pending" || value.status === "inProgress" || value.status === "succeeded" || value.status === "rejected" || value.status === "unavailable" || value.status === "failed") &&
+    safeMessage(value.summary) &&
+    value.cloudRequired === false &&
+    optionalIdeActionType(value.action) &&
+    safeRelativePath(value.workspaceRelativePath)
+  );
+}
+
+export function isIdeActionResultPayload(value: unknown): value is IdeActionResultPayload {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["status", "message", "cloudRequired", "action", "workspaceRelativePath", "range", "context"])) {
+    return false;
+  }
+  return (
+    (value.status === "succeeded" || value.status === "rejected" || value.status === "unavailable" || value.status === "failed") &&
+    safeMessage(value.message) &&
+    value.cloudRequired === false &&
+    optionalIdeActionType(value.action) &&
+    safeRelativePath(value.workspaceRelativePath) &&
+    (value.range === undefined || isEditRange(value.range)) &&
+    isOptionalIdeActionContext(value.context)
+  );
+}
+
+function optionalIdeActionType(value: unknown): boolean {
+  return value === undefined || value === "getContextSnapshot" || value === "openWorkspaceFile" || value === "revealWorkspaceRange";
+}
+
+function isOptionalIdeActionContext(value: unknown): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["source", "hasActiveEditor", "workspaceFolderCount"])) {
+    return false;
+  }
+  return (value.source === undefined || value.source === "vscode" || value.source === "jetbrains" || value.source === "browser") &&
+    (value.hasActiveEditor === undefined || typeof value.hasActiveEditor === "boolean") &&
+    optionalBoundedInteger(value.workspaceFolderCount, 0, 100);
 }
 
 function isFileTextEdits(value: unknown): value is WorkspaceFileTextEdits {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createBridgeAdapter, isApplyWorkspaceEditPayload, isApplyWorkspaceEditResultPayload, isGuiMessage, isHostMessage } from "./bridgeAdapter";
+import { createBridgeAdapter, isApplyWorkspaceEditPayload, isApplyWorkspaceEditResultPayload, isGuiMessage, isHostMessage, isIdeActionProgressPayload, isIdeActionRequestPayload, isIdeActionResultPayload } from "./bridgeAdapter";
 import guiReadyMessage from "../../../../packages/contracts/examples/bridge/gui-ready-message.json";
 import hostOpenedFromCommandMessage from "../../../../packages/contracts/examples/bridge/host-opened-from-command-message.json";
 import hostContextSnapshotMessage from "../../../../packages/contracts/examples/bridge/host-context-snapshot-message.json";
@@ -28,6 +28,12 @@ import guiApplyWorkspaceEditTrailingSlashPathMessage from "../../../../packages/
 import guiApplyWorkspaceEditKeyLikeSummaryMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-apply-workspace-edit-key-like-summary.json";
 import hostApplyWorkspaceEditResultSecretMessage from "../../../../packages/contracts/examples-invalid/bridge/host-apply-workspace-edit-result-secret-message.json";
 import hostApplyWorkspaceEditResultKeyLikeMessage from "../../../../packages/contracts/examples-invalid/bridge/host-apply-workspace-edit-result-key-like-message.json";
+import guiIdeActionContextMessage from "../../../../packages/contracts/examples/bridge/gui-ide-action-request-get-context-snapshot.json";
+import guiIdeActionOpenMessage from "../../../../packages/contracts/examples/bridge/gui-ide-action-request-open-workspace-file.json";
+import guiIdeActionRevealMessage from "../../../../packages/contracts/examples/bridge/gui-ide-action-request-reveal-workspace-range.json";
+import hostIdeActionProgressMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-progress.json";
+import hostIdeActionResultSucceededMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-succeeded.json";
+import hostIdeActionResultRejectedMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-rejected.json";
 
 const bridgeVersion = "2026-05-15";
 const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
@@ -627,9 +633,18 @@ describe("bridgeAdapter", () => {
 
   it("accepts positive bridge contract fixtures through runtime validation", () => {
     expect(isGuiMessage(guiReadyMessage)).toBe(true);
+    expect(isGuiMessage(guiIdeActionContextMessage)).toBe(true);
+    expect(isGuiMessage(guiIdeActionOpenMessage)).toBe(true);
+    expect(isGuiMessage(guiIdeActionRevealMessage)).toBe(true);
+    expect(isIdeActionRequestPayload(guiIdeActionRevealMessage.payload)).toBe(true);
     expect(isHostMessage(hostReadyMessage)).toBe(true);
     expect(isHostMessage(hostOpenedFromCommandMessage)).toBe(true);
     expect(isHostMessage(hostContextSnapshotMessage)).toBe(true);
+    expect(isHostMessage(hostIdeActionProgressMessage)).toBe(true);
+    expect(isHostMessage(hostIdeActionResultSucceededMessage)).toBe(true);
+    expect(isHostMessage(hostIdeActionResultRejectedMessage)).toBe(true);
+    expect(isIdeActionProgressPayload(hostIdeActionProgressMessage.payload)).toBe(true);
+    expect(isIdeActionResultPayload(hostIdeActionResultSucceededMessage.payload)).toBe(true);
     expect(isGuiMessage(guiApplyWorkspaceEditRequestValidMessage)).toBe(true);
     expect(isHostMessage(hostApplyWorkspaceEditResultAppliedMessage)).toBe(true);
     expect(isHostMessage(hostApplyWorkspaceEditResultDeniedMessage)).toBe(true);
@@ -641,13 +656,25 @@ describe("bridgeAdapter", () => {
     window.dispatchEvent(new MessageEvent("message", { data: hostReadyMessage }));
     window.dispatchEvent(new MessageEvent("message", { data: hostOpenedFromCommandMessage }));
     window.dispatchEvent(new MessageEvent("message", { data: hostContextSnapshotMessage }));
+    window.dispatchEvent(new MessageEvent("message", { data: hostIdeActionProgressMessage }));
 
-    expect(messages).toEqual([hostReadyMessage, hostOpenedFromCommandMessage, hostContextSnapshotMessage]);
+    expect(messages).toEqual([hostReadyMessage, hostOpenedFromCommandMessage, hostContextSnapshotMessage, hostIdeActionProgressMessage]);
     expect(logs).toContain("Host runtime settings received");
     expect(logs).toContain("Host message host.contextSnapshot");
     expect(logs.join("\n")).not.toContain(hostReadyMessage.payload.sessionToken);
     expect(logs.join("\n")).not.toContain(hostContextSnapshotMessage.payload.selection.text);
     adapter.dispose();
+  });
+
+  it("validates IDE action messages and rejects traversal, private paths, secret-like messages, and raw fields", () => {
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "req-1", payload: { action: "getContextSnapshot" } })).toBe(true);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "req-2", payload: { action: "openWorkspaceFile", workspaceRelativePath: "src/App.tsx" } })).toBe(true);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "req-3", payload: { action: "openWorkspaceFile", workspaceRelativePath: "../secret.ts" } })).toBe(false);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "req-4", payload: { action: "revealWorkspaceRange", workspaceRelativePath: "/Users/alice/project/src/App.tsx", range: { start: { line: 1, character: 0 }, end: { line: 1, character: 3 } } } })).toBe(false);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "req-5", payload: { action: "revealWorkspaceRange", workspaceRelativePath: "src/App.tsx", range: { start: { line: 2, character: 0 }, end: { line: 1, character: 3 } } } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-6", payload: { phase: "running", status: "inProgress", summary: "Reading /Users/alice/project/file.ts", cloudRequired: false, action: "getContextSnapshot" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-7", payload: { status: "failed", message: "provider response sk-abcdefghijklmnopqrstuvwxyz", cloudRequired: false, action: "getContextSnapshot" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-8", payload: { status: "succeeded", message: "Done.", cloudRequired: false, action: "getContextSnapshot", rawPrompt: "show me" } })).toBe(false);
   });
 
   it("rejects invalid bridge contract fixtures through runtime validation", () => {
