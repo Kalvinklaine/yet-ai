@@ -1,0 +1,10 @@
+{
+  "protocolVersion": "2026-05-29",
+  "eventId": "agent-progress-event-tmp-path-message",
+  "runId": "run-T269-invalid",
+  "cardId": "T269",
+  "timestamp": "2026-05-29T15:10:00Z",
+  "phase": "waiting_for_tool",
+  "status": "running",
+  "message": "Read path /tmp/secret.log"
+}

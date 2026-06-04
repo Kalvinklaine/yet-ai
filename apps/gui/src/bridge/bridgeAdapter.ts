@@ -349,7 +349,7 @@ export function isHostMessage(value: unknown): value is HostMessage {
   if (value.type === "host.ideActionResult") {
     return typeof value.requestId === "string" && isIdeActionResultPayload(value.payload);
   }
-  return value.type !== "host.openedFromCommand" || isEmptyPayload(value.payload);
+  return value.type === "host.openedFromCommand" && value.requestId === undefined && isEmptyPayload(value.payload);
 }
 
 export function isHostReadyPayload(value: unknown): value is HostReadyPayload {
@@ -521,10 +521,7 @@ function hasOnlyKeys(value: Record<string, unknown>, keys: string[]): boolean {
 }
 
 function isBoundedRequestId(value: unknown): boolean {
-  return value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 128 && [...value].every((char) => {
-    const code = char.codePointAt(0) ?? 0;
-    return code >= 0x20 && (code < 0x7f || code > 0x9f);
-  }));
+  return value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value));
 }
 
 function isEmptyPayload(value: unknown): boolean {

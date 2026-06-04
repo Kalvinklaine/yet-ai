@@ -5,7 +5,16 @@
   "description": "Local planner/agent progress event with bounded sanitized operational status only. It excludes raw prompts, chain-of-thought, provider responses, secrets, private paths, credential paths, and workspace file contents.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["protocolVersion", "eventId", "runId", "cardId", "timestamp", "phase", "status", "message"],
+  "required": [
+    "protocolVersion",
+    "eventId",
+    "runId",
+    "cardId",
+    "timestamp",
+    "phase",
+    "status",
+    "message"
+  ],
   "properties": {
     "protocolVersion": {
       "type": "string",
@@ -40,6 +49,9 @@
     },
     "outputTail": {
       "$ref": "#/$defs/outputTail"
+    },
+    "ideAction": {
+      "$ref": "#/$defs/ideAction"
     }
   },
   "$defs": {
@@ -63,19 +75,42 @@
     },
     "phase": {
       "type": "string",
-      "enum": ["queued", "started", "reading_context", "editing", "running_command", "waiting_for_tool", "verifying", "finishing", "done", "failed", "stuck"]
+      "enum": [
+        "queued",
+        "started",
+        "reading_context",
+        "editing",
+        "running_command",
+        "waiting_for_tool",
+        "verifying",
+        "finishing",
+        "done",
+        "failed",
+        "stuck"
+      ]
     },
     "status": {
       "type": "string",
-      "enum": ["pending", "running", "healthy_running", "long_running", "stalled", "stuck", "done", "failed"]
+      "enum": [
+        "pending",
+        "running",
+        "healthy_running",
+        "long_running",
+        "stalled",
+        "stuck",
+        "done",
+        "failed"
+      ]
     },
     "safeText": {
       "type": "string",
-      "pattern": "^(?![\\s\\S]*(?:[aA][pP][iI][-_ ]?[kK][eE][yY]|[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][eE][aA][rR][eE][rR]|[tT][oO][kK][eE][nN]|[sS][eE][cC][rR][eE][tT]|[pP][aA][sS][sS][wW][oO][rR][dD]|[cC][oO][oO][kK][iI][eE]|[pP][kK][cC][eE]|[rR][eE][fF][rR][eE][sS][hH]|[aA][cC][cC][eE][sS][sS][-_ ]?[tT][oO][kK][eE][nN]|[aA][uU][tT][hH][-_ ]?[cC][oO][dD][eE]|[cC][hH][aA][iI][nN][-_ ]?[oO][fF][-_ ]?[tT][hH][oO][uU][gG][hH][tT]|[rR][aA][wW][-_ ]?(?:[pP][rR][oO][mM][pP][tT]|[dD][uU][mM][pP]|[oO][uU][tT][pP][uU][tT]|[fF][iI][lL][eE]|[wW][oO][rR][kK][sS][pP][aA][cC][eE])|[pP][rR][oO][vV][iI][dD][eE][rR][-_ ]?(?:[rR][eE][sS][pP][oO][nN][sS][eE]|[bB][oO][dD][yY])|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[fF][iI][lL][eE][-_ ]?[cC][oO][nN][tT][eE][nN][tT]|[wW][oO][rR][kK][sS][pP][aA][cC][eE][-_ ]?(?:[fF][iI][lL][eE]|[cC][oO][nN][tT][eE][nN][tT])|/Users/|/home/|/private/|[A-Za-z]:\\\\|~/|\\.[cC][oO][dD][eE][xX]/[aA][uU][tT][hH]\\.json|(?:[aA][uU][tT][hH]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL][sS]?)\\.json|BEGIN [A-Z ]*PRIVATE KEY))[\\s\\S]*$"
+      "pattern": "^(?![\\s\\S]*(?:[aA][pP][iI][-_ ]?[kK][eE][yY]|[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][eE][aA][rR][eE][rR]|[tT][oO][kK][eE][nN]|[sS][eE][cC][rR][eE][tT]|[pP][aA][sS][sS][wW][oO][rR][dD]|[cC][oO][oO][kK][iI][eE]|[pP][kK][cC][eE]|[rR][eE][fF][rR][eE][sS][hH]|[aA][cC][cC][eE][sS][sS][-_ ]?[tT][oO][kK][eE][nN]|[aA][uU][tT][hH][-_ ]?[cC][oO][dD][eE]|[cC][hH][aA][iI][nN][-_ ]?[oO][fF][-_ ]?[tT][hH][oO][uU][gG][hH][tT]|[rR][aA][wW][-_ ]?(?:[pP][rR][oO][mM][pP][tT]|[dD][uU][mM][pP]|[oO][uU][tT][pP][uU][tT]|[fF][iI][lL][eE]|[wW][oO][rR][kK][sS][pP][aA][cC][eE])|[pP][rR][oO][vV][iI][dD][eE][rR][-_ ]?(?:[rR][eE][sS][pP][oO][nN][sS][eE]|[bB][oO][dD][yY])|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[fF][iI][lL][eE][-_ ]?[cC][oO][nN][tT][eE][nN][tT]|[wW][oO][rR][kK][sS][pP][aA][cC][eE][-_ ]?(?:[fF][iI][lL][eE]|[cC][oO][nN][tT][eE][nN][tT])|/Users/|/home/|/tmp/|/var/|/Volumes/|/private/|[A-Za-z]:\\\\|~/|\\.[cC][oO][dD][eE][xX]/[aA][uU][tT][hH]\\.json|(?:[aA][uU][tT][hH]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL][sS]?)\\.json|BEGIN [A-Z ]*PRIVATE KEY))[\\s\\S]*$"
     },
     "safeMessage": {
       "allOf": [
-        { "$ref": "#/$defs/safeText" },
+        {
+          "$ref": "#/$defs/safeText"
+        },
         {
           "type": "string",
           "minLength": 1,
@@ -85,7 +120,9 @@
     },
     "outputTail": {
       "allOf": [
-        { "$ref": "#/$defs/safeText" },
+        {
+          "$ref": "#/$defs/safeText"
+        },
         {
           "type": "string",
           "maxLength": 2000
@@ -94,19 +131,33 @@
     },
     "toolKind": {
       "type": "string",
-      "enum": ["read", "edit", "command", "test", "validation", "network", "planner", "other"]
+      "enum": [
+        "read",
+        "edit",
+        "command",
+        "test",
+        "validation",
+        "network",
+        "planner",
+        "other"
+      ]
     },
     "toolSummary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "label"],
+      "required": [
+        "kind",
+        "label"
+      ],
       "properties": {
         "kind": {
           "$ref": "#/$defs/toolKind"
         },
         "label": {
           "allOf": [
-            { "$ref": "#/$defs/safeText" },
+            {
+              "$ref": "#/$defs/safeText"
+            },
             {
               "type": "string",
               "minLength": 1,
@@ -127,7 +178,9 @@
     "heartbeat": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["lastHeartbeatAt"],
+      "required": [
+        "lastHeartbeatAt"
+      ],
       "properties": {
         "lastHeartbeatAt": {
           "$ref": "#/$defs/timestamp"
@@ -139,6 +192,84 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 100
+        }
+      }
+    },
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?!~)(?!.*%)(?!.*\\\\)(?!.*:)(?!.*[?#])(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*//)(?!.*\\/$)[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "line",
+        "character"
+      ],
+      "properties": {
+        "line": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "character": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        }
+      }
+    },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/position"
+        },
+        "end": {
+          "$ref": "#/$defs/position"
+        }
+      }
+    },
+    "ideAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "action"
+      ],
+      "properties": {
+        "requestId": {
+          "$ref": "#/$defs/id"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "getContextSnapshot",
+            "openWorkspaceFile",
+            "revealWorkspaceRange"
+          ]
+        },
+        "workspaceRelativePath": {
+          "$ref": "#/$defs/safeRelativePath"
+        },
+        "range": {
+          "$ref": "#/$defs/range"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "vscode",
+            "jetbrains",
+            "browser",
+            "engine"
+          ]
         }
       }
     }
