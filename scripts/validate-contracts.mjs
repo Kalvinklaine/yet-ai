@@ -259,12 +259,15 @@ const invalidMappings = [
     "host-ready-control-display-name.json",
     "host-ready-session-token-whitespace.json",
     "host-ready-session-token-control.json",
+    "host-ready-runtime-url-high-port.json",
+    "host-ready-sk-proj-session-token.json",
     "host-ide-action-result-succeeded-open-missing-path.json",
     "host-ide-action-result-succeeded-open-with-range.json",
     "host-ide-action-result-succeeded-context-missing-context.json",
     "host-ide-action-result-succeeded-context-with-path-range.json",
     "host-ide-action-progress-succeeded-reveal-missing-range.json",
     "host-ide-action-progress-succeeded-context-with-path.json",
+    "host-ide-action-progress-succeeded-context-with-range.json",
     "host-ide-action-progress-succeeded-open-with-range.json",
     "host-ide-action-result-secret-like-relative-path.json",
     "host-ide-action-result-succeeded-missing-action.json",
@@ -300,6 +303,10 @@ const invalidMappings = [
   ],
   [
     "packages/contracts/examples-invalid/bridge/host-context-snapshot-privileged-command.json",
+    "packages/contracts/schemas/bridge/host-message.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/bridge/host-context-snapshot-reversed-selection-range.json",
     "packages/contracts/schemas/bridge/host-message.schema.json"
   ],
   [

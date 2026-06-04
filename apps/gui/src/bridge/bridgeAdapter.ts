@@ -497,7 +497,7 @@ function hasRequiredSuccessfulActionMetadata(value: Record<string, unknown>): bo
   if (value.action === "revealWorkspaceRange") {
     return requiredSafeRelativePath(value.workspaceRelativePath) && isEditRange(value.range);
   }
-  return value.action === "getContextSnapshot" && value.workspaceRelativePath === undefined && value.range === undefined && ("context" in value ? isIdeActionContext(value.context) : true);
+  return value.action === "getContextSnapshot" && value.workspaceRelativePath === undefined && value.range === undefined && (value.status === "succeeded" ? isIdeActionContext(value.context) : true);
 }
 
 function optionalIdeActionType(value: unknown): boolean {
@@ -574,15 +574,15 @@ function optionalString(value: unknown, maxLength: number, minLength = 0): boole
 }
 
 function optionalSessionToken(value: unknown): boolean {
-  return value === undefined || (typeof value === "string" && value.length >= 1 && value.length <= 4096 && /^[!-~]+$/.test(value));
+  return value === undefined || (typeof value === "string" && value.length >= 1 && value.length <= 512 && /^[A-Za-z0-9._~+/=-]+$/.test(value) && !/bearer|api[_-]?key|secret|password|sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value));
 }
 
 function optionalProductId(value: unknown): boolean {
-  return value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value));
+  return value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(value) && !/auth|bearer|api[_-]?key|token|secret|sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value));
 }
 
 function optionalDisplayName(value: unknown): boolean {
-  return value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,127}$/.test(value));
+  return value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,79}$/.test(value) && !/auth|bearer|api[_-]?key|token|secret|sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value));
 }
 
 function optionalNonEmptyString(value: unknown, maxLength: number): boolean {
@@ -601,7 +601,7 @@ function optionalLoopbackRuntimeUrl(value: unknown): boolean {
     const hasRootPath = parsed.pathname === "/" && /^[a-zA-Z][a-zA-Z\d+.-]*:\/\/[^/?#]*(?:\/)?$/.test(value);
     return (parsed.protocol === "http:" || parsed.protocol === "https:") &&
       (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost" || parsed.hostname === "[::1]") &&
-      parsed.port.length > 0 && Number.parseInt(parsed.port, 10) > 0 &&
+      parsed.port.length > 0 && Number.parseInt(parsed.port, 10) > 0 && Number.parseInt(parsed.port, 10) <= 65535 &&
       parsed.username.length === 0 && parsed.password.length === 0 &&
       parsed.search.length === 0 && parsed.hash.length === 0 &&
       hasRootPath;
@@ -632,8 +632,20 @@ function isContextSelection(value: unknown): boolean {
     optionalBoundedInteger(value.startCharacter, 0, 1000000) &&
     optionalBoundedInteger(value.endLine, 0, 1000000) &&
     optionalBoundedInteger(value.endCharacter, 0, 1000000) &&
-    optionalString(value.text, 8000)
+    optionalString(value.text, 8000) &&
+    isOptionalSelectionRangeOrdered(value)
   );
+}
+
+function isOptionalSelectionRangeOrdered(value: Record<string, unknown>): boolean {
+  const rangeKeys = [value.startLine, value.startCharacter, value.endLine, value.endCharacter];
+  if (rangeKeys.every((item) => item === undefined)) {
+    return true;
+  }
+  if (!rangeKeys.every((item) => Number.isInteger(item))) {
+    return false;
+  }
+  return (value.endLine as number) > (value.startLine as number) || ((value.endLine as number) === (value.startLine as number) && (value.endCharacter as number) >= (value.startCharacter as number));
 }
 
 function safeDisplayPath(value: unknown): boolean {
@@ -681,7 +693,7 @@ function safeMessage(value: unknown): boolean {
 }
 
 function hasPrivatePathLikeText(value: string): boolean {
-  return /(?:\/Users\/|\/home\/|\/(?:tmp|var|Volumes|Private|etc|opt|mnt)(?:\/|$)|~[\/\\]|[A-Za-z]:[\/\\])/i.test(value);
+  return /(?:\/Users(?:\/|$)|\/home(?:\/|$)|\/(?:tmp|var|Volumes|Private|etc|opt|mnt)(?:\/|$)|~[\/\\]|[A-Za-z]:[\/\\])/i.test(value);
 }
 
 function hasKeyLikeSecretText(value: string): boolean {

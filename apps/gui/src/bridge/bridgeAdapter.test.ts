@@ -181,7 +181,7 @@ describe("bridgeAdapter", () => {
   });
 
   it("accepts host.ready from the captured iframe parent without token logging or storage", () => {
-    const token = "iframe-parent-session-token-secret";
+    const token = "iframeParentSessionTokenLocal";
     const logs: string[] = [];
     const messages: unknown[] = [];
     const parent = { postMessage: vi.fn() };
@@ -540,7 +540,7 @@ describe("bridgeAdapter", () => {
   it("delivers synchronous VS Code host.ready replies after subscribe", () => {
     const logs: string[] = [];
     window.acquireVsCodeApi = () => ({
-      postMessage: () => window.dispatchEvent(new MessageEvent("message", { data: hostReady({ sessionToken: "sync-vscode-token" }) })),
+      postMessage: () => window.dispatchEvent(new MessageEvent("message", { data: hostReady({ sessionToken: "syncVscodeLocalValue" }) })),
     });
 
     const adapter = createBridgeAdapter((entry) => logs.push(entry));
@@ -548,9 +548,9 @@ describe("bridgeAdapter", () => {
     adapter.subscribe((message) => messages.push(message));
 
     expect(messages).toHaveLength(1);
-    expect(JSON.stringify(messages[0])).toContain("sync-vscode-token");
+    expect(JSON.stringify(messages[0])).toContain("syncVscodeLocalValue");
     expect(logs).toContain("Host runtime settings received");
-    expect(logs.join("\n")).not.toContain("sync-vscode-token");
+    expect(logs.join("\n")).not.toContain("syncVscodeLocalValue");
     adapter.dispose();
   });
 
@@ -576,7 +576,7 @@ describe("bridgeAdapter", () => {
 
   it("delivers synchronous JetBrains host.ready replies after subscribe", () => {
     const logs: string[] = [];
-    window.postIntellijMessage = () => window.dispatchEvent(new MessageEvent("message", { data: hostReady({ sessionToken: "sync-jetbrains-token" }) }));
+    window.postIntellijMessage = () => window.dispatchEvent(new MessageEvent("message", { data: hostReady({ sessionToken: "syncJetbrainsLocalValue" }) }));
 
     const adapter = createBridgeAdapter((entry) => logs.push(entry));
     const messages: unknown[] = [];
@@ -584,8 +584,8 @@ describe("bridgeAdapter", () => {
 
     expect(adapter.host).toBe("jetbrains");
     expect(messages).toHaveLength(1);
-    expect(JSON.stringify(messages[0])).toContain("sync-jetbrains-token");
-    expect(logs.join("\n")).not.toContain("sync-jetbrains-token");
+    expect(JSON.stringify(messages[0])).toContain("syncJetbrainsLocalValue");
+    expect(logs.join("\n")).not.toContain("syncJetbrainsLocalValue");
     adapter.dispose();
   });
 
@@ -803,9 +803,12 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { runtimeUrl: "http://user@127.0.0.1:8765" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { runtimeUrl: "http://127.0.0.1:8765/?token=x" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { sessionToken: "" } })).toBe(false);
-    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { sessionToken: "x".repeat(4097) } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { sessionToken: "x".repeat(513) } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { sessionToken: "sk-proj-abcdefghijkl" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { runtimeUrl: "http://127.0.0.1:70000" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { productId: "" } })).toBe(false);
     expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", file: { workspaceRelativePath: "../secret.ts" } } }))).toBe(false);
+    expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", selection: { startLine: 2, startCharacter: 0, endLine: 1, endCharacter: 0 } } }))).toBe(false);
     expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", file: { displayPath: "/Users/alice/secret.ts" } } }))).toBe(false);
     expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", selection: { text: "x".repeat(8001) } } }))).toBe(false);
     expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", selection: { startLine: -1 } } }))).toBe(false);
@@ -831,7 +834,7 @@ describe("bridgeAdapter", () => {
   });
 
   it("emits valid host.ready to subscribers without logging the token", () => {
-    const token = "host-session-token-secret";
+    const token = "hostSessionLocalValue";
     const logs: string[] = [];
     const messages: unknown[] = [];
     const adapter = createBridgeAdapter((entry) => logs.push(entry));
