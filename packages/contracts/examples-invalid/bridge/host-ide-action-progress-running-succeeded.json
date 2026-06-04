@@ -1,0 +1,12 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionProgress",
+  "requestId": "req-progress-running-succeeded",
+  "payload": {
+    "phase": "running",
+    "status": "succeeded",
+    "summary": "IDE action succeeded.",
+    "cloudRequired": false,
+    "action": "getContextSnapshot"
+  }
+}

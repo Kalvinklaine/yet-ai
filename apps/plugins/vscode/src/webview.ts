@@ -567,7 +567,7 @@ function isSafeSummary(value: unknown): value is string {
 }
 
 function isRequiredRequestId(value: unknown): value is string {
-  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value);
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value) && !hasSecretRequestIdMarker(value);
 }
 
 function sanitizeApplyWorkspaceEditResultMessage(value: string): string {
@@ -711,8 +711,9 @@ const maxForwardedIdeActionMessageBytes = ${maxForwardedIdeActionMessageBytes};
 let latestHostReady;
 let frameReady = false;
 const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
-const isBoundedRequestId = (value) => value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value));
-const isRequiredRequestId = (value) => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value);
+const hasSecretRequestIdMarker = (value) => /authorization|bearer|api[_-]?key|token|secret|access[_-]?token|sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value);
+const isBoundedRequestId = (value) => value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value) && !hasSecretRequestIdMarker(value));
+const isRequiredRequestId = (value) => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value) && !hasSecretRequestIdMarker(value);
 const isBoundedForwardedApplyWorkspaceEditMessage = (value) => {
   try {
     return new TextEncoder().encode(JSON.stringify(value)).length <= maxForwardedApplyWorkspaceEditMessageBytes;
