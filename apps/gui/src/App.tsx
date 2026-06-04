@@ -1,5 +1,5 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createBridgeAdapter, isApplyWorkspaceEditPayload, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload } from "./bridge/bridgeAdapter";
+import { createBridgeAdapter, isApplyWorkspaceEditPayload, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type WorkspaceEditRange } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
@@ -88,6 +88,18 @@ type ApplyResultState = {
   requestId: string;
   proposalRequestId: string | null;
   payload: ApplyWorkspaceEditResultPayload;
+};
+
+type IdeActionAttemptState = {
+  requestId: string;
+  action: IdeActionType;
+  label: string;
+  status: "pending" | "inProgress" | "succeeded" | "rejected" | "unavailable" | "failed";
+  message: string;
+  workspaceRelativePath?: string;
+  range?: WorkspaceEditRange;
+  progress?: IdeActionProgressPayload;
+  result?: IdeActionResultPayload;
 };
 
 type FirstMessageAction =
@@ -259,6 +271,8 @@ export function App() {
   const [editProposal, setEditProposal] = useState<EditProposalState | null>(null);
   const [applyResult, setApplyResult] = useState<ApplyResultState | null>(null);
   const [pendingApplyRequestId, setPendingApplyRequestId] = useState<string | null>(null);
+  const [ideActionAttempt, setIdeActionAttempt] = useState<IdeActionAttemptState | null>(null);
+  const [ideActionNote, setIdeActionNote] = useState<string | null>(null);
   const bridgeAdapterRef = useRef<BridgeAdapter | null>(null);
   const editProposalCounterRef = useRef(0);
   const editProposalApplyCounterRef = useRef(0);
@@ -266,6 +280,9 @@ export function App() {
   const chatViewMessagesRef = useRef<ChatViewMessage[]>([]);
   const pendingApplyRequestIdRef = useRef<string | null>(null);
   const pendingApplyProposalRequestIdRef = useRef<string | null>(null);
+  const pendingIdeActionRequestIdRef = useRef<string | null>(null);
+  const completedIdeActionRequestIdsRef = useRef<Set<string>>(new Set());
+  const ideActionCounterRef = useRef(0);
   const attachedContextRef = useRef<typeof attachedContext>(null);
   const agentProgressAttemptRef = useRef(0);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -329,6 +346,8 @@ export function App() {
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
   const currentAttachedContext = attachedContext?.settingsRevision === settingsRevision && attachedContext.chatId === chatId ? attachedContext.payload : null;
   const activeEditProposal = editProposalMatchesCurrentMessages(chatView.messages, editProposal) ? editProposal : null;
+  const safeActiveWorkspacePath = currentAttachedContext?.file?.workspaceRelativePath;
+  const safeActiveRange = rangeFromContextSelection(currentAttachedContext?.selection);
 
   const addTimeline = useCallback((entry: string) => {
     setTimeline((current) => [entry, ...current].slice(0, 80));
@@ -395,6 +414,9 @@ export function App() {
     setIncludeAttachedContext(false);
     setAttachedContextStatus(null);
     clearEditProposalState();
+    pendingIdeActionRequestIdRef.current = null;
+    setIdeActionAttempt(null);
+    setIdeActionNote(null);
   }, [abortActiveStream, clearEditProposalState]);
 
   const updateRuntimeSettings = useCallback((nextSettings: RuntimeSettings) => {
@@ -452,6 +474,41 @@ export function App() {
         pendingApplyProposalRequestIdRef.current = null;
         setPendingApplyRequestId(null);
         setApplyResult({ requestId, proposalRequestId, payload: message.payload as ApplyWorkspaceEditResultPayload });
+      } else if (message.type === "host.ideActionProgress") {
+        const requestId = message.requestId ?? "unknown";
+        if (requestId !== pendingIdeActionRequestIdRef.current) {
+          setIdeActionNote("Ignored stale IDE action progress.");
+          return;
+        }
+        const payload = message.payload as IdeActionProgressPayload;
+        setIdeActionAttempt((current) => current?.requestId === requestId ? {
+          ...current,
+          status: payload.status,
+          message: payload.summary,
+          workspaceRelativePath: payload.workspaceRelativePath ?? current.workspaceRelativePath,
+          progress: payload,
+        } : current);
+      } else if (message.type === "host.ideActionResult") {
+        const requestId = message.requestId ?? "unknown";
+        if (completedIdeActionRequestIdsRef.current.has(requestId)) {
+          setIdeActionNote("Ignored duplicate IDE action result.");
+          return;
+        }
+        if (requestId !== pendingIdeActionRequestIdRef.current) {
+          setIdeActionNote("Ignored stale IDE action result.");
+          return;
+        }
+        const payload = message.payload as IdeActionResultPayload;
+        completedIdeActionRequestIdsRef.current.add(requestId);
+        pendingIdeActionRequestIdRef.current = null;
+        setIdeActionAttempt((current) => current?.requestId === requestId ? {
+          ...current,
+          status: payload.status,
+          message: payload.message,
+          workspaceRelativePath: payload.workspaceRelativePath ?? current.workspaceRelativePath,
+          range: payload.range ?? current.range,
+          result: payload,
+        } : current);
       }
     });
     return () => {
@@ -1153,6 +1210,33 @@ export function App() {
     addTimeline(`Edit proposal apply requested ${applyRequestId}`);
   }, [addTimeline, bridgeHost, clearEditProposalState, editProposal]);
 
+  const requestIdeAction = useCallback((payload: IdeActionRequestPayload) => {
+    if (bridgeHost !== "vscode" || pendingIdeActionRequestIdRef.current) {
+      return;
+    }
+    ideActionCounterRef.current += 1;
+    const requestId = `gui-ide-action-${ideActionCounterRef.current}`;
+    const label = ideActionLabel(payload.action);
+    pendingIdeActionRequestIdRef.current = requestId;
+    setIdeActionNote(null);
+    setIdeActionAttempt({
+      requestId,
+      action: payload.action,
+      label,
+      status: "pending",
+      message: `${label} requested.`,
+      workspaceRelativePath: "workspaceRelativePath" in payload ? payload.workspaceRelativePath : undefined,
+      range: "range" in payload ? payload.range : undefined,
+    });
+    bridgeAdapterRef.current?.post({
+      version: "2026-05-15",
+      type: "gui.ideActionRequest",
+      requestId,
+      payload,
+    });
+    addTimeline(`IDE action requested ${requestId}`);
+  }, [addTimeline, bridgeHost]);
+
   useEffect(() => {
     const proposal = latestEditProposalFromMessages(chatView.messages, editProposalCounterRef, editProposalIdentityRef);
     if (!proposal) {
@@ -1404,6 +1488,7 @@ export function App() {
               {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
             </div>
             <EditProposalPanel proposal={activeEditProposal} result={activeEditProposal ? applyResult : null} host={bridgeHost} pendingRequestId={pendingApplyRequestId} onApply={submitEditProposal} onCancelPending={cancelPendingEditProposalApply} />
+            <IdeActionsPanel host={bridgeHost} attempt={ideActionAttempt} note={ideActionNote} workspaceRelativePath={safeActiveWorkspacePath} range={safeActiveRange} onGetContext={() => requestIdeAction({ action: "getContextSnapshot" })} onOpenFile={(workspaceRelativePath) => requestIdeAction({ action: "openWorkspaceFile", workspaceRelativePath })} onRevealRange={(workspaceRelativePath, range) => requestIdeAction({ action: "revealWorkspaceRange", workspaceRelativePath, range })} />
             <form className="stack chat-composer" onSubmit={(event) => void submitChat(event)}>
               <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} />
               <textarea ref={chatInputRef} value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
@@ -1863,6 +1948,70 @@ function formatSelectionRange(selection: HostContextSnapshotPayload["selection"]
     return `${selection.startLine}:${selection.startCharacter}`;
   }
   return "unknown range";
+}
+
+function rangeFromContextSelection(selection: HostContextSnapshotPayload["selection"]): WorkspaceEditRange | undefined {
+  if (!selection || selection.startLine === undefined || selection.startCharacter === undefined || selection.endLine === undefined || selection.endCharacter === undefined) {
+    return undefined;
+  }
+  if (selection.endLine < selection.startLine || (selection.endLine === selection.startLine && selection.endCharacter < selection.startCharacter)) {
+    return undefined;
+  }
+  return {
+    start: { line: selection.startLine, character: selection.startCharacter },
+    end: { line: selection.endLine, character: selection.endCharacter },
+  };
+}
+
+function ideActionLabel(action: IdeActionType): string {
+  switch (action) {
+    case "getContextSnapshot":
+      return "Get IDE context";
+    case "openWorkspaceFile":
+      return "Open file";
+    case "revealWorkspaceRange":
+      return "Reveal range";
+  }
+}
+
+function IdeActionsPanel({ host, attempt, note, workspaceRelativePath, range, onGetContext, onOpenFile, onRevealRange }: { host: BridgeHost; attempt: IdeActionAttemptState | null; note: string | null; workspaceRelativePath?: string; range?: WorkspaceEditRange; onGetContext: () => void; onOpenFile: (workspaceRelativePath: string) => void; onRevealRange: (workspaceRelativePath: string, range: WorkspaceEditRange) => void }) {
+  const supported = host === "vscode";
+  const pending = attempt?.status === "pending" || attempt?.status === "inProgress";
+  return (
+    <section className="ide-actions-card stack" aria-label="Agent activity IDE actions">
+      <div className="row">
+        <strong>Agent activity · IDE actions</strong>
+        <span className={`badge ${supported ? "ok" : "warn"}`}>{supported ? "VS Code controlled actions" : host === "jetbrains" ? "JetBrains preview-only" : "browser unsupported"}</span>
+      </div>
+      <p className="subtle">Safe local navigation/context actions only. This panel cannot edit files, run shell commands, call tools, read arbitrary file content, or send raw payloads.</p>
+      {!supported ? (
+        <div className="readiness-card warn" role="status">Controlled IDE actions are unsupported/preview-only in {host}. No privileged action will be posted.</div>
+      ) : (
+        <div className="row">
+          <button type="button" onClick={onGetContext} disabled={pending}>{pending ? "IDE action pending…" : "Get IDE context"}</button>
+          <button type="button" onClick={() => workspaceRelativePath && onOpenFile(workspaceRelativePath)} disabled={pending || !workspaceRelativePath}>Open file</button>
+          <button type="button" onClick={() => workspaceRelativePath && range && onRevealRange(workspaceRelativePath, range)} disabled={pending || !workspaceRelativePath || !range}>Reveal range</button>
+        </div>
+      )}
+      {workspaceRelativePath && <span className="subtle">Active safe path: {sanitizeDisplayText(workspaceRelativePath)}</span>}
+      {range && <span className="subtle">Active safe range: {formatEditRange(range)}</span>}
+      {attempt ? <IdeActionAttemptPreview attempt={attempt} /> : <span className="subtle">No controlled IDE action requested yet.</span>}
+      {note && <span className="subtle" role="status">{sanitizeDisplayText(note)}</span>}
+    </section>
+  );
+}
+
+function IdeActionAttemptPreview({ attempt }: { attempt: IdeActionAttemptState }) {
+  return (
+    <div className={`ide-action-status ${attempt.status}`} role="status">
+      <strong>{sanitizeDisplayText(attempt.label)}: {sanitizeDisplayText(attempt.status)}</strong>
+      <span>{sanitizeDisplayText(attempt.message)}</span>
+      <span>Request: {sanitizeDisplayText(attempt.requestId)} · cloud required: false</span>
+      {attempt.workspaceRelativePath && <span>Path: {sanitizeDisplayText(attempt.workspaceRelativePath)}</span>}
+      {attempt.range && <span>Range: {formatEditRange(attempt.range)}</span>}
+      {attempt.result?.context && <span>Context: active editor {String(attempt.result.context.hasActiveEditor ?? "unknown")} · workspace folders {attempt.result.context.workspaceFolderCount ?? "unknown"}</span>}
+    </div>
+  );
 }
 
 function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, context, hasLocalConversations, onProviderSetup, onRefreshRuntime }: { runtimeConnected: boolean; canSendChat: boolean; providerReady: boolean; context: HostContextSnapshotPayload | null; hasLocalConversations: boolean; onProviderSetup: () => void; onRefreshRuntime: () => void }) {
