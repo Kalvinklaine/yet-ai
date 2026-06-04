@@ -7,7 +7,7 @@ import { ProductIdentity, bridgeVersion, configurationPrefix } from "./identity"
 
 export type HostMessage = {
   version: string;
-  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.applyWorkspaceEditResult";
+  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult";
   requestId?: string;
   payload?: Record<string, unknown>;
 };
@@ -31,10 +31,19 @@ type HostContextPayload = {
 
 type GuiMessage = {
   version: string;
-  type: "gui.ready" | "gui.applyWorkspaceEditRequest";
+  type: "gui.ready" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest";
   requestId?: string;
   payload?: Record<string, unknown>;
 };
+
+type IdeActionType = "getContextSnapshot" | "openWorkspaceFile" | "revealWorkspaceRange";
+
+type IdeActionStatus = "succeeded" | "rejected" | "unavailable" | "failed";
+
+type IdeActionRequest =
+  | { requestId: string; action: "getContextSnapshot" }
+  | { requestId: string; action: "openWorkspaceFile"; workspaceRelativePath: string }
+  | { requestId: string; action: "revealWorkspaceRange"; workspaceRelativePath: string; range: ApplyWorkspaceTextReplacement["range"] };
 
 type ApplyWorkspaceEditRequest = {
   requestId: string;
@@ -77,6 +86,7 @@ type ApplyWorkspaceEditStatus = "applied" | "denied" | "rejected" | "failed";
 
 const applyWorkspaceEditConfirmationLabel = "Apply edits";
 const maxForwardedApplyWorkspaceEditMessageBytes = 65536;
+const inFlightIdeActionRequestIds = new Set<string>();
 
 export function openYetAiWebview(
   context: vscode.ExtensionContext,
@@ -105,6 +115,10 @@ export function openYetAiWebview(
       return;
     }
     console.log(`Yet AI received ${message.type}`);
+    if (message.type === "gui.ideActionRequest") {
+      void handleIdeActionRequest(panel.webview, message);
+      return;
+    }
     if (message.type === "gui.applyWorkspaceEditRequest") {
       void handleApplyWorkspaceEditRequest(panel.webview, message);
       return;
@@ -165,6 +179,125 @@ export function createApplyWorkspaceEditResult(
       appliedEditCount: clampAppliedEditCount(appliedEditCount),
       affectedFiles: affectedFiles.map((file) => sanitizeRelativePath(file, 512)).filter((file): file is string => file !== undefined).slice(0, 4),
     },
+  };
+}
+
+export function createIdeActionProgress(
+  requestId: string,
+  phase: "queued" | "checkingPolicy" | "running" | "completed",
+  status: "pending" | "inProgress" | IdeActionStatus,
+  summary: string,
+  action?: IdeActionType,
+  workspaceRelativePath?: string,
+): HostMessage {
+  const payload: Record<string, unknown> = {
+    phase,
+    status,
+    summary: sanitizeResultMessage(summary),
+    cloudRequired: false,
+  };
+  if (action) {
+    payload.action = action;
+  }
+  const pathValue = sanitizeRelativePath(workspaceRelativePath, 512);
+  if (pathValue) {
+    payload.workspaceRelativePath = pathValue;
+  }
+  return { version: bridgeVersion, type: "host.ideActionProgress", requestId, payload };
+}
+
+export function createIdeActionResult(
+  requestId: string,
+  status: IdeActionStatus,
+  message: string,
+  metadata: { action?: IdeActionType; workspaceRelativePath?: string; range?: ApplyWorkspaceTextReplacement["range"]; context?: Record<string, unknown> } = {},
+): HostMessage {
+  const payload: Record<string, unknown> = {
+    status,
+    message: sanitizeResultMessage(message),
+    cloudRequired: false,
+  };
+  if (metadata.action) {
+    payload.action = metadata.action;
+  }
+  const pathValue = sanitizeRelativePath(metadata.workspaceRelativePath, 512);
+  if (pathValue) {
+    payload.workspaceRelativePath = pathValue;
+  }
+  if (metadata.range && isStrictRange(metadata.range)) {
+    payload.range = metadata.range;
+  }
+  if (metadata.context) {
+    payload.context = metadata.context;
+  }
+  return { version: bridgeVersion, type: "host.ideActionResult", requestId, payload };
+}
+
+export async function handleIdeActionRequest(webview: vscode.Webview, message: GuiMessage): Promise<void> {
+  const requestId = typeof message.requestId === "string" ? message.requestId : "invalid-request";
+  const request = parseIdeActionRequest(message);
+  if (!request) {
+    await webview.postMessage(createIdeActionResult(requestId, "rejected", "IDE action rejected by host policy."));
+    return;
+  }
+  if (inFlightIdeActionRequestIds.has(request.requestId)) {
+    await webview.postMessage(createIdeActionResult(request.requestId, "rejected", "IDE action rejected by host policy.", { action: request.action }));
+    return;
+  }
+
+  inFlightIdeActionRequestIds.add(request.requestId);
+  try {
+    await webview.postMessage(createIdeActionProgress(request.requestId, "checkingPolicy", "inProgress", "IDE action policy check started.", request.action, "workspaceRelativePath" in request ? request.workspaceRelativePath : undefined));
+    const result = await runIdeActionRequest(request);
+    await webview.postMessage(result);
+  } catch {
+    await webview.postMessage(createIdeActionResult(request.requestId, "failed", "IDE action failed.", { action: request.action }));
+  } finally {
+    inFlightIdeActionRequestIds.delete(request.requestId);
+  }
+}
+
+async function runIdeActionRequest(request: IdeActionRequest): Promise<HostMessage> {
+  if (request.action === "getContextSnapshot") {
+    return createIdeActionResult(request.requestId, "succeeded", "IDE context snapshot captured.", {
+      action: request.action,
+      context: createIdeActionContextMetadata(),
+    });
+  }
+
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (!workspaceFolders || workspaceFolders.length === 0) {
+    return createIdeActionResult(request.requestId, "unavailable", "Workspace is unavailable.", { action: request.action, workspaceRelativePath: request.workspaceRelativePath });
+  }
+  const uri = await resolveExistingWorkspaceFile(request.workspaceRelativePath, workspaceFolders);
+  if (!uri) {
+    return createIdeActionResult(request.requestId, "rejected", "Workspace file rejected by host policy.", { action: request.action, workspaceRelativePath: request.workspaceRelativePath });
+  }
+  const document = await vscode.workspace.openTextDocument(uri);
+  if (!document || document.isUntitled) {
+    return createIdeActionResult(request.requestId, "unavailable", "Workspace file is unavailable.", { action: request.action, workspaceRelativePath: request.workspaceRelativePath });
+  }
+  if (request.action === "openWorkspaceFile") {
+    await vscode.window.showTextDocument(document, { preview: true });
+    return createIdeActionResult(request.requestId, "succeeded", "Workspace file opened.", { action: request.action, workspaceRelativePath: request.workspaceRelativePath });
+  }
+  if (!isRangeWithinDocument(request.range, document)) {
+    return createIdeActionResult(request.requestId, "rejected", "Workspace range rejected by host policy.", { action: request.action, workspaceRelativePath: request.workspaceRelativePath });
+  }
+  const editor = await vscode.window.showTextDocument(document, { preview: true, selection: toVscodeRange(request.range) });
+  editor.revealRange(toVscodeRange(request.range), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+  return createIdeActionResult(request.requestId, "succeeded", "Workspace range revealed.", { action: request.action, workspaceRelativePath: request.workspaceRelativePath, range: request.range });
+}
+
+function toVscodeRange(range: ApplyWorkspaceTextReplacement["range"]): vscode.Range {
+  return new vscode.Range(new vscode.Position(range.start.line, range.start.character), new vscode.Position(range.end.line, range.end.character));
+}
+
+function createIdeActionContextMetadata(): Record<string, unknown> {
+  return {
+    source: "vscode",
+    hasActiveEditor: vscode.window.activeTextEditor !== undefined,
+    workspaceFolderCount: Math.min(vscode.workspace.workspaceFolders?.length ?? 0, 100),
   };
 }
 
@@ -326,6 +459,31 @@ function parseApplyWorkspaceEditRequest(message: GuiMessage): ApplyWorkspaceEdit
     summary: message.payload.summary,
     edits,
   };
+}
+
+export function parseIdeActionRequest(message: GuiMessage): IdeActionRequest | undefined {
+  if (message.type !== "gui.ideActionRequest" || !isRequiredRequestId(message.requestId) || !isPlainRecord(message.payload)) {
+    return undefined;
+  }
+  if (hasOnlyKeys(message.payload, ["action"]) && message.payload.action === "getContextSnapshot") {
+    return { requestId: message.requestId, action: "getContextSnapshot" };
+  }
+  if (
+    hasOnlyKeys(message.payload, ["action", "workspaceRelativePath"]) &&
+    message.payload.action === "openWorkspaceFile" &&
+    isStrictSafeRelativePath(message.payload.workspaceRelativePath)
+  ) {
+    return { requestId: message.requestId, action: "openWorkspaceFile", workspaceRelativePath: message.payload.workspaceRelativePath };
+  }
+  if (
+    hasOnlyKeys(message.payload, ["action", "workspaceRelativePath", "range"]) &&
+    message.payload.action === "revealWorkspaceRange" &&
+    isStrictSafeRelativePath(message.payload.workspaceRelativePath) &&
+    isStrictRange(message.payload.range)
+  ) {
+    return { requestId: message.requestId, action: "revealWorkspaceRange", workspaceRelativePath: message.payload.workspaceRelativePath, range: message.payload.range };
+  }
+  return undefined;
 }
 
 async function resolveExistingWorkspaceFile(workspaceRelativePath: string, workspaceFolders: readonly vscode.WorkspaceFolder[]): Promise<vscode.Uri | undefined> {
@@ -552,8 +710,12 @@ const isStrictGuiReadyPayload = (payload) => {
   }
   return isPlainObject(payload) && Object.keys(payload).every((key) => key === "supportedBridgeVersion") && (payload.supportedBridgeVersion === undefined || payload.supportedBridgeVersion === bootstrap.bridgeVersion);
 };
-const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && ((message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload)) || (message.type === "gui.applyWorkspaceEditRequest" && isBoundedRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)));
-const isHostMessage = (message) => isPlainObject(message) && message.version === bootstrap.bridgeVersion && (message.type === "host.ready" || message.type === "host.openedFromCommand" || message.type === "host.contextSnapshot" || message.type === "host.applyWorkspaceEditResult");
+const isStrictSafeRelativePath = (value) => typeof value === "string" && value.length > 0 && value.length <= 512 && !value.startsWith("/") && !value.startsWith("~") && !value.includes("%") && !value.includes("\\\\") && !value.includes(":") && !value.includes("?") && !value.includes("#") && !/[\u0000-\u001f\u007f-\u009f]/.test(value) && !/(^|\/)\.\.?(\/|$)/.test(value) && !value.includes("//") && !value.endsWith("/");
+const isStrictPosition = (value) => isPlainObject(value) && Object.keys(value).every((key) => key === "line" || key === "character") && Number.isInteger(value.line) && Number.isInteger(value.character) && value.line >= 0 && value.line <= 1000000 && value.character >= 0 && value.character <= 1000000;
+const isStrictRange = (value) => isPlainObject(value) && Object.keys(value).every((key) => key === "start" || key === "end") && isStrictPosition(value.start) && isStrictPosition(value.end) && (value.end.line > value.start.line || (value.end.line === value.start.line && value.end.character >= value.start.character));
+const isStrictIdeActionPayload = (payload) => isPlainObject(payload) && ((Object.keys(payload).every((key) => key === "action") && payload.action === "getContextSnapshot") || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath") && payload.action === "openWorkspaceFile" && isStrictSafeRelativePath(payload.workspaceRelativePath)) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath" || key === "range") && payload.action === "revealWorkspaceRange" && isStrictSafeRelativePath(payload.workspaceRelativePath) && isStrictRange(payload.range)));
+const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && ((message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload)) || (message.type === "gui.ideActionRequest" && isBoundedRequestId(message.requestId) && isStrictIdeActionPayload(message.payload)) || (message.type === "gui.applyWorkspaceEditRequest" && isBoundedRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)));
+const isHostMessage = (message) => isPlainObject(message) && message.version === bootstrap.bridgeVersion && (message.type === "host.ready" || message.type === "host.openedFromCommand" || message.type === "host.contextSnapshot" || message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult");
 const sendToFrame = (message) => {
   if (frame && frame.contentWindow && frameTargetOrigin) {
     frame.contentWindow.postMessage(message, frameTargetOrigin);
@@ -782,6 +944,7 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
     hasOnlyKeys(record, ["version", "type", "requestId", "payload"]) &&
     record.version === bridgeVersion &&
     ((record.type === "gui.ready" && isBoundedRequestId(record.requestId) && isGuiReadyPayload(record.payload)) ||
+      (record.type === "gui.ideActionRequest" && parseIdeActionRequest(record as GuiMessage) !== undefined) ||
       (record.type === "gui.applyWorkspaceEditRequest" && isBoundedForwardedApplyWorkspaceEditMessage(record) && parseApplyWorkspaceEditRequest(record as GuiMessage) !== undefined))
   );
 }

@@ -11,6 +11,7 @@ const bootstrapSource = extractSection("const bootstrap = serializeScriptJson({"
 const requiredSnippets = [
   "record.version === bridgeVersion",
   "record.type === \"gui.ready\"",
+  "record.type === \"gui.ideActionRequest\"",
   "record.type === \"gui.applyWorkspaceEditRequest\"",
   "const maxForwardedApplyWorkspaceEditMessageBytes = 65536;",
   "isBoundedForwardedApplyWorkspaceEditMessage(record)",
@@ -26,6 +27,8 @@ const requiredSnippets = [
   "message.type === \"gui.applyWorkspaceEditRequest\" && isBoundedRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)",
   "latestHostReady = event.data",
   "host.contextSnapshot",
+  "host.ideActionProgress",
+  "host.ideActionResult",
   "createHostContextSnapshot(message.requestId)",
   "console.log(\"Yet AI rejected invalid GUI bridge message\")",
   "replayHostReady();",
@@ -89,6 +92,9 @@ const disabledGuiMessageTypes = [
   "gui.copyText",
   "gui.showNotification",
   "gui.getHostContext",
+  "gui.executeShellCommand",
+  "gui.runTask",
+  "gui.gitOperation",
 ];
 for (const type of disabledGuiMessageTypes) {
   if (source.includes(`record.type === \"${type}\"`) || renderWebviewHtmlSource.includes(`message.type === \"${type}\"`)) {
@@ -114,6 +120,26 @@ for (const snippet of privilegedVscodeApiSnippets) {
   }
 }
 
+const controlledIdeActionSource = extractSection("export async function handleIdeActionRequest", "export async function handleApplyWorkspaceEditRequest");
+for (const snippet of [
+  "vscode.workspace.applyEdit",
+  "new vscode.WorkspaceEdit",
+  "workspaceEdit.replace",
+  "vscode.workspace.fs.writeFile",
+  "vscode.workspace.fs.delete",
+  "vscode.workspace.fs.rename",
+  "vscode.commands.executeCommand",
+  "vscode.window.createTerminal",
+  "vscode.tasks.executeTask",
+]) {
+  if (controlledIdeActionSource.includes(snippet)) {
+    throw new Error(`Controlled IDE action handler must not call write/shell/task API: ${snippet}`);
+  }
+}
+if (!extractSection("export async function handleApplyWorkspaceEditRequest", "export async function validateWorkspaceEditBeforeApply").includes("vscode.workspace.applyEdit(workspaceEdit)")) {
+  throw new Error("Confirmed edit proposal path must remain the only workspace.applyEdit path.");
+}
+
 const originalLoad = Module._load;
 const fakeVscode = {
   Uri: {
@@ -129,7 +155,17 @@ const fakeVscode = {
     showWarningMessage() {
       return Promise.resolve(undefined);
     },
+    showTextDocument(document, options) {
+      fakeVscode.__shownDocuments.push({ document, options });
+      return Promise.resolve({
+        revealRange(range, revealType) {
+          fakeVscode.__revealedRanges.push({ range, revealType });
+        },
+      });
+    },
   },
+  __shownDocuments: [],
+  __revealedRanges: [],
   workspace: {
     workspaceFolders: undefined,
     fs: {
@@ -160,10 +196,18 @@ const fakeVscode = {
     }
   },
   Range: class Range {
-    constructor(start, end) {
-      this.start = start;
-      this.end = end;
+    constructor(startOrLine, startCharacter, endLine, endCharacter) {
+      if (typeof startOrLine === "object") {
+        this.start = startOrLine;
+        this.end = startCharacter;
+      } else {
+        this.start = { line: startOrLine, character: startCharacter };
+        this.end = { line: endLine, character: endCharacter };
+      }
     }
+  },
+  TextEditorRevealType: {
+    InCenterIfOutsideViewport: 2,
   },
   WorkspaceEdit: class WorkspaceEdit {
     constructor() {
@@ -178,6 +222,9 @@ let createHostReady;
 let createHostContextSnapshot;
 let createApplyWorkspaceEditResult;
 let handleApplyWorkspaceEditRequest;
+let handleIdeActionRequest;
+let parseIdeActionRequest;
+let createIdeActionResult;
 let isInvalidApplyWorkspaceEditRequestMessage;
 let isGuiMessage;
 let renderWebviewHtml;
@@ -188,7 +235,7 @@ try {
     }
     return originalLoad.call(this, request, parent, isMain);
   };
-  ({ createHostReady, createHostContextSnapshot, createApplyWorkspaceEditResult, handleApplyWorkspaceEditRequest, isInvalidApplyWorkspaceEditRequestMessage, isGuiMessage, renderWebviewHtml } = await import("../out/webview.js"));
+  ({ createHostReady, createHostContextSnapshot, createApplyWorkspaceEditResult, handleApplyWorkspaceEditRequest, handleIdeActionRequest, parseIdeActionRequest, createIdeActionResult, isInvalidApplyWorkspaceEditRequestMessage, isGuiMessage, renderWebviewHtml } = await import("../out/webview.js"));
 } finally {
   Module._load = originalLoad;
 }
@@ -322,6 +369,23 @@ const rejectedPrivilegedGuiMessages = [
 ];
 
 const validApplyWorkspaceEditRequest = createApplyWorkspaceEditRequest();
+const validIdeActionRequests = [
+  createIdeActionRequest({ action: "getContextSnapshot" }),
+  createIdeActionRequest({ action: "openWorkspaceFile", workspaceRelativePath: "src/main.ts" }),
+  createIdeActionRequest({ action: "revealWorkspaceRange", workspaceRelativePath: "src/main.ts", range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } } }),
+];
+const invalidIdeActionRequests = [
+  createIdeActionRequest({ action: "runShellCommand", payload: { command: "git status" } }),
+  createIdeActionRequest({ action: "gitOperation", payload: { operation: "status" } }),
+  createIdeActionRequest({ action: "runTask", payload: { task: "build" } }),
+  createIdeActionRequest({ action: "applyEdit", payload: { workspaceRelativePath: "src/main.ts" } }),
+  createIdeActionRequest({ action: "openWorkspaceFile", workspaceRelativePath: "../src/main.ts" }),
+  createIdeActionRequest({ action: "openWorkspaceFile", workspaceRelativePath: "/src/main.ts" }),
+  createIdeActionRequest({ action: "openWorkspaceFile", workspaceRelativePath: "src//main.ts" }),
+  createIdeActionRequest({ action: "revealWorkspaceRange", workspaceRelativePath: "src/main.ts", range: { start: { line: 2, character: 0 }, end: { line: 1, character: 0 } } }),
+  createIdeActionRequest({ action: "getContextSnapshot", payload: { includeFileContent: true } }),
+  createIdeActionRequest({ action: "getContextSnapshot", requestId: undefined }),
+];
 const unsafeEditTextSamples = [
   "Authorization handling",
   "bearer handling",
@@ -389,6 +453,14 @@ const invalidApplyWorkspaceEditRequests = [
 
 assert.equal(isGuiMessage(acceptedGuiReadyMessage), true);
 assert.equal(isGuiMessage(rejectedControlCharGuiReadyMessage), false, "VS Code host must reject gui.ready with control-char requestId.");
+for (const message of validIdeActionRequests) {
+  assert.equal(isGuiMessage(message), true, `VS Code host should accept strict IDE action request: ${message.payload.action}`);
+  assert.notEqual(parseIdeActionRequest(message), undefined, `VS Code host should parse strict IDE action request: ${message.payload.action}`);
+}
+for (const message of invalidIdeActionRequests) {
+  assert.equal(isGuiMessage(message), false, `VS Code host must reject malformed/forbidden IDE action request: ${message.payload.action}`);
+  assert.equal(parseIdeActionRequest(message), undefined, `VS Code host must not parse malformed/forbidden IDE action request: ${message.payload.action}`);
+}
 assert.equal(isGuiMessage(validApplyWorkspaceEditRequest), true, "VS Code host should accept strict confirmed apply requests.");
 for (const message of rejectedPrivilegedGuiMessages) {
   if (message.type === "gui.applyWorkspaceEditRequest") {
@@ -469,6 +541,7 @@ assert.equal(outsideContextSnapshot.payload.file.workspaceRelativePath, undefine
 assertNoAbsolutePath(JSON.stringify(outsideContextSnapshot), "VS Code outside-workspace active context snapshot");
 
 await assertApplyWorkspaceEditBehavior();
+await assertIdeActionBehavior();
 
 const sanitizedResult = createApplyWorkspaceEditResult(
   "req-apply-edit-result-sanitize",
@@ -511,6 +584,7 @@ for (const privateResultMessage of [
   ...unsafeEditTextSamples.map((sample) => `Failed with ${sample}.`),
 ]) {
   assert.equal(createApplyWorkspaceEditResult("req-private-result", "failed", privateResultMessage).payload.message, "Edit request status changed.");
+  assert.equal(createIdeActionResult("req-private-result", "failed", privateResultMessage).payload.message, "Edit request status changed.");
 }
 assertNoSecretSentinels(JSON.stringify(sanitizedResult), fakeSecretValues, "VS Code apply edit sanitized result");
 assertNoAbsolutePath(JSON.stringify(sanitizedResult), "VS Code apply edit sanitized result");
@@ -709,6 +783,90 @@ function createApplyWorkspaceEditRequest(overrides = {}) {
     requestId: Object.hasOwn(overrides, "requestId") ? overrides.requestId : "req-apply-edit-valid-001",
     payload,
   };
+}
+
+function createIdeActionRequest(overrides = {}) {
+  const payload = {
+    action: overrides.action ?? "getContextSnapshot",
+    ...(overrides.workspaceRelativePath === undefined ? {} : { workspaceRelativePath: overrides.workspaceRelativePath }),
+    ...(overrides.range === undefined ? {} : { range: overrides.range }),
+    ...(overrides.payload ?? {}),
+  };
+  return {
+    version: "2026-05-15",
+    type: "gui.ideActionRequest",
+    requestId: Object.hasOwn(overrides, "requestId") ? overrides.requestId : `req-ide-action-${payload.action}`,
+    payload,
+  };
+}
+
+async function assertIdeActionBehavior() {
+  const existingPath = path.join(workspaceRoot, "src", "main.ts");
+  const webviewMessages = [];
+  const testWebview = {
+    postMessage(message) {
+      webviewMessages.push(message);
+      return Promise.resolve(true);
+    },
+  };
+
+  fakeVscode.__shownDocuments = [];
+  fakeVscode.__revealedRanges = [];
+  fakeVscode.workspace.workspaceFolders = [{ uri: { fsPath: workspaceRoot, scheme: "file", path: workspaceRoot } }];
+  fakeVscode.workspace.fs.stat = (uri) => uri.fsPath === existingPath ? Promise.resolve({ type: fakeVscode.FileType.File }) : Promise.reject(new Error("missing"));
+  fakeVscode.workspace.openTextDocument = (uri) => {
+    if (uri.fsPath !== existingPath) {
+      return Promise.reject(new Error("missing"));
+    }
+    return Promise.resolve({
+      isUntitled: false,
+      lineCount: 1,
+      lineAt(line) {
+        assert.equal(line, 0);
+        return { text: "hello world" };
+      },
+    });
+  };
+  let applyCalls = 0;
+  fakeVscode.workspace.applyEdit = () => {
+    applyCalls += 1;
+    return Promise.resolve(true);
+  };
+
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "runShellCommand", payload: { command: "git status" } }));
+  assert.equal(webviewMessages.at(-1).type, "host.ideActionResult");
+  assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "openWorkspaceFile", workspaceRelativePath: "../src/main.ts" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "openWorkspaceFile", workspaceRelativePath: "src/missing.ts" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "revealWorkspaceRange", workspaceRelativePath: "src/main.ts", range: { start: { line: 0, character: 8 }, end: { line: 0, character: 2 } } }));
+  assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+
+  fakeVscode.workspace.workspaceFolders = undefined;
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "openWorkspaceFile", workspaceRelativePath: "src/main.ts" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "unavailable");
+
+  fakeVscode.workspace.workspaceFolders = [{ uri: { fsPath: workspaceRoot, scheme: "file", path: workspaceRoot } }];
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "openWorkspaceFile", workspaceRelativePath: "src/main.ts" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "succeeded");
+  assert.equal(fakeVscode.__shownDocuments.length, 1);
+
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "revealWorkspaceRange", workspaceRelativePath: "src/main.ts", range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } } }));
+  assert.equal(webviewMessages.at(-1).payload.status, "succeeded");
+  assert.equal(fakeVscode.__revealedRanges.length, 1);
+
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "getContextSnapshot" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "succeeded");
+  assert.equal(webviewMessages.at(-1).payload.context.source, "vscode");
+  assert.equal(applyCalls, 0, "Controlled IDE actions must not apply workspace edits.");
+  assertNoSecretSentinels(JSON.stringify(webviewMessages), fakeSecretValues, "VS Code IDE action messages");
+  assertNoAbsolutePath(JSON.stringify(webviewMessages), "VS Code IDE action messages");
+
+  fakeVscode.workspace.workspaceFolders = undefined;
 }
 
 async function assertApplyWorkspaceEditBehavior() {
