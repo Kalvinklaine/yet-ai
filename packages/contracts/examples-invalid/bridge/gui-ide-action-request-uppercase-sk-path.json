@@ -1,0 +1,9 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.ideActionRequest",
+  "requestId": "req-uppercase-sk-path",
+  "payload": {
+    "action": "openWorkspaceFile",
+    "workspaceRelativePath": "src/SK-proj-abcdef1234567890.txt"
+  }
+}

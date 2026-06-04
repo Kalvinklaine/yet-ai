@@ -230,9 +230,14 @@ const invalidMappings = [
     "gui-apply-workspace-edit-key-like-summary.json",
     "gui-apply-workspace-edit-private-path-summary.json",
     "gui-apply-workspace-edit-bare-private-root-summary.json",
+    "gui-apply-workspace-edit-bare-users-summary.json",
+    "gui-apply-workspace-edit-bare-home-summary.json",
+    "gui-apply-workspace-edit-bare-private-summary.json",
     "gui-apply-workspace-edit-drive-path-summary.json",
     "gui-apply-workspace-edit-empty-segment-path.json",
-    "gui-apply-workspace-edit-trailing-slash-path.json"
+    "gui-apply-workspace-edit-trailing-slash-path.json",
+    "gui-ide-action-request-uppercase-sk-request-id.json",
+    "gui-ide-action-request-uppercase-sk-path.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/gui-message.schema.json"
@@ -276,7 +281,11 @@ const invalidMappings = [
     "host-ide-action-progress-succeeded-open-missing-path.json",
     "host-ide-action-progress-completed-in-progress.json",
     "host-ide-action-progress-running-succeeded.json",
-    "host-ide-action-result-bare-private-root-message.json"
+    "host-ide-action-result-bare-private-root-message.json",
+    "host-context-snapshot-partial-selection-coordinates.json",
+    "host-ide-action-result-succeeded-open-with-context.json",
+    "host-ide-action-result-succeeded-reveal-with-context.json",
+    "host-ide-action-result-uppercase-sk-message.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/host-message.schema.json"
@@ -457,7 +466,10 @@ const invalidMappings = [
     "agent-progress-event-bare-home-path-message.json",
     "agent-progress-event-bare-private-path-message.json",
     "agent-progress-event-etc-path-message.json",
-    "agent-progress-event-windows-drive-slash-message.json"
+    "agent-progress-event-windows-drive-slash-message.json",
+    "agent-progress-event-uppercase-sk-message.json",
+    "agent-progress-event-uppercase-sk-id.json",
+    "agent-progress-event-uppercase-sk-path.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/agent-progress-event.schema.json"
@@ -528,6 +540,10 @@ const invalidMappings = [
     "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
   ],
   [
+    "packages/contracts/examples-invalid/engine/agent-progress-snapshot-uppercase-sk-message.json",
+    "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
+  ],
+  [
     "packages/contracts/examples-invalid/engine/agent-progress-list-done-overflow-recovery.json",
     "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
   ],
@@ -582,6 +598,10 @@ const invalidMappings = [
   ]),
   [
     "packages/contracts/examples-invalid/engine/agent-progress-list-sk-secret-tail.json",
+    "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-list-uppercase-sk-tail.json",
     "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
   ],
   [

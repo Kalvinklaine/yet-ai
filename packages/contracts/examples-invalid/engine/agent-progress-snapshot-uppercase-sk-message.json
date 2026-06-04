@@ -1,0 +1,13 @@
+{
+  "protocolVersion": "2026-05-29",
+  "runId": "run-1",
+  "cardId": "P0-4",
+  "startedAt": "2026-05-31T10:00:00Z",
+  "updatedAt": "2026-05-31T10:00:01Z",
+  "phase": "running_command",
+  "status": "running",
+  "message": "Running near SK-proj-abcdefghijklmnopqrstuvwxyz.",
+  "elapsedMs": 1000,
+  "ageMs": 10,
+  "recentEvents": []
+}

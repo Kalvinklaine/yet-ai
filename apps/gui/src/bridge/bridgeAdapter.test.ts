@@ -285,7 +285,7 @@ describe("bridgeAdapter", () => {
   });
 
   it("rejects request ids with compact secret markers", () => {
-    for (const requestId of ["AuthorizationBearerFake", "apiKeySecretValue", "sk-proj-abcdef1234567890", "access_token"]) {
+    for (const requestId of ["AuthorizationBearerFake", "apiKeySecretValue", "sk-proj-abcdef1234567890", "SK-proj-abcdef1234567890", "access_token"]) {
       expect(isGuiMessage({ ...guiIdeActionContextMessage, requestId })).toBe(false);
       expect(isHostMessage({ ...hostIdeActionProgressMessage, requestId })).toBe(false);
     }
@@ -410,6 +410,10 @@ describe("bridgeAdapter", () => {
     for (const summary of [
       "Update reviewed text near sk-abcdefghijklmnopqrstuvwxyz.",
       "Update reviewed text near sk-proj-abcdefghijklmnopqrstuvwxyz.",
+      "Update reviewed text near SK-proj-abcdefghijklmnopqrstuvwxyz.",
+      "Update /Users",
+      "Update /home",
+      "Update /Private",
     ]) {
       const message = applyEditMessage({ summary });
       expect(isGuiMessage(message)).toBe(false);
@@ -457,6 +461,7 @@ describe("bridgeAdapter", () => {
     for (const resultMessage of [
       "Failed while applying sk-abcdefghijklmnopqrstuvwxyz.",
       "Failed while applying sk-proj-abcdefghijklmnopqrstuvwxyz.",
+      "Failed while applying SK-proj-abcdefghijklmnopqrstuvwxyz.",
     ]) {
       const message = {
         version: bridgeVersion,
@@ -687,6 +692,7 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-7", payload: { status: "failed", message: "provider response sk-abcdefghijklmnopqrstuvwxyz", cloudRequired: false, action: "getContextSnapshot" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-8", payload: { status: "succeeded", message: "Done.", cloudRequired: false, action: "getContextSnapshot", rawPrompt: "show me" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-9", payload: { status: "succeeded", message: "Opened.", cloudRequired: false, action: "openWorkspaceFile" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-9-context", payload: { status: "succeeded", message: "Opened.", cloudRequired: false, action: "openWorkspaceFile", workspaceRelativePath: "src/App.tsx", context: { source: "vscode" } } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-10", payload: { phase: "completed", status: "succeeded", summary: "Revealed.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/App.tsx" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-11", payload: { phase: "completed", status: "succeeded", summary: "Revealed.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/App.tsx", range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } } } })).toBe(true);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-12", payload: { status: "succeeded", message: "Opened.", cloudRequired: false, action: "openWorkspaceFile", workspaceRelativePath: "config/secret.env" } })).toBe(false);
@@ -809,6 +815,7 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { productId: "" } })).toBe(false);
     expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", file: { workspaceRelativePath: "../secret.ts" } } }))).toBe(false);
     expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", selection: { startLine: 2, startCharacter: 0, endLine: 1, endCharacter: 0 } } }))).toBe(false);
+    expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", selection: { startLine: 2, text: "safe selected text" } } }))).toBe(false);
     expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", file: { displayPath: "/Users/alice/secret.ts" } } }))).toBe(false);
     expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", selection: { text: "x".repeat(8001) } } }))).toBe(false);
     expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", selection: { startLine: -1 } } }))).toBe(false);

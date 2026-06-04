@@ -442,7 +442,9 @@ const unsafeEditTextSamples = [
   "sk-proj-abcdefghijklmnopqrstuvwxyz handling",
 ];
 const invalidApplyWorkspaceEditRequests = [
+  createApplyWorkspaceEditRequest({ summary: "Update /Users" }),
   createApplyWorkspaceEditRequest({ summary: "Update /Users/alice/project/src/main.ts." }),
+  createApplyWorkspaceEditRequest({ summary: "Update /home" }),
   createApplyWorkspaceEditRequest({ summary: "Update /home/alice/project/src/main.ts." }),
   createApplyWorkspaceEditRequest({ summary: "Update /tmp/project/src/main.ts." }),
   createApplyWorkspaceEditRequest({ summary: "Update /var/project/src/main.ts." }),
@@ -593,6 +595,8 @@ assert.equal(sanitizedResult.payload.cloudRequired, false);
 assert.equal(sanitizedResult.payload.appliedEditCount, 64);
 assert.deepEqual(sanitizedResult.payload.affectedFiles, ["src/main.ts", "src/second.ts", "src/third.ts", "src/fourth.ts"]);
 for (const privateResultMessage of [
+  "Failed at /Users.",
+  "Failed at /home.",
   "Failed at /home/alice/project/src/main.ts.",
   "Failed at /tmp/project/src/main.ts.",
   "Failed at /var/project/src/main.ts.",

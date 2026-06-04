@@ -1,0 +1,12 @@
+{
+  "version": "2026-05-15",
+  "type": "host.contextSnapshot",
+  "payload": {
+    "kind": "active_editor",
+    "source": "vscode",
+    "selection": {
+      "startLine": 1,
+      "text": "safe selected text"
+    }
+  }
+}

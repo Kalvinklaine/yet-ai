@@ -1,0 +1,10 @@
+{
+  "protocolVersion": "2026-05-29",
+  "eventId": "SK-proj-abcdef1234567890",
+  "runId": "run-1",
+  "cardId": "P0-4",
+  "timestamp": "2026-05-31T10:00:01Z",
+  "phase": "running_command",
+  "status": "running",
+  "message": "Running validation."
+}
