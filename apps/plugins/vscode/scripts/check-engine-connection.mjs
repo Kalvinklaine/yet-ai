@@ -190,6 +190,7 @@ try {
     resolveSessionToken,
     safeRuntimeUrl,
     setStoredSessionToken,
+    isBridgeSafeSessionToken,
     validateEngineConnectionSettings,
     validateLoopbackUrl,
     validateRuntimeLaunchProtocol,
@@ -205,6 +206,10 @@ try {
     source: "legacySetting",
   });
   assert.deepEqual(resolveSessionToken("", "  "), { source: "none" });
+  assert.equal(isBridgeSafeSessionToken("0123456789abcdef"), true);
+  assert.equal(isBridgeSafeSessionToken("local-dev-token"), true);
+  assert.equal(isBridgeSafeSessionToken("sk-abcdefghijkl"), false);
+  assert.equal(isBridgeSafeSessionToken("manual sk-abcdefghijkl"), false);
 
   assert.doesNotThrow(() => validateLoopbackUrl("https://127.0.0.1:5173", "yetai.guiDevUrl"));
   assert.doesNotThrow(() => validateRuntimeUrl("http://127.0.0.1:8001", "yetai.runtimeUrl"));
@@ -240,6 +245,16 @@ try {
   assert.throws(
     () => validateLoopbackUrl("https://localhost:5173/#fake-secret", "yetai.guiDevUrl"),
     /yetai\.guiDevUrl must not include query parameters or fragments\./,
+  );
+  for (const runtimeUrl of ["http://127.0.0.1", "http://localhost", "http://[::1]"]) {
+    assert.throws(
+      () => validateRuntimeUrl(runtimeUrl, "yetai.runtimeUrl"),
+      /yetai\.runtimeUrl must include an explicit valid port/,
+    );
+  }
+  assert.throws(
+    () => validateRuntimeUrl("http://127.0.0.1:70000", "yetai.runtimeUrl"),
+    /yetai\.runtimeUrl must be a valid URL\./,
   );
 
   const connectHttpsSettings = {
@@ -1485,7 +1500,7 @@ try {
       { ...fakeContext, extensionPath: tempRoot },
       { engine: { binaryName: "yet-lsp" } },
     );
-    assert.match(launchMissingPortDiagnostics.pingStatus, /^skipped: yetai\.runtimeUrl must include an explicit nonzero port/);
+    assert.match(launchMissingPortDiagnostics.pingStatus, /^skipped: yetai\.runtimeUrl must include an explicit valid port/);
     assert.equal(launchMissingPortPinged, false);
 
     configValues = {
@@ -1502,7 +1517,7 @@ try {
       { ...fakeContext, extensionPath: tempRoot },
       { engine: { binaryName: "yet-lsp" } },
     );
-    assert.match(launchZeroPortDiagnostics.pingStatus, /^skipped: yetai\.runtimeUrl must include an explicit nonzero port/);
+    assert.match(launchZeroPortDiagnostics.pingStatus, /^skipped: yetai\.runtimeUrl must include an explicit valid port/);
     assert.equal(launchZeroPortPinged, false);
 
     configValues = {
@@ -1760,12 +1775,12 @@ try {
         async get(key) {
           secretStorageReads += 1;
           assert.equal(key, "yetai.localRuntimeSessionToken");
-          return "secret-storage-connect-session-token";
+          return "local-dev-token";
         },
       },
     };
     globalThis.fetch = async (_url, options = {}) => {
-      assert.equal(options.headers?.Authorization, "Bearer secret-storage-connect-session-token");
+      assert.equal(options.headers?.Authorization, "Bearer local-dev-token");
       return { ok: true, status: 200 };
     };
     const secretStorageConnect = await prepareEngineConnection(
@@ -1773,7 +1788,7 @@ try {
       { engine: { binaryName: "yet-lsp" } },
       fakeOutputChannel(),
     );
-    assert.equal(secretStorageConnect.sessionToken, "secret-storage-connect-session-token");
+    assert.equal(secretStorageConnect.sessionToken, "local-dev-token");
     assert.equal(secretStorageReads, 1);
     assert.equal(spawnedProcesses.length, 2);
 

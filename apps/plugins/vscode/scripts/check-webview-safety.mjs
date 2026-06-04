@@ -41,6 +41,8 @@ const requiredSnippets = [
   "console.log(\"Yet AI rejected invalid GUI bridge message\")",
   "replayHostReady();",
   "crypto.randomBytes(24).toString(\"base64url\")",
+  "validateRuntimeUrl(connection.runtimeUrl",
+  "isBridgeSafeSessionToken(connection.sessionToken)",
   ".replace(/</g, \"\\\\u003c\")",
   ".replace(/\\u2028/g, \"\\\\u2028\")",
   ".replace(/\\u2029/g, \"\\\\u2029\")",
@@ -546,6 +548,13 @@ assert.equal(hostReady.requestId, "valid-gui-ready-request");
 assert.equal(hostReady.payload.runtimeUrl, connection.runtimeUrl);
 assert.equal(hostReady.payload.sessionToken, connection.sessionToken);
 assert.equal(hostReady.payload.cloudRequired, false);
+assert.throws(
+  () => createHostReady(identity, { runtimeUrl: "http://127.0.0.1", sessionToken: connection.sessionToken }, "valid-gui-ready-request"),
+  /must include an explicit valid port/,
+);
+const unsafeTokenHostReady = createHostReady(identity, { runtimeUrl: connection.runtimeUrl, sessionToken: "sk-abcdefghijkl" }, "valid-gui-ready-request");
+assert.equal(unsafeTokenHostReady.payload.sessionToken, undefined);
+assert.equal(unsafeTokenHostReady.payload.runtimeUrl, connection.runtimeUrl);
 
 assert.equal(contextSnapshot.version, "2026-05-15");
 assert.equal(contextSnapshot.type, "host.contextSnapshot");
@@ -594,6 +603,8 @@ assert.equal(sanitizedResult.payload.message, "Edit request status changed.");
 assert.equal(sanitizedResult.payload.cloudRequired, false);
 assert.equal(sanitizedResult.payload.appliedEditCount, 64);
 assert.deepEqual(sanitizedResult.payload.affectedFiles, ["src/main.ts", "src/second.ts", "src/third.ts", "src/fourth.ts"]);
+assert.equal(createIdeActionResult("req-open-context", "succeeded", "Workspace file opened.", { action: "openWorkspaceFile", workspaceRelativePath: "src/main.ts", context: { hasActiveEditor: true } }).payload.context, undefined);
+assert.equal(createIdeActionResult("req-reveal-context", "succeeded", "Workspace range revealed.", { action: "revealWorkspaceRange", workspaceRelativePath: "src/main.ts", range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }, context: { hasActiveEditor: true } }).payload.context, undefined);
 for (const privateResultMessage of [
   "Failed at /Users.",
   "Failed at /home.",

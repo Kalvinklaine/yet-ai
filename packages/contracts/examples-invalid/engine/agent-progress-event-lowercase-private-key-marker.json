@@ -1,0 +1,10 @@
+{
+  "protocolVersion": "2026-05-29",
+  "eventId": "evt-lowercase-private-key",
+  "runId": "run-T269-006",
+  "cardId": "card-T269-006",
+  "timestamp": "2026-05-29T12:00:00Z",
+  "phase": "failed",
+  "status": "failed",
+  "message": "begin rsa private key"
+}
