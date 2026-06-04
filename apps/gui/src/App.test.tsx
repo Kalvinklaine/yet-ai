@@ -1942,6 +1942,140 @@ describe("active editor attached context", () => {
     expect(container?.textContent).not.toContain("Stale result ignored.");
   });
 
+  it("renders browser read-only IDE action proposal without posting a request", async () => {
+    const proposal = ideActionProposal({ action: "openWorkspaceFile", workspaceRelativePath: "src/example.ts", summary: "Open the example file." });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Browser proposal", 1)], chatThreads: { "chat-001": chatThread("chat-001", "Browser proposal", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Read-only IDE action proposal");
+    expect(container?.textContent).toContain("Open the example file.");
+    expect(container?.textContent).toContain("Browser preview only. No IDE action will be posted.");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Run read-only IDE action");
+  });
+
+  it("renders JetBrains read-only IDE action proposal without posting a request", async () => {
+    const postIntellijMessage = vi.fn();
+    window.postIntellijMessage = postIntellijMessage;
+    const proposal = ideActionProposal({ action: "getContextSnapshot", summary: "Check current IDE context." });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "JetBrains proposal", 1)], chatThreads: { "chat-001": chatThread("chat-001", "JetBrains proposal", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Read-only IDE action proposal");
+    expect(container?.textContent).toContain("JetBrains preview-only unsupported. No IDE action will be posted.");
+    expect(postIntellijMessage.mock.calls.some(([message]) => message?.type === "gui.ideActionRequest")).toBe(false);
+  });
+
+  it("renders VS Code read-only IDE action proposal and does not auto-post", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = ideActionProposal({ action: "revealWorkspaceRange", workspaceRelativePath: "src/example.ts", range: testRange(), summary: "Reveal the example range." });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "VS Code proposal", 1)], chatThreads: { "chat-001": chatThread("chat-001", "VS Code proposal", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    expect(findButton("Run read-only IDE action").disabled).toBe(false);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
+  });
+
+  it.each([
+    [ideActionProposal({ action: "getContextSnapshot", summary: "Check current IDE context." }), { action: "getContextSnapshot" }],
+    [ideActionProposal({ action: "openWorkspaceFile", workspaceRelativePath: "src/example.ts", summary: "Open the example file." }), { action: "openWorkspaceFile", workspaceRelativePath: "src/example.ts" }],
+    [ideActionProposal({ action: "revealWorkspaceRange", workspaceRelativePath: "src/example.ts", range: testRange(), summary: "Reveal the example range." }), { action: "revealWorkspaceRange", workspaceRelativePath: "src/example.ts", range: testRange() }],
+  ])("posts one GUI-owned VS Code request for proposal variant %#", async (proposal, expectedPayload) => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Variant proposal", 1)], chatThreads: { "chat-001": chatThread("chat-001", "Variant proposal", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Run read-only IDE action").click();
+    });
+
+    const ideActionMessages = postMessage.mock.calls.map(([message]) => message).filter((message) => message.type === "gui.ideActionRequest");
+    expect(ideActionMessages).toHaveLength(1);
+    expect(ideActionMessages[0].requestId).toMatch(/^gui-ide-proposal-action-\d+$/);
+    expect(ideActionMessages[0].requestId.length).toBeLessThanOrEqual(128);
+    expect(ideActionMessages[0].payload).toEqual(expectedPayload);
+  });
+
+  it("blocks duplicate proposal clicks while pending", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = ideActionProposal({ action: "getContextSnapshot", summary: "Check current IDE context." });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Duplicate proposal", 1)], chatThreads: { "chat-001": chatThread("chat-001", "Duplicate proposal", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const runButton = findButton("Run read-only IDE action");
+    await act(async () => {
+      runButton.click();
+      runButton.click();
+    });
+
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(1);
+    expect(findButton("IDE action pending…").disabled).toBe(true);
+  });
+
+  it("clears stale read-only proposal when latest assistant message is invalid or normal", async () => {
+    const valid = ideActionProposal({ action: "getContextSnapshot", summary: "Check current IDE context." });
+    const invalid = { ...valid, requestId: "assistant-supplied" };
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Stale proposal", 2), chatSummary("chat-002", "Normal latest", 2)], chatThreads: {
+      "chat-001": chatThread("chat-001", "Stale proposal", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(valid)), chatMessage("chat-001", "assistant-2", "assistant", JSON.stringify(invalid))]),
+      "chat-002": chatThread("chat-002", "Normal latest", [chatMessage("chat-002", "assistant-1", "assistant", JSON.stringify(valid)), chatMessage("chat-002", "assistant-2", "assistant", "Normal assistant response.")]),
+    } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+    expect(container?.textContent ?? "").not.toContain("Read-only IDE action proposal");
+
+    await act(async () => {
+      setInputValue(chatIdInput(), "chat-002");
+      await Promise.resolve();
+    });
+    await flushAsync();
+    expect(container?.textContent ?? "").not.toContain("Read-only IDE action proposal");
+  });
+
+  it("correlates proposal action host progress and result in Agent activity", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = ideActionProposal({ action: "getContextSnapshot", summary: "Check current IDE context." });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Correlated action", 1)], chatThreads: { "chat-001": chatThread("chat-001", "Correlated action", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+    await act(async () => { findButton("Run read-only IDE action").click(); });
+    const requestId = postMessage.mock.calls.find(([message]) => message.type === "gui.ideActionRequest")?.[0].requestId;
+
+    await dispatchHostIdeActionProgress(requestId, { phase: "running", status: "inProgress", summary: "Reading active editor context.", cloudRequired: false, action: "getContextSnapshot" });
+    expect(container?.textContent ?? "").toContain("Get IDE context: inProgress");
+    expect(container?.textContent ?? "").toContain("Reading active editor context.");
+    await dispatchHostIdeActionResult(requestId, { status: "succeeded", message: "Context snapshot ready.", cloudRequired: false, action: "getContextSnapshot", context: { source: "vscode", hasActiveEditor: true, workspaceFolderCount: 1 } });
+    expect(container?.textContent ?? "").toContain("Get IDE context: succeeded");
+    expect(container?.textContent ?? "").toContain("Context snapshot ready.");
+  });
+
+  it("does not write proposal data to browser storage", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const proposal = ideActionProposal({ action: "openWorkspaceFile", workspaceRelativePath: "src/no-storage.ts", summary: "Open no storage file." });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Storage proposal", 1)], chatThreads: { "chat-001": chatThread("chat-001", "Storage proposal", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("Open no storage file.");
+    expect(browserStorageDump()).not.toContain("src/no-storage.ts");
+  });
+
   it("rejects malicious IDE action results before App renders unsafe payload", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
@@ -4592,6 +4726,20 @@ function safeEditProposalPayload() {
         ],
       },
     ],
+  };
+}
+
+function testRange() {
+  return { start: { line: 4, character: 2 }, end: { line: 4, character: 18 } };
+}
+
+function ideActionProposal(overrides: Record<string, unknown>) {
+  return {
+    type: "assistant.ideActionProposal",
+    version: bridgeVersion,
+    requiresUserConfirmation: true,
+    cloudRequired: false,
+    ...overrides,
   };
 }
 

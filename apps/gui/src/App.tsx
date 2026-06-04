@@ -1,6 +1,7 @@
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { createBridgeAdapter, isApplyWorkspaceEditPayload, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type WorkspaceEditRange } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
+import { describeIdeActionProposal, parseAssistantIdeActionProposalContent, toIdeActionRequestPayload, type AssistantIdeActionProposal } from "./services/ideActionProposal";
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
 import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
@@ -80,6 +81,14 @@ type AgentProgressState = {
 type EditProposalState = {
   requestId: string;
   payload: ApplyWorkspaceEditPayload;
+  sourceMessageId: string;
+  payloadKey: string;
+};
+
+type IdeActionProposalState = {
+  requestId: string;
+  proposal: AssistantIdeActionProposal;
+  payload: IdeActionRequestPayload;
   sourceMessageId: string;
   payloadKey: string;
 };
@@ -277,6 +286,8 @@ export function App() {
   const editProposalCounterRef = useRef(0);
   const editProposalApplyCounterRef = useRef(0);
   const editProposalIdentityRef = useRef<{ requestId: string; sourceMessageId: string; payloadKey: string } | null>(null);
+  const ideActionProposalCounterRef = useRef(0);
+  const ideActionProposalIdentityRef = useRef<{ requestId: string; sourceMessageId: string; payloadKey: string } | null>(null);
   const chatViewMessagesRef = useRef<ChatViewMessage[]>([]);
   const pendingApplyRequestIdRef = useRef<string | null>(null);
   const pendingApplyProposalRequestIdRef = useRef<string | null>(null);
@@ -346,6 +357,7 @@ export function App() {
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
   const currentAttachedContext = attachedContext?.settingsRevision === settingsRevision && attachedContext.chatId === chatId ? attachedContext.payload : null;
   const activeEditProposal = editProposalMatchesCurrentMessages(chatView.messages, editProposal) ? editProposal : null;
+  const activeIdeActionProposal = useMemo(() => deriveLatestIdeActionProposal(chatView.messages, ideActionProposalIdentityRef, ideActionProposalCounterRef), [chatView.messages]);
   const safeActiveWorkspacePath = currentAttachedContext?.file?.workspaceRelativePath;
   const safeActiveRange = rangeFromContextSelection(currentAttachedContext?.selection);
 
@@ -1210,12 +1222,12 @@ export function App() {
     addTimeline(`Edit proposal apply requested ${applyRequestId}`);
   }, [addTimeline, bridgeHost, clearEditProposalState, editProposal]);
 
-  const requestIdeAction = useCallback((payload: IdeActionRequestPayload) => {
+  const requestIdeAction = useCallback((payload: IdeActionRequestPayload, requestIdPrefix = "gui-ide-action") => {
     if (bridgeHost !== "vscode" || pendingIdeActionRequestIdRef.current) {
       return;
     }
     ideActionCounterRef.current += 1;
-    const requestId = `gui-ide-action-${ideActionCounterRef.current}`;
+    const requestId = `${requestIdPrefix}-${ideActionCounterRef.current}`;
     const label = ideActionLabel(payload.action);
     pendingIdeActionRequestIdRef.current = requestId;
     setIdeActionNote(null);
@@ -1488,6 +1500,7 @@ export function App() {
               {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
             </div>
             <EditProposalPanel proposal={activeEditProposal} result={activeEditProposal ? applyResult : null} host={bridgeHost} pendingRequestId={pendingApplyRequestId} onApply={submitEditProposal} onCancelPending={cancelPendingEditProposalApply} />
+            <IdeActionProposalPanel proposal={activeIdeActionProposal} host={bridgeHost} pending={pendingIdeActionRequestIdRef.current !== null} onRun={(payload) => requestIdeAction(payload, "gui-ide-proposal-action")} />
             <IdeActionsPanel host={bridgeHost} attempt={ideActionAttempt} note={ideActionNote} workspaceRelativePath={safeActiveWorkspacePath} range={safeActiveRange} onGetContext={() => requestIdeAction({ action: "getContextSnapshot" })} onOpenFile={(workspaceRelativePath) => requestIdeAction({ action: "openWorkspaceFile", workspaceRelativePath })} onRevealRange={(workspaceRelativePath, range) => requestIdeAction({ action: "revealWorkspaceRange", workspaceRelativePath, range })} />
             <form className="stack chat-composer" onSubmit={(event) => void submitChat(event)}>
               <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} />
@@ -1913,6 +1926,29 @@ function stableEditProposalPayloadKey(payload: ApplyWorkspaceEditPayload): strin
   return JSON.stringify(payload);
 }
 
+function deriveLatestIdeActionProposal(messages: ChatViewMessage[], identityRef: MutableRefObject<{ requestId: string; sourceMessageId: string; payloadKey: string } | null>, counterRef: MutableRefObject<number>): IdeActionProposalState | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== "assistant" || message.status !== "complete") {
+      continue;
+    }
+    const proposal = parseAssistantIdeActionProposalContent(message.content);
+    if (!proposal) {
+      return null;
+    }
+    const payload = toIdeActionRequestPayload(proposal);
+    const payloadKey = JSON.stringify(proposal);
+    if (identityRef.current?.sourceMessageId === message.id && identityRef.current.payloadKey === payloadKey) {
+      return { requestId: identityRef.current.requestId, proposal, payload, sourceMessageId: message.id, payloadKey };
+    }
+    counterRef.current += 1;
+    const requestId = `gui-ide-proposal-${counterRef.current}`;
+    identityRef.current = { requestId, sourceMessageId: message.id, payloadKey };
+    return { requestId, proposal, payload, sourceMessageId: message.id, payloadKey };
+  }
+  return null;
+}
+
 function extractEditProposal(content: string): ApplyWorkspaceEditPayload | null {
   const parsed = parseFirstJsonObject(content);
   if (!parsed) {
@@ -2011,6 +2047,37 @@ function IdeActionAttemptPreview({ attempt }: { attempt: IdeActionAttemptState }
       {attempt.range && <span>Range: {formatEditRange(attempt.range)}</span>}
       {attempt.result?.context && <span>Context: active editor {String(attempt.result.context.hasActiveEditor ?? "unknown")} · workspace folders {attempt.result.context.workspaceFolderCount ?? "unknown"}</span>}
     </div>
+  );
+}
+
+function IdeActionProposalPanel({ proposal, host, pending, onRun }: { proposal: IdeActionProposalState | null; host: BridgeHost; pending: boolean; onRun: (payload: IdeActionRequestPayload) => void }) {
+  if (!proposal) {
+    return null;
+  }
+  const label = describeIdeActionProposal(proposal.proposal);
+  const supported = host === "vscode";
+  return (
+    <section className="ide-action-proposal-card stack" aria-label="Read-only IDE action proposal">
+      <div className="row">
+        <strong>Read-only IDE action proposal</strong>
+        <span className="badge ok">cloud required: false</span>
+        <span className="badge warn">requires confirmation</span>
+      </div>
+      <span>{sanitizeDisplayText(proposal.proposal.summary)}</span>
+      <div className="edit-proposal-grid">
+        <span>Action: {sanitizeDisplayText(label)}</span>
+        <span>Request: {sanitizeDisplayText(proposal.requestId)}</span>
+        <span>Cloud required: false</span>
+        {"workspaceRelativePath" in proposal.payload && <span>Path: {sanitizeDisplayText(proposal.payload.workspaceRelativePath)}</span>}
+        {"range" in proposal.payload && <span>Range: {formatEditRange(proposal.payload.range)}</span>}
+      </div>
+      <span className="subtle">Review this assistant-proposed read-only navigation/context action before running. The GUI will not run it automatically and never accepts assistant-supplied request ids.</span>
+      {host === "vscode" ? (
+        <button type="button" onClick={() => onRun(proposal.payload)} disabled={pending}>{pending ? "IDE action pending…" : "Run read-only IDE action"}</button>
+      ) : (
+        <div className="readiness-card warn" role="status">{host === "jetbrains" ? "JetBrains preview-only unsupported. No IDE action will be posted." : "Browser preview only. No IDE action will be posted."}</div>
+      )}
+    </section>
   );
 }
 
