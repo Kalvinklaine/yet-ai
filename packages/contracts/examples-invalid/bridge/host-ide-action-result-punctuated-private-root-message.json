@@ -1,0 +1,10 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-punctuated-private-root-message",
+  "payload": {
+    "status": "failed",
+    "message": "Failed at /Users.",
+    "cloudRequired": false
+  }
+}

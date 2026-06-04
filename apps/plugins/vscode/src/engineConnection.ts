@@ -150,6 +150,9 @@ export async function prepareEngineConnection(
     sessionToken: settings.sessionToken,
     guiDevUrl: settings.guiDevUrl,
   };
+  if (connection.sessionToken !== undefined && !isBridgeSafeSessionToken(connection.sessionToken)) {
+    throw new Error(`${configurationPrefix}.sessionToken must be a local runtime session token that is safe for the host.ready bridge schema.`);
+  }
   if (settings.sessionTokenSource === "legacySetting") {
     output.appendLine(`Warning: ${configurationPrefix}.sessionToken is deprecated. Use the Yet AI command to store the local runtime session token in VS Code SecretStorage.`);
   }
@@ -245,10 +248,23 @@ export function validateLoopbackUrl(value: string, settingName: string): vscode.
 
 export function validateRuntimeUrl(value: string, settingName: string): vscode.Uri {
   const uri = validateLoopbackUrl(value, settingName);
+  const port = explicitRawPort(value);
+  if (port === undefined || port <= 0 || port > 65535) {
+    throw new Error(`${settingName} must include an explicit valid port such as http://127.0.0.1:8001.`);
+  }
   if (!hasRootUrlPath(value)) {
     throw new Error(`${settingName} must not include a path.`);
   }
   return uri;
+}
+
+function explicitRawPort(value: string): number | undefined {
+  const authority = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\/([^/?#]*)/.exec(value)?.[1] ?? "";
+  const portText = authority.startsWith("[") ? /^\[[^\]]+\]:(\d+)$/.exec(authority)?.[1] : /:(\d+)$/.exec(authority)?.[1];
+  if (!portText) {
+    return undefined;
+  }
+  return Number.parseInt(portText, 10);
 }
 
 export function getLoopbackOrigin(value: string, settingName: string): string {
@@ -278,6 +294,10 @@ export function validateEngineConnectionSettings(settings: EngineConnectionSetti
   if (settings.launchMode !== "connect" && settings.engineBinaryPath && !path.isAbsolute(settings.engineBinaryPath)) {
     throw new Error(`${configurationPrefix}.engineBinaryPath must be an absolute path.`);
   }
+}
+
+export function isBridgeSafeSessionToken(value: string): boolean {
+  return value.length >= 1 && value.length <= 512 && /^(?!.*(?:[Bb][Ee][Aa][Rr][Ee][Rr]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}))[A-Za-z0-9._~+/=-]+$/.test(value);
 }
 
 export function validateRuntimeLaunchProtocol(runtimeUrl: string, launchMode: LaunchMode, willLaunch: boolean): void {
@@ -395,7 +415,7 @@ async function launchOrReuseEngine(runtimeUrl: string, binaryPath: string, outpu
   }
   stopLaunchedEngine(output);
 
-  const token = crypto.randomBytes(32).toString("base64url");
+  const token = crypto.randomBytes(32).toString("hex");
   const port = parseRuntimePort(runtimeUrl);
   let child: childProcess.ChildProcess;
   try {

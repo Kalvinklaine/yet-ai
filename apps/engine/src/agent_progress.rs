@@ -731,8 +731,7 @@ fn has_secret_id_marker(value: &str) -> bool {
         || lower.contains("access_token")
         || lower.contains("access-token")
         || lower.contains("accesstoken")
-        || lower.contains("sk-proj-")
-        || lower.starts_with("sk-")
+        || lower.contains("sk-")
 }
 
 fn validate_request_id(value: &str, max_length: usize) -> Result<(), AgentProgressError> {
@@ -748,8 +747,7 @@ fn validate_request_id(value: &str, max_length: usize) -> Result<(), AgentProgre
         || lower.contains("access_token")
         || lower.contains("access-token")
         || lower.contains("accesstoken")
-        || lower.contains("sk-proj-")
-        || lower.starts_with("sk-")
+        || lower.contains("sk-")
     {
         return Err(AgentProgressError::Unavailable);
     }
@@ -833,24 +831,6 @@ fn contains_unsafe_text(value: &str) -> bool {
         "pkce",
         "refresh",
         "credential",
-        "/users",
-        "/users/",
-        "/home",
-        "/home/",
-        "/tmp",
-        "/tmp/",
-        "/var",
-        "/var/",
-        "/etc",
-        "/etc/",
-        "/opt",
-        "/opt/",
-        "/mnt",
-        "/mnt/",
-        "/volumes",
-        "/volumes/",
-        "/private",
-        "/private/",
         "~/",
         ".codex/auth.json",
         "auth.json",
@@ -861,6 +841,12 @@ fn contains_unsafe_text(value: &str) -> bool {
         if lower.contains(marker) {
             return true;
         }
+    }
+    if ["/users", "/home", "/tmp", "/var", "/etc", "/opt", "/mnt", "/volumes", "/private"]
+        .iter()
+        .any(|root| has_private_root_marker(&lower, root))
+    {
+        return true;
     }
     if lower
         .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'))
@@ -895,6 +881,20 @@ fn contains_unsafe_text(value: &str) -> bool {
     value.contains(":\\") || value.contains(":/")
 }
 
+fn has_private_root_marker(value: &str, root: &str) -> bool {
+    let mut start = 0;
+    while let Some(offset) = value[start..].find(root) {
+        let index = start + offset;
+        let after = index + root.len();
+        let next = value[after..].chars().next();
+        if next.is_none_or(|ch| ch == '/' || !(ch.is_ascii_alphanumeric() || ch == '_')) {
+            return true;
+        }
+        start = after;
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::{contains_unsafe_text, validate_card_id, validate_safe_relative_path};
@@ -923,7 +923,7 @@ mod tests {
     #[test]
     fn agent_progress_card_id_rejects_secret_like_markers() {
         assert!(validate_card_id("CARD-123_ok").is_ok());
-        for card_id in ["token-card", "AuthorizationBearerFake", "sk-proj-abcdef1234567890"] {
+        for card_id in ["token-card", "AuthorizationBearerFake", "card-sk-abcdef1234567890", "sk-proj-abcdef1234567890"] {
             assert!(validate_card_id(card_id).is_err(), "{card_id} should be rejected");
         }
     }
@@ -932,6 +932,11 @@ mod tests {
     fn agent_progress_safe_text_rejects_private_path_matrix() {
         for text in [
             "Read /tmp",
+            "Read /tmp.",
+            "Read /home,",
+            "Read /Users.",
+            "Read /Private:",
+            "Read /etc.",
             "Read /TMP/log",
             "Read /var",
             "Read /Volumes",

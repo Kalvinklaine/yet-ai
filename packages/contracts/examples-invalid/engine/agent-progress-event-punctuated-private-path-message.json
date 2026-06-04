@@ -1,0 +1,10 @@
+{
+  "protocolVersion": "2026-05-29",
+  "eventId": "evt-punctuated-private-path",
+  "runId": "run-T269-005",
+  "cardId": "card-T269-005",
+  "timestamp": "2026-05-29T12:00:00Z",
+  "phase": "done",
+  "status": "done",
+  "message": "Read /tmp."
+}

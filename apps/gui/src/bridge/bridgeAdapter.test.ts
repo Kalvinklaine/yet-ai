@@ -412,8 +412,13 @@ describe("bridgeAdapter", () => {
       "Update reviewed text near sk-proj-abcdefghijklmnopqrstuvwxyz.",
       "Update reviewed text near SK-proj-abcdefghijklmnopqrstuvwxyz.",
       "Update /Users",
+      "Update /Users.",
       "Update /home",
+      "Update /home,",
+      "Update /tmp.",
       "Update /Private",
+      "Update /Private:",
+      "Update /etc.",
     ]) {
       const message = applyEditMessage({ summary });
       expect(isGuiMessage(message)).toBe(false);
@@ -806,6 +811,7 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { runtimeUrl: "ftp://127.0.0.1:8765" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { runtimeUrl: "https://example.com:8765" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { runtimeUrl: "http://127.0.0.1" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { runtimeUrl: "http://127.0.0.1:70000" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { runtimeUrl: "http://user@127.0.0.1:8765" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { runtimeUrl: "http://127.0.0.1:8765/?token=x" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { sessionToken: "" } })).toBe(false);

@@ -702,7 +702,7 @@ function safeMessage(value: unknown): boolean {
 }
 
 function hasPrivatePathLikeText(value: string): boolean {
-  return /(?:\/Users(?:\/|$)|\/home(?:\/|$)|\/(?:tmp|var|Volumes|Private|etc|opt|mnt)(?:\/|$)|~[\/\\]|[A-Za-z]:[\/\\])/i.test(value);
+  return /(?:\/(?:Users|home|tmp|var|Volumes|Private|etc|opt|mnt)(?=\/|$|[^A-Za-z0-9_])|~[\/\\]|[A-Za-z]:[\/\\])/i.test(value);
 }
 
 function hasKeyLikeSecretText(value: string): boolean {

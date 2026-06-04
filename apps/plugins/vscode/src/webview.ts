@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { EngineConnection, getLoopbackOrigin } from "./engineConnection";
+import { EngineConnection, getLoopbackOrigin, isBridgeSafeSessionToken, validateRuntimeUrl } from "./engineConnection";
 import { ProductIdentity, bridgeVersion, configurationPrefix } from "./identity";
 
 export type HostMessage = {
@@ -145,6 +145,21 @@ export function createHostReady(
   connection: EngineConnection,
   requestId: string | undefined,
 ): HostMessage {
+  validateRuntimeUrl(connection.runtimeUrl, `${configurationPrefix}.runtimeUrl`);
+  if (connection.sessionToken !== undefined && !isBridgeSafeSessionToken(connection.sessionToken)) {
+    console.log("Yet AI refused unsafe host.ready session token");
+    return {
+      version: bridgeVersion,
+      type: "host.ready",
+      requestId,
+      payload: {
+        productId: identity.product.id,
+        displayName: identity.product.displayName,
+        runtimeUrl: connection.runtimeUrl,
+        cloudRequired: false,
+      },
+    };
+  }
   return {
     version: bridgeVersion,
     type: "host.ready",
@@ -234,7 +249,7 @@ export function createIdeActionResult(
   if (metadata.range && isStrictRange(metadata.range)) {
     payload.range = metadata.range;
   }
-  if (metadata.context) {
+  if (metadata.context && (status !== "succeeded" || metadata.action === "getContextSnapshot")) {
     payload.context = { ...metadata.context, source: "vscode" };
   }
   hardenIdeActionResultPayload(payload);
@@ -254,6 +269,10 @@ function hardenIdeActionResultPayload(payload: Record<string, unknown>): void {
   }
   if (payload.action === "openWorkspaceFile") {
     delete payload.range;
+    delete payload.context;
+  }
+  if (payload.action === "revealWorkspaceRange") {
+    delete payload.context;
   }
 }
 
@@ -1084,7 +1103,7 @@ function hasOnlyKeys(record: Record<string, unknown>, allowedKeys: string[]): bo
 }
 
 function hasPrivatePathLikeText(value: string): boolean {
-  return /(?:\/(?:Users|home)(?=\/|$|[^A-Za-z0-9_])|\/(?:tmp|var|Volumes|Private|etc|opt|mnt)(?:\/|$)|~[\/\\]|[A-Za-z]:[\/\\])/i.test(value);
+  return /(?:\/(?:Users|home|tmp|var|Volumes|Private|etc|opt|mnt)(?=\/|$|[^A-Za-z0-9_])|~[\/\\]|[A-Za-z]:[\/\\])/i.test(value);
 }
 
 function createRequestId(): string {
