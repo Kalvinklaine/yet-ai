@@ -8,6 +8,8 @@ The plugin stays thin. Chat runtime, provider configuration, tool policy, storag
 
 The plugin connects the GUI to the local Yet AI runtime for local-first BYOK workflows. It does not require a Yet AI cloud workspace, account, hosted model gateway, or managed credit balance for normal operation. It must not persist provider API keys or duplicate provider adapters.
 
+Controlled IDE actions are not implemented by the JetBrains plugin in this sprint. The current controlled action host path is VS Code-first only and limited to local bounded read-only/navigation/context actions (`getContextSnapshot`, `openWorkspaceFile`, and `revealWorkspaceRange`). JetBrains remains preview-only/unsupported for controlled actions unless a later card separately plans and verifies JetBrains host execution. Confirmed edit proposals are also not applied by JetBrains in this sprint; the only implemented write path is the VS Code confirmed edit-proposal flow with explicit user confirmation.
+
 ## Commands
 
 ```sh
@@ -311,10 +313,10 @@ Notes:
 - The plugin shell is a dev-preview MVP, not production-ready.
 - No marketplace packaging, signed/notarized engine bundle, or production installer is complete.
 - The local launcher is an MVP: it sets token and HTTP port environment variables only, reads `/v1/ping`, and does not add LSP/completion wiring. JetBrains LSP client wiring is explicitly deferred for this sprint until the IntelliJ API path, stdio lifecycle, document bounds, URI policy, diagnostics, and smoke coverage are designed and verified.
-- The bridge currently accepts only `gui.ready` from the GUI and emits `host.ready`, `host.openedFromCommand`, and non-privileged active editor/selection `host.contextSnapshot` messages.
+- The bridge currently accepts only `gui.ready` from the GUI and emits `host.ready`, `host.openedFromCommand`, and non-privileged active editor/selection `host.contextSnapshot` messages. It does not execute controlled IDE actions; VS Code is the only controlled action host for this sprint.
 - Settings use JetBrains application state for non-secret local runtime/debug URLs only. The local session token uses JetBrains PasswordSafe.
 - Packaged GUI assets are generated build output from `apps/gui/dist`; they are copied into Gradle build resources but are not committed and this is not a final release packaging flow.
-- No LSP client, completions, tools, privileged workspace edits, IDE tools, file mutation, shell actions, or provider actions are implemented.
+- No LSP client, completions, controlled IDE action execution, tools, privileged workspace edits, IDE tools, file mutation, shell/git/task actions, arbitrary file reads/indexing, provider actions, or confirmed edit-proposal apply support are implemented.
 - Current chat support is limited to the local provider/chat MVP exposed by the engine and GUI.
 
 ## Safety rules
