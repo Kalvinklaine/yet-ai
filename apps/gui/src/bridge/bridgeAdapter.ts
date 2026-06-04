@@ -484,7 +484,16 @@ export function isIdeActionResultPayload(value: unknown): value is IdeActionResu
 }
 
 function hasRequiredSuccessfulResultMetadata(value: Record<string, unknown>): boolean {
-  return value.status !== "succeeded" || value.action !== "getContextSnapshot" || isIdeActionContext(value.context);
+  if (value.status !== "succeeded") {
+    return true;
+  }
+  if (value.action === "getContextSnapshot") {
+    return isIdeActionContext(value.context);
+  }
+  if (value.action === "openWorkspaceFile" || value.action === "revealWorkspaceRange") {
+    return value.context === undefined;
+  }
+  return true;
 }
 
 function hasRequiredSuccessfulActionMetadata(value: Record<string, unknown>): boolean {
@@ -697,7 +706,7 @@ function hasPrivatePathLikeText(value: string): boolean {
 }
 
 function hasKeyLikeSecretText(value: string): boolean {
-  return /(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}/.test(value);
+  return /(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value);
 }
 
 function unsafeDisplayText(value: string): boolean {

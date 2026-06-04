@@ -1,0 +1,17 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-reveal-with-context",
+  "payload": {
+    "status": "succeeded",
+    "message": "Revealed workspace range.",
+    "cloudRequired": false,
+    "action": "revealWorkspaceRange",
+    "workspaceRelativePath": "src/example.ts",
+    "range": {
+      "start": { "line": 0, "character": 0 },
+      "end": { "line": 0, "character": 1 }
+    },
+    "context": { "source": "vscode", "hasActiveEditor": true }
+  }
+}

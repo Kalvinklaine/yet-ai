@@ -1084,7 +1084,7 @@ function hasOnlyKeys(record: Record<string, unknown>, allowedKeys: string[]): bo
 }
 
 function hasPrivatePathLikeText(value: string): boolean {
-  return /(?:\/Users\/|\/home\/|\/(?:tmp|var|Volumes|Private|etc|opt|mnt)(?:\/|$)|~[\/\\]|[A-Za-z]:[\/\\])/i.test(value);
+  return /(?:\/(?:Users|home)(?=\/|$|[^A-Za-z0-9_])|\/(?:tmp|var|Volumes|Private|etc|opt|mnt)(?:\/|$)|~[\/\\]|[A-Za-z]:[\/\\])/i.test(value);
 }
 
 function createRequestId(): string {

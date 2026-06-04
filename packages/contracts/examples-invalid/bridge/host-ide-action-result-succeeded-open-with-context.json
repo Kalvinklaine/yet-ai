@@ -1,0 +1,13 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-open-with-context",
+  "payload": {
+    "status": "succeeded",
+    "message": "Opened workspace file.",
+    "cloudRequired": false,
+    "action": "openWorkspaceFile",
+    "workspaceRelativePath": "src/example.ts",
+    "context": { "source": "vscode", "hasActiveEditor": true }
+  }
+}
