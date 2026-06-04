@@ -1,0 +1,14 @@
+{
+  "protocolVersion": "2026-05-29",
+  "eventId": "evt-T269-invalid-raw-content",
+  "runId": "run-T269-invalid",
+  "cardId": "T269",
+  "timestamp": "2026-05-29T15:12:00Z",
+  "phase": "reading_context",
+  "status": "running",
+  "message": "Reading bounded context.",
+  "fileContent": "export const hidden = true;",
+  "providerResponse": {
+    "text": "raw provider body must not be reported"
+  }
+}

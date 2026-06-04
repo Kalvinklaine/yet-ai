@@ -1,0 +1,14 @@
+{
+  "protocolVersion": "2026-05-29",
+  "eventId": "evt-T269-invalid-long-path",
+  "runId": "run-T269-invalid",
+  "cardId": "T269",
+  "timestamp": "2026-05-29T15:16:00Z",
+  "phase": "waiting_for_tool",
+  "status": "running",
+  "message": "IDE action progress must keep path-like labels bounded.",
+  "tool": {
+    "kind": "other",
+    "label": "workspace/path/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/file.ts"
+  }
+}
