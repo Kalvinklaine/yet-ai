@@ -1,0 +1,16 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-context-browser",
+  "payload": {
+    "status": "succeeded",
+    "message": "IDE context snapshot captured.",
+    "cloudRequired": false,
+    "action": "getContextSnapshot",
+    "context": {
+      "source": "browser",
+      "hasActiveEditor": false,
+      "workspaceFolderCount": 0
+    }
+  }
+}

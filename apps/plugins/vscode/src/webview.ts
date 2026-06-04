@@ -235,7 +235,7 @@ export function createIdeActionResult(
     payload.range = metadata.range;
   }
   if (metadata.context) {
-    payload.context = metadata.context;
+    payload.context = { ...metadata.context, source: "vscode" };
   }
   return { version: bridgeVersion, type: "host.ideActionResult", requestId, payload };
 }
@@ -733,7 +733,8 @@ const isStrictGuiReadyPayload = (payload) => {
   }
   return isPlainObject(payload) && Object.keys(payload).every((key) => key === "supportedBridgeVersion") && (payload.supportedBridgeVersion === undefined || payload.supportedBridgeVersion === bootstrap.bridgeVersion);
 };
-const isStrictSafeRelativePath = (value) => typeof value === "string" && value.length > 0 && value.length <= 512 && !value.startsWith("/") && !value.startsWith("~") && !value.includes("%") && !value.includes("\\\\") && !value.includes(":") && !value.includes("?") && !value.includes("#") && !/[\u0000-\u001f\u007f-\u009f]/.test(value) && !/(^|\/)\.\.?(\/|$)/.test(value) && !value.includes("//") && !value.endsWith("/");
+const isSecretLikePathSegment = (value) => /^(?:auth|authorization|bearer|cookie|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:\.|-|_|$)/i.test(value) || /(?:^|[._-])(?:auth|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:[._-]|$)/i.test(value) || /^sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value);
+const isStrictSafeRelativePath = (value) => typeof value === "string" && value.length > 0 && value.length <= 512 && !value.startsWith("/") && !value.startsWith("~") && !value.includes("%") && !value.includes("\\\\") && !value.includes(":") && !value.includes("?") && !value.includes("#") && !/[\u0000-\u001f\u007f-\u009f]/.test(value) && !/(^|\/)\.\.?(\/|$)/.test(value) && !value.includes("//") && !value.endsWith("/") && !value.split("/").some(isSecretLikePathSegment);
 const isStrictPosition = (value) => isPlainObject(value) && Object.keys(value).every((key) => key === "line" || key === "character") && Number.isInteger(value.line) && Number.isInteger(value.character) && value.line >= 0 && value.line <= 1000000 && value.character >= 0 && value.character <= 1000000;
 const isStrictRange = (value) => isPlainObject(value) && Object.keys(value).every((key) => key === "start" || key === "end") && isStrictPosition(value.start) && isStrictPosition(value.end) && (value.end.line > value.start.line || (value.end.line === value.start.line && value.end.character >= value.start.character));
 const isStrictIdeActionPayload = (payload) => isPlainObject(payload) && ((Object.keys(payload).every((key) => key === "action") && payload.action === "getContextSnapshot") || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath") && payload.action === "openWorkspaceFile" && isStrictSafeRelativePath(payload.workspaceRelativePath)) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath" || key === "range") && payload.action === "revealWorkspaceRange" && isStrictSafeRelativePath(payload.workspaceRelativePath) && isStrictRange(payload.range)));
@@ -1057,7 +1058,7 @@ function hasOnlyKeys(record: Record<string, unknown>, allowedKeys: string[]): bo
 }
 
 function hasPrivatePathLikeText(value: string): boolean {
-  return /(?:\/Users\/|\/home\/|\/tmp\/|\/var\/|\/Volumes\/|\/Private\/|~[\/\\]|[A-Za-z]:[\/\\])/.test(value);
+  return /(?:\/Users\/|\/home\/|\/(?:tmp|var|Volumes|Private|etc|opt|mnt)(?:\/|$)|~[\/\\]|[A-Za-z]:[\/\\])/i.test(value);
 }
 
 function createRequestId(): string {
