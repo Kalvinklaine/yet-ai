@@ -424,11 +424,17 @@ pre,
   border-color: #cdd8ff;
 }
 
-.ide-actions-card {
+.ide-actions-card,
+.ide-action-proposal-card {
   border: 1px solid #cdd8ff;
   border-radius: 16px;
   padding: 14px;
   background: #fbfcff;
+}
+
+.ide-action-proposal-card {
+  border-color: #b9e6d3;
+  background: #f5fffb;
 }
 
 .ide-action-status {
