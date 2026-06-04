@@ -100,6 +100,62 @@
           "type": "object",
           "additionalProperties": false,
           "minProperties": 1,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "startLine": true,
+                  "startCharacter": true,
+                  "endLine": true,
+                  "endCharacter": true
+                },
+                "required": [
+                  "startLine",
+                  "startCharacter",
+                  "endLine",
+                  "endCharacter"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "endLine": {
+                    "type": "integer",
+                    "minimum": {
+                      "$data": "1/startLine"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "endLine": {
+                    "type": "integer",
+                    "const": {
+                      "$data": "1/startLine"
+                    }
+                  }
+                },
+                "required": [
+                  "startLine",
+                  "startCharacter",
+                  "endLine",
+                  "endCharacter"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "endCharacter": {
+                    "type": "integer",
+                    "minimum": {
+                      "$data": "1/startCharacter"
+                    }
+                  }
+                }
+              }
+            }
+          ],
           "properties": {
             "startLine": {
               "type": "integer",
@@ -326,13 +382,12 @@
           "then": {
             "properties": {
               "workspaceRelativePath": false,
-              "range": false
+              "range": false,
+              "context": true
             },
-            "dependentRequired": {
-              "action": [
-                "context"
-              ]
-            }
+            "required": [
+              "context"
+            ]
           }
         },
         {
@@ -354,14 +409,12 @@
             "properties": {
               "workspaceRelativePath": {
                 "$ref": "#/$defs/safeRelativePath"
-              }
+              },
+              "range": false
             },
             "required": [
               "workspaceRelativePath"
-            ],
-            "properties": {
-              "range": false
-            }
+            ]
           }
         },
         {
@@ -581,14 +634,12 @@
             "properties": {
               "workspaceRelativePath": {
                 "$ref": "#/$defs/safeRelativePath"
-              }
+              },
+              "range": false
             },
             "required": [
               "workspaceRelativePath"
-            ],
-            "properties": {
-              "range": false
-            }
+            ]
           }
         },
         {
@@ -686,25 +737,26 @@
               "runtimeUrl": {
                 "type": "string",
                 "format": "uri",
-                "pattern": "^https?://(?:127\\.0\\.0\\.1|localhost|\\[::1\\]):[1-9][0-9]{0,4}/?$"
+                "maxLength": 2048,
+                "pattern": "^https?://(?:127\\.0\\.0\\.1|localhost|\\[::1\\]):(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])/?$"
               },
               "sessionToken": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 4096,
-                "pattern": "^[!-~]+$"
+                "maxLength": 512,
+                "pattern": "^(?!.*(?:[Bb][Ee][Aa][Rr][Ee][Rr]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|sk-(?:proj-)?[A-Za-z0-9_-]{8,}))[A-Za-z0-9._~+/=-]+$"
               },
               "productId": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 128,
-                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+                "maxLength": 64,
+                "pattern": "^(?!.*(?:[Aa][Uu][Tt][Hh]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|sk-(?:proj-)?[A-Za-z0-9_-]{8,}))[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
               },
               "displayName": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 128,
-                "pattern": "^(?!.*(?:[\\u0000-\\u001f\\u007f-\\u009f]))[A-Za-z0-9][A-Za-z0-9 ._+-]{0,127}$"
+                "maxLength": 80,
+                "pattern": "^(?!.*(?:[\\u0000-\\u001f\\u007f-\\u009f]|[Aa][Uu][Tt][Hh]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|sk-(?:proj-)?[A-Za-z0-9_-]{8,}))[A-Za-z0-9][A-Za-z0-9 ._+-]{0,79}$"
               },
               "cloudRequired": {
                 "type": "boolean",

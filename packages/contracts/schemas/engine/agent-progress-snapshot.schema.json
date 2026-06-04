@@ -138,7 +138,7 @@
       "format": "date-time",
       "minLength": 20,
       "maxLength": 32,
-      "pattern": "Z$"
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$"
     },
     "durationMs": {
       "type": "integer",

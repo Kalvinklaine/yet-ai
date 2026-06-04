@@ -775,12 +775,23 @@ fn validate_timestamp(value: &str) -> Result<(), AgentProgressError> {
     if value.len() < 20 || value.len() > 32 {
         return Err(AgentProgressError::Unavailable);
     }
-    if !value.ends_with('Z') {
+    if !value.ends_with('Z') || !has_utc_z_timestamp_shape(value) {
         return Err(AgentProgressError::Unavailable);
     }
     DateTime::parse_from_rfc3339(value)
         .map(|_| ())
         .map_err(|_| AgentProgressError::Unavailable)
+}
+
+fn has_utc_z_timestamp_shape(value: &str) -> bool {
+    let (main, suffix) = match value.strip_suffix('Z').and_then(|value| value.split_once('.').map_or(Some((value, "")), |parts| Some(parts))) {
+        Some(parts) => parts,
+        None => return false,
+    };
+    if !matches!(main.as_bytes(), [d0, d1, d2, d3, b'-', d5, d6, b'-', d8, d9, b'T', d11, d12, b':', d14, d15, b':', d17, d18] if [d0, d1, d2, d3, d5, d6, d8, d9, d11, d12, d14, d15, d17, d18].iter().all(|ch| ch.is_ascii_digit())) {
+        return false;
+    }
+    suffix.is_empty() || (suffix.len() <= 6 && suffix.bytes().all(|ch| ch.is_ascii_digit()))
 }
 
 fn validate_duration(value: u64, max: u64) -> Result<(), AgentProgressError> {

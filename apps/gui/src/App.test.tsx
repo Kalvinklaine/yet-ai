@@ -156,7 +156,7 @@ describe("runtime refresh feedback", () => {
 
 
   it("queues latest runtime settings when host.ready arrives during an in-flight refresh", async () => {
-    const hostToken = "queued-host-token-secret";
+    const hostToken = "queuedHostLocalValue";
     const initialPing = deferred<Response>();
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -1740,7 +1740,7 @@ describe("agent progress panel", () => {
 
 describe("host.ready runtime bootstrap", () => {
   it("updates runtime settings from host.ready without persisting the token", async () => {
-    const token = "host-session-token-secret";
+    const token = "hostSessionLocalValue";
     mockRuntimeResponses();
     renderApp();
 
@@ -1753,7 +1753,7 @@ describe("host.ready runtime bootstrap", () => {
   });
 
   it("keeps an existing token when URL-only host.ready repeats the same runtime URL", async () => {
-    const token = "same-url-token-secret";
+    const token = "sameUrlLocalValue";
     mockRuntimeResponses();
     renderApp();
 
@@ -1769,7 +1769,7 @@ describe("host.ready runtime bootstrap", () => {
   });
 
   it("clears an existing token when URL-only host.ready changes runtime URL", async () => {
-    const token = "retarget-token-secret";
+    const token = "retargetLocalValue";
     mockRuntimeResponses();
     renderApp();
 
@@ -1789,7 +1789,7 @@ describe("host.ready runtime bootstrap", () => {
   });
 
   it("ignores invalid non-loopback URL-only host.ready", async () => {
-    const token = "invalid-host-token-secret";
+    const token = "invalidHostLocalValue";
     mockRuntimeResponses();
     renderApp();
 
@@ -1805,7 +1805,7 @@ describe("host.ready runtime bootstrap", () => {
   });
 
   it("ignores empty host.ready sessionToken instead of treating it as a token clear", async () => {
-    const token = "empty-token-clear-secret";
+    const token = "emptyClearLocalValue";
     mockRuntimeResponses();
     renderApp();
 
@@ -1857,7 +1857,7 @@ describe("host.ready runtime bootstrap", () => {
     });
     fetchMock.mockClear();
 
-    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: "new-host-ready-token" });
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: "newHostReadyLocalValue" });
     await flushAsync();
 
     const abortCalls = abortCommandCalls();
