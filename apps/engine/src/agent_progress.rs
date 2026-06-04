@@ -837,6 +837,7 @@ fn contains_unsafe_text(value: &str) -> bool {
         "/mnt/",
         "/volumes",
         "/volumes/",
+        "/private",
         "/private/",
         "~/",
         ".codex/auth.json",
@@ -874,4 +875,41 @@ fn contains_unsafe_text(value: &str) -> bool {
         }
     }
     value.contains(":\\") || value.contains(":/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{contains_unsafe_text, validate_safe_relative_path};
+
+    #[test]
+    fn agent_progress_safe_relative_path_rejects_secret_like_segments() {
+        assert!(validate_safe_relative_path("src/main.rs").is_ok());
+        assert!(validate_safe_relative_path("docs/navigation-notes.md").is_ok());
+        for path in [
+            "src/access_token.txt",
+            "src/api-key.json",
+            "credentials/config.json",
+            "secret/local.env",
+            "src/sk-proj-abcdef1234567890.txt",
+        ] {
+            assert!(validate_safe_relative_path(path).is_err(), "{path} should be rejected");
+        }
+    }
+
+    #[test]
+    fn agent_progress_safe_text_rejects_private_path_matrix() {
+        for text in [
+            "Read /tmp",
+            "Read /TMP/log",
+            "Read /var",
+            "Read /Volumes",
+            "Read /etc",
+            "Read /opt",
+            "Read /mnt",
+            "Opened C:/Users/Alice/file.txt",
+            "Opened C:\\Users\\Alice\\file.txt",
+        ] {
+            assert!(contains_unsafe_text(text), "{text} should be rejected");
+        }
+    }
 }

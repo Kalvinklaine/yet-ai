@@ -481,7 +481,7 @@ function hasRequiredSuccessfulActionMetadata(value: Record<string, unknown>): bo
   if (value.action === "revealWorkspaceRange") {
     return requiredSafeRelativePath(value.workspaceRelativePath) && isEditRange(value.range);
   }
-  return true;
+  return value.action === "getContextSnapshot";
 }
 
 function optionalIdeActionType(value: unknown): boolean {
@@ -495,7 +495,7 @@ function isOptionalIdeActionContext(value: unknown): boolean {
   if (!isPlainObject(value) || !hasOnlyKeys(value, ["source", "hasActiveEditor", "workspaceFolderCount"])) {
     return false;
   }
-  return (value.source === undefined || value.source === "vscode" || value.source === "jetbrains" || value.source === "browser") &&
+  return (value.source === undefined || value.source === "vscode") &&
     (value.hasActiveEditor === undefined || typeof value.hasActiveEditor === "boolean") &&
     optionalBoundedInteger(value.workspaceFolderCount, 0, 100);
 }
@@ -649,7 +649,7 @@ function safeMessage(value: unknown): boolean {
 }
 
 function hasPrivatePathLikeText(value: string): boolean {
-  return /(?:\/Users\/|\/home\/|\/tmp\/|\/var\/|\/Volumes\/|\/Private\/|~[\/\\]|[A-Za-z]:[\/\\])/.test(value);
+  return /(?:\/Users\/|\/home\/|\/(?:tmp|var|Volumes|Private|etc|opt|mnt)(?:\/|$)|~[\/\\]|[A-Za-z]:[\/\\])/i.test(value);
 }
 
 function hasKeyLikeSecretText(value: string): boolean {

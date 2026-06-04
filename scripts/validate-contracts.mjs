@@ -212,6 +212,7 @@ const invalidMappings = [
     "gui-ready-sk-proj-request-id.json",
     "gui-ready-traversal-request-id.json",
     "gui-ide-action-request-oversized-path.json",
+    "gui-ide-action-request-secret-like-path.json",
     "gui-apply-workspace-edit-missing-confirmation.json",
     "gui-apply-workspace-edit-absolute-path.json",
     "gui-apply-workspace-edit-traversal-path.json",
@@ -255,7 +256,11 @@ const invalidMappings = [
     "host-ready-empty-session-token.json",
     "host-ide-action-result-succeeded-open-missing-path.json",
     "host-ide-action-progress-succeeded-reveal-missing-range.json",
-    "host-ide-action-result-secret-like-relative-path.json"
+    "host-ide-action-result-secret-like-relative-path.json",
+    "host-ide-action-result-succeeded-missing-action.json",
+    "host-ide-action-progress-succeeded-missing-action.json",
+    "host-ide-action-result-succeeded-context-browser-source.json",
+    "host-ide-action-progress-succeeded-open-missing-path.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/host-message.schema.json"
@@ -476,7 +481,12 @@ const invalidMappings = [
     "agent-progress-snapshot-tmp-path-message.json",
     "agent-progress-snapshot-var-path-message.json",
     "agent-progress-snapshot-volumes-path-message.json",
-    "agent-progress-snapshot-mixed-case-private-path-message.json"
+    "agent-progress-snapshot-mixed-case-private-path-message.json",
+    "agent-progress-snapshot-bare-tmp-path-message.json",
+    "agent-progress-snapshot-etc-path-message.json",
+    "agent-progress-snapshot-opt-path-message.json",
+    "agent-progress-snapshot-mnt-path-message.json",
+    "agent-progress-snapshot-windows-drive-slash-path-message.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
@@ -521,7 +531,12 @@ const invalidMappings = [
     "agent-progress-list-tmp-path-message.json",
     "agent-progress-list-var-path-message.json",
     "agent-progress-list-volumes-path-message.json",
-    "agent-progress-list-mixed-case-private-path-message.json"
+    "agent-progress-list-mixed-case-private-path-message.json",
+    "agent-progress-list-bare-tmp-path-message.json",
+    "agent-progress-list-etc-path-message.json",
+    "agent-progress-list-opt-path-message.json",
+    "agent-progress-list-mnt-path-message.json",
+    "agent-progress-list-windows-drive-slash-path-message.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"

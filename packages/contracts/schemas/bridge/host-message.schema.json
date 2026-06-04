@@ -286,8 +286,84 @@
         "cloudRequired"
       ],
       "allOf": [
-        { "if": { "properties": { "status": { "const": "succeeded" }, "action": { "const": "openWorkspaceFile" } }, "required": ["status", "action"] }, "then": { "properties": { "workspaceRelativePath": { "$ref": "#/$defs/safeRelativePath" } }, "required": ["workspaceRelativePath"] } },
-        { "if": { "properties": { "status": { "const": "succeeded" }, "action": { "const": "revealWorkspaceRange" } }, "required": ["status", "action"] }, "then": { "properties": { "workspaceRelativePath": { "$ref": "#/$defs/safeRelativePath" }, "range": { "$ref": "#/$defs/range" } }, "required": ["workspaceRelativePath", "range"] } }
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "action": {
+                "$ref": "#/$defs/ideActionType"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              },
+              "action": {
+                "const": "openWorkspaceFile"
+              }
+            },
+            "required": [
+              "status",
+              "action"
+            ]
+          },
+          "then": {
+            "properties": {
+              "workspaceRelativePath": {
+                "$ref": "#/$defs/safeRelativePath"
+              }
+            },
+            "required": [
+              "workspaceRelativePath"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              },
+              "action": {
+                "const": "revealWorkspaceRange"
+              }
+            },
+            "required": [
+              "status",
+              "action"
+            ]
+          },
+          "then": {
+            "properties": {
+              "workspaceRelativePath": {
+                "$ref": "#/$defs/safeRelativePath"
+              },
+              "range": {
+                "$ref": "#/$defs/range"
+              }
+            },
+            "required": [
+              "workspaceRelativePath",
+              "range"
+            ]
+          }
+        }
       ],
       "properties": {
         "status": {
@@ -322,9 +398,7 @@
             "source": {
               "type": "string",
               "enum": [
-                "vscode",
-                "jetbrains",
-                "browser"
+                "vscode"
               ]
             },
             "hasActiveEditor": {
@@ -349,8 +423,84 @@
         "cloudRequired"
       ],
       "allOf": [
-        { "if": { "properties": { "status": { "const": "succeeded" }, "action": { "const": "openWorkspaceFile" } }, "required": ["status", "action"] }, "then": { "properties": { "workspaceRelativePath": { "$ref": "#/$defs/safeRelativePath" } }, "required": ["workspaceRelativePath"] } },
-        { "if": { "properties": { "status": { "const": "succeeded" }, "action": { "const": "revealWorkspaceRange" } }, "required": ["status", "action"] }, "then": { "properties": { "workspaceRelativePath": { "$ref": "#/$defs/safeRelativePath" }, "range": { "$ref": "#/$defs/range" } }, "required": ["workspaceRelativePath", "range"] } }
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "action": {
+                "$ref": "#/$defs/ideActionType"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              },
+              "action": {
+                "const": "openWorkspaceFile"
+              }
+            },
+            "required": [
+              "status",
+              "action"
+            ]
+          },
+          "then": {
+            "properties": {
+              "workspaceRelativePath": {
+                "$ref": "#/$defs/safeRelativePath"
+              }
+            },
+            "required": [
+              "workspaceRelativePath"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              },
+              "action": {
+                "const": "revealWorkspaceRange"
+              }
+            },
+            "required": [
+              "status",
+              "action"
+            ]
+          },
+          "then": {
+            "properties": {
+              "workspaceRelativePath": {
+                "$ref": "#/$defs/safeRelativePath"
+              },
+              "range": {
+                "$ref": "#/$defs/range"
+              }
+            },
+            "required": [
+              "workspaceRelativePath",
+              "range"
+            ]
+          }
+        }
       ],
       "properties": {
         "phase": {
