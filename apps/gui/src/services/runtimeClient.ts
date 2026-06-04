@@ -375,6 +375,16 @@ export function validateRuntimeBaseUrl(baseUrl: string): RuntimeResult<URL> {
     };
   }
 
+  if (parsed.port.length === 0 || Number.parseInt(parsed.port, 10) <= 0) {
+    return {
+      ok: false,
+      error: {
+        status: "configuration",
+        message: "Runtime base URL must include an explicit local loopback port.",
+      },
+    };
+  }
+
   if (parsed.pathname !== "/" || !hasRootRawUrlPath(baseUrl)) {
     return {
       ok: false,

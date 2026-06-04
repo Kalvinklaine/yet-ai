@@ -593,7 +593,32 @@ fn validate_safe_relative_path(value: &str) -> Result<(), AgentProgressError> {
     {
         return Err(AgentProgressError::Unavailable);
     }
+    if value.split('/').any(is_secret_like_path_segment) {
+        return Err(AgentProgressError::Unavailable);
+    }
     Ok(())
+}
+
+fn is_secret_like_path_segment(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.starts_with("sk-")
+        || lower == "auth"
+        || lower == "authorization"
+        || lower == "bearer"
+        || lower == "cookie"
+        || lower == "credential"
+        || lower == "credentials"
+        || lower == "password"
+        || lower == "secret"
+        || lower == "token"
+        || lower == "access_token"
+        || lower == "access-token"
+        || lower == "apikey"
+        || lower == "api_key"
+        || lower == "api-key"
+        || ["auth", "credential", "credentials", "password", "secret", "token", "access_token", "access-token", "api_key", "api-key"]
+            .iter()
+            .any(|marker| lower.starts_with(&format!("{marker}.")) || lower.starts_with(&format!("{marker}-")) || lower.starts_with(&format!("{marker}_")) || lower.ends_with(&format!(".{marker}")) || lower.ends_with(&format!("-{marker}")) || lower.ends_with(&format!("_{marker}")) || lower.contains(&format!(".{marker}.")) || lower.contains(&format!("-{marker}-")) || lower.contains(&format!("_{marker}_")))
 }
 
 fn validate_tool(tool: &AgentProgressToolSummary) -> Result<(), AgentProgressError> {
@@ -687,7 +712,26 @@ fn validate_id(value: &str, max_length: usize) -> Result<(), AgentProgressError>
     {
         return Err(AgentProgressError::Unavailable);
     }
+    if has_secret_id_marker(value) {
+        return Err(AgentProgressError::Unavailable);
+    }
     Ok(())
+}
+
+fn has_secret_id_marker(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.contains("authorization")
+        || lower.contains("bearer")
+        || lower.contains("apikey")
+        || lower.contains("api_key")
+        || lower.contains("api-key")
+        || lower.contains("token")
+        || lower.contains("secret")
+        || lower.contains("access_token")
+        || lower.contains("access-token")
+        || lower.contains("accesstoken")
+        || lower.contains("sk-proj-")
+        || lower.starts_with("sk-")
 }
 
 fn validate_request_id(value: &str, max_length: usize) -> Result<(), AgentProgressError> {
@@ -781,8 +825,17 @@ fn contains_unsafe_text(value: &str) -> bool {
         "credential",
         "/users/",
         "/home/",
+        "/tmp",
         "/tmp/",
+        "/var",
         "/var/",
+        "/etc",
+        "/etc/",
+        "/opt",
+        "/opt/",
+        "/mnt",
+        "/mnt/",
+        "/volumes",
         "/volumes/",
         "/private/",
         "~/",
@@ -820,5 +873,5 @@ fn contains_unsafe_text(value: &str) -> bool {
             return true;
         }
     }
-    value.contains(":\\")
+    value.contains(":\\") || value.contains(":/")
 }

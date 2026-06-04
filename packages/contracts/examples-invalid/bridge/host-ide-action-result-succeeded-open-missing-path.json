@@ -1,0 +1,11 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-open-missing-path",
+  "payload": {
+    "status": "succeeded",
+    "message": "Opened workspace file.",
+    "cloudRequired": false,
+    "action": "openWorkspaceFile"
+  }
+}

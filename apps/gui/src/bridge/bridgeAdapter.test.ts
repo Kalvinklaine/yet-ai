@@ -686,6 +686,15 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-6", payload: { phase: "running", status: "inProgress", summary: "Reading /Users/alice/project/file.ts", cloudRequired: false, action: "getContextSnapshot" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-7", payload: { status: "failed", message: "provider response sk-abcdefghijklmnopqrstuvwxyz", cloudRequired: false, action: "getContextSnapshot" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-8", payload: { status: "succeeded", message: "Done.", cloudRequired: false, action: "getContextSnapshot", rawPrompt: "show me" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-9", payload: { status: "succeeded", message: "Opened.", cloudRequired: false, action: "openWorkspaceFile" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-10", payload: { phase: "completed", status: "succeeded", summary: "Revealed.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/App.tsx" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-11", payload: { phase: "completed", status: "succeeded", summary: "Revealed.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/App.tsx", range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } } } })).toBe(true);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-12", payload: { status: "succeeded", message: "Opened.", cloudRequired: false, action: "openWorkspaceFile", workspaceRelativePath: "config/secret.env" } })).toBe(false);
+  });
+
+  it("keeps bounded selection text as active user-selected prompt context only", () => {
+    expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", selection: { text: "Bearer user-selected text stays prompt context, not action metadata" } } }))).toBe(true);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-context", payload: { status: "succeeded", message: "Done.", cloudRequired: false, action: "getContextSnapshot", context: { text: "Bearer unsafe action metadata" } } })).toBe(false);
   });
 
   it("rejects invalid bridge contract fixtures through runtime validation", () => {
@@ -789,6 +798,12 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { unknown: true } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: {}, extra: true })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { runtimeUrl: "ftp://127.0.0.1:8765" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { runtimeUrl: "https://example.com:8765" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { runtimeUrl: "http://127.0.0.1" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { runtimeUrl: "http://user@127.0.0.1:8765" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { runtimeUrl: "http://127.0.0.1:8765/?token=x" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { sessionToken: "" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { sessionToken: "x".repeat(4097) } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { productId: "" } })).toBe(false);
     expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", file: { workspaceRelativePath: "../secret.ts" } } }))).toBe(false);
     expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", file: { displayPath: "/Users/alice/secret.ts" } } }))).toBe(false);

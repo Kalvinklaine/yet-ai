@@ -249,7 +249,13 @@ const invalidMappings = [
     "host-apply-workspace-edit-result-secret-message.json",
     "host-apply-workspace-edit-result-key-like-message.json",
     "host-apply-workspace-edit-result-unknown-status.json",
-    "host-apply-workspace-edit-result-traversal-path.json"
+    "host-apply-workspace-edit-result-traversal-path.json",
+    "host-ready-non-loopback-runtime-url.json",
+    "host-ready-runtime-url-missing-port.json",
+    "host-ready-empty-session-token.json",
+    "host-ide-action-result-succeeded-open-missing-path.json",
+    "host-ide-action-progress-succeeded-reveal-missing-range.json",
+    "host-ide-action-result-secret-like-relative-path.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/host-message.schema.json"
@@ -412,7 +418,12 @@ const invalidMappings = [
     "agent-progress-event-ide-action-reversed-line-range.json",
     "agent-progress-event-ide-action-reversed-character-range.json",
     "agent-progress-event-ide-action-browser-source.json",
-    "agent-progress-event-ide-action-jetbrains-source.json"
+    "agent-progress-event-ide-action-jetbrains-source.json",
+    "agent-progress-event-secret-id.json",
+    "agent-progress-event-secret-like-relative-path.json",
+    "agent-progress-event-bare-tmp-path-message.json",
+    "agent-progress-event-etc-path-message.json",
+    "agent-progress-event-windows-drive-slash-message.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/agent-progress-event.schema.json"

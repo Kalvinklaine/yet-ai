@@ -1,0 +1,8 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ready",
+  "payload": {
+    "runtimeUrl": "https://example.com:8765",
+    "cloudRequired": false
+  }
+}
