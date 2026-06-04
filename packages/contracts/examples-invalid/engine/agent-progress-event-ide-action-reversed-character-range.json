@@ -1,0 +1,37 @@
+{
+  "protocolVersion": "2026-05-29",
+  "eventId": "agent-progress-event-ide-action-reversed-character-range",
+  "runId": "run-T269-ide-action",
+  "cardId": "T269",
+  "timestamp": "2026-05-29T15:10:00Z",
+  "phase": "waiting_for_tool",
+  "status": "healthy_running",
+  "message": "IDE action progress received with sanitized metadata.",
+  "tool": {
+    "kind": "other",
+    "label": "IDE action reveal workspace range",
+    "startedAt": "2026-05-29T15:09:58Z",
+    "elapsedMs": 2000
+  },
+  "heartbeat": {
+    "lastHeartbeatAt": "2026-05-29T15:10:00Z",
+    "attempt": 1
+  },
+  "outputTail": "IDE host reported bounded progress for request ide-action-42.",
+  "ideAction": {
+    "requestId": "ide-action-42",
+    "action": "revealWorkspaceRange",
+    "workspaceRelativePath": "src/main.ts",
+    "range": {
+      "start": {
+        "line": 10,
+        "character": 5
+      },
+      "end": {
+        "line": 10,
+        "character": 4
+      }
+    },
+    "source": "vscode"
+  }
+}

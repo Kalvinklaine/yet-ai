@@ -4074,7 +4074,24 @@ async fn agent_progress_event_rejects_unsafe_or_oversized_metadata_without_raw_e
     let mut tmp_path_event = valid_agent_progress_event();
     tmp_path_event["message"] = json!("Opened /tmp/secret.log");
 
-    for event in [unsafe_event, oversized_event, tmp_path_event] {
+    let mut var_path_event = valid_agent_progress_event();
+    var_path_event["eventId"] = json!("ide-action-evt-var-path");
+    var_path_event["message"] = json!("Opened /var/log/secret.log");
+    let mut volumes_path_event = valid_agent_progress_event();
+    volumes_path_event["eventId"] = json!("ide-action-evt-volumes-path");
+    volumes_path_event["message"] = json!("Opened /Volumes/Drive/secret.log");
+    let mut mixed_case_tmp_path_event = valid_agent_progress_event();
+    mixed_case_tmp_path_event["eventId"] = json!("ide-action-evt-mixed-tmp-path");
+    mixed_case_tmp_path_event["message"] = json!("Opened /TmP/secret.log");
+
+    for event in [
+        unsafe_event,
+        oversized_event,
+        tmp_path_event,
+        var_path_event,
+        volumes_path_event,
+        mixed_case_tmp_path_event,
+    ] {
         let (status, body) = json_response(authed_request(
             Method::POST,
             "/v1/agent-progress/events",
@@ -4112,6 +4129,55 @@ async fn agent_progress_event_rejects_invalid_ide_action_metadata() {
         {
             let mut event = valid_agent_progress_event();
             event["ideAction"]["workspaceRelativePath"] = json!("../secret.txt");
+            event
+        },
+        {
+            let mut event = valid_agent_progress_event();
+            event["ideAction"]["requestId"] = json!("access_token");
+            event
+        },
+        {
+            let mut event = valid_agent_progress_event();
+            event["ideAction"]["action"] = json!("getContextSnapshot");
+            event
+        },
+        {
+            let mut event = valid_agent_progress_event();
+            event["ideAction"]["action"] = json!("openWorkspaceFile");
+            event["ideAction"].as_object_mut().unwrap().remove("workspaceRelativePath");
+            event["ideAction"].as_object_mut().unwrap().remove("range");
+            event
+        },
+        {
+            let mut event = valid_agent_progress_event();
+            event["ideAction"].as_object_mut().unwrap().remove("workspaceRelativePath");
+            event
+        },
+        {
+            let mut event = valid_agent_progress_event();
+            event["ideAction"].as_object_mut().unwrap().remove("range");
+            event
+        },
+        {
+            let mut event = valid_agent_progress_event();
+            event["ideAction"]["range"]["start"] = json!({ "line": 10, "character": 0 });
+            event["ideAction"]["range"]["end"] = json!({ "line": 9, "character": 0 });
+            event
+        },
+        {
+            let mut event = valid_agent_progress_event();
+            event["ideAction"]["range"]["start"] = json!({ "line": 10, "character": 5 });
+            event["ideAction"]["range"]["end"] = json!({ "line": 10, "character": 4 });
+            event
+        },
+        {
+            let mut event = valid_agent_progress_event();
+            event["ideAction"]["source"] = json!("browser");
+            event
+        },
+        {
+            let mut event = valid_agent_progress_event();
+            event["ideAction"]["source"] = json!("jetbrains");
             event
         },
     ] {

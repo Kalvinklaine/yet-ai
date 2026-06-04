@@ -523,22 +523,47 @@ fn validate_event(event: &AgentProgressEvent) -> Result<(), AgentProgressError> 
 }
 
 fn validate_ide_action(action: &AgentProgressIdeAction) -> Result<(), AgentProgressError> {
-    validate_id(&action.request_id, 128)?;
-    validate_enum(&action.action, &["getContextSnapshot", "openWorkspaceFile", "revealWorkspaceRange"])?;
-    if let Some(path) = &action.workspace_relative_path {
-        validate_safe_relative_path(path)?;
-    }
-    if let Some(range) = &action.range {
-        validate_position(&range.start)?;
-        validate_position(&range.end)?;
-        if range.end.line < range.start.line
-            || (range.end.line == range.start.line && range.end.character < range.start.character)
-        {
-            return Err(AgentProgressError::Unavailable);
+    validate_request_id(&action.request_id, 128)?;
+    match action.action.as_str() {
+        "getContextSnapshot" => {
+            if action.workspace_relative_path.is_some() || action.range.is_some() {
+                return Err(AgentProgressError::Unavailable);
+            }
         }
+        "openWorkspaceFile" => {
+            let Some(path) = &action.workspace_relative_path else {
+                return Err(AgentProgressError::Unavailable);
+            };
+            validate_safe_relative_path(path)?;
+            if action.range.is_some() {
+                return Err(AgentProgressError::Unavailable);
+            }
+        }
+        "revealWorkspaceRange" => {
+            let Some(path) = &action.workspace_relative_path else {
+                return Err(AgentProgressError::Unavailable);
+            };
+            validate_safe_relative_path(path)?;
+            let Some(range) = &action.range else {
+                return Err(AgentProgressError::Unavailable);
+            };
+            validate_range(range)?;
+        }
+        _ => return Err(AgentProgressError::Unavailable),
     }
     if let Some(source) = &action.source {
-        validate_enum(source, &["vscode", "jetbrains", "browser", "engine"])?;
+        validate_enum(source, &["vscode", "engine"])?;
+    }
+    Ok(())
+}
+
+fn validate_range(range: &AgentProgressRange) -> Result<(), AgentProgressError> {
+    validate_position(&range.start)?;
+    validate_position(&range.end)?;
+    if range.end.line < range.start.line
+        || (range.end.line == range.start.line && range.end.character < range.start.character)
+    {
+        return Err(AgentProgressError::Unavailable);
     }
     Ok(())
 }
@@ -659,6 +684,27 @@ fn validate_id(value: &str, max_length: usize) -> Result<(), AgentProgressError>
     }
     if !chars
         .all(|value| value.is_ascii_alphanumeric() || value == '_' || value == '.' || value == '-')
+    {
+        return Err(AgentProgressError::Unavailable);
+    }
+    Ok(())
+}
+
+fn validate_request_id(value: &str, max_length: usize) -> Result<(), AgentProgressError> {
+    validate_id(value, max_length)?;
+    let lower = value.to_ascii_lowercase();
+    if lower.contains("authorization")
+        || lower.contains("bearer")
+        || lower.contains("apikey")
+        || lower.contains("api_key")
+        || lower.contains("api-key")
+        || lower.contains("token")
+        || lower.contains("secret")
+        || lower.contains("access_token")
+        || lower.contains("access-token")
+        || lower.contains("accesstoken")
+        || lower.contains("sk-proj-")
+        || lower.starts_with("sk-")
     {
         return Err(AgentProgressError::Unavailable);
     }

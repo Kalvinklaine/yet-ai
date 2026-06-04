@@ -1,0 +1,8 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.ideActionRequest",
+  "requestId": "sk-proj-abcdef1234567890",
+  "payload": {
+    "action": "getContextSnapshot"
+  }
+}

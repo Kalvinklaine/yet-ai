@@ -521,7 +521,11 @@ function hasOnlyKeys(value: Record<string, unknown>, keys: string[]): boolean {
 }
 
 function isBoundedRequestId(value: unknown): boolean {
-  return value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value));
+  return value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value) && !hasSecretRequestIdMarker(value));
+}
+
+function hasSecretRequestIdMarker(value: string): boolean {
+  return /authorization|bearer|api[_-]?key|token|secret|access[_-]?token|sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value);
 }
 
 function isEmptyPayload(value: unknown): boolean {
