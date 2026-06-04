@@ -462,6 +462,7 @@ const invalidMappings = [
     "assistant-ide-action-proposal-secret-like-path.json",
     "assistant-ide-action-proposal-uppercase-sk-path.json",
     "assistant-ide-action-proposal-secret-summary.json",
+    "assistant-ide-action-proposal-control-summary.json",
     "assistant-ide-action-proposal-reversed-range.json",
     "assistant-ide-action-proposal-open-file-with-range.json",
     "assistant-ide-action-proposal-get-context-with-path-range.json",

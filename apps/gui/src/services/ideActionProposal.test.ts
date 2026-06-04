@@ -66,8 +66,8 @@ describe("ideActionProposal", () => {
     }
   });
 
-  it("rejects secret or private summaries", () => {
-    for (const summary of ["Open token configuration.", "Open /Users/alice/project/src/App.tsx.", "Open private_path metadata.", "Open sk-proj-abcdefghijklmnop."]) {
+  it("rejects control, secret, or private summaries", () => {
+    for (const summary of ["Review local\nIDE context.", "Review local\u007fIDE context.", "Open token configuration.", "Open /Users/alice/project/src/App.tsx.", "Open private_path metadata.", "Open sk-proj-abcdefghijklmnop."]) {
       expect(parseAssistantIdeActionProposalContent(JSON.stringify({ ...base, summary, action: "getContextSnapshot" }))).toBeNull();
     }
   });
