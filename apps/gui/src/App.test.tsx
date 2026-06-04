@@ -1804,7 +1804,7 @@ describe("host.ready runtime bootstrap", () => {
     expect(container?.textContent).not.toContain("https://example.test:8765");
   });
 
-  it("treats empty host.ready sessionToken as an explicit token clear", async () => {
+  it("ignores empty host.ready sessionToken instead of treating it as a token clear", async () => {
     const token = "empty-token-clear-secret";
     mockRuntimeResponses();
     renderApp();
@@ -1815,7 +1815,7 @@ describe("host.ready runtime bootstrap", () => {
     });
     await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001", sessionToken: "" });
 
-    expect(sessionTokenInput().value).toBe("");
+    expect(sessionTokenInput().value).toBe(token);
     expect(browserStorageDump()).not.toContain(token);
   });
 
@@ -2048,7 +2048,7 @@ describe("active editor attached context", () => {
     renderApp();
 
     await dispatchHostContextSnapshot({
-      file: { displayPath: "src/secret.ts", languageId: "typescript" },
+      file: { displayPath: "src/session.ts", languageId: "typescript" },
       selection: { startLine: 1, startCharacter: 0, endLine: 1, endCharacter: 10, text: `const token = "${rawSecret}"; Cookie: session=context-secret` },
     });
 
@@ -2206,7 +2206,7 @@ describe("active editor attached context", () => {
 
     await dispatchHostContextSnapshot({
       source: "jetbrains",
-      file: { displayPath: "src/Auth.kt", languageId: "kotlin" },
+      file: { displayPath: "src/Main.kt", languageId: "kotlin" },
       selection: { startLine: 2, startCharacter: 0, endLine: 2, endCharacter: 12, text: `val token = "${rawSecret}" Cookie: session=jetbrains-secret` },
     });
 

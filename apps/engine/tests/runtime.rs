@@ -4083,6 +4083,15 @@ async fn agent_progress_event_rejects_unsafe_or_oversized_metadata_without_raw_e
     let mut mixed_case_tmp_path_event = valid_agent_progress_event();
     mixed_case_tmp_path_event["eventId"] = json!("ide-action-evt-mixed-tmp-path");
     mixed_case_tmp_path_event["message"] = json!("Opened /TmP/secret.log");
+    let mut bare_tmp_path_event = valid_agent_progress_event();
+    bare_tmp_path_event["eventId"] = json!("ide-action-evt-bare-tmp-path");
+    bare_tmp_path_event["message"] = json!("Opened /tmp");
+    let mut windows_drive_path_event = valid_agent_progress_event();
+    windows_drive_path_event["eventId"] = json!("ide-action-evt-drive-path");
+    windows_drive_path_event["message"] = json!("Opened C:/Users/Alice/file.txt");
+    let mut etc_path_event = valid_agent_progress_event();
+    etc_path_event["eventId"] = json!("ide-action-evt-etc-path");
+    etc_path_event["message"] = json!("Opened /etc/hosts");
 
     for event in [
         unsafe_event,
@@ -4091,6 +4100,9 @@ async fn agent_progress_event_rejects_unsafe_or_oversized_metadata_without_raw_e
         var_path_event,
         volumes_path_event,
         mixed_case_tmp_path_event,
+        bare_tmp_path_event,
+        windows_drive_path_event,
+        etc_path_event,
     ] {
         let (status, body) = json_response(authed_request(
             Method::POST,

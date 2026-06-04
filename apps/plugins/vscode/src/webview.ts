@@ -936,11 +936,18 @@ function sanitizeSafePath(value: string | undefined, maxLength: number): string 
     /[\u0000-\u001f\u007f-\u009f]/.test(normalized) ||
     /(?:^|\/)\.\.?(?:\/|$)/.test(normalized) ||
     hasSecretLikeText(normalized) ||
+    normalized.split("/").some(isSecretLikePathSegment) ||
     normalized.split("/").some((segment) => segment.length === 0)
   ) {
     return undefined;
   }
   return normalized;
+}
+
+function isSecretLikePathSegment(value: string): boolean {
+  return /^(?:auth|authorization|bearer|cookie|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:\.|-|_|$)/i.test(value) ||
+    /(?:^|[._-])(?:auth|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:[._-]|$)/i.test(value) ||
+    /^sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value);
 }
 
 function hasSecretLikeText(value: string): boolean {

@@ -49,6 +49,7 @@ export type IdeActionProgressPayload = {
   cloudRequired: false;
   action?: IdeActionType;
   workspaceRelativePath?: string;
+  range?: WorkspaceEditRange;
 };
 
 export type IdeActionResultPayload = {
@@ -357,8 +358,8 @@ export function isHostReadyPayload(value: unknown): value is HostReadyPayload {
     return false;
   }
   return (
-    optionalHttpUrl(value.runtimeUrl) &&
-    optionalString(value.sessionToken, 4096) &&
+    optionalLoopbackRuntimeUrl(value.runtimeUrl) &&
+    optionalString(value.sessionToken, 4096, 1) &&
     optionalNonEmptyString(value.productId, 256) &&
     optionalNonEmptyString(value.displayName, 256) &&
     (value.cloudRequired === undefined || value.cloudRequired === false)
@@ -439,7 +440,7 @@ export function isIdeActionRequestPayload(value: unknown): value is IdeActionReq
 }
 
 export function isIdeActionProgressPayload(value: unknown): value is IdeActionProgressPayload {
-  if (!isPlainObject(value) || !hasOnlyKeys(value, ["phase", "status", "summary", "cloudRequired", "action", "workspaceRelativePath"])) {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["phase", "status", "summary", "cloudRequired", "action", "workspaceRelativePath", "range"])) {
     return false;
   }
   return (
@@ -448,7 +449,9 @@ export function isIdeActionProgressPayload(value: unknown): value is IdeActionPr
     safeMessage(value.summary) &&
     value.cloudRequired === false &&
     optionalIdeActionType(value.action) &&
-    safeRelativePath(value.workspaceRelativePath)
+    safeRelativePath(value.workspaceRelativePath) &&
+    (value.range === undefined || isEditRange(value.range)) &&
+    hasRequiredSuccessfulActionMetadata(value)
   );
 }
 
@@ -463,8 +466,22 @@ export function isIdeActionResultPayload(value: unknown): value is IdeActionResu
     optionalIdeActionType(value.action) &&
     safeRelativePath(value.workspaceRelativePath) &&
     (value.range === undefined || isEditRange(value.range)) &&
-    isOptionalIdeActionContext(value.context)
+    isOptionalIdeActionContext(value.context) &&
+    hasRequiredSuccessfulActionMetadata(value)
   );
+}
+
+function hasRequiredSuccessfulActionMetadata(value: Record<string, unknown>): boolean {
+  if (value.status !== "succeeded") {
+    return true;
+  }
+  if (value.action === "openWorkspaceFile") {
+    return requiredSafeRelativePath(value.workspaceRelativePath);
+  }
+  if (value.action === "revealWorkspaceRange") {
+    return requiredSafeRelativePath(value.workspaceRelativePath) && isEditRange(value.range);
+  }
+  return true;
 }
 
 function optionalIdeActionType(value: unknown): boolean {
@@ -532,15 +549,15 @@ function isEmptyPayload(value: unknown): boolean {
   return value === undefined || (isPlainObject(value) && Object.keys(value).length === 0);
 }
 
-function optionalString(value: unknown, maxLength: number): boolean {
-  return value === undefined || (typeof value === "string" && value.length <= maxLength);
+function optionalString(value: unknown, maxLength: number, minLength = 0): boolean {
+  return value === undefined || (typeof value === "string" && value.length >= minLength && value.length <= maxLength);
 }
 
 function optionalNonEmptyString(value: unknown, maxLength: number): boolean {
   return value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength);
 }
 
-function optionalHttpUrl(value: unknown): boolean {
+function optionalLoopbackRuntimeUrl(value: unknown): boolean {
   if (value === undefined) {
     return true;
   }
@@ -549,7 +566,13 @@ function optionalHttpUrl(value: unknown): boolean {
   }
   try {
     const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
+    const hasRootPath = parsed.pathname === "/" && /^[a-zA-Z][a-zA-Z\d+.-]*:\/\/[^/?#]*(?:\/)?$/.test(value);
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost" || parsed.hostname === "[::1]") &&
+      parsed.port.length > 0 && Number.parseInt(parsed.port, 10) > 0 &&
+      parsed.username.length === 0 && parsed.password.length === 0 &&
+      parsed.search.length === 0 && parsed.hash.length === 0 &&
+      hasRootPath;
   } catch {
     return false;
   }
@@ -600,7 +623,13 @@ function safePath(value: unknown, maxLength: number): boolean {
   if (/^[^\u0000-\u001f\u007f-\u009f]+$/.test(value) === false) {
     return false;
   }
-  return value.split("/").every((part) => part.length > 0 && part !== "." && part !== "..");
+  return value.split("/").every((part) => part.length > 0 && part !== "." && part !== ".." && !isSecretLikePathSegment(part));
+}
+
+function isSecretLikePathSegment(value: string): boolean {
+  return /^(?:auth|authorization|bearer|cookie|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:\.|-|_|$)/i.test(value) ||
+    /(?:^|[._-])(?:auth|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:[._-]|$)/i.test(value) ||
+    /^sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value);
 }
 
 function optionalLanguageId(value: unknown): boolean {

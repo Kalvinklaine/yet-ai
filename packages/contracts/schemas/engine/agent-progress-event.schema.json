@@ -59,7 +59,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 128,
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+      "pattern": "^(?!.*(?:[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Cc][Cc][Ee][Ss][Ss][-_]?[Tt][Oo][Kk][Ee][Nn]|sk-(?:proj-)?[A-Za-z0-9_-]{8,}))[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
     },
     "requestId": {
       "type": "string",
@@ -71,7 +71,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 64,
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      "pattern": "^(?!.*(?:[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Cc][Cc][Ee][Ss][Ss][-_]?[Tt][Oo][Kk][Ee][Nn]|sk-(?:proj-)?[A-Za-z0-9_-]{8,}))[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
     },
     "timestamp": {
       "type": "string",
@@ -110,7 +110,7 @@
     },
     "safeText": {
       "type": "string",
-      "pattern": "^(?![\\s\\S]*(?:[aA][pP][iI][-_ ]?[kK][eE][yY]|[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][eE][aA][rR][eE][rR]|[tT][oO][kK][eE][nN]|[sS][eE][cC][rR][eE][tT]|[pP][aA][sS][sS][wW][oO][rR][dD]|[cC][oO][oO][kK][iI][eE]|[pP][kK][cC][eE]|[rR][eE][fF][rR][eE][sS][hH]|[aA][cC][cC][eE][sS][sS][-_ ]?[tT][oO][kK][eE][nN]|[aA][uU][tT][hH][-_ ]?[cC][oO][dD][eE]|[cC][hH][aA][iI][nN][-_ ]?[oO][fF][-_ ]?[tT][hH][oO][uU][gG][hH][tT]|[rR][aA][wW][-_ ]?(?:[pP][rR][oO][mM][pP][tT]|[dD][uU][mM][pP]|[oO][uU][tT][pP][uU][tT]|[fF][iI][lL][eE]|[wW][oO][rR][kK][sS][pP][aA][cC][eE])|[pP][rR][oO][vV][iI][dD][eE][rR][-_ ]?(?:[rR][eE][sS][pP][oO][nN][sS][eE]|[bB][oO][dD][yY])|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[fF][iI][lL][eE][-_ ]?[cC][oO][nN][tT][eE][nN][tT]|[wW][oO][rR][kK][sS][pP][aA][cC][eE][-_ ]?(?:[fF][iI][lL][eE]|[cC][oO][nN][tT][eE][nN][tT])|/[Uu][Ss][Ee][Rr][Ss]/|/[Hh][Oo][Mm][Ee]/|/[Tt][Mm][Pp]/|/[Vv][Aa][Rr]/|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss]/|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee]/|[A-Za-z]:\\\\|~/|\\.[cC][oO][dD][eE][xX]/[aA][uU][tT][hH]\\.json|(?:[aA][uU][tT][hH]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL][sS]?)\\.json|BEGIN [A-Z ]*PRIVATE KEY))[\\s\\S]*$"
+      "pattern": "^(?![\\s\\S]*(?:[aA][pP][iI][-_ ]?[kK][eE][yY]|[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][eE][aA][rR][eE][rR]|[tT][oO][kK][eE][nN]|[sS][eE][cC][rR][eE][tT]|[pP][aA][sS][sS][wW][oO][rR][dD]|[cC][oO][oO][kK][iI][eE]|[pP][kK][cC][eE]|[rR][eE][fF][rR][eE][sS][hH]|[aA][cC][cC][eE][sS][sS][-_ ]?[tT][oO][kK][eE][nN]|[aA][uU][tT][hH][-_ ]?[cC][oO][dD][eE]|[cC][hH][aA][iI][nN][-_ ]?[oO][fF][-_ ]?[tT][hH][oO][uU][gG][hH][tT]|[rR][aA][wW][-_ ]?(?:[pP][rR][oO][mM][pP][tT]|[dD][uU][mM][pP]|[oO][uU][tT][pP][uU][tT]|[fF][iI][lL][eE]|[wW][oO][rR][kK][sS][pP][aA][cC][eE])|[pP][rR][oO][vV][iI][dD][eE][rR][-_ ]?(?:[rR][eE][sS][pP][oO][nN][sS][eE]|[bB][oO][dD][yY])|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[fF][iI][lL][eE][-_ ]?[cC][oO][nN][tT][eE][nN][tT]|[wW][oO][rR][kK][sS][pP][aA][cC][eE][-_ ]?(?:[fF][iI][lL][eE]|[cC][oO][nN][tT][eE][nN][tT])|/[Uu][Ss][Ee][Rr][Ss]/|/[Hh][Oo][Mm][Ee]/|/[Tt][Mm][Pp](?:/|$)|/[Ee][Tt][Cc](?:/|$)|/[Vv][Aa][Rr]/|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss]/|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee]/|[A-Za-z]:\\\\|~/|\\.[cC][oO][dD][eE][xX]/[aA][uU][tT][hH]\\.json|(?:[aA][uU][tT][hH]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL][sS]?)\\.json|BEGIN [A-Z ]*PRIVATE KEY))[\\s\\S]*$"
     },
     "safeMessage": {
       "allOf": [

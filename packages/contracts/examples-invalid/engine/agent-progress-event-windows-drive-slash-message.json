@@ -1,0 +1,10 @@
+{
+  "protocolVersion": "2026-05-29",
+  "eventId": "ide-action-evt-drive",
+  "runId": "ide-run-1",
+  "cardId": "P0-4",
+  "timestamp": "2026-05-31T10:00:01Z",
+  "phase": "waiting_for_tool",
+  "status": "running",
+  "message": "Opened C:/Users/Alice/file.txt"
+}
