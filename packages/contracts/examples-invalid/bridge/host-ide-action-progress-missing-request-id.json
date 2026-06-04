@@ -1,0 +1,10 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionProgress",
+  "payload": {
+    "phase": "running",
+    "status": "inProgress",
+    "summary": "Working locally.",
+    "cloudRequired": false
+  }
+}

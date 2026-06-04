@@ -1,0 +1,19 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.ideActionRequest",
+  "requestId": "req-ide-action-reveal-001",
+  "payload": {
+    "action": "revealWorkspaceRange",
+    "workspaceRelativePath": "src/example.ts",
+    "range": {
+      "start": {
+        "line": 4,
+        "character": 2
+      },
+      "end": {
+        "line": 4,
+        "character": 18
+      }
+    }
+  }
+}
