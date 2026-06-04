@@ -208,6 +208,8 @@ const invalidMappings = [
     "gui-ide-action-request-missing-request-id.json",
     "gui-ide-action-request-oversized-request-id.json",
     "gui-ready-secret-request-id.json",
+    "gui-ready-authorization-bearer-request-id.json",
+    "gui-ready-sk-proj-request-id.json",
     "gui-ready-traversal-request-id.json",
     "gui-ide-action-request-oversized-path.json",
     "gui-apply-workspace-edit-missing-confirmation.json",
@@ -238,6 +240,8 @@ const invalidMappings = [
     "host-ide-action-progress-missing-request-id.json",
     "host-ide-action-result-secret-message.json",
     "host-ide-action-result-secret-field.json",
+    "host-ide-action-progress-authorization-bearer-request-id.json",
+    "host-ide-action-progress-sk-proj-request-id.json",
     "host-ide-action-result-traversal-request-id.json",
     "host-ide-action-progress-secret-summary.json",
     "host-ide-action-progress-extra-api-key.json",
@@ -399,7 +403,16 @@ const invalidMappings = [
     "agent-progress-event-ide-action-bad-action.json",
     "agent-progress-event-ide-action-absolute-path.json",
     "agent-progress-event-ide-action-traversal-path.json",
-    "agent-progress-event-tmp-path-message.json"
+    "agent-progress-event-tmp-path-message.json",
+    "agent-progress-event-ide-action-access-token-request-id.json",
+    "agent-progress-event-ide-action-get-context-with-path-range.json",
+    "agent-progress-event-ide-action-open-file-missing-path.json",
+    "agent-progress-event-ide-action-reveal-range-missing-path.json",
+    "agent-progress-event-ide-action-reveal-range-missing-range.json",
+    "agent-progress-event-ide-action-reversed-line-range.json",
+    "agent-progress-event-ide-action-reversed-character-range.json",
+    "agent-progress-event-ide-action-browser-source.json",
+    "agent-progress-event-ide-action-jetbrains-source.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/agent-progress-event.schema.json"
@@ -448,6 +461,15 @@ const invalidMappings = [
     "packages/contracts/examples-invalid/engine/agent-progress-snapshot-done-failed-overflow-recovery.json",
     "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
   ],
+  ...[
+    "agent-progress-snapshot-tmp-path-message.json",
+    "agent-progress-snapshot-var-path-message.json",
+    "agent-progress-snapshot-volumes-path-message.json",
+    "agent-progress-snapshot-mixed-case-private-path-message.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
+  ]),
   [
     "packages/contracts/examples-invalid/engine/agent-progress-list-done-overflow-recovery.json",
     "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
@@ -484,6 +506,15 @@ const invalidMappings = [
     "packages/contracts/examples-invalid/engine/agent-progress-list-private-path.json",
     "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
   ],
+  ...[
+    "agent-progress-list-tmp-path-message.json",
+    "agent-progress-list-var-path-message.json",
+    "agent-progress-list-volumes-path-message.json",
+    "agent-progress-list-mixed-case-private-path-message.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
+  ]),
   [
     "packages/contracts/examples-invalid/engine/agent-progress-list-cloud-required.json",
     "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"

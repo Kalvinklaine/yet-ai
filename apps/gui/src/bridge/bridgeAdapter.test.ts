@@ -284,6 +284,15 @@ describe("bridgeAdapter", () => {
     adapter.dispose();
   });
 
+  it("rejects request ids with compact secret markers", () => {
+    for (const requestId of ["AuthorizationBearerFake", "apiKeySecretValue", "sk-proj-abcdef1234567890", "access_token"]) {
+      expect(isGuiMessage({ ...guiIdeActionContextMessage, requestId })).toBe(false);
+      expect(isHostMessage({ ...hostIdeActionProgressMessage, requestId })).toBe(false);
+    }
+    expect(isGuiMessage({ ...guiIdeActionContextMessage, requestId: "gui-ide-action-1" })).toBe(true);
+    expect(isHostMessage({ ...hostIdeActionProgressMessage, requestId: "gui-ide-action-1" })).toBe(true);
+  });
+
   it("posts only gui.ready to VS Code and drops disabled privileged GUI messages with generic logs", () => {
     const logs: string[] = [];
     const postMessage = vi.fn();
