@@ -1,0 +1,9 @@
+{
+  "type": "assistant.ideActionProposal",
+  "version": "2026-05-15",
+  "requiresUserConfirmation": true,
+  "cloudRequired": false,
+  "summary": "Open a local source file.",
+  "action": "openWorkspaceFile",
+  "workspaceRelativePath": "/Users/example/project/apps/gui/src/App.tsx"
+}

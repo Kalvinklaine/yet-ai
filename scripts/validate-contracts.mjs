@@ -31,6 +31,9 @@ const mappings = [
   ["packages/contracts/examples/engine/agent-progress-event-failed-command.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-event-done.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-event-ide-action-progress.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
+  ["packages/contracts/examples/engine/assistant-ide-action-proposal-get-context.json", "packages/contracts/schemas/engine/assistant-ide-action-proposal.schema.json"],
+  ["packages/contracts/examples/engine/assistant-ide-action-proposal-open-file.json", "packages/contracts/schemas/engine/assistant-ide-action-proposal.schema.json"],
+  ["packages/contracts/examples/engine/assistant-ide-action-proposal-reveal-range.json", "packages/contracts/schemas/engine/assistant-ide-action-proposal.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-snapshot-healthy-command.json", "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-snapshot-stuck-heartbeat.json", "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-snapshot-failed-command.json", "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"],
@@ -444,6 +447,30 @@ const invalidMappings = [
     "packages/contracts/examples-invalid/engine/agent-progress-event-secret-like-message.json",
     "packages/contracts/schemas/engine/agent-progress-event.schema.json"
   ],
+  ...[
+    "assistant-ide-action-proposal-shell-action.json",
+    "assistant-ide-action-proposal-tool-action.json",
+    "assistant-ide-action-proposal-git-action.json",
+    "assistant-ide-action-proposal-task-action.json",
+    "assistant-ide-action-proposal-edit-action.json",
+    "assistant-ide-action-proposal-missing-confirmation.json",
+    "assistant-ide-action-proposal-confirmation-false.json",
+    "assistant-ide-action-proposal-cloud-required-true.json",
+    "assistant-ide-action-proposal-extra-request-id.json",
+    "assistant-ide-action-proposal-absolute-path.json",
+    "assistant-ide-action-proposal-traversal-path.json",
+    "assistant-ide-action-proposal-secret-like-path.json",
+    "assistant-ide-action-proposal-uppercase-sk-path.json",
+    "assistant-ide-action-proposal-secret-summary.json",
+    "assistant-ide-action-proposal-reversed-range.json",
+    "assistant-ide-action-proposal-open-file-with-range.json",
+    "assistant-ide-action-proposal-get-context-with-path-range.json",
+    "assistant-ide-action-proposal-reveal-range-missing-path.json",
+    "assistant-ide-action-proposal-reveal-range-missing-range.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/assistant-ide-action-proposal.schema.json"
+  ]),
   ...[
     "agent-progress-event-ide-action-missing-request-id.json",
     "agent-progress-event-ide-action-bad-action.json",

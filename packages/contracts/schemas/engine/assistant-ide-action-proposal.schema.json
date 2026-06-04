@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/assistant-ide-action-proposal.schema.json",
+  "title": "Assistant IDE Action Proposal",
+  "description": "Strict assistant-authored read-only/navigation IDE action proposal envelope. Proposals require explicit user confirmation, are local-only, do not include requestId, and do not grant shell, git, task, tool, provider, edit, or workspace mutation authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "version",
+    "requiresUserConfirmation",
+    "cloudRequired",
+    "summary",
+    "action"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "assistant.ideActionProposal"
+    },
+    "version": {
+      "type": "string",
+      "const": "2026-05-15"
+    },
+    "requiresUserConfirmation": {
+      "type": "boolean",
+      "const": true
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "summary": {
+      "$ref": "#/$defs/safeSummary"
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "getContextSnapshot",
+        "openWorkspaceFile",
+        "revealWorkspaceRange"
+      ]
+    },
+    "workspaceRelativePath": {
+      "$ref": "#/$defs/safeRelativePath"
+    },
+    "range": {
+      "$ref": "#/$defs/range"
+    }
+  },
+  "$defs": {
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?!~)(?!.*%)(?!.*\\\\)(?!.*:)(?!.*[?#])(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*//)(?!.*\\/$)(?!.*(?:^|/)(?:[Aa][Uu][Tt][Hh]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Cc][Cc][Ee][Ss][Ss][_-]?[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy])(?:[._-]|/|$))(?!.*(?:^|[._-])(?:[Aa][Uu][Tt][Hh]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Cc][Cc][Ee][Ss][Ss][_-]?[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy])(?:[._-]|$))(?!.*(?:^|/)[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,})[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+    },
+    "safeSummary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 280,
+      "pattern": "^(?!.*(?:[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Pp][Aa][Tt][Hh]|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][_-]?[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Rr][Aa][Ww][_-]?[Pp][Rr][Oo][Mm][Pp][Tt]|[Ff][Ii][Ll][Ee][_-]?[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,})).*$"
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line", "character"],
+      "properties": {
+        "line": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "character": { "type": "integer", "minimum": 0, "maximum": 1000000 }
+      }
+    },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "$ref": "#/$defs/position" },
+        "end": { "$ref": "#/$defs/position" }
+      },
+      "allOf": [
+        {
+          "properties": {
+            "end": { "type": "object", "properties": { "line": { "type": "integer", "minimum": { "$data": "2/start/line" } } } }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "start": { "type": "object", "properties": { "line": true }, "required": ["line"] },
+              "end": { "type": "object", "properties": { "line": { "type": "integer", "const": { "$data": "2/start/line" } } }, "required": ["line"] }
+            },
+            "required": ["start", "end"]
+          },
+          "then": {
+            "properties": {
+              "end": { "type": "object", "properties": { "character": { "type": "integer", "minimum": { "$data": "2/start/character" } } } }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "required": ["action"],
+      "properties": {
+        "action": { "const": "getContextSnapshot" },
+        "workspaceRelativePath": false,
+        "range": false
+      }
+    },
+    {
+      "required": ["action", "workspaceRelativePath"],
+      "properties": {
+        "action": { "const": "openWorkspaceFile" },
+        "range": false
+      }
+    },
+    {
+      "required": ["action", "workspaceRelativePath", "range"],
+      "properties": { "action": { "const": "revealWorkspaceRange" } }
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "type": "assistant.ideActionProposal",
+  "version": "2026-05-15",
+  "requiresUserConfirmation": true,
+  "cloudRequired": false,
+  "summary": "Reveal a reversed range.",
+  "action": "revealWorkspaceRange",
+  "workspaceRelativePath": "apps/gui/src/App.tsx",
+  "range": {
+    "start": { "line": 10, "character": 4 },
+    "end": { "line": 8, "character": 1 }
+  }
+}

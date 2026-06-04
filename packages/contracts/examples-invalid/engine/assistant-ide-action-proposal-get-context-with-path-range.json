@@ -1,0 +1,13 @@
+{
+  "type": "assistant.ideActionProposal",
+  "version": "2026-05-15",
+  "requiresUserConfirmation": true,
+  "cloudRequired": false,
+  "summary": "Get context with extra path and range.",
+  "action": "getContextSnapshot",
+  "workspaceRelativePath": "apps/gui/src/App.tsx",
+  "range": {
+    "start": { "line": 1, "character": 0 },
+    "end": { "line": 2, "character": 0 }
+  }
+}
