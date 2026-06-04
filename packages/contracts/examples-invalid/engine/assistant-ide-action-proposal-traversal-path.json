@@ -1,0 +1,9 @@
+{
+  "type": "assistant.ideActionProposal",
+  "version": "2026-05-15",
+  "requiresUserConfirmation": true,
+  "cloudRequired": false,
+  "summary": "Open a parent file.",
+  "action": "openWorkspaceFile",
+  "workspaceRelativePath": "../outside.txt"
+}

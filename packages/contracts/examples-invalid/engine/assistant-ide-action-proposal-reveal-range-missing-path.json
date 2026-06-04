@@ -1,0 +1,12 @@
+{
+  "type": "assistant.ideActionProposal",
+  "version": "2026-05-15",
+  "requiresUserConfirmation": true,
+  "cloudRequired": false,
+  "summary": "Reveal a range without a path.",
+  "action": "revealWorkspaceRange",
+  "range": {
+    "start": { "line": 1, "character": 0 },
+    "end": { "line": 2, "character": 0 }
+  }
+}
