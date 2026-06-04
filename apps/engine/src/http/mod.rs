@@ -47,6 +47,7 @@ pub fn router(state: AppState) -> Router {
                 )
                 .route("/models", get(models_list))
                 .route("/agent-progress", get(agent_progress_list))
+                .route("/agent-progress/events", post(agent_progress_event))
                 .route("/chats", get(chats_list).post(chats_create))
                 .route("/chats/subscribe", get(chats_subscribe))
                 .route("/chats/:chat_id", get(chats_get).delete(chats_delete))
@@ -366,10 +367,34 @@ async fn models_list(_auth: Authenticated, State(state): State<AppState>) -> Res
 }
 
 async fn agent_progress_list(_auth: Authenticated, State(state): State<AppState>) -> Response {
-    match agent_progress::load_progress(&state.storage_paths.cache_dir).await {
+    match agent_progress::load_progress_with_runtime(
+        &state.storage_paths.cache_dir,
+        &state.agent_progress_runtime,
+    )
+    .await
+    {
         Ok(response) => Json(response).into_response(),
         Err(error) => (
             StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn agent_progress_event(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    request: Result<Json<agent_progress::AgentProgressEvent>, JsonRejection>,
+) -> Response {
+    let Json(event) = match request {
+        Ok(event) => event,
+        Err(rejection) => return invalid_json_body(rejection),
+    };
+    match state.agent_progress_runtime.publish_event(event).await {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
             Json(json!({ "error": error.to_string() })),
         )
             .into_response(),
@@ -510,9 +535,7 @@ async fn chat_command(
 }
 
 fn valid_bounded_string(value: &str, max_length: usize) -> bool {
-    !value.is_empty()
-        && value.chars().count() <= max_length
-        && !value.chars().any(is_c0_c1_control)
+    !value.is_empty() && value.chars().count() <= max_length && !value.chars().any(is_c0_c1_control)
 }
 
 fn is_c0_c1_control(value: char) -> bool {

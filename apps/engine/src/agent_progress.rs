@@ -1,13 +1,42 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::io::AsyncReadExt;
+use tokio::sync::Mutex;
 
 pub const MAX_PROGRESS_SOURCE_BYTES: u64 = 256 * 1024;
 pub const MAX_SNAPSHOTS: usize = 50;
 pub const MAX_RECENT_EVENTS: usize = 20;
+
+#[derive(Clone, Debug, Default)]
+pub struct AgentProgressRuntime {
+    inner: Arc<Mutex<AgentProgressListResponse>>,
+}
+
+impl AgentProgressRuntime {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub async fn publish_event(
+        &self,
+        event: AgentProgressEvent,
+    ) -> Result<AgentProgressListResponse, AgentProgressError> {
+        validate_event(&event)?;
+        let mut guard = self.inner.lock().await;
+        guard.generated_at = Some(event.timestamp.clone());
+        upsert_event_snapshot(&mut guard, event);
+        normalize_response(&mut guard)?;
+        Ok(guard.clone())
+    }
+
+    pub async fn snapshot(&self) -> AgentProgressListResponse {
+        self.inner.lock().await.clone()
+    }
+}
 
 pub fn progress_source_path(cache_dir: &Path) -> PathBuf {
     cache_dir.join("agent-progress").join("progress.json")
@@ -31,6 +60,12 @@ impl AgentProgressListResponse {
             generated_at: None,
             snapshots: Vec::new(),
         }
+    }
+}
+
+impl Default for AgentProgressListResponse {
+    fn default() -> Self {
+        Self::empty()
     }
 }
 
@@ -98,6 +133,35 @@ pub struct AgentProgressRecentEvent {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentProgressEvent {
+    pub protocol_version: String,
+    pub event_id: String,
+    pub run_id: String,
+    pub card_id: String,
+    pub timestamp: String,
+    pub phase: String,
+    pub status: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<AgentProgressToolSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heartbeat: Option<AgentProgressHeartbeat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_tail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentProgressHeartbeat {
+    pub last_heartbeat_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_tool_output_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<u64>,
+}
+
 #[derive(Debug, Error)]
 pub enum AgentProgressError {
     #[error("agent progress unavailable")]
@@ -124,6 +188,103 @@ pub async fn load_progress(
         serde_json::from_slice(&bytes).map_err(|_| AgentProgressError::Unavailable)?;
     normalize_response(&mut response)?;
     Ok(response)
+}
+
+pub async fn load_progress_with_runtime(
+    cache_dir: &Path,
+    runtime: &AgentProgressRuntime,
+) -> Result<AgentProgressListResponse, AgentProgressError> {
+    let mut response = load_progress(cache_dir).await?;
+    let runtime_response = runtime.snapshot().await;
+    if runtime_response.snapshots.is_empty() {
+        return Ok(response);
+    }
+    response.generated_at = runtime_response.generated_at;
+    for snapshot in runtime_response.snapshots {
+        if let Some(existing) = response
+            .snapshots
+            .iter_mut()
+            .find(|value| value.run_id == snapshot.run_id && value.card_id == snapshot.card_id)
+        {
+            *existing = snapshot;
+        } else {
+            response.snapshots.push(snapshot);
+        }
+    }
+    if response.snapshots.len() > MAX_SNAPSHOTS {
+        response.snapshots.truncate(MAX_SNAPSHOTS);
+    }
+    normalize_response(&mut response)?;
+    Ok(response)
+}
+
+fn upsert_event_snapshot(response: &mut AgentProgressListResponse, event: AgentProgressEvent) {
+    let recent_event = AgentProgressRecentEvent {
+        event_id: event.event_id.clone(),
+        timestamp: event.timestamp.clone(),
+        phase: event.phase.clone(),
+        status: event.status.clone(),
+        message: event.message.clone(),
+    };
+    let snapshot = response
+        .snapshots
+        .iter_mut()
+        .find(|snapshot| snapshot.run_id == event.run_id && snapshot.card_id == event.card_id);
+    if let Some(snapshot) = snapshot {
+        snapshot.updated_at = event.timestamp.clone();
+        snapshot.phase = event.phase;
+        snapshot.status = event.status;
+        snapshot.message = event.message;
+        snapshot.current_tool = event.tool;
+        snapshot.output_tail = event.output_tail;
+        if let Some(heartbeat) = event.heartbeat {
+            snapshot.last_heartbeat_at = Some(heartbeat.last_heartbeat_at);
+            snapshot.last_tool_output_at = heartbeat.last_tool_output_at;
+        }
+        if matches!(snapshot.phase.as_str(), "done" | "failed") {
+            snapshot.completed_at = Some(snapshot.updated_at.clone());
+        }
+        snapshot.recent_events.push(recent_event);
+        if snapshot.recent_events.len() > MAX_RECENT_EVENTS {
+            let overflow = snapshot.recent_events.len() - MAX_RECENT_EVENTS;
+            snapshot.recent_events.drain(0..overflow);
+        }
+        return;
+    }
+    response.snapshots.insert(
+        0,
+        AgentProgressSnapshot {
+            protocol_version: event.protocol_version,
+            run_id: event.run_id,
+            card_id: event.card_id,
+            started_at: event.timestamp.clone(),
+            updated_at: event.timestamp.clone(),
+            completed_at: matches!(event.phase.as_str(), "done" | "failed")
+                .then_some(event.timestamp.clone()),
+            phase: event.phase,
+            status: event.status,
+            message: event.message,
+            elapsed_ms: 0,
+            age_ms: 0,
+            last_heartbeat_at: event
+                .heartbeat
+                .as_ref()
+                .map(|heartbeat| heartbeat.last_heartbeat_at.clone()),
+            heartbeat_age_ms: None,
+            last_tool_output_at: event
+                .heartbeat
+                .and_then(|heartbeat| heartbeat.last_tool_output_at),
+            tool_output_age_ms: None,
+            current_tool: event.tool,
+            output_tail: event.output_tail,
+            stuck_reason: None,
+            overflow_recovery: None,
+            recent_events: vec![recent_event],
+        },
+    );
+    if response.snapshots.len() > MAX_SNAPSHOTS {
+        response.snapshots.truncate(MAX_SNAPSHOTS);
+    }
 }
 
 async fn reject_symlink(path: &Path) -> Result<(), AgentProgressError> {
@@ -267,6 +428,64 @@ fn validate_snapshot(snapshot: &AgentProgressSnapshot) -> Result<(), AgentProgre
     }
     for event in &snapshot.recent_events {
         validate_recent_event(event)?;
+    }
+    Ok(())
+}
+
+fn validate_event(event: &AgentProgressEvent) -> Result<(), AgentProgressError> {
+    if event.protocol_version != "2026-05-29" {
+        return Err(AgentProgressError::Unavailable);
+    }
+    validate_id(&event.event_id, 128)?;
+    validate_id(&event.run_id, 128)?;
+    validate_card_id(&event.card_id)?;
+    validate_timestamp(&event.timestamp)?;
+    validate_enum(
+        &event.phase,
+        &[
+            "queued",
+            "started",
+            "reading_context",
+            "editing",
+            "running_command",
+            "waiting_for_tool",
+            "verifying",
+            "finishing",
+            "done",
+            "failed",
+            "stuck",
+        ],
+    )?;
+    validate_enum(
+        &event.status,
+        &[
+            "pending",
+            "running",
+            "healthy_running",
+            "long_running",
+            "stalled",
+            "stuck",
+            "done",
+            "failed",
+        ],
+    )?;
+    validate_safe_string(&event.message, 1, 280)?;
+    if let Some(tool) = &event.tool {
+        validate_tool(tool)?;
+    }
+    if let Some(heartbeat) = &event.heartbeat {
+        validate_timestamp(&heartbeat.last_heartbeat_at)?;
+        if let Some(last_tool_output_at) = &heartbeat.last_tool_output_at {
+            validate_timestamp(last_tool_output_at)?;
+        }
+        if let Some(attempt) = heartbeat.attempt {
+            if !(1..=100).contains(&attempt) {
+                return Err(AgentProgressError::Unavailable);
+            }
+        }
+    }
+    if let Some(output_tail) = &event.output_tail {
+        validate_safe_string(output_tail, 0, 2000)?;
     }
     Ok(())
 }

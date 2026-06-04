@@ -22,7 +22,10 @@ pub fn resolve_storage_paths(
     }
 }
 
-pub fn resolve_default_storage_paths(identity: &ProductIdentity, project_root: &Path) -> StoragePaths {
+pub fn resolve_default_storage_paths(
+    identity: &ProductIdentity,
+    project_root: &Path,
+) -> StoragePaths {
     let config_root = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
     let cache_root = dirs::cache_dir().unwrap_or_else(|| PathBuf::from("."));
     resolve_storage_paths(identity, project_root, &config_root, &cache_root)

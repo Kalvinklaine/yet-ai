@@ -3994,6 +3994,130 @@ async fn agent_progress_requires_bearer_token() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
+fn valid_agent_progress_event() -> Value {
+    json!({
+        "protocolVersion": "2026-05-29",
+        "eventId": "ide-action-evt-1",
+        "runId": "ide-run-1",
+        "cardId": "P0-4",
+        "timestamp": "2026-05-31T10:00:01Z",
+        "phase": "waiting_for_tool",
+        "status": "running",
+        "message": "Host is opening a workspace range.",
+        "tool": {
+            "kind": "other",
+            "label": "open workspace range",
+            "startedAt": "2026-05-31T10:00:00Z",
+            "elapsedMs": 1000
+        },
+        "heartbeat": {
+            "lastHeartbeatAt": "2026-05-31T10:00:01Z",
+            "attempt": 1
+        },
+        "outputTail": "Awaiting host-mediated IDE action result."
+    })
+}
+
+#[tokio::test]
+async fn agent_progress_event_accepts_bounded_sanitized_ide_action_metadata() {
+    let app = test_app();
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/agent-progress/events",
+            Body::from(valid_agent_progress_event().to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["cloudRequired"], false);
+    assert_eq!(body["providerAccess"], "direct");
+    assert_eq!(body["generatedAt"], "2026-05-31T10:00:01Z");
+    assert_eq!(body["snapshots"][0]["runId"], "ide-run-1");
+    assert_eq!(
+        body["snapshots"][0]["currentTool"]["label"],
+        "open workspace range"
+    );
+    assert_eq!(
+        body["snapshots"][0]["outputTail"],
+        "Awaiting host-mediated IDE action result."
+    );
+
+    let (status, listed) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/agent-progress", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(listed["snapshots"][0]["runId"], "ide-run-1");
+}
+
+#[tokio::test]
+async fn agent_progress_event_rejects_unsafe_or_oversized_metadata_without_raw_echo() {
+    let mut unsafe_event = valid_agent_progress_event();
+    unsafe_event["message"] =
+        json!("Bearer token sk-progress-secret /Users/example/.codex/auth.json");
+    let mut oversized_event = valid_agent_progress_event();
+    oversized_event["eventId"] = json!("ide-action-evt-oversized");
+    oversized_event["outputTail"] = json!("x".repeat(2001));
+
+    for event in [unsafe_event, oversized_event] {
+        let (status, body) = json_response(authed_request(
+            Method::POST,
+            "/v1/agent-progress/events",
+            Body::from(event.to_string()),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "agent progress unavailable");
+        let text = body.to_string().to_lowercase();
+        assert!(!text.contains("sk-progress-secret"));
+        assert!(!text.contains("/users/example"));
+        assert!(!text.contains("bearer token"));
+        assert!(!text.contains(&"x".repeat(64)));
+    }
+}
+
+#[tokio::test]
+async fn agent_progress_event_rejects_execution_commands_and_raw_content_fields() {
+    for payload in [
+        json!({
+            "protocolVersion": "2026-05-29",
+            "eventId": "ide-action-evt-extra",
+            "runId": "ide-run-extra",
+            "cardId": "P0-4",
+            "timestamp": "2026-05-31T10:00:01Z",
+            "phase": "waiting_for_tool",
+            "status": "running",
+            "message": "Safe metadata.",
+            "command": "rm -rf workspace"
+        }),
+        json!({
+            "protocolVersion": "2026-05-29",
+            "eventId": "ide-action-evt-file",
+            "runId": "ide-run-file",
+            "cardId": "P0-4",
+            "timestamp": "2026-05-31T10:00:01Z",
+            "phase": "waiting_for_tool",
+            "status": "running",
+            "message": "Safe metadata.",
+            "fileContent": "raw workspace content"
+        }),
+    ] {
+        let (status, body) = json_response(authed_request(
+            Method::POST,
+            "/v1/agent-progress/events",
+            Body::from(payload.to_string()),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "invalid request body");
+        assert!(!body.to_string().contains("rm -rf"));
+        assert!(!body.to_string().contains("raw workspace content"));
+    }
+}
+
 fn valid_agent_progress_snapshot(index: usize, event_count: usize) -> Value {
     json!({
         "protocolVersion": "2026-05-29",
@@ -8186,6 +8310,8 @@ async fn unsupported_privileged_commands_remain_rejected() {
         "set_params",
         "shell_exec",
         "file_edit",
+        "git_checkout",
+        "task_run",
     ] {
         let command = json!({
             "requestId": format!("req-{command_type}"),
