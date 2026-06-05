@@ -107,8 +107,11 @@ try {
     failures.push("Double-click/pending apply emitted more than one request.");
   }
   await dispatchHostResult(page, "gui-edit-proposal-mismatch", result("gui-edit-proposal-mismatch", "failed", "Mismatched pending result ignored."));
-  if ((await page.evaluate(() => document.body.innerText)).includes("Mismatched pending result ignored.")) {
-    failures.push("Mismatched host result was displayed while a different request was pending.");
+  // App.tsx surfaces setApplyNote(ignoredStaleApplyResultNote) when a non-matching
+  // host result arrives while a different request is pending. The applied line
+  // must NOT have been rendered yet in apply-result.
+  if ((await page.evaluate(() => document.getElementById("apply-result")?.textContent ?? "")).includes("Applied 1 edit to 1 file.")) {
+    failures.push("Mismatched host result was applied while a different request was pending.");
   }
   const acceptedResult = await handleApplyWorkspaceEditRequest(acceptedRequest, { confirmed: true });
   assertHostResultShape(acceptedResult, "accepted result");
@@ -175,19 +178,43 @@ try {
   hostResults.push(secondRetryResult);
 
   // Stale first result: dispatch a result for the cleared (first) request id; must be ignored.
+  // Mirror App.tsx: stale results (no longer matching the current pending id) surface
+  // setApplyNote(ignoredStaleApplyResultNote) in the apply-note element without
+  // overwriting the apply-result outcome.
   await dispatchHostResult(page, firstRetryRequestId, result(firstRetryRequestId, "applied", "Stale first result ignored."));
-  if ((await page.evaluate(() => document.body.innerText)).includes("Stale first result ignored.")) {
-    failures.push("Stale first result for the cleared request id was rendered.");
+  const staleNoteVisibleAfterFirst = await page.evaluate(() => document.getElementById("apply-note")?.textContent?.includes("Ignored stale host apply result.") === true);
+  if (!staleNoteVisibleAfterFirst) {
+    failures.push("Stale first host result for the cleared request id did not surface a stale ignored note.");
+  }
+  if ((await page.evaluate(() => document.getElementById("apply-result")?.textContent ?? "")).includes("Applied ")) {
+    failures.push("Stale first result for the cleared request id rendered an applied outcome before any match.");
+  }
+  const staleHostResultsAfterFirst = await page.evaluate(() => (window.__yetAiHostResults ?? []).filter((entry) => entry?.ignored === "stale"));
+  if (staleHostResultsAfterFirst.length === 0) {
+    failures.push("Stale first host result for the cleared request id was not captured as ignored stale.");
   }
 
-  // Matching retry result must render.
+  // Matching retry result must render. The visible stale note from the
+  // earlier first-result dispatch is allowed to coexist visually; the
+  // applied outcome line is asserted above and below.
   await dispatchHostResult(page, secondRetryRequest.requestId, secondRetryResult);
   await expectVisible(page, "Applied 1 edit to 1 file.");
 
-  // Duplicate completed result for the same request id must not overwrite the rendered outcome.
+  // Duplicate completed result for the same request id must surface a visible
+  // ignored-duplicate note (App's setApplyNote(ignoredDuplicateApplyResultNote))
+  // in the apply-note element, and must not overwrite the previously rendered
+  // applied outcome in the apply-result element.
   await dispatchHostResult(page, secondRetryRequest.requestId, result(secondRetryRequest.requestId, "failed", "Duplicate completed result ignored."));
-  if ((await page.evaluate(() => document.body.innerText)).includes("Duplicate completed result ignored.")) {
+  const duplicateNoteVisible = await page.evaluate(() => document.getElementById("apply-note")?.textContent?.includes("Ignored duplicate host apply result.") === true);
+  if (!duplicateNoteVisible) {
+    failures.push("Duplicate completed host result did not surface an ignored-duplicate note.");
+  }
+  if ((await page.evaluate(() => document.getElementById("apply-result")?.textContent ?? "")).includes("Applied 1 edit to 1 file.") === false) {
     failures.push("Duplicate completed host result replaced the previously rendered applied outcome.");
+  }
+  const duplicateHostResults = await page.evaluate(() => (window.__yetAiHostResults ?? []).filter((entry) => entry?.ignored === "duplicate"));
+  if (duplicateHostResults.length === 0) {
+    failures.push("Duplicate completed host result was not captured as an ignored duplicate.");
   }
 
   // Secret-like / invalid host result must be rejected (invalid status, raw key-like, or invalid range/status shape).
@@ -306,7 +333,7 @@ try {
   }
 
   console.log("VS Code edit-proposal smoke passed.");
-  console.log("Verified contract-shaped textReplacements, compact bubble with hidden raw JSON, explicit apply emission, accepted and denied host confirmations, clear-pending lifecycle recovery with fresh retry id, stale first result and duplicate completed suppression, invalid host result rejection, browser-storage hygiene, unsafe path variants, oversized edit rejection, sanitized leak handling, temp-fixture cleanup, and loopback-free browser harness.");
+  console.log("Verified contract-shaped textReplacements, edit-proposal browser harness (compact bubble with hidden raw JSON), explicit apply emission, accepted and denied host confirmations, clear-pending lifecycle recovery with fresh retry id, visible stale and duplicate ignored notes in the apply-note slot (App order: completedRequestIds checked before pendingRequestId, apply-result preserved), stale first result and duplicate completed suppression, invalid host result rejection, browser-storage hygiene, unsafe path variants, oversized edit rejection, sanitized leak handling, temp-fixture cleanup, and loopback-free browser harness. Real packaged GUI chat-bubble coverage is exercised by App/App.test.tsx, not by this inline browser harness.");
   console.log("No OpenAI, ChatGPT, hosted Yet AI service, real provider credential, VS Code launch, shell/tool/task/git execution, or real workspace mutation was used.");
 } finally {
   await browser?.close().catch(() => undefined);
@@ -456,7 +483,9 @@ function harnessHtml() {
       });
       const result = document.createElement("p");
       result.id = "apply-result";
-      section.append(title, badge, summary, stats, list, button, clearButton, result);
+      const note = document.createElement("p");
+      note.id = "apply-note";
+      section.append(title, badge, summary, stats, list, button, clearButton, result, note);
       root.append(section);
     }
     function isProposal(value) {
@@ -497,16 +526,30 @@ function harnessHtml() {
     window.addEventListener("message", (event) => {
       const message = event.data;
       if (!isHostResult(message)) return;
-      if (message.requestId !== pendingRequestId) return;
-      pendingRequestId = null;
+      // Mirror App.tsx: check the completed-request set FIRST so duplicate
+      // completed results are exercised even when there is no current pending
+      // request, then fall through to the pending/stale guard. Ignored
+      // duplicates/stales surface a note (setApplyNote) and leave the rendered
+      // apply result untouched — matching App behavior.
       if (completedRequestIds.has(message.requestId)) {
-        window.__yetAiHostResults.push({ version: message.version, type: message.type, requestId: message.requestId, ignored: true });
+        window.__yetAiHostResults.push({ version: message.version, type: message.type, requestId: message.requestId, ignored: "duplicate" });
+        const note = document.getElementById("apply-note");
+        if (note) note.textContent = "Ignored duplicate host apply result.";
         return;
       }
+      if (message.requestId !== pendingRequestId) {
+        window.__yetAiHostResults.push({ version: message.version, type: message.type, requestId: message.requestId, ignored: "stale" });
+        const note = document.getElementById("apply-note");
+        if (note) note.textContent = "Ignored stale host apply result.";
+        return;
+      }
+      pendingRequestId = null;
       completedRequestIds.add(message.requestId);
       window.__yetAiHostResults.push(message);
       const target = document.getElementById("apply-result");
       if (!target) return;
+      const note = document.getElementById("apply-note");
+      if (note) note.textContent = "";
       const button = document.querySelector("button");
       if (button) {
         button.disabled = false;
