@@ -78,10 +78,9 @@ export type IdeActionProposalPanelProps = {
   host: BridgeHost;
   pending: boolean;
   onRun: (payload: IdeActionRequestPayload) => void;
-  onClearPendingIdeAction: () => void;
 };
 
-export function IdeActionProposalPanel({ proposal, host, pending, onRun, onClearPendingIdeAction }: IdeActionProposalPanelProps) {
+export function IdeActionProposalPanel({ proposal, host, pending, onRun }: IdeActionProposalPanelProps) {
   if (!proposal) {
     return null;
   }
@@ -105,7 +104,6 @@ export function IdeActionProposalPanel({ proposal, host, pending, onRun, onClear
       {host === "vscode" ? (
         <div className="row">
           <button type="button" onClick={() => onRun(proposal.payload)} disabled={pending}>{pending ? "IDE action pending…" : "Run read-only IDE action"}</button>
-          {pending && <button type="button" className="secondary-button" onClick={onClearPendingIdeAction}>Clear pending IDE action state</button>}
         </div>
       ) : (
         <div className="readiness-card warn" role="status">{host === "jetbrains" ? "JetBrains preview-only unsupported. No IDE action will be posted." : "Browser preview only. No IDE action will be posted."}</div>

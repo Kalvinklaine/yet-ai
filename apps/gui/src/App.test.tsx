@@ -2003,6 +2003,7 @@ describe("active editor attached context", () => {
     expect(ideActionMessages[0].requestId).toBe("gui-ide-proposal-action-1");
     expect(findButton("IDE action pending…").disabled).toBe(true);
     expect(container?.textContent).toContain("Clear pending IDE action state");
+    expect(buttonsNamed("Clear pending IDE action state")).toHaveLength(1);
 
     await act(async () => {
       findButton("Clear pending IDE action state").click();
@@ -5288,6 +5289,10 @@ function findButton(name: string) {
     throw new Error(`Button not found: ${name}`);
   }
   return button;
+}
+
+function buttonsNamed(name: string) {
+  return Array.from(container?.querySelectorAll<HTMLButtonElement>("button") ?? []).filter((item) => item.textContent === name);
 }
 
 function findInputValue(value: string) {

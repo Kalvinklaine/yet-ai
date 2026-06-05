@@ -150,6 +150,8 @@ try {
   const proposalRequestId = proposalIdeRequest?.requestId ?? "gui-ide-proposal-action-missing";
   await expectVisibleText(page, "IDE action pending…", "pending proposal IDE action button label");
   await expectVisibleText(page, "Clear pending IDE action state", "clear pending IDE action state button");
+  const clearPendingButtonCount = await page.getByRole("button", { name: "Clear pending IDE action state", exact: true }).count();
+  if (clearPendingButtonCount !== 1) failures.push(`Expected exactly one clear pending IDE action state button during proposal pending state; found ${clearPendingButtonCount}.`);
 
   const clearPendingButton = page.getByRole("button", { name: "Clear pending IDE action state", exact: true }).first();
   await clearPendingButton.click();
