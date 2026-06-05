@@ -687,6 +687,38 @@ describe("bridgeAdapter", () => {
     adapter.dispose();
   });
 
+  it("rejects C0 and C1 control characters in runtime bridge summaries and messages", () => {
+    const applyEditControlSummaryMessage = applyEditMessage({ requestId: "req-apply-edit-control-runtime-001", summary: "Replace one visible\u0000 editor line." });
+    const hostIdeActionProgressControlSummaryMessage = { version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-ide-action-control-runtime-001", payload: { phase: "running", status: "inProgress", summary: "Revealing\u0085 workspace range.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/App.tsx" } };
+    const hostIdeActionProgressControlMessage = { version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-ide-action-control-runtime-002", payload: { phase: "completed", status: "failed", summary: "IDE rejected\u009f the request.", cloudRequired: false, action: "openWorkspaceFile" } };
+    const hostIdeActionResultControlMessage = { version: bridgeVersion, type: "host.ideActionResult", requestId: "req-ide-action-control-runtime-003", payload: { status: "rejected", message: "Request rejected\u001f by local IDE policy.", cloudRequired: false, action: "openWorkspaceFile" } };
+    const hostApplyWorkspaceEditResultControlMessage = { version: bridgeVersion, type: "host.applyWorkspaceEditResult", requestId: "req-apply-edit-control-runtime-002", payload: { status: "denied", message: "User declined\u009f the proposed edit.", cloudRequired: false, appliedEditCount: 0, affectedFiles: [] } };
+
+    expect(isApplyWorkspaceEditPayload(applyEditControlSummaryMessage.payload)).toBe(false);
+    expect(isGuiMessage(applyEditControlSummaryMessage)).toBe(false);
+    expect(isIdeActionProgressPayload(hostIdeActionProgressControlSummaryMessage.payload)).toBe(false);
+    expect(isHostMessage(hostIdeActionProgressControlSummaryMessage)).toBe(false);
+    expect(isIdeActionProgressPayload(hostIdeActionProgressControlMessage.payload)).toBe(false);
+    expect(isHostMessage(hostIdeActionProgressControlMessage)).toBe(false);
+    expect(isIdeActionResultPayload(hostIdeActionResultControlMessage.payload)).toBe(false);
+    expect(isHostMessage(hostIdeActionResultControlMessage)).toBe(false);
+    expect(isApplyWorkspaceEditResultPayload(hostApplyWorkspaceEditResultControlMessage.payload)).toBe(false);
+    expect(isHostMessage(hostApplyWorkspaceEditResultControlMessage)).toBe(false);
+
+    const logs: string[] = [];
+    const messages: unknown[] = [];
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    adapter.subscribe((message) => messages.push(message));
+    window.dispatchEvent(new MessageEvent("message", { data: hostIdeActionProgressControlSummaryMessage }));
+    window.dispatchEvent(new MessageEvent("message", { data: hostIdeActionProgressControlMessage }));
+    window.dispatchEvent(new MessageEvent("message", { data: hostIdeActionResultControlMessage }));
+    window.dispatchEvent(new MessageEvent("message", { data: hostApplyWorkspaceEditResultControlMessage }));
+
+    expect(messages).toHaveLength(0);
+    expect(logs.filter((entry) => entry === "Rejected invalid host bridge message")).toHaveLength(4);
+    adapter.dispose();
+  });
+
   it("validates IDE action messages and rejects traversal, private paths, secret-like messages, and raw fields", () => {
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "req-1", payload: { action: "getContextSnapshot" } })).toBe(true);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "req-2", payload: { action: "openWorkspaceFile", workspaceRelativePath: "src/App.tsx" } })).toBe(true);
