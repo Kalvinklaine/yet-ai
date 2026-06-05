@@ -1,0 +1,12 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-result-reveal-missing-range",
+  "payload": {
+    "status": "succeeded",
+    "message": "Revealed workspace range.",
+    "cloudRequired": false,
+    "action": "revealWorkspaceRange",
+    "workspaceRelativePath": "src/example.ts"
+  }
+}

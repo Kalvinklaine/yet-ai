@@ -1,0 +1,17 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionProgress",
+  "requestId": "req-ide-action-reveal-progress-001",
+  "payload": {
+    "phase": "completed",
+    "status": "succeeded",
+    "summary": "Revealed workspace range.",
+    "cloudRequired": false,
+    "action": "revealWorkspaceRange",
+    "workspaceRelativePath": "src/example.ts",
+    "range": {
+      "start": { "line": 1, "character": 0 },
+      "end": { "line": 1, "character": 8 }
+    }
+  }
+}
