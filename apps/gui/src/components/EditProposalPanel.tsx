@@ -52,12 +52,7 @@ export type EditProposalPreviewProps = {
 export function EditProposalPreview({ proposal, host, pending, onApply, onCancelPending }: EditProposalPreviewProps) {
   const files = proposal.payload.edits;
   const editCount = files.reduce((count, file) => count + file.textReplacements.length, 0);
-  const uniqueFilePaths = new Set<string>();
-  for (const file of files) {
-    uniqueFilePaths.add(file.workspaceRelativePath);
-  }
-  const uniqueFileCount = uniqueFilePaths.size;
-  const duplicateFileCount = files.length - uniqueFileCount;
+  const fileCount = files.length;
   const replacementPreviewSummaries = files.flatMap((file) =>
     file.textReplacements.map((replacement) => ({
       workspaceRelativePath: file.workspaceRelativePath,
@@ -72,7 +67,7 @@ export function EditProposalPreview({ proposal, host, pending, onApply, onCancel
       <span>{sanitizeDisplayText(proposal.payload.summary)}</span>
       <div className="edit-proposal-grid">
         <span>Request: {sanitizeDisplayText(proposal.requestId)}</span>
-        <span data-testid="edit-proposal-unique-files">Files: {uniqueFileCount}{duplicateFileCount > 0 ? ` (${duplicateFileCount} duplicate group${duplicateFileCount === 1 ? "" : "s"} merged)` : ""}</span>
+        <span data-testid="edit-proposal-unique-files">Files: {fileCount}</span>
         <span data-testid="edit-proposal-edit-count">Text edits: {editCount}</span>
         <span>Cloud required: false</span>
       </div>
