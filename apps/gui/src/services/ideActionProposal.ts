@@ -8,6 +8,30 @@ export type AssistantIdeActionProposal = {
   summary: string;
 } & IdeActionRequestPayload;
 
+export type IdeActionProposalSourceMessage = {
+  id: string;
+  role: string;
+  status?: string;
+  content: string;
+};
+
+export type IdeActionProposalCandidate = {
+  proposal: AssistantIdeActionProposal;
+  payload: IdeActionRequestPayload;
+  sourceMessageId: string;
+  payloadKey: string;
+};
+
+export type IdeActionProposalState = IdeActionProposalCandidate & {
+  requestId: string;
+};
+
+export type IdeActionProposalIdentity = {
+  requestId: string;
+  sourceMessageId: string;
+  payloadKey: string;
+};
+
 const proposalVersion = "2026-05-15";
 
 export function parseAssistantIdeActionProposalContent(content: string): AssistantIdeActionProposal | null {
@@ -42,6 +66,42 @@ export function describeIdeActionProposal(proposal: AssistantIdeActionProposal):
     return "Open workspace file";
   }
   return "Reveal workspace range";
+}
+
+export function ideActionProposalPayloadKey(proposal: AssistantIdeActionProposal): string {
+  return JSON.stringify(proposal);
+}
+
+export function latestIdeActionProposalCandidateFromMessages(messages: IdeActionProposalSourceMessage[]): IdeActionProposalCandidate | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== "assistant" || message.status !== "complete") {
+      continue;
+    }
+    const proposal = parseAssistantIdeActionProposalContent(message.content);
+    if (!proposal) {
+      return null;
+    }
+    return {
+      proposal,
+      payload: toIdeActionRequestPayload(proposal),
+      sourceMessageId: message.id,
+      payloadKey: ideActionProposalPayloadKey(proposal),
+    };
+  }
+  return null;
+}
+
+export function ideActionProposalCandidateIdentityMatches(left: Pick<IdeActionProposalCandidate, "sourceMessageId" | "payloadKey"> | null | undefined, right: Pick<IdeActionProposalCandidate, "sourceMessageId" | "payloadKey"> | null | undefined): boolean {
+  return Boolean(left && right && left.sourceMessageId === right.sourceMessageId && left.payloadKey === right.payloadKey);
+}
+
+export function ideActionProposalMatchesCandidate(proposal: IdeActionProposalState | null, candidate: IdeActionProposalCandidate | null): proposal is IdeActionProposalState {
+  return ideActionProposalCandidateIdentityMatches(proposal, candidate);
+}
+
+export function ideActionProposalIdentityMatchesCandidate(identity: IdeActionProposalIdentity | null, candidate: IdeActionProposalCandidate | null): identity is IdeActionProposalIdentity {
+  return ideActionProposalCandidateIdentityMatches(identity, candidate);
 }
 
 function isAssistantIdeActionProposal(value: unknown): value is AssistantIdeActionProposal {
