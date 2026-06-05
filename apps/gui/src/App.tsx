@@ -1,7 +1,7 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBridgeAdapter, isApplyWorkspaceEditPayload, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type WorkspaceEditRange } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
-import { describeIdeActionProposal, parseAssistantIdeActionProposalContent, toIdeActionRequestPayload, type AssistantIdeActionProposal } from "./services/ideActionProposal";
+import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
 import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
@@ -83,17 +83,6 @@ type EditProposalState = {
   payload: ApplyWorkspaceEditPayload;
   sourceMessageId: string;
   payloadKey: string;
-};
-
-type IdeActionProposalCandidate = {
-  proposal: AssistantIdeActionProposal;
-  payload: IdeActionRequestPayload;
-  sourceMessageId: string;
-  payloadKey: string;
-};
-
-type IdeActionProposalState = IdeActionProposalCandidate & {
-  requestId: string;
 };
 
 type ApplyResultState = {
@@ -1285,7 +1274,7 @@ export function App() {
       return;
     }
     const existing = ideActionProposalIdentityRef.current;
-    let requestId = existing?.sourceMessageId === ideActionProposalCandidate.sourceMessageId && existing.payloadKey === ideActionProposalCandidate.payloadKey ? existing.requestId : null;
+    let requestId = ideActionProposalIdentityMatchesCandidate(existing, ideActionProposalCandidate) ? existing.requestId : null;
     if (!requestId) {
       ideActionProposalCounterRef.current += 1;
       requestId = `gui-ide-proposal-${ideActionProposalCounterRef.current}`;
@@ -1976,30 +1965,6 @@ function stableEditProposalPayloadKey(payload: ApplyWorkspaceEditPayload): strin
   return JSON.stringify(payload);
 }
 
-function latestIdeActionProposalCandidateFromMessages(messages: ChatViewMessage[]): IdeActionProposalCandidate | null {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.role !== "assistant" || message.status !== "complete") {
-      continue;
-    }
-    const proposal = parseAssistantIdeActionProposalContent(message.content);
-    if (!proposal) {
-      return null;
-    }
-    return {
-      proposal,
-      payload: toIdeActionRequestPayload(proposal),
-      sourceMessageId: message.id,
-      payloadKey: JSON.stringify(proposal),
-    };
-  }
-  return null;
-}
-
-function ideActionProposalMatchesCandidate(proposal: IdeActionProposalState | null, candidate: IdeActionProposalCandidate | null): proposal is IdeActionProposalState {
-  return Boolean(proposal && candidate && proposal.sourceMessageId === candidate.sourceMessageId && proposal.payloadKey === candidate.payloadKey);
-}
-
 function extractEditProposal(content: string): ApplyWorkspaceEditPayload | null {
   const parsed = parseFirstJsonObject(content);
   if (!parsed) {
@@ -2172,7 +2137,7 @@ function ChatBubble({ message, activeIdeActionProposal }: { message: ChatViewMes
   const [inspectProposalJson, setInspectProposalJson] = useState(false);
   const proposal = message.role === "assistant" && message.status === "complete" ? parseAssistantIdeActionProposalContent(message.content) : null;
   const proposalJson = proposal ? JSON.stringify(proposal, null, 2) : null;
-  const proposalPayloadKey = proposal ? JSON.stringify(proposal) : null;
+  const proposalPayloadKey = proposal ? ideActionProposalPayloadKey(proposal) : null;
   const proposalLabel = proposal ? sanitizeDisplayText(describeIdeActionProposal(proposal)) : null;
   const isActiveProposal = Boolean(proposalPayloadKey && activeIdeActionProposal?.sourceMessageId === message.id && activeIdeActionProposal.payloadKey === proposalPayloadKey);
 
