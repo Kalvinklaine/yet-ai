@@ -1984,6 +1984,40 @@ describe("active editor attached context", () => {
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
   });
 
+  it("compacts valid assistant IDE proposal JSON until explicit inspect", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const proposal = ideActionProposal({ action: "openWorkspaceFile", workspaceRelativePath: "src/compact-proposal.ts", summary: "Open compact proposal file." });
+    const rawJson = JSON.stringify(proposal);
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Compact proposal", 1)], chatThreads: { "chat-001": chatThread("chat-001", "Compact proposal", [chatMessage("chat-001", "assistant-1", "assistant", rawJson)]) } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const initialText = container?.textContent ?? "";
+    expect(initialText).not.toContain(rawJson);
+    expect(initialText).not.toContain('"type":"assistant.ideActionProposal"');
+    expect(initialText).toContain("Proposed a read-only IDE action: Open workspace file. Review the proposal card below. It will not run automatically.");
+    expect(initialText).toContain("Read-only IDE action proposal");
+    expect(initialText).toContain("Open compact proposal file.");
+    expect(findButton("Run read-only IDE action").disabled).toBe(false);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("compact-proposal");
+
+    await act(async () => {
+      findButton("Inspect proposal JSON").click();
+    });
+
+    const inspectedText = container?.textContent ?? "";
+    expect(inspectedText).toContain('"type": "assistant.ideActionProposal"');
+    expect(inspectedText).toContain('"workspaceRelativePath": "src/compact-proposal.ts"');
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("compact-proposal");
+  });
+
   it.each([
     [ideActionProposal({ action: "getContextSnapshot", summary: "Check current IDE context." }), { action: "getContextSnapshot" }],
     [ideActionProposal({ action: "openWorkspaceFile", workspaceRelativePath: "src/example.ts", summary: "Open the example file." }), { action: "openWorkspaceFile", workspaceRelativePath: "src/example.ts" }],

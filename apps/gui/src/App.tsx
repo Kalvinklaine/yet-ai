@@ -2147,10 +2147,22 @@ function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, context,
 }
 
 function ChatBubble({ message }: { message: ChatViewMessage }) {
+  const [inspectProposalJson, setInspectProposalJson] = useState(false);
+  const proposal = message.role === "assistant" && message.status === "complete" ? parseAssistantIdeActionProposalContent(message.content) : null;
+  const proposalJson = proposal ? JSON.stringify(proposal, null, 2) : null;
+
   return (
     <div className={`chat-bubble ${message.role}`}>
       <strong>{message.role === "user" ? "You" : message.role === "assistant" ? "Yet AI" : "Error"}</strong>
-      <span>{message.content || (message.status === "streaming" ? "…" : "")}</span>
+      {proposal && proposalJson ? (
+        <div className="assistant-proposal-compact stack">
+          <span>Proposed a read-only IDE action: {sanitizeDisplayText(describeIdeActionProposal(proposal))}. Review the proposal card below. It will not run automatically.</span>
+          <button type="button" className="link-button" onClick={() => setInspectProposalJson((current) => !current)}>{inspectProposalJson ? "Hide proposal JSON" : "Inspect proposal JSON"}</button>
+          {inspectProposalJson && <pre aria-label="Assistant proposal JSON">{proposalJson}</pre>}
+        </div>
+      ) : (
+        <span>{message.content || (message.status === "streaming" ? "…" : "")}</span>
+      )}
     </div>
   );
 }
