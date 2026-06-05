@@ -13,6 +13,7 @@ const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
 const agentProgressSnapshotDisplayLimit = 20;
 const agentProgressRecentEventDisplayLimit = 12;
+export const completedIdeActionRequestChatsLimit = 64;
 
 const providerAuthStatusCopy: Record<ProviderAuthStatus, string> = {
   not_configured: "No account login is configured yet. Use Login with OpenAI when available or the API key fallback.",
@@ -361,6 +362,7 @@ export function App() {
   const clearIdeActionState = useCallback(() => {
     pendingIdeActionRequestIdRef.current = null;
     pendingIdeActionChatIdRef.current = null;
+    completedIdeActionRequestChatsRef.current.clear();
     ideActionProposalIdentityRef.current = null;
     setIdeActionProposal(null);
     setIdeActionAttempt(null);
@@ -519,7 +521,7 @@ export function App() {
           return;
         }
         const payload = message.payload as IdeActionResultPayload;
-        completedIdeActionRequestChatsRef.current.set(requestId, chatIdRef.current);
+        rememberCompletedIdeActionRequest(completedIdeActionRequestChatsRef.current, requestId, chatIdRef.current);
         pendingIdeActionRequestIdRef.current = null;
         pendingIdeActionChatIdRef.current = null;
         setIdeActionAttempt((current) => current?.requestId === requestId ? {
@@ -2022,6 +2024,25 @@ function ideActionLabel(action: IdeActionType): string {
       return "Open file";
     case "revealWorkspaceRange":
       return "Reveal range";
+  }
+}
+
+export function rememberCompletedIdeActionRequest(completedRequests: Map<string, string>, requestId: string, chatId: string, limit = completedIdeActionRequestChatsLimit) {
+  if (limit <= 0) {
+    completedRequests.clear();
+    return;
+  }
+  if (completedRequests.has(requestId)) {
+    completedRequests.delete(requestId);
+  }
+  completedRequests.set(requestId, chatId);
+  while (completedRequests.size > limit) {
+    const oldestRequestId = completedRequests.keys().next().value;
+    if (typeof oldestRequestId !== "string") {
+      completedRequests.clear();
+      return;
+    }
+    completedRequests.delete(oldestRequestId);
   }
 }
 
