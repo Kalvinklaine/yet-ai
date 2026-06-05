@@ -5095,6 +5095,80 @@ describe("edit proposal preview", () => {
     expect(container?.querySelector(".chat-bubble.assistant pre[aria-label='Assistant edit proposal JSON']")).toBeNull();
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
+
+  it.each([
+    ["applied", "Edits were applied by the host after confirmation."],
+    ["denied", "The host/user declined the edit. Review the proposal and request apply again only if you still want it."],
+    ["rejected", "The host rejected the edit by policy or validation. Ask for a smaller/safe proposal or regenerate the edit."],
+    ["failed", "The host failed while applying. The file may have changed; ask for an updated proposal or retry after checking the target range."],
+  ] satisfies Array<["applied" | "denied" | "rejected" | "failed", string]>)(
+    "renders per-status repair guidance with the host apply result for %s",
+    async (status, guidance) => {
+      const postMessage = vi.fn();
+      window.acquireVsCodeApi = () => ({ postMessage });
+      const proposal = safeEditProposalPayload();
+      mockRuntimeResponses({
+        ...readyRuntimeOptions(),
+        chats: [chatSummary("chat-001", "Repair guidance chat", 1)],
+        chatThreads: { "chat-001": chatThread("chat-001", "Repair guidance chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+      });
+      renderApp();
+      await flushAsync();
+      await flushAsync();
+
+      await act(async () => {
+        findButton("Request host apply after review").click();
+      });
+      const requestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
+      expect(requestId).toMatch(/^gui-edit-proposal-apply-\d+$/);
+
+      const hostResultMessage = `Host result ${status} should be shown alongside the static repair hint.`;
+      await dispatchHostApplyResult(requestId, {
+        status,
+        message: hostResultMessage,
+        cloudRequired: false,
+        appliedEditCount: status === "applied" ? 1 : 0,
+        affectedFiles: status === "applied" ? ["src/example.ts"] : [],
+      });
+
+      const text = container?.textContent ?? "";
+      expect(text).toContain(`Host apply result: ${status}`);
+      expect(text).toContain(guidance);
+      expect(container?.querySelector(".apply-result-card .subtle[data-testid='apply-result-guidance']")).not.toBeNull();
+      expect(text).toContain(hostResultMessage);
+      // The GUI only renders the sanitized host result alongside the bounded/static repair hint;
+      // it never claims to have applied, retried, or edited files itself.
+      expect(text).not.toContain("Authorization Bearer");
+    },
+  );
+
+  it("drops host apply results whose status is not in the bounded repair-guidance set", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Unsafe status chat", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Unsafe status chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    // Unknown statuses are rejected by the bridge payload validator before reaching the panel,
+    // so no result card or repair guidance is rendered for them.
+    await dispatchHostApplyResult(undefined, {
+      status: "exploded",
+      message: "Should not render at all.",
+      cloudRequired: false,
+      appliedEditCount: 0,
+      affectedFiles: [],
+    });
+    expect(container?.querySelector(".apply-result-card")).toBeNull();
+    expect(container?.textContent ?? "").not.toContain("Should not render at all.");
+    expect(container?.textContent ?? "").not.toContain("Edits were applied by the host after confirmation.");
+    expect(container?.textContent ?? "").not.toContain("The host failed while applying.");
+  });
 });
 
 async function dispatchHostReady(payload: { runtimeUrl: string; sessionToken?: string }) {
