@@ -393,11 +393,16 @@ export function isApplyWorkspaceEditPayload(value: unknown): value is ApplyWorks
   if (!Array.isArray(value.edits) || value.edits.length < 1 || value.edits.length > 4) {
     return false;
   }
+  const seenWorkspaceRelativePaths = new Set<string>();
   let totalReplacementText = 0;
   for (const fileEdit of value.edits) {
     if (!isFileTextEdits(fileEdit)) {
       return false;
     }
+    if (seenWorkspaceRelativePaths.has(fileEdit.workspaceRelativePath)) {
+      return false;
+    }
+    seenWorkspaceRelativePaths.add(fileEdit.workspaceRelativePath);
     for (const replacement of fileEdit.textReplacements) {
       totalReplacementText += replacement.replacementText.length;
       if (totalReplacementText > 32768) {

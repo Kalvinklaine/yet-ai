@@ -192,6 +192,7 @@
       "type": "object",
       "additionalProperties": false,
       "maxTotalReplacementText": 32768,
+      "uniquePathsInEdits": true,
       "required": [
         "requiresUserConfirmation",
         "summary",

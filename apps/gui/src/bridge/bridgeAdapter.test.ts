@@ -398,6 +398,97 @@ describe("bridgeAdapter", () => {
     expect(isApplyWorkspaceEditPayload(message.payload)).toBe(true);
   });
 
+  it("rejects apply workspace edit proposals with duplicate file groups", () => {
+    const message = {
+      version: bridgeVersion,
+      type: "gui.applyWorkspaceEditRequest",
+      requestId: "req-apply-edit-duplicate-files-001",
+      payload: {
+        requiresUserConfirmation: true,
+        summary: "Replace two ranges in the same file twice.",
+        cloudRequired: false,
+        edits: [
+          {
+            workspaceRelativePath: "src/example.ts",
+            textReplacements: [
+              {
+                range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } },
+                replacementText: "x",
+              },
+            ],
+          },
+          {
+            workspaceRelativePath: "src/another.ts",
+            textReplacements: [
+              {
+                range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } },
+                replacementText: "y",
+              },
+            ],
+          },
+          {
+            workspaceRelativePath: "src/example.ts",
+            textReplacements: [
+              {
+                range: { start: { line: 2, character: 0 }, end: { line: 2, character: 1 } },
+                replacementText: "z",
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    expect(isGuiMessage(message)).toBe(false);
+    expect(isApplyWorkspaceEditPayload(message.payload)).toBe(false);
+  });
+
+  it("does not post apply workspace edit requests with duplicate file groups through the adapter", () => {
+    const logs: string[] = [];
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    postMessage.mockClear();
+
+    const message = {
+      version: bridgeVersion,
+      type: "gui.applyWorkspaceEditRequest",
+      requestId: "req-apply-edit-duplicate-files-post-001",
+      payload: {
+        requiresUserConfirmation: true,
+        summary: "Replace two ranges in the same file twice.",
+        cloudRequired: false,
+        edits: [
+          {
+            workspaceRelativePath: "src/example.ts",
+            textReplacements: [
+              {
+                range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } },
+                replacementText: "x",
+              },
+            ],
+          },
+          {
+            workspaceRelativePath: "src/example.ts",
+            textReplacements: [
+              {
+                range: { start: { line: 2, character: 0 }, end: { line: 2, character: 1 } },
+                replacementText: "y",
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    adapter.post(message as never);
+
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(logs.filter((entry) => entry === "Rejected invalid GUI bridge message")).toHaveLength(1);
+    adapter.dispose();
+  });
+
   it("rejects missing, undefined, or non-canonical apply workspace edit paths", () => {
     const missingPathMessage = applyEditMessage({ requestId: "req-apply-edit-missing-path-001", summary: "Missing path." });
     delete (missingPathMessage.payload.edits[0] as Record<string, unknown>).workspaceRelativePath;

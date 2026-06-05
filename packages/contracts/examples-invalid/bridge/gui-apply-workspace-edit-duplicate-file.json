@@ -1,0 +1,66 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.applyWorkspaceEditRequest",
+  "requestId": "req-apply-edit-invalid-duplicate-file-001",
+  "payload": {
+    "requiresUserConfirmation": true,
+    "summary": "Example safe edit proposal with a duplicate file group.",
+    "cloudRequired": false,
+    "edits": [
+      {
+        "workspaceRelativePath": "src/example.ts",
+        "textReplacements": [
+          {
+            "range": {
+              "start": {
+                "line": 4,
+                "character": 2
+              },
+              "end": {
+                "line": 4,
+                "character": 18
+              }
+            },
+            "replacementText": "const label = \"Yet AI\";"
+          }
+        ]
+      },
+      {
+        "workspaceRelativePath": "src/example.ts",
+        "textReplacements": [
+          {
+            "range": {
+              "start": {
+                "line": 9,
+                "character": 0
+              },
+              "end": {
+                "line": 9,
+                "character": 12
+              }
+            },
+            "replacementText": "const next = \"Yet AI\";"
+          }
+        ]
+      },
+      {
+        "workspaceRelativePath": "src/another.ts",
+        "textReplacements": [
+          {
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 4
+              }
+            },
+            "replacementText": "const another = \"Yet AI\";"
+          }
+        ]
+      }
+    ]
+  }
+}

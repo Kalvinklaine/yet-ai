@@ -229,6 +229,7 @@ const invalidMappings = [
     "gui-ide-action-request-oversized-path.json",
     "gui-ide-action-request-secret-like-path.json",
     "gui-apply-workspace-edit-missing-confirmation.json",
+    "gui-apply-workspace-edit-duplicate-file.json",
     "gui-apply-workspace-edit-absolute-path.json",
     "gui-apply-workspace-edit-traversal-path.json",
     "gui-apply-workspace-edit-backslash-path.json",
@@ -934,6 +935,33 @@ ajv.addKeyword({
           }
         }
       }
+    }
+    return true;
+  }
+});
+
+ajv.addKeyword({
+  keyword: "uniquePathsInEdits",
+  type: "object",
+  schemaType: "boolean",
+  errors: false,
+  validate(required, payload) {
+    if (!required) {
+      return true;
+    }
+    if (!Array.isArray(payload?.edits)) {
+      return true;
+    }
+    const seen = new Set();
+    for (const fileEdit of payload.edits) {
+      const path = fileEdit?.workspaceRelativePath;
+      if (typeof path !== "string") {
+        return true;
+      }
+      if (seen.has(path)) {
+        return false;
+      }
+      seen.add(path);
     }
     return true;
   }

@@ -4381,7 +4381,9 @@ describe("edit proposal preview", () => {
     expect(findButton("Request host apply after review").disabled).toBe(false);
   });
 
-  it("counts unique affected files when duplicate edit groups target the same file", async () => {
+  it("rejects duplicate edit proposal file groups before rendering or posting", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
     const proposal = {
       ...safeEditProposalPayload(),
       edits: [
@@ -4400,10 +4402,6 @@ describe("edit proposal preview", () => {
             {
               range: { start: { line: 9, character: 0 }, end: { line: 9, character: 12 } },
               replacementText: "const next = \"Yet AI\";",
-            },
-            {
-              range: { start: { line: 12, character: 0 }, end: { line: 12, character: 8 } },
-              replacementText: "const other = \"Yet AI\";",
             },
           ],
         },
@@ -4429,11 +4427,10 @@ describe("edit proposal preview", () => {
     await flushAsync();
 
     const text = container?.textContent ?? "";
-    expect(text).toContain("Confirmed edit proposal");
-    expect(container?.querySelector("[data-testid='edit-proposal-unique-files']")?.textContent ?? "").toMatch(/^Files: 2/);
-    expect(container?.querySelector("[data-testid='edit-proposal-unique-files']")?.textContent ?? "").toContain("1 duplicate group merged");
-    expect(container?.querySelector("[data-testid='edit-proposal-edit-count']")?.textContent ?? "").toBe("Text edits: 4");
-    expect(text).toContain("This MVP can apply workspace edits only from VS Code");
+    expect(text).not.toContain("Confirmed edit proposal");
+    expect(text).not.toContain("Request host apply after review");
+    expect(container?.querySelector("[data-testid='edit-proposal-unique-files']")).toBeNull();
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
 
   it("does not transfer edit-proposal inspect state to a changed proposal JSON", async () => {
