@@ -2,7 +2,7 @@ import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useSta
 import { createBridgeAdapter, isApplyWorkspaceEditPayload, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type WorkspaceEditRange } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { IdeActionProposalPanel, IdeActionsPanel, type IdeActionAttemptState } from "./components/IdeActionsPanel";
-import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
+import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
 import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
@@ -2084,7 +2084,7 @@ function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, context,
 
 function ChatBubble({ message, activeIdeActionProposal }: { message: ChatViewMessage; activeIdeActionProposal: IdeActionProposalState | null }) {
   const [inspectProposalJson, setInspectProposalJson] = useState(false);
-  const proposal = message.role === "assistant" && message.status === "complete" ? parseAssistantIdeActionProposalContent(message.content) : null;
+  const proposal = message.role === "assistant" && isCompleteAssistantIdeActionProposalStatus(message.status) ? parseAssistantIdeActionProposalContent(message.content) : null;
   const proposalJson = proposal ? JSON.stringify(proposal, null, 2) : null;
   const proposalPayloadKey = proposal ? ideActionProposalPayloadKey(proposal) : null;
   const proposalLabel = proposal ? sanitizeDisplayText(describeIdeActionProposal(proposal)) : null;
