@@ -476,9 +476,20 @@ export function isIdeActionResultPayload(value: unknown): value is IdeActionResu
     safeRelativePath(value.workspaceRelativePath) &&
     (value.range === undefined || isEditRange(value.range)) &&
     isOptionalIdeActionContext(value.context) &&
+    hasAllowedResultMetadata(value) &&
     hasRequiredSuccessfulActionMetadata(value) &&
     hasRequiredSuccessfulResultMetadata(value)
   );
+}
+
+function hasAllowedResultMetadata(value: Record<string, unknown>): boolean {
+  if (value.action === "getContextSnapshot") {
+    return value.workspaceRelativePath === undefined && value.range === undefined;
+  }
+  if (value.action === "openWorkspaceFile" || value.action === "revealWorkspaceRange") {
+    return value.context === undefined;
+  }
+  return true;
 }
 
 function hasRequiredSuccessfulResultMetadata(value: Record<string, unknown>): boolean {

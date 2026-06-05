@@ -370,6 +370,44 @@
         {
           "if": {
             "properties": {
+              "action": {
+                "const": "getContextSnapshot"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "properties": {
+              "workspaceRelativePath": false,
+              "range": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "enum": [
+                  "openWorkspaceFile",
+                  "revealWorkspaceRange"
+                ]
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "properties": {
+              "context": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
               "status": {
                 "const": "succeeded"
               }

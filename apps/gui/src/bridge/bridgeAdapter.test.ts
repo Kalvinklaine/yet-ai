@@ -47,6 +47,9 @@ import hostIdeActionProgressSucceededOpenWorkspaceFileMessage from "../../../../
 import hostIdeActionResultSucceededOpenWorkspaceFileMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-succeeded-open-workspace-file.json";
 import hostIdeActionProgressSucceededRevealWorkspaceRangeMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-progress-succeeded-reveal-workspace-range.json";
 import hostIdeActionResultSucceededRevealWorkspaceRangeMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-succeeded-reveal-workspace-range.json";
+import hostIdeActionResultFailedOpenWithContextMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-failed-open-with-context.json";
+import hostIdeActionResultRejectedRevealWithContextMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-rejected-reveal-with-context.json";
+import hostIdeActionResultUnavailableContextWithPathRangeMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-unavailable-context-with-path-range.json";
 
 const bridgeVersion = "2026-05-15";
 const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
@@ -771,6 +774,28 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-12", payload: { status: "succeeded", message: "Opened.", cloudRequired: false, action: "openWorkspaceFile", workspaceRelativePath: "config/secret.env" } })).toBe(false);
   });
 
+  it("rejects forbidden IDE action result metadata on non-success statuses", () => {
+    const context = { source: "vscode", hasActiveEditor: true, workspaceFolderCount: 1 };
+    const range = { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } };
+
+    const invalidMessages = [
+      hostIdeActionResultFailedOpenWithContextMessage,
+      hostIdeActionResultRejectedRevealWithContextMessage,
+      hostIdeActionResultUnavailableContextWithPathRangeMessage,
+      { version: bridgeVersion, type: "host.ideActionResult", requestId: "req-open-rejected-context", payload: { status: "rejected", message: "Open rejected.", cloudRequired: false, action: "openWorkspaceFile", context } },
+      { version: bridgeVersion, type: "host.ideActionResult", requestId: "req-reveal-failed-context", payload: { status: "failed", message: "Reveal failed.", cloudRequired: false, action: "revealWorkspaceRange", context } },
+      { version: bridgeVersion, type: "host.ideActionResult", requestId: "req-context-failed-path", payload: { status: "failed", message: "Context failed.", cloudRequired: false, action: "getContextSnapshot", workspaceRelativePath: "src/App.tsx" } },
+      { version: bridgeVersion, type: "host.ideActionResult", requestId: "req-context-rejected-range", payload: { status: "rejected", message: "Context rejected.", cloudRequired: false, action: "getContextSnapshot", range } },
+    ];
+
+    for (const message of invalidMessages) {
+      expect(isIdeActionResultPayload(message.payload)).toBe(false);
+      expect(isHostMessage(message)).toBe(false);
+    }
+
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-context-failed-no-context", payload: { status: "failed", message: "Context failed.", cloudRequired: false, action: "getContextSnapshot" } })).toBe(true);
+  });
+
   it("aligns successful getContextSnapshot progress and result metadata with the bridge schema", () => {
     const context = { source: "vscode", hasActiveEditor: true, workspaceFolderCount: 1 };
 
@@ -822,6 +847,9 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage(hostApplyWorkspaceEditResultKeyLikeMessage)).toBe(false);
     expect(isIdeActionResultPayload(hostIdeActionResultSucceededContextEmptyContextMessage.payload)).toBe(false);
     expect(isHostMessage(hostIdeActionResultSucceededContextEmptyContextMessage)).toBe(false);
+    expect(isHostMessage(hostIdeActionResultFailedOpenWithContextMessage)).toBe(false);
+    expect(isHostMessage(hostIdeActionResultRejectedRevealWithContextMessage)).toBe(false);
+    expect(isHostMessage(hostIdeActionResultUnavailableContextWithPathRangeMessage)).toBe(false);
 
     const logs: string[] = [];
     const messages: unknown[] = [];

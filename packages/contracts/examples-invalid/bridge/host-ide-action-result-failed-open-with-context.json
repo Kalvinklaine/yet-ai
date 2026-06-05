@@ -1,0 +1,16 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-failed-open-context",
+  "payload": {
+    "status": "failed",
+    "message": "Open workspace file failed.",
+    "cloudRequired": false,
+    "action": "openWorkspaceFile",
+    "context": {
+      "source": "vscode",
+      "hasActiveEditor": true,
+      "workspaceFolderCount": 1
+    }
+  }
+}

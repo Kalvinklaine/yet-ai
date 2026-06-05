@@ -309,6 +309,9 @@ const invalidMappings = [
     "host-ide-action-result-succeeded-open-with-context.json",
     "host-ide-action-result-succeeded-reveal-with-context.json",
     "host-ide-action-result-succeeded-reveal-missing-range.json",
+    "host-ide-action-result-failed-open-with-context.json",
+    "host-ide-action-result-rejected-reveal-with-context.json",
+    "host-ide-action-result-unavailable-context-with-path-range.json",
     "host-ide-action-result-uppercase-sk-message.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,

@@ -1,0 +1,16 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-rejected-reveal-context",
+  "payload": {
+    "status": "rejected",
+    "message": "Reveal workspace range rejected.",
+    "cloudRequired": false,
+    "action": "revealWorkspaceRange",
+    "context": {
+      "source": "vscode",
+      "hasActiveEditor": true,
+      "workspaceFolderCount": 1
+    }
+  }
+}
