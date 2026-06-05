@@ -301,6 +301,10 @@
               "supportedBridgeVersion": {
                 "type": "string",
                 "const": "2026-05-15"
+              },
+              "frameNonce": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}$"
               }
             }
           }
