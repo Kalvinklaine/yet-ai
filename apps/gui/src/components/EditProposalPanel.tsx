@@ -93,13 +93,22 @@ export type ApplyResultPreviewProps = {
   result: ApplyResultState;
 };
 
+const APPLY_RESULT_REPAIR_GUIDANCE: Readonly<Record<ApplyWorkspaceEditResultPayload["status"], string>> = Object.freeze({
+  applied: "Edits were applied by the host after confirmation.",
+  denied: "The host/user declined the edit. Review the proposal and request apply again only if you still want it.",
+  rejected: "The host rejected the edit by policy or validation. Ask for a smaller/safe proposal or regenerate the edit.",
+  failed: "The host failed while applying. The file may have changed; ask for an updated proposal or retry after checking the target range.",
+});
+
 export function ApplyResultPreview({ result }: ApplyResultPreviewProps) {
+  const guidance = APPLY_RESULT_REPAIR_GUIDANCE[result.payload.status];
   return (
     <div className={`apply-result-card ${result.payload.status}`} role="status">
       <strong>Host apply result: {sanitizeDisplayText(result.payload.status)}</strong>
       <span>{sanitizeDisplayText(result.payload.message)}</span>
       <span>Request: {sanitizeDisplayText(result.requestId)} · applied edits: {result.payload.appliedEditCount ?? 0} · cloud required: false</span>
       {result.payload.affectedFiles && result.payload.affectedFiles.length > 0 && <span>Affected files: {result.payload.affectedFiles.map((file) => sanitizeDisplayText(file)).join(", ")}</span>}
+      {guidance && <span className="subtle" data-testid="apply-result-guidance">{sanitizeDisplayText(guidance)}</span>}
     </div>
   );
 }
