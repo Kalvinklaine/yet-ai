@@ -2099,6 +2099,38 @@ describe("active editor attached context", () => {
     expect(container?.textContent ?? "").toContain("Context snapshot ready.");
   });
 
+  it("does not render old-chat IDE action progress or results after direct chat id change", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = ideActionProposal({ action: "getContextSnapshot", summary: "Check current IDE context." });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Chat A", 1), chatSummary("chat-002", "Chat B", 0)], chatThreads: {
+      "chat-001": chatThread("chat-001", "Chat A", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]),
+      "chat-002": chatThread("chat-002", "Chat B", []),
+    } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+    await act(async () => { findButton("Run read-only IDE action").click(); });
+    const requestId = postMessage.mock.calls.find(([message]) => message.type === "gui.ideActionRequest")?.[0].requestId;
+
+    await act(async () => {
+      setInputValue(chatIdInput(), "chat-002");
+      await Promise.resolve();
+    });
+    await flushAsync();
+    expect(container?.textContent ?? "").toContain("No controlled IDE action requested yet.");
+
+    await dispatchHostIdeActionProgress(requestId, { phase: "running", status: "inProgress", summary: "Old chat progress should not show.", cloudRequired: false, action: "getContextSnapshot" });
+    await dispatchHostIdeActionResult(requestId, { status: "succeeded", message: "Old chat result should not show.", cloudRequired: false, action: "getContextSnapshot", context: { source: "vscode", hasActiveEditor: true, workspaceFolderCount: 1 } });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("No controlled IDE action requested yet.");
+    expect(text).not.toContain("Old chat progress should not show.");
+    expect(text).not.toContain("Old chat result should not show.");
+    expect(text).not.toContain("Get IDE context: succeeded");
+    expect(text).not.toContain("Ignored stale IDE action");
+  });
+
   it("does not write proposal data to browser storage", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     const proposal = ideActionProposal({ action: "openWorkspaceFile", workspaceRelativePath: "src/no-storage.ts", summary: "Open no storage file." });

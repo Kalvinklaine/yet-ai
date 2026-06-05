@@ -296,7 +296,8 @@ export function App() {
   const pendingApplyRequestIdRef = useRef<string | null>(null);
   const pendingApplyProposalRequestIdRef = useRef<string | null>(null);
   const pendingIdeActionRequestIdRef = useRef<string | null>(null);
-  const completedIdeActionRequestIdsRef = useRef<Set<string>>(new Set());
+  const pendingIdeActionChatIdRef = useRef<string | null>(null);
+  const completedIdeActionRequestChatsRef = useRef<Map<string, string>>(new Map());
   const ideActionCounterRef = useRef(0);
   const attachedContextRef = useRef<typeof attachedContext>(null);
   const agentProgressAttemptRef = useRef(0);
@@ -379,6 +380,15 @@ export function App() {
     setPendingApplyRequestId(null);
   }, []);
 
+  const clearIdeActionState = useCallback(() => {
+    pendingIdeActionRequestIdRef.current = null;
+    pendingIdeActionChatIdRef.current = null;
+    ideActionProposalIdentityRef.current = null;
+    setIdeActionProposal(null);
+    setIdeActionAttempt(null);
+    setIdeActionNote(null);
+  }, []);
+
   const abortActiveStream = useCallback((timelineMessage: string, options: AbortActiveStreamOptions = {}) => {
     const { finalizeStreaming = true, addTimelineEntry = true, reportAbortErrors = true } = options;
     const activeStream = activeStreamRef.current;
@@ -431,12 +441,8 @@ export function App() {
     setIncludeAttachedContext(false);
     setAttachedContextStatus(null);
     clearEditProposalState();
-    pendingIdeActionRequestIdRef.current = null;
-    ideActionProposalIdentityRef.current = null;
-    setIdeActionProposal(null);
-    setIdeActionAttempt(null);
-    setIdeActionNote(null);
-  }, [abortActiveStream, clearEditProposalState]);
+    clearIdeActionState();
+  }, [abortActiveStream, clearEditProposalState, clearIdeActionState]);
 
   const updateRuntimeSettings = useCallback((nextSettings: RuntimeSettings) => {
     const changed = settingsRef.current.baseUrl !== nextSettings.baseUrl || settingsRef.current.token !== nextSettings.token;
@@ -495,8 +501,10 @@ export function App() {
         setApplyResult({ requestId, proposalRequestId, payload: message.payload as ApplyWorkspaceEditResultPayload });
       } else if (message.type === "host.ideActionProgress") {
         const requestId = message.requestId ?? "unknown";
-        if (requestId !== pendingIdeActionRequestIdRef.current) {
-          setIdeActionNote("Ignored stale IDE action progress.");
+        if (requestId !== pendingIdeActionRequestIdRef.current || pendingIdeActionChatIdRef.current !== chatIdRef.current) {
+          if (pendingIdeActionRequestIdRef.current && pendingIdeActionChatIdRef.current === chatIdRef.current) {
+            setIdeActionNote("Ignored stale IDE action progress.");
+          }
           return;
         }
         const payload = message.payload as IdeActionProgressPayload;
@@ -509,17 +517,23 @@ export function App() {
         } : current);
       } else if (message.type === "host.ideActionResult") {
         const requestId = message.requestId ?? "unknown";
-        if (completedIdeActionRequestIdsRef.current.has(requestId)) {
-          setIdeActionNote("Ignored duplicate IDE action result.");
+        const completedChatId = completedIdeActionRequestChatsRef.current.get(requestId);
+        if (completedChatId) {
+          if (completedChatId === chatIdRef.current) {
+            setIdeActionNote("Ignored duplicate IDE action result.");
+          }
           return;
         }
-        if (requestId !== pendingIdeActionRequestIdRef.current) {
-          setIdeActionNote("Ignored stale IDE action result.");
+        if (requestId !== pendingIdeActionRequestIdRef.current || pendingIdeActionChatIdRef.current !== chatIdRef.current) {
+          if (pendingIdeActionRequestIdRef.current && pendingIdeActionChatIdRef.current === chatIdRef.current) {
+            setIdeActionNote("Ignored stale IDE action result.");
+          }
           return;
         }
         const payload = message.payload as IdeActionResultPayload;
-        completedIdeActionRequestIdsRef.current.add(requestId);
+        completedIdeActionRequestChatsRef.current.set(requestId, chatIdRef.current);
         pendingIdeActionRequestIdRef.current = null;
+        pendingIdeActionChatIdRef.current = null;
         setIdeActionAttempt((current) => current?.requestId === requestId ? {
           ...current,
           status: payload.status,
@@ -697,6 +711,7 @@ export function App() {
       if (summaries.length > 0 && !summaries.some((summary) => summary.chatId === currentChat)) {
         const nextChatId = summaries[0].chatId;
         clearEditProposalState();
+        clearIdeActionState();
         setChatInput("");
         setChatView(resetChatViewState(nextChatId));
         setChatId(nextChatId);
@@ -704,6 +719,7 @@ export function App() {
       if (summaries.length === 0 && currentChat !== "chat-001") {
         const nextChatId = "chat-001";
         clearEditProposalState();
+        clearIdeActionState();
         setChatInput("");
         setChatView(resetChatViewState(nextChatId));
         setChatId(nextChatId);
@@ -714,7 +730,7 @@ export function App() {
       setChatHistoryRevision(revision);
     }
     setChatHistoryLoading(false);
-  }, [clearEditProposalState, isCurrentRefresh]);
+  }, [clearEditProposalState, clearIdeActionState, isCurrentRefresh]);
 
   const loadChatThread = useCallback(async (targetChatId: string, targetSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
     const attempt = chatHistoryAttemptRef.current + 1;
@@ -761,12 +777,13 @@ export function App() {
       setIncludeAttachedContext(false);
       setAttachedContextStatus(null);
       clearEditProposalState();
+      clearIdeActionState();
     } else {
       setChatHistoryError(result.error);
       setChatHistoryRevision(targetRevision);
     }
     setChatHistoryLoading(false);
-  }, [abortActiveStream, clearEditProposalState, isCurrentRefresh]);
+  }, [abortActiveStream, clearEditProposalState, clearIdeActionState, isCurrentRefresh]);
 
   const selectChat = useCallback((nextChatId: string) => {
     if (nextChatId === chatIdRef.current) {
@@ -775,10 +792,11 @@ export function App() {
     abortActiveStream("SSE stopped and abort requested before switching chats");
     setChatInput("");
     clearEditProposalState();
+    clearIdeActionState();
     setChatId(nextChatId);
     setChatView(resetChatViewState(nextChatId));
     void loadChatThread(nextChatId);
-  }, [abortActiveStream, clearEditProposalState, loadChatThread]);
+  }, [abortActiveStream, clearEditProposalState, clearIdeActionState, loadChatThread]);
 
   const updateDirectChatId = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const nextChatId = event.target.value;
@@ -786,10 +804,11 @@ export function App() {
       abortActiveStream("SSE stopped and abort requested before changing chat id");
       setChatInput("");
       clearEditProposalState();
+      clearIdeActionState();
       setChatView(resetChatViewState(nextChatId));
     }
     setChatId(nextChatId);
-  }, [abortActiveStream, clearEditProposalState]);
+  }, [abortActiveStream, clearEditProposalState, clearIdeActionState]);
 
   const deleteCurrentChat = useCallback(async (targetChatId: string) => {
     const targetSettings = settingsRef.current;
@@ -822,6 +841,7 @@ export function App() {
         setIncludeAttachedContext(false);
         setAttachedContextStatus(null);
         clearEditProposalState();
+        clearIdeActionState();
       }
     } else {
       setChatHistoryError(result.error);
@@ -829,7 +849,7 @@ export function App() {
     }
     setDeletingChatId(null);
     setChatHistoryLoading(false);
-  }, [abortActiveStream, chatSummaries, clearEditProposalState, isCurrentRefresh]);
+  }, [abortActiveStream, chatSummaries, clearEditProposalState, clearIdeActionState, isCurrentRefresh]);
 
   const connect = useCallback(async () => {
     if (runtimeRefreshInFlightRef.current) {
@@ -1136,10 +1156,11 @@ export function App() {
     setIncludeAttachedContext(false);
     setAttachedContextStatus(null);
     clearEditProposalState();
+    clearIdeActionState();
     if (activeChatSummary) {
       void loadChatThread(chatId);
     }
-  }, [abortActiveStream, activeChatSummary?.chatId, chatId, clearEditProposalState, loadChatThread]);
+  }, [abortActiveStream, activeChatSummary?.chatId, chatId, clearEditProposalState, clearIdeActionState, loadChatThread]);
 
   useEffect(() => () => {
     abortActiveStream("SSE stopped and abort requested on cleanup", { finalizeStreaming: false, addTimelineEntry: false, reportAbortErrors: false });
@@ -1237,6 +1258,7 @@ export function App() {
     const requestId = `${requestIdPrefix}-${ideActionCounterRef.current}`;
     const label = ideActionLabel(payload.action);
     pendingIdeActionRequestIdRef.current = requestId;
+    pendingIdeActionChatIdRef.current = chatIdRef.current;
     setIdeActionNote(null);
     setIdeActionAttempt({
       requestId,
