@@ -18,6 +18,7 @@
       "type": "string",
       "enum": [
         "gui.ready",
+        "gui.unloaded",
         "gui.ideActionRequest",
         "gui.applyWorkspaceEditRequest"
       ]
@@ -302,6 +303,34 @@
                 "const": "2026-05-15"
               }
             }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "gui.unloaded"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "not": {
+          "properties": {
+            "requestId": true
+          },
+          "required": [
+            "requestId"
+          ]
+        },
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false
           }
         }
       }
