@@ -522,9 +522,10 @@ function isIdeActionContext(value: unknown): boolean {
   if (!isPlainObject(value) || !hasOnlyKeys(value, ["source", "hasActiveEditor", "workspaceFolderCount"])) {
     return false;
   }
+  const workspaceFolderCount = value.workspaceFolderCount;
   return value.source === "vscode" &&
     typeof value.hasActiveEditor === "boolean" &&
-    Number.isInteger(value.workspaceFolderCount) && (value.workspaceFolderCount as number) >= 0 && (value.workspaceFolderCount as number) <= 100;
+    typeof workspaceFolderCount === "number" && Number.isInteger(workspaceFolderCount) && workspaceFolderCount >= 0 && workspaceFolderCount <= 100;
 }
 
 function isFileTextEdits(value: unknown): value is WorkspaceFileTextEdits {
