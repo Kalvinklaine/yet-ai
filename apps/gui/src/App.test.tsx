@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { App } from "./App";
+import { App, completedIdeActionRequestChatsLimit, rememberCompletedIdeActionRequest } from "./App";
 import type { ProviderAuthResponse, ProviderAuthStatus } from "./services/providerAuthClient";
 
 const bridgeVersion = "2026-05-15";
@@ -2214,6 +2214,24 @@ describe("active editor attached context", () => {
     expect(container?.textContent ?? "").toContain("Context snapshot ready.");
   });
 
+  it("notes duplicate result for the current completed IDE action request without re-rendering payload", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    await act(async () => { findButton("Get IDE context").click(); });
+    await dispatchHostIdeActionResult("gui-ide-action-1", { status: "succeeded", message: "First context result rendered.", cloudRequired: false, action: "getContextSnapshot", context: { source: "vscode", hasActiveEditor: true, workspaceFolderCount: 1 } });
+    await dispatchHostIdeActionResult("gui-ide-action-1", { status: "failed", message: "Duplicate result should not render.", cloudRequired: false, action: "getContextSnapshot", context: { source: "vscode", hasActiveEditor: true, workspaceFolderCount: 1 } });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Get IDE context: succeeded");
+    expect(text).toContain("First context result rendered.");
+    expect(text).toContain("Ignored duplicate IDE action result.");
+    expect(text).not.toContain("Duplicate result should not render.");
+  });
+
   it("does not render old-chat IDE action progress or results after direct chat id change", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
@@ -2246,6 +2264,40 @@ describe("active editor attached context", () => {
     expect(text).not.toContain("Ignored stale IDE action");
   });
 
+  it("does not render old-chat duplicate IDE action results after direct chat id change", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Chat A", 0), chatSummary("chat-002", "Chat B", 0)], chatThreads: { "chat-001": chatThread("chat-001", "Chat A", []), "chat-002": chatThread("chat-002", "Chat B", []) } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    await act(async () => { findButton("Get IDE context").click(); });
+    await dispatchHostIdeActionResult("gui-ide-action-1", { status: "succeeded", message: "Original chat result rendered.", cloudRequired: false, action: "getContextSnapshot", context: { source: "vscode", hasActiveEditor: true, workspaceFolderCount: 1 } });
+    await act(async () => {
+      setInputValue(chatIdInput(), "chat-002");
+      await Promise.resolve();
+    });
+    await flushAsync();
+    await dispatchHostIdeActionResult("gui-ide-action-1", { status: "failed", message: "Old chat duplicate should not render.", cloudRequired: false, action: "getContextSnapshot", context: { source: "vscode", hasActiveEditor: true, workspaceFolderCount: 1 } });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("No controlled IDE action requested yet.");
+    expect(text).not.toContain("Old chat duplicate should not render.");
+    expect(text).not.toContain("Ignored duplicate IDE action result.");
+  });
+
+  it("bounds completed IDE action request tracking to a fixed small limit", () => {
+    const completed = new Map<string, string>();
+    for (let index = 0; index < completedIdeActionRequestChatsLimit + 5; index += 1) {
+      rememberCompletedIdeActionRequest(completed, `request-${index}`, "chat-001");
+    }
+
+    expect(completed.size).toBe(completedIdeActionRequestChatsLimit);
+    expect(completed.has("request-0")).toBe(false);
+    expect(completed.has(`request-${completedIdeActionRequestChatsLimit + 4}`)).toBe(true);
+  });
+
   it("does not write proposal data to browser storage", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     const proposal = ideActionProposal({ action: "openWorkspaceFile", workspaceRelativePath: "src/no-storage.ts", summary: "Open no storage file." });
@@ -2259,8 +2311,10 @@ describe("active editor attached context", () => {
     expect(browserStorageDump()).not.toContain("src/no-storage.ts");
   });
 
-  it("rejects malicious IDE action results before App renders unsafe payload", async () => {
+  it("rejects secret-like IDE action results before App renders unsafe payload or stores it", async () => {
     const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const rawSecret = "access_token=" + "i".repeat(64);
     window.acquireVsCodeApi = () => ({ postMessage });
     mockRuntimeResponses();
     renderApp();
@@ -2269,11 +2323,15 @@ describe("active editor attached context", () => {
     await act(async () => {
       findButton("Get IDE context").click();
     });
-    await dispatchHostIdeActionResult("gui-ide-action-1", { status: "succeeded", message: "Opened /Users/alice/private/file.ts", cloudRequired: false, action: "getContextSnapshot", privatePath: "/Users/alice/private/file.ts" });
+    await dispatchHostIdeActionResult("gui-ide-action-1", { status: "succeeded", message: `Opened /Users/alice/private/file.ts ${rawSecret}`, cloudRequired: false, action: "getContextSnapshot", privatePath: "/Users/alice/private/file.ts", token: rawSecret });
 
     expect(container?.textContent).toContain("Get IDE context: pending");
     expect(container?.textContent).toContain("Rejected invalid host bridge message");
     expect(container?.textContent).not.toContain("/Users/alice");
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("i".repeat(64));
+    expect(localSetItem.mock.calls.some((call) => call.some((value) => String(value).includes(rawSecret)))).toBe(false);
+    expect(browserStorageDump()).not.toContain(rawSecret);
   });
 
   it("renders valid host.contextSnapshot preview with default include toggle", async () => {
