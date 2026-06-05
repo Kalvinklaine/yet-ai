@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { App, completedIdeActionRequestChatsLimit, rememberCompletedIdeActionRequest } from "./App";
+import { App, completedApplyRequestChatsLimit, completedIdeActionRequestChatsLimit, rememberCompletedApplyRequest, rememberCompletedIdeActionRequest } from "./App";
 import type { ProviderAuthResponse, ProviderAuthStatus } from "./services/providerAuthClient";
 
 const bridgeVersion = "2026-05-15";
@@ -4750,6 +4750,161 @@ describe("edit proposal preview", () => {
       affectedFiles: ["src/example.ts"],
     });
     expect(container?.textContent ?? "").not.toContain("Stale result after chat switch.");
+  });
+
+  it("bounds completed host apply request tracking to a fixed small limit", () => {
+    const completed = new Map<string, string>();
+    for (let index = 0; index < completedApplyRequestChatsLimit + 5; index += 1) {
+      rememberCompletedApplyRequest(completed, `request-${index}`, "chat-001");
+    }
+
+    expect(completed.size).toBe(completedApplyRequestChatsLimit);
+    expect(completed.has("request-0")).toBe(false);
+    expect(completed.has(`request-${completedApplyRequestChatsLimit + 4}`)).toBe(true);
+  });
+
+  it("does not overwrite a rendered host apply result when a duplicate result arrives for the same chat", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Confirmed edit apply chat", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Confirmed edit apply chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Request host apply after review").click();
+    });
+    const requestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
+    expect(requestId).toMatch(/^gui-edit-proposal-apply-\d+$/);
+
+    await dispatchHostApplyResult(requestId, {
+      status: "applied",
+      message: "First host apply result rendered.",
+      cloudRequired: false,
+      appliedEditCount: 1,
+      affectedFiles: ["src/example.ts"],
+    });
+    expect(container?.textContent ?? "").toContain("First host apply result rendered.");
+
+    await dispatchHostApplyResult(requestId, {
+      status: "failed",
+      message: "Duplicate host apply result should not render.",
+      cloudRequired: false,
+      appliedEditCount: 0,
+      affectedFiles: [],
+    });
+    const text = container?.textContent ?? "";
+    expect(text).toContain("First host apply result rendered.");
+    expect(text).toContain("Ignored duplicate host apply result.");
+    expect(text).not.toContain("Duplicate host apply result should not render.");
+  });
+
+  it("ignores stale host apply result while a different apply request is pending in the same chat", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Stale apply chat", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Stale apply chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    await dispatchHostApplyResult("gui-edit-proposal-999", {
+      status: "failed",
+      message: "Unsolicited host apply result.",
+      cloudRequired: false,
+      appliedEditCount: 0,
+      affectedFiles: [],
+    });
+    expect(container?.textContent ?? "").not.toContain("Unsolicited host apply result.");
+    expect(container?.textContent ?? "").not.toContain("Ignored stale host apply result.");
+
+    await act(async () => {
+      findButton("Request host apply after review").click();
+    });
+    const pendingRequestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
+    expect(pendingRequestId).toMatch(/^gui-edit-proposal-apply-\d+$/);
+
+    await dispatchHostApplyResult("gui-edit-proposal-999", {
+      status: "failed",
+      message: "Mismatched stale host apply result should not render.",
+      cloudRequired: false,
+      appliedEditCount: 0,
+      affectedFiles: [],
+    });
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Ignored stale host apply result.");
+    expect(text).not.toContain("Mismatched stale host apply result should not render.");
+    expect(findButton("Host apply pending…").disabled).toBe(true);
+
+    await dispatchHostApplyResult(pendingRequestId, {
+      status: "applied",
+      message: "Pending apply result displayed.",
+      cloudRequired: false,
+      appliedEditCount: 1,
+      affectedFiles: ["src/example.ts"],
+    });
+    expect(container?.textContent ?? "").toContain("Pending apply result displayed.");
+    expect(container?.textContent ?? "").not.toContain("Ignored stale host apply result.");
+  });
+
+  it("does not render an old-chat host apply result or a duplicate for a previous chat", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Original chat", 1), chatSummary("chat-002", "Switched chat", 0)],
+      chatThreads: {
+        "chat-001": chatThread("chat-001", "Original chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]),
+        "chat-002": chatThread("chat-002", "Switched chat", []),
+      },
+    });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Request host apply after review").click();
+    });
+    const requestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
+    expect(requestId).toMatch(/^gui-edit-proposal-apply-\d+$/);
+
+    await dispatchHostApplyResult(requestId, {
+      status: "applied",
+      message: "Original chat apply result rendered.",
+      cloudRequired: false,
+      appliedEditCount: 1,
+      affectedFiles: ["src/example.ts"],
+    });
+    expect(container?.textContent ?? "").toContain("Original chat apply result rendered.");
+
+    await act(async () => {
+      setInputValue(chatIdInput(), "chat-002");
+      await Promise.resolve();
+    });
+    await flushAsync();
+    expect(container?.textContent ?? "").not.toContain("Host apply result");
+
+    await dispatchHostApplyResult(requestId, {
+      status: "applied",
+      message: "Old chat duplicate apply result should not render.",
+      cloudRequired: false,
+      appliedEditCount: 1,
+      affectedFiles: ["src/example.ts"],
+    });
+    const text = container?.textContent ?? "";
+    expect(text).not.toContain("Old chat duplicate apply result should not render.");
+    expect(text).not.toContain("Ignored duplicate host apply result.");
+    expect(text).not.toContain("Ignored stale host apply result.");
   });
 });
 

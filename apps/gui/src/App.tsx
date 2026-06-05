@@ -15,6 +15,9 @@ const productName = productIdentity.displayName;
 const agentProgressSnapshotDisplayLimit = 20;
 const agentProgressRecentEventDisplayLimit = 12;
 export const completedIdeActionRequestChatsLimit = 64;
+export const completedApplyRequestChatsLimit = 64;
+const ignoredDuplicateApplyResultNote = sanitizeDisplayText("Ignored duplicate host apply result.");
+const ignoredStaleApplyResultNote = sanitizeDisplayText("Ignored stale host apply result.");
 
 const providerAuthStatusCopy: Record<ProviderAuthStatus, string> = {
   not_configured: "No account login is configured yet. Use Login with OpenAI when available or the API key fallback.",
@@ -263,6 +266,7 @@ export function App() {
   const [editProposal, setEditProposal] = useState<EditProposalState | null>(null);
   const [applyResult, setApplyResult] = useState<ApplyResultState | null>(null);
   const [pendingApplyRequestId, setPendingApplyRequestId] = useState<string | null>(null);
+  const [applyNote, setApplyNote] = useState<string | null>(null);
   const [ideActionAttempt, setIdeActionAttempt] = useState<IdeActionAttemptState | null>(null);
   const [ideActionNote, setIdeActionNote] = useState<string | null>(null);
   const [ideActionProposal, setIdeActionProposal] = useState<IdeActionProposalState | null>(null);
@@ -278,6 +282,7 @@ export function App() {
   const pendingIdeActionRequestIdRef = useRef<string | null>(null);
   const pendingIdeActionChatIdRef = useRef<string | null>(null);
   const completedIdeActionRequestChatsRef = useRef<Map<string, string>>(new Map());
+  const completedApplyRequestChatsRef = useRef<Map<string, string>>(new Map());
   const ideActionCounterRef = useRef(0);
   const attachedContextRef = useRef<typeof attachedContext>(null);
   const agentProgressAttemptRef = useRef(0);
@@ -356,8 +361,10 @@ export function App() {
     editProposalIdentityRef.current = null;
     pendingApplyRequestIdRef.current = null;
     pendingApplyProposalRequestIdRef.current = null;
+    completedApplyRequestChatsRef.current.clear();
     setEditProposal(null);
     setApplyResult(null);
+    setApplyNote(null);
     setPendingApplyRequestId(null);
   }, []);
 
@@ -483,13 +490,25 @@ export function App() {
         setAttachedContextStatus(null);
       } else if (message.type === "host.applyWorkspaceEditResult") {
         const requestId = message.requestId ?? "unknown";
+        const completedChatId = completedApplyRequestChatsRef.current.get(requestId);
+        if (completedChatId) {
+          if (completedChatId === chatIdRef.current) {
+            setApplyNote(ignoredDuplicateApplyResultNote);
+          }
+          return;
+        }
         if (requestId !== pendingApplyRequestIdRef.current) {
+          if (pendingApplyRequestIdRef.current && pendingApplyRequestIdRef.current !== requestId) {
+            setApplyNote(ignoredStaleApplyResultNote);
+          }
           return;
         }
         const proposalRequestId = pendingApplyProposalRequestIdRef.current;
+        rememberCompletedApplyRequest(completedApplyRequestChatsRef.current, requestId, chatIdRef.current);
         pendingApplyRequestIdRef.current = null;
         pendingApplyProposalRequestIdRef.current = null;
         setPendingApplyRequestId(null);
+        setApplyNote(null);
         setApplyResult({ requestId, proposalRequestId, payload: message.payload as ApplyWorkspaceEditResultPayload });
       } else if (message.type === "host.ideActionProgress") {
         const requestId = message.requestId ?? "unknown";
@@ -1218,6 +1237,7 @@ export function App() {
     pendingApplyRequestIdRef.current = null;
     pendingApplyProposalRequestIdRef.current = null;
     setPendingApplyRequestId(null);
+    setApplyNote("Cleared pending apply state in the GUI only. No host-side cancellation was requested.");
     addTimeline(`Edit proposal pending apply cleared ${requestId}`);
   }, [addTimeline]);
 
@@ -1235,6 +1255,7 @@ export function App() {
     pendingApplyProposalRequestIdRef.current = editProposal.requestId;
     setPendingApplyRequestId(applyRequestId);
     setApplyResult(null);
+    setApplyNote(null);
     bridgeAdapterRef.current?.post({
       version: "2026-05-15",
       type: "gui.applyWorkspaceEditRequest",
@@ -1553,7 +1574,7 @@ export function App() {
               {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect()} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeIdeActionProposal={activeIdeActionProposal} />)}
               {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
             </div>
-            <EditProposalPanel proposal={activeEditProposal} result={activeEditProposal ? applyResult : null} host={bridgeHost} pendingRequestId={pendingApplyRequestId} onApply={submitEditProposal} onCancelPending={cancelPendingEditProposalApply} />
+            <EditProposalPanel proposal={activeEditProposal} result={activeEditProposal ? applyResult : null} host={bridgeHost} pendingRequestId={pendingApplyRequestId} note={applyNote} onApply={submitEditProposal} onCancelPending={cancelPendingEditProposalApply} />
             <IdeActionProposalPanel proposal={activeIdeActionProposal} host={bridgeHost} pending={pendingIdeActionRequestIdRef.current !== null} onRun={(payload) => requestIdeAction(payload, "gui-ide-proposal-action")} />
             <IdeActionsPanel host={bridgeHost} attempt={ideActionAttempt} note={ideActionNote} workspaceRelativePath={safeActiveWorkspacePath} range={safeActiveRange} onGetContext={() => requestIdeAction({ action: "getContextSnapshot" })} onOpenFile={(workspaceRelativePath) => requestIdeAction({ action: "openWorkspaceFile", workspaceRelativePath })} onRevealRange={(workspaceRelativePath, range) => requestIdeAction({ action: "revealWorkspaceRange", workspaceRelativePath, range })} onClearPendingIdeAction={clearPendingIdeActionState} />
             <form className="stack chat-composer" onSubmit={(event) => void submitChat(event)}>
@@ -1992,6 +2013,25 @@ export function rememberCompletedIdeActionRequest(completedRequests: Map<string,
   }
 }
 
+export function rememberCompletedApplyRequest(completedRequests: Map<string, string>, requestId: string, chatId: string, limit = completedApplyRequestChatsLimit) {
+  if (limit <= 0) {
+    completedRequests.clear();
+    return;
+  }
+  if (completedRequests.has(requestId)) {
+    completedRequests.delete(requestId);
+  }
+  completedRequests.set(requestId, chatId);
+  while (completedRequests.size > limit) {
+    const oldestRequestId = completedRequests.keys().next().value;
+    if (typeof oldestRequestId !== "string") {
+      completedRequests.clear();
+      return;
+    }
+    completedRequests.delete(oldestRequestId);
+  }
+}
+
 function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, context, hasLocalConversations, onProviderSetup, onRefreshRuntime }: { runtimeConnected: boolean; canSendChat: boolean; providerReady: boolean; context: HostContextSnapshotPayload | null; hasLocalConversations: boolean; onProviderSetup: () => void; onRefreshRuntime: () => void }) {
   if (!runtimeConnected) {
     return (
@@ -2056,8 +2096,8 @@ function ChatBubble({ message, activeIdeActionProposal }: { message: ChatViewMes
   );
 }
 
-function EditProposalPanel({ proposal, result, host, pendingRequestId, onApply, onCancelPending }: { proposal: EditProposalState | null; result: ApplyResultState | null; host: BridgeHost; pendingRequestId: string | null; onApply: () => void; onCancelPending: () => void }) {
-  if (!proposal && !result) {
+function EditProposalPanel({ proposal, result, host, pendingRequestId, note, onApply, onCancelPending }: { proposal: EditProposalState | null; result: ApplyResultState | null; host: BridgeHost; pendingRequestId: string | null; note: string | null; onApply: () => void; onCancelPending: () => void }) {
+  if (!proposal && !result && !note) {
     return null;
   }
   return (
@@ -2068,6 +2108,7 @@ function EditProposalPanel({ proposal, result, host, pendingRequestId, onApply, 
       </div>
       {proposal ? <EditProposalPreview proposal={proposal} host={host} pending={pendingRequestId !== null} onApply={onApply} onCancelPending={onCancelPending} /> : <span className="subtle">No valid bounded edit proposal is available.</span>}
       {result && <ApplyResultPreview result={result} />}
+      {note && <span className="subtle" role="status">{sanitizeDisplayText(note)}</span>}
     </section>
   );
 }
