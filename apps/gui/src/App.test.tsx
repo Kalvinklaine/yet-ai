@@ -4307,6 +4307,65 @@ describe("edit proposal preview", () => {
     expect(browserStorageDump()).not.toContain("Replace one visible editor line");
   });
 
+  it("does not transfer edit-proposal inspect state to a changed proposal JSON", async () => {
+    const first = safeEditProposalPayload();
+    const second = { ...first, summary: "Different confirmed edit after first review." };
+    let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const encoder = new TextEncoder();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/v1/chats/subscribe?chat_id=")) {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            sseController = controller;
+          },
+          cancel() {},
+        });
+        return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+      }
+      return mockRuntimeResponse(input, init, {
+        ...readyRuntimeOptions(),
+        chats: [chatSummary("chat-001", "Edit proposal inspect transfer", 1)],
+        chatThreads: { "chat-001": chatThread("chat-001", "Edit proposal inspect transfer", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(first))]) },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const initialText = container?.textContent ?? "";
+    expect(initialText).not.toContain(JSON.stringify(first, null, 2));
+
+    await act(async () => {
+      findButton("Inspect proposal JSON").click();
+    });
+    expect(container?.textContent ?? "").toContain("Replace one visible editor line after user review.");
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "trigger sse for edit proposal update");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+    expect(sseController).toBeDefined();
+
+    await act(async () => {
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 0, type: "snapshot", chatId: "chat-001", payload: { messages: [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(second))] } })}\n\n`));
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    const changedText = container?.textContent ?? "";
+    expect(changedText).toContain("Different confirmed edit after first review.");
+    expect(changedText).not.toContain("Replace one visible editor line after user review.");
+    expect(changedText).not.toContain("Assistant edit proposal JSON");
+    expect(findButton("Inspect proposal JSON").disabled).toBe(false);
+  });
+
 
   it("renders JetBrains proposal preview without apply emission", async () => {
     const postIntellijMessage = vi.fn();

@@ -257,3 +257,28 @@ describe("latestEditProposalCandidateFromMessages", () => {
     expect(editProposalCandidateIdentityMatches(candidate, null)).toBe(false);
   });
 });
+
+describe("editProposalPayloadKey", () => {
+  it("treats omitted cloudRequired and explicit cloudRequired:false as the same key", () => {
+    const proposal = safeEditProposalPayload();
+    const omitted = { ...proposal };
+    delete (omitted as Partial<ApplyWorkspaceEditPayload>).cloudRequired;
+    const explicit = { ...proposal, cloudRequired: false } as ApplyWorkspaceEditPayload;
+
+    expect(editProposalPayloadKey(omitted as ApplyWorkspaceEditPayload)).toBe(editProposalPayloadKey(explicit));
+  });
+
+  it("preserves the same key for a payload that already has cloudRequired:false", () => {
+    const proposal = safeEditProposalPayload();
+    expect(editProposalPayloadKey(proposal)).toBe(editProposalPayloadKey({ ...proposal, cloudRequired: false }));
+  });
+
+  it("changes the key when a different summary is set", () => {
+    const proposal = safeEditProposalPayload();
+    const omitted = { ...proposal };
+    delete (omitted as Partial<ApplyWorkspaceEditPayload>).cloudRequired;
+    const changed = { ...omitted, summary: "Different summary." } as ApplyWorkspaceEditPayload;
+
+    expect(editProposalPayloadKey(omitted as ApplyWorkspaceEditPayload)).not.toBe(editProposalPayloadKey(changed));
+  });
+});
