@@ -755,6 +755,24 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-12", payload: { status: "succeeded", message: "Opened.", cloudRequired: false, action: "openWorkspaceFile", workspaceRelativePath: "config/secret.env" } })).toBe(false);
   });
 
+  it("aligns successful getContextSnapshot progress and result metadata with the bridge schema", () => {
+    const context = { source: "vscode", hasActiveEditor: true, workspaceFolderCount: 1 };
+
+    const progressWithoutContext = { version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-context-progress", payload: { phase: "completed", status: "succeeded", summary: "Context snapshot ready.", cloudRequired: false, action: "getContextSnapshot" } };
+    const progressWithContext = { version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-context-progress-context", payload: { ...progressWithoutContext.payload, context } };
+    const resultWithContext = { version: bridgeVersion, type: "host.ideActionResult", requestId: "req-context-result", payload: { status: "succeeded", message: "Context snapshot ready.", cloudRequired: false, action: "getContextSnapshot", context } };
+    const resultWithoutContext = { version: bridgeVersion, type: "host.ideActionResult", requestId: "req-context-result-missing", payload: { status: "succeeded", message: "Context snapshot ready.", cloudRequired: false, action: "getContextSnapshot" } };
+
+    expect(isIdeActionProgressPayload(progressWithoutContext.payload)).toBe(true);
+    expect(isHostMessage(progressWithoutContext)).toBe(true);
+    expect(isIdeActionProgressPayload(progressWithContext.payload)).toBe(false);
+    expect(isHostMessage(progressWithContext)).toBe(false);
+    expect(isIdeActionResultPayload(resultWithContext.payload)).toBe(true);
+    expect(isHostMessage(resultWithContext)).toBe(true);
+    expect(isIdeActionResultPayload(resultWithoutContext.payload)).toBe(false);
+    expect(isHostMessage(resultWithoutContext)).toBe(false);
+  });
+
   it("keeps bounded selection text as active user-selected prompt context only", () => {
     expect(isHostMessage(contextSnapshot({ payload: { kind: "active_editor", source: "vscode", selection: { text: "Bearer user-selected text stays prompt context, not action metadata" } } }))).toBe(true);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-context", payload: { status: "succeeded", message: "Done.", cloudRequired: false, action: "getContextSnapshot", context: { text: "Bearer unsafe action metadata" } } })).toBe(false);
