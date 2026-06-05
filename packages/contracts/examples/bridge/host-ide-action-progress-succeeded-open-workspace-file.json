@@ -1,0 +1,13 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionProgress",
+  "requestId": "req-ide-action-open-progress-001",
+  "payload": {
+    "phase": "completed",
+    "status": "succeeded",
+    "summary": "Opened workspace file.",
+    "cloudRequired": false,
+    "action": "openWorkspaceFile",
+    "workspaceRelativePath": "src/example.ts"
+  }
+}

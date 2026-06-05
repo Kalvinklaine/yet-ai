@@ -40,6 +40,12 @@ import guiIdeActionRevealMessage from "../../../../packages/contracts/examples/b
 import hostIdeActionProgressMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-progress.json";
 import hostIdeActionResultSucceededMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-succeeded.json";
 import hostIdeActionResultRejectedMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-rejected.json";
+import hostIdeActionProgressSucceededGetContextSnapshotMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-progress-succeeded-get-context-snapshot.json";
+import hostIdeActionResultSucceededGetContextSnapshotMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-succeeded-get-context-snapshot.json";
+import hostIdeActionProgressSucceededOpenWorkspaceFileMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-progress-succeeded-open-workspace-file.json";
+import hostIdeActionResultSucceededOpenWorkspaceFileMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-succeeded-open-workspace-file.json";
+import hostIdeActionProgressSucceededRevealWorkspaceRangeMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-progress-succeeded-reveal-workspace-range.json";
+import hostIdeActionResultSucceededRevealWorkspaceRangeMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-succeeded-reveal-workspace-range.json";
 
 const bridgeVersion = "2026-05-15";
 const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
@@ -684,6 +690,12 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage(hostIdeActionProgressMessage)).toBe(true);
     expect(isHostMessage(hostIdeActionResultSucceededMessage)).toBe(true);
     expect(isHostMessage(hostIdeActionResultRejectedMessage)).toBe(true);
+    expect(isHostMessage(hostIdeActionProgressSucceededGetContextSnapshotMessage)).toBe(true);
+    expect(isHostMessage(hostIdeActionResultSucceededGetContextSnapshotMessage)).toBe(true);
+    expect(isHostMessage(hostIdeActionProgressSucceededOpenWorkspaceFileMessage)).toBe(true);
+    expect(isHostMessage(hostIdeActionResultSucceededOpenWorkspaceFileMessage)).toBe(true);
+    expect(isHostMessage(hostIdeActionProgressSucceededRevealWorkspaceRangeMessage)).toBe(true);
+    expect(isHostMessage(hostIdeActionResultSucceededRevealWorkspaceRangeMessage)).toBe(true);
     expect(isIdeActionProgressPayload(hostIdeActionProgressMessage.payload)).toBe(true);
     expect(isIdeActionResultPayload(hostIdeActionResultSucceededMessage.payload)).toBe(true);
     expect(isGuiMessage(guiApplyWorkspaceEditRequestValidMessage)).toBe(true);
@@ -750,8 +762,11 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-8", payload: { status: "succeeded", message: "Done.", cloudRequired: false, action: "getContextSnapshot", rawPrompt: "show me" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-9", payload: { status: "succeeded", message: "Opened.", cloudRequired: false, action: "openWorkspaceFile" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-9-context", payload: { status: "succeeded", message: "Opened.", cloudRequired: false, action: "openWorkspaceFile", workspaceRelativePath: "src/App.tsx", context: { source: "vscode" } } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-9-progress-context", payload: { phase: "completed", status: "succeeded", summary: "Opened.", cloudRequired: false, action: "openWorkspaceFile", workspaceRelativePath: "src/App.tsx", context: { source: "vscode" } } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-10", payload: { phase: "completed", status: "succeeded", summary: "Revealed.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/App.tsx" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-11", payload: { phase: "completed", status: "succeeded", summary: "Revealed.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/App.tsx", range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } } } })).toBe(true);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-11-result", payload: { status: "succeeded", message: "Revealed.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/App.tsx" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-11-result-range", payload: { status: "succeeded", message: "Revealed.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/App.tsx", range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } } } })).toBe(true);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-12", payload: { status: "succeeded", message: "Opened.", cloudRequired: false, action: "openWorkspaceFile", workspaceRelativePath: "config/secret.env" } })).toBe(false);
   });
 
