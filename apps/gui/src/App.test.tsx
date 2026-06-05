@@ -2060,24 +2060,86 @@ describe("active editor attached context", () => {
     expect(findButton("IDE action pending…").disabled).toBe(true);
   });
 
-  it("clears stale read-only proposal when latest assistant message is invalid or normal", async () => {
+  it("renders historical copy and no card when a valid proposal is followed by a normal assistant message", async () => {
     const valid = ideActionProposal({ action: "getContextSnapshot", summary: "Check current IDE context." });
-    const invalid = { ...valid, requestId: "assistant-supplied" };
-    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Stale proposal", 2), chatSummary("chat-002", "Normal latest", 2)], chatThreads: {
-      "chat-001": chatThread("chat-001", "Stale proposal", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(valid)), chatMessage("chat-001", "assistant-2", "assistant", JSON.stringify(invalid))]),
-      "chat-002": chatThread("chat-002", "Normal latest", [chatMessage("chat-002", "assistant-1", "assistant", JSON.stringify(valid)), chatMessage("chat-002", "assistant-2", "assistant", "Normal assistant response.")]),
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Normal latest", 2)], chatThreads: {
+      "chat-001": chatThread("chat-001", "Normal latest", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(valid)), chatMessage("chat-001", "assistant-2", "assistant", "Normal assistant response.")]),
     } });
     renderApp();
     await flushAsync();
     await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Earlier read-only IDE action proposal: Get IDE context. Only the latest valid proposal can be run from the proposal card.");
+    expect(text).toContain("Normal assistant response.");
+    expect(text).not.toContain("Review the proposal card below");
+    expect(text).not.toContain("Read-only IDE action proposal");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Run read-only IDE action");
+  });
+
+  it("clears stale read-only proposal card when latest assistant message is invalid", async () => {
+    const valid = ideActionProposal({ action: "getContextSnapshot", summary: "Check current IDE context." });
+    const invalid = { ...valid, requestId: "assistant-supplied" };
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Stale proposal", 2)], chatThreads: {
+      "chat-001": chatThread("chat-001", "Stale proposal", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(valid)), chatMessage("chat-001", "assistant-2", "assistant", JSON.stringify(invalid))]),
+    } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+    expect(container?.textContent ?? "").toContain("Earlier read-only IDE action proposal: Get IDE context. Only the latest valid proposal can be run from the proposal card.");
     expect(container?.textContent ?? "").not.toContain("Read-only IDE action proposal");
+  });
+
+  it("resets proposal JSON inspection when the same message receives changed proposal content", async () => {
+    const first = ideActionProposal({ action: "openWorkspaceFile", workspaceRelativePath: "src/first.ts", summary: "Open first file." });
+    const second = ideActionProposal({ action: "openWorkspaceFile", workspaceRelativePath: "src/second.ts", summary: "Open second file." });
+    let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const encoder = new TextEncoder();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/v1/chats/subscribe?chat_id=")) {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            sseController = controller;
+          },
+          cancel() {},
+        });
+        return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+      }
+      return mockRuntimeResponse(input, init, { ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Changed proposal", 1)], chatThreads: { "chat-001": chatThread("chat-001", "Changed proposal", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(first))]) } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+    await flushAsync();
+    await flushAsync();
 
     await act(async () => {
-      setInputValue(chatIdInput(), "chat-002");
+      findButton("Inspect proposal JSON").click();
+    });
+    expect(container?.textContent ?? "").toContain('"workspaceRelativePath": "src/first.ts"');
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "trigger sse for proposal update");
+    });
+    await act(async () => {
+      findButton("Send").click();
       await Promise.resolve();
     });
     await flushAsync();
-    expect(container?.textContent ?? "").not.toContain("Read-only IDE action proposal");
+    expect(sseController).toBeDefined();
+
+    await act(async () => {
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 0, type: "snapshot", chatId: "chat-001", payload: { messages: [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(second))] } })}\n\n`));
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    const changedText = container?.textContent ?? "";
+    expect(changedText).toContain("Proposed a read-only IDE action: Open workspace file. Review the proposal card below. It will not run automatically.");
+    expect(changedText).toContain("Open second file.");
+    expect(changedText).not.toContain('"workspaceRelativePath": "src/first.ts"');
+    expect(changedText).not.toContain('"workspaceRelativePath": "src/second.ts"');
+    expect(findButton("Inspect proposal JSON").disabled).toBe(false);
   });
 
   it("correlates proposal action host progress and result in Agent activity", async () => {
