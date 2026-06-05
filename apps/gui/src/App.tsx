@@ -198,6 +198,24 @@ const providerPresets: ProviderPreset[] = [
   },
 ];
 
+export function generateApplyRequestSessionNonce(): string {
+  const alphabet = "0123456789abcdef";
+  let hex = "";
+  const cryptoObj = typeof globalThis !== "undefined" ? (globalThis.crypto as Crypto | undefined) : undefined;
+  if (cryptoObj && typeof cryptoObj.getRandomValues === "function") {
+    const bytes = new Uint8Array(12);
+    cryptoObj.getRandomValues(bytes);
+    for (const byte of bytes) {
+      hex += alphabet[byte & 0x0f];
+    }
+  } else {
+    for (let index = 0; index < 12; index += 1) {
+      hex += alphabet[Math.floor(Math.random() * 16)];
+    }
+  }
+  return `s${hex}`;
+}
+
 export function App() {
   const [baseUrl, setBaseUrl] = useState(defaultBaseUrl);
   const [token, setToken] = useState("");
@@ -261,6 +279,7 @@ export function App() {
   const bridgeAdapterRef = useRef<BridgeAdapter | null>(null);
   const editProposalCounterRef = useRef(0);
   const editProposalApplyCounterRef = useRef(0);
+  const editProposalApplySessionNonceRef = useRef<string>(generateApplyRequestSessionNonce());
   const editProposalIdentityRef = useRef<(EditProposalIdentity & { requestId: string }) | null>(null);
   const ideActionProposalCounterRef = useRef(0);
   const ideActionProposalIdentityRef = useRef<{ requestId: string; sourceMessageId: string; payloadKey: string } | null>(null);
@@ -1238,7 +1257,7 @@ export function App() {
       return;
     }
     editProposalApplyCounterRef.current += 1;
-    const applyRequestId = `gui-edit-proposal-apply-${editProposalApplyCounterRef.current}`;
+    const applyRequestId = `gui-edit-proposal-apply-${editProposalApplySessionNonceRef.current}-${editProposalApplyCounterRef.current}`;
     pendingApplyRequestIdRef.current = applyRequestId;
     pendingApplyProposalRequestIdRef.current = editProposal.requestId;
     setPendingApplyRequestId(applyRequestId);

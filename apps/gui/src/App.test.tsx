@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { App, completedApplyRequestChatsLimit, completedIdeActionRequestChatsLimit, rememberCompletedApplyRequest, rememberCompletedIdeActionRequest } from "./App";
+import { App, completedApplyRequestChatsLimit, completedIdeActionRequestChatsLimit, generateApplyRequestSessionNonce, rememberCompletedApplyRequest, rememberCompletedIdeActionRequest } from "./App";
 import type { ProviderAuthResponse, ProviderAuthStatus } from "./services/providerAuthClient";
 
 const bridgeVersion = "2026-05-15";
@@ -4412,7 +4412,7 @@ describe("edit proposal preview", () => {
     const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
     expect(applyCalls).toHaveLength(1);
     expect(applyCalls[0][0]).toMatchObject({ version: bridgeVersion, type: "gui.applyWorkspaceEditRequest", payload: proposal });
-    expect(applyCalls[0][0].requestId).toMatch(/^gui-edit-proposal-apply-\d+$/);
+    expect(applyCalls[0][0].requestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
   });
 
   it("clears proposal apply state synchronously on direct chat id changes", async () => {
@@ -4437,7 +4437,7 @@ describe("edit proposal preview", () => {
       findButton("Request host apply after review").click();
     });
     const oldRequestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
-    expect(oldRequestId).toMatch(/^gui-edit-proposal-apply-\d+$/);
+    expect(oldRequestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
 
     await act(async () => {
       setInputValue(chatIdInput(), "chat-002");
@@ -4575,7 +4575,7 @@ describe("edit proposal preview", () => {
     });
     const firstApplyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
     const firstRequestId = firstApplyCalls[firstApplyCalls.length - 1]?.[0].requestId;
-    expect(firstRequestId).toMatch(/^gui-edit-proposal-apply-\d+$/);
+    expect(firstRequestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
 
     await act(async () => {
       findButton("Clear pending apply state").click();
@@ -4586,8 +4586,17 @@ describe("edit proposal preview", () => {
     const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
     const secondRequestId = applyCalls[applyCalls.length - 1]?.[0].requestId;
     expect(applyCalls).toHaveLength(2);
-    expect(secondRequestId).toMatch(/^gui-edit-proposal-apply-\d+$/);
+    expect(secondRequestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
     expect(secondRequestId).not.toBe(firstRequestId);
+    // Session-nonce contract: two retries inside the same App mount must share
+    // the same per-session nonce segment but differ in the counter segment.
+    const firstMatch = firstRequestId?.match(/^gui-edit-proposal-apply-([A-Za-z0-9][A-Za-z0-9_.-]*)-(\d+)$/);
+    const secondMatch = secondRequestId?.match(/^gui-edit-proposal-apply-([A-Za-z0-9][A-Za-z0-9_.-]*)-(\d+)$/);
+    expect(firstMatch).not.toBeNull();
+    expect(secondMatch).not.toBeNull();
+    expect(firstMatch?.[1]).toBe(secondMatch?.[1]);
+    expect(firstMatch?.[1].length ?? 0).toBeGreaterThan(0);
+    expect(firstMatch?.[2]).not.toBe(secondMatch?.[2]);
 
     await dispatchHostApplyResult(firstRequestId, {
       status: "applied",
@@ -4607,6 +4616,19 @@ describe("edit proposal preview", () => {
       affectedFiles: ["src/example.ts"],
     });
     expect(container?.textContent ?? "").toContain("Second apply result displayed.");
+  });
+
+  it("regenerates the apply session nonce on each App mount and shares it across retries", () => {
+    // Per-session contract: the helper must return a non-empty, bridge-safe
+    // nonce (no forbidden secret/api_key/sk markers, no token/secret words).
+    const nonce = generateApplyRequestSessionNonce();
+    expect(nonce).toMatch(/^s[0-9a-f]{12}$/);
+    expect(nonce.length).toBeLessThanOrEqual(128);
+    expect(/authorization|bearer|api[_-]?key|token|secret|access[_-]?token|sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(nonce)).toBe(false);
+
+    // Two independent calls produce different nonces (high-entropy).
+    const other = generateApplyRequestSessionNonce();
+    expect(other).not.toBe(nonce);
   });
 
   it("rejects invalid proposal objects before rendering or sending", async () => {
@@ -4839,7 +4861,7 @@ describe("edit proposal preview", () => {
       findButton("Request host apply after review").click();
     });
     const requestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
-    expect(requestId).toMatch(/^gui-edit-proposal-apply-\d+$/);
+    expect(requestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
 
     await dispatchHostApplyResult(requestId, {
       status: "applied",
@@ -4890,7 +4912,7 @@ describe("edit proposal preview", () => {
       findButton("Request host apply after review").click();
     });
     const pendingRequestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
-    expect(pendingRequestId).toMatch(/^gui-edit-proposal-apply-\d+$/);
+    expect(pendingRequestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
 
     await dispatchHostApplyResult("gui-edit-proposal-999", {
       status: "failed",
@@ -4935,7 +4957,7 @@ describe("edit proposal preview", () => {
       findButton("Request host apply after review").click();
     });
     const requestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
-    expect(requestId).toMatch(/^gui-edit-proposal-apply-\d+$/);
+    expect(requestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
 
     await dispatchHostApplyResult(requestId, {
       status: "applied",
@@ -5179,7 +5201,7 @@ describe("edit proposal preview", () => {
         findButton("Request host apply after review").click();
       });
       const requestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
-      expect(requestId).toMatch(/^gui-edit-proposal-apply-\d+$/);
+      expect(requestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
 
       const hostResultMessage = `Host result ${status} should be shown alongside the static repair hint.`;
       await dispatchHostApplyResult(requestId, {
