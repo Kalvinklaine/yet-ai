@@ -1,0 +1,12 @@
+{
+  "version": "2026-05-15",
+  "type": "host.applyWorkspaceEditResult",
+  "requestId": "req-apply-edit-control-002",
+  "payload": {
+    "status": "denied",
+    "message": "User declined the proposed edit.",
+    "cloudRequired": false,
+    "appliedEditCount": 0,
+    "affectedFiles": []
+  }
+}
