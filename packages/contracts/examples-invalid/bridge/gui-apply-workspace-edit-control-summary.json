@@ -1,0 +1,30 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.applyWorkspaceEditRequest",
+  "requestId": "req-apply-edit-control-001",
+  "payload": {
+    "requiresUserConfirmation": true,
+    "summary": "Replace one visible\u0000 editor line.",
+    "cloudRequired": false,
+    "edits": [
+      {
+        "workspaceRelativePath": "src/example.ts",
+        "textReplacements": [
+          {
+            "range": {
+              "start": {
+                "line": 4,
+                "character": 2
+              },
+              "end": {
+                "line": 4,
+                "character": 18
+              }
+            },
+            "replacementText": "const label = \"Yet AI\";"
+          }
+        ]
+      }
+    ]
+  }
+}
