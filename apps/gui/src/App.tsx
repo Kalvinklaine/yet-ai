@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBridgeAdapter, isApplyWorkspaceEditPayload, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type WorkspaceEditRange } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { describeIdeActionProposal, parseAssistantIdeActionProposalContent, toIdeActionRequestPayload, type AssistantIdeActionProposal } from "./services/ideActionProposal";
@@ -85,12 +85,15 @@ type EditProposalState = {
   payloadKey: string;
 };
 
-type IdeActionProposalState = {
-  requestId: string;
+type IdeActionProposalCandidate = {
   proposal: AssistantIdeActionProposal;
   payload: IdeActionRequestPayload;
   sourceMessageId: string;
   payloadKey: string;
+};
+
+type IdeActionProposalState = IdeActionProposalCandidate & {
+  requestId: string;
 };
 
 type ApplyResultState = {
@@ -282,6 +285,7 @@ export function App() {
   const [pendingApplyRequestId, setPendingApplyRequestId] = useState<string | null>(null);
   const [ideActionAttempt, setIdeActionAttempt] = useState<IdeActionAttemptState | null>(null);
   const [ideActionNote, setIdeActionNote] = useState<string | null>(null);
+  const [ideActionProposal, setIdeActionProposal] = useState<IdeActionProposalState | null>(null);
   const bridgeAdapterRef = useRef<BridgeAdapter | null>(null);
   const editProposalCounterRef = useRef(0);
   const editProposalApplyCounterRef = useRef(0);
@@ -357,7 +361,8 @@ export function App() {
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
   const currentAttachedContext = attachedContext?.settingsRevision === settingsRevision && attachedContext.chatId === chatId ? attachedContext.payload : null;
   const activeEditProposal = editProposalMatchesCurrentMessages(chatView.messages, editProposal) ? editProposal : null;
-  const activeIdeActionProposal = useMemo(() => deriveLatestIdeActionProposal(chatView.messages, ideActionProposalIdentityRef, ideActionProposalCounterRef), [chatView.messages]);
+  const ideActionProposalCandidate = useMemo(() => latestIdeActionProposalCandidateFromMessages(chatView.messages), [chatView.messages]);
+  const activeIdeActionProposal = ideActionProposalMatchesCandidate(ideActionProposal, ideActionProposalCandidate) ? ideActionProposal : null;
   const safeActiveWorkspacePath = currentAttachedContext?.file?.workspaceRelativePath;
   const safeActiveRange = rangeFromContextSelection(currentAttachedContext?.selection);
 
@@ -427,6 +432,8 @@ export function App() {
     setAttachedContextStatus(null);
     clearEditProposalState();
     pendingIdeActionRequestIdRef.current = null;
+    ideActionProposalIdentityRef.current = null;
+    setIdeActionProposal(null);
     setIdeActionAttempt(null);
     setIdeActionNote(null);
   }, [abortActiveStream, clearEditProposalState]);
@@ -1250,6 +1257,27 @@ export function App() {
   }, [addTimeline, bridgeHost]);
 
   useEffect(() => {
+    if (!ideActionProposalCandidate) {
+      ideActionProposalIdentityRef.current = null;
+      setIdeActionProposal(null);
+      return;
+    }
+    const existing = ideActionProposalIdentityRef.current;
+    let requestId = existing?.sourceMessageId === ideActionProposalCandidate.sourceMessageId && existing.payloadKey === ideActionProposalCandidate.payloadKey ? existing.requestId : null;
+    if (!requestId) {
+      ideActionProposalCounterRef.current += 1;
+      requestId = `gui-ide-proposal-${ideActionProposalCounterRef.current}`;
+      ideActionProposalIdentityRef.current = {
+        requestId,
+        sourceMessageId: ideActionProposalCandidate.sourceMessageId,
+        payloadKey: ideActionProposalCandidate.payloadKey,
+      };
+    }
+    const nextProposal = { ...ideActionProposalCandidate, requestId };
+    setIdeActionProposal((current) => ideActionProposalMatchesCandidate(current, ideActionProposalCandidate) && current.requestId === requestId ? current : nextProposal);
+  }, [ideActionProposalCandidate]);
+
+  useEffect(() => {
     const proposal = latestEditProposalFromMessages(chatView.messages, editProposalCounterRef, editProposalIdentityRef);
     if (!proposal) {
       clearEditProposalState();
@@ -1926,7 +1954,7 @@ function stableEditProposalPayloadKey(payload: ApplyWorkspaceEditPayload): strin
   return JSON.stringify(payload);
 }
 
-function deriveLatestIdeActionProposal(messages: ChatViewMessage[], identityRef: MutableRefObject<{ requestId: string; sourceMessageId: string; payloadKey: string } | null>, counterRef: MutableRefObject<number>): IdeActionProposalState | null {
+function latestIdeActionProposalCandidateFromMessages(messages: ChatViewMessage[]): IdeActionProposalCandidate | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message.role !== "assistant" || message.status !== "complete") {
@@ -1936,17 +1964,18 @@ function deriveLatestIdeActionProposal(messages: ChatViewMessage[], identityRef:
     if (!proposal) {
       return null;
     }
-    const payload = toIdeActionRequestPayload(proposal);
-    const payloadKey = JSON.stringify(proposal);
-    if (identityRef.current?.sourceMessageId === message.id && identityRef.current.payloadKey === payloadKey) {
-      return { requestId: identityRef.current.requestId, proposal, payload, sourceMessageId: message.id, payloadKey };
-    }
-    counterRef.current += 1;
-    const requestId = `gui-ide-proposal-${counterRef.current}`;
-    identityRef.current = { requestId, sourceMessageId: message.id, payloadKey };
-    return { requestId, proposal, payload, sourceMessageId: message.id, payloadKey };
+    return {
+      proposal,
+      payload: toIdeActionRequestPayload(proposal),
+      sourceMessageId: message.id,
+      payloadKey: JSON.stringify(proposal),
+    };
   }
   return null;
+}
+
+function ideActionProposalMatchesCandidate(proposal: IdeActionProposalState | null, candidate: IdeActionProposalCandidate | null): proposal is IdeActionProposalState {
+  return Boolean(proposal && candidate && proposal.sourceMessageId === candidate.sourceMessageId && proposal.payloadKey === candidate.payloadKey);
 }
 
 function extractEditProposal(content: string): ApplyWorkspaceEditPayload | null {
@@ -2066,7 +2095,7 @@ function IdeActionProposalPanel({ proposal, host, pending, onRun }: { proposal: 
       <span>{sanitizeDisplayText(proposal.proposal.summary)}</span>
       <div className="edit-proposal-grid">
         <span>Action: {sanitizeDisplayText(label)}</span>
-        <span>Request: {sanitizeDisplayText(proposal.requestId)}</span>
+        <span>Proposal id: {sanitizeDisplayText(proposal.requestId)}</span>
         <span>Cloud required: false</span>
         {"workspaceRelativePath" in proposal.payload && <span>Path: {sanitizeDisplayText(proposal.payload.workspaceRelativePath)}</span>}
         {"range" in proposal.payload && <span>Range: {formatEditRange(proposal.payload.range)}</span>}

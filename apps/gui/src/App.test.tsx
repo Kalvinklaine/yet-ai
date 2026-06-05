@@ -1951,6 +1951,8 @@ describe("active editor attached context", () => {
 
     expect(container?.textContent).toContain("Read-only IDE action proposal");
     expect(container?.textContent).toContain("Open the example file.");
+    expect(container?.textContent).toContain("Proposal id: gui-ide-proposal-1");
+    expect(container?.querySelector(".ide-action-proposal-card")?.textContent ?? "").not.toContain("Request:");
     expect(container?.textContent).toContain("Browser preview only. No IDE action will be posted.");
     expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Run read-only IDE action");
   });
