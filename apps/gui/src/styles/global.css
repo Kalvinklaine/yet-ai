@@ -620,6 +620,28 @@ pre,
   border: 1px solid #dfe5f0;
 }
 
+.assistant-proposal-compact {
+  white-space: normal;
+}
+
+.assistant-proposal-compact pre {
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid #dfe5f0;
+  border-radius: 12px;
+  background: #f8faff;
+  padding: 10px;
+  white-space: pre-wrap;
+}
+
+.link-button {
+  justify-self: start;
+  border: 1px solid #c9d6f4;
+  background: #f2f6ff;
+  color: #2441a1;
+  padding: 6px 10px;
+}
+
 .chat-bubble.error {
   justify-self: start;
   border: 1px solid #ffc9c9;
