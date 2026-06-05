@@ -289,6 +289,7 @@ const invalidMappings = [
     "host-ide-action-result-succeeded-open-missing-path.json",
     "host-ide-action-result-succeeded-open-with-range.json",
     "host-ide-action-result-succeeded-context-missing-context.json",
+    "host-ide-action-result-succeeded-context-empty-context.json",
     "host-ide-action-result-succeeded-context-with-path-range.json",
     "host-ide-action-progress-succeeded-reveal-missing-range.json",
     "host-ide-action-progress-succeeded-context-with-path.json",

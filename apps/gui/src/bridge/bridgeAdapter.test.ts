@@ -42,6 +42,7 @@ import hostIdeActionResultSucceededMessage from "../../../../packages/contracts/
 import hostIdeActionResultRejectedMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-rejected.json";
 import hostIdeActionProgressSucceededGetContextSnapshotMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-progress-succeeded-get-context-snapshot.json";
 import hostIdeActionResultSucceededGetContextSnapshotMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-succeeded-get-context-snapshot.json";
+import hostIdeActionResultSucceededContextEmptyContextMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-succeeded-context-empty-context.json";
 import hostIdeActionProgressSucceededOpenWorkspaceFileMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-progress-succeeded-open-workspace-file.json";
 import hostIdeActionResultSucceededOpenWorkspaceFileMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-succeeded-open-workspace-file.json";
 import hostIdeActionProgressSucceededRevealWorkspaceRangeMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-progress-succeeded-reveal-workspace-range.json";
@@ -777,6 +778,7 @@ describe("bridgeAdapter", () => {
     const progressWithContext = { version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-context-progress-context", payload: { ...progressWithoutContext.payload, context } };
     const resultWithContext = { version: bridgeVersion, type: "host.ideActionResult", requestId: "req-context-result", payload: { status: "succeeded", message: "Context snapshot ready.", cloudRequired: false, action: "getContextSnapshot", context } };
     const resultWithoutContext = { version: bridgeVersion, type: "host.ideActionResult", requestId: "req-context-result-missing", payload: { status: "succeeded", message: "Context snapshot ready.", cloudRequired: false, action: "getContextSnapshot" } };
+    const resultWithEmptyContext = { version: bridgeVersion, type: "host.ideActionResult", requestId: "req-context-result-empty", payload: { status: "succeeded", message: "Context snapshot ready.", cloudRequired: false, action: "getContextSnapshot", context: {} } };
 
     expect(isIdeActionProgressPayload(progressWithoutContext.payload)).toBe(true);
     expect(isHostMessage(progressWithoutContext)).toBe(true);
@@ -786,6 +788,10 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage(resultWithContext)).toBe(true);
     expect(isIdeActionResultPayload(resultWithoutContext.payload)).toBe(false);
     expect(isHostMessage(resultWithoutContext)).toBe(false);
+    expect(isIdeActionResultPayload(resultWithEmptyContext.payload)).toBe(false);
+    expect(isHostMessage(resultWithEmptyContext)).toBe(false);
+    expect(isIdeActionResultPayload(hostIdeActionResultSucceededContextEmptyContextMessage.payload)).toBe(false);
+    expect(isHostMessage(hostIdeActionResultSucceededContextEmptyContextMessage)).toBe(false);
   });
 
   it("keeps bounded selection text as active user-selected prompt context only", () => {
@@ -814,6 +820,8 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage(hostApplyWorkspaceEditResultSecretMessage)).toBe(false);
     expect(isApplyWorkspaceEditResultPayload(hostApplyWorkspaceEditResultKeyLikeMessage.payload)).toBe(false);
     expect(isHostMessage(hostApplyWorkspaceEditResultKeyLikeMessage)).toBe(false);
+    expect(isIdeActionResultPayload(hostIdeActionResultSucceededContextEmptyContextMessage.payload)).toBe(false);
+    expect(isHostMessage(hostIdeActionResultSucceededContextEmptyContextMessage)).toBe(false);
 
     const logs: string[] = [];
     const messages: unknown[] = [];
