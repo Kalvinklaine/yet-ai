@@ -4307,6 +4307,135 @@ describe("edit proposal preview", () => {
     expect(browserStorageDump()).not.toContain("Replace one visible editor line");
   });
 
+  it("does not leak secret-like replacement text into DOM or storage, and shows redaction warning", async () => {
+    localStorage.setItem("sentinel", "keep");
+    const rawToken = "sk-" + "x".repeat(40);
+    const longToken = "y".repeat(64);
+    const proposal = {
+      ...safeEditProposalPayload(),
+      edits: [
+        {
+          workspaceRelativePath: "src/example.ts",
+          textReplacements: [
+            {
+              range: { start: { line: 4, character: 2 }, end: { line: 4, character: 18 } },
+              replacementText: `api_key=${longToken} Bearer ${rawToken}`,
+            },
+          ],
+        },
+      ],
+    };
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Redacted edit proposal chat", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Redacted edit proposal chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Confirmed edit proposal");
+    expect(text).toContain("Replacement preview was redacted; inspect proposal JSON before applying.");
+    expect(text).not.toContain(rawToken);
+    expect(text).not.toContain(longToken);
+    expect(text).not.toContain("api_key=");
+    expect(text).not.toContain("Bearer");
+    expect(browserStorageDump()).toContain("sentinel");
+    expect(browserStorageDump()).not.toContain(rawToken);
+    expect(browserStorageDump()).not.toContain(longToken);
+    expect(Array.from(container?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Request host apply after review")).toBe(false);
+  });
+
+  it("keeps apply available and shows the redaction warning only, never blocking apply", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const longToken = "z".repeat(64);
+    const proposal = {
+      ...safeEditProposalPayload(),
+      edits: [
+        {
+          workspaceRelativePath: "src/example.ts",
+          textReplacements: [
+            {
+              range: { start: { line: 4, character: 2 }, end: { line: 4, character: 18 } },
+              replacementText: `api_key=${longToken}`,
+            },
+          ],
+        },
+      ],
+    };
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Apply available redaction", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Apply available redaction", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Replacement preview was redacted; inspect proposal JSON before applying.");
+    expect(findButton("Request host apply after review").disabled).toBe(false);
+  });
+
+  it("counts unique affected files when duplicate edit groups target the same file", async () => {
+    const proposal = {
+      ...safeEditProposalPayload(),
+      edits: [
+        {
+          workspaceRelativePath: "src/example.ts",
+          textReplacements: [
+            {
+              range: { start: { line: 4, character: 2 }, end: { line: 4, character: 18 } },
+              replacementText: "const label = \"Yet AI\";",
+            },
+          ],
+        },
+        {
+          workspaceRelativePath: "src/example.ts",
+          textReplacements: [
+            {
+              range: { start: { line: 9, character: 0 }, end: { line: 9, character: 12 } },
+              replacementText: "const next = \"Yet AI\";",
+            },
+            {
+              range: { start: { line: 12, character: 0 }, end: { line: 12, character: 8 } },
+              replacementText: "const other = \"Yet AI\";",
+            },
+          ],
+        },
+        {
+          workspaceRelativePath: "src/another.ts",
+          textReplacements: [
+            {
+              range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } },
+              replacementText: "const another = \"Yet AI\";",
+            },
+          ],
+        },
+      ],
+    };
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Duplicate file edit groups chat", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Duplicate file edit groups chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Confirmed edit proposal");
+    expect(container?.querySelector("[data-testid='edit-proposal-unique-files']")?.textContent ?? "").toMatch(/^Files: 2/);
+    expect(container?.querySelector("[data-testid='edit-proposal-unique-files']")?.textContent ?? "").toContain("1 duplicate group merged");
+    expect(container?.querySelector("[data-testid='edit-proposal-edit-count']")?.textContent ?? "").toBe("Text edits: 4");
+    expect(text).toContain("This MVP can apply workspace edits only from VS Code");
+  });
+
   it("does not transfer edit-proposal inspect state to a changed proposal JSON", async () => {
     const first = safeEditProposalPayload();
     const second = { ...first, summary: "Different confirmed edit after first review." };

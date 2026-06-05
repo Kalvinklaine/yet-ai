@@ -52,15 +52,35 @@ export type EditProposalPreviewProps = {
 export function EditProposalPreview({ proposal, host, pending, onApply, onCancelPending }: EditProposalPreviewProps) {
   const files = proposal.payload.edits;
   const editCount = files.reduce((count, file) => count + file.textReplacements.length, 0);
+  const uniqueFilePaths = new Set<string>();
+  for (const file of files) {
+    uniqueFilePaths.add(file.workspaceRelativePath);
+  }
+  const uniqueFileCount = uniqueFilePaths.size;
+  const duplicateFileCount = files.length - uniqueFileCount;
+  const replacementPreviewSummaries = files.flatMap((file) =>
+    file.textReplacements.map((replacement) => ({
+      workspaceRelativePath: file.workspaceRelativePath,
+      replacementText: replacement.replacementText,
+      preview: boundedReplacementPreview(replacement.replacementText),
+      isRedacted: isReplacementPreviewRedacted(replacement.replacementText),
+    })),
+  );
+  const redactedPreviewCount = replacementPreviewSummaries.filter((entry) => entry.isRedacted).length;
   return (
     <div className="stack">
       <span>{sanitizeDisplayText(proposal.payload.summary)}</span>
       <div className="edit-proposal-grid">
         <span>Request: {sanitizeDisplayText(proposal.requestId)}</span>
-        <span>Files: {files.length}</span>
-        <span>Text edits: {editCount}</span>
+        <span data-testid="edit-proposal-unique-files">Files: {uniqueFileCount}{duplicateFileCount > 0 ? ` (${duplicateFileCount} duplicate group${duplicateFileCount === 1 ? "" : "s"} merged)` : ""}</span>
+        <span data-testid="edit-proposal-edit-count">Text edits: {editCount}</span>
         <span>Cloud required: false</span>
       </div>
+      {redactedPreviewCount > 0 && (
+        <div className="readiness-card warn" role="status" data-testid="edit-proposal-redaction-warning">
+          Replacement preview was redacted; inspect proposal JSON before applying.
+        </div>
+      )}
       <div className="stack">
         {files.map((file, index) => (
           <article className="edit-file-card stack" key={`${file.workspaceRelativePath}:${index}`}>
@@ -113,12 +133,22 @@ export function ApplyResultPreview({ result }: ApplyResultPreviewProps) {
   );
 }
 
-function boundedReplacementPreview(text: string): string {
+const replacementPreviewLimit = 320;
+
+export function boundedReplacementPreview(text: string): string {
   if (!text) {
     return "Empty replacement text.";
   }
-  const limit = 320;
-  return sanitizeDisplayText(text.length > limit ? `${text.slice(0, limit)}…` : text);
+  return sanitizeDisplayText(text.length > replacementPreviewLimit ? `${text.slice(0, replacementPreviewLimit)}…` : text);
+}
+
+export function isReplacementPreviewRedacted(text: string): boolean {
+  if (!text) {
+    return false;
+  }
+  const rawPreview = text.length > replacementPreviewLimit ? `${text.slice(0, replacementPreviewLimit)}…` : text;
+  const sanitized = sanitizeDisplayText(rawPreview);
+  return sanitized !== rawPreview;
 }
 
 function formatEditRange(range: { start: { line: number; character: number }; end: { line: number; character: number } }): string {
