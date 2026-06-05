@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBridgeAdapter, isApplyWorkspaceEditPayload, isApplyWorkspaceEditResultPayload, isGuiMessage, isHostMessage, isIdeActionProgressPayload, isIdeActionRequestPayload, isIdeActionResultPayload } from "./bridgeAdapter";
 import guiReadyMessage from "../../../../packages/contracts/examples/bridge/gui-ready-message.json";
+import guiReadyWithFrameNonceMessage from "../../../../packages/contracts/examples/bridge/gui-ready-with-frame-nonce.json";
 import guiUnloadedMessage from "../../../../packages/contracts/examples/bridge/gui-unloaded-message.json";
 import hostOpenedFromCommandMessage from "../../../../packages/contracts/examples/bridge/host-opened-from-command-message.json";
 import hostContextSnapshotMessage from "../../../../packages/contracts/examples/bridge/host-context-snapshot-message.json";
@@ -14,6 +15,8 @@ import guiExecuteIdeToolMessage from "../../../../packages/contracts/examples-in
 import guiGetHostContextMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-get-host-context-message.json";
 import guiOpenFileMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-open-file-message.json";
 import guiReadyExtraPayloadMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-ready-extra-payload.json";
+import guiReadyFrameNonceBadLengthMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-ready-frame-nonce-bad-length.json";
+import guiReadyFrameNonceUppercaseMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-ready-frame-nonce-uppercase.json";
 import guiUnloadedRequestIdMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-unloaded-request-id.json";
 import guiUnloadedNonEmptyPayloadMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-unloaded-non-empty-payload.json";
 import guiRevealRangeMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-reveal-range-message.json";
@@ -669,6 +672,7 @@ describe("bridgeAdapter", () => {
 
   it("accepts positive bridge contract fixtures through runtime validation", () => {
     expect(isGuiMessage(guiReadyMessage)).toBe(true);
+    expect(isGuiMessage(guiReadyWithFrameNonceMessage)).toBe(true);
     expect(isGuiMessage(guiUnloadedMessage)).toBe(true);
     expect(isGuiMessage(guiIdeActionContextMessage)).toBe(true);
     expect(isGuiMessage(guiIdeActionOpenMessage)).toBe(true);
@@ -758,6 +762,8 @@ describe("bridgeAdapter", () => {
 
   it("rejects invalid bridge contract fixtures through runtime validation", () => {
     expect(isGuiMessage(guiReadyExtraPayloadMessage)).toBe(false);
+    expect(isGuiMessage(guiReadyFrameNonceBadLengthMessage)).toBe(false);
+    expect(isGuiMessage(guiReadyFrameNonceUppercaseMessage)).toBe(false);
     expect(isGuiMessage(guiUnloadedRequestIdMessage)).toBe(false);
     expect(isGuiMessage(guiUnloadedNonEmptyPayloadMessage)).toBe(false);
     expect(isHostMessage(hostOpenedFromCommandPayloadMessage)).toBe(false);
@@ -824,6 +830,7 @@ describe("bridgeAdapter", () => {
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready" })).toBe(true);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "r1", payload: { supportedBridgeVersion: bridgeVersion } })).toBe(true);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", payload: { supportedBridgeVersion: bridgeVersion, frameNonce: "0123456789abcdef0123456789abcdef" } })).toBe(true);
+    expect(isGuiMessage(guiReadyWithFrameNonceMessage)).toBe(true);
     expect(isGuiMessage({ version: "", type: "gui.ready" })).toBe(false);
     expect(isGuiMessage({ version: "1", type: "gui.ready" })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "" })).toBe(false);
@@ -835,6 +842,8 @@ describe("bridgeAdapter", () => {
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "../secret" })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", requestId: "sk-secret/request" })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", payload: { supportedBridgeVersion: "1" } })).toBe(false);
+    expect(isGuiMessage(guiReadyFrameNonceBadLengthMessage)).toBe(false);
+    expect(isGuiMessage(guiReadyFrameNonceUppercaseMessage)).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", payload: { supportedBridgeVersion: bridgeVersion, extra: true } })).toBe(false);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ready", extra: true })).toBe(false);
   });
