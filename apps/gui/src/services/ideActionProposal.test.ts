@@ -108,8 +108,20 @@ describe("ideActionProposal", () => {
       proposal: JSON.parse(latest),
       payload: { action: "openWorkspaceFile", workspaceRelativePath: "src/App.tsx" },
       sourceMessageId: "a2",
-      payloadKey: latest,
+      payloadKey: ideActionProposalPayloadKey(JSON.parse(latest)),
     });
+  });
+
+  it("treats missing assistant status as complete while deriving candidates", () => {
+    const latest = JSON.stringify({ ...base, summary: "Open reviewed file.", action: "openWorkspaceFile", workspaceRelativePath: "src/App.tsx" });
+
+    const candidate = latestIdeActionProposalCandidateFromMessages([
+      assistantMessage("a1", JSON.stringify(contextProposal)),
+      { id: "a2", role: "assistant", content: latest },
+    ]);
+
+    expect(candidate?.sourceMessageId).toBe("a2");
+    expect(candidate?.payload).toEqual({ action: "openWorkspaceFile", workspaceRelativePath: "src/App.tsx" });
   });
 
   it("returns no candidate when the latest complete assistant message is normal or invalid", () => {
@@ -136,6 +148,33 @@ describe("ideActionProposal", () => {
 
     expect(candidate?.sourceMessageId).toBe("a1");
     expect(candidate?.payload).toEqual({ action: "getContextSnapshot" });
+  });
+
+  it("ignores incomplete assistant messages without falling through to invalid latest content", () => {
+    const candidate = latestIdeActionProposalCandidateFromMessages([
+      assistantMessage("a1", JSON.stringify(contextProposal)),
+      assistantMessage("a2", "Normal but incomplete.", "streaming"),
+      assistantMessage("a3", JSON.stringify({ ...base, action: "shell" }), "streaming"),
+    ]);
+
+    expect(candidate?.sourceMessageId).toBe("a1");
+    expect(candidate?.payload).toEqual({ action: "getContextSnapshot" });
+  });
+
+  it("uses canonical payload keys independent of JSON field order", () => {
+    const ordered = parseAssistantIdeActionProposalContent(JSON.stringify({ ...base, summary: "Reveal reviewed range.", action: "revealWorkspaceRange", workspaceRelativePath: "src/App.tsx", range: { start: { line: 4, character: 2 }, end: { line: 4, character: 8 } } }))!;
+    const reordered = parseAssistantIdeActionProposalContent(JSON.stringify({ action: "revealWorkspaceRange", range: { end: { character: 8, line: 4 }, start: { character: 2, line: 4 } }, workspaceRelativePath: "src/App.tsx", summary: "Reveal reviewed range.", cloudRequired: false, requiresUserConfirmation: true, version: "2026-05-15", type: "assistant.ideActionProposal" }))!;
+
+    expect(ideActionProposalPayloadKey(reordered)).toBe(ideActionProposalPayloadKey(ordered));
+    expect(latestIdeActionProposalCandidateFromMessages([assistantMessage("a1", JSON.stringify(ordered))])?.payloadKey)
+      .toBe(latestIdeActionProposalCandidateFromMessages([assistantMessage("a1", JSON.stringify(reordered))])?.payloadKey);
+  });
+
+  it("changes canonical payload keys when semantic payload changes", () => {
+    const first = parseAssistantIdeActionProposalContent(JSON.stringify({ ...base, action: "openWorkspaceFile", workspaceRelativePath: "src/first.ts" }))!;
+    const second = parseAssistantIdeActionProposalContent(JSON.stringify({ ...base, action: "openWorkspaceFile", workspaceRelativePath: "src/second.ts" }))!;
+
+    expect(ideActionProposalPayloadKey(first)).not.toBe(ideActionProposalPayloadKey(second));
   });
 
   it("keeps payload keys stable and matches identity by source message and payload", () => {

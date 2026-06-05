@@ -69,13 +69,50 @@ export function describeIdeActionProposal(proposal: AssistantIdeActionProposal):
 }
 
 export function ideActionProposalPayloadKey(proposal: AssistantIdeActionProposal): string {
-  return JSON.stringify(proposal);
+  if (proposal.action === "getContextSnapshot") {
+    return JSON.stringify({
+      type: proposal.type,
+      version: proposal.version,
+      requiresUserConfirmation: proposal.requiresUserConfirmation,
+      cloudRequired: proposal.cloudRequired,
+      summary: proposal.summary,
+      action: proposal.action,
+    });
+  }
+  if (proposal.action === "openWorkspaceFile") {
+    return JSON.stringify({
+      type: proposal.type,
+      version: proposal.version,
+      requiresUserConfirmation: proposal.requiresUserConfirmation,
+      cloudRequired: proposal.cloudRequired,
+      summary: proposal.summary,
+      action: proposal.action,
+      workspaceRelativePath: proposal.workspaceRelativePath,
+    });
+  }
+  return JSON.stringify({
+    type: proposal.type,
+    version: proposal.version,
+    requiresUserConfirmation: proposal.requiresUserConfirmation,
+    cloudRequired: proposal.cloudRequired,
+    summary: proposal.summary,
+    action: proposal.action,
+    workspaceRelativePath: proposal.workspaceRelativePath,
+    range: {
+      start: { line: proposal.range.start.line, character: proposal.range.start.character },
+      end: { line: proposal.range.end.line, character: proposal.range.end.character },
+    },
+  });
+}
+
+export function isCompleteAssistantIdeActionProposalStatus(status: string | undefined): boolean {
+  return status === undefined || status === "complete";
 }
 
 export function latestIdeActionProposalCandidateFromMessages(messages: IdeActionProposalSourceMessage[]): IdeActionProposalCandidate | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
-    if (message.role !== "assistant" || message.status !== "complete") {
+    if (message.role !== "assistant" || !isCompleteAssistantIdeActionProposalStatus(message.status)) {
       continue;
     }
     const proposal = parseAssistantIdeActionProposalContent(message.content);

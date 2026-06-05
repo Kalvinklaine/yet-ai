@@ -2071,6 +2071,23 @@ describe("active editor attached context", () => {
     expect(browserStorageDump()).not.toContain("compact-proposal");
   });
 
+  it("renders compact proposal card for persisted assistant proposal with missing status", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = ideActionProposal({ action: "openWorkspaceFile", workspaceRelativePath: "src/statusless-proposal.ts", summary: "Open statusless proposal file." });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Statusless proposal", 1)], chatThreads: { "chat-001": chatThread("chat-001", "Statusless proposal", [chatMessageWithoutStatus("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Proposed a read-only IDE action: Open workspace file. Review the proposal card below. It will not run automatically.");
+    expect(text).toContain("Read-only IDE action proposal");
+    expect(text).toContain("Open statusless proposal file.");
+    expect(findButton("Run read-only IDE action").disabled).toBe(false);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
+  });
+
   it.each([
     [ideActionProposal({ action: "getContextSnapshot", summary: "Check current IDE context." }), { action: "getContextSnapshot" }],
     [ideActionProposal({ action: "openWorkspaceFile", workspaceRelativePath: "src/example.ts", summary: "Open the example file." }), { action: "openWorkspaceFile", workspaceRelativePath: "src/example.ts" }],
@@ -4938,6 +4955,16 @@ function chatMessage(chatId: string, id: string, role: "user" | "assistant" | "e
     content,
     createdAt: "2026-05-29T07:15:00Z",
     status,
+  };
+}
+
+function chatMessageWithoutStatus(chatId: string, id: string, role: "user" | "assistant" | "error", content: string) {
+  return {
+    id,
+    chatId,
+    role,
+    content,
+    createdAt: "2026-05-29T07:15:00Z",
   };
 }
 
