@@ -113,11 +113,17 @@ try {
   await expectVisibleText(page, "bridge vscode", "VS Code bridge mode badge");
   await expectAttachedText(page, "VS Code controlled actions", "controlled action availability");
 
+  const initialChatText = await page.locator("body").innerText();
+  if (initialChatText.includes('"type":"assistant.ideActionProposal"') || initialChatText.includes('"type": "assistant.ideActionProposal"')) {
+    failures.push("Assistant IDE action proposal raw JSON rendered instead of compact proposal copy before inspection.");
+  }
+  await expectVisibleText(page, "Proposed a read-only IDE action: Reveal workspace range. Review the proposal card below. It will not run automatically.", "compact assistant proposal chat copy");
   await expectVisibleText(page, "Read-only IDE action proposal", "assistant read-only IDE action proposal card");
   await expectVisibleText(page, proposalSummary, "assistant proposal summary");
   await expectVisibleText(page, "Reveal workspace range", "assistant proposal action label");
   await expectVisibleText(page, `Path: ${proposalPath}`, "assistant proposal workspace-relative path");
   await expectVisibleText(page, "Range: 4:2-4:8", "assistant proposal range");
+  await assertProposalSecretsOnlyInVisibleUi(page, "initial compact proposal render");
 
   const proposalPreClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
   if (proposalPreClickIdeRequestCount !== 0) failures.push("Assistant IDE action proposal auto-posted gui.ideActionRequest before explicit confirmation.");
@@ -142,10 +148,53 @@ try {
   }
 
   const proposalRequestId = proposalIdeRequest?.requestId ?? "gui-ide-proposal-action-missing";
+  await expectVisibleText(page, "IDE action pending…", "pending proposal IDE action button label");
+  await expectVisibleText(page, "Clear pending IDE action state", "clear pending IDE action state button");
+
+  const clearPendingButton = page.getByRole("button", { name: "Clear pending IDE action state", exact: true }).first();
+  await clearPendingButton.click();
+  const proposalPostClearIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
+  if (proposalPostClearIdeRequestCount !== proposalPreClickIdeRequestCount + 1) failures.push("Clearing pending IDE action state posted a new gui.ideActionRequest or changed request count.");
+  await expectVisibleText(page, "Cleared pending IDE action state in the GUI only. No host-side cancellation was requested.", "local-only clear pending IDE action note");
+  await runProposalButton.waitFor({ state: "visible", timeout: 10_000 });
+  if (await runProposalButton.isDisabled()) failures.push("Run read-only IDE action button stayed disabled after clearing pending state.");
+
+  const staleProgressSummary = "Stale first proposal progress should not render.";
+  const staleResultMessage = "Stale first proposal result should not render.";
   await dispatchHostMessage(page, {
     version: bridgeVersion,
     type: "host.ideActionProgress",
     requestId: proposalRequestId,
+    payload: { phase: "running", status: "inProgress", summary: staleProgressSummary, cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: proposalPath },
+  });
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.ideActionResult",
+    requestId: proposalRequestId,
+    payload: { status: "failed", message: staleResultMessage, cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: proposalPath, range: proposalRange },
+  });
+  await page.waitForTimeout(150);
+  await expectNoVisibleText(page, staleProgressSummary, "stale proposal IDE action progress after clear");
+  await expectNoVisibleText(page, staleResultMessage, "stale proposal IDE action result after clear");
+
+  const retryPreClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
+  await runProposalButton.click();
+  const retryProposalIdeRequest = await waitForGuiMessageAfter(page, "gui.ideActionRequest", retryPreClickIdeRequestCount);
+  if (!retryProposalIdeRequest) {
+    failures.push("Retrying Run read-only IDE action did not send a fresh gui.ideActionRequest.");
+  } else {
+    if (retryProposalIdeRequest.requestId === proposalRequestId) failures.push("Retrying proposal IDE action reused the stale cleared request id.");
+    if (typeof retryProposalIdeRequest.requestId !== "string" || !/^gui-ide-proposal-action-\d+$/.test(retryProposalIdeRequest.requestId)) {
+      failures.push("Retry proposal IDE action request id was not GUI-owned with the expected prefix.");
+    }
+    if (!deepEqual(retryProposalIdeRequest.payload, proposalIdeRequest?.payload)) failures.push("Retry proposal IDE action payload changed from the original strict proposal payload.");
+  }
+
+  const retryProposalRequestId = retryProposalIdeRequest?.requestId ?? "gui-ide-proposal-action-retry-missing";
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.ideActionProgress",
+    requestId: retryProposalRequestId,
     payload: { phase: "running", status: "inProgress", summary: proposalProgressSummary, cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: proposalPath },
   });
   await expectVisibleText(page, "Reveal range: inProgress", "correlated proposal IDE action progress");
@@ -154,13 +203,14 @@ try {
   await dispatchHostMessage(page, {
     version: bridgeVersion,
     type: "host.ideActionResult",
-    requestId: proposalRequestId,
+    requestId: retryProposalRequestId,
     payload: { status: "succeeded", message: proposalResultMessage, cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: proposalPath, range: proposalRange },
   });
   await expectVisibleText(page, "Reveal range: succeeded", "correlated proposal IDE action result");
   await expectVisibleText(page, proposalResultMessage, "proposal IDE action result message");
   await expectVisibleText(page, `Path: ${proposalPath}`, "proposal IDE action result path");
   await expectVisibleText(page, "Range: 4:2-4:8", "proposal IDE action result range");
+  await assertProposalSecretsOnlyInVisibleUi(page, "matched retry proposal result render");
 
   const getContextButton = page.getByRole("button", { name: "Get IDE context", exact: true });
   await getContextButton.waitFor({ state: "visible", timeout: 10_000 });
@@ -217,7 +267,7 @@ try {
 
   if (failures.length > 0) reportFailures();
   console.log("VS Code wrapper browser smoke passed.");
-  console.log("Verified packaged VS Code GUI assets in a VS Code-like browser bridge, gui.ready, trusted host.ready, assistant read-only IDE action proposal rendering without auto-post, explicit proposal confirmation with GUI-owned strict request, manual controlled getContextSnapshot request, correlated progress/result rendering, loopback-only networking, invalid host-result rejection, and secret redaction.");
+  console.log("Verified packaged VS Code GUI assets in a VS Code-like browser bridge, gui.ready, trusted host.ready, compact assistant read-only IDE action proposal rendering without auto-post, explicit proposal confirmation with GUI-owned strict request, GUI-only pending clear, stale-result ignore, retry with a fresh request id, matching proposal result rendering, manual controlled getContextSnapshot request, loopback-only networking, invalid host-result rejection, and secret redaction.");
   console.log("No real VS Code launch, provider credentials, OpenAI/ChatGPT calls, hosted Yet AI service, or non-loopback provider call was used.");
 } finally {
   await browser?.close().catch(() => undefined);
@@ -393,6 +443,21 @@ async function expectAttachedText(page, text, description, timeout = 10_000) {
   } catch (error) {
     const body = await page.locator("body").innerText().catch(() => "");
     throw new Error(`Timed out waiting for ${description}. ${messageOf(error)}\nVisible body excerpt: ${redactSecrets(body).slice(0, 2000)}`);
+  }
+}
+
+async function expectNoVisibleText(page, text, description) {
+  const visible = await page.getByText(text, { exact: false }).first().isVisible().catch(() => false);
+  if (visible) failures.push(`${description} rendered unexpectedly.`);
+}
+
+async function assertProposalSecretsOnlyInVisibleUi(page, description) {
+  const nonUiState = JSON.stringify(await page.evaluate(() => ({
+    localStorage: Object.fromEntries(Array.from({ length: localStorage.length }, (_, index) => [localStorage.key(index) ?? "", localStorage.getItem(localStorage.key(index) ?? "")])),
+    sessionStorage: Object.fromEntries(Array.from({ length: sessionStorage.length }, (_, index) => [sessionStorage.key(index) ?? "", sessionStorage.getItem(sessionStorage.key(index) ?? "")])),
+  }))) + JSON.stringify(consoleMessages);
+  if (nonUiState.includes(proposalPath) || nonUiState.includes(proposalSummary)) {
+    failures.push(`Proposal path/summary leaked outside expected visible UI during ${description}.`);
   }
 }
 
