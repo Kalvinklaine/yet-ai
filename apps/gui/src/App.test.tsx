@@ -4362,7 +4362,7 @@ describe("edit proposal preview", () => {
     const changedText = container?.textContent ?? "";
     expect(changedText).toContain("Different confirmed edit after first review.");
     expect(changedText).not.toContain("Replace one visible editor line after user review.");
-    expect(changedText).not.toContain("Assistant edit proposal JSON");
+    expect(container?.querySelector(".chat-bubble.assistant pre[aria-label='Assistant edit proposal JSON']")).toBeNull();
     expect(findButton("Inspect proposal JSON").disabled).toBe(false);
   });
 
@@ -5008,7 +5008,7 @@ describe("edit proposal preview", () => {
     expect(browserStorageDump()).not.toContain("Replace one visible editor line");
   });
 
-  it("renders historical confirmed edit proposal copy and keeps card runnable on latest valid", async () => {
+  it("renders historical confirmed edit proposal copy and shows no active card when latest is normal", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
     const valid = safeEditProposalPayload();
