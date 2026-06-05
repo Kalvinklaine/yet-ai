@@ -2045,8 +2045,8 @@ function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, context,
 }
 
 function ChatBubble({ message, activeEditProposal, activeIdeActionProposal }: { message: ChatViewMessage; activeEditProposal: EditProposalState | null; activeIdeActionProposal: IdeActionProposalState | null }) {
-  const [inspectProposalJson, setInspectProposalJson] = useState(false);
-  const [inspectEditProposalJson, setInspectEditProposalJson] = useState(false);
+  const [inspectedProposalPayloadKey, setInspectedProposalPayloadKey] = useState<string | null>(null);
+  const [inspectedEditProposalKey, setInspectedEditProposalKey] = useState<string | null>(null);
   const editProposal = message.role === "assistant" && isCompleteAssistantEditProposalStatus(message.status) ? parseEditProposalContent(message.content) : null;
   const editProposalJson = editProposal ? JSON.stringify(editProposal, null, 2) : null;
   const editProposalKey = editProposal ? editProposalPayloadKey(editProposal) : null;
@@ -2056,14 +2056,12 @@ function ChatBubble({ message, activeEditProposal, activeIdeActionProposal }: { 
   const proposalPayloadKey = proposal ? ideActionProposalPayloadKey(proposal) : null;
   const proposalLabel = proposal ? sanitizeDisplayText(describeIdeActionProposal(proposal)) : null;
   const isActiveProposal = Boolean(proposalPayloadKey && activeIdeActionProposal?.sourceMessageId === message.id && activeIdeActionProposal.payloadKey === proposalPayloadKey);
-
-  useEffect(() => {
-    setInspectProposalJson(false);
-  }, [proposalPayloadKey]);
-
-  useEffect(() => {
-    setInspectEditProposalJson(false);
-  }, [editProposalKey]);
+  // Key-based inspect state: the JSON is only visible when the user has explicitly
+  // clicked the toggle AND the inspected key still matches the current proposal.
+  // This makes the inspect state a per-(proposal-key) gate instead of a boolean
+  // that can leak the previous proposal's JSON when the payload changes.
+  const editProposalJsonVisible = editProposalKey !== null && inspectedEditProposalKey === editProposalKey;
+  const proposalJsonVisible = proposalPayloadKey !== null && inspectedProposalPayloadKey === proposalPayloadKey;
 
   return (
     <div className={`chat-bubble ${message.role}`}>
@@ -2071,14 +2069,14 @@ function ChatBubble({ message, activeEditProposal, activeIdeActionProposal }: { 
       {editProposal && editProposalJson && editProposalKey ? (
         <div className="assistant-proposal-compact stack">
           <span>{isActiveEditProposal ? "Proposed a confirmed edit. Review the edit proposal card below. It will not apply automatically." : "Earlier confirmed edit proposal. Only the latest valid proposal can be requested from the proposal card."}</span>
-          <button type="button" className="link-button" onClick={() => setInspectEditProposalJson((current) => !current)}>{inspectEditProposalJson ? "Hide proposal JSON" : "Inspect proposal JSON"}</button>
-          {inspectEditProposalJson && <pre aria-label="Assistant edit proposal JSON">{editProposalJson}</pre>}
+          <button type="button" className="link-button" onClick={() => setInspectedEditProposalKey(editProposalJsonVisible ? null : editProposalKey)}>{editProposalJsonVisible ? "Hide proposal JSON" : "Inspect proposal JSON"}</button>
+          {editProposalJsonVisible && <pre aria-label="Assistant edit proposal JSON">{editProposalJson}</pre>}
         </div>
       ) : proposal && proposalJson && proposalLabel ? (
         <div className="assistant-proposal-compact stack">
           <span>{isActiveProposal ? `Proposed a read-only IDE action: ${proposalLabel}. Review the proposal card below. It will not run automatically.` : `Earlier read-only IDE action proposal: ${proposalLabel}. Only the latest valid proposal can be run from the proposal card.`}</span>
-          <button type="button" className="link-button" onClick={() => setInspectProposalJson((current) => !current)}>{inspectProposalJson ? "Hide proposal JSON" : "Inspect proposal JSON"}</button>
-          {inspectProposalJson && <pre aria-label="Assistant proposal JSON">{proposalJson}</pre>}
+          <button type="button" className="link-button" onClick={() => setInspectedProposalPayloadKey(proposalJsonVisible ? null : proposalPayloadKey)}>{proposalJsonVisible ? "Hide proposal JSON" : "Inspect proposal JSON"}</button>
+          {proposalJsonVisible && <pre aria-label="Assistant proposal JSON">{proposalJson}</pre>}
         </div>
       ) : (
         <span>{message.content || (message.status === "streaming" ? "…" : "")}</span>

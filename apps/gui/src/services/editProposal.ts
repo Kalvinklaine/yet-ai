@@ -67,7 +67,14 @@ export function parseEditProposalContent(content: string): ApplyWorkspaceEditPay
 }
 
 export function editProposalPayloadKey(payload: ApplyWorkspaceEditPayload): string {
-  return canonicalizeJsonValue(payload);
+  // Normalize the optional `cloudRequired` flag before computing the canonical key
+  // so payloads with `cloudRequired` omitted and `cloudRequired: false` produce the
+  // same key. The bridge contract only allows `cloudRequired === false`; treating
+  // both forms as equivalent is a canonicalization choice, not an authority change.
+  const normalized: ApplyWorkspaceEditPayload = payload.cloudRequired === false
+    ? payload
+    : { ...payload, cloudRequired: false };
+  return canonicalizeJsonValue(normalized);
 }
 
 export function isCompleteAssistantEditProposalStatus(status: string | undefined): boolean {

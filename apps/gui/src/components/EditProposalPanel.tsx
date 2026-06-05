@@ -62,8 +62,8 @@ export function EditProposalPreview({ proposal, host, pending, onApply, onCancel
         <span>Cloud required: false</span>
       </div>
       <div className="stack">
-        {files.map((file) => (
-          <article className="edit-file-card stack" key={file.workspaceRelativePath}>
+        {files.map((file, index) => (
+          <article className="edit-file-card stack" key={`${file.workspaceRelativePath}:${index}`}>
             <strong>{sanitizeDisplayText(file.workspaceRelativePath)}</strong>
             <span>{file.textReplacements.length} replacement{file.textReplacements.length === 1 ? "" : "s"}</span>
             {file.textReplacements.slice(0, 4).map((replacement, index) => (
