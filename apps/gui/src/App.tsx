@@ -8,7 +8,7 @@ import { listProviders, saveProvider, testProvider, type ProviderSummary, type P
 import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
-import { editProposalCandidateIdentityMatches, latestEditProposalCandidateFromMessages, type EditProposalIdentity } from "./services/editProposal";
+import { editProposalCandidateIdentityMatches, editProposalPayloadKey, isCompleteAssistantEditProposalStatus, latestEditProposalCandidateFromMessages, parseEditProposalContent, type EditProposalIdentity } from "./services/editProposal";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
@@ -1571,7 +1571,7 @@ export function App() {
               </label>
             </div>
             <div className="chat-panel" aria-label="Chat messages">
-              {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect()} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeIdeActionProposal={activeIdeActionProposal} />)}
+              {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect()} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeEditProposal={activeEditProposal} activeIdeActionProposal={activeIdeActionProposal} />)}
               {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
             </div>
             <EditProposalPanel proposal={activeEditProposal} result={activeEditProposal ? applyResult : null} host={bridgeHost} pendingRequestId={pendingApplyRequestId} note={applyNote} onApply={submitEditProposal} onCancelPending={cancelPendingEditProposalApply} />
@@ -2068,8 +2068,13 @@ function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, context,
   );
 }
 
-function ChatBubble({ message, activeIdeActionProposal }: { message: ChatViewMessage; activeIdeActionProposal: IdeActionProposalState | null }) {
+function ChatBubble({ message, activeEditProposal, activeIdeActionProposal }: { message: ChatViewMessage; activeEditProposal: EditProposalState | null; activeIdeActionProposal: IdeActionProposalState | null }) {
   const [inspectProposalJson, setInspectProposalJson] = useState(false);
+  const [inspectEditProposalJson, setInspectEditProposalJson] = useState(false);
+  const editProposal = message.role === "assistant" && isCompleteAssistantEditProposalStatus(message.status) ? parseEditProposalContent(message.content) : null;
+  const editProposalJson = editProposal ? JSON.stringify(editProposal, null, 2) : null;
+  const editProposalKey = editProposal ? editProposalPayloadKey(editProposal) : null;
+  const isActiveEditProposal = Boolean(editProposalKey && activeEditProposal?.sourceMessageId === message.id && activeEditProposal.payloadKey === editProposalKey);
   const proposal = message.role === "assistant" && isCompleteAssistantIdeActionProposalStatus(message.status) ? parseAssistantIdeActionProposalContent(message.content) : null;
   const proposalJson = proposal ? JSON.stringify(proposal, null, 2) : null;
   const proposalPayloadKey = proposal ? ideActionProposalPayloadKey(proposal) : null;
@@ -2080,10 +2085,20 @@ function ChatBubble({ message, activeIdeActionProposal }: { message: ChatViewMes
     setInspectProposalJson(false);
   }, [proposalPayloadKey]);
 
+  useEffect(() => {
+    setInspectEditProposalJson(false);
+  }, [editProposalKey]);
+
   return (
     <div className={`chat-bubble ${message.role}`}>
       <strong>{message.role === "user" ? "You" : message.role === "assistant" ? "Yet AI" : "Error"}</strong>
-      {proposal && proposalJson && proposalLabel ? (
+      {editProposal && editProposalJson && editProposalKey ? (
+        <div className="assistant-proposal-compact stack">
+          <span>{isActiveEditProposal ? "Proposed a confirmed edit. Review the edit proposal card below. It will not apply automatically." : "Earlier confirmed edit proposal. Only the latest valid proposal can be requested from the proposal card."}</span>
+          <button type="button" className="link-button" onClick={() => setInspectEditProposalJson((current) => !current)}>{inspectEditProposalJson ? "Hide proposal JSON" : "Inspect proposal JSON"}</button>
+          {inspectEditProposalJson && <pre aria-label="Assistant edit proposal JSON">{editProposalJson}</pre>}
+        </div>
+      ) : proposal && proposalJson && proposalLabel ? (
         <div className="assistant-proposal-compact stack">
           <span>{isActiveProposal ? `Proposed a read-only IDE action: ${proposalLabel}. Review the proposal card below. It will not run automatically.` : `Earlier read-only IDE action proposal: ${proposalLabel}. Only the latest valid proposal can be run from the proposal card.`}</span>
           <button type="button" className="link-button" onClick={() => setInspectProposalJson((current) => !current)}>{inspectProposalJson ? "Hide proposal JSON" : "Inspect proposal JSON"}</button>

@@ -4906,6 +4906,195 @@ describe("edit proposal preview", () => {
     expect(text).not.toContain("Ignored duplicate host apply result.");
     expect(text).not.toContain("Ignored stale host apply result.");
   });
+
+  it("compacts latest valid edit proposal bubble and hides raw JSON by default", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const proposal = safeEditProposalPayload();
+    const rawJson = JSON.stringify(proposal);
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Compact edit proposal", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Compact edit proposal", [chatMessage("chat-001", "assistant-1", "assistant", rawJson)]) },
+    });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const initialText = container?.textContent ?? "";
+    expect(initialText).toContain("Proposed a confirmed edit. Review the edit proposal card below. It will not apply automatically.");
+    expect(initialText).toContain("Confirmed edit proposal");
+    expect(initialText).toContain("Replace one visible editor line after user review.");
+    expect(initialText).not.toContain(rawJson);
+    expect(container?.querySelector(".chat-bubble.assistant pre[aria-label='Assistant edit proposal JSON']")).toBeNull();
+    expect(findButton("Request host apply after review").disabled).toBe(false);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("Replace one visible editor line");
+
+    await act(async () => {
+      findButton("Inspect proposal JSON").click();
+    });
+
+    const inspectedText = container?.textContent ?? "";
+    const inspectedPre = container?.querySelector(".chat-bubble.assistant pre[aria-label='Assistant edit proposal JSON']");
+    expect(inspectedPre).not.toBeNull();
+    expect(inspectedPre?.textContent).toContain("\"workspaceRelativePath\": \"src/example.ts\"");
+    expect(inspectedPre?.textContent).toContain("\"summary\":");
+    expect(inspectedText).toContain("\"workspaceRelativePath\": \"src/example.ts\"");
+    expect(inspectedText).toContain("\"requiresUserConfirmation\": true");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("Replace one visible editor line");
+  });
+
+  it("renders historical confirmed edit proposal copy and keeps card runnable on latest valid", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const valid = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Historical edit proposal", 2)],
+      chatThreads: {
+        "chat-001": chatThread("chat-001", "Historical edit proposal", [
+          chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(valid)),
+          chatMessage("chat-001", "assistant-2", "assistant", "Normal assistant response."),
+        ]),
+      },
+    });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Earlier confirmed edit proposal. Only the latest valid proposal can be requested from the proposal card.");
+    expect(text).toContain("Normal assistant response.");
+    expect(text).not.toContain("Confirmed edit proposal");
+    expect(text).not.toContain("Replace one visible editor line after user review.");
+    expect(container?.querySelector(".edit-proposal-card")).toBeNull();
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Request host apply after review");
+    expect(container?.querySelectorAll("pre[aria-label=\"Assistant edit proposal JSON\"]")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+  });
+
+  it("resets edit proposal inspect state when payload changes and the new proposal is hidden by default", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const firstProposal = safeEditProposalPayload();
+    const secondProposal = {
+      ...safeEditProposalPayload(),
+      summary: "Replace a different editor line after user review.",
+      edits: [
+        {
+          workspaceRelativePath: "src/example.ts",
+          textReplacements: [
+            {
+              range: { start: { line: 7, character: 0 }, end: { line: 7, character: 20 } },
+              replacementText: "const other = \"Yet AI\";",
+            },
+          ],
+        },
+      ],
+    };
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Edit proposal change", 1)],
+      chatThreads: {
+        "chat-001": chatThread("chat-001", "Edit proposal change", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(firstProposal))]),
+      },
+      sseEvents: [],
+    });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Inspect proposal JSON").click();
+    });
+    expect(container?.querySelector(".chat-bubble.assistant pre[aria-label='Assistant edit proposal JSON']")).not.toBeNull();
+
+    let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const encoder = new TextEncoder();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/v1/chats/subscribe?chat_id=")) {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) { sseController = controller; },
+          cancel() {},
+        });
+        return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+      }
+      return mockRuntimeResponse(input, init, {
+        ...readyRuntimeOptions(),
+        chats: [chatSummary("chat-001", "Edit proposal change", 1)],
+        chatThreads: { "chat-001": chatThread("chat-001", "Edit proposal change", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(secondProposal))]) },
+      });
+    });
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "open edit proposal stream");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({
+        seq: 1,
+        type: "snapshot",
+        chatId: "chat-001",
+        payload: {
+          messages: [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(secondProposal))],
+        },
+      })}\n\n`));
+      await Promise.resolve();
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Replace a different editor line after user review.");
+    expect(text).toContain("Proposed a confirmed edit. Review the edit proposal card below. It will not apply automatically.");
+    expect(container?.querySelector(".chat-bubble.assistant pre[aria-label='Assistant edit proposal JSON']")).toBeNull();
+    expect(findButton("Inspect proposal JSON")).toBeDefined();
+
+    await act(async () => {
+      findButton("Inspect proposal JSON").click();
+    });
+    const inspectedPre = container?.querySelector(".chat-bubble.assistant pre[aria-label='Assistant edit proposal JSON']");
+    expect(inspectedPre).not.toBeNull();
+    expect(inspectedPre?.textContent).toContain("\"summary\": \"Replace a different editor line after user review.\"");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+  });
+
+  it("does not render compact edit proposal bubble or card when the latest assistant message is invalid", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    const invalidProposal = { ...proposal, requiresUserConfirmation: false };
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Invalid latest edit", 2)],
+      chatThreads: {
+        "chat-001": chatThread("chat-001", "Invalid latest edit", [
+          chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal)),
+          chatMessage("chat-001", "assistant-2", "assistant", JSON.stringify(invalidProposal)),
+        ]),
+      },
+    });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Earlier confirmed edit proposal. Only the latest valid proposal can be requested from the proposal card.");
+    expect(text).not.toContain("Proposed a confirmed edit.");
+    expect(text).not.toContain("Confirmed edit proposal");
+    expect(container?.querySelector(".edit-proposal-card")).toBeNull();
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Request host apply after review");
+    expect(container?.querySelector(".chat-bubble.assistant pre[aria-label='Assistant edit proposal JSON']")).toBeNull();
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+  });
 });
 
 async function dispatchHostReady(payload: { runtimeUrl: string; sessionToken?: string }) {
