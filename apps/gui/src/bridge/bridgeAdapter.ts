@@ -504,7 +504,7 @@ function hasRequiredSuccessfulActionMetadata(value: Record<string, unknown>): bo
   if (value.action === "revealWorkspaceRange") {
     return requiredSafeRelativePath(value.workspaceRelativePath) && isEditRange(value.range);
   }
-  return value.action === "getContextSnapshot" && value.workspaceRelativePath === undefined && value.range === undefined && (value.status === "succeeded" ? isIdeActionContext(value.context) : true);
+  return value.action === "getContextSnapshot" && value.workspaceRelativePath === undefined && value.range === undefined;
 }
 
 function optionalIdeActionType(value: unknown): boolean {
