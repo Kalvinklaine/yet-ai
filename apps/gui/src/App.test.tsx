@@ -1932,13 +1932,14 @@ describe("active editor attached context", () => {
     });
     await dispatchHostIdeActionProgress("gui-ide-action-1", { phase: "running", status: "inProgress", summary: "Revealing workspace range.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/main.ts" });
     await dispatchHostIdeActionResult("stale-ide-action", { status: "failed", message: "Stale result ignored.", cloudRequired: false, action: "revealWorkspaceRange" });
+    expect(container?.textContent).toContain("Ignored stale IDE action result.");
     await dispatchHostIdeActionResult("gui-ide-action-1", { status: "succeeded", message: "Revealed workspace range.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/main.ts", range: { start: { line: 2, character: 1 }, end: { line: 2, character: 5 } } });
 
     const ideActionMessages = postMessage.mock.calls.map(([message]) => message).filter((message) => message.type === "gui.ideActionRequest");
     expect(ideActionMessages[0].payload).toEqual({ action: "revealWorkspaceRange", workspaceRelativePath: "src/main.ts", range: { start: { line: 2, character: 1 }, end: { line: 2, character: 5 } } });
     expect(container?.textContent).toContain("Reveal range: succeeded");
     expect(container?.textContent).toContain("Revealed workspace range.");
-    expect(container?.textContent).toContain("Ignored stale IDE action result.");
+    expect(container?.textContent).not.toContain("Ignored stale IDE action result.");
     expect(container?.textContent).not.toContain("Stale result ignored.");
   });
 
@@ -2028,10 +2029,12 @@ describe("active editor attached context", () => {
     expect(ideActionMessages[1].requestId).not.toBe(ideActionMessages[0].requestId);
 
     await dispatchHostIdeActionResult("gui-ide-proposal-action-1", { status: "failed", message: "Late stale first result should not overwrite retry.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/retry-proposal.ts", range: testRange() });
+    expect(container?.textContent).toContain("Ignored stale IDE action result.");
     await dispatchHostIdeActionResult("gui-ide-proposal-action-2", { status: "succeeded", message: "Retry result rendered.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/retry-proposal.ts", range: testRange() });
 
     expect(container?.textContent).toContain("Reveal range: succeeded");
     expect(container?.textContent).toContain("Retry result rendered.");
+    expect(container?.textContent).not.toContain("Ignored stale IDE action result.");
     expect(container?.textContent).not.toContain("Late stale first result should not overwrite retry.");
     expect(browserStorageDump()).not.toContain("src/retry-proposal.ts");
     expect(browserStorageDump()).not.toContain("Reveal the retry proposal range.");

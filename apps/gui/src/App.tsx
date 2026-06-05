@@ -498,6 +498,7 @@ export function App() {
           return;
         }
         const payload = message.payload as IdeActionProgressPayload;
+        setIdeActionNote(null);
         setIdeActionAttempt((current) => current?.requestId === requestId ? {
           ...current,
           status: payload.status,
@@ -524,6 +525,7 @@ export function App() {
         rememberCompletedIdeActionRequest(completedIdeActionRequestChatsRef.current, requestId, chatIdRef.current);
         pendingIdeActionRequestIdRef.current = null;
         pendingIdeActionChatIdRef.current = null;
+        setIdeActionNote(null);
         setIdeActionAttempt((current) => current?.requestId === requestId ? {
           ...current,
           status: payload.status,
