@@ -694,11 +694,15 @@ function optionalBoundedInteger(value: unknown, min: number, max: number): boole
 }
 
 function safeSummary(value: unknown): boolean {
-  return typeof value === "string" && value.length > 0 && value.length <= 1000 && !unsafeDisplayText(value) && !hasPrivatePathLikeText(value) && !hasKeyLikeSecretText(value);
+  return typeof value === "string" && value.length > 0 && value.length <= 1000 && !hasControlCharacters(value) && !unsafeDisplayText(value) && !hasPrivatePathLikeText(value) && !hasKeyLikeSecretText(value);
 }
 
 function safeMessage(value: unknown): boolean {
-  return typeof value === "string" && value.length > 0 && value.length <= 1000 && !unsafeDisplayText(value) && !hasPrivatePathLikeText(value) && !hasKeyLikeSecretText(value);
+  return typeof value === "string" && value.length > 0 && value.length <= 1000 && !hasControlCharacters(value) && !unsafeDisplayText(value) && !hasPrivatePathLikeText(value) && !hasKeyLikeSecretText(value);
+}
+
+function hasControlCharacters(value: string): boolean {
+  return /[\u0000-\u001F\u007F-\u009F]/u.test(value);
 }
 
 function hasPrivatePathLikeText(value: string): boolean {

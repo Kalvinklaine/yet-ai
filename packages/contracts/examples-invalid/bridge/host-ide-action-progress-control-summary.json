@@ -5,7 +5,7 @@
   "payload": {
     "phase": "running",
     "status": "inProgress",
-    "summary": "Revealing workspace range.",
+    "summary": "Revealing\u0085 workspace range.",
     "cloudRequired": false,
     "action": "revealWorkspaceRange",
     "workspaceRelativePath": "src/example.ts"
