@@ -145,6 +145,7 @@ const hostMessageTypes = new Set<HostMessage["type"]>([
 ]);
 const guiMessageTypes = new Set<GuiMessage["type"]>([
   "gui.ready",
+  "gui.unloaded",
   "gui.ideActionRequest",
   "gui.applyWorkspaceEditRequest",
 ]);
@@ -194,7 +195,7 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
 
   const post = (message: GuiMessage) => {
     const outbound = withFrameNonce(message);
-    if (!isGuiMessage(outbound) && !isGuiUnloadedMessage(outbound)) {
+    if (!isGuiMessage(outbound)) {
       append("Rejected invalid GUI bridge message");
       return;
     }
@@ -300,18 +301,15 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
   if (value.type === "gui.ready") {
     return isGuiReadyPayload(value.payload);
   }
+  if (value.type === "gui.unloaded") {
+    return value.requestId === undefined && isEmptyPayload(value.payload);
+  }
   if (value.type === "gui.ideActionRequest") {
     return typeof value.requestId === "string" && isIdeActionRequestPayload(value.payload);
   }
   return value.type === "gui.applyWorkspaceEditRequest" && typeof value.requestId === "string" && isApplyWorkspaceEditPayload(value.payload);
 }
 
-function isGuiUnloadedMessage(value: unknown): value is GuiMessage {
-  if (!isPlainObject(value) || !hasOnlyKeys(value, ["version", "type", "payload"])) {
-    return false;
-  }
-  return value.version === bridgeVersion && value.type === "gui.unloaded" && isEmptyPayload(value.payload);
-}
 
 function isFrameNonceMessage(value: unknown): value is FrameNonceMessage {
   if (!isPlainObject(value) || !hasOnlyKeys(value, ["version", "type", "payload"])) {

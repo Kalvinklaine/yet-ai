@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBridgeAdapter, isApplyWorkspaceEditPayload, isApplyWorkspaceEditResultPayload, isGuiMessage, isHostMessage, isIdeActionProgressPayload, isIdeActionRequestPayload, isIdeActionResultPayload } from "./bridgeAdapter";
 import guiReadyMessage from "../../../../packages/contracts/examples/bridge/gui-ready-message.json";
+import guiUnloadedMessage from "../../../../packages/contracts/examples/bridge/gui-unloaded-message.json";
 import hostOpenedFromCommandMessage from "../../../../packages/contracts/examples/bridge/host-opened-from-command-message.json";
 import hostContextSnapshotMessage from "../../../../packages/contracts/examples/bridge/host-context-snapshot-message.json";
 import hostReadyMessage from "../../../../packages/contracts/examples/bridge/host-ready-message.json";
@@ -13,6 +14,8 @@ import guiExecuteIdeToolMessage from "../../../../packages/contracts/examples-in
 import guiGetHostContextMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-get-host-context-message.json";
 import guiOpenFileMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-open-file-message.json";
 import guiReadyExtraPayloadMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-ready-extra-payload.json";
+import guiUnloadedRequestIdMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-unloaded-request-id.json";
+import guiUnloadedNonEmptyPayloadMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-unloaded-non-empty-payload.json";
 import guiRevealRangeMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-reveal-range-message.json";
 import guiShowNotificationMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-show-notification-message.json";
 import hostContextSnapshotAbsolutePathMessage from "../../../../packages/contracts/examples-invalid/bridge/host-context-snapshot-absolute-path.json";
@@ -282,6 +285,18 @@ describe("bridgeAdapter", () => {
     });
     expect(messages).toHaveLength(1);
     adapter.dispose();
+  });
+
+  it("accepts valid gui.unloaded through public runtime validation", () => {
+    expect(isGuiMessage(guiUnloadedMessage)).toBe(true);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.unloaded" })).toBe(true);
+  });
+
+  it("rejects gui.unloaded with requestId or non-empty payload through public runtime validation", () => {
+    expect(isGuiMessage(guiUnloadedRequestIdMessage)).toBe(false);
+    expect(isGuiMessage(guiUnloadedNonEmptyPayloadMessage)).toBe(false);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.unloaded", requestId: "unload-1" })).toBe(false);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.unloaded", payload: { reason: "pagehide" } })).toBe(false);
   });
 
   it("rejects request ids with compact secret markers", () => {
@@ -654,6 +669,7 @@ describe("bridgeAdapter", () => {
 
   it("accepts positive bridge contract fixtures through runtime validation", () => {
     expect(isGuiMessage(guiReadyMessage)).toBe(true);
+    expect(isGuiMessage(guiUnloadedMessage)).toBe(true);
     expect(isGuiMessage(guiIdeActionContextMessage)).toBe(true);
     expect(isGuiMessage(guiIdeActionOpenMessage)).toBe(true);
     expect(isGuiMessage(guiIdeActionRevealMessage)).toBe(true);
@@ -742,6 +758,8 @@ describe("bridgeAdapter", () => {
 
   it("rejects invalid bridge contract fixtures through runtime validation", () => {
     expect(isGuiMessage(guiReadyExtraPayloadMessage)).toBe(false);
+    expect(isGuiMessage(guiUnloadedRequestIdMessage)).toBe(false);
+    expect(isGuiMessage(guiUnloadedNonEmptyPayloadMessage)).toBe(false);
     expect(isHostMessage(hostOpenedFromCommandPayloadMessage)).toBe(false);
     expect(isHostMessage(hostContextSnapshotAbsolutePathMessage)).toBe(false);
     expect(isHostMessage(hostContextSnapshotPrivilegedCommandMessage)).toBe(false);
