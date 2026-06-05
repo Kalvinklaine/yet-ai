@@ -182,9 +182,13 @@ describe("ideActionProposal", () => {
     const candidate = latestIdeActionProposalCandidateFromMessages([assistantMessage("a1", JSON.stringify(contextProposal))]);
     const state: IdeActionProposalState = { ...candidate!, requestId: "gui-ide-proposal-1" };
 
-    expect(ideActionProposalPayloadKey(proposal)).toBe(JSON.stringify(contextProposal));
+    const semanticallyEquivalentProposal = parseAssistantIdeActionProposalContent(JSON.stringify({ action: "getContextSnapshot", summary: "Review local IDE context.", cloudRequired: false, requiresUserConfirmation: true, version: "2026-05-15", type: "assistant.ideActionProposal" }))!;
+    const differentSummaryProposal = parseAssistantIdeActionProposalContent(JSON.stringify({ ...contextProposal, summary: "Different safe summary." }))!;
+
+    expect(ideActionProposalPayloadKey(semanticallyEquivalentProposal)).toBe(ideActionProposalPayloadKey(proposal));
+    expect(candidate?.payloadKey).toBe(ideActionProposalPayloadKey(proposal));
     expect(ideActionProposalMatchesCandidate(state, candidate)).toBe(true);
-    expect(ideActionProposalMatchesCandidate({ ...state, payloadKey: JSON.stringify({ ...contextProposal, summary: "Different safe summary." }) }, candidate)).toBe(false);
+    expect(ideActionProposalMatchesCandidate({ ...state, payloadKey: ideActionProposalPayloadKey(differentSummaryProposal) }, candidate)).toBe(false);
     expect(ideActionProposalMatchesCandidate({ ...state, sourceMessageId: "a2" }, candidate)).toBe(false);
   });
 });
