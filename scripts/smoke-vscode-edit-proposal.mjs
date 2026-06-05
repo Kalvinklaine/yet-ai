@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+let harnessServer = null;
+let harnessOrigin = null;
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { mkdir } from "node:fs/promises";
 import os from "node:os";
@@ -41,7 +43,12 @@ try {
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   await page.route("**/*", async (route) => {
-    failures.push("Unexpected browser network request outside local inline harness.");
+    const url = route.request().url();
+    if (harnessOrigin && url.startsWith(harnessOrigin)) {
+      await route.continue();
+      return;
+    }
+    failures.push(`Unexpected browser network request outside local inline harness: ${url}`);
     await route.abort();
   });
   page.on("console", (message) => {
@@ -51,7 +58,8 @@ try {
   });
   page.on("pageerror", (error) => failures.push(`Page JavaScript error: ${sanitize(error.message)}`));
 
-  await page.setContent(harnessHtml(), { waitUntil: "load" });
+  const harnessOrigin = await startHarnessServer();
+  await page.goto(harnessOrigin, { waitUntil: "load" });
   if (await page.evaluate(() => typeof window.__yetAiLoadProposal !== "function")) {
     failures.push("Inline edit proposal harness did not initialize.");
     reportFailures();
@@ -68,6 +76,21 @@ try {
   await expectVisible(page, "Text edits: 1");
   await expectVisible(page, "src/main.ts");
   await expectVisible(page, "const label = \"After\";");
+
+  const compactSnapshot = await page.evaluate(() => {
+    const section = document.querySelector("section[aria-label=\"Edit proposal preview\"]");
+    return { text: section ? section.innerText : "", html: section ? section.outerHTML : "" };
+  });
+  if (/textReplacements|workspaceRelativePath|"edits":|replacementText|"version":|"cloudRequired":|"summary":/.test(compactSnapshot.html) || /textReplacements|workspaceRelativePath|"edits":|replacementText|"version":|"cloudRequired":|"summary":/.test(compactSnapshot.text)) {
+    failures.push("Compact edit proposal bubble leaked raw proposal JSON before inspect.");
+  }
+  const clearControlHiddenBeforeClick = await page.evaluate(() => {
+    const control = document.getElementById("clear-pending-apply");
+    return !control || control.hidden === true;
+  });
+  if (!clearControlHiddenBeforeClick) {
+    failures.push("Clear pending apply control was visible before any apply click.");
+  }
 
   const beforeClickMessages = await bridgeMessages(page);
   if (beforeClickMessages.some((message) => message.type === "gui.applyWorkspaceEditRequest")) {
@@ -114,6 +137,103 @@ try {
   const deniedFixture = await readFile(fixturePath, "utf8");
   if (deniedFixture !== "const label = \"Before\";\n") {
     failures.push("Denied host confirmation mutated the controlled temp fixture.");
+  }
+
+  // Lifecycle recovery coverage: clear pending → retry with fresh id → stale first ignored
+  // → matching retry renders → duplicate completed ignored → invalid host rejected → storage clean.
+  await writeFile(fixturePath, "const label = \"Before\";\n");
+  await page.evaluate(({ version, proposal }) => window.__yetAiLoadProposal(version, proposal), { version: bridgeVersion, proposal: safeProposal });
+  const clearBeforeCount = (await bridgeMessages(page)).filter((message) => message.type === "gui.applyWorkspaceEditRequest").length;
+
+  await page.getByRole("button", { name: "Request host apply after review" }).click();
+  const firstRetryRequest = await waitForApplyRequest(page, 3);
+  assertApplyRequestShape(firstRetryRequest, "first retry request");
+  const firstRetryRequestId = firstRetryRequest.requestId;
+
+  // Clear pending apply must not post any additional bridge request.
+  await page.getByRole("button", { name: "Clear pending apply" }).click();
+  const messagesAfterClear = await bridgeMessages(page);
+  if (messagesAfterClear.filter((message) => message.type === "gui.applyWorkspaceEditRequest").length !== clearBeforeCount + 1) {
+    failures.push("Clear pending apply emitted an extra gui.applyWorkspaceEditRequest message.");
+  }
+  if (await page.evaluate(() => document.getElementById("clear-pending-apply")?.hidden !== true)) {
+    failures.push("Clear pending apply control was still visible after clearing the pending apply.");
+  }
+  if ((await page.evaluate(() => document.body.innerText)).includes("Applied ")) {
+    failures.push("Clear pending apply surfaced a completed-result line before any host result was accepted.");
+  }
+
+  // Retry after clear must emit a fresh request id (different from the cleared one).
+  await page.getByRole("button", { name: "Request host apply after review" }).click();
+  const secondRetryRequest = await waitForApplyRequest(page, 4);
+  assertApplyRequestShape(secondRetryRequest, "second retry request");
+  if (secondRetryRequest.requestId === firstRetryRequestId) {
+    failures.push("Retry after clear re-used the cleared request id instead of emitting a fresh one.");
+  }
+  const secondRetryResult = await handleApplyWorkspaceEditRequest(secondRetryRequest, { confirmed: true });
+  assertHostResultShape(secondRetryResult, "second retry result");
+  hostResults.push(secondRetryResult);
+
+  // Stale first result: dispatch a result for the cleared (first) request id; must be ignored.
+  await dispatchHostResult(page, firstRetryRequestId, result(firstRetryRequestId, "applied", "Stale first result ignored."));
+  if ((await page.evaluate(() => document.body.innerText)).includes("Stale first result ignored.")) {
+    failures.push("Stale first result for the cleared request id was rendered.");
+  }
+
+  // Matching retry result must render.
+  await dispatchHostResult(page, secondRetryRequest.requestId, secondRetryResult);
+  await expectVisible(page, "Applied 1 edit to 1 file.");
+
+  // Duplicate completed result for the same request id must not overwrite the rendered outcome.
+  await dispatchHostResult(page, secondRetryRequest.requestId, result(secondRetryRequest.requestId, "failed", "Duplicate completed result ignored."));
+  if ((await page.evaluate(() => document.body.innerText)).includes("Duplicate completed result ignored.")) {
+    failures.push("Duplicate completed host result replaced the previously rendered applied outcome.");
+  }
+
+  // Secret-like / invalid host result must be rejected (invalid status, raw key-like, or invalid range/status shape).
+  const hostResultCountBeforeInvalid = await page.evaluate(() => (window.__yetAiHostResults ?? []).length);
+  await page.evaluate(({ version, rawMessage }) => {
+    window.dispatchEvent(new MessageEvent("message", { data: rawMessage }));
+  }, {
+    version: bridgeVersion,
+    rawMessage: {
+      version: bridgeVersion,
+      type: "host.applyWorkspaceEditResult",
+      requestId: secondRetryRequest.requestId,
+      payload: { status: "pwned", message: `Leaked ${secretMarkers[0]} ${secretMarkers[3]}`, cloudRequired: false, appliedEditCount: 0, affectedFiles: [] },
+    },
+  });
+  const hostResultCountAfterInvalid = await page.evaluate(() => (window.__yetAiHostResults ?? []).length);
+  if (hostResultCountAfterInvalid !== hostResultCountBeforeInvalid) {
+    failures.push("Invalid-status host result was captured or rendered.");
+  }
+  const postInvalidText = await page.evaluate(() => document.body.innerText);
+  if (postInvalidText.includes(secretMarkers[0]) || postInvalidText.includes(secretMarkers[3])) {
+    failures.push("Invalid host result leaked a raw secret or private-path marker into browser-visible text.");
+  }
+
+  // Browser storage must not contain proposal text, paths, replacement text, or secrets.
+  const storage = await page.evaluate(() => {
+    const snapshot = { local: [], session: [] };
+    for (const name of ["localStorage", "sessionStorage"]) {
+      const storage = window[name];
+      for (let index = 0; index < storage.length; index += 1) {
+        const key = storage.key(index);
+        snapshot[name === "localStorage" ? "local" : "session"].push([key ?? "", storage.getItem(key) ?? ""]);
+      }
+    }
+    return snapshot;
+  });
+  const storageFlattened = JSON.stringify(storage);
+  for (const marker of secretMarkers) {
+    if (storageFlattened.includes(marker)) {
+      failures.push("Browser storage leaked a raw secret or private-path marker.");
+    }
+  }
+  for (const fragment of ["src/main.ts", "const label", "After", "replacementText", "workspaceRelativePath", "textReplacements"]) {
+    if (storageFlattened.includes(fragment)) {
+      failures.push(`Browser storage leaked proposal fragment: ${fragment}.`);
+    }
   }
 
   for (const [name, proposal] of invalidPathProposals) {
@@ -186,11 +306,33 @@ try {
   }
 
   console.log("VS Code edit-proposal smoke passed.");
-  console.log("Verified contract-shaped textReplacements, explicit apply emission, accepted and denied host confirmations, unsafe path variants, oversized edit rejection, sanitized leak handling, temp-fixture cleanup, and loopback-free browser harness.");
+  console.log("Verified contract-shaped textReplacements, compact bubble with hidden raw JSON, explicit apply emission, accepted and denied host confirmations, clear-pending lifecycle recovery with fresh retry id, stale first result and duplicate completed suppression, invalid host result rejection, browser-storage hygiene, unsafe path variants, oversized edit rejection, sanitized leak handling, temp-fixture cleanup, and loopback-free browser harness.");
   console.log("No OpenAI, ChatGPT, hosted Yet AI service, real provider credential, VS Code launch, shell/tool/task/git execution, or real workspace mutation was used.");
 } finally {
   await browser?.close().catch(() => undefined);
+  await stopHarnessServer().catch(() => undefined);
   await rm(workspaceRoot, { recursive: true, force: true }).catch(() => undefined);
+}
+
+import http from "node:http";
+
+async function startHarnessServer() {
+  if (harnessOrigin) return harnessOrigin;
+  harnessServer = http.createServer((_req, res) => {
+    const body = harnessHtml();
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    res.end(body);
+  });
+  await new Promise((resolve) => harnessServer.listen(0, "127.0.0.1", resolve));
+  const address = harnessServer.address();
+  harnessOrigin = `http://127.0.0.1:${address.port}/`;
+  return harnessOrigin;
+}
+async function stopHarnessServer() {
+  if (!harnessServer) return;
+  await new Promise((resolve) => harnessServer.close(resolve));
+  harnessServer = null;
+  harnessOrigin = null;
 }
 
 async function requireChromium() {
@@ -257,8 +399,10 @@ function harnessHtml() {
     }
     let pendingRequestId = null;
     let applyAttempt = 0;
+    let completedRequestIds = new Set();
     function renderProposal(version, proposal) {
       pendingRequestId = null;
+      completedRequestIds = new Set();
       const root = document.getElementById("root");
       root.innerHTML = "";
       if (!isProposal(proposal)) {
@@ -287,17 +431,32 @@ function harnessHtml() {
       const button = document.createElement("button");
       button.type = "button";
       button.textContent = "Request host apply after review";
+      const clearButton = document.createElement("button");
+      clearButton.type = "button";
+      clearButton.textContent = "Clear pending apply";
+      clearButton.id = "clear-pending-apply";
+      clearButton.hidden = true;
+      clearButton.addEventListener("click", () => {
+        if (!pendingRequestId) return;
+        pendingRequestId = null;
+        button.disabled = false;
+        button.textContent = "Request host apply after review";
+        clearButton.hidden = true;
+        const target = document.getElementById("apply-result");
+        if (target) target.textContent = "Pending apply cleared. No host request was sent.";
+      });
       button.addEventListener("click", () => {
         if (pendingRequestId) return;
         applyAttempt += 1;
         pendingRequestId = "gui-edit-proposal-apply-smoke-" + applyAttempt;
         button.disabled = true;
         button.textContent = "Host apply pending…";
+        clearButton.hidden = false;
         vscode.postMessage({ version, type: "gui.applyWorkspaceEditRequest", requestId: pendingRequestId, payload: proposal });
       });
       const result = document.createElement("p");
       result.id = "apply-result";
-      section.append(title, badge, summary, stats, list, button, result);
+      section.append(title, badge, summary, stats, list, button, clearButton, result);
       root.append(section);
     }
     function isProposal(value) {
@@ -340,6 +499,11 @@ function harnessHtml() {
       if (!isHostResult(message)) return;
       if (message.requestId !== pendingRequestId) return;
       pendingRequestId = null;
+      if (completedRequestIds.has(message.requestId)) {
+        window.__yetAiHostResults.push({ version: message.version, type: message.type, requestId: message.requestId, ignored: true });
+        return;
+      }
+      completedRequestIds.add(message.requestId);
       window.__yetAiHostResults.push(message);
       const target = document.getElementById("apply-result");
       if (!target) return;
@@ -348,6 +512,8 @@ function harnessHtml() {
         button.disabled = false;
         button.textContent = "Request host apply after review";
       }
+      const clearControl = document.getElementById("clear-pending-apply");
+      if (clearControl) clearControl.hidden = true;
       if (message.payload.status === "applied") target.textContent = "Applied " + message.payload.appliedEditCount + " edit to " + message.payload.affectedFiles.length + " file.";
       else if (message.payload.status === "denied") target.textContent = "Host confirmation denied the edit request.";
       else target.textContent = "Host rejected the edit request.";
