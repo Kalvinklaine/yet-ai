@@ -1,5 +1,5 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createBridgeAdapter, isApplyWorkspaceEditPayload, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type WorkspaceEditRange } from "./bridge/bridgeAdapter";
+import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type WorkspaceEditRange } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { IdeActionProposalPanel, IdeActionsPanel, type IdeActionAttemptState } from "./components/IdeActionsPanel";
 import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
@@ -8,6 +8,7 @@ import { listProviders, saveProvider, testProvider, type ProviderSummary, type P
 import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
+import { editProposalCandidateIdentityMatches, latestEditProposalCandidateFromMessages, type EditProposalIdentity } from "./services/editProposal";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
@@ -268,7 +269,7 @@ export function App() {
   const bridgeAdapterRef = useRef<BridgeAdapter | null>(null);
   const editProposalCounterRef = useRef(0);
   const editProposalApplyCounterRef = useRef(0);
-  const editProposalIdentityRef = useRef<{ requestId: string; sourceMessageId: string; payloadKey: string } | null>(null);
+  const editProposalIdentityRef = useRef<(EditProposalIdentity & { requestId: string }) | null>(null);
   const ideActionProposalCounterRef = useRef(0);
   const ideActionProposalIdentityRef = useRef<{ requestId: string; sourceMessageId: string; payloadKey: string } | null>(null);
   const chatViewMessagesRef = useRef<ChatViewMessage[]>([]);
@@ -340,7 +341,8 @@ export function App() {
   const chatModelStatus = apiKeyReadiness.model ? modelStatusText(apiKeyReadiness.model, apiKeyReadiness.provider) : null;
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
   const currentAttachedContext = attachedContext?.settingsRevision === settingsRevision && attachedContext.chatId === chatId ? attachedContext.payload : null;
-  const activeEditProposal = editProposalMatchesCurrentMessages(chatView.messages, editProposal) ? editProposal : null;
+  const editProposalCandidate = latestEditProposalCandidateFromMessages(chatView.messages);
+  const activeEditProposal = editProposalCandidateIdentityMatches(editProposal, editProposalCandidate) ? editProposal : null;
   const ideActionProposalCandidate = useMemo(() => latestIdeActionProposalCandidateFromMessages(chatView.messages), [chatView.messages]);
   const activeIdeActionProposal = ideActionProposalMatchesCandidate(ideActionProposal, ideActionProposalCandidate) ? ideActionProposal : null;
   const safeActiveWorkspacePath = currentAttachedContext?.file?.workspaceRelativePath;
@@ -1223,7 +1225,7 @@ export function App() {
     if (!editProposal || bridgeHost !== "vscode" || pendingApplyRequestIdRef.current) {
       return;
     }
-    if (!editProposalMatchesCurrentMessages(chatViewMessagesRef.current, editProposal)) {
+    if (!editProposalCandidateIdentityMatches(editProposal, latestEditProposalCandidateFromMessages(chatViewMessagesRef.current))) {
       clearEditProposalState();
       return;
     }
@@ -1292,11 +1294,21 @@ export function App() {
   }, [ideActionProposalCandidate]);
 
   useEffect(() => {
-    const proposal = latestEditProposalFromMessages(chatView.messages, editProposalCounterRef, editProposalIdentityRef);
-    if (!proposal) {
+    const candidate = latestEditProposalCandidateFromMessages(chatView.messages);
+    if (!candidate) {
       clearEditProposalState();
       return;
     }
+    const existing = editProposalIdentityRef.current;
+    const stableRequestId = existing && editProposalCandidateIdentityMatches(existing, candidate) ? existing.requestId : null;
+    const proposal = stableRequestId
+      ? { requestId: stableRequestId, payload: candidate.proposal, sourceMessageId: candidate.sourceMessageId, payloadKey: candidate.payloadKey }
+      : (() => {
+          editProposalCounterRef.current += 1;
+          const requestId = `gui-edit-proposal-${editProposalCounterRef.current}`;
+          editProposalIdentityRef.current = { requestId, sourceMessageId: candidate.sourceMessageId, payloadKey: candidate.payloadKey };
+          return { requestId, payload: candidate.proposal, sourceMessageId: candidate.sourceMessageId, payloadKey: candidate.payloadKey };
+        })();
     setEditProposal((current) => current?.requestId === proposal.requestId ? current : proposal);
     setApplyResult((current) => current?.proposalRequestId === proposal.requestId ? current : null);
     if (pendingApplyRequestIdRef.current && pendingApplyProposalRequestIdRef.current !== proposal.requestId) {
@@ -1920,74 +1932,6 @@ function boundedReplacementPreview(text: string): string {
 
 function formatEditRange(range: { start: { line: number; character: number }; end: { line: number; character: number } }): string {
   return `${range.start.line}:${range.start.character}-${range.end.line}:${range.end.character}`;
-}
-
-function latestEditProposalFromMessages(messages: ChatViewMessage[], counterRef: { current: number }, identityRef: { current: { requestId: string; sourceMessageId: string; payloadKey: string } | null }): EditProposalState | null {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.role !== "assistant") {
-      continue;
-    }
-    const payload = extractEditProposal(message.content);
-    if (!payload) {
-      return null;
-    }
-    const payloadKey = stableEditProposalPayloadKey(payload);
-    if (identityRef.current?.sourceMessageId === message.id && identityRef.current.payloadKey === payloadKey) {
-      return { requestId: identityRef.current.requestId, payload, sourceMessageId: message.id, payloadKey };
-    }
-    counterRef.current += 1;
-    const requestId = `gui-edit-proposal-${counterRef.current}`;
-    identityRef.current = { requestId, sourceMessageId: message.id, payloadKey };
-    return { requestId, payload, sourceMessageId: message.id, payloadKey };
-  }
-  return null;
-}
-
-function editProposalMatchesCurrentMessages(messages: ChatViewMessage[], proposal: EditProposalState | null): boolean {
-  if (!proposal) {
-    return false;
-  }
-  const latest = latestValidEditProposalIdentityFromMessages(messages);
-  return latest?.sourceMessageId === proposal.sourceMessageId && latest.payloadKey === proposal.payloadKey;
-}
-
-function latestValidEditProposalIdentityFromMessages(messages: ChatViewMessage[]): { sourceMessageId: string; payloadKey: string } | null {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.role !== "assistant") {
-      continue;
-    }
-    const payload = extractEditProposal(message.content);
-    return payload ? { sourceMessageId: message.id, payloadKey: stableEditProposalPayloadKey(payload) } : null;
-  }
-  return null;
-}
-
-function stableEditProposalPayloadKey(payload: ApplyWorkspaceEditPayload): string {
-  return JSON.stringify(payload);
-}
-
-function extractEditProposal(content: string): ApplyWorkspaceEditPayload | null {
-  const parsed = parseFirstJsonObject(content);
-  if (!parsed) {
-    return null;
-  }
-  const candidate = asRecord(parsed)?.type === "gui.applyWorkspaceEditRequest" ? asRecord(parsed)?.payload : parsed;
-  return isApplyWorkspaceEditPayload(candidate) ? candidate : null;
-}
-
-function parseFirstJsonObject(content: string): unknown | null {
-  const start = content.indexOf("{");
-  const end = content.lastIndexOf("}");
-  if (start < 0 || end <= start || end - start > 50000) {
-    return null;
-  }
-  try {
-    return JSON.parse(content.slice(start, end + 1));
-  } catch {
-    return null;
-  }
 }
 
 function formatSelectionRange(selection: HostContextSnapshotPayload["selection"]): string {
