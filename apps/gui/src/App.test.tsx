@@ -1984,6 +1984,59 @@ describe("active editor attached context", () => {
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
   });
 
+  it("lets users clear a stuck VS Code proposal IDE action locally and ignores stale first host updates", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = ideActionProposal({ action: "revealWorkspaceRange", workspaceRelativePath: "src/retry-proposal.ts", range: testRange(), summary: "Reveal the retry proposal range." });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "VS Code retry proposal", 1)], chatThreads: { "chat-001": chatThread("chat-001", "VS Code retry proposal", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Run read-only IDE action").click();
+    });
+
+    let ideActionMessages = postMessage.mock.calls.map(([message]) => message).filter((message) => message.type === "gui.ideActionRequest");
+    expect(ideActionMessages).toHaveLength(1);
+    expect(ideActionMessages[0].requestId).toBe("gui-ide-proposal-action-1");
+    expect(findButton("IDE action pending…").disabled).toBe(true);
+    expect(container?.textContent).toContain("Clear pending IDE action state");
+
+    await act(async () => {
+      findButton("Clear pending IDE action state").click();
+    });
+
+    ideActionMessages = postMessage.mock.calls.map(([message]) => message).filter((message) => message.type === "gui.ideActionRequest");
+    expect(ideActionMessages).toHaveLength(1);
+    expect(findButton("Run read-only IDE action").disabled).toBe(false);
+    expect(container?.textContent).toContain("Cleared pending IDE action state in the GUI only. No host-side cancellation was requested.");
+
+    await dispatchHostIdeActionProgress("gui-ide-proposal-action-1", { phase: "running", status: "inProgress", summary: "Stale first progress should not render.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/retry-proposal.ts" });
+    await dispatchHostIdeActionResult("gui-ide-proposal-action-1", { status: "failed", message: "Stale first result should not render.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/retry-proposal.ts", range: testRange() });
+    expect(container?.textContent).not.toContain("Stale first progress should not render.");
+    expect(container?.textContent).not.toContain("Stale first result should not render.");
+
+    await act(async () => {
+      findButton("Run read-only IDE action").click();
+    });
+    ideActionMessages = postMessage.mock.calls.map(([message]) => message).filter((message) => message.type === "gui.ideActionRequest");
+    expect(ideActionMessages).toHaveLength(2);
+    expect(ideActionMessages[1].requestId).toBe("gui-ide-proposal-action-2");
+    expect(ideActionMessages[1].requestId).not.toBe(ideActionMessages[0].requestId);
+
+    await dispatchHostIdeActionResult("gui-ide-proposal-action-1", { status: "failed", message: "Late stale first result should not overwrite retry.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/retry-proposal.ts", range: testRange() });
+    await dispatchHostIdeActionResult("gui-ide-proposal-action-2", { status: "succeeded", message: "Retry result rendered.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/retry-proposal.ts", range: testRange() });
+
+    expect(container?.textContent).toContain("Reveal range: succeeded");
+    expect(container?.textContent).toContain("Retry result rendered.");
+    expect(container?.textContent).not.toContain("Late stale first result should not overwrite retry.");
+    expect(browserStorageDump()).not.toContain("src/retry-proposal.ts");
+    expect(browserStorageDump()).not.toContain("Reveal the retry proposal range.");
+    expect(localSetItem.mock.calls.some((call) => call.some((value) => String(value).includes("src/retry-proposal.ts") || String(value).includes("Reveal the retry proposal range.")))).toBe(false);
+  });
+
   it("compacts valid assistant IDE proposal JSON until explicit inspect", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });

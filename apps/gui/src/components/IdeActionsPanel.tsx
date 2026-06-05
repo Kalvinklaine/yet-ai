@@ -23,9 +23,10 @@ export type IdeActionsPanelProps = {
   onGetContext: () => void;
   onOpenFile: (workspaceRelativePath: string) => void;
   onRevealRange: (workspaceRelativePath: string, range: WorkspaceEditRange) => void;
+  onClearPendingIdeAction: () => void;
 };
 
-export function IdeActionsPanel({ host, attempt, note, workspaceRelativePath, range, onGetContext, onOpenFile, onRevealRange }: IdeActionsPanelProps) {
+export function IdeActionsPanel({ host, attempt, note, workspaceRelativePath, range, onGetContext, onOpenFile, onRevealRange, onClearPendingIdeAction }: IdeActionsPanelProps) {
   const supported = host === "vscode";
   const pending = attempt?.status === "pending" || attempt?.status === "inProgress";
   return (
@@ -43,6 +44,9 @@ export function IdeActionsPanel({ host, attempt, note, workspaceRelativePath, ra
           <button type="button" onClick={() => workspaceRelativePath && onOpenFile(workspaceRelativePath)} disabled={pending || !workspaceRelativePath}>Open file</button>
           <button type="button" onClick={() => workspaceRelativePath && range && onRevealRange(workspaceRelativePath, range)} disabled={pending || !workspaceRelativePath || !range}>Reveal range</button>
         </div>
+      )}
+      {supported && pending && (
+        <button type="button" className="secondary-button" onClick={onClearPendingIdeAction}>Clear pending IDE action state</button>
       )}
       {workspaceRelativePath && <span className="subtle">Active safe path: {sanitizeDisplayText(workspaceRelativePath)}</span>}
       {range && <span className="subtle">Active safe range: {formatEditRange(range)}</span>}
@@ -74,9 +78,10 @@ export type IdeActionProposalPanelProps = {
   host: BridgeHost;
   pending: boolean;
   onRun: (payload: IdeActionRequestPayload) => void;
+  onClearPendingIdeAction: () => void;
 };
 
-export function IdeActionProposalPanel({ proposal, host, pending, onRun }: IdeActionProposalPanelProps) {
+export function IdeActionProposalPanel({ proposal, host, pending, onRun, onClearPendingIdeAction }: IdeActionProposalPanelProps) {
   if (!proposal) {
     return null;
   }
@@ -98,7 +103,10 @@ export function IdeActionProposalPanel({ proposal, host, pending, onRun }: IdeAc
       </div>
       <span className="subtle">Review this assistant-proposed read-only navigation/context action before running. The GUI will not run it automatically and never accepts assistant-supplied request ids.</span>
       {host === "vscode" ? (
-        <button type="button" onClick={() => onRun(proposal.payload)} disabled={pending}>{pending ? "IDE action pending…" : "Run read-only IDE action"}</button>
+        <div className="row">
+          <button type="button" onClick={() => onRun(proposal.payload)} disabled={pending}>{pending ? "IDE action pending…" : "Run read-only IDE action"}</button>
+          {pending && <button type="button" className="secondary-button" onClick={onClearPendingIdeAction}>Clear pending IDE action state</button>}
+        </div>
       ) : (
         <div className="readiness-card warn" role="status">{host === "jetbrains" ? "JetBrains preview-only unsupported. No IDE action will be posted." : "Browser preview only. No IDE action will be posted."}</div>
       )}
