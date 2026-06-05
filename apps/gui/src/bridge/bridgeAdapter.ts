@@ -60,9 +60,9 @@ export type IdeActionResultPayload = {
   workspaceRelativePath?: string;
   range?: WorkspaceEditRange;
   context?: {
-    source?: "vscode";
-    hasActiveEditor?: boolean;
-    workspaceFolderCount?: number;
+    source: "vscode";
+    hasActiveEditor: boolean;
+    workspaceFolderCount: number;
   };
 };
 
@@ -522,9 +522,9 @@ function isIdeActionContext(value: unknown): boolean {
   if (!isPlainObject(value) || !hasOnlyKeys(value, ["source", "hasActiveEditor", "workspaceFolderCount"])) {
     return false;
   }
-  return (value.source === undefined || value.source === "vscode") &&
-    (value.hasActiveEditor === undefined || typeof value.hasActiveEditor === "boolean") &&
-    optionalBoundedInteger(value.workspaceFolderCount, 0, 100);
+  return value.source === "vscode" &&
+    typeof value.hasActiveEditor === "boolean" &&
+    Number.isInteger(value.workspaceFolderCount) && (value.workspaceFolderCount as number) >= 0 && (value.workspaceFolderCount as number) <= 100;
 }
 
 function isFileTextEdits(value: unknown): value is WorkspaceFileTextEdits {

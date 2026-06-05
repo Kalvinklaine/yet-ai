@@ -504,6 +504,11 @@
         "context": {
           "type": "object",
           "additionalProperties": false,
+          "required": [
+            "source",
+            "hasActiveEditor",
+            "workspaceFolderCount"
+          ],
           "properties": {
             "source": {
               "type": "string",
