@@ -1,0 +1,16 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-unavailable-context-path-range",
+  "payload": {
+    "status": "unavailable",
+    "message": "Context snapshot unavailable.",
+    "cloudRequired": false,
+    "action": "getContextSnapshot",
+    "workspaceRelativePath": "src/example.ts",
+    "range": {
+      "start": { "line": 1, "character": 0 },
+      "end": { "line": 1, "character": 4 }
+    }
+  }
+}
