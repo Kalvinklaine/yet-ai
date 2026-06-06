@@ -4337,7 +4337,7 @@ describe("edit proposal preview", () => {
 
     const text = container?.textContent ?? "";
     expect(text).toContain("Confirmed edit proposal");
-    expect(text).toContain("Replacement preview was redacted; inspect proposal JSON before applying.");
+    expect(text).toContain("Replacement preview was redacted or shortened. Applying uses the raw proposal text; inspect proposal JSON before applying.");
     expect(text).not.toContain(rawToken);
     expect(text).not.toContain(longToken);
     expect(text).not.toContain("api_key=");
@@ -4348,10 +4348,11 @@ describe("edit proposal preview", () => {
     expect(Array.from(container?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Request host apply after review")).toBe(false);
   });
 
-  it("keeps apply available and shows the redaction warning only, never blocking apply", async () => {
+  it("disables apply for redacted replacement preview until acknowledged, then emits gui.applyWorkspaceEditRequest on click in VS Code", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
     const longToken = "z".repeat(64);
+    const rawToken = "sk-" + "a".repeat(40);
     const proposal = {
       ...safeEditProposalPayload(),
       edits: [
@@ -4360,7 +4361,7 @@ describe("edit proposal preview", () => {
           textReplacements: [
             {
               range: { start: { line: 4, character: 2 }, end: { line: 4, character: 18 } },
-              replacementText: `api_key=${longToken}`,
+              replacementText: `api_key=${longToken} Bearer ${rawToken}`,
             },
           ],
         },
@@ -4368,8 +4369,8 @@ describe("edit proposal preview", () => {
     };
     mockRuntimeResponses({
       ...readyRuntimeOptions(),
-      chats: [chatSummary("chat-001", "Apply available redaction", 1)],
-      chatThreads: { "chat-001": chatThread("chat-001", "Apply available redaction", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+      chats: [chatSummary("chat-001", "Redacted apply gated", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Redacted apply gated", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
     });
 
     renderApp();
@@ -4377,8 +4378,198 @@ describe("edit proposal preview", () => {
     await flushAsync();
 
     const text = container?.textContent ?? "";
-    expect(text).toContain("Replacement preview was redacted; inspect proposal JSON before applying.");
+    expect(text).toContain("Replacement preview was redacted or shortened. Applying uses the raw proposal text; inspect proposal JSON before applying.");
+    expect(text).toContain("I understand the raw replacement text may differ from the redacted preview.");
+    expect(text).not.toContain(rawToken);
+    expect(text).not.toContain(longToken);
+    expect(text).not.toContain("api_key=");
+    expect(text).not.toContain("Bearer");
+    expect(browserStorageDump()).not.toContain(rawToken);
+    expect(browserStorageDump()).not.toContain(longToken);
+
+    const applyButton = findButton("Request host apply after review");
+    expect(applyButton.disabled).toBe(true);
+
+    // Even if the user tries to click while disabled, no apply is emitted.
+    await act(async () => {
+      applyButton.click();
+    });
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+
+    // Acknowledge the warning; the apply button becomes enabled.
+    const ack = container?.querySelector<HTMLInputElement>("[data-testid='edit-proposal-acknowledge-redaction']");
+    expect(ack).not.toBeNull();
+    await act(async () => {
+      ack!.click();
+    });
     expect(findButton("Request host apply after review").disabled).toBe(false);
+
+    // Clicking now emits the apply request with the raw proposal text.
+    await act(async () => {
+      findButton("Request host apply after review").click();
+    });
+    const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
+    expect(applyCalls).toHaveLength(1);
+    expect(applyCalls[0][0]).toMatchObject({ version: bridgeVersion, type: "gui.applyWorkspaceEditRequest", payload: proposal });
+    // The raw replacement is sent only after the explicit acknowledgement and apply click.
+    expect(applyCalls[0][0].requestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
+  });
+
+  it("keeps non-redacted apply enabled without acknowledgement in VS Code", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Non-redacted apply", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Non-redacted apply", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).not.toContain("Replacement preview was redacted or shortened");
+    expect(text).not.toContain("I understand the raw replacement text may differ from the redacted preview.");
+    expect(container?.querySelector("[data-testid='edit-proposal-acknowledge-redaction']")).toBeNull();
+    expect(findButton("Request host apply after review").disabled).toBe(false);
+
+    await act(async () => {
+      findButton("Request host apply after review").click();
+    });
+    const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
+    expect(applyCalls).toHaveLength(1);
+    expect(applyCalls[0][0]).toMatchObject({ version: bridgeVersion, type: "gui.applyWorkspaceEditRequest", payload: proposal });
+  });
+
+  it("does not expose raw secret-like replacement text in DOM or storage before acknowledgement for a redacted proposal", async () => {
+    localStorage.setItem("sentinel", "keep");
+    const rawToken = "sk-" + "b".repeat(40);
+    const longToken = "c".repeat(64);
+    const proposal = {
+      ...safeEditProposalPayload(),
+      edits: [
+        {
+          workspaceRelativePath: "src/example.ts",
+          textReplacements: [
+            {
+              range: { start: { line: 4, character: 2 }, end: { line: 4, character: 18 } },
+              replacementText: `Bearer ${rawToken} api_key=${longToken}`,
+            },
+          ],
+        },
+      ],
+    };
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Redacted secret isolation", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Redacted secret isolation", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const html = container?.innerHTML ?? "";
+    expect(container?.textContent ?? "").toContain("Replacement preview was redacted or shortened. Applying uses the raw proposal text; inspect proposal JSON before applying.");
+    expect(container?.textContent ?? "").toContain("I understand the raw replacement text may differ from the redacted preview.");
+    expect(container?.querySelector("[data-testid='edit-proposal-acknowledge-redaction']")).not.toBeNull();
+    expect(html).not.toContain(rawToken);
+    expect(html).not.toContain(longToken);
+    expect(html).not.toContain(`Bearer ${rawToken}`);
+    expect(html).not.toContain(`api_key=${longToken}`);
+    expect(browserStorageDump()).toContain("sentinel");
+    expect(browserStorageDump()).not.toContain(rawToken);
+    expect(browserStorageDump()).not.toContain(longToken);
+    // In browser mode the apply button is not rendered; in VS Code it would be disabled. Either way the acknowledgement control is required before any apply can be issued.
+    expect(Array.from(container?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Request host apply after review")).toBe(false);
+  });
+
+  it("resets acknowledgement when the edit proposal payload changes", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const shortenedReplacementText = "safe replacement text segment ".repeat(14);
+    const firstProposal = {
+      ...safeEditProposalPayload(),
+      edits: [
+        {
+          workspaceRelativePath: "src/example.ts",
+          textReplacements: [
+            {
+              range: { start: { line: 4, character: 2 }, end: { line: 4, character: 18 } },
+              replacementText: shortenedReplacementText,
+            },
+          ],
+        },
+      ],
+    };
+    const secondProposal = {
+      ...firstProposal,
+      summary: "Different confirmed edit after first review.",
+    };
+
+    let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const encoder = new TextEncoder();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/v1/chats/subscribe?chat_id=")) {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            sseController = controller;
+          },
+          cancel() {},
+        });
+        return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+      }
+      return mockRuntimeResponse(input, init, {
+        ...readyRuntimeOptions(),
+        chats: [chatSummary("chat-001", "Edit proposal acknowledge reset", 1)],
+        chatThreads: { "chat-001": chatThread("chat-001", "Edit proposal acknowledge reset", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(firstProposal))]) },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const firstAck = container?.querySelector<HTMLInputElement>("[data-testid='edit-proposal-acknowledge-redaction']");
+    expect(firstAck).not.toBeNull();
+    expect(findButton("Request host apply after review").disabled).toBe(true);
+    await act(async () => {
+      firstAck!.click();
+    });
+    expect(findButton("Request host apply after review").disabled).toBe(false);
+
+    // Send a new user message that produces a new (changed) assistant edit proposal.
+    await act(async () => {
+      setTextareaValue(chatInput(), "trigger sse for second edit proposal");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({
+        seq: 2,
+        type: "snapshot",
+        chatId: "chat-001",
+        payload: { messages: [chatMessage("chat-001", "assistant-2", "assistant", JSON.stringify(secondProposal))] },
+      })}\n\n`));
+      sseController?.close();
+    });
+    await flushAsync();
+    await flushAsync();
+
+    const secondText = container?.textContent ?? "";
+    expect(secondText).toContain("Different confirmed edit after first review.");
+    expect(secondText).toContain("Replacement preview was redacted or shortened. Applying uses the raw proposal text; inspect proposal JSON before applying.");
+    const secondAck = container?.querySelector<HTMLInputElement>("[data-testid='edit-proposal-acknowledge-redaction']");
+    expect(secondAck).not.toBeNull();
+    expect(secondAck?.checked).toBe(false);
+    expect(findButton("Request host apply after review").disabled).toBe(true);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
 
   it("rejects duplicate edit proposal file groups before rendering or posting", async () => {

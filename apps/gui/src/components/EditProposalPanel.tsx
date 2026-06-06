@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { ApplyWorkspaceEditPayload, ApplyWorkspaceEditResultPayload, BridgeHost } from "../bridge/bridgeAdapter";
 import { sanitizeDisplayText } from "../services/redaction";
 
@@ -62,6 +63,14 @@ export function EditProposalPreview({ proposal, host, pending, onApply, onCancel
     })),
   );
   const redactedPreviewCount = replacementPreviewSummaries.filter((entry) => entry.isRedacted).length;
+  const hasRedactedPreview = hasRedactedReplacementPreview(proposal);
+  const acknowledgementKey = proposal.payloadKey || proposal.requestId;
+  const [acknowledgedRedactedPreview, setAcknowledgedRedactedPreview] = useState(false);
+  useEffect(() => {
+    setAcknowledgedRedactedPreview(false);
+  }, [acknowledgementKey]);
+  const applyBlockedByRedaction = hasRedactedPreview && !acknowledgedRedactedPreview;
+  const applyDisabled = pending || applyBlockedByRedaction;
   return (
     <div className="stack">
       <span>{sanitizeDisplayText(proposal.payload.summary)}</span>
@@ -71,9 +80,18 @@ export function EditProposalPreview({ proposal, host, pending, onApply, onCancel
         <span data-testid="edit-proposal-edit-count">Text edits: {editCount}</span>
         <span>Cloud required: false</span>
       </div>
-      {redactedPreviewCount > 0 && (
+      {hasRedactedPreview && (
         <div className="readiness-card warn" role="status" data-testid="edit-proposal-redaction-warning">
-          Replacement preview was redacted; inspect proposal JSON before applying.
+          Replacement preview was redacted or shortened. Applying uses the raw proposal text; inspect proposal JSON before applying.
+          <label className="stack edit-proposal-ack" style={{ marginTop: 4 }}>
+            <input
+              type="checkbox"
+              data-testid="edit-proposal-acknowledge-redaction"
+              checked={acknowledgedRedactedPreview}
+              onChange={(event) => setAcknowledgedRedactedPreview(event.target.checked)}
+            />
+            <span>I understand the raw replacement text may differ from the redacted preview.</span>
+          </label>
         </div>
       )}
       <div className="stack">
@@ -95,7 +113,14 @@ export function EditProposalPreview({ proposal, host, pending, onApply, onCancel
         <div className="readiness-card warn" role="status">This MVP can apply workspace edits only from VS Code. Browser and JetBrains preview mode cannot request apply yet.</div>
       ) : (
         <div className="row">
-          <button type="button" onClick={onApply} disabled={pending}>{pending ? "Host apply pending…" : "Request host apply after review"}</button>
+          <button
+            type="button"
+            onClick={onApply}
+            disabled={applyDisabled}
+            data-testid="edit-proposal-apply-button"
+          >
+            {pending ? "Host apply pending…" : "Request host apply after review"}
+          </button>
           {pending && <button type="button" onClick={onCancelPending}>Clear pending apply state</button>}
         </div>
       )}
@@ -143,7 +168,24 @@ export function isReplacementPreviewRedacted(text: string): boolean {
   }
   const rawPreview = text.length > replacementPreviewLimit ? `${text.slice(0, replacementPreviewLimit)}…` : text;
   const sanitized = sanitizeDisplayText(rawPreview);
-  return sanitized !== rawPreview;
+  return text.length > replacementPreviewLimit || sanitized !== rawPreview;
+}
+
+export function hasRedactedReplacementPreview(proposal: EditProposalState): boolean {
+  if (!proposal || !proposal.payload || !Array.isArray(proposal.payload.edits)) {
+    return false;
+  }
+  for (const file of proposal.payload.edits) {
+    if (!file || !Array.isArray(file.textReplacements)) {
+      continue;
+    }
+    for (const replacement of file.textReplacements) {
+      if (isReplacementPreviewRedacted(replacement.replacementText)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function formatEditRange(range: { start: { line: number; character: number }; end: { line: number; character: number } }): string {
