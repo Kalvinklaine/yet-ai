@@ -1943,6 +1943,25 @@ describe("active editor attached context", () => {
     expect(container?.textContent).not.toContain("Stale result ignored.");
   });
 
+  it("redacts secret-like active editor preview text from the DOM", async () => {
+    const postMessage = vi.fn();
+    const rawSecret = "sk-proj-1234567890abcdef";
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    await dispatchHostContextSnapshot({
+      file: { displayPath: "src/main.ts", workspaceRelativePath: "src/main.ts", languageId: "typescript" },
+      selection: { startLine: 2, startCharacter: 1, endLine: 2, endCharacter: 5, text: `const apiKey = "${rawSecret}";` },
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Bounded preview");
+    expect(text).toContain("[redacted]");
+    expect(text).not.toContain(rawSecret);
+  });
+
   it("renders browser read-only IDE action proposal without posting a request", async () => {
     const proposal = ideActionProposal({ action: "openWorkspaceFile", workspaceRelativePath: "src/example.ts", summary: "Open the example file." });
     mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Browser proposal", 1)], chatThreads: { "chat-001": chatThread("chat-001", "Browser proposal", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) } });
