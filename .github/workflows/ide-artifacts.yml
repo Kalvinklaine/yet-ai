@@ -1,0 +1,90 @@
+name: Yet AI IDE Artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-ide-artifacts:
+    name: Build downloadable IDE dev-preview artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/gui/package-lock.json
+            apps/plugins/vscode/package-lock.json
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.14.3
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install GUI dependencies
+        run: npm ci
+        working-directory: apps/gui
+
+      - name: Install VS Code plugin dependencies
+        run: npm ci
+        working-directory: apps/plugins/vscode
+
+      - name: Build and validate IDE dev-preview artifacts
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          npm run prepare:vscode-preview
+          npm run smoke:vscode-installable
+          npm run smoke:vscode-preview
+          npm run prepare:jetbrains-preview
+          npm run smoke:jetbrains-installable
+          npm run smoke:jetbrains-preview
+          npm run artifact:manifest -- --require vscode,jetbrains
+
+      - name: Upload IDE dev-preview artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: yet-ai-dev-preview-plugins-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            dist/plugins/vscode/*.vsix
+            dist/plugins/vscode/*.sha256
+            dist/plugins/jetbrains/*.zip
+            dist/plugins/jetbrains/*.sha256
+            dist/plugins/manifest.json
+
+      - name: Clean tracked status
+        run: |
+          status="$(git status --short --untracked-files=no)"
+          if [ -n "$status" ]; then
+            printf '%s\n' "$status"
+            exit 1
+          fi
+          echo "Tracked git status is clean."
