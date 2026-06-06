@@ -59,6 +59,7 @@ const distVsixName = `${identity.product.id}-vscode-${vscodePackage.version}-dev
 const distVsixPath = path.join(rootDistDir, distVsixName);
 const distChecksumPath = `${distVsixPath}.sha256`;
 const checksum = await publishDevPreviewArtifact(distVsixPath, distChecksumPath);
+run("npm", ["run", "artifact:manifest"]);
 
 console.log("\nVS Code dev preview is prepared.");
 console.log("Open apps/plugins/vscode in VS Code, start an Extension Development Host, then run Yet AI: Open Chat.");
