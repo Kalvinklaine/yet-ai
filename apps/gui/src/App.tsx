@@ -1,6 +1,7 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type WorkspaceEditRange } from "./bridge/bridgeAdapter";
+import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
+import { activeEditorSourceLabel, attachedContextFileLabel, attachedContextSummary, boundedContextPreview, formatSelectionRange, hasUsableAttachedContext, rangeFromContextSelection } from "./services/activeEditorContext";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
 import { IdeActionProposalPanel, IdeActionsPanel, type IdeActionAttemptState } from "./components/IdeActionsPanel";
 import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
@@ -1924,60 +1925,6 @@ function modelProviderMismatchMessage(model: ModelSummary, provider?: ProviderSu
   return `Runtime model/provider mismatch. Refresh runtime or test/save provider before sending.${detail}`;
 }
 
-function hasUsableAttachedContext(context: HostContextSnapshotPayload): boolean {
-  return Boolean(context.file?.displayPath || context.file?.workspaceRelativePath || context.file?.languageId || context.selection?.text?.trim() || formatSelectionRange(context.selection) !== "unknown range");
-}
-
-function attachedContextSummary(context: HostContextSnapshotPayload): string {
-  return `${sanitizeDisplayText(context.source)} ${sanitizeDisplayText(context.file?.workspaceRelativePath ?? context.file?.displayPath ?? "active editor")}`;
-}
-
-function attachedContextFileLabel(context: HostContextSnapshotPayload): string {
-  const displayPath = context.file?.displayPath;
-  const workspacePath = context.file?.workspaceRelativePath;
-  if (displayPath && workspacePath && displayPath !== workspacePath) {
-    return `${sanitizeDisplayText(displayPath)} (${sanitizeDisplayText(workspacePath)})`;
-  }
-  return sanitizeDisplayText(displayPath ?? workspacePath ?? "Untitled editor");
-}
-
-function boundedContextPreview(text: string): string {
-  if (!text.trim()) {
-    return "No selected text preview.";
-  }
-  const limit = 360;
-  const bounded = text.length > limit ? `${text.slice(0, limit)}…` : text;
-  return sanitizeDisplayText(bounded);
-}
-
-function formatSelectionRange(selection: HostContextSnapshotPayload["selection"]): string {
-  if (!selection) {
-    return "unknown range";
-  }
-  const hasStart = selection.startLine !== undefined && selection.startCharacter !== undefined;
-  const hasEnd = selection.endLine !== undefined && selection.endCharacter !== undefined;
-  if (hasStart && hasEnd) {
-    return `${selection.startLine}:${selection.startCharacter}-${selection.endLine}:${selection.endCharacter}`;
-  }
-  if (hasStart) {
-    return `${selection.startLine}:${selection.startCharacter}`;
-  }
-  return "unknown range";
-}
-
-function rangeFromContextSelection(selection: HostContextSnapshotPayload["selection"]): WorkspaceEditRange | undefined {
-  if (!selection || selection.startLine === undefined || selection.startCharacter === undefined || selection.endLine === undefined || selection.endCharacter === undefined) {
-    return undefined;
-  }
-  if (selection.endLine < selection.startLine || (selection.endLine === selection.startLine && selection.endCharacter < selection.startCharacter)) {
-    return undefined;
-  }
-  return {
-    start: { line: selection.startLine, character: selection.startCharacter },
-    end: { line: selection.endLine, character: selection.endCharacter },
-  };
-}
-
 function ideActionLabel(action: IdeActionType): string {
   switch (action) {
     case "getContextSnapshot":
@@ -2178,11 +2125,11 @@ function AttachedContextPreview({ context, include, status, onIncludeChange }: {
       <div className="stack">
         <div className="row">
           <strong>Active editor context</strong>
-          <span className="badge ok">{sanitizeDisplayText(context.source)}</span>
+          <span className="badge ok">{activeEditorSourceLabel(context.source)}</span>
           <span className={include ? "badge ok" : "badge warn"}>{include ? "Attach to next message" : "Do not attach"}</span>
         </div>
         <div className="attached-context-grid">
-          <span>Source host: {sanitizeDisplayText(context.source)}</span>
+          <span>Source host: {activeEditorSourceLabel(context.source)}</span>
           <span>File: {fileLabel}</span>
           <span>Language: {language}</span>
           <span>Selection range: {range}</span>
