@@ -116,6 +116,7 @@ const distZipName = `${identity.product.id}-jetbrains-${pluginVersion}-dev-previ
 const distZipPath = path.join(rootDistDir, distZipName);
 const distChecksumPath = `${distZipPath}.sha256`;
 const checksum = await publishDevPreviewArtifact(selectedZip, distZipPath, distChecksumPath);
+run("npm", ["run", "artifact:manifest"]);
 
 console.log("\nJetBrains installable dev-preview ZIP prepared:");
 for (const zip of zips) {
