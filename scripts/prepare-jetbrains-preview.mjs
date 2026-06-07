@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -95,9 +95,15 @@ const pluginVersion = await readGradleProjectVersion();
 const gradleProjectName = await readGradleProjectName();
 const expectedGradleZipName = `${gradleProjectName}-${pluginVersion}.zip`;
 
+const profile = new Set(args).has("--release") ? "release" : "debug";
+const binaryName = process.platform === "win32" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
+const engineBinaryPath = path.join(root, "target", profile, binaryName);
+
 run("npm", ["run", "prepare:ide-engine", "--", ...args]);
 run("npm", ["run", "build"], { cwd: path.join(root, "apps", "gui") });
 await rm(path.join(jetbrainsRoot, "build", "generated", "resources", "yet-ai-gui"), { recursive: true, force: true });
+await rm(path.join(jetbrainsRoot, "build", "generated", "resources", "yet-ai-engine"), { recursive: true, force: true });
+await stageEngineBinary(engineBinaryPath, binaryName);
 await clearDistributionZips();
 run("gradle", ["buildPlugin", "--console=plain"], { cwd: jetbrainsRoot, diagnoseGradleFailure: true });
 
@@ -108,9 +114,6 @@ if (zips.length !== 1) {
   process.exit(1);
 }
 
-const profile = new Set(args).has("--release") ? "release" : "debug";
-const binaryName = process.platform === "win32" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
-const engineBinaryPath = path.join(root, "target", profile, binaryName);
 const selectedZip = zips[0];
 const distZipName = `${identity.product.id}-jetbrains-${pluginVersion}-dev-preview.zip`;
 const distZipPath = path.join(rootDistDir, distZipName);
@@ -126,7 +129,8 @@ console.log("\nStable root dev-preview artifact:");
 console.log(`  ${distZipPath}`);
 console.log(`  ${distChecksumPath}`);
 console.log(`  sha256 ${checksum}`);
-console.log("\nIf the plugin does not discover the engine from PATH, configure:");
+console.log(`\nThe ZIP also bundles the engine as a stable resource at yet-ai-engine/${binaryName} inside the plugin JAR. The IDE extracts it on first launch and prefers it over PATH lookup.`);
+console.log("\nIf the plugin does not discover the bundled engine, configure:");
 console.log("  Launch mode = auto");
 console.log(`  Engine binary path = ${engineBinaryPath}`);
 console.log("\nInstall from disk:");
@@ -134,7 +138,7 @@ console.log("  1. IntelliJ IDEA Settings/Preferences -> Plugins -> gear -> Insta
 console.log("  2. Choose one of the ZIP paths printed above.");
 console.log("  3. Restart the IDE.");
 console.log("  4. Open the Yet AI tool window and verify the packaged UI/chat path.");
-console.log("\nThis is a local dev-preview ZIP only: no signing, marketplace publishing, production installer, or notarized bundled engine is produced.");
+console.log("\nThis is a local dev-preview ZIP only: the bundled yet-lsp engine is the local cargo build output packaged as a stable resource, with no signing, marketplace publishing, production installer, or notarized build of the engine.");
 
 async function publishDevPreviewArtifact(sourceZip, distZipPath, distChecksumPath) {
   await mkdir(rootDistDir, { recursive: true });
@@ -166,6 +170,28 @@ async function readGradleProjectName() {
     process.exit(1);
   }
   return match[1];
+}
+
+async function stageEngineBinary(sourceBinaryPath, binaryFileName) {
+  let sourceStat;
+  try {
+    sourceStat = await stat(sourceBinaryPath);
+  } catch (error) {
+    console.error(`Engine binary not found at ${sourceBinaryPath}. Run cargo build -p ${identity.engine.rustCrate}${profile === "release" ? " --release" : ""} first.`);
+    process.exit(1);
+  }
+  if (!sourceStat.isFile()) {
+    console.error(`Engine binary path is not a file: ${sourceBinaryPath}.`);
+    process.exit(1);
+  }
+  const resourceDir = path.join(jetbrainsRoot, "build", "generated", "resources", "yet-ai-engine", "yet-ai-engine");
+  await mkdir(resourceDir, { recursive: true });
+  const stagedPath = path.join(resourceDir, binaryFileName);
+  await copyFile(sourceBinaryPath, stagedPath);
+  if (process.platform !== "win32") {
+    await chmod(stagedPath, 0o755);
+  }
+  console.log(`Staged ${binaryFileName} into ${path.relative(root, stagedPath)} (${sourceStat.size} bytes).`);
 }
 
 async function clearDistributionZips() {

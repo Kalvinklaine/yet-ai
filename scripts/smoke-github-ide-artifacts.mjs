@@ -13,6 +13,9 @@ const jetbrainsUnzipFirstDir = path.join(artifactsRoot, "jetbrains-unzip-first")
 const jetbrainsInstallDirectDir = path.join(artifactsRoot, "jetbrains-install-direct");
 const manifestStageDir = path.join(artifactsRoot, "manifest");
 const failures = [];
+const identity = JSON.parse(await readFile(path.join(root, "product", "identity.json"), "utf8"));
+const binaryFileName = process.platform === "win32" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
+const bundledEngineResourcePath = `yet-ai-engine/${binaryFileName}`;
 
 await checkArtifactsRootRegressionGuards();
 
@@ -197,6 +200,11 @@ async function checkJetBrainsZip(zipPath, label) {
     const indexHtml = await extractArchiveEntryText(pluginJar, "yet-ai-gui/index.html", `${label} plugin JAR must allow reading yet-ai-gui/index.html.`);
     if (indexHtml !== undefined) {
       requireReferencedGuiAssets(jarEntries, indexHtml, label);
+    }
+    requireArchiveEntry(jarEntries, bundledEngineResourcePath, `${label} plugin JAR must contain bundled engine resource at ${bundledEngineResourcePath} (the local cargo-built ${identity.engine.binaryName} staged by npm run prepare:jetbrains-preview).`);
+    const engineBytes = await extractArchiveEntryBytes(pluginJar, bundledEngineResourcePath, `${label} plugin JAR must allow extracting bundled engine resource at ${bundledEngineResourcePath}.`);
+    if (engineBytes !== undefined && engineBytes.length === 0) {
+      failures.push(`${label} plugin JAR bundled engine resource at ${bundledEngineResourcePath} must contain non-zero bytes; got 0.`);
     }
   } finally {
     await rm(path.dirname(pluginJar), { recursive: true, force: true });
