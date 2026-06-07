@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jetbrainsRoot = path.join(root, "apps", "plugins", "jetbrains");
 const distributionsDir = path.join(jetbrainsRoot, "build", "distributions");
+const archiveInspectMaxBuffer = 128 * 1024 * 1024;
 const requiredVisibleText = ["Yet AI", "Local runtime connection", "Provider setup", "Chat with Yet AI", "Bridge debug"];
 const failures = [];
 
@@ -200,6 +201,7 @@ async function extractZipEntryBuffer(zipPath, entry) {
   const result = spawnSync("unzip", ["-p", zipPath, entry], {
     cwd: root,
     encoding: "buffer",
+    maxBuffer: archiveInspectMaxBuffer,
     stdio: ["ignore", "pipe", "pipe"],
     shell: process.platform === "win32",
   });
@@ -219,6 +221,7 @@ function listZip(zipPath) {
     const result = spawnSync(command, args, {
       cwd: root,
       encoding: "utf8",
+      maxBuffer: archiveInspectMaxBuffer,
       stdio: ["ignore", "pipe", "pipe"],
       shell: process.platform === "win32",
     });
