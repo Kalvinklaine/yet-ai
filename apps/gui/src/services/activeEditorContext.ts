@@ -28,6 +28,15 @@ export function hasUsableAttachedContext(context: HostContextSnapshotPayload | n
   return activeEditorContextUsability(context) !== "none";
 }
 
+export function attachedContextRequiresAcknowledgement(context: HostContextSnapshotPayload | null | undefined): boolean {
+  const selectedText = context?.selection?.text;
+  if (!selectedText) {
+    return false;
+  }
+  const preview = classifyBoundedContextPreview(selectedText);
+  return preview.redacted || preview.truncated;
+}
+
 export function attachedContextSummary(context: HostContextSnapshotPayload): string {
   return `${activeEditorSourceLabel(context.source)} ${sanitizeDisplayText(context.file?.workspaceRelativePath ?? context.file?.displayPath ?? "active editor")}`;
 }

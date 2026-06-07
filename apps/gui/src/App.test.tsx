@@ -2476,8 +2476,74 @@ describe("active editor attached context", () => {
     expect(browserStorageDump()).not.toContain(rawSecret);
   });
 
+  it("does not send secret-like selected text context without acknowledgement", async () => {
+    const rawSecret = "access_token=" + "s".repeat(64);
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    await dispatchHostContextSnapshot({ selection: { text: `const token = "${rawSecret}";` } });
+
+    expect(container?.textContent).toContain("Context preview requires acknowledgement");
+    expect(container?.textContent).toContain("Selected text preview was redacted");
+    expect(attachedContextToggle().checked).toBe(false);
+    expect(attachedContextToggle().disabled).toBe(true);
+    expect(container?.textContent).not.toContain(rawSecret);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(rawSecret);
+    fetchMock.mockClear();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "send without secret context");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    expect(lastUserMessageBody().payload).toEqual({ content: "send without secret context" });
+    expect(browserStorageDump()).not.toContain(rawSecret);
+  });
+
+  it("sends gated selected text context only after explicit acknowledgement and attach on user Send", async () => {
+    const rawSecret = "access_token=" + "a".repeat(64);
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    await dispatchHostContextSnapshot({ selection: { text: `const token = "${rawSecret}";` } });
+    fetchMock.mockClear();
+
+    await act(async () => {
+      attachedContextAcknowledgementToggle().click();
+    });
+    expect(attachedContextToggle().disabled).toBe(false);
+    await act(async () => {
+      attachedContextToggle().click();
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    await act(async () => {
+      setTextareaValue(chatInput(), "send acknowledged context");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    expect(lastUserMessageBody().payload).toEqual({
+      content: "send acknowledged context",
+      context: {
+        kind: "active_editor",
+        source: "vscode",
+        selection: { text: `const token = "${rawSecret}";` },
+      },
+    });
+  });
+
   it("bounds huge attached context previews", async () => {
-    const repeated = "SAFE_CONTEXT_PREVIEW_";
+    const repeated = "safe context preview ";
     const hugeSelection = repeated.repeat(350);
     mockRuntimeResponses();
     renderApp();
@@ -2489,8 +2555,34 @@ describe("active editor attached context", () => {
 
     const text = container?.textContent ?? "";
     expect(text).toContain("Selected characters: 7350");
-    expect((text.match(/SAFE_CONTEXT_PREVIEW_/g) ?? []).length).toBeLessThan(30);
+    expect((text.match(/safe context preview/g) ?? []).length).toBeLessThan(30);
     expect(text.length).toBeLessThan(20000);
+    expect(text).toContain("Selected text preview was shortened");
+    expect(attachedContextToggle().checked).toBe(false);
+  });
+
+  it("resets gated context acknowledgement when context payload changes", async () => {
+    const firstSecret = "access_token=" + "f".repeat(64);
+    const secondSecret = "access_token=" + "g".repeat(64);
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    await dispatchHostContextSnapshot({ selection: { text: `first ${firstSecret}` } });
+    await act(async () => {
+      attachedContextAcknowledgementToggle().click();
+    });
+    await act(async () => {
+      attachedContextToggle().click();
+    });
+    expect(attachedContextAcknowledgementToggle().checked).toBe(true);
+    expect(attachedContextToggle().checked).toBe(true);
+
+    await dispatchHostContextSnapshot({ selection: { text: `second ${secondSecret}` } });
+
+    expect(attachedContextAcknowledgementToggle().checked).toBe(false);
+    expect(attachedContextToggle().checked).toBe(false);
+    expect(attachedContextToggle().disabled).toBe(true);
   });
 
   it("sends attached context when valid and included", async () => {
@@ -6187,6 +6279,14 @@ function attachedContextToggle() {
 
 function attachedContextToggleOptional() {
   return Array.from(container?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]') ?? []).find((item) => item.parentElement?.textContent?.includes("Attach to next message") || item.parentElement?.textContent?.includes("Do not attach"));
+}
+
+function attachedContextAcknowledgementToggle() {
+  const input = Array.from(container?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]') ?? []).find((item) => item.parentElement?.textContent?.includes("I understand the hidden selected text may be included"));
+  if (!input) {
+    throw new Error("Attached context acknowledgement toggle not found");
+  }
+  return input;
 }
 
 function chatIdInput() {

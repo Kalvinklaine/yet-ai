@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HostContextSnapshotPayload } from "../bridge/bridgeAdapter";
-import { activeEditorContextUsability, activeEditorSourceLabel, attachedContextFileLabel, attachedContextSummary, boundedContextPreview, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, rangeFromContextSelection } from "./activeEditorContext";
+import { activeEditorContextUsability, activeEditorSourceLabel, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, boundedContextPreview, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, rangeFromContextSelection } from "./activeEditorContext";
 
 const baseContext: HostContextSnapshotPayload = { kind: "active_editor", source: "vscode" };
 
@@ -54,6 +54,12 @@ describe("activeEditorContext", () => {
     expect(preview.text).toContain("[redacted]");
     expect(preview.text).not.toContain(rawSecret);
     expect(boundedContextPreview(`Authorization: Bearer ${rawSecret}`)).not.toContain(rawSecret);
+  });
+
+  it("requires acknowledgement for redacted or truncated selected text previews but not safe short previews", () => {
+    expect(attachedContextRequiresAcknowledgement({ ...baseContext, selection: { text: "safe short selected text" } })).toBe(false);
+    expect(attachedContextRequiresAcknowledgement({ ...baseContext, selection: { text: "Authorization: Bearer sk-proj-1234567890abcdef" } })).toBe(true);
+    expect(attachedContextRequiresAcknowledgement({ ...baseContext, selection: { text: "safe long text ".repeat(100) } })).toBe(true);
   });
 
   it("uses safe source labels", () => {
