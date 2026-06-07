@@ -75,18 +75,40 @@ jobs:
           npm run smoke:jetbrains-wrapper-browser
           npm run smoke:jetbrains-first-message
           npm run artifact:manifest -- --require vscode,jetbrains
+          npm run artifact:stage-github
+          npm run smoke:github-ide-artifacts
 
-      - name: Upload IDE dev-preview artifacts
+      # GitHub wraps every uploaded artifact in its own ZIP. The VS Code and
+      # JetBrains unzip-first artifacts must be unzipped before IDE install.
+      - name: Upload VS Code artifact (unzip GitHub artifact first)
         uses: actions/upload-artifact@v4
         with:
-          name: yet-ai-dev-preview-plugins-${{ github.sha }}
+          name: yet-ai-vscode-unzip-first-${{ github.sha }}
           if-no-files-found: error
-          path: |
-            dist/plugins/vscode/*.vsix
-            dist/plugins/vscode/*.sha256
-            dist/plugins/jetbrains/*.zip
-            dist/plugins/jetbrains/*.sha256
-            dist/plugins/manifest.json
+          path: dist/github-artifacts/vscode-unzip-first/*
+
+      - name: Upload JetBrains artifact (unzip GitHub artifact first)
+        uses: actions/upload-artifact@v4
+        with:
+          name: yet-ai-jetbrains-unzip-first-${{ github.sha }}
+          if-no-files-found: error
+          path: dist/github-artifacts/jetbrains-unzip-first/*
+
+      # This staging layout makes the GitHub artifact ZIP itself installable in
+      # JetBrains, so do not unzip it before installing from disk.
+      - name: Upload JetBrains direct-install artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: yet-ai-jetbrains-install-direct-${{ github.sha }}
+          if-no-files-found: error
+          path: dist/github-artifacts/jetbrains-install-direct/*
+
+      - name: Upload plugin artifact manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: yet-ai-plugin-manifest-${{ github.sha }}
+          if-no-files-found: error
+          path: dist/github-artifacts/manifest/*
 
       - name: Clean tracked status
         run: |
