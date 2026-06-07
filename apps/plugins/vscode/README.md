@@ -125,17 +125,28 @@ This is the nearest hands-on path for trying the local-first VS Code dev preview
 
 For a downloadable CI-built dev preview, use GitHub Actions workflow `Yet AI IDE Artifacts` (`.github/workflows/ide-artifacts.yml`). The workflow runs local/mock-only validation and uploads unsigned, unpublished dev-preview artifacts. It does not publish to a marketplace, sign, notarize, create a production release, call real providers, require provider credentials, or contact a hosted Yet AI backend.
 
+Current artifact names are:
+
+- `yet-ai-vscode-unzip-first-<sha>`
+- `yet-ai-jetbrains-unzip-first-<sha>`
+- `yet-ai-jetbrains-install-direct-<sha>`
+- `yet-ai-plugin-manifest-<sha>`
+
+VS Code install:
+
 1. In GitHub Actions, open a successful `Yet AI IDE Artifacts` run for the commit you want to test.
-2. Download the bundle named `yet-ai-dev-preview-plugins-<commit-sha>`; if GitHub shows a generated artifact name, use the bundle attached to that run.
-3. Unpack the bundle. Expected VS Code files are `dist/plugins/vscode/*.vsix` and adjacent `*.sha256`; the bundle also includes `dist/plugins/manifest.json` and JetBrains ZIP artifacts.
-4. Read `dist/plugins/manifest.json` and verify the VSIX against its `.sha256` before installing.
-5. Install the VSIX from a shell:
+2. Download `yet-ai-vscode-unzip-first-<sha>`.
+3. Unzip the downloaded GitHub artifact ZIP.
+4. Download/read `yet-ai-plugin-manifest-<sha>` for commit and checksum metadata.
+5. Install the inner VSIX from a shell:
 
    ```sh
-   code --install-extension <path-to-vsix> --force
+   code --install-extension yet-ai-vscode-<version>-dev-preview.vsix --force
    ```
 
 6. Open Yet AI with `Yet AI: Open Chat` and complete the manual checklist below.
+
+Do not install the old combined artifact bundle or any artifact containing both IDE plugins. JetBrains expects a JetBrains plugin ZIP structure; a generic GitHub transport bundle will fail with something like `Fail to load plugin descriptor`. If a JetBrains tester sees that error, they should select either the JetBrains direct-install artifact ZIP or the inner JetBrains plugin ZIP from the unzip-first artifact.
 
 Manual verification checklist:
 

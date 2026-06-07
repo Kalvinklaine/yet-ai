@@ -37,12 +37,32 @@ The helper reuses `prepare:ide-engine`, runs the GUI build, and invokes `gradle 
 
 For a downloadable CI-built dev preview, use GitHub Actions workflow `Yet AI IDE Artifacts` (`.github/workflows/ide-artifacts.yml`). The workflow runs local/mock-only validation and uploads unsigned, unpublished dev-preview artifacts. It does not publish to a marketplace, sign, notarize, create a production release, call real providers, require provider credentials, or contact a hosted Yet AI backend.
 
+Current artifact names are:
+
+- `yet-ai-vscode-unzip-first-<sha>`
+- `yet-ai-jetbrains-unzip-first-<sha>`
+- `yet-ai-jetbrains-install-direct-<sha>`
+- `yet-ai-plugin-manifest-<sha>`
+
+Download/read `yet-ai-plugin-manifest-<sha>` for commit and checksum metadata.
+
+Recommended direct install:
+
 1. In GitHub Actions, open a successful `Yet AI IDE Artifacts` run for the commit you want to test.
-2. Download the bundle named `yet-ai-dev-preview-plugins-<commit-sha>`; if GitHub shows a generated artifact name, use the bundle attached to that run.
-3. Unpack the bundle. Expected JetBrains files are `dist/plugins/jetbrains/*.zip` and adjacent `*.sha256`; the bundle also includes `dist/plugins/manifest.json` and VS Code VSIX artifacts.
-4. Read `dist/plugins/manifest.json` and verify the ZIP against its `.sha256` before installing.
-5. Install the ZIP with Settings/Preferences → Plugins → gear → Install Plugin from Disk → select ZIP → restart.
-6. Keep `Launch mode` as `auto` or `launch`, set `Engine binary path` only if discovery fails, then open the Yet AI tool window.
+2. Download `yet-ai-jetbrains-install-direct-<sha>`.
+3. Use the downloaded GitHub artifact ZIP directly in Settings/Preferences → Plugins → gear → Install Plugin from Disk.
+4. Restart.
+5. Keep `Launch mode` as `auto` or `launch`, set `Engine binary path` only if discovery fails, then open the Yet AI tool window.
+
+Fallback unzip-first install:
+
+1. Download `yet-ai-jetbrains-unzip-first-<sha>`.
+2. Unzip the downloaded GitHub artifact ZIP.
+3. Install the inner `yet-ai-jetbrains-<version>-dev-preview.zip` with Settings/Preferences → Plugins → gear → Install Plugin from Disk.
+4. Restart.
+5. Keep `Launch mode` as `auto` or `launch`, set `Engine binary path` only if discovery fails, then open the Yet AI tool window.
+
+Do not install the old combined artifact bundle or any artifact containing both IDE plugins. JetBrains expects a JetBrains plugin ZIP structure; a generic GitHub transport bundle will fail with something like `Fail to load plugin descriptor`. If you see that error, make sure you selected either the JetBrains direct-install artifact ZIP or the inner JetBrains plugin ZIP from the unzip-first artifact.
 
 Manual verification checklist:
 
