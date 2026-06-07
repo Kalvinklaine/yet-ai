@@ -12,6 +12,7 @@ const vscodeStageDir = path.join(artifactsRoot, "vscode-unzip-first");
 const jetbrainsUnzipFirstDir = path.join(artifactsRoot, "jetbrains-unzip-first");
 const jetbrainsInstallDirectDir = path.join(artifactsRoot, "jetbrains-install-direct");
 const manifestStageDir = path.join(artifactsRoot, "manifest");
+const archiveInspectMaxBuffer = 128 * 1024 * 1024;
 const failures = [];
 const identity = JSON.parse(await readFile(path.join(root, "product", "identity.json"), "utf8"));
 const binaryFileName = process.platform === "win32" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
@@ -355,7 +356,7 @@ async function listArchiveEntries(archivePath) {
     ["jar", ["tf", archivePath]],
   ];
   for (const [command, args] of commands) {
-    const result = spawnSync(command, args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], shell: false });
+    const result = spawnSync(command, args, { cwd: root, encoding: "utf8", maxBuffer: archiveInspectMaxBuffer, stdio: ["ignore", "pipe", "pipe"], shell: false });
     if (result.status === 0) {
       return result.stdout.split(/\r?\n/).filter(Boolean);
     }
@@ -390,7 +391,7 @@ async function extractArchiveEntryBytes(archivePath, entry, label) {
     failures.push(`${label} contains unsafe archive entry path ${JSON.stringify(entry)}.`);
     return undefined;
   }
-  const result = spawnSync("unzip", ["-p", archivePath, entry], { cwd: root, encoding: "buffer", stdio: ["ignore", "pipe", "pipe"], shell: false });
+  const result = spawnSync("unzip", ["-p", archivePath, entry], { cwd: root, encoding: "buffer", maxBuffer: archiveInspectMaxBuffer, stdio: ["ignore", "pipe", "pipe"], shell: false });
   if (result.status === 0) {
     return result.stdout;
   }

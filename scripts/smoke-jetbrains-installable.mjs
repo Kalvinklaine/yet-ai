@@ -10,6 +10,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jetbrainsRoot = path.join(root, "apps", "plugins", "jetbrains");
 const distributionsDir = path.join(jetbrainsRoot, "build", "distributions");
 const rootDistDir = path.join(root, "dist", "plugins", "jetbrains");
+const archiveInspectMaxBuffer = 128 * 1024 * 1024;
 const failures = [];
 const identity = JSON.parse(await readFile(path.join(root, "product", "identity.json"), "utf8"));
 const binaryFileName = process.platform === "win32" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
@@ -266,6 +267,7 @@ async function extractZipEntryBytes(zipPath, entry) {
   const result = spawnSync("unzip", ["-p", zipPath, entry], {
     cwd: root,
     encoding: "buffer",
+    maxBuffer: archiveInspectMaxBuffer,
     stdio: ["ignore", "pipe", "pipe"],
     shell: false,
   });
@@ -411,6 +413,7 @@ function listZip(zipPath) {
     const result = spawnSync(command, args, {
       cwd: root,
       encoding: "utf8",
+      maxBuffer: archiveInspectMaxBuffer,
       stdio: ["ignore", "pipe", "pipe"],
       shell: false,
     });
