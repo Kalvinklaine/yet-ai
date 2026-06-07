@@ -35,6 +35,7 @@
     "prepare:vscode-preview": "node scripts/prepare-vscode-preview.mjs",
     "prepare:jetbrains-preview": "node scripts/prepare-jetbrains-preview.mjs",
     "artifact:manifest": "node scripts/write-plugin-artifact-manifest.mjs",
+    "artifact:stage-github": "node scripts/stage-github-ide-artifacts.mjs",
     "validate:identity": "node scripts/validate-product-identity.mjs",
     "validate:hygiene": "node scripts/validate-public-hygiene.mjs",
     "validate:docs": "node scripts/validate-docs-index.mjs",
