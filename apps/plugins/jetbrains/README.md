@@ -33,6 +33,28 @@ npm run prepare:jetbrains-preview
 
 The helper reuses `prepare:ide-engine`, runs the GUI build, and invokes `gradle buildPlugin --console=plain` in `apps/plugins/jetbrains`. It prints every original Gradle ZIP found under `apps/plugins/jetbrains/build/distributions/`, then overwrites the current stable ignored root artifact at `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip` with a matching `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip.sha256` checksum. It also prints the local `Engine binary path` to use if the plugin does not discover `yet-lsp` from `PATH`. If `gradle` is not installed, install Gradle or add a reviewed project wrapper later; this repository does not vendor a Gradle wrapper for the preview path. If Gradle fails while resolving JetBrains dependencies such as `java-compiler-ant-tasks` through JetBrains cache endpoints or during `instrumentCode`, treat it as an external Gradle dependency/network failure: retry with a stable network, verify Gradle can resolve JetBrains dependencies, and use cached/offline Gradle only after those dependencies are already present locally.
 
+### GitHub Actions artifact install
+
+For a downloadable CI-built dev preview, use GitHub Actions workflow `Yet AI IDE Artifacts` (`.github/workflows/ide-artifacts.yml`). The workflow runs local/mock-only validation and uploads unsigned, unpublished dev-preview artifacts. It does not publish to a marketplace, sign, notarize, create a production release, call real providers, require provider credentials, or contact a hosted Yet AI backend.
+
+1. In GitHub Actions, open a successful `Yet AI IDE Artifacts` run for the commit you want to test.
+2. Download the bundle named `yet-ai-dev-preview-plugins-<commit-sha>`; if GitHub shows a generated artifact name, use the bundle attached to that run.
+3. Unpack the bundle. Expected JetBrains files are `dist/plugins/jetbrains/*.zip` and adjacent `*.sha256`; the bundle also includes `dist/plugins/manifest.json` and VS Code VSIX artifacts.
+4. Read `dist/plugins/manifest.json` and verify the ZIP against its `.sha256` before installing.
+5. Install the ZIP with Settings/Preferences → Plugins → gear → Install Plugin from Disk → select ZIP → restart.
+6. Keep `Launch mode` as `auto` or `launch`, set `Engine binary path` only if discovery fails, then open the Yet AI tool window.
+
+Manual verification checklist:
+
+- Packaged GUI loads in the tool window, not a placeholder or blank panel.
+- Runtime refresh connects or shows only sanitized actionable errors; runtime diagnostics omit session tokens, bearer headers, provider keys, auth codes, cookies, raw process output, and raw bridge payloads.
+- Provider setup is visible; provider errors/status are sanitized and provider credentials remain engine-owned local BYOK data.
+- Active editor/selection context preview appears only when relevant and is explicitly attached or omitted.
+- Read-only context/action execution remains unsupported in JetBrains for this sprint unless separately planned; confirmed edit proposals are preview-only and cannot be applied by JetBrains.
+- No shell, git, task, tool, autonomous edit, silent workspace mutation, or unconfirmed apply controls are present.
+
+Safe report template: include OS, IDE version, workflow run/commit, ZIP path family, manifest/checksum status, install result, GUI/runtime/provider status, active-context status if tested, and first-message outcome. Mark untested items as `not run`; do not imply production release status. Never include tokens, provider keys, bearer headers, auth codes, OAuth tokens, cookies, raw bridge payloads, request bodies, private paths, browser storage dumps, or screenshots containing secrets.
+
 Manual IntelliJ IDEA install-from-disk steps:
 
 1. Run `npm run prepare:jetbrains-preview` from the repository root.

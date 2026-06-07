@@ -273,6 +273,36 @@ All generated VSIX/ZIP files, `.sha256` files, packaged GUI assets, copied engin
 
 `npm run smoke:ide-preview` runs `npm run prepare:vscode-preview`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, `npm run smoke:vscode-wrapper-browser`, `npm run smoke:vscode-first-message`, `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, `npm run smoke:jetbrains-preview`, `npm run smoke:jetbrains-gui-browser`, and `npm run smoke:jetbrains-first-message` in order with fail-fast step labels. The `npm run smoke:vscode-wrapper-browser` step exercises packaged VS Code GUI assets in a VS Code-like browser harness with mock `acquireVsCodeApi`, proving assistant-authored strict JSON read-only IDE action proposal rendering, no auto-execution before the user clicks, explicit user confirmation, fresh GUI-owned `gui.ideActionRequest` ids, correlated host progress/result rendering, retained manual `getContextSnapshot` coverage, and secret redaction without launching real VS Code or using provider credentials. The underlying prepare commands build/prepare the local engine and `apps/gui`, then publish ignored root dev-preview artifacts under `dist/plugins/vscode/` and `dist/plugins/jetbrains/` with matching `.sha256` checksums. The generated VSIX, ZIP, checksums, GUI assets, extension/plugin output, engine binaries, and root `dist/` artifacts are ignored and must not be committed. This is a local dev-preview/install-from-file and first-message preview flow only: it is not marketplace publication, signing, notarization, a production installer, or a production release, and it requires no provider credentials, hosted Yet AI backend, real OpenAI/ChatGPT calls, or cloud workspace. The automated first-message coverage is loopback/mock-only; real OpenAI API-key fallback testing is manual-only and must produce sanitized evidence.
 
+### GitHub Actions IDE artifact download and install
+
+The `Yet AI IDE Artifacts` workflow (`.github/workflows/ide-artifacts.yml`) builds the same dev-preview IDE artifacts in GitHub Actions. This workflow is local/mock-only validation and upload for manual download: it does not publish, sign, notarize, release, upload to a marketplace, call real providers, require provider credentials, or contact a hosted Yet AI backend.
+
+1. Open GitHub Actions, choose the `Yet AI IDE Artifacts` workflow, and select a successful run for the commit you want to test.
+2. Download the artifact bundle named `yet-ai-dev-preview-plugins-<commit-sha>`; if GitHub presents a generated artifact name, use the bundle from that workflow run.
+3. Unpack the bundle and inspect `dist/plugins/manifest.json`. Confirm the commit/run metadata matches the intended run and that checksums are listed for the artifacts you will install.
+4. Verify the downloaded files against their adjacent checksums. The bundle contents are expected to include `dist/plugins/vscode/*.vsix`, `dist/plugins/vscode/*.sha256`, `dist/plugins/jetbrains/*.zip`, `dist/plugins/jetbrains/*.sha256`, and `dist/plugins/manifest.json`.
+5. Install the VS Code dev-preview artifact with:
+
+   ```sh
+   code --install-extension <path-to-vsix> --force
+   ```
+
+6. Install the JetBrains dev-preview artifact with Settings/Preferences → Plugins → gear → Install Plugin from Disk → select the ZIP → restart.
+
+These artifacts are unsigned, unpublished dev previews, not marketplace releases or production installers. Report manual verification honestly: if a checklist item was not run, mark it `not run`; if it failed, include only sanitized failure text.
+
+Manual verification checklist for installed artifacts:
+
+- Open Yet AI chat / the Yet AI tool window.
+- Confirm the packaged GUI loads rather than a placeholder or blank panel.
+- Refresh runtime and confirm connected status or sanitized actionable errors.
+- Confirm Provider setup is visible and provider status/errors are sanitized.
+- If active context or read-only IDE actions are relevant, confirm context preview/explicit action confirmation only.
+- If confirmed edit proposals are relevant, confirm preview plus explicit apply only; JetBrains remains preview-only for apply in this sprint.
+- Confirm there are no shell, git, task, tool, autonomous edit, silent workspace mutation, or unconfirmed apply controls.
+
+Safe report template: include OS/IDE version, workflow run/commit, artifact path family, checksum/manifest status, install result, GUI/runtime/provider status, active-context or edit-proposal status, and first-message outcome. Do not include tokens, provider keys, bearer headers, auth codes, OAuth tokens, cookies, raw bridge payloads, request bodies, private paths, browser storage dumps, or screenshots containing secrets.
+
 Manual launch paths after preparation:
 
 - VS Code primary path: open `apps/plugins/vscode` in VS Code, start an Extension Development Host, keep `yetai.launchMode = auto`, run `Yet AI: Open Chat`, and use the packaged GUI. For install-from-file testing, install `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix` with `code --install-extension ...` after `npm run smoke:vscode-installable` passes.
