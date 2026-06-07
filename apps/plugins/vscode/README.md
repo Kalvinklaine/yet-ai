@@ -125,19 +125,23 @@ This is the nearest hands-on path for trying the local-first VS Code dev preview
 
 For a downloadable CI-built dev preview, use GitHub Actions workflow `Yet AI IDE Artifacts` (`.github/workflows/ide-artifacts.yml`). The workflow runs local/mock-only validation and uploads unsigned, unpublished dev-preview artifacts. It does not publish to a marketplace, sign, notarize, create a production release, call real providers, require provider credentials, or contact a hosted Yet AI backend.
 
-Current artifact names are:
+The workflow builds per-platform artifacts in a `linux-x64` / `macos-arm64` / `windows-x64` matrix because the JetBrains plugin JAR bundles a native `yet-lsp` runtime. Download the artifact whose `<os>-<arch>` suffix matches your local OS/architecture; mixing platforms will fail at install time. The bundled `yet-lsp` is the dev-preview local cargo build output staged from the runner's `target/<profile>/yet-lsp` (or `yet-lsp.exe` on Windows); it is not a signed or notarized production engine and no signing, notarization, marketplace publication, production installer, or production release claim is made.
 
-- `yet-ai-vscode-unzip-first-<sha>`
-- `yet-ai-jetbrains-unzip-first-<sha>`
-- `yet-ai-jetbrains-install-direct-<sha>`
-- `yet-ai-plugin-manifest-<sha>`
+Per-platform artifact names are:
+
+- `yet-ai-vscode-unzip-first-<os>-<arch>-<sha>` (e.g. `yet-ai-vscode-unzip-first-linux-x64-<sha>`)
+- `yet-ai-jetbrains-unzip-first-<os>-<arch>-<sha>` (e.g. `yet-ai-jetbrains-unzip-first-macos-arm64-<sha>`)
+- `yet-ai-jetbrains-install-direct-<os>-<arch>-<sha>` (e.g. `yet-ai-jetbrains-install-direct-windows-x64-<sha>`)
+- `yet-ai-plugin-manifest-<os>-<arch>-<sha>` (per-platform manifest with `platform.os`/`platform.arch` and `runtime.bundledEngineResource`)
+
+A combined `yet-ai-plugin-manifest-<sha>` is also uploaded with a `platforms[]` array aggregating per-platform `platform`, `runtime`, and `artifacts` entries.
 
 VS Code install:
 
 1. In GitHub Actions, open a successful `Yet AI IDE Artifacts` run for the commit you want to test.
-2. Download `yet-ai-vscode-unzip-first-<sha>`.
+2. Download the `yet-ai-vscode-unzip-first-<os>-<arch>-<sha>` artifact matching your local OS/architecture.
 3. Unzip the downloaded GitHub artifact ZIP.
-4. Download/read `yet-ai-plugin-manifest-<sha>` for commit and checksum metadata.
+4. Download/read `yet-ai-plugin-manifest-<sha>` (or the per-platform `yet-ai-plugin-manifest-<os>-<arch>-<sha>`) for commit, checksum, and platform metadata.
 5. Install the inner VSIX from a shell:
 
    ```sh
