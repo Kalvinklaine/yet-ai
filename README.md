@@ -262,7 +262,7 @@ dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix
 dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix.sha256
 ```
 
-The JetBrains prepare command builds/prepares the local `yet-lsp` runtime, builds `apps/gui`, refreshes generated JetBrains GUI resources, runs the Gradle plugin package, prints the Gradle distribution ZIP under `apps/plugins/jetbrains/build/distributions/`, and publishes the ignored Install Plugin from Disk artifact plus checksum:
+The JetBrains prepare command builds/prepares the local `yet-lsp` runtime, builds `apps/gui`, refreshes generated JetBrains GUI resources, stages the local cargo-built `yet-lsp` binary as a stable bundled engine resource at `yet-ai-engine/yet-lsp` (or `yet-ai-engine/yet-lsp.exe` on Windows) inside the plugin JAR, runs the Gradle plugin package, prints the Gradle distribution ZIP under `apps/plugins/jetbrains/build/distributions/`, and publishes the ignored Install Plugin from Disk artifact plus checksum. The bundled engine resource is the local cargo build output, not a signed or notarized production engine. No signing, notarization, marketplace publication, production installer, or production release claim is made:
 
 ```text
 dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip

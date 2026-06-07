@@ -21,6 +21,16 @@ val copyGuiDist by tasks.registering(Copy::class) {
     into(packagedGuiResourcesDir.map { it.dir("yet-ai-gui") })
 }
 
+// Generated resource directory where `scripts/prepare-jetbrains-preview.mjs`
+// stages the local cargo-built `yet-lsp` (or `yet-lsp.exe`) as a stable
+// resource at `yet-ai-engine/yet-lsp` inside the plugin JAR. The directory is
+// registered as a resources srcDir so a regular `gradle build` packages the
+// staged binary if it is present, and simply produces an empty resource
+// directory (no failure) if the prepare step has not run yet. This keeps dev
+// builds green without relying on config-time file detection, which Gradle
+// evaluates before the prepare script has had a chance to copy the binary.
+val packagedEngineResourcesDir = layout.buildDirectory.dir("generated/resources/yet-ai-engine")
+
 dependencies {
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
@@ -38,6 +48,7 @@ kotlin {
 sourceSets {
     main {
         resources.srcDir(packagedGuiResourcesDir)
+        resources.srcDir(packagedEngineResourcesDir)
     }
 }
 

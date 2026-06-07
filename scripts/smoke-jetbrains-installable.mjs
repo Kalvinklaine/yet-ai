@@ -12,6 +12,8 @@ const distributionsDir = path.join(jetbrainsRoot, "build", "distributions");
 const rootDistDir = path.join(root, "dist", "plugins", "jetbrains");
 const failures = [];
 const identity = JSON.parse(await readFile(path.join(root, "product", "identity.json"), "utf8"));
+const binaryFileName = process.platform === "win32" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
+const bundledEngineResourcePath = `yet-ai-engine/${binaryFileName}`;
 const expectedPluginVersion = await readGradleProjectVersion();
 const staleToleranceMs = 2000;
 const prepareMessage = "Run `npm run prepare:jetbrains-preview` from the repository root to rebuild generated JetBrains preview artifacts.";
@@ -132,6 +134,16 @@ async function collectRootArtifactInputs() {
   }
   await collectFiles(path.join(jetbrainsRoot, "src", "main", "kotlin"), inputs, [".kt", ".java"]);
   await collectFiles(path.join(jetbrainsRoot, "build", "generated", "resources", "yet-ai-gui"), inputs, [".html", ".js", ".css"]);
+  await collectFiles(path.join(jetbrainsRoot, "build", "generated", "resources", "yet-ai-engine"), inputs, [".exe"]);
+  if (!inputs.some((filePath) => filePath.endsWith(path.join("yet-ai-engine", binaryFileName)))) {
+    const fallbackPath = path.join(root, "target", "debug", binaryFileName);
+    try {
+      const fallbackStat = await stat(fallbackPath);
+      if (fallbackStat.isFile()) {
+        inputs.push(fallbackPath);
+      }
+    } catch {}
+  }
   return inputs;
 }
 
@@ -212,6 +224,13 @@ async function checkZip(zipPath) {
     const indexHtml = await extractZipEntryText(pluginJar, "yet-ai-gui/index.html", `${path.relative(root, zipPath)} plugin JAR must allow reading yet-ai-gui/index.html.`);
     if (indexHtml !== undefined) {
       requireReferencedGuiAssets(jarEntries, indexHtml, zipPath);
+    }
+    requireZipEntry(jarListing, bundledEngineResourcePath, `${path.relative(root, zipPath)} plugin JAR must contain bundled engine resource at ${bundledEngineResourcePath} (the local cargo-built yet-lsp staged by npm run prepare:jetbrains-preview).`);
+    const engineBytes = await extractZipEntryBytes(pluginJar, bundledEngineResourcePath);
+    if (engineBytes === undefined) {
+      failures.push(`${path.relative(root, zipPath)} plugin JAR must allow extracting bundled engine resource at ${bundledEngineResourcePath}.`);
+    } else if (engineBytes.length === 0) {
+      failures.push(`${path.relative(root, zipPath)} plugin JAR bundled engine resource at ${bundledEngineResourcePath} must contain non-zero bytes; got 0.`);
     }
   } finally {
     await rm(path.dirname(pluginJar), { recursive: true, force: true });
@@ -448,6 +467,7 @@ async function checkDocs() {
   requireDoc(combined, "npm run smoke:jetbrains-wrapper-browser", "Docs must mention the JetBrains wrapper browser smoke command.");
   requireDoc(combined, "dist/plugins/jetbrains/", "Docs must mention the stable root JetBrains dev-preview artifact directory.");
   requireDoc(combined, "yet-ai-jetbrains-<version>-dev-preview.zip", "Docs must mention the stable root JetBrains dev-preview ZIP naming pattern.");
+  requireDoc(combined, "yet-ai-engine/yet-lsp", "Docs must mention the stable bundled engine resource path inside the plugin JAR.");
   requireDoc(combined, "No provider credentials", "Docs must state provider credentials are not required for the installable smoke.");
   requireDoc(combined, "no signing", "Docs must keep dev-preview limitations clear and avoid release overclaims.");
 }
