@@ -1,0 +1,138 @@
+package ai.yet.plugin.runtime
+
+import ai.yet.plugin.identity.ProductIdentity
+import com.intellij.openapi.application.PathManager
+import java.io.ByteArrayInputStream
+import java.io.InputStream
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.PosixFilePermission
+import java.security.MessageDigest
+
+/**
+ * Helpers that locate the bundled `yet-lsp` (or `yet-lsp.exe`) shipped inside the
+ * JetBrains plugin JAR, extract it to a deterministic on-disk cache directory
+ * owned by the IDE/product, and report whether the bundled binary is present.
+ *
+ * The cache path is intentionally derived from the resource content hash so a
+ * plugin update that ships a different binary transparently re-extracts. The
+ * directory is placed under `PathManager.getSystemPath()` (`~/.config/...` or
+ * the JetBrains equivalent for the host IDE) so it is product-local, follows
+ * the IDE's cache conventions, and never leaks into the user's working tree.
+ *
+ * All side effects (classpath access, file writes, permission changes) are
+ * routed through injectable functions so unit tests can drive the helper
+ * without touching real plugin state.
+ */
+object BundledEngineResources {
+    const val CACHE_DIR_NAME: String = "yet-ai/engine"
+
+    /** Absolute resource path inside the plugin JAR (leading slash, classpath style). */
+    fun bundledResourcePath(osName: String = System.getProperty("os.name")): String {
+        val name = if (osName.lowercase().contains("win")) "${ProductIdentity.engineBinaryName}.exe" else ProductIdentity.engineBinaryName
+        return "/yet-ai-engine/$name"
+    }
+
+    fun bundledResourceName(osName: String = System.getProperty("os.name")): String {
+        val path = bundledResourcePath(osName)
+        return path.substring(path.lastIndexOf('/') + 1)
+    }
+
+    /** True if the plugin JAR currently ships a bundled engine resource. */
+    fun isBundled(
+        classLoader: ClassLoader = BundledEngineResources::class.java.classLoader,
+        osName: String = System.getProperty("os.name"),
+    ): Boolean = loadStream(classLoader, bundledResourcePath(osName)) != null
+
+    /**
+     * Resolve a launchable on-disk path to the bundled engine resource, extracting
+     * it to the cache directory the first time it is needed. Returns `null` if the
+     * plugin JAR does not ship a bundled resource (so callers can fall back to PATH).
+     *
+     * Throws [IllegalStateException] when the resource is present but extraction
+     * fails or the resulting file is not launchable; callers surface a clear error
+     * rather than silently degrading.
+     */
+    fun resolveOrExtract(
+        classLoader: ClassLoader = BundledEngineResources::class.java.classLoader,
+        cacheDir: Path = defaultCacheDir(),
+        osName: String = System.getProperty("os.name"),
+        resourceLoader: (String) -> InputStream? = { path -> classLoader.getResourceAsStream(path) },
+        cacheDirCreator: (Path) -> Path = { dir -> Files.createDirectories(dir) },
+        permissionApplier: (Path) -> Unit = { path -> applyExecutablePermissions(path, osName) },
+    ): Path? {
+        val resourcePath = bundledResourcePath(osName)
+        val stream = resourceLoader(resourcePath) ?: return null
+        val bytes = stream.use { it.readBytes() }
+        val hash = sha256(bytes)
+        val target = cacheFile(cacheDir, hash, osName)
+        if (!Files.exists(target)) {
+            cacheDirCreator(cacheDir)
+            ByteArrayInputStream(bytes).use { input ->
+                Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING)
+            }
+            permissionApplier(target)
+        } else if (!isLaunchableEngineFile(target, osName)) {
+            // Existing cache file lost its executable bit (e.g. extracted on
+            // Windows and copied to a non-FAT cache). Re-apply best effort.
+            permissionApplier(target)
+        }
+        if (!isLaunchableEngineFile(target, osName)) {
+            throw IllegalStateException("Bundled Yet AI engine resource is not launchable after extraction")
+        }
+        return target
+    }
+
+    /**
+     * Diagnostics-friendly description that avoids exposing the on-disk cache path
+     * or any user/host-specific fragments. Reports only `available` or `not bundled`.
+     */
+    fun describeAvailability(
+        classLoader: ClassLoader = BundledEngineResources::class.java.classLoader,
+        osName: String = System.getProperty("os.name"),
+    ): String = if (isBundled(classLoader, osName)) "available" else "not bundled"
+
+    fun defaultCacheDir(): Path = Path.of(systemPath(), "yet-ai", "engine")
+
+    /**
+     * Indirection so production code uses JetBrains `PathManager` and tests
+     * (which may run outside a fully bootstrapped IDE) do not crash when the
+     * IntelliJ test framework is not on the classpath.
+     */
+    private fun systemPath(): String = try {
+        PathManager.getSystemPath()
+    } catch (_: Throwable) {
+        System.getProperty("user.home") ?: "."
+    }
+
+    private fun cacheFile(cacheDir: Path, contentHash: String, osName: String): Path {
+        val name = bundledResourceName(osName)
+        return cacheDir.resolve("$contentHash-$name")
+    }
+
+    private fun loadStream(classLoader: ClassLoader, resourcePath: String): InputStream? =
+        classLoader.getResourceAsStream(resourcePath)
+
+    private fun sha256(bytes: ByteArray): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+        return digest.joinToString(separator = "") { byte -> "%02x".format(byte) }
+    }
+
+    internal fun applyExecutablePermissions(path: Path, osName: String) {
+        if (osName.lowercase().contains("win")) return
+        try {
+            val perms = Files.getPosixFilePermissions(path).toMutableSet()
+            perms.add(PosixFilePermission.OWNER_READ)
+            perms.add(PosixFilePermission.OWNER_EXECUTE)
+            perms.add(PosixFilePermission.GROUP_READ)
+            perms.add(PosixFilePermission.GROUP_EXECUTE)
+            perms.add(PosixFilePermission.OTHERS_READ)
+            perms.add(PosixFilePermission.OTHERS_EXECUTE)
+            Files.setPosixFilePermissions(path, perms)
+        } catch (_: Exception) {
+            // Non-POSIX filesystems (e.g. Windows mounted FAT) cannot chmod; rely
+            // on the existing executable heuristic that accepts .exe/.cmd/.bat.
+        }
+    }
+}
