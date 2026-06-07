@@ -25,6 +25,7 @@ class RuntimeConnectionManager : Disposable {
     private var launchedConnection: RuntimeSettings? = null
     private var lastHealthResult: String? = null
     private var lastConnectionError: String? = null
+    private val bundledEngineProvider: BundledEngineProvider = DefaultBundledEngineProvider()
 
     @Synchronized
     fun prepare(): RuntimeConnectionResult {
@@ -104,9 +105,21 @@ class RuntimeConnectionManager : Disposable {
     fun prepareConnectionSettings(settings: RuntimeSettings): RuntimeSettings {
         val binaryPath = when (settings.launchMode) {
             LaunchMode.CONNECT -> null
-            LaunchMode.LAUNCH -> findEngineBinary(settings.engineBinaryPath)
-                ?: throw IllegalArgumentException("Yet AI engine binary path must point to ${ProductIdentity.engineBinaryName} when launch mode is enabled")
-            LaunchMode.AUTO -> findEngineBinary(settings.engineBinaryPath)
+            LaunchMode.LAUNCH -> {
+                val configured = settings.engineBinaryPath
+                if (configured != null) {
+                    findEngineBinary(configured)
+                } else {
+                    val bundled = bundledEngineProvider.resolveOrNull()
+                    if (bundled != null) {
+                        bundled
+                    } else {
+                        findEngineBinary(null)
+                            ?: throw IllegalArgumentException("Yet AI engine binary path must point to ${ProductIdentity.engineBinaryName} when launch mode is enabled")
+                    }
+                }
+            }
+            LaunchMode.AUTO -> resolveEngineBinary(settings.engineBinaryPath, bundledEngineProvider.resolveOrNull())
         }
         val shouldLaunch = settings.launchMode == LaunchMode.LAUNCH ||
             (settings.launchMode == LaunchMode.AUTO && binaryPath != null)
@@ -245,7 +258,10 @@ fun sanitizeRuntimeUrlForDiagnostics(value: String): String {
     return "$scheme://$host$port"
 }
 
-fun describeEngineBinaryStatus(settings: RuntimeSettings): String = when (settings.launchMode) {
+fun describeEngineBinaryStatus(
+    settings: RuntimeSettings,
+    bundledAvailability: String = BundledEngineResources.describeAvailability(),
+): String = when (settings.launchMode) {
     LaunchMode.CONNECT -> "not used in connect mode"
     LaunchMode.LAUNCH -> {
         val path = settings.engineBinaryPath
@@ -257,9 +273,11 @@ fun describeEngineBinaryStatus(settings: RuntimeSettings): String = when (settin
     }
     LaunchMode.AUTO -> {
         val path = settings.engineBinaryPath
+        val bundled = bundledAvailability == "available"
         when {
             path != null && isLaunchableEngineFile(path) -> "configured binary is executable"
             path != null -> "configured binary is not executable"
+            bundled -> "bundled plugin binary available"
             findEngineBinary(null) != null -> "discovered ${ProductIdentity.engineBinaryName} on PATH"
             else -> "no configured or discovered binary; connect-only fallback"
         }
@@ -295,6 +313,46 @@ fun parseExplicitRuntimePort(runtimeUrl: String): Int {
         throw IllegalArgumentException("Yet AI launch mode requires runtime URL with an explicit nonzero port such as http://127.0.0.1:8001")
     }
     return uri.port
+}
+
+/**
+ * Strategy for resolving the bundled engine binary shipped inside the plugin
+ * JAR. Implementations must NOT throw on absence; they return `null` so the
+ * discovery chain can fall through to PATH lookup. Extraction failures are
+ * surfaced by the implementation (typically via [resolveOrNull] returning
+ * null and logging) so [resolveEngineBinary] can decide whether to fall back.
+ */
+interface BundledEngineProvider {
+    fun resolveOrNull(): Path?
+}
+
+private class DefaultBundledEngineProvider : BundledEngineProvider {
+    override fun resolveOrNull(): Path? = try {
+        BundledEngineResources.resolveOrExtract()
+    } catch (_: Exception) {
+        null
+    }
+}
+
+/**
+ * Discovery order: configured absolute path (must be launchable, else throws),
+ * then the bundled plugin engine resource (if the JAR ships one), then PATH.
+ * In `auto` mode a missing configured path is not an error: discovery simply
+ * continues with bundled, then PATH, then connect-only fallback. An explicit
+ * configured path that is not launchable always throws so the user sees the
+ * failure rather than a silent fallback.
+ */
+fun resolveEngineBinary(
+    configuredPath: Path?,
+    bundled: Path? = BundledEngineResources.resolveOrExtract(),
+): Path? {
+    if (configuredPath != null) {
+        return findEngineBinary(configuredPath)
+    }
+    if (bundled != null) {
+        return bundled
+    }
+    return findEngineBinary(null)
 }
 
 fun findEngineBinary(configuredPath: Path?): Path? {
