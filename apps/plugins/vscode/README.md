@@ -121,6 +121,33 @@ export PATH="$HOME/.cargo/bin:$PATH"; npm run prepare:vscode-preview && npm run 
 
 This is the nearest hands-on path for trying the local-first VS Code dev preview with the packaged GUI and a local engine launcher. It does not require a Yet AI cloud account, hosted workspace, managed model gateway, or product credit balance.
 
+### GitHub Actions artifact install
+
+For a downloadable CI-built dev preview, use GitHub Actions workflow `Yet AI IDE Artifacts` (`.github/workflows/ide-artifacts.yml`). The workflow runs local/mock-only validation and uploads unsigned, unpublished dev-preview artifacts. It does not publish to a marketplace, sign, notarize, create a production release, call real providers, require provider credentials, or contact a hosted Yet AI backend.
+
+1. In GitHub Actions, open a successful `Yet AI IDE Artifacts` run for the commit you want to test.
+2. Download the bundle named `yet-ai-dev-preview-plugins-<commit-sha>`; if GitHub shows a generated artifact name, use the bundle attached to that run.
+3. Unpack the bundle. Expected VS Code files are `dist/plugins/vscode/*.vsix` and adjacent `*.sha256`; the bundle also includes `dist/plugins/manifest.json` and JetBrains ZIP artifacts.
+4. Read `dist/plugins/manifest.json` and verify the VSIX against its `.sha256` before installing.
+5. Install the VSIX from a shell:
+
+   ```sh
+   code --install-extension <path-to-vsix> --force
+   ```
+
+6. Open Yet AI with `Yet AI: Open Chat` and complete the manual checklist below.
+
+Manual verification checklist:
+
+- Packaged GUI loads, not a placeholder or blank webview.
+- Runtime refresh connects or shows only sanitized actionable errors.
+- Provider setup is visible; provider errors/status are sanitized and provider credentials remain engine-owned local BYOK data.
+- Active editor/selection context preview appears only when relevant and is explicitly attached or omitted.
+- Read-only IDE action proposals require explicit user confirmation before running; confirmed edit proposals are previewed and require explicit apply plus VS Code confirmation.
+- No shell, git, task, tool, autonomous edit, silent workspace mutation, or unconfirmed apply controls are present.
+
+Safe report template: include OS, VS Code version, workflow run/commit, VSIX path family, manifest/checksum status, install result, GUI/runtime/provider status, active-context/action/edit-proposal result if tested, and first-message outcome. Mark untested items as `not run`; do not imply production release status. Never include tokens, provider keys, bearer headers, auth codes, OAuth tokens, cookies, raw bridge payloads, request bodies, private paths, browser storage dumps, or screenshots containing secrets.
+
 1. From the repository root, prepare and smoke-check the extension artifacts:
 
    ```sh
