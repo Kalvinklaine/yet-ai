@@ -1,7 +1,7 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
-import { activeEditorSourceLabel, attachedContextFileLabel, attachedContextSummary, boundedContextPreview, formatSelectionRange, hasUsableAttachedContext, rangeFromContextSelection } from "./services/activeEditorContext";
+import { activeEditorSourceLabel, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, rangeFromContextSelection } from "./services/activeEditorContext";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
 import { IdeActionProposalPanel, IdeActionsPanel, type IdeActionAttemptState } from "./components/IdeActionsPanel";
 import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
@@ -251,6 +251,7 @@ export function App() {
   const [bridgeHost, setBridgeHost] = useState<BridgeHost>("browser");
   const [attachedContext, setAttachedContext] = useState<{ payload: HostContextSnapshotPayload; settingsRevision: number; chatId: string } | null>(null);
   const [includeAttachedContext, setIncludeAttachedContext] = useState(false);
+  const [attachedContextAcknowledged, setAttachedContextAcknowledged] = useState(false);
   const [attachedContextStatus, setAttachedContextStatus] = useState<string | null>(null);
   const [runtimeRefreshStatus, setRuntimeRefreshStatus] = useState<{ state: "checking" | "connected" | "failed"; attempt: number; checkedAt: string; detail: string } | null>(null);
   const [runtimeRefreshInFlight, setRuntimeRefreshInFlight] = useState(false);
@@ -446,6 +447,7 @@ export function App() {
     setAgentProgress({ state: "not_checked", response: null, error: null });
     setAttachedContext(null);
     setIncludeAttachedContext(false);
+    setAttachedContextAcknowledged(false);
     setAttachedContextStatus(null);
     clearEditProposalState();
     clearIdeActionState();
@@ -494,7 +496,8 @@ export function App() {
       } else if (message.type === "host.contextSnapshot") {
         const nextContext = message.payload as HostContextSnapshotPayload;
         setAttachedContext({ payload: nextContext, settingsRevision: settingsRevisionRef.current, chatId: chatIdRef.current });
-        setIncludeAttachedContext(hasUsableAttachedContext(nextContext));
+        setIncludeAttachedContext(hasUsableAttachedContext(nextContext) && !attachedContextRequiresAcknowledgement(nextContext));
+        setAttachedContextAcknowledged(false);
         setAttachedContextStatus(null);
       } else if (message.type === "host.applyWorkspaceEditResult") {
         const requestId = message.requestId ?? "unknown";
@@ -588,6 +591,7 @@ export function App() {
     if (current?.settingsRevision === submittedContext.settingsRevision && current.chatId === submittedContext.chatId && current.payload === submittedContext.payload) {
       setAttachedContext(null);
       setIncludeAttachedContext(false);
+      setAttachedContextAcknowledged(false);
       setAttachedContextStatus(`Context attached to the last accepted message from ${attachedContextSummary(submittedContext.payload)}.`);
     }
   }, []);
@@ -796,6 +800,7 @@ export function App() {
       setTimeline([]);
       setAttachedContext(null);
       setIncludeAttachedContext(false);
+      setAttachedContextAcknowledged(false);
       setAttachedContextStatus(null);
       clearEditProposalState();
       clearIdeActionState();
@@ -814,6 +819,7 @@ export function App() {
     setChatInput("");
     clearEditProposalState();
     clearIdeActionState();
+    setAttachedContextAcknowledged(false);
     setChatId(nextChatId);
     setChatView(resetChatViewState(nextChatId));
     void loadChatThread(nextChatId);
@@ -826,6 +832,7 @@ export function App() {
       setChatInput("");
       clearEditProposalState();
       clearIdeActionState();
+      setAttachedContextAcknowledged(false);
       setChatView(resetChatViewState(nextChatId));
     }
     setChatId(nextChatId);
@@ -860,6 +867,7 @@ export function App() {
         setTimeline([]);
         setAttachedContext(null);
         setIncludeAttachedContext(false);
+        setAttachedContextAcknowledged(false);
         setAttachedContextStatus(null);
         clearEditProposalState();
         clearIdeActionState();
@@ -1368,7 +1376,8 @@ export function App() {
       addTimeline("Command blocked until current runtime settings are ready");
       return;
     }
-    const submittedAttachedContext = includeAttachedContext && attachedContextRef.current?.settingsRevision === targetRevision && attachedContextRef.current.chatId === targetChatId && currentAttachedContext && hasUsableAttachedContext(currentAttachedContext) ? attachedContextRef.current : null;
+    const attachedContextAllowed = currentAttachedContext && (!attachedContextRequiresAcknowledgement(currentAttachedContext) || attachedContextAcknowledged);
+    const submittedAttachedContext = includeAttachedContext && attachedContextAllowed && attachedContextRef.current?.settingsRevision === targetRevision && attachedContextRef.current.chatId === targetChatId && currentAttachedContext && hasUsableAttachedContext(currentAttachedContext) ? attachedContextRef.current : null;
     const context = submittedAttachedContext?.payload;
     startSse(targetChatId);
     const result = await sendUserMessage(targetSettings, targetChatId, content, context);
@@ -1586,7 +1595,7 @@ export function App() {
             <IdeActionProposalPanel proposal={activeIdeActionProposal} host={bridgeHost} pending={pendingIdeActionRequestIdRef.current !== null} onRun={(payload) => requestIdeAction(payload, "gui-ide-proposal-action")} />
             <IdeActionsPanel host={bridgeHost} attempt={ideActionAttempt} note={ideActionNote} workspaceRelativePath={safeActiveWorkspacePath} range={safeActiveRange} onGetContext={() => requestIdeAction({ action: "getContextSnapshot" })} onOpenFile={(workspaceRelativePath) => requestIdeAction({ action: "openWorkspaceFile", workspaceRelativePath })} onRevealRange={(workspaceRelativePath, range) => requestIdeAction({ action: "revealWorkspaceRange", workspaceRelativePath, range })} onClearPendingIdeAction={clearPendingIdeActionState} />
             <form className="stack chat-composer" onSubmit={(event) => void submitChat(event)}>
-              <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} />
+              <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} acknowledged={attachedContextAcknowledged} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} onAcknowledgeChange={setAttachedContextAcknowledged} />
               <textarea ref={chatInputRef} value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
               <div className="row chat-actions">
                 <button type="submit" disabled={!canSendChat}>Send</button>
@@ -2103,7 +2112,7 @@ function FirstMessageActionButton({ action, runtimeRefreshInFlight, providerTest
   return <button type="button" onClick={onFocusPrompt}>{action.label}</button>;
 }
 
-function AttachedContextPreview({ context, include, status, onIncludeChange }: { context: HostContextSnapshotPayload | null; include: boolean; status: string | null; onIncludeChange: (include: boolean) => void }) {
+function AttachedContextPreview({ context, include, acknowledged, status, onIncludeChange, onAcknowledgeChange }: { context: HostContextSnapshotPayload | null; include: boolean; acknowledged: boolean; status: string | null; onIncludeChange: (include: boolean) => void; onAcknowledgeChange: (acknowledged: boolean) => void }) {
   if (!context || !hasUsableAttachedContext(context)) {
     return (
       <div className="readiness-card warn" role="status">
@@ -2119,14 +2128,16 @@ function AttachedContextPreview({ context, include, status, onIncludeChange }: {
   const language = context.file?.languageId ? sanitizeDisplayText(context.file.languageId) : "unknown language";
   const range = formatSelectionRange(context.selection);
   const text = context.selection?.text ?? "";
-  const preview = boundedContextPreview(text);
+  const preview = classifyBoundedContextPreview(text);
+  const requiresAcknowledgement = preview.redacted || preview.truncated;
+  const canAttach = !requiresAcknowledgement || acknowledged;
   return (
     <div className="readiness-card ready attached-context-card" role="status">
       <div className="stack">
         <div className="row">
           <strong>Active editor context</strong>
           <span className="badge ok">{activeEditorSourceLabel(context.source)}</span>
-          <span className={include ? "badge ok" : "badge warn"}>{include ? "Attach to next message" : "Do not attach"}</span>
+          <span className={include && canAttach ? "badge ok" : "badge warn"}>{include && canAttach ? "Attach to next message" : "Do not attach"}</span>
         </div>
         <div className="attached-context-grid">
           <span>Source host: {activeEditorSourceLabel(context.source)}</span>
@@ -2137,12 +2148,17 @@ function AttachedContextPreview({ context, include, status, onIncludeChange }: {
         </div>
         <div className="attached-context-preview">
           <strong>Bounded preview</strong>
-          <pre>{preview}</pre>
+          <pre>{preview.text}</pre>
         </div>
+        {requiresAcknowledgement && <div className="readiness-card warn" role="alert"><strong>Context preview requires acknowledgement</strong><span>Selected text preview was {preview.redacted && preview.truncated ? "redacted and shortened" : preview.redacted ? "redacted" : "shortened"}. Raw selected text will not be attached unless you acknowledge this warning and enable attachment.</span></div>}
         <span className="subtle">Context stays in React state only. It is one-shot and is attached only to the next accepted message while enabled.</span>
+        {requiresAcknowledgement && <label className="row attached-context-toggle">
+          <input style={{ width: "auto" }} type="checkbox" checked={acknowledged} onChange={(event) => onAcknowledgeChange(event.target.checked)} />
+          I understand the hidden selected text may be included
+        </label>}
         <label className="row attached-context-toggle">
-          <input style={{ width: "auto" }} type="checkbox" checked={include} onChange={(event) => onIncludeChange(event.target.checked)} />
-          {include ? "Attach to next message" : "Do not attach"}
+          <input style={{ width: "auto" }} type="checkbox" checked={include} disabled={requiresAcknowledgement && !acknowledged} onChange={(event) => onIncludeChange(event.target.checked)} />
+          {include && canAttach ? "Attach to next message" : "Do not attach"}
         </label>
       </div>
     </div>
