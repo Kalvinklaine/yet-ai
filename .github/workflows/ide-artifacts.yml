@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build-ide-artifacts:
-    name: Build downloadable IDE dev-preview artifacts
+    name: Build and validate downloadable dev-preview artifacts
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -49,6 +49,9 @@ jobs:
       - name: Install root dependencies
         run: npm ci
 
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
       - name: Install GUI dependencies
         run: npm ci
         working-directory: apps/gui
@@ -57,15 +60,20 @@ jobs:
         run: npm ci
         working-directory: apps/plugins/vscode
 
-      - name: Build and validate IDE dev-preview artifacts
+      - name: Build and validate downloadable dev-preview artifacts
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"
           npm run prepare:vscode-preview
           npm run smoke:vscode-installable
           npm run smoke:vscode-preview
+          npm run smoke:vscode-wrapper-browser
+          npm run smoke:vscode-first-message
           npm run prepare:jetbrains-preview
           npm run smoke:jetbrains-installable
           npm run smoke:jetbrains-preview
+          npm run smoke:jetbrains-gui-browser
+          npm run smoke:jetbrains-wrapper-browser
+          npm run smoke:jetbrains-first-message
           npm run artifact:manifest -- --require vscode,jetbrains
 
       - name: Upload IDE dev-preview artifacts
