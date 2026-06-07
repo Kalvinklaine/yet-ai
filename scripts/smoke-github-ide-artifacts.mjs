@@ -51,6 +51,7 @@ async function checkVscodeUnzipFirst() {
     requireText(readme, /do not install the downloaded github artifact zip directly/i, `${relative(vscodeStageDir)}/README-INSTALL.txt must warn not to install the downloaded GitHub artifact ZIP directly.`);
     requireText(readme, /unzip/i, `${relative(vscodeStageDir)}/README-INSTALL.txt must tell users to unzip the GitHub artifact first.`);
     requireText(readme, /code --install-extension\s+\S+\.vsix\s+--force/i, `${relative(vscodeStageDir)}/README-INSTALL.txt must show code --install-extension <path-to-vsix> --force for the inner VSIX.`);
+    requireText(readme, /platform|os\/arch|linux|macos|windows/i, `${relative(vscodeStageDir)}/README-INSTALL.txt must mention the OS/architecture platform this artifact was built for.`);
   }
   return vsixPath;
 }
@@ -63,6 +64,10 @@ async function checkJetBrainsUnzipFirst() {
     await checkJetBrainsZip(zipPath, `${relative(zipPath)} inner plugin ZIP`);
   }
   const readme = await readRequiredText(path.join(jetbrainsUnzipFirstDir, "README-INSTALL.txt"), "JetBrains unzip-first README-INSTALL.txt");
+  if (readme !== undefined) {
+    requireText(readme, /platform|os\/arch|linux|macos|windows/i, `${relative(jetbrainsUnzipFirstDir)}/README-INSTALL.txt must mention the OS/architecture platform this artifact was built for.`);
+    requireText(readme, /bundled.*runtime|native.*runtime|cargo build|dev-preview local build output|not a signed/i, `${relative(jetbrainsUnzipFirstDir)}/README-INSTALL.txt must mention the bundled native engine runtime and clarify it is the local dev-preview cargo build output, not a signed production engine.`);
+  }
   if (readme !== undefined) {
     requireText(readme, /do not install the downloaded github artifact zip directly/i, `${relative(jetbrainsUnzipFirstDir)}/README-INSTALL.txt must warn not to install the downloaded GitHub artifact ZIP directly.`);
     requireText(readme, /unzip/i, `${relative(jetbrainsUnzipFirstDir)}/README-INSTALL.txt must tell users to unzip the GitHub artifact first.`);
@@ -105,12 +110,54 @@ async function checkManifest() {
     failures.push(`${relative(manifestPath)} must contain valid JSON: ${error instanceof Error ? error.message : String(error)}.`);
     return;
   }
-  const kinds = new Set(Array.isArray(manifest.artifacts) ? manifest.artifacts.map((artifact) => artifact?.kind).filter((kind) => typeof kind === "string") : []);
+  const artifacts = Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
+  const kinds = new Set(artifacts.map((artifact) => artifact?.kind).filter((kind) => typeof kind === "string"));
   if (!kinds.has("vscode")) {
     failures.push(`${relative(manifestPath)} must contain a vscode artifact entry.`);
   }
   if (!kinds.has("jetbrains")) {
     failures.push(`${relative(manifestPath)} must contain a jetbrains artifact entry.`);
+  }
+
+  const platform = manifest.platform;
+  if (platform === undefined || typeof platform !== "object") {
+    failures.push(`${relative(manifestPath)} must include a top-level "platform" object identifying the runner OS/architecture.`);
+  } else {
+    if (typeof platform.os !== "string" || !["linux", "macos", "windows"].includes(platform.os)) {
+      failures.push(`${relative(manifestPath)} platform.os must be a normalized runner OS string (linux|macos|windows); got ${JSON.stringify(platform?.os)}.`);
+    }
+    if (typeof platform.arch !== "string" || !["x64", "arm64", "x86", "arm"].includes(platform.arch)) {
+      failures.push(`${relative(manifestPath)} platform.arch must be a normalized runner architecture string (x64|arm64|x86|arm); got ${JSON.stringify(platform?.arch)}.`);
+    }
+  }
+
+  const runtime = manifest.runtime;
+  if (runtime === undefined || typeof runtime !== "object") {
+    failures.push(`${relative(manifestPath)} must include a top-level "runtime" object describing the bundled engine.`);
+  } else {
+    if (typeof runtime.bundledEngineResource !== "string" || runtime.bundledEngineResource.length === 0) {
+      failures.push(`${relative(manifestPath)} runtime.bundledEngineResource must be a non-empty string path under yet-ai-engine/.`);
+    } else if (!/^yet-ai-engine\//.test(runtime.bundledEngineResource)) {
+      failures.push(`${relative(manifestPath)} runtime.bundledEngineResource must live under yet-ai-engine/; got ${JSON.stringify(runtime.bundledEngineResource)}.`);
+    }
+    if (typeof runtime.engineBinaryName !== "string" || runtime.engineBinaryName.length === 0) {
+      failures.push(`${relative(manifestPath)} runtime.engineBinaryName must be a non-empty string.`);
+    }
+  }
+
+  for (const artifact of artifacts) {
+    if (typeof artifact?.path !== "string") {
+      continue;
+    }
+    if (typeof artifact.os !== "string" || artifact.os.length === 0) {
+      failures.push(`${relative(manifestPath)} artifact ${artifact.path} must include "os" matching the runner OS.`);
+    }
+    if (typeof artifact.arch !== "string" || artifact.arch.length === 0) {
+      failures.push(`${relative(manifestPath)} artifact ${artifact.path} must include "arch" matching the runner architecture.`);
+    }
+    if (artifact.kind === "jetbrains" && (typeof artifact.bundledEngineResource !== "string" || !/^yet-ai-engine\//.test(artifact.bundledEngineResource))) {
+      failures.push(`${relative(manifestPath)} jetbrains artifact ${artifact.path} must include "bundledEngineResource" under yet-ai-engine/ describing the bundled native runtime.`);
+    }
   }
 }
 

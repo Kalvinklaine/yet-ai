@@ -11,8 +11,31 @@ permissions:
 
 jobs:
   build-ide-artifacts:
-    name: Build and validate downloadable dev-preview artifacts
-    runs-on: ubuntu-latest
+    name: Build and validate downloadable dev-preview artifacts (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux-x64
+            runner_os: linux
+            runner_arch: x64
+            with_deps: true
+          - os: macos-latest
+            label: macos-arm64
+            runner_os: macos
+            runner_arch: arm64
+            with_deps: false
+          - os: windows-latest
+            label: windows-x64
+            runner_os: windows
+            runner_arch: x64
+            with_deps: false
+    env:
+      YET_AI_RUNTIME_OS: ${{ matrix.runner_os }}
+      YET_AI_RUNTIME_ARCH: ${{ matrix.runner_arch }}
+      YET_AI_RUNTIME_RUNNER: ${{ matrix.label }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,22 +70,37 @@ jobs:
           gradle-version: 8.14.3
 
       - name: Install root dependencies
+        shell: bash
         run: npm ci
 
       - name: Install Playwright Chromium
+        if: matrix.with_deps
+        shell: bash
         run: npx playwright install --with-deps chromium
 
+      - name: Install Playwright Chromium (no system deps)
+        if: ${{ !matrix.with_deps }}
+        shell: bash
+        run: npx playwright install chromium
+
       - name: Install GUI dependencies
+        shell: bash
         run: npm ci
         working-directory: apps/gui
 
       - name: Install VS Code plugin dependencies
+        shell: bash
         run: npm ci
         working-directory: apps/plugins/vscode
 
       - name: Build and validate downloadable dev-preview artifacts
+        shell: bash
         run: |
-          export PATH="$HOME/.cargo/bin:$PATH"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            export PATH="$USERPROFILE/.cargo/bin:$PATH"
+          else
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
           npm run prepare:vscode-preview
           npm run smoke:vscode-installable
           npm run smoke:vscode-preview
@@ -83,14 +121,14 @@ jobs:
       - name: Upload VS Code artifact (unzip GitHub artifact first)
         uses: actions/upload-artifact@v4
         with:
-          name: yet-ai-vscode-unzip-first-${{ github.sha }}
+          name: yet-ai-vscode-unzip-first-${{ matrix.label }}-${{ github.sha }}
           if-no-files-found: error
           path: dist/github-artifacts/vscode-unzip-first/*
 
       - name: Upload JetBrains artifact (unzip GitHub artifact first)
         uses: actions/upload-artifact@v4
         with:
-          name: yet-ai-jetbrains-unzip-first-${{ github.sha }}
+          name: yet-ai-jetbrains-unzip-first-${{ matrix.label }}-${{ github.sha }}
           if-no-files-found: error
           path: dist/github-artifacts/jetbrains-unzip-first/*
 
@@ -99,18 +137,19 @@ jobs:
       - name: Upload JetBrains direct-install artifact
         uses: actions/upload-artifact@v4
         with:
-          name: yet-ai-jetbrains-install-direct-${{ github.sha }}
+          name: yet-ai-jetbrains-install-direct-${{ matrix.label }}-${{ github.sha }}
           if-no-files-found: error
           path: dist/github-artifacts/jetbrains-install-direct/*
 
-      - name: Upload plugin artifact manifest
+      - name: Upload per-platform plugin artifact manifest
         uses: actions/upload-artifact@v4
         with:
-          name: yet-ai-plugin-manifest-${{ github.sha }}
+          name: yet-ai-plugin-manifest-${{ matrix.label }}-${{ github.sha }}
           if-no-files-found: error
           path: dist/github-artifacts/manifest/*
 
       - name: Clean tracked status
+        shell: bash
         run: |
           status="$(git status --short --untracked-files=no)"
           if [ -n "$status" ]; then
@@ -118,3 +157,43 @@ jobs:
             exit 1
           fi
           echo "Tracked git status is clean."
+
+  combine-manifests:
+    name: Combine per-platform manifests
+    needs: build-ide-artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/gui/package-lock.json
+            apps/plugins/vscode/package-lock.json
+
+      - name: Download all per-platform manifests
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/combined-per-platform
+          pattern: yet-ai-plugin-manifest-*
+          merge-multiple: true
+
+      - name: Combine per-platform manifests
+        shell: bash
+        run: |
+          mkdir -p dist/combined-manifest
+          node scripts/combine-plugin-artifact-manifests.mjs \
+            --input dist/combined-per-platform \
+            --output dist/combined-manifest/manifest.json
+
+      - name: Upload combined plugin artifact manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: yet-ai-plugin-manifest-${{ github.sha }}
+          if-no-files-found: error
+          path: dist/combined-manifest/manifest.json

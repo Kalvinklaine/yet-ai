@@ -30,6 +30,9 @@ try {
     throw new Error("No dev-preview plugin artifacts found under dist/plugins/vscode or dist/plugins/jetbrains. Run a prepare:*preview script first.");
   }
 
+  const platform = resolvePlatform();
+  const runtime = resolveRuntime();
+
   const manifest = {
     product: {
       id: identity.product.id,
@@ -37,6 +40,8 @@ try {
     },
     commit: gitCommit(),
     createdAt: new Date().toISOString(),
+    platform,
+    runtime,
     artifacts,
   };
 
@@ -44,6 +49,8 @@ try {
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 
   console.log(`Plugin artifact manifest written: ${relative(manifestPath)}`);
+  console.log(`  platform: ${platform.os}/${platform.arch} (runner=${platform.runnerLabel}, source=${platform.source})`);
+  console.log(`  bundled engine: ${runtime.bundledEngineResource} (${runtime.source})`);
   for (const artifact of artifacts) {
     console.log(`  ${artifact.kind}: ${artifact.path} (${artifact.sha256})`);
   }
@@ -118,12 +125,18 @@ async function artifactEntry(kind, artifactPath) {
     target: targetFor(kind),
     sha256Path: relative(checksumPath),
     sha256: actualSha256,
+    os: runnerOsLabel(),
+    arch: runnerArchLabel(),
+    bundledEngineResource: bundledEngineResourceFor(kind),
   });
 }
 
 async function readChecksum(checksumPath, artifactPath) {
-  const text = (await readFile(checksumPath, "utf8")).trim();
-  const match = text.match(/^([a-fA-F0-9]{64})(?:\s+(.+))?$/);
+  const text = await readFile(checksumPath, "utf8").catch(() => undefined);
+  if (text === undefined) {
+    throw new Error(`Missing checksum file: ${relative(checksumPath)}`);
+  }
+  const match = text.trim().match(/^([a-fA-F0-9]{64})(?:\s+(.+))?$/);
   if (match === null) {
     throw new Error(`${relative(checksumPath)} must contain a sha256 digest and optional artifact filename.`);
   }
@@ -176,6 +189,82 @@ function versionFromFilename(artifactPath, kind, extension) {
     return name.slice(prefix.length, -suffix.length);
   }
   return undefined;
+}
+
+function bundledEngineResourceFor(kind) {
+  if (kind !== "jetbrains") {
+    return undefined;
+  }
+  const binaryFileName = runnerOsLabel() === "windows" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
+  return `yet-ai-engine/${binaryFileName}`;
+}
+
+function resolvePlatform() {
+  const envOs = stringOrUndefined(process.env.YET_AI_RUNTIME_OS);
+  const envArch = stringOrUndefined(process.env.YET_AI_RUNTIME_ARCH);
+  const envRunner = stringOrUndefined(process.env.YET_AI_RUNTIME_RUNNER);
+  const os = envOs ?? process.platform;
+  const arch = envArch ?? process.arch;
+  const source = envOs !== undefined || envArch !== undefined ? "env" : "process";
+  const runnerLabel = envRunner ?? `${os}-${arch}`;
+  return removeUndefined({
+    os: normalizeOsLabel(os),
+    arch: normalizeArchLabel(arch),
+    runnerLabel,
+    source,
+  });
+}
+
+function resolveRuntime() {
+  const envSource = stringOrUndefined(process.env.YET_AI_RUNTIME_BUILD);
+  const profile = envSource === "release" || envSource === "debug" ? envSource : "debug";
+  return removeUndefined({
+    engineBinaryName: identity.engine.binaryName,
+    engineCrate: identity.engine.rustCrate,
+    bundledEngineResource: `yet-ai-engine/${runnerOsLabel() === "windows" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName}`,
+    profile,
+    source: envSource === undefined ? "local-cargo-build" : "env",
+    notes: "Bundled engine is the dev-preview local cargo build output, not a signed or notarized production engine. No signing, notarization, marketplace publication, production installer, or production release claim is made for this artifact.",
+  });
+}
+
+function runnerOsLabel() {
+  return normalizeOsLabel(stringOrUndefined(process.env.YET_AI_RUNTIME_OS) ?? process.platform);
+}
+
+function runnerArchLabel() {
+  return normalizeArchLabel(stringOrUndefined(process.env.YET_AI_RUNTIME_ARCH) ?? process.arch);
+}
+
+function normalizeOsLabel(value) {
+  const lower = (value ?? "").toLowerCase();
+  if (lower === "win32" || lower === "windows" || lower.startsWith("windows-")) {
+    return "windows";
+  }
+  if (lower === "darwin" || lower === "macos" || lower === "osx" || lower.startsWith("macos-")) {
+    return "macos";
+  }
+  if (lower === "linux" || lower.startsWith("ubuntu") || lower.startsWith("linux-")) {
+    return "linux";
+  }
+  return lower;
+}
+
+function normalizeArchLabel(value) {
+  const lower = (value ?? "").toLowerCase();
+  if (lower === "x64" || lower === "amd64" || lower === "x86_64") {
+    return "x64";
+  }
+  if (lower === "arm64" || lower === "aarch64") {
+    return "arm64";
+  }
+  if (lower === "x86" || lower === "i386" || lower === "i686") {
+    return "x86";
+  }
+  if (lower === "arm") {
+    return "arm";
+  }
+  return lower;
 }
 
 async function readJsonIfPresent(filePath) {

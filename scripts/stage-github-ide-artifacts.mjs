@@ -13,6 +13,7 @@ const vscodeStageDir = path.join(githubArtifactsRoot, "vscode-unzip-first");
 const jetbrainsUnzipFirstDir = path.join(githubArtifactsRoot, "jetbrains-unzip-first");
 const jetbrainsInstallDirectDir = path.join(githubArtifactsRoot, "jetbrains-install-direct");
 const manifestStageDir = path.join(githubArtifactsRoot, "manifest");
+const platform = platformSuffixFor();
 
 try {
   const vscodeArtifact = await findSingleArtifact("vscode", ".vsix");
@@ -35,7 +36,7 @@ try {
   await copyFile(jetbrainsArtifact.checksumPath, path.join(jetbrainsUnzipFirstDir, path.basename(jetbrainsArtifact.checksumPath)));
   await copyFile(manifestPath, path.join(manifestStageDir, "manifest.json"));
 
-  await writeInstallReadmes(vscodeArtifact.path, jetbrainsArtifact.path);
+  await writeInstallReadmes(vscodeArtifact.path, jetbrainsArtifact.path, platform);
   await stageJetBrainsDirectInstall(jetbrainsArtifact.path);
   await validateJetBrainsDirectInstall();
 
@@ -119,10 +120,35 @@ async function readChecksum(checksumPath, artifactPath) {
   return match[1].toLowerCase();
 }
 
-async function writeInstallReadmes(vsixPath, jetbrainsZipPath) {
-  await writeTextFile(path.join(vscodeStageDir, "README-INSTALL.txt"), `Yet AI VS Code dev-preview GitHub artifact\n\nIMPORTANT: Do not install the downloaded GitHub artifact ZIP directly.\n\nGitHub wraps this folder in an outer artifact ZIP. Unzip that GitHub artifact first, then install the inner VSIX file:\n\n  code --install-extension ${path.basename(vsixPath)} --force\n\nIf your shell is in a different directory, replace ${path.basename(vsixPath)} with the full path to the extracted inner VSIX.\n`);
+async function writeInstallReadmes(vsixPath, jetbrainsZipPath, platform) {
+  const platformTag = `${platform.os}-${platform.arch}`;
+  const platformLine = `This artifact was built for ${platform.os}/${platform.arch} (suffix: ${platform.suffix}). Download the matching ${platformTag} artifact for your OS/architecture; mixing platforms will fail because the JetBrains plugin JAR bundles a native ${process.env.YET_AI_ENGINE_BINARY_NAME || "yet-lsp"} runtime staged from the local cargo build output (not a signed or notarized production engine).`;
+  await writeTextFile(path.join(vscodeStageDir, "README-INSTALL.txt"), `Yet AI VS Code dev-preview GitHub artifact for ${platformTag}
 
-  await writeTextFile(path.join(jetbrainsUnzipFirstDir, "README-INSTALL.txt"), `Yet AI JetBrains dev-preview GitHub artifact\n\nIMPORTANT: Do not install the downloaded GitHub artifact ZIP directly.\n\nGitHub wraps this folder in an outer artifact ZIP. Unzip that GitHub artifact first, then install the inner plugin ZIP in JetBrains:\n\n  Settings/Preferences -> Plugins -> gear -> Install Plugin from Disk...\n  Choose: ${path.basename(jetbrainsZipPath)}\n\nThe inner plugin ZIP is the installable file; the outer GitHub artifact ZIP is only packaging.\n`);
+IMPORTANT: Do not install the downloaded GitHub artifact ZIP directly.
+
+${platformLine}
+
+GitHub wraps this folder in an outer artifact ZIP. Unzip that GitHub artifact first, then install the inner VSIX file:
+
+  code --install-extension ${path.basename(vsixPath)} --force
+
+If your shell is in a different directory, replace ${path.basename(vsixPath)} with the full path to the extracted inner VSIX.
+`);
+
+  await writeTextFile(path.join(jetbrainsUnzipFirstDir, "README-INSTALL.txt"), `Yet AI JetBrains dev-preview GitHub artifact for ${platformTag}
+
+IMPORTANT: Do not install the downloaded GitHub artifact ZIP directly.
+
+${platformLine}
+
+GitHub wraps this folder in an outer artifact ZIP. Unzip that GitHub artifact first, then install the inner plugin ZIP in JetBrains:
+
+  Settings/Preferences -> Plugins -> gear -> Install Plugin from Disk...
+  Choose: ${path.basename(jetbrainsZipPath)}
+
+The inner plugin ZIP is the installable file; the outer GitHub artifact ZIP is only packaging. The plugin JAR bundles a native ${process.env.YET_AI_ENGINE_BINARY_NAME || "yet-lsp"} runtime; this bundled runtime is the dev-preview local cargo build output, not a signed or notarized production engine.
+`);
 }
 
 async function writeTextFile(filePath, text) {
@@ -261,3 +287,50 @@ function isSafeArchiveEntryPath(entry) {
 function relative(filePath) {
   return path.relative(root, filePath).replaceAll(path.sep, "/");
 }
+
+
+function platformSuffixFor(stage) {
+  const os = stringOrUndefined(process.env.YET_AI_RUNTIME_OS) ?? process.platform;
+  const arch = stringOrUndefined(process.env.YET_AI_RUNTIME_ARCH) ?? process.arch;
+  return {
+    os: normalizeOsLabel(os),
+    arch: normalizeArchLabel(arch),
+    suffix: `${normalizeOsLabel(os)}-${normalizeArchLabel(arch)}`,
+  };
+}
+
+function normalizeOsLabel(value) {
+  const lower = (value ?? "").toLowerCase();
+  if (lower === "win32" || lower === "windows" || lower.startsWith("windows-")) {
+    return "windows";
+  }
+  if (lower === "darwin" || lower === "macos" || lower === "osx" || lower.startsWith("macos-")) {
+    return "macos";
+  }
+  if (lower === "linux" || lower.startsWith("ubuntu") || lower.startsWith("linux-")) {
+    return "linux";
+  }
+  return lower;
+}
+
+function normalizeArchLabel(value) {
+  const lower = (value ?? "").toLowerCase();
+  if (lower === "x64" || lower === "amd64" || lower === "x86_64") {
+    return "x64";
+  }
+  if (lower === "arm64" || lower === "aarch64") {
+    return "arm64";
+  }
+  if (lower === "x86" || lower === "i386" || lower === "i686") {
+    return "x86";
+  }
+  if (lower === "arm") {
+    return "arm";
+  }
+  return lower;
+}
+
+function stringOrUndefined(value) {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
