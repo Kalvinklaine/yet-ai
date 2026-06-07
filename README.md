@@ -275,19 +275,41 @@ All generated VSIX/ZIP files, `.sha256` files, packaged GUI assets, copied engin
 
 ### GitHub Actions IDE artifact download and install
 
-The `Yet AI IDE Artifacts` workflow (`.github/workflows/ide-artifacts.yml`) builds the same dev-preview IDE artifacts in GitHub Actions. This workflow is local/mock-only validation and upload for manual download: it does not publish, sign, notarize, release, upload to a marketplace, call real providers, require provider credentials, or contact a hosted Yet AI backend.
+The `Yet AI IDE Artifacts` workflow (`.github/workflows/ide-artifacts.yml`) builds split dev-preview IDE artifacts in GitHub Actions. This workflow is local/mock-only validation and upload for manual download: it does not publish, sign, notarize, release, upload to a marketplace, call real providers, require provider credentials, or contact a hosted Yet AI backend.
 
-1. Open GitHub Actions, choose the `Yet AI IDE Artifacts` workflow, and select a successful run for the commit you want to test.
-2. Download the artifact bundle named `yet-ai-dev-preview-plugins-<commit-sha>`; if GitHub presents a generated artifact name, use the bundle from that workflow run.
-3. Unpack the bundle and inspect `dist/plugins/manifest.json`. Confirm the commit/run metadata matches the intended run and that checksums are listed for the artifacts you will install.
-4. Verify the downloaded files against their adjacent checksums. The bundle contents are expected to include `dist/plugins/vscode/*.vsix`, `dist/plugins/vscode/*.sha256`, `dist/plugins/jetbrains/*.zip`, `dist/plugins/jetbrains/*.sha256`, and `dist/plugins/manifest.json`.
-5. Install the VS Code dev-preview artifact with:
+Open GitHub Actions, choose the `Yet AI IDE Artifacts` workflow, and select a successful run for the commit you want to test. Current artifact names are:
+
+- `yet-ai-vscode-unzip-first-<sha>`
+- `yet-ai-jetbrains-unzip-first-<sha>`
+- `yet-ai-jetbrains-install-direct-<sha>`
+- `yet-ai-plugin-manifest-<sha>`
+
+Download/read `yet-ai-plugin-manifest-<sha>` for commit and checksum metadata before installing.
+
+VS Code install:
+
+1. Download `yet-ai-vscode-unzip-first-<sha>`.
+2. Unzip the downloaded GitHub artifact ZIP.
+3. Install the inner VSIX:
 
    ```sh
-   code --install-extension <path-to-vsix> --force
+   code --install-extension yet-ai-vscode-<version>-dev-preview.vsix --force
    ```
 
-6. Install the JetBrains dev-preview artifact with Settings/Preferences → Plugins → gear → Install Plugin from Disk → select the ZIP → restart.
+JetBrains recommended direct install:
+
+1. Download `yet-ai-jetbrains-install-direct-<sha>`.
+2. Use the downloaded GitHub artifact ZIP directly in Settings/Preferences → Plugins → gear → Install Plugin from Disk.
+3. Restart.
+
+JetBrains fallback unzip-first install:
+
+1. Download `yet-ai-jetbrains-unzip-first-<sha>`.
+2. Unzip the downloaded GitHub artifact ZIP.
+3. Install the inner `yet-ai-jetbrains-<version>-dev-preview.zip` from Settings/Preferences → Plugins → gear → Install Plugin from Disk.
+4. Restart.
+
+Do not install the old combined artifact bundle or any artifact containing both IDE plugins. JetBrains expects a JetBrains plugin ZIP structure; a generic GitHub transport bundle will fail with something like `Fail to load plugin descriptor`. If you see that error, make sure you selected either the JetBrains direct-install artifact ZIP or the inner JetBrains plugin ZIP from the unzip-first artifact.
 
 These artifacts are unsigned, unpublished dev previews, not marketplace releases or production installers. Report manual verification honestly: if a checklist item was not run, mark it `not run`; if it failed, include only sanitized failure text.
 
