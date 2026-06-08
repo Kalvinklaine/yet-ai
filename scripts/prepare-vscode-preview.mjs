@@ -10,6 +10,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const vscodeRoot = path.join(root, "apps", "plugins", "vscode");
 const rootDistDir = path.join(root, "dist", "plugins", "vscode");
 const args = process.argv.slice(2);
+const skipEnginePrepare = new Set(args).has("--skip-engine-prepare");
 const identity = JSON.parse(await readFile(path.join(root, "product", "identity.json"), "utf8"));
 const vscodePackage = JSON.parse(await readFile(path.join(vscodeRoot, "package.json"), "utf8"));
 
@@ -51,7 +52,12 @@ function platformCommand(command) {
   }[command] ?? command;
 }
 
-run(process.execPath, [path.join(root, "scripts", "prepare-ide-engine.mjs"), ...args]);
+if (skipEnginePrepare) {
+  console.log("Skipping IDE engine preparation because --skip-engine-prepare was provided.");
+  console.log("Assuming target engine and VS Code bin engine were already staged by the workflow.");
+} else {
+  run(process.execPath, [path.join(root, "scripts", "prepare-ide-engine.mjs"), ...args]);
+}
 run("npm", ["run", "build"], { cwd: path.join(root, "apps", "gui") });
 run("npm", ["run", "prepare:preview"], { cwd: vscodeRoot });
 

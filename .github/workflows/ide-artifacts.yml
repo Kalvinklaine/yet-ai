@@ -113,18 +113,25 @@ jobs:
           set -euxo pipefail
           export PATH="$HOME/.cargo/bin:$PATH"
           npm run prepare:ide-engine
+          if [ "${{ matrix.runner_os }}" = "windows" ]; then
+            test -f target/debug/yet-lsp.exe
+            test -f apps/plugins/vscode/bin/yet-lsp.exe
+          else
+            test -f target/debug/yet-lsp
+            test -f apps/plugins/vscode/bin/yet-lsp
+          fi
 
       - name: Build and validate downloadable dev-preview artifacts
         shell: bash
         run: |
           set -euxo pipefail
           export PATH="$HOME/.cargo/bin:$PATH"
-          npm run prepare:vscode-preview -- --no-build
+          npm run prepare:vscode-preview -- --skip-engine-prepare
           npm run smoke:vscode-installable
           npm run smoke:vscode-preview
           npm run smoke:vscode-wrapper-browser
           npm run smoke:vscode-first-message
-          npm run prepare:jetbrains-preview -- --no-build
+          npm run prepare:jetbrains-preview -- --skip-engine-prepare
           npm run smoke:jetbrains-installable
           npm run smoke:jetbrains-preview
           npm run smoke:jetbrains-gui-browser
