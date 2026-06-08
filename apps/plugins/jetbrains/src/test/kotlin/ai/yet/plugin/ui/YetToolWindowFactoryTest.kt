@@ -145,6 +145,41 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
+    fun wrapperSafelyForwardsStrictReadOnlyIdeActionRequests() {
+        val html = renderHtml(
+            RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
+            "console.log('bridge')",
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+        )
+
+        assertContains(html, "const maxIdeActionRequestBytes = 8192;")
+        assertContains(html, "message.type !== \"gui.ideActionRequest\"")
+        assertContains(html, "const allowedIdeActionNames = [\"getContextSnapshot\", \"openWorkspaceFile\", \"revealWorkspaceRange\"];")
+        assertContains(html, "const isGuiIdeActionRequest = (message) => {")
+        assertContains(html, "JSON.stringify(message)")
+        assertContains(html, "new Blob([serialized]).size > maxIdeActionRequestBytes")
+        assertContains(html, "requiredRequestId(message.requestId)")
+        assertContains(html, "safeRequiredWorkspacePath(payload.workspaceRelativePath)")
+        assertContains(html, "isIdeActionRange(payload.range)")
+        assertContains(html, "} else if (isGuiIdeActionRequest(event.data)) {")
+        assertContains(html, "!frameReady || !hostReadyAcceptedForCurrentFrame || acceptedHostReadyRequestId !== currentReadyRequestId()")
+        assertContains(html, "window.postIntellijMessage(event.data);")
+        assertContains(html, "event.source === currentFrameWindow && event.source === frame?.contentWindow")
+        assertContains(html, "event.origin !== frameTargetOrigin")
+        assertContains(html, "message.type === \"host.ideActionProgress\"")
+        assertContains(html, "message.type === \"host.ideActionResult\"")
+        assertContains(html, "isHostIdeActionProgressPayload(message.payload)")
+        assertContains(html, "isHostIdeActionResultPayload(message.payload)")
+        assertContains(html, "ideActionRequestTypesRejectedByPolicy")
+        assertContains(html, "gui.applyWorkspaceEditRequest")
+
+        listOf("writeWorkspaceFile", "applyWorkspaceEdit", "runShellCommand", "gitStatus", "runTask", "executeIdeTool", "callProvider", "readWorkspaceFile", "indexWorkspace").forEach { action ->
+            assertFalse(html.contains("\"$action\""), action)
+        }
+        assertFalse(html.contains("window.postMessage(message"))
+    }
+
+    @Test
     fun wrapperReadyIdUsesRandomTokenAndKeepsStaleMessagesBoundToCurrentReady() {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
@@ -212,11 +247,44 @@ class YetToolWindowFactoryTest {
         assertContains(html, "payload.cloudRequired === undefined || payload.cloudRequired === false")
         assertContains(html, "if (message.type === \"host.contextSnapshot\") return isContextSnapshotPayload(message.payload)")
         assertContains(html, "if (message.type === \"host.openedFromCommand\") return message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0)")
+        assertContains(html, "if (message.type === \"host.ideActionProgress\") return isHostIdeActionProgressPayload(message.payload)")
+        assertContains(html, "if (message.type === \"host.ideActionResult\") return isHostIdeActionResultPayload(message.payload)")
         assertContains(html, "const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();")
         assertContains(html, "return hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();")
         assertContains(html, "if (message.type === \"host.ready\") {")
         assertContains(html, "acceptedHostReadyRequestId = message.requestId;")
         assertContains(html, "hostReadyAcceptedForCurrentFrame = true;")
+    }
+
+    @Test
+    fun ideActionBridgeStubReturnsProgressAndUnavailableResult() {
+        val sent = mutableListOf<String>()
+        val handled = JetBrainsIdeActionBridge.handleReadOnlyIdeActionRequest(
+            """{"version":"2026-05-15","type":"gui.ideActionRequest","requestId":"req-1","payload":{"action":"openWorkspaceFile","workspaceRelativePath":"src/Main.kt"}}""",
+            send = { sent.add(it) },
+        )
+
+        assertTrue(handled)
+        assertEquals(listOf("host.ideActionProgress", "host.ideActionResult"), sent.map(::messageType))
+        assertContains(sent[0], "\"checkingPolicy\"")
+        assertContains(sent[1], "\"unavailable\"")
+        assertContains(sent[1], "JetBrains read-only IDE action execution is not wired yet.")
+    }
+
+    @Test
+    fun ideActionBridgeRejectsInvalidRequestWithSafeRequestIdOnly() {
+        val sent = mutableListOf<String>()
+        val handled = JetBrainsIdeActionBridge.handleReadOnlyIdeActionRequest(
+            """{"version":"2026-05-15","type":"gui.ideActionRequest","requestId":"req-2","payload":{"action":"runShellCommand"}}""",
+            send = { sent.add(it) },
+        )
+
+        assertTrue(handled)
+        assertEquals(listOf("host.ideActionResult"), sent.map(::messageType))
+        assertContains(sent.single(), "\"rejected\"")
+
+        val ignored = JetBrainsIdeActionBridge.handleReadOnlyIdeActionRequest("not-json", send = { sent.add(it) })
+        assertFalse(ignored)
     }
 
     @Test
@@ -371,9 +439,9 @@ class YetToolWindowFactoryTest {
 
     @Test
     fun guiUnloadedBridgeMessageRequiresStrictShape() {
-        assertTrue(isGuiUnloadedBridgeMessage("""{"version":"2026-05-15","type":"gui.unloaded"}"""))
         assertTrue(isGuiUnloadedBridgeMessage("""{"version":"2026-05-15","type":"gui.unloaded","payload":{}}"""))
 
+        assertFalse(isGuiUnloadedBridgeMessage("""{"version":"2026-05-15","type":"gui.unloaded"}"""))
         assertFalse(isGuiUnloadedBridgeMessage("""{"version":"2026-05-15","type":"gui.unloaded","payload":null}"""))
         assertFalse(isGuiUnloadedBridgeMessage("""{"version":"2026-05-15","type":"gui.unloaded","payload":[]}"""))
         assertFalse(isGuiUnloadedBridgeMessage("""{"version":"2026-05-15","type":"gui.unloaded","payload":{"reason":"reload"}}"""))

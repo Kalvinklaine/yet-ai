@@ -2,6 +2,7 @@ package ai.yet.plugin.ui
 
 import ai.yet.plugin.bridge.BridgeMessages
 import ai.yet.plugin.bridge.ActiveEditorContext
+import ai.yet.plugin.bridge.ControlledIdeActions
 import ai.yet.plugin.identity.ProductIdentity
 import ai.yet.plugin.runtime.RuntimeConnectionManager
 import ai.yet.plugin.runtime.RuntimeConnectionResult
@@ -94,6 +95,8 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
                 guiReadyRequestId = null
                 return@addHandler null
             }
+            val ideActionHandled = JetBrainsIdeActionBridge.handleReadOnlyIdeActionRequest(raw, ::sendToGui) { logger.info(it) }
+            if (ideActionHandled) return@addHandler null
             val guiReady = BridgeMessages.parseGuiReady(raw)
             if (guiReady == null) {
                 logger.info("Yet AI rejected invalid GUI bridge message")
@@ -152,6 +155,54 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         RuntimeSettings.current()
     } catch (_: Exception) {
         RuntimeSettings.safeFallback()
+    }
+}
+
+object JetBrainsIdeActionBridge {
+    fun handleReadOnlyIdeActionRequest(raw: String, send: (String) -> Unit, logStatus: (String) -> Unit = {}): Boolean {
+        val request = ControlledIdeActions.parse(raw)
+        if (request == null) {
+            val safeRequestId = ControlledIdeActions.safeRequestIdFromRaw(raw) ?: return false
+            logStatus("Yet AI rejected invalid IDE action request")
+            send(
+                ControlledIdeActions.ideActionResult(
+                    requestId = safeRequestId,
+                    status = ControlledIdeActions.ResultStatus.Rejected,
+                    message = "IDE action request was rejected by policy.",
+                ),
+            )
+            return true
+        }
+
+        logStatus("Yet AI received read-only IDE action request")
+        send(
+            ControlledIdeActions.ideActionProgress(
+                requestId = request.requestId,
+                phase = "checkingPolicy",
+                status = ControlledIdeActions.ProgressStatus.InProgress,
+                summary = "Checking IDE action policy.",
+                action = request.action,
+                workspaceRelativePath = workspaceRelativePath(request),
+            ),
+        )
+        send(
+            ControlledIdeActions.ideActionResult(
+                requestId = request.requestId,
+                status = ControlledIdeActions.ResultStatus.Unavailable,
+                message = "JetBrains read-only IDE action execution is not wired yet.",
+                action = request.action,
+                workspaceRelativePath = workspaceRelativePath(request),
+                range = (request as? ControlledIdeActions.Request.RevealWorkspaceRange)?.range,
+                includeContextMetadata = request is ControlledIdeActions.Request.GetContextSnapshot,
+            ),
+        )
+        return true
+    }
+
+    private fun workspaceRelativePath(request: ControlledIdeActions.Request): String? = when (request) {
+        is ControlledIdeActions.Request.OpenWorkspaceFile -> request.workspaceRelativePath
+        is ControlledIdeActions.Request.RevealWorkspaceRange -> request.workspaceRelativePath
+        is ControlledIdeActions.Request.GetContextSnapshot -> null
     }
 }
 
@@ -325,8 +376,12 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           return code >= 0x20 && (code < 0x7f || code > 0x9f);
         }));
         const isFrameNonce = (value) => typeof value === "string" && /^[0-9a-f]{32}$/.test(value);
+        const maxIdeActionRequestBytes = 8192;
+        const ideActionRequestTypesRejectedByPolicy = ["gui.applyWorkspaceEditRequest", "gui.openFile", "gui.revealRange", "gui.executeIdeTool", "gui.copyText", "gui.showNotification", "gui.getHostContext"];
+        const allowedIdeActionNames = ["getContextSnapshot", "openWorkspaceFile", "revealWorkspaceRange"];
         const optionalString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length <= maxLength);
         const optionalNonEmptyString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength);
+        const requiredRequestId = (value) => typeof value === "string" && value.length > 0 && value.length <= 128 && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value) && !/(authorization|bearer|api[_-]?key|token|secret|access[_-]?token|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value);
         const requiredLoopbackRuntimeUrl = (value) => {
           if (typeof value !== "string" || value.length === 0 || value.length > 2048) return false;
           try {
@@ -340,16 +395,38 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         };
         const optionalNumber = (value) => value === undefined || (Number.isInteger(value) && value >= 0 && value <= 1000000);
         const safePath = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength && !value.startsWith("/") && !value.startsWith("~") && !value.includes("\\") && !value.includes(":") && /^[^\u0000-\u001f]+$/.test(value) && value.split("/").every((part) => part !== "." && part !== ".."));
+        const safeRequiredWorkspacePath = (value) => safePath(value, 512) && !value.includes("%") && !value.includes("?") && !value.includes("#") && !value.includes("//") && !value.endsWith("/") && value.split("/").every((part) => part.length > 0 && !/(?:^|[._-])(?:auth|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:[._-]|$)|^sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(part));
+        const isIdeActionPosition = (position) => isPlainObject(position) && hasOnlyKeys(position, ["line", "character"]) && Number.isInteger(position.line) && position.line >= 0 && position.line <= 1000000 && Number.isInteger(position.character) && position.character >= 0 && position.character <= 1000000;
+        const isIdeActionRange = (range) => isPlainObject(range) && hasOnlyKeys(range, ["start", "end"]) && isIdeActionPosition(range.start) && isIdeActionPosition(range.end) && (range.end.line > range.start.line || (range.end.line === range.start.line && range.end.character >= range.start.character));
         const isContextFile = (file) => file === undefined || (isPlainObject(file) && hasOnlyKeys(file, ["displayPath", "workspaceRelativePath", "languageId"]) && Object.keys(file).length > 0 && safePath(file.displayPath, 256) && safePath(file.workspaceRelativePath, 512) && (file.languageId === undefined || (typeof file.languageId === "string" && file.languageId.length > 0 && file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(file.languageId))));
         const isContextSelection = (selection) => selection === undefined || (isPlainObject(selection) && hasOnlyKeys(selection, ["startLine", "startCharacter", "endLine", "endCharacter", "text"]) && Object.keys(selection).length > 0 && optionalNumber(selection.startLine) && optionalNumber(selection.startCharacter) && optionalNumber(selection.endLine) && optionalNumber(selection.endCharacter) && optionalString(selection.text, 8000));
         const isContextSnapshotPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["kind", "source", "file", "selection"]) && payload.kind === "active_editor" && (payload.source === "vscode" || payload.source === "jetbrains" || payload.source === "browser") && isContextFile(payload.file) && isContextSelection(payload.selection);
         const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && requiredLoopbackRuntimeUrl(payload.runtimeUrl) && optionalString(payload.sessionToken, 4096) && optionalNonEmptyString(payload.productId, 256) && optionalNonEmptyString(payload.displayName, 256) && (payload.cloudRequired === undefined || payload.cloudRequired === false);
+        const isHostIdeActionProgressPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["phase", "status", "summary", "cloudRequired", "action", "workspaceRelativePath"]) && ["queued", "checkingPolicy", "running", "completed"].includes(payload.phase) && ["pending", "inProgress", "succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.summary === "string" && payload.summary.length > 0 && payload.summary.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512);
+        const isHostIdeActionResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "action", "workspaceRelativePath", "range", "context"]) && ["succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512) && (payload.range === undefined || isIdeActionRange(payload.range)) && (payload.context === undefined || (isPlainObject(payload.context) && hasOnlyKeys(payload.context, ["source", "kind"]) && payload.context.source === "jetbrains" && payload.context.kind === "active_editor"));
         const isHostMessage = (message) => {
           if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || !isRequestId(message.requestId)) return false;
           if (message.type === "host.ready") return isHostReadyPayload(message.payload);
           if (message.type === "host.contextSnapshot") return isContextSnapshotPayload(message.payload);
           if (message.type === "host.openedFromCommand") return message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0);
+          if (message.type === "host.ideActionProgress") return isHostIdeActionProgressPayload(message.payload);
+          if (message.type === "host.ideActionResult") return isHostIdeActionResultPayload(message.payload);
           return false;
+        };
+        const isGuiIdeActionPayload = (payload) => {
+          if (!isPlainObject(payload) || typeof payload.action !== "string" || !allowedIdeActionNames.includes(payload.action)) return false;
+          if (payload.action === "getContextSnapshot") return hasOnlyKeys(payload, ["action"]);
+          if (payload.action === "openWorkspaceFile") return hasOnlyKeys(payload, ["action", "workspaceRelativePath"]) && safeRequiredWorkspacePath(payload.workspaceRelativePath);
+          if (payload.action === "revealWorkspaceRange") return hasOnlyKeys(payload, ["action", "workspaceRelativePath", "range"]) && safeRequiredWorkspacePath(payload.workspaceRelativePath) && isIdeActionRange(payload.range);
+          return false;
+        };
+        const isGuiIdeActionRequest = (message) => {
+          if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.ideActionRequest" || !requiredRequestId(message.requestId)) return false;
+          if (ideActionRequestTypesRejectedByPolicy.includes(message.type)) return false;
+          let serialized;
+          try { serialized = JSON.stringify(message); } catch (_) { return false; }
+          if (typeof serialized !== "string" || new Blob([serialized]).size > maxIdeActionRequestBytes) return false;
+          return isGuiIdeActionPayload(message.payload);
         };
         const isGuiMessage = (message) => {
           if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.ready" || !isRequestId(message.requestId)) return false;
@@ -397,11 +474,12 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           currentFrameNonce = undefined;
           pendingHostMessages.length = 0;
         };
-        const isGuiUnloadedMessage = (message) => isPlainObject(message) && hasOnlyKeys(message, ["version", "type", "payload"]) && message.version === bridgeVersion && message.type === "gui.unloaded" && (message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0));
+        const isGuiUnloadedMessage = (message) => isPlainObject(message) && hasOnlyKeys(message, ["version", "type", "payload"]) && message.version === bridgeVersion && message.type === "gui.unloaded" && isPlainObject(message.payload) && Object.keys(message.payload).length === 0;
         const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
         const canDeliverHostMessage = (message) => {
           if (!messageMatchesCurrentReady(message)) return false;
           if (message.type === "host.ready") return true;
+          if (message.type === "host.ideActionProgress" || message.type === "host.ideActionResult") return hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
           return hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
         };
         const postToFrame = (message) => {
@@ -431,6 +509,12 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
             }
             if (isGuiUnloadedMessage(event.data)) {
               invalidateFrameAuthority("gui.unloaded");
+              window.postIntellijMessage(event.data);
+            } else if (isGuiIdeActionRequest(event.data)) {
+              if (!frameReady || !hostReadyAcceptedForCurrentFrame || acceptedHostReadyRequestId !== currentReadyRequestId()) {
+                console.log("Yet AI rejected IDE action request before GUI bridge readiness");
+                return;
+              }
               window.postIntellijMessage(event.data);
             } else if (isGuiMessage(event.data)) {
               if (frameReady && event.data.payload.frameNonce === currentFrameNonce) return;
@@ -495,7 +579,7 @@ internal fun isGuiUnloadedBridgeMessage(raw: String): Boolean {
     if (!record.keySet().all { it in setOf("version", "type", "payload") }) return false
     if (record.stringValue("version") != ProductIdentity.bridgeVersion) return false
     if (record.stringValue("type") != "gui.unloaded") return false
-    val payload = record.get("payload") ?: return true
+    val payload = record.get("payload") ?: return false
     return payload.isJsonObject && payload.asJsonObject.keySet().isEmpty()
 }
 

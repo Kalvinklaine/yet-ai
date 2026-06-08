@@ -40,6 +40,18 @@ class ControlledIdeActionsTest {
     }
 
     @Test
+    fun extractsOnlySafeRequestIdForRejectedResult() {
+        assertEquals(
+            "req-1",
+            ControlledIdeActions.safeRequestIdFromRaw(message("req-1", """{"action":"runShellCommand"}""")),
+        )
+        assertNull(ControlledIdeActions.safeRequestIdFromRaw(message("token-abc", """{"action":"runShellCommand"}""")))
+        assertNull(ControlledIdeActions.safeRequestIdFromRaw("not-json"))
+        assertNull(ControlledIdeActions.safeRequestIdFromRaw("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.ready","requestId":"req-1","payload":{}}"""))
+        assertNull(ControlledIdeActions.safeRequestIdFromRaw(message("req-1", """{"action":"runShellCommand"}""", extra = ""","extra":true""")))
+    }
+
+    @Test
     fun rejectsUnknownWriteApplyShellGitTaskToolProviderAndIndexingActions() {
         listOf(
             "writeWorkspaceFile",
