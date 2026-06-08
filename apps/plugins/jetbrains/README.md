@@ -91,7 +91,7 @@ Manual IntelliJ IDEA install-from-disk steps:
 2. Open IntelliJ IDEA Settings/Preferences → Plugins → gear → Install Plugin from Disk.
 3. Choose the stable root ZIP path `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip` printed by the preparation command. The Gradle ZIP path under `apps/plugins/jetbrains/build/distributions/` remains useful for diagnostics.
 4. Restart the IDE when prompted.
-5. Open Yet AI settings and keep `Launch mode` as `auto`, or set it to `launch`; set `Engine binary path` to the printed `target/debug/yet-lsp` path if discovery from `PATH` is not enough. Use `connect` only for an already running loopback runtime.
+5. Open Yet AI settings and keep `Launch mode` as `auto`, or set it to `launch`. The installed direct-install/dev-preview artifact bundles `yet-ai-engine/yet-lsp` (or `yet-lsp.exe`), so no `Engine binary path` is needed when that bundled runtime is available; set `Engine binary path` to the printed `target/debug/yet-lsp` path only if bundled runtime discovery and `PATH` discovery both fail. Use `connect` only for an already running loopback runtime.
 6. Open the Yet AI tool window and verify that the packaged GUI loads.
 7. Optional safe real-provider smoke: configure the OpenAI API-key fallback in the GUI, confirm the key field clears after save, then send a short chat prompt. The experimental OpenAI account path remains explicit-risk, mock-covered in automation, and any real account test is manual/high-risk/outside CI.
 

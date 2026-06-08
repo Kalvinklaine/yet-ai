@@ -19,13 +19,17 @@ import java.util.Base64
 import kotlin.concurrent.thread
 
 @Service(Service.Level.APP)
-class RuntimeConnectionManager : Disposable {
+class RuntimeConnectionManager(
+    private val bundledEngineProvider: BundledEngineProvider = DefaultBundledEngineProvider(),
+    private val engineBinaryFinder: (Path?) -> Path? = ::findEngineBinary,
+    private val processStarter: (EngineLaunchCommand) -> Process = ::startEngineProcess,
+    private val tokenGenerator: () -> String = ::generateSessionToken,
+) : Disposable {
     private val logger = Logger.getInstance(RuntimeConnectionManager::class.java)
     private var launchedProcess: Process? = null
     private var launchedConnection: RuntimeSettings? = null
     private var lastHealthResult: String? = null
     private var lastConnectionError: String? = null
-    private val bundledEngineProvider: BundledEngineProvider = DefaultBundledEngineProvider()
 
     @Synchronized
     fun prepare(): RuntimeConnectionResult {
@@ -108,18 +112,18 @@ class RuntimeConnectionManager : Disposable {
             LaunchMode.LAUNCH -> {
                 val configured = settings.engineBinaryPath
                 if (configured != null) {
-                    findEngineBinary(configured)
+                    engineBinaryFinder(configured)
                 } else {
                     val bundled = bundledEngineProvider.resolveOrNull()
                     if (bundled != null) {
                         bundled
                     } else {
-                        findEngineBinary(null)
+                        engineBinaryFinder(null)
                             ?: throw IllegalArgumentException("Yet AI engine binary path must point to ${ProductIdentity.engineBinaryName} when launch mode is enabled")
                     }
                 }
             }
-            LaunchMode.AUTO -> resolveEngineBinary(settings.engineBinaryPath, bundledEngineProvider.resolveOrNull())
+            LaunchMode.AUTO -> resolveEngineBinary(settings.engineBinaryPath, bundledEngineProvider.resolveOrNull(), engineBinaryFinder)
         }
         val shouldLaunch = settings.launchMode == LaunchMode.LAUNCH ||
             (settings.launchMode == LaunchMode.AUTO && binaryPath != null)
@@ -138,12 +142,13 @@ class RuntimeConnectionManager : Disposable {
             return existingConnection
         }
         stopLaunchedProcess()
-        val token = generateSessionToken()
+        val token = tokenGenerator()
         val command = buildEngineLaunchCommand(settings.runtimeUrl, binaryPath, token)
-        val process = ProcessBuilder(command.binaryPath.toString())
-            .redirectInput(ProcessBuilder.Redirect.PIPE)
-            .apply { environment().putAll(command.environment) }
-            .start()
+        val process = try {
+            processStarter(command)
+        } catch (error: Exception) {
+            throw IllegalStateException(sanitizedRuntimeError("Yet AI local runtime process start failed", error, token))
+        }
         launchedProcess = process
         launchedConnection = settings.copyWithSessionToken(token)
         attachLogs(process, token)
@@ -214,6 +219,11 @@ data class EngineLaunchCommand(
     val binaryPath: Path,
     val environment: Map<String, String>,
 )
+
+fun startEngineProcess(command: EngineLaunchCommand): Process = ProcessBuilder(command.binaryPath.toString())
+    .redirectInput(ProcessBuilder.Redirect.PIPE)
+    .apply { environment().putAll(command.environment) }
+    .start()
 
 data class RuntimeDiagnostics(
     val launchMode: String,
@@ -345,14 +355,15 @@ private class DefaultBundledEngineProvider : BundledEngineProvider {
 fun resolveEngineBinary(
     configuredPath: Path?,
     bundled: Path? = BundledEngineResources.resolveOrExtract(),
+    finder: (Path?) -> Path? = ::findEngineBinary,
 ): Path? {
     if (configuredPath != null) {
-        return findEngineBinary(configuredPath)
+        return finder(configuredPath)
     }
     if (bundled != null) {
         return bundled
     }
-    return findEngineBinary(null)
+    return finder(null)
 }
 
 fun findEngineBinary(configuredPath: Path?): Path? {
