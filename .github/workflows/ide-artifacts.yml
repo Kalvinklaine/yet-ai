@@ -133,6 +133,7 @@ jobs:
           npm run smoke:vscode-first-message
           npm run prepare:jetbrains-preview -- --skip-engine-prepare
           npm run smoke:jetbrains-installable
+          npm run smoke:jetbrains-bundled-runtime
           npm run smoke:jetbrains-preview
           npm run smoke:jetbrains-gui-browser
           npm run smoke:jetbrains-wrapper-browser
@@ -140,6 +141,10 @@ jobs:
           npm run artifact:manifest -- --require vscode,jetbrains
           npm run artifact:stage-github
           npm run smoke:github-ide-artifacts
+
+      - name: Summarize expected public IDE artifacts
+        shell: bash
+        run: npm run artifact:github-summary -- --sha "${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
 
       # GitHub wraps every uploaded artifact in its own ZIP. The VS Code
       # artifact must be unzipped before IDE install.
