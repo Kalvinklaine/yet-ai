@@ -12,7 +12,7 @@ Local-only sanitized evidence template. Keep every untested field as \`not run\`
 
 - OS/arch: <os>/<arch>
 - Commit hash: <git-commit-sha>
-- Artifact family: <local-dev-preview | github-vscode-unzip-first | github-jetbrains-unzip-first | github-jetbrains-direct-install | other-sanitized-family>
+- Artifact family: <local-dev-preview | github-vscode-unzip-first | github-jetbrains-direct-install | other-sanitized-family>
 - Checksum status: <matched | mismatch | missing | not run>
 
 ## VS Code
