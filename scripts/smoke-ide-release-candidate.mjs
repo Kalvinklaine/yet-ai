@@ -9,6 +9,7 @@ const gitStatusLimit = 40;
 const steps = [
   ["Prepare VS Code dev-preview artifact", "npm", ["run", "prepare:vscode-preview"], "."],
   ["Prepare JetBrains dev-preview artifact", "npm", ["run", "prepare:jetbrains-preview"], "."],
+  ["Smoke JetBrains bundled runtime startup", "npm", ["run", "smoke:jetbrains-bundled-runtime"], "."],
   ["Write required IDE artifact manifest", "npm", ["run", "artifact:manifest", "--", "--require", "vscode,jetbrains"], "."],
   ["Stage split GitHub IDE artifacts", "npm", ["run", "artifact:stage-github"], "."],
   ["Smoke staged GitHub IDE artifacts", "npm", ["run", "smoke:github-ide-artifacts"], "."],
@@ -26,7 +27,7 @@ for (const [label, command, args, cwd] of steps) {
 assertCleanTrackedGitStatus();
 
 console.log("\nIDE release-candidate artifact gate passed.");
-console.log("Verified local dev-preview artifact preparation, GitHub staging, manifest combination, workflow/report safety checks, expected public artifact summary, and clean tracked status.");
+console.log("Verified local dev-preview artifact preparation, JetBrains bundled runtime startup, GitHub staging, manifest combination, workflow/report safety checks, expected public artifact summary, and clean tracked status.");
 console.log("This gate does NOT launch real IDEs, use real provider credentials, call OpenAI/ChatGPT, contact hosted Yet AI services, sign or publish artifacts, upload a marketplace package, or create a production release.");
 
 function runStep(label, command, args, cwd) {
