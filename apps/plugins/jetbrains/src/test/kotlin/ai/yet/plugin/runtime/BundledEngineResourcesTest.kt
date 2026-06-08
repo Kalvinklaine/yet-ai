@@ -161,6 +161,42 @@ class BundledEngineResourcesTest {
         }
     }
 
+
+    @Test
+    fun bundledResourceLookupStripsLeadingSlashForClassLoaderAccess() {
+        val requested = mutableListOf<String>()
+        val payload = "bundled-lsp".toByteArray()
+        val loader = object : ClassLoader() {
+            override fun getResourceAsStream(name: String?): InputStream? {
+                requested += name.orEmpty()
+                return if (name == "yet-ai-engine/yet-lsp") ByteArrayInputStream(payload) else null
+            }
+        }
+
+        assertTrue(BundledEngineResources.isBundled(loader, "Linux"))
+        assertEquals(listOf("yet-ai-engine/yet-lsp"), requested)
+
+        requested.clear()
+        val temp = createTempDirectory(prefix = "yet-bundled-normalized-")
+        try {
+            val target = BundledEngineResources.resolveOrExtract(
+                classLoader = loader,
+                cacheDir = temp,
+                osName = "Linux",
+                resourceLoader = { name ->
+                    requested += name
+                    if (name == "yet-ai-engine/yet-lsp") ByteArrayInputStream(payload) else null
+                },
+                cacheDirCreator = { Files.createDirectories(it) },
+                permissionApplier = { it.markLaunchable() },
+            )
+            assertNotNull(target)
+            assertTrue(requested.all { it == "yet-ai-engine/yet-lsp" }, "resource access must be normalized: $requested")
+        } finally {
+            temp.deleteRecursively()
+        }
+    }
+
     @Test
     fun isBundledReturnsFalseWhenResourceMissing() {
         val absent = BundledEngineResources.isBundled(

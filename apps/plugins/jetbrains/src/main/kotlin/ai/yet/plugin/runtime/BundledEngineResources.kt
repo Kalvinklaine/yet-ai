@@ -63,7 +63,8 @@ object BundledEngineResources {
         permissionApplier: (Path) -> Unit = { path -> applyExecutablePermissions(path, osName) },
     ): Path? {
         val resourcePath = bundledResourcePath(osName)
-        val stream = resourceLoader(resourcePath) ?: return null
+        val resourceName = resourcePath.removePrefix("/")
+        val stream = resourceLoader(resourceName) ?: return null
         val bytes = stream.use { it.readBytes() }
         val hash = sha256(bytes)
         val target = cacheFile(cacheDir, hash, osName)
@@ -112,7 +113,7 @@ object BundledEngineResources {
     }
 
     private fun loadStream(classLoader: ClassLoader, resourcePath: String): InputStream? =
-        classLoader.getResourceAsStream(resourcePath)
+        classLoader.getResourceAsStream(resourcePath.removePrefix("/"))
 
     private fun sha256(bytes: ByteArray): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
