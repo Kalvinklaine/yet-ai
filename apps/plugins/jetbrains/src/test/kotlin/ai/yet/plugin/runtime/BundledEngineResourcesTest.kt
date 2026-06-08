@@ -326,7 +326,14 @@ class BundledEngineResourcesTest {
             RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.LAUNCH, null),
             bundledAvailability = "not bundled",
         )
-        assertEquals("configured path missing", missing)
+        assertEquals("no configured path and no bundled plugin binary available", missing)
+
+        val bundled = describeEngineBinaryStatus(
+            RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.LAUNCH, null),
+            bundledAvailability = "available",
+        )
+        assertEquals("bundled plugin binary available", bundled)
+        assertFalse(bundled.contains("configured path missing"), bundled)
 
         val configured = createLaunchableTempFile(prefix = "yet-status-launch-")
         try {
