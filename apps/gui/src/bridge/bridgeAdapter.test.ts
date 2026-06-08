@@ -875,6 +875,33 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-12", payload: { status: "succeeded", message: "Opened.", cloudRequired: false, action: "openWorkspaceFile", workspaceRelativePath: "config/secret.env" } })).toBe(false);
   });
 
+  it("accepts only minimal VS Code or JetBrains IDE action result context", () => {
+    const basePayload = { status: "succeeded", message: "Context snapshot ready.", cloudRequired: false, action: "getContextSnapshot" };
+    const validJetBrainsContext = { source: "jetbrains", hasActiveEditor: true, workspaceFolderCount: 1 };
+    const validVsCodeContext = { source: "vscode", hasActiveEditor: false, workspaceFolderCount: 0 };
+
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-context-jetbrains", payload: { ...basePayload, context: validJetBrainsContext } })).toBe(true);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-context-vscode", payload: { ...basePayload, context: validVsCodeContext } })).toBe(true);
+
+    const invalidContexts = [
+      { ...validJetBrainsContext, kind: "active_editor" },
+      { ...validJetBrainsContext, file: { workspaceRelativePath: "src/App.tsx" } },
+      { ...validJetBrainsContext, workspaceRelativePath: "src/App.tsx" },
+      { ...validJetBrainsContext, selectedText: "selection" },
+      { ...validJetBrainsContext, text: "selection" },
+      { ...validJetBrainsContext, rawContent: "contents" },
+      { ...validJetBrainsContext, provider: "host" },
+      { ...validJetBrainsContext, extra: true },
+      { source: "jetbrains", workspaceFolderCount: 1 },
+      { source: "jetbrains", hasActiveEditor: true },
+      { source: "browser", hasActiveEditor: true, workspaceFolderCount: 1 },
+    ];
+
+    for (const context of invalidContexts) {
+      expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: `req-invalid-${Object.keys(context).join("-")}`, payload: { ...basePayload, context } })).toBe(false);
+    }
+  });
+
   it("rejects forbidden IDE action result metadata on non-success statuses", () => {
     const context = { source: "vscode", hasActiveEditor: true, workspaceFolderCount: 1 };
     const range = { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } };
@@ -898,7 +925,7 @@ describe("bridgeAdapter", () => {
   });
 
   it("aligns successful getContextSnapshot progress and result metadata with the bridge schema", () => {
-    const context = { source: "vscode", hasActiveEditor: true, workspaceFolderCount: 1 };
+    const context = { source: "jetbrains", hasActiveEditor: true, workspaceFolderCount: 1 };
 
     const progressWithoutContext = { version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-context-progress", payload: { phase: "completed", status: "succeeded", summary: "Context snapshot ready.", cloudRequired: false, action: "getContextSnapshot" } };
     const progressWithContext = { version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-context-progress-context", payload: { ...progressWithoutContext.payload, context } };

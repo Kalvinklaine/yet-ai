@@ -1883,16 +1883,29 @@ describe("active editor attached context", () => {
     expect(postMessage).not.toHaveBeenCalled();
   });
 
-  it("marks JetBrains controlled IDE actions preview-only and does not send requests", async () => {
+  it("sends unique bounded JetBrains IDE action requests and blocks pending duplicate clicks", async () => {
     const postIntellijMessage = vi.fn();
     window.postIntellijMessage = postIntellijMessage;
     mockRuntimeResponses();
     renderApp();
     await flushAsync();
 
-    expect(container?.textContent).toContain("JetBrains preview-only");
-    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Get IDE context");
-    expect(postIntellijMessage.mock.calls.some(([message]) => message?.type === "gui.ideActionRequest")).toBe(false);
+    expect(container?.textContent).toContain("bridge jetbrains");
+    expect(container?.textContent).toContain("JetBrains controlled actions");
+    expect(findButton("Get IDE context")).toBeTruthy();
+
+    await act(async () => {
+      findButton("Get IDE context").click();
+    });
+    await act(async () => {
+      findButton("IDE action pending…").click();
+    });
+
+    const ideActionMessages = postIntellijMessage.mock.calls.map(([message]) => message).filter((message) => message.type === "gui.ideActionRequest");
+    expect(ideActionMessages).toHaveLength(1);
+    expect(ideActionMessages[0]).toEqual({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "gui-ide-action-1", payload: { action: "getContextSnapshot" } });
+    expect(ideActionMessages[0].requestId.length).toBeLessThanOrEqual(128);
+    expect(postIntellijMessage.mock.calls.some(([message]) => message?.type === "gui.applyWorkspaceEditRequest")).toBe(false);
   });
 
   it("sends unique bounded VS Code IDE action requests and blocks pending duplicate clicks", async () => {
@@ -1943,6 +1956,23 @@ describe("active editor attached context", () => {
     expect(container?.textContent).not.toContain("Stale result ignored.");
   });
 
+  it("renders JetBrains IDE action progress and context result metadata", async () => {
+    const postIntellijMessage = vi.fn();
+    window.postIntellijMessage = postIntellijMessage;
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Get IDE context").click();
+    });
+    await dispatchHostIdeActionProgress("gui-ide-action-1", { phase: "running", status: "inProgress", summary: "Reading IDE context.", cloudRequired: false, action: "getContextSnapshot" });
+    await dispatchHostIdeActionResult("gui-ide-action-1", { status: "succeeded", message: "Context snapshot ready.", cloudRequired: false, action: "getContextSnapshot", context: { source: "jetbrains", hasActiveEditor: true, workspaceFolderCount: 1 } });
+
+    expect(container?.textContent).toContain("Get IDE context: succeeded");
+    expect(container?.textContent).toContain("Result context: source jetbrains · active editor present yes · workspace folders 1");
+  });
+
   it("redacts secret-like active editor preview text from the DOM", async () => {
     const postMessage = vi.fn();
     const rawSecret = "sk-proj-1234567890abcdef";
@@ -1977,7 +2007,7 @@ describe("active editor attached context", () => {
     expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Run read-only IDE action");
   });
 
-  it("renders JetBrains read-only IDE action proposal without posting a request", async () => {
+  it("runs JetBrains read-only IDE action proposal only after click", async () => {
     const postIntellijMessage = vi.fn();
     window.postIntellijMessage = postIntellijMessage;
     const proposal = ideActionProposal({ action: "getContextSnapshot", summary: "Check current IDE context." });
@@ -1987,8 +2017,17 @@ describe("active editor attached context", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("Read-only IDE action proposal");
-    expect(container?.textContent).toContain("JetBrains preview-only unsupported. No IDE action will be posted.");
-    expect(postIntellijMessage.mock.calls.some(([message]) => message?.type === "gui.ideActionRequest")).toBe(false);
+    expect(findButton("Run read-only IDE action").disabled).toBe(false);
+    expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
+
+    await act(async () => {
+      findButton("Run read-only IDE action").click();
+    });
+
+    const ideActionMessages = postIntellijMessage.mock.calls.map(([message]) => message).filter((message) => message.type === "gui.ideActionRequest");
+    expect(ideActionMessages).toHaveLength(1);
+    expect(ideActionMessages[0]).toEqual({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "gui-ide-proposal-action-1", payload: { action: "getContextSnapshot" } });
+    expect(postIntellijMessage.mock.calls.some(([message]) => message?.type === "gui.applyWorkspaceEditRequest")).toBe(false);
   });
 
   it("renders VS Code read-only IDE action proposal and does not auto-post", async () => {
