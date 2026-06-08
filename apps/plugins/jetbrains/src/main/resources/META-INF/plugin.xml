@@ -23,6 +23,7 @@
         <applicationService serviceImplementation="ai.yet.plugin.settings.YetSettingsState"/>
         <applicationService serviceImplementation="ai.yet.plugin.settings.SessionTokenStore"/>
         <applicationService serviceImplementation="ai.yet.plugin.runtime.RuntimeConnectionManager"/>
+        <projectService serviceImplementation="ai.yet.plugin.lsp.JetBrainsLspLifecycleService"/>
     </extensions>
 
     <actions>
