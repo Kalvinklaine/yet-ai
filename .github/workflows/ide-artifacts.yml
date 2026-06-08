@@ -141,21 +141,14 @@ jobs:
           npm run artifact:stage-github
           npm run smoke:github-ide-artifacts
 
-      # GitHub wraps every uploaded artifact in its own ZIP. The VS Code and
-      # JetBrains unzip-first artifacts must be unzipped before IDE install.
+      # GitHub wraps every uploaded artifact in its own ZIP. The VS Code
+      # artifact must be unzipped before IDE install.
       - name: Upload VS Code artifact (unzip GitHub artifact first)
         uses: actions/upload-artifact@v4
         with:
           name: yet-ai-vscode-unzip-first-${{ matrix.label }}-${{ github.sha }}
           if-no-files-found: error
           path: dist/github-artifacts/vscode-unzip-first/*
-
-      - name: Upload JetBrains artifact (unzip GitHub artifact first)
-        uses: actions/upload-artifact@v4
-        with:
-          name: yet-ai-jetbrains-unzip-first-${{ matrix.label }}-${{ github.sha }}
-          if-no-files-found: error
-          path: dist/github-artifacts/jetbrains-unzip-first/*
 
       # This staging layout makes the GitHub artifact ZIP itself installable in
       # JetBrains, so do not unzip it before installing from disk.
@@ -165,13 +158,6 @@ jobs:
           name: yet-ai-jetbrains-install-direct-${{ matrix.label }}-${{ github.sha }}
           if-no-files-found: error
           path: dist/github-artifacts/jetbrains-install-direct/*
-
-      - name: Upload per-platform plugin artifact manifest
-        uses: actions/upload-artifact@v4
-        with:
-          name: yet-ai-plugin-manifest-${{ matrix.label }}-${{ github.sha }}
-          if-no-files-found: error
-          path: dist/github-artifacts/manifest/*
 
       - name: Clean tracked status
         shell: bash
@@ -201,24 +187,23 @@ jobs:
             apps/gui/package-lock.json
             apps/plugins/vscode/package-lock.json
 
-      - name: Download all per-platform manifests
+      - name: Download all per-platform VS Code artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist/combined-per-platform
-          pattern: yet-ai-plugin-manifest-*
-          merge-multiple: true
+          pattern: yet-ai-vscode-unzip-first-*
 
       - name: Combine per-platform manifests
         shell: bash
         run: |
-          mkdir -p dist/combined-manifest
+          mkdir -p dist/combined-plugin-manifest
           node scripts/combine-plugin-artifact-manifests.mjs \
             --input dist/combined-per-platform \
-            --output dist/combined-manifest/manifest.json
+            --output dist/combined-plugin-manifest/manifest.json
 
       - name: Upload combined plugin artifact manifest
         uses: actions/upload-artifact@v4
         with:
           name: yet-ai-plugin-manifest-${{ github.sha }}
           if-no-files-found: error
-          path: dist/combined-manifest/manifest.json
+          path: dist/combined-plugin-manifest/manifest.json

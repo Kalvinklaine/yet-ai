@@ -280,14 +280,13 @@ The `Yet AI IDE Artifacts` workflow (`.github/workflows/ide-artifacts.yml`) buil
 
 Open GitHub Actions, choose the `Yet AI IDE Artifacts` workflow, and select a successful run for the commit you want to test. The workflow builds per-platform dev-preview artifacts in a `linux-x64` / `macos-arm64` / `windows-x64` matrix because the JetBrains plugin JAR bundles a native `yet-lsp` runtime staged from the local cargo build output (not a signed or notarized production engine). Download the artifact whose `<os>-<arch>` suffix matches your local OS/architecture; mixing platforms will fail because the plugin JAR contains a platform-specific native binary.
 
-Per-platform artifact names are:
+Public artifact names are:
 
 - `yet-ai-vscode-unzip-first-<os>-<arch>-<sha>` (e.g. `yet-ai-vscode-unzip-first-linux-x64-<sha>`)
-- `yet-ai-jetbrains-unzip-first-<os>-<arch>-<sha>` (e.g. `yet-ai-jetbrains-unzip-first-macos-arm64-<sha>`)
 - `yet-ai-jetbrains-install-direct-<os>-<arch>-<sha>` (e.g. `yet-ai-jetbrains-install-direct-windows-x64-<sha>`)
-- `yet-ai-plugin-manifest-<os>-<arch>-<sha>` (per-platform manifest with `platform.os`/`platform.arch` and `runtime.bundledEngineResource`)
+- `yet-ai-plugin-manifest-<sha>` (combined manifest)
 
-A combined `yet-ai-plugin-manifest-<sha>` is also uploaded once all per-platform builds finish, with a `platforms[]` array aggregating per-platform `platform`, `runtime`, and `artifacts` entries. Download/read `yet-ai-plugin-manifest-<sha>` (or the per-platform manifest) for commit, checksum, and platform metadata before installing.
+The combined `yet-ai-plugin-manifest-<sha>` is uploaded once all per-platform builds finish, with a `platforms[]` array aggregating per-platform commit, checksum, platform, runtime, and artifact metadata. Download/read `yet-ai-plugin-manifest-<sha>` for commit, checksum, and platform metadata before installing.
 
 VS Code install:
 
@@ -305,14 +304,9 @@ JetBrains recommended direct install:
 2. Use the downloaded GitHub artifact ZIP directly in Settings/Preferences → Plugins → gear → Install Plugin from Disk.
 3. Restart.
 
-JetBrains fallback unzip-first install:
+Local JetBrains preview preparation still creates `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip` for install-from-disk testing, but the public GitHub Actions JetBrains artifact is the platform-specific direct-install ZIP selected directly in the IDE.
 
-1. Download the `yet-ai-jetbrains-unzip-first-<os>-<arch>-<sha>` artifact matching your local OS/architecture.
-2. Unzip the downloaded GitHub artifact ZIP.
-3. Install the inner `yet-ai-jetbrains-<version>-dev-preview.zip` from Settings/Preferences → Plugins → gear → Install Plugin from Disk.
-4. Restart.
-
-Do not install the old combined artifact bundle or any artifact containing both IDE plugins. JetBrains expects a JetBrains plugin ZIP structure; a generic GitHub transport bundle will fail with something like `Fail to load plugin descriptor`. If you see that error, make sure you selected either the JetBrains direct-install artifact ZIP or the inner JetBrains plugin ZIP from the unzip-first artifact.
+Do not install the old combined artifact bundle or any artifact containing both IDE plugins. JetBrains expects a JetBrains plugin ZIP structure; a generic GitHub transport bundle will fail with something like `Fail to load plugin descriptor`. If you see that error, make sure you selected the JetBrains direct-install artifact ZIP.
 
 These artifacts are unsigned, unpublished dev previews, not marketplace releases or production installers. Report manual verification honestly: if a checklist item was not run, mark it `not run`; if it failed, include only sanitized failure text.
 

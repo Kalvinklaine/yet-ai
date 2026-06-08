@@ -136,21 +136,20 @@ For a downloadable CI-built dev preview, use GitHub Actions workflow `Yet AI IDE
 
 The workflow builds per-platform artifacts in a `linux-x64` / `macos-arm64` / `windows-x64` matrix because the JetBrains plugin JAR bundles a native `yet-lsp` runtime. Download the artifact whose `<os>-<arch>` suffix matches your local OS/architecture; mixing platforms will fail at install time. The bundled `yet-lsp` is the dev-preview local cargo build output staged from the runner's `target/<profile>/yet-lsp` (or `yet-lsp.exe` on Windows); it is not a signed or notarized production engine and no signing, notarization, marketplace publication, production installer, or production release claim is made.
 
-Per-platform artifact names are:
+Public artifact names are:
 
 - `yet-ai-vscode-unzip-first-<os>-<arch>-<sha>` (e.g. `yet-ai-vscode-unzip-first-linux-x64-<sha>`)
-- `yet-ai-jetbrains-unzip-first-<os>-<arch>-<sha>` (e.g. `yet-ai-jetbrains-unzip-first-macos-arm64-<sha>`)
 - `yet-ai-jetbrains-install-direct-<os>-<arch>-<sha>` (e.g. `yet-ai-jetbrains-install-direct-windows-x64-<sha>`)
-- `yet-ai-plugin-manifest-<os>-<arch>-<sha>` (per-platform manifest with `platform.os`/`platform.arch` and `runtime.bundledEngineResource`)
+- `yet-ai-plugin-manifest-<sha>` (combined manifest)
 
-A combined `yet-ai-plugin-manifest-<sha>` is also uploaded with a `platforms[]` array aggregating per-platform `platform`, `runtime`, and `artifacts` entries.
+The combined `yet-ai-plugin-manifest-<sha>` is uploaded with a `platforms[]` array aggregating per-platform commit, checksum, platform, runtime, and artifact metadata. VS Code uses the unzip-first artifact; JetBrains uses the platform-specific direct-install artifact because native `yet-lsp` is bundled.
 
 VS Code install:
 
 1. In GitHub Actions, open a successful `Yet AI IDE Artifacts` run for the commit you want to test.
 2. Download the `yet-ai-vscode-unzip-first-<os>-<arch>-<sha>` artifact matching your local OS/architecture.
 3. Unzip the downloaded GitHub artifact ZIP.
-4. Download/read `yet-ai-plugin-manifest-<sha>` (or the per-platform `yet-ai-plugin-manifest-<os>-<arch>-<sha>`) for commit, checksum, and platform metadata.
+4. Download/read `yet-ai-plugin-manifest-<sha>` for commit, checksum, and platform metadata.
 5. Install the inner VSIX from a shell:
 
    ```sh
@@ -159,7 +158,7 @@ VS Code install:
 
 6. Open Yet AI with `Yet AI: Open Chat` and complete the manual checklist below.
 
-Do not install the old combined artifact bundle or any artifact containing both IDE plugins. JetBrains expects a JetBrains plugin ZIP structure; a generic GitHub transport bundle will fail with something like `Fail to load plugin descriptor`. If a JetBrains tester sees that error, they should select either the JetBrains direct-install artifact ZIP or the inner JetBrains plugin ZIP from the unzip-first artifact.
+Do not install the old combined artifact bundle or any artifact containing both IDE plugins. JetBrains expects a JetBrains plugin ZIP structure; a generic GitHub transport bundle will fail with something like `Fail to load plugin descriptor`. If a JetBrains tester sees that error, they should select the JetBrains direct-install artifact ZIP.
 
 Manual verification checklist:
 
