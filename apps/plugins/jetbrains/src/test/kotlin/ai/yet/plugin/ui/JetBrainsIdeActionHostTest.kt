@@ -1,6 +1,7 @@
 package ai.yet.plugin.ui
 
 import kotlin.io.path.createDirectory
+import kotlin.io.path.createSymbolicLinkPointingTo
 import kotlin.io.path.createTempDirectory
 import kotlin.io.path.writeBytes
 import kotlin.io.path.writeText
@@ -33,6 +34,21 @@ class JetBrainsIdeActionHostTest {
         assertNull(resolveWorkspaceFile(root.toString(), "src/bin.txt"))
     }
 
+
+    @Test
+    fun rejectsSymlinkThatPointsOutsideWorkspace() {
+        val root = createTempDirectory()
+        val outside = createTempDirectory()
+        outside.resolve("secret.txt").writeText("secret")
+        val link = root.resolve("linked.txt")
+        try {
+            link.createSymbolicLinkPointingTo(outside.resolve("secret.txt"))
+        } catch (_: Exception) {
+            return
+        }
+
+        assertNull(resolveWorkspaceFile(root.toString(), "linked.txt"))
+    }
     @Test
     fun rejectsTraversalAndUnsafeInputs() {
         val root = createTempDirectory()
