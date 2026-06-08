@@ -13,16 +13,20 @@ private fun isSafeDocumentText(text: String): Boolean = text.all { ch ->
 }
 
 fun canOpenJetBrainsLspDocument(uri: URI, text: String, currentCount: Int): Boolean {
-    if (currentCount >= maxTrackedDocumentCount) return false
     if (uri.scheme != "file") return false
+    if (uri.isOpaque) return false
+    if (!uri.authority.isNullOrEmpty()) return false
+    if (!uri.query.isNullOrEmpty() || !uri.fragment.isNullOrEmpty()) return false
+    if (uri.path.isNullOrBlank()) return false
     if (uri.toString().utf8ByteCount() > maxDocumentUriBytes) return false
     if (text.utf8ByteCount() > maxDocumentTextBytes) return false
     if (!isSafeDocumentText(text)) return false
+    if (currentCount >= maxTrackedDocumentCount) return false
     return true
 }
 
 class JetBrainsLspDocumentPolicy {
-    private val openDocuments = mutableMapOf<URI, String>()
+    private val openDocuments = mutableSetOf<URI>()
 
     val trackedCount: Int
         get() = openDocuments.size
@@ -30,11 +34,13 @@ class JetBrainsLspDocumentPolicy {
     fun canOpen(uri: URI, text: String): Boolean = canOpenJetBrainsLspDocument(uri, text, trackedCount)
 
     fun open(uri: URI, text: String): Boolean {
-        if (!canOpen(uri, text)) {
+        val alreadyTracked = openDocuments.contains(uri)
+        val effectiveCount = if (alreadyTracked) trackedCount - 1 else trackedCount
+        if (!canOpenJetBrainsLspDocument(uri, text, effectiveCount)) {
             openDocuments.remove(uri)
             return false
         }
-        openDocuments[uri] = text
+        openDocuments.add(uri)
         return true
     }
 
@@ -46,7 +52,6 @@ class JetBrainsLspDocumentPolicy {
         openDocuments.clear()
     }
 
-    fun isTracked(uri: URI): Boolean = openDocuments.containsKey(uri)
+    fun isTracked(uri: URI): Boolean = openDocuments.contains(uri)
 
-    fun trackedText(uri: URI): String? = openDocuments[uri]
 }

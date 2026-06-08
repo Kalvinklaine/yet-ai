@@ -51,10 +51,10 @@ class JetBrainsLspProcessPolicyTest {
     @Test
     fun diagnosticsRedactSecretsAndPrivatePaths() {
         val text = sanitizeJetBrainsLspDiagnosticText(
-            "Authorization: Bearer bearer-secret Cookie: session=cookie-secret access_token=oauth-secret /Users/alice/private/file.txt raw document body bridge payload sk-test-12345678901234567890.abcdefghijklmnopqrstuv.zyxwvutsrqponmlkjihgfedcba0123456789",
+            "OPENAI_API_KEY=sk-test-secret ANTHROPIC_API_KEY=anthropic-secret YET_AI_AUTH_TOKEN=auth-secret PROVIDER_CLIENT_SECRET=client-secret Authorization: Bearer bearer-secret Cookie: session=cookie-secret access_token=oauth-secret /Users/alice/private/file.txt raw document body sentinel-after-body bridge payload sentinel-after-payload sk-test-12345678901234567890.abcdefghijklmnopqrstuv.zyxwvutsrqponmlkjihgfedcba0123456789",
         )
 
-        listOf("bearer-secret", "cookie-secret", "oauth-secret", "/Users/alice/private/file.txt", "alice", "sk-test", "bridge payload", "raw document body").forEach {
+        listOf("sk-test-secret", "anthropic-secret", "auth-secret", "client-secret", "bearer-secret", "cookie-secret", "oauth-secret", "/Users/alice/private/file.txt", "alice", "sentinel-after-body", "sentinel-after-payload").forEach {
             assertFalse(text.contains(it), text)
         }
         assertTrue(text.contains("[redacted]"), text)

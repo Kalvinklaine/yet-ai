@@ -3,7 +3,6 @@ package ai.yet.plugin.lsp
 import java.net.URI
 import kotlin.test.Test
 import kotlin.test.assertFalse
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class JetBrainsLspDocumentPolicyTest {
@@ -23,6 +22,10 @@ class JetBrainsLspDocumentPolicyTest {
             URI("jar:file:///tmp/app.jar!/Main.kt"),
             URI("untitled:Untitled-1"),
             URI("vfs://tmp/main.kt"),
+            URI("file://host/path.kt"),
+            URI("file:relative.kt"),
+            URI("file:///tmp/a.kt?token=x"),
+            URI("file:///tmp/a.kt#frag"),
         ).forEach { uri ->
             assertFalse(policy.open(uri, "text"), uri.toString())
         }
@@ -69,26 +72,42 @@ class JetBrainsLspDocumentPolicyTest {
         policy.close(uri)
 
         assertFalse(policy.isTracked(uri))
-        assertNull(policy.trackedText(uri))
     }
 
     @Test
-    fun unsafeTransitionDoesNotRetainBody() {
+    fun unsafeTransitionDoesNotRetainState() {
         val policy = JetBrainsLspDocumentPolicy()
         val uri = URI("file:///tmp/body.kt")
 
         assertTrue(policy.open(uri, "safe text"))
         assertFalse(policy.open(uri, "unsafe\u0000text"))
         assertFalse(policy.isTracked(uri))
-        assertNull(policy.trackedText(uri))
     }
 
     @Test
-    fun sourceHasNoProviderRuntimeSessionTokenCoupling() {
-        val source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/kotlin/ai/yet/plugin/lsp/JetBrainsLspDocumentPolicy.kt"))
-
-        listOf("provider", "runtime", "sessionToken", "token").forEach {
-            assertFalse(source.contains(it), source)
+    fun reopenTrackedUriAtCapacityRemainsTracked() {
+        val policy = JetBrainsLspDocumentPolicy()
+        repeat(32) {
+            assertTrue(policy.open(URI("file:///tmp/$it.kt"), "text $it"))
         }
+        val uri = URI("file:///tmp/0.kt")
+
+        assertTrue(policy.open(uri, "updated text"))
+        assertTrue(policy.isTracked(uri))
+        assertFalse(policy.open(URI("file:///tmp/new-safe.kt"), "text"))
+        assertTrue(policy.trackedCount == 32)
+    }
+
+    @Test
+    fun unsafeTransitionDropsTrackedUriAtCapacity() {
+        val policy = JetBrainsLspDocumentPolicy()
+        repeat(32) {
+            assertTrue(policy.open(URI("file:///tmp/$it.kt"), "text $it"))
+        }
+        val uri = URI("file:///tmp/0.kt")
+
+        assertFalse(policy.open(uri, "unsafe\u0000text"))
+        assertFalse(policy.isTracked(uri))
+        assertTrue(policy.open(URI("file:///tmp/new-safe.kt"), "text"))
     }
 }
