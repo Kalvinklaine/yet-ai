@@ -198,7 +198,7 @@ async function checkZip(zipPath) {
   }
   for (const entry of entries) {
     if (!isSafeZipEntryPath(entry)) {
-      failures.push(`${path.relative(root, zipPath)} contains unsafe ZIP/JAR entry path ${JSON.stringify(entry)}.`);
+      failures.push(`${path.relative(root, zipPath)} contains unsafe ZIP/JAR entry path; entries must be non-empty POSIX relative paths without traversal, backslashes, absolute prefixes, or macOS metadata.`);
     }
   }
   const pluginJar = await extractZipEntry(zipPath, pluginJarEntry);
@@ -213,7 +213,7 @@ async function checkZip(zipPath) {
     const jarEntries = jarListing.split(/\r?\n/).filter(Boolean);
     for (const entry of jarEntries) {
       if (!isSafeZipEntryPath(entry)) {
-        failures.push(`${path.relative(root, zipPath)} plugin JAR contains unsafe ZIP/JAR entry path ${JSON.stringify(entry)}.`);
+        failures.push(`${path.relative(root, zipPath)} plugin JAR contains unsafe ZIP/JAR entry path; entries must be non-empty POSIX relative paths without traversal, backslashes, absolute prefixes, or macOS metadata.`);
       }
     }
     requireZipEntry(jarListing, "META-INF/plugin.xml", `${path.relative(root, zipPath)} plugin JAR must contain META-INF/plugin.xml.`);
@@ -302,6 +302,9 @@ function isSafeZipEntryPath(entry) {
   if (typeof entry !== "string" || entry.length === 0) {
     return false;
   }
+  if (entry.includes("\\")) {
+    return false;
+  }
   if (path.posix.isAbsolute(entry) || path.win32.isAbsolute(entry) || /^[A-Za-z]:/.test(entry)) {
     return false;
   }
@@ -310,6 +313,9 @@ function isSafeZipEntryPath(entry) {
     return false;
   }
   const segments = normalized.split("/");
+  if (segments.some((segment) => segment === "__MACOSX" || segment === ".DS_Store")) {
+    return false;
+  }
   return segments.every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 

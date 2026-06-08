@@ -9,6 +9,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = path.join(root, "dist", "plugins");
 const manifestPath = path.join(distRoot, "manifest.json");
 const supportedKinds = ["vscode", "jetbrains"];
+const supportedOs = new Set(["linux", "macos", "windows"]);
+const supportedArch = new Set(["x64", "arm64", "x86", "arm"]);
 
 const args = parseArgs(process.argv.slice(2));
 const identity = JSON.parse(await readFile(path.join(root, "product", "identity.json"), "utf8"));
@@ -207,9 +209,17 @@ function resolvePlatform() {
   const arch = envArch ?? process.arch;
   const source = envOs !== undefined || envArch !== undefined ? "env" : "process";
   const runnerLabel = envRunner ?? `${os}-${arch}`;
+  const normalizedOs = normalizeOsLabel(os);
+  const normalizedArch = normalizeArchLabel(arch);
+  if (!supportedOs.has(normalizedOs)) {
+    throw new Error(`Unsupported artifact manifest OS ${normalizedOs}; expected one of ${[...supportedOs].join(", ")}. Set YET_AI_RUNTIME_OS to a supported CI runner OS.`);
+  }
+  if (!supportedArch.has(normalizedArch)) {
+    throw new Error(`Unsupported artifact manifest architecture ${normalizedArch}; expected one of ${[...supportedArch].join(", ")}. Set YET_AI_RUNTIME_ARCH to a supported CI runner architecture.`);
+  }
   return removeUndefined({
-    os: normalizeOsLabel(os),
-    arch: normalizeArchLabel(arch),
+    os: normalizedOs,
+    arch: normalizedArch,
     runnerLabel,
     source,
   });

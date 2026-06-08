@@ -86,7 +86,7 @@ async function checkRootVsix(vsixPath) {
   const entries = listing.split(/\r?\n/).filter(Boolean);
   for (const entry of entries) {
     if (!isSafeArchiveEntryPath(entry)) {
-      failures.push(`${relativeVsix} contains unsafe archive entry path ${JSON.stringify(entry)}.`);
+      failures.push(`${relativeVsix} contains unsafe archive entry path; entries must be non-empty POSIX relative paths without traversal, backslashes, absolute prefixes, or macOS metadata.`);
     }
   }
 
@@ -334,6 +334,9 @@ function isSafeArchiveEntryPath(entry) {
   if (typeof entry !== "string" || entry.length === 0) {
     return false;
   }
+  if (entry.includes("\\")) {
+    return false;
+  }
   if (path.posix.isAbsolute(entry) || path.win32.isAbsolute(entry) || /^[A-Za-z]:/.test(entry)) {
     return false;
   }
@@ -342,5 +345,8 @@ function isSafeArchiveEntryPath(entry) {
     return false;
   }
   const segments = normalized.split("/");
+  if (segments.some((segment) => segment === "__MACOSX" || segment === ".DS_Store")) {
+    return false;
+  }
   return segments.every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
