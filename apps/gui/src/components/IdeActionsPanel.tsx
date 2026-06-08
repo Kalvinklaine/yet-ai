@@ -68,9 +68,25 @@ export function IdeActionAttemptPreview({ attempt }: IdeActionAttemptPreviewProp
       <span>Request: {sanitizeDisplayText(attempt.requestId)} · cloud required: false</span>
       {attempt.workspaceRelativePath && <span>Path: {sanitizeDisplayText(attempt.workspaceRelativePath)}</span>}
       {attempt.range && <span>Range: {formatEditRange(attempt.range)}</span>}
-      {attempt.result?.context && <span>Context: active editor {String(attempt.result.context.hasActiveEditor ?? "unknown")} · workspace folders {attempt.result.context.workspaceFolderCount ?? "unknown"}</span>}
+      {renderIdeActionResultMetadata(attempt.result)}
     </div>
   );
+}
+
+function renderIdeActionResultMetadata(result: IdeActionResultPayload | undefined) {
+  if (!result || result.status !== "succeeded") {
+    return null;
+  }
+  if (result.action === "getContextSnapshot" && result.context) {
+    return <span>Result context: source {sanitizeDisplayText(result.context.source)} · active editor present {result.context.hasActiveEditor ? "yes" : "no"} · workspace folders {result.context.workspaceFolderCount}</span>;
+  }
+  if (result.action === "openWorkspaceFile" && result.workspaceRelativePath) {
+    return <span>Result path: {sanitizeDisplayText(result.workspaceRelativePath)}</span>;
+  }
+  if (result.action === "revealWorkspaceRange" && result.workspaceRelativePath && result.range) {
+    return <span>Result path: {sanitizeDisplayText(result.workspaceRelativePath)} · result range: {formatEditRange(result.range)}</span>;
+  }
+  return null;
 }
 
 export type IdeActionProposalPanelProps = {
