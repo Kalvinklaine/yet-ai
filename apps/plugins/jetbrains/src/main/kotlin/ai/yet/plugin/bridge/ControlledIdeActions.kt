@@ -84,6 +84,20 @@ object ControlledIdeActions {
         }
     }
 
+    fun safeRequestIdFromRaw(raw: String): String? {
+        val element = try {
+            JsonParser.parseString(raw)
+        } catch (_: RuntimeException) {
+            return null
+        }
+        if (!element.isJsonObject) return null
+        val record = element.asJsonObject
+        if (!record.keySet().all { it in setOf("version", "type", "requestId", "payload") }) return null
+        if (record.stringValue("version") != ProductIdentity.bridgeVersion) return null
+        if (record.stringValue("type") != "gui.ideActionRequest") return null
+        return record.stringValue("requestId")?.takeIf(::isRequiredRequestId)
+    }
+
     fun ideActionProgress(
         requestId: String,
         phase: String,
