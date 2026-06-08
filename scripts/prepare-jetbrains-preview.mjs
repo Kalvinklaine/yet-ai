@@ -33,6 +33,7 @@ function run(command, commandArgs, options = {}) {
     process.exit(1);
   }
   if (result.status !== 0) {
+    console.error(`Command failed with status ${result.status ?? "unknown"}${result.signal ? ` (signal ${result.signal})` : ""}: ${printable}`);
     if (options.diagnoseGradleFailure) {
       printGradleFailureDiagnostic(`${result.stdout ?? ""}\n${result.stderr ?? ""}`);
     }
@@ -99,7 +100,7 @@ const profile = new Set(args).has("--release") ? "release" : "debug";
 const binaryName = process.platform === "win32" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
 const engineBinaryPath = path.join(root, "target", profile, binaryName);
 
-run("npm", ["run", "prepare:ide-engine", "--", ...args]);
+run(process.execPath, [path.join(root, "scripts", "prepare-ide-engine.mjs"), ...args]);
 run("npm", ["run", "build"], { cwd: path.join(root, "apps", "gui") });
 await rm(path.join(jetbrainsRoot, "build", "generated", "resources", "yet-ai-gui"), { recursive: true, force: true });
 await rm(path.join(jetbrainsRoot, "build", "generated", "resources", "yet-ai-engine"), { recursive: true, force: true });

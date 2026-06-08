@@ -36,6 +36,7 @@ function run(command, commandArgs, options = {}) {
     process.exit(1);
   }
   if (result.status !== 0) {
+    console.error(`Command failed with status ${result.status ?? "unknown"}${result.signal ? ` (signal ${result.signal})` : ""}: ${printable}`);
     process.exit(result.status ?? 1);
   }
 }
@@ -50,7 +51,7 @@ function platformCommand(command) {
   }[command] ?? command;
 }
 
-run("npm", ["run", "prepare:ide-engine", "--", ...args]);
+run(process.execPath, [path.join(root, "scripts", "prepare-ide-engine.mjs"), ...args]);
 run("npm", ["run", "build"], { cwd: path.join(root, "apps", "gui") });
 run("npm", ["run", "prepare:preview"], { cwd: vscodeRoot });
 
