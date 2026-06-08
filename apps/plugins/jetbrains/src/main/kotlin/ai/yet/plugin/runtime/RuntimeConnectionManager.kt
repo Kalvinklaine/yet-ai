@@ -114,7 +114,7 @@ class RuntimeConnectionManager(
                 if (configured != null) {
                     engineBinaryFinder(configured)
                 } else {
-                    val bundled = bundledEngineProvider.resolveOrNull()
+                    val bundled = resolveBundledEngineOrThrow(bundledEngineProvider)
                     if (bundled != null) {
                         bundled
                     } else {
@@ -123,7 +123,7 @@ class RuntimeConnectionManager(
                     }
                 }
             }
-            LaunchMode.AUTO -> resolveEngineBinary(settings.engineBinaryPath, bundledEngineProvider.resolveOrNull(), engineBinaryFinder)
+            LaunchMode.AUTO -> resolveEngineBinary(settings.engineBinaryPath, resolveBundledEngineOrThrow(bundledEngineProvider), engineBinaryFinder)
         }
         val shouldLaunch = settings.launchMode == LaunchMode.LAUNCH ||
             (settings.launchMode == LaunchMode.AUTO && binaryPath != null)
@@ -270,20 +270,22 @@ fun sanitizeRuntimeUrlForDiagnostics(value: String): String {
 
 fun describeEngineBinaryStatus(
     settings: RuntimeSettings,
-    bundledAvailability: String = BundledEngineResources.describeAvailability(),
+    bundledAvailability: String? = null,
 ): String = when (settings.launchMode) {
     LaunchMode.CONNECT -> "not used in connect mode"
     LaunchMode.LAUNCH -> {
         val path = settings.engineBinaryPath
+        val bundled = (bundledAvailability ?: BundledEngineResources.describeAvailability()) == "available"
         when {
-            path == null -> "configured path missing"
+            path == null && bundled -> "bundled plugin binary available"
+            path == null -> "no configured path and no bundled plugin binary available"
             isLaunchableEngineFile(path) -> "configured binary is executable"
             else -> "configured binary is not executable"
         }
     }
     LaunchMode.AUTO -> {
         val path = settings.engineBinaryPath
-        val bundled = bundledAvailability == "available"
+        val bundled = (bundledAvailability ?: BundledEngineResources.describeAvailability()) == "available"
         when {
             path != null && isLaunchableEngineFile(path) -> "configured binary is executable"
             path != null -> "configured binary is not executable"
@@ -327,21 +329,28 @@ fun parseExplicitRuntimePort(runtimeUrl: String): Int {
 
 /**
  * Strategy for resolving the bundled engine binary shipped inside the plugin
- * JAR. Implementations must NOT throw on absence; they return `null` so the
- * discovery chain can fall through to PATH lookup. Extraction failures are
- * surfaced by the implementation (typically via [resolveOrNull] returning
- * null and logging) so [resolveEngineBinary] can decide whether to fall back.
+ * JAR. Implementations must return `null` when no bundle is present so the
+ * discovery chain can fall through to PATH lookup. If a bundle is present but
+ * cannot be resolved/extracted, implementations must throw so callers surface a
+ * launch failure instead of silently falling back to PATH/connect.
  */
 interface BundledEngineProvider {
     fun resolveOrNull(): Path?
 }
 
 private class DefaultBundledEngineProvider : BundledEngineProvider {
-    override fun resolveOrNull(): Path? = try {
-        BundledEngineResources.resolveOrExtract()
-    } catch (_: Exception) {
-        null
+    override fun resolveOrNull(): Path? {
+        if (!BundledEngineResources.isBundled()) {
+            return null
+        }
+        return BundledEngineResources.resolveOrExtract()
     }
+}
+
+private fun resolveBundledEngineOrThrow(provider: BundledEngineProvider): Path? = try {
+    provider.resolveOrNull()
+} catch (error: Exception) {
+    throw IllegalStateException(sanitizedRuntimeError("Bundled Yet AI engine extraction failed", error))
 }
 
 /**

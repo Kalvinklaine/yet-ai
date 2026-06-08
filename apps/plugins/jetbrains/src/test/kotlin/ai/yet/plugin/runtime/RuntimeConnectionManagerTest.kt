@@ -206,6 +206,53 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun autoModeSurfacesBundledExtractionFailureInsteadOfFallingBackToPathOrConnect() {
+        var finderCalls = 0
+        var launchCalls = 0
+        val privatePath = "/Users/alice/Library/Application Support/yet-ai/engine/abcdef-yet-lsp"
+        val token = "generated-session-token-that-must-not-leak-1234567890"
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = ThrowingBundledProvider("extract failed at $privatePath with token=$token"),
+            engineBinaryFinder = { finderCalls += 1; Path.of("/tmp/path-yet-lsp") },
+            processStarter = { launchCalls += 1; FakeProcess(listOf(true)) },
+            tokenGenerator = { token },
+        )
+
+        val error = assertFailsWith<IllegalStateException> {
+            manager.prepareConnectionSettings(RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.AUTO, null))
+        }
+
+        val message = error.message.orEmpty()
+        assertTrue(message.contains("Bundled Yet AI engine extraction failed"), message)
+        listOf(privatePath, "alice", "Application Support", token).forEach { privateValue ->
+            assertFalse(message.contains(privateValue), message)
+        }
+        assertTrue(message.contains("[redacted"), message)
+        assertEquals(0, finderCalls)
+        assertEquals(0, launchCalls)
+    }
+
+    @Test
+    fun launchModeSurfacesBundledExtractionFailureInsteadOfFallingBackToPath() {
+        var finderCalls = 0
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = ThrowingBundledProvider("cache write failed at /Users/alice/Library/Application Support/yet-ai/engine/abcdef-yet-lsp"),
+            engineBinaryFinder = { finderCalls += 1; Path.of("/tmp/path-yet-lsp") },
+            processStarter = { FakeProcess(listOf(true)) },
+            tokenGenerator = { "unused-token" },
+        )
+
+        val error = assertFailsWith<IllegalStateException> {
+            manager.prepareConnectionSettings(RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.LAUNCH, null))
+        }
+
+        val message = error.message.orEmpty()
+        assertTrue(message.contains("Bundled Yet AI engine extraction failed"), message)
+        assertFalse(message.contains("/Users/alice"), message)
+        assertEquals(0, finderCalls)
+    }
+
+    @Test
     fun launchUsesBinaryPathAsExecutableWithoutLspStdioArgument() {
         val commands = mutableListOf<List<String>>()
         val command = buildEngineLaunchCommand(
@@ -605,6 +652,12 @@ private class RecordingBundledProvider(private val path: Path?) : BundledEngineP
     override fun resolveOrNull(): Path? {
         resolveCalls += 1
         return path
+    }
+}
+
+private class ThrowingBundledProvider(private val message: String) : BundledEngineProvider {
+    override fun resolveOrNull(): Path? {
+        throw IllegalStateException(message)
     }
 }
 
