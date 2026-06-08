@@ -1,9 +1,11 @@
 package ai.yet.plugin.ui
 
 import ai.yet.plugin.bridge.ActiveEditorContext
+import ai.yet.plugin.bridge.ControlledIdeActions
 import com.google.gson.JsonParser
 import ai.yet.plugin.runtime.RuntimeConnectionResult
 import ai.yet.plugin.runtime.RuntimeSettings
+import java.util.concurrent.CompletableFuture
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -257,18 +259,40 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
-    fun ideActionBridgeStubReturnsProgressAndUnavailableResult() {
+    fun ideActionBridgeExecutesHostAndReturnsProgressAndResult() {
         val sent = mutableListOf<String>()
         val handled = JetBrainsIdeActionBridge.handleReadOnlyIdeActionRequest(
             """{"version":"2026-05-15","type":"gui.ideActionRequest","requestId":"req-1","payload":{"action":"openWorkspaceFile","workspaceRelativePath":"src/Main.kt"}}""",
             send = { sent.add(it) },
+            host = FakeIdeActionHost(IdeActionHostResult(ControlledIdeActions.ResultStatus.Succeeded, "Workspace file opened.", workspaceRelativePath = "src/Main.kt")),
         )
 
         assertTrue(handled)
-        assertEquals(listOf("host.ideActionProgress", "host.ideActionResult"), sent.map(::messageType))
+        assertEquals(listOf("host.ideActionProgress", "host.ideActionProgress", "host.ideActionProgress", "host.ideActionResult"), sent.map(::messageType))
         assertContains(sent[0], "\"checkingPolicy\"")
-        assertContains(sent[1], "\"unavailable\"")
-        assertContains(sent[1], "JetBrains read-only IDE action execution is not wired yet.")
+        assertContains(sent[1], "\"running\"")
+        assertContains(sent[2], "\"completed\"")
+        assertContains(sent[3], "\"succeeded\"")
+        assertContains(sent[3], "Workspace file opened.")
+        assertContains(sent[3], "\"workspaceRelativePath\":\"src/Main.kt\"")
+    }
+
+    @Test
+    fun ideActionBridgeContextResultMetadataIsSanitized() {
+        val sent = mutableListOf<String>()
+        JetBrainsIdeActionBridge.handleReadOnlyIdeActionRequest(
+            """{"version":"2026-05-15","type":"gui.ideActionRequest","requestId":"req-ctx","payload":{"action":"getContextSnapshot"}}""",
+            send = { sent.add(it) },
+            host = FakeIdeActionHost(IdeActionHostResult(ControlledIdeActions.ResultStatus.Succeeded, "IDE context snapshot captured.", hasActiveEditor = true, workspaceFolderCount = 1)),
+        )
+
+        val payload = JsonParser.parseString(sent.last()).asJsonObject.getAsJsonObject("payload")
+        val context = payload.getAsJsonObject("context")
+        assertEquals("jetbrains", context.get("source").asString)
+        assertTrue(context.get("hasActiveEditor").asBoolean)
+        assertEquals(1, context.get("workspaceFolderCount").asInt)
+        assertFalse(context.has("kind"))
+        assertFalse(payload.has("workspaceRelativePath"))
     }
 
     @Test
@@ -277,13 +301,14 @@ class YetToolWindowFactoryTest {
         val handled = JetBrainsIdeActionBridge.handleReadOnlyIdeActionRequest(
             """{"version":"2026-05-15","type":"gui.ideActionRequest","requestId":"req-2","payload":{"action":"runShellCommand"}}""",
             send = { sent.add(it) },
+            host = FakeIdeActionHost(IdeActionHostResult(ControlledIdeActions.ResultStatus.Succeeded, "unused")),
         )
 
         assertTrue(handled)
         assertEquals(listOf("host.ideActionResult"), sent.map(::messageType))
         assertContains(sent.single(), "\"rejected\"")
 
-        val ignored = JetBrainsIdeActionBridge.handleReadOnlyIdeActionRequest("not-json", send = { sent.add(it) })
+        val ignored = JetBrainsIdeActionBridge.handleReadOnlyIdeActionRequest("not-json", send = { sent.add(it) }, host = FakeIdeActionHost(IdeActionHostResult(ControlledIdeActions.ResultStatus.Succeeded, "unused")))
         assertFalse(ignored)
     }
 
@@ -494,6 +519,10 @@ class YetToolWindowFactoryTest {
 }
 
 private fun messageType(message: String): String = JsonParser.parseString(message).asJsonObject.get("type").asString
+
+private class FakeIdeActionHost(private val result: IdeActionHostResult) : IdeActionHost {
+    override fun execute(request: ControlledIdeActions.Request): CompletableFuture<IdeActionHostResult> = CompletableFuture.completedFuture(result)
+}
 
 private class TestDeliveryGate(private val execute: (String) -> Unit) {
     private var disposed = false
