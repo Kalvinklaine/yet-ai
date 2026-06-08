@@ -96,11 +96,7 @@ jobs:
       - name: Build and validate downloadable dev-preview artifacts
         shell: bash
         run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            export PATH="$USERPROFILE/.cargo/bin:$PATH"
-          else
-            export PATH="$HOME/.cargo/bin:$PATH"
-          fi
+          export PATH="$HOME/.cargo/bin:$PATH"
           npm run prepare:vscode-preview
           npm run smoke:vscode-installable
           npm run smoke:vscode-preview
