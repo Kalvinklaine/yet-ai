@@ -10,6 +10,7 @@ const jetbrainsRoot = path.join(root, "apps", "plugins", "jetbrains");
 const distributionsDir = path.join(jetbrainsRoot, "build", "distributions");
 const rootDistDir = path.join(root, "dist", "plugins", "jetbrains");
 const args = process.argv.slice(2);
+const skipEnginePrepare = new Set(args).has("--skip-engine-prepare");
 const identity = JSON.parse(await readFile(path.join(root, "product", "identity.json"), "utf8"));
 
 function run(command, commandArgs, options = {}) {
@@ -100,7 +101,12 @@ const profile = new Set(args).has("--release") ? "release" : "debug";
 const binaryName = process.platform === "win32" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
 const engineBinaryPath = path.join(root, "target", profile, binaryName);
 
-run(process.execPath, [path.join(root, "scripts", "prepare-ide-engine.mjs"), ...args]);
+if (skipEnginePrepare) {
+  console.log("Skipping IDE engine preparation because --skip-engine-prepare was provided.");
+  console.log("Assuming target engine and VS Code bin engine were already staged by the workflow.");
+} else {
+  run(process.execPath, [path.join(root, "scripts", "prepare-ide-engine.mjs"), ...args]);
+}
 run("npm", ["run", "build"], { cwd: path.join(root, "apps", "gui") });
 await rm(path.join(jetbrainsRoot, "build", "generated", "resources", "yet-ai-gui"), { recursive: true, force: true });
 await rm(path.join(jetbrainsRoot, "build", "generated", "resources", "yet-ai-engine"), { recursive: true, force: true });
