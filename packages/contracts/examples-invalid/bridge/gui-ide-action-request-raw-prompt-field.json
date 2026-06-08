@@ -1,0 +1,9 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.ideActionRequest",
+  "requestId": "req-ide-action-raw-prompt-001",
+  "payload": {
+    "action": "getContextSnapshot",
+    "rawPrompt": "Read file contents"
+  }
+}

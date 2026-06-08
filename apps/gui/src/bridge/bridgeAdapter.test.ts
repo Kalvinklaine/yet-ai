@@ -22,7 +22,13 @@ import guiUnloadedNonEmptyPayloadMessage from "../../../../packages/contracts/ex
 import guiRevealRangeMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-reveal-range-message.json";
 import guiShowNotificationMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-show-notification-message.json";
 import hostContextSnapshotAbsolutePathMessage from "../../../../packages/contracts/examples-invalid/bridge/host-context-snapshot-absolute-path.json";
+import hostContextSnapshotFileContentsFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-context-snapshot-file-contents-field.json";
+import hostContextSnapshotFileOnlyMessage from "../../../../packages/contracts/examples/bridge/host-context-snapshot-file-only.json";
+import hostContextSnapshotMinimalActiveEditorMessage from "../../../../packages/contracts/examples/bridge/host-context-snapshot-minimal-active-editor.json";
+import hostContextSnapshotOversizedSelectionTextMessage from "../../../../packages/contracts/examples-invalid/bridge/host-context-snapshot-oversized-selection-text.json";
 import hostContextSnapshotPrivilegedCommandMessage from "../../../../packages/contracts/examples-invalid/bridge/host-context-snapshot-privileged-command.json";
+import hostContextSnapshotProviderResponseFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-context-snapshot-provider-response-field.json";
+import hostContextSnapshotSecretLikeWorkspacePathMessage from "../../../../packages/contracts/examples-invalid/bridge/host-context-snapshot-secret-like-workspace-path.json";
 import hostContextSnapshotUnknownFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-context-snapshot-unknown-field.json";
 import hostOpenedFromCommandPayloadMessage from "../../../../packages/contracts/examples-invalid/bridge/host-opened-from-command-payload.json";
 import guiApplyWorkspaceEditMissingConfirmationMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-apply-workspace-edit-missing-confirmation.json";
@@ -42,6 +48,7 @@ import hostIdeActionResultSucceededMessage from "../../../../packages/contracts/
 import hostIdeActionResultRejectedMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-rejected.json";
 import hostIdeActionProgressSucceededGetContextSnapshotMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-progress-succeeded-get-context-snapshot.json";
 import hostIdeActionResultSucceededGetContextSnapshotMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-succeeded-get-context-snapshot.json";
+import hostIdeActionResultSucceededGetContextSnapshotNoActiveEditorMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-succeeded-get-context-snapshot-no-active-editor.json";
 import hostIdeActionResultSucceededContextEmptyContextMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-succeeded-context-empty-context.json";
 import hostIdeActionProgressSucceededOpenWorkspaceFileMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-progress-succeeded-open-workspace-file.json";
 import hostIdeActionResultSucceededOpenWorkspaceFileMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-succeeded-open-workspace-file.json";
@@ -50,6 +57,9 @@ import hostIdeActionResultSucceededRevealWorkspaceRangeMessage from "../../../..
 import hostIdeActionResultFailedOpenWithContextMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-failed-open-with-context.json";
 import hostIdeActionResultRejectedRevealWithContextMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-rejected-reveal-with-context.json";
 import hostIdeActionResultUnavailableContextWithPathRangeMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-unavailable-context-with-path-range.json";
+import hostIdeActionResultRawPromptFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-raw-prompt-field.json";
+import hostIdeActionResultProviderResponseFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-provider-response-field.json";
+import hostIdeActionProgressRawFileContentsFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-progress-raw-file-contents-field.json";
 
 const bridgeVersion = "2026-05-15";
 const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
@@ -923,7 +933,11 @@ describe("bridgeAdapter", () => {
     expect(isGuiMessage(guiUnloadedNonEmptyPayloadMessage)).toBe(false);
     expect(isHostMessage(hostOpenedFromCommandPayloadMessage)).toBe(false);
     expect(isHostMessage(hostContextSnapshotAbsolutePathMessage)).toBe(false);
+    expect(isHostMessage(hostContextSnapshotFileContentsFieldMessage)).toBe(false);
+    expect(isHostMessage(hostContextSnapshotOversizedSelectionTextMessage)).toBe(false);
     expect(isHostMessage(hostContextSnapshotPrivilegedCommandMessage)).toBe(false);
+    expect(isHostMessage(hostContextSnapshotProviderResponseFieldMessage)).toBe(false);
+    expect(isHostMessage(hostContextSnapshotSecretLikeWorkspacePathMessage)).toBe(false);
     expect(isHostMessage(hostContextSnapshotUnknownFieldMessage)).toBe(false);
     expect(isGuiMessage(guiApplyWorkspaceEditMissingConfirmationMessage)).toBe(false);
     expect(isGuiMessage(guiApplyWorkspaceEditReversedRangeMessage)).toBe(false);
@@ -939,8 +953,11 @@ describe("bridgeAdapter", () => {
     expect(isIdeActionResultPayload(hostIdeActionResultSucceededContextEmptyContextMessage.payload)).toBe(false);
     expect(isHostMessage(hostIdeActionResultSucceededContextEmptyContextMessage)).toBe(false);
     expect(isHostMessage(hostIdeActionResultFailedOpenWithContextMessage)).toBe(false);
+    expect(isHostMessage(hostIdeActionResultProviderResponseFieldMessage)).toBe(false);
+    expect(isHostMessage(hostIdeActionResultRawPromptFieldMessage)).toBe(false);
     expect(isHostMessage(hostIdeActionResultRejectedRevealWithContextMessage)).toBe(false);
     expect(isHostMessage(hostIdeActionResultUnavailableContextWithPathRangeMessage)).toBe(false);
+    expect(isHostMessage(hostIdeActionProgressRawFileContentsFieldMessage)).toBe(false);
 
     const logs: string[] = [];
     const messages: unknown[] = [];
@@ -961,6 +978,9 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage({ version: bridgeVersion, type: "host.openedFromCommand" })).toBe(true);
     expect(isHostMessage({ version: bridgeVersion, type: "host.openedFromCommand", payload: {} })).toBe(true);
     expect(isHostMessage(contextSnapshot())).toBe(true);
+    expect(isHostMessage(hostContextSnapshotFileOnlyMessage)).toBe(true);
+    expect(isHostMessage(hostContextSnapshotMinimalActiveEditorMessage)).toBe(true);
+    expect(isHostMessage(hostIdeActionResultSucceededGetContextSnapshotNoActiveEditorMessage)).toBe(true);
   });
 
   it("accepts JetBrains active editor context snapshots", () => {

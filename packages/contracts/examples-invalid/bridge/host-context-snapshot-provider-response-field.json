@@ -1,0 +1,10 @@
+{
+  "version": "2026-05-15",
+  "type": "host.contextSnapshot",
+  "requestId": "bridge-context-provider-response-001",
+  "payload": {
+    "kind": "active_editor",
+    "source": "vscode",
+    "providerResponse": "raw provider response"
+  }
+}

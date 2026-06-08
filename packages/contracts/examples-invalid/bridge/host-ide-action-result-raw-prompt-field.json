@@ -1,0 +1,17 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-ide-action-raw-prompt-001",
+  "payload": {
+    "status": "succeeded",
+    "message": "Context snapshot ready.",
+    "cloudRequired": false,
+    "action": "getContextSnapshot",
+    "context": {
+      "source": "vscode",
+      "hasActiveEditor": true,
+      "workspaceFolderCount": 1
+    },
+    "rawPrompt": "Use selected code."
+  }
+}

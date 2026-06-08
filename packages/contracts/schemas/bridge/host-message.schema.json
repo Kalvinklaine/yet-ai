@@ -97,6 +97,7 @@
           }
         },
         "selection": {
+          "description": "Bounded active user-selected prompt context only. Selection text is not valid IDE action metadata and does not grant file read, edit, shell, task, git, tool, provider response, or raw prompt authority.",
           "type": "object",
           "additionalProperties": false,
           "minProperties": 1,
