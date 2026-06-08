@@ -4,7 +4,8 @@ const validators = [
   "scripts/validate-product-identity.mjs",
   "scripts/validate-public-hygiene.mjs",
   "scripts/validate-docs-index.mjs",
-  "scripts/validate-contracts.mjs"
+  "scripts/validate-contracts.mjs",
+  "scripts/validate-ide-artifact-workflow.mjs"
 ];
 
 for (const validator of validators) {
