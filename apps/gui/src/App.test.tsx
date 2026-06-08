@@ -2252,6 +2252,64 @@ describe("active editor attached context", () => {
     await dispatchHostIdeActionResult(requestId, { status: "succeeded", message: "Context snapshot ready.", cloudRequired: false, action: "getContextSnapshot", context: { source: "vscode", hasActiveEditor: true, workspaceFolderCount: 1 } });
     expect(container?.textContent ?? "").toContain("Get IDE context: succeeded");
     expect(container?.textContent ?? "").toContain("Context snapshot ready.");
+    expect(container?.textContent ?? "").toContain("Result context: source vscode · active editor present yes · workspace folders 1");
+  });
+
+  it("renders safe successful openWorkspaceFile result metadata", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    await dispatchHostContextSnapshot({
+      file: { displayPath: "src/open-target.ts", workspaceRelativePath: "src/open-target.ts", languageId: "typescript" },
+    });
+    await act(async () => { findButton("Open file").click(); });
+    await dispatchHostIdeActionResult("gui-ide-action-1", { status: "succeeded", message: "Opened workspace file.", cloudRequired: false, action: "openWorkspaceFile", workspaceRelativePath: "src/open-target.ts" });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Open file: succeeded");
+    expect(text).toContain("Result path: src/open-target.ts");
+  });
+
+  it("renders safe successful revealWorkspaceRange result metadata", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    await dispatchHostContextSnapshot({
+      file: { displayPath: "src/reveal-target.ts", workspaceRelativePath: "src/reveal-target.ts", languageId: "typescript" },
+      selection: { startLine: 4, startCharacter: 2, endLine: 4, endCharacter: 9, text: "target" },
+    });
+    await act(async () => { findButton("Reveal range").click(); });
+    await dispatchHostIdeActionResult("gui-ide-action-1", { status: "succeeded", message: "Revealed workspace range.", cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: "src/reveal-target.ts", range: { start: { line: 4, character: 2 }, end: { line: 4, character: 9 } } });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Reveal range: succeeded");
+    expect(text).toContain("Result path: src/reveal-target.ts · result range: 4:2-4:9");
+  });
+
+  it("does not render forbidden IDE action result metadata rejected by bridge validation", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    await dispatchHostContextSnapshot({
+      file: { displayPath: "src/rejected-open.ts", workspaceRelativePath: "src/rejected-open.ts", languageId: "typescript" },
+    });
+    await act(async () => { findButton("Open file").click(); });
+    await dispatchHostIdeActionResult("gui-ide-action-1", { status: "rejected", message: "Open rejected.", cloudRequired: false, action: "openWorkspaceFile", context: { source: "vscode", hasActiveEditor: true, workspaceFolderCount: 1 } });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Open file: pending");
+    expect(text).toContain("Rejected invalid host bridge message");
+    expect(text).not.toContain("Result context:");
+    expect(text).not.toContain("Open rejected.");
   });
 
   it("notes duplicate result for the current completed IDE action request without re-rendering payload", async () => {
