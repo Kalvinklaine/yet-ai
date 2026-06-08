@@ -104,13 +104,24 @@ private const val MaxIdeActionFileBytes = 2L * 1024L * 1024L
 fun resolveWorkspaceFile(basePath: String?, workspaceRelativePath: String): ResolvedWorkspaceFile? {
     if (basePath == null || !ControlledIdeActions.isStrictSafeWorkspaceRelativePath(workspaceRelativePath)) return null
     val base = Path.of(basePath).toAbsolutePath().normalize()
-    val path = base.resolve(workspaceRelativePath).normalize()
-    if (!path.startsWith(base)) return null
-    if (!Files.exists(path) || !Files.isRegularFile(path) || Files.isDirectory(path)) return null
-    if (Files.size(path) > MaxIdeActionFileBytes) return null
-    if (isBinaryLike(path)) return null
-    val safePath = base.relativize(path).joinToString("/") { it.toString() }
-    return if (ControlledIdeActions.isStrictSafeWorkspaceRelativePath(safePath)) ResolvedWorkspaceFile(path, safePath) else null
+    val baseReal = try {
+        base.toRealPath()
+    } catch (_: Exception) {
+        return null
+    }
+    val candidate = base.resolve(workspaceRelativePath).normalize()
+    if (!Files.exists(candidate) || Files.isDirectory(candidate)) return null
+    val candidateReal = try {
+        candidate.toRealPath()
+    } catch (_: Exception) {
+        return null
+    }
+    if (!candidateReal.startsWith(baseReal)) return null
+    if (!Files.isRegularFile(candidateReal) || Files.isDirectory(candidateReal)) return null
+    if (Files.size(candidateReal) > MaxIdeActionFileBytes) return null
+    if (isBinaryLike(candidateReal)) return null
+    val safePath = baseReal.relativize(candidateReal).joinToString("/") { it.toString() }
+    return if (ControlledIdeActions.isStrictSafeWorkspaceRelativePath(safePath)) ResolvedWorkspaceFile(candidateReal, safePath) else null
 }
 
 private fun isBinaryLike(path: Path): Boolean {
