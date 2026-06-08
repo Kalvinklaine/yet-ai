@@ -27,17 +27,18 @@ export type IdeActionsPanelProps = {
 };
 
 export function IdeActionsPanel({ host, attempt, note, workspaceRelativePath, range, onGetContext, onOpenFile, onRevealRange, onClearPendingIdeAction }: IdeActionsPanelProps) {
-  const supported = host === "vscode";
+  const supported = host === "vscode" || host === "jetbrains";
+  const badgeCopy = host === "vscode" ? "VS Code controlled actions" : host === "jetbrains" ? "JetBrains controlled actions" : "browser unsupported";
   const pending = attempt?.status === "pending" || attempt?.status === "inProgress";
   return (
     <section className="ide-actions-card stack" aria-label="Agent activity IDE actions">
       <div className="row">
         <strong>Agent activity · IDE actions</strong>
-        <span className={`badge ${supported ? "ok" : "warn"}`}>{supported ? "VS Code controlled actions" : host === "jetbrains" ? "JetBrains preview-only" : "browser unsupported"}</span>
+        <span className={`badge ${supported ? "ok" : "warn"}`}>{badgeCopy}</span>
       </div>
       <p className="subtle">Safe local navigation/context actions only. This panel cannot edit files, run shell commands, call tools, read arbitrary file content, or send raw payloads.</p>
       {!supported ? (
-        <div className="readiness-card warn" role="status">Controlled IDE actions are unsupported/preview-only in {host}. No privileged action will be posted.</div>
+        <div className="readiness-card warn" role="status">Controlled IDE actions are unsupported in browser. No privileged action will be posted.</div>
       ) : (
         <div className="row">
           <button type="button" onClick={onGetContext} disabled={pending}>{pending ? "IDE action pending…" : "Get IDE context"}</button>
@@ -117,12 +118,12 @@ export function IdeActionProposalPanel({ proposal, host, pending, onRun }: IdeAc
         {"range" in proposal.payload && <span>Range: {formatEditRange(proposal.payload.range)}</span>}
       </div>
       <span className="subtle">Review this assistant-proposed read-only navigation/context action before running. The GUI will not run it automatically and never accepts assistant-supplied request ids.</span>
-      {host === "vscode" ? (
+      {host === "vscode" || host === "jetbrains" ? (
         <div className="row">
           <button type="button" onClick={() => onRun(proposal.payload)} disabled={pending}>{pending ? "IDE action pending…" : "Run read-only IDE action"}</button>
         </div>
       ) : (
-        <div className="readiness-card warn" role="status">{host === "jetbrains" ? "JetBrains preview-only unsupported. No IDE action will be posted." : "Browser preview only. No IDE action will be posted."}</div>
+        <div className="readiness-card warn" role="status">Browser preview only. No IDE action will be posted.</div>
       )}
     </section>
   );

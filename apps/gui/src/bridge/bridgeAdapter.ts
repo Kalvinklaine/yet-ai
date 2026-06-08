@@ -60,7 +60,7 @@ export type IdeActionResultPayload = {
   workspaceRelativePath?: string;
   range?: WorkspaceEditRange;
   context?: {
-    source: "vscode";
+    source: "vscode" | "jetbrains";
     hasActiveEditor: boolean;
     workspaceFolderCount: number;
   };
@@ -539,7 +539,7 @@ function isIdeActionContext(value: unknown): boolean {
     return false;
   }
   const workspaceFolderCount = value.workspaceFolderCount;
-  return value.source === "vscode" &&
+  return (value.source === "vscode" || value.source === "jetbrains") &&
     typeof value.hasActiveEditor === "boolean" &&
     typeof workspaceFolderCount === "number" && Number.isInteger(workspaceFolderCount) && workspaceFolderCount >= 0 && workspaceFolderCount <= 100;
 }

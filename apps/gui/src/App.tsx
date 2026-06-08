@@ -1282,7 +1282,7 @@ export function App() {
   }, [addTimeline, bridgeHost, clearEditProposalState, editProposal]);
 
   const requestIdeAction = useCallback((payload: IdeActionRequestPayload, requestIdPrefix = "gui-ide-action") => {
-    if (bridgeHost !== "vscode" || pendingIdeActionRequestIdRef.current) {
+    if ((bridgeHost !== "vscode" && bridgeHost !== "jetbrains") || pendingIdeActionRequestIdRef.current) {
       return;
     }
     ideActionCounterRef.current += 1;
