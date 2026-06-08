@@ -46,6 +46,7 @@
     "validate:hygiene": "node scripts/validate-public-hygiene.mjs",
     "validate:docs": "node scripts/validate-docs-index.mjs",
     "validate:contracts": "node scripts/validate-contracts.mjs",
+    "validate:ide-artifact-contract": "node scripts/validate-ide-artifact-contract.mjs",
     "validate:ide-artifact-workflow": "node scripts/validate-ide-artifact-workflow.mjs"
   },
   "devDependencies": {

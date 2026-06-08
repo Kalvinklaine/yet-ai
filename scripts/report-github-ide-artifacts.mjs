@@ -2,17 +2,9 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { expectedPublicGithubIdeArtifactNames } from "./ide-artifact-contract.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const artifactPrefixes = [
-  "yet-ai-vscode-unzip-first-linux-x64",
-  "yet-ai-vscode-unzip-first-macos-arm64",
-  "yet-ai-vscode-unzip-first-windows-x64",
-  "yet-ai-jetbrains-install-direct-linux-x64",
-  "yet-ai-jetbrains-install-direct-macos-arm64",
-  "yet-ai-jetbrains-install-direct-windows-x64",
-  "yet-ai-plugin-manifest",
-];
 
 try {
   const args = parseArgs(process.argv.slice(2));
@@ -27,8 +19,8 @@ try {
   }
 
   console.log(`Expected public Yet AI IDE artifacts for ${sha}:`);
-  for (const prefix of artifactPrefixes) {
-    console.log(`- ${prefix}-${sha}`);
+  for (const artifactName of expectedPublicGithubIdeArtifactNames(sha)) {
+    console.log(`- ${artifactName}`);
   }
   console.log("VS Code unzip-first artifacts must be unzipped before installing the inner VSIX; JetBrains direct-install artifacts are selected directly in the IDE; the combined manifest contains metadata.");
 } catch (error) {

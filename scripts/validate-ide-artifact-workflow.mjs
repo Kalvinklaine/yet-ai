@@ -2,30 +2,27 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import {
+  githubIdeArtifactStagingPaths,
+  githubIdePlatforms,
+  githubIdeWorkflowCombinedUploadArtifactName,
+  githubIdeWorkflowMatrixUploadArtifactNames,
+} from "./ide-artifact-contract.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const workflowPath = path.join(root, ".github", "workflows", "ide-artifacts.yml");
 
-const requiredUploadPaths = [
-  "dist/github-artifacts/vscode-unzip-first/*",
-  "dist/github-artifacts/jetbrains-install-direct/*",
-];
 const staleRefs = [
   `jetbrains-${"unzip-first"}`,
   `dist/github-artifacts/${"manifest"}`,
   `yet-ai-plugin-manifest-${"${{ matrix.label }}"}`,
 ];
-const matrixUploadNames = [
-  "yet-ai-vscode-unzip-first-${{ matrix.label }}-${{ github.sha }}",
-  "yet-ai-jetbrains-install-direct-${{ matrix.label }}-${{ github.sha }}",
-];
-const combinedUploadName = "yet-ai-plugin-manifest-${{ github.sha }}";
 const combinedManifestPath = "dist/combined-plugin-manifest/manifest.json";
 
 const workflow = await readFile(workflowPath, "utf8");
 const failures = [];
 
-for (const requiredPath of requiredUploadPaths) {
+for (const requiredPath of githubIdeArtifactStagingPaths) {
   assert(countOccurrences(workflow, requiredPath) === 1, `Workflow must contain upload path exactly once: ${requiredPath}`);
 }
 
@@ -54,9 +51,10 @@ assert(combineJob !== undefined, "Workflow must include combine-manifests job.")
 
 if (buildJob !== undefined) {
   const names = uploadArtifactNames(buildJob);
-  assertSetEquals(names, matrixUploadNames, "Matrix job upload artifact names must be only the VS Code unzip-first and JetBrains direct-install public families.");
+  assertSetEquals(names, githubIdeWorkflowMatrixUploadArtifactNames, "Matrix job upload artifact names must be only the VS Code unzip-first and JetBrains direct-install public families.");
   assert(buildJob.includes("npm run smoke:jetbrains-bundled-runtime"), "Build job must run npm run smoke:jetbrains-bundled-runtime before uploading artifacts.");
   assert(buildJob.includes("artifact:github-summary"), "Build job must write the expected public artifact summary with artifact:github-summary.");
+  assertSetEquals(matrixLabels(buildJob), githubIdePlatforms.map((platform) => platform.label), "Workflow matrix labels must match the public IDE artifact platform labels.");
   const firstUploadIndex = buildJob.indexOf("uses: actions/upload-artifact@v4");
   const bundledSmokeIndex = buildJob.indexOf("npm run smoke:jetbrains-bundled-runtime");
   const summaryIndex = buildJob.indexOf("artifact:github-summary");
@@ -67,11 +65,11 @@ if (buildJob !== undefined) {
 }
 if (combineJob !== undefined) {
   const names = uploadArtifactNames(combineJob);
-  assertSetEquals(names, [combinedUploadName], "Combine job upload artifact name must be the single combined plugin manifest family.");
+  assertSetEquals(names, [githubIdeWorkflowCombinedUploadArtifactName], "Combine job upload artifact name must be the single combined plugin manifest family.");
 }
 
 const allUploadNames = uploadArtifactNames(workflow);
-assertSetEquals(allUploadNames, [...matrixUploadNames, combinedUploadName], "Workflow upload artifact names must remain the two per-platform families plus the combined manifest.");
+assertSetEquals(allUploadNames, [...githubIdeWorkflowMatrixUploadArtifactNames, githubIdeWorkflowCombinedUploadArtifactName], "Workflow upload artifact names must remain the two per-platform families plus the combined manifest.");
 assert(workflow.includes(`path: ${combinedManifestPath}`), `Combined manifest upload path must be ${combinedManifestPath}.`);
 const staleManifestUploadPath = `path: dist/github-artifacts/${"manifest"}`;
 assert(!workflow.includes(staleManifestUploadPath), `Combined manifest upload must not point under ${staleManifestUploadPath.replace(/^path: /, "")}.`);
@@ -130,6 +128,10 @@ function uploadArtifactNames(text) {
     }
   }
   return names;
+}
+
+function matrixLabels(text) {
+  return [...text.matchAll(/^\s*label:\s*([A-Za-z0-9_-]+)\s*$/gm)].map((match) => match[1]);
 }
 
 function assertSetEquals(actual, expected, message) {
