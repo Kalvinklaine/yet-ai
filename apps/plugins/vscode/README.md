@@ -78,7 +78,7 @@ npm run smoke:vscode-wrapper-browser
 
 `npm run smoke:vscode-wrapper-browser` is the focused VS Code controlled IDE action wrapper smoke for this sprint. It verifies the packaged GUI bridge path for the current read-only/navigation/context actions and does not launch real VS Code, call providers, require a hosted backend, or mutate a workspace. JetBrains parity for the same three read-only actions is covered separately by `npm run smoke:jetbrains-wrapper-browser`. These are automated harness coverage, not manual IDE dogfood.
 
-The repository-level cross-IDE gate is available when the same change should validate both VS Code and JetBrains preview routes:
+The repository-level cross-IDE preview gate is available when the same change should validate both VS Code and JetBrains preview routes:
 
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -86,6 +86,15 @@ npm run smoke:ide-preview
 ```
 
 It runs `npm run prepare:vscode-preview`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, `npm run smoke:vscode-wrapper-browser`, `npm run smoke:vscode-first-message`, `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, `npm run smoke:jetbrains-preview`, `npm run smoke:jetbrains-gui-browser`, and `npm run smoke:jetbrains-first-message` in order. It is local-only, uses ignored preview artifacts, includes the VS Code controlled action wrapper browser smoke, uses loopback first-message mocks, and does not launch real IDEs or call real providers.
+
+Use the broader closure gate before declaring the change ready for manual IDE dogfood or when running the manual CI workflow:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+npm run smoke:ide-dogfood
+```
+
+It is fail-fast and additionally runs JetBrains Gradle tests, VS Code compile/engine checks, the `dogfood:ide-report -- --check-template` and `--self-test` safety checks, repository validation, and final clean tracked-status output. Passing output prints the manual next steps: install generated VS Code/JetBrains dev-preview artifacts from GitHub Actions or local `dist/plugins/`, keep normal `auto`/`launch` mode, use the generated dogfood report template, record only sanitized statuses or `not run`, and never include tokens, provider keys, auth codes, cookies, private paths, raw bridge payloads, browser storage dumps, or screenshots with secrets. The gate does not launch real IDEs, use real provider credentials, call OpenAI/ChatGPT, contact hosted Yet AI services, sign/publish, or create a production release.
 
 Run the VS Code first-message smoke directly when changing only the VS Code packaged GUI or bridge bootstrap path:
 
@@ -165,10 +174,12 @@ Use the root sanitized report helper for manual evidence:
 
 ```sh
 npm run dogfood:ide-report -- --template
+npm run dogfood:ide-report -- --check-template
+npm run dogfood:ide-report -- --self-test
 npm run dogfood:ide-report -- --check path/to/local-report.md
 ```
 
-The generated cross-IDE template includes VS Code fields for install result, launch mode, packaged GUI, runtime refresh, provider setup, active context, read-only IDE action, and first-message status. Mark untested items as `not run`; do not imply production release status. The helper writes nothing by default. If you redirect a report to a file, keep manual/local evidence out of tracked files unless it has been explicitly reviewed as sanitized. Never include tokens, provider keys, bearer headers, auth codes, OAuth tokens, cookies, raw bridge payloads, request bodies, private paths, browser storage dumps, raw provider responses, raw prompts, file contents, or screenshots containing secrets.
+The generated cross-IDE template includes VS Code fields for install result, launch mode, packaged GUI, runtime refresh, provider setup, active context, read-only IDE action, and first-message status. Mark untested items as `not run`; do not imply production release status. The helper writes nothing by default, and `smoke:ide-dogfood` validates the built-in template plus self-test so the safe report checker cannot rot. If you redirect a report to a file, keep manual/local evidence out of tracked files unless it has been explicitly reviewed as sanitized. Never include tokens, provider keys, bearer headers, auth codes, OAuth tokens, cookies, raw bridge payloads, request bodies, private paths, browser storage dumps, raw provider responses, raw prompts, file contents, or screenshots containing secrets.
 
 1. From the repository root, prepare and smoke-check the extension artifacts:
 

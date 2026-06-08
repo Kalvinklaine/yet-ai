@@ -85,10 +85,12 @@ Use the root sanitized report helper for manual evidence:
 
 ```sh
 npm run dogfood:ide-report -- --template
+npm run dogfood:ide-report -- --check-template
+npm run dogfood:ide-report -- --self-test
 npm run dogfood:ide-report -- --check path/to/local-report.md
 ```
 
-The generated cross-IDE template includes JetBrains fields for install result, launch mode, packaged GUI, runtime refresh, provider setup, active context, read-only IDE action, and first-message status. Mark untested items as `not run`; do not imply production release status. The helper writes nothing by default. If you redirect a report to a file, keep manual/local evidence out of tracked files unless it has been explicitly reviewed as sanitized. Never include tokens, provider keys, bearer headers, auth codes, OAuth tokens, cookies, raw bridge payloads, request bodies, private paths, browser storage dumps, raw provider responses, raw prompts, file contents, or screenshots containing secrets.
+The generated cross-IDE template includes JetBrains fields for install result, launch mode, packaged GUI, runtime refresh, provider setup, active context, read-only IDE action, and first-message status. Mark untested items as `not run`; do not imply production release status. The helper writes nothing by default, and `smoke:ide-dogfood` validates the built-in template plus self-test so the safe report checker cannot rot. If you redirect a report to a file, keep manual/local evidence out of tracked files unless it has been explicitly reviewed as sanitized. Never include tokens, provider keys, bearer headers, auth codes, OAuth tokens, cookies, raw bridge payloads, request bodies, private paths, browser storage dumps, raw provider responses, raw prompts, file contents, or screenshots containing secrets.
 
 Manual IntelliJ IDEA install-from-disk steps:
 
@@ -130,7 +132,7 @@ npm run smoke:jetbrains-gui-browser
 npm run smoke:jetbrains-first-message
 ```
 
-When a change should validate both IDE preview routes, use the root cross-IDE gate:
+When a change should validate both IDE preview routes, use the root cross-IDE preview gate:
 
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -138,6 +140,15 @@ npm run smoke:ide-preview
 ```
 
 It runs `npm run prepare:vscode-preview`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, `npm run smoke:vscode-wrapper-browser`, `npm run smoke:vscode-first-message`, `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, `npm run smoke:jetbrains-preview`, `npm run smoke:jetbrains-gui-browser`, and `npm run smoke:jetbrains-first-message` in order. It validates ignored local preview artifacts, the VS Code controlled action wrapper browser path, and loopback first-message paths without launching VS Code, IntelliJ IDEA, JCEF automation, real provider calls, hosted Yet AI services, signing, marketplace publication, or production installers.
+
+Use the broader closure gate before declaring the change ready for manual IDE dogfood or when running the manual CI workflow:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+npm run smoke:ide-dogfood
+```
+
+It is fail-fast and additionally runs JetBrains Gradle tests, VS Code compile/engine checks, the `dogfood:ide-report -- --check-template` and `--self-test` safety checks, repository validation, and final clean tracked-status output. Passing output prints the manual next steps: install generated VS Code/JetBrains dev-preview artifacts from GitHub Actions or local `dist/plugins/`, keep normal `auto`/`launch` mode, use the generated dogfood report template, record only sanitized statuses or `not run`, and never include tokens, provider keys, auth codes, cookies, private paths, raw bridge payloads, browser storage dumps, or screenshots with secrets. The gate does not launch real IDEs, use real provider credentials, call OpenAI/ChatGPT, contact hosted Yet AI services, sign/publish, or create a production release.
 
 Run the JetBrains first-message smoke directly when changing only the JetBrains packaged GUI or wrapper bridge path:
 
