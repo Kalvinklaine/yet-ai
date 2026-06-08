@@ -13,6 +13,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class RuntimeConnectionManagerTest {
@@ -29,6 +30,21 @@ class RuntimeConnectionManagerTest {
         assertEquals("session-secret", command.environment["YET_AI_AUTH_TOKEN"])
         assertEquals("8123", command.environment["YET_AI_HTTP_PORT"])
         assertEquals("/bin", command.environment["PATH"])
+    }
+
+    @Test
+    fun launchCommandDoesNotIntroduceProviderApiKeyEnvironment() {
+        val command = buildEngineLaunchCommand(
+            runtimeUrl = "http://127.0.0.1:8123",
+            binaryPath = Path.of("/tmp/yet-lsp"),
+            sessionToken = "session-secret",
+            baseEnvironment = emptyMap(),
+        )
+
+        assertEquals(setOf("YET_AI_AUTH_TOKEN", "YET_AI_HTTP_PORT"), command.environment.keys)
+        listOf("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "PROVIDER_API_KEY").forEach { key ->
+            assertFalse(command.environment.containsKey(key), "launch command must not introduce provider/API-key env $key")
+        }
     }
 
     @Test
@@ -115,6 +131,115 @@ class RuntimeConnectionManagerTest {
         } finally {
             file.deleteIfExists()
         }
+    }
+
+    @Test
+    fun connectModeNeverResolvesBundledEngineOrLaunchesProcess() {
+        val bundled = RecordingBundledProvider(Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp"))
+        var finderCalls = 0
+        var launchCalls = 0
+        val settings = RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.CONNECT, Path.of("/tmp/not-launchable-yet-lsp"))
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = bundled,
+            engineBinaryFinder = { finderCalls += 1; error("connect mode must not resolve engine binaries") },
+            processStarter = { launchCalls += 1; FakeProcess(listOf(true)) },
+            tokenGenerator = { "fixed-session-token" },
+        )
+
+        assertEquals(settings, manager.prepareConnectionSettings(settings))
+        assertEquals(0, bundled.resolveCalls)
+        assertEquals(0, finderCalls)
+        assertEquals(0, launchCalls)
+    }
+
+    @Test
+    fun autoModeWithoutConfiguredPathLaunchesBundledEngineAndReturnsGeneratedToken() {
+        val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
+        val launched = mutableListOf<EngineLaunchCommand>()
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(bundledPath),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { command -> launched += command; FakeProcess(listOf(true)) },
+            tokenGenerator = { "generated-session-token" },
+        )
+        val settings = RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.AUTO, null)
+
+        val prepared = manager.prepareConnectionSettings(settings)
+
+        assertEquals("generated-session-token", prepared.sessionToken)
+        val command = assertNotNull(launched.singleOrNull())
+        assertEquals(bundledPath, command.binaryPath)
+        assertEquals("generated-session-token", command.environment["YET_AI_AUTH_TOKEN"])
+        assertEquals("8123", command.environment["YET_AI_HTTP_PORT"])
+    }
+
+    @Test
+    fun launchModeWithoutConfiguredPathLaunchesBundledEngine() {
+        val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
+        val launched = mutableListOf<EngineLaunchCommand>()
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(bundledPath),
+            engineBinaryFinder = { error("launch mode should not require PATH when bundled engine is available") },
+            processStarter = { command -> launched += command; FakeProcess(listOf(true)) },
+            tokenGenerator = { "launch-session-token" },
+        )
+
+        val prepared = manager.prepareConnectionSettings(RuntimeSettings("http://127.0.0.1:8124", null, null, LaunchMode.LAUNCH, null))
+
+        assertEquals("launch-session-token", prepared.sessionToken)
+        assertEquals(bundledPath, assertNotNull(launched.singleOrNull()).binaryPath)
+    }
+
+    @Test
+    fun autoModeWithoutConfiguredBundledOrPathFallsBackToConnectOnly() {
+        var launchCalls = 0
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(null),
+            engineBinaryFinder = { configured -> assertEquals(null, configured); null },
+            processStarter = { launchCalls += 1; FakeProcess(listOf(true)) },
+            tokenGenerator = { "unused-token" },
+        )
+        val settings = RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.AUTO, null)
+
+        assertEquals(settings, manager.prepareConnectionSettings(settings))
+        assertEquals(0, launchCalls)
+    }
+
+    @Test
+    fun launchUsesBinaryPathAsExecutableWithoutLspStdioArgument() {
+        val commands = mutableListOf<List<String>>()
+        val command = buildEngineLaunchCommand(
+            runtimeUrl = "http://127.0.0.1:8123",
+            binaryPath = Path.of("/tmp/yet-lsp"),
+            sessionToken = "session-secret",
+            baseEnvironment = emptyMap(),
+        )
+        val process = ProcessBuilder(command.binaryPath.toString())
+        commands += process.command()
+
+        assertEquals(listOf("/tmp/yet-lsp"), commands.single())
+        assertFalse(commands.single().contains("--lsp-stdio"))
+    }
+
+    @Test
+    fun launchFailureSanitizesTokenAndBundledCachePath() {
+        val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(bundledPath),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { error("spawn failed for $bundledPath with token=fixed-session-token") },
+            tokenGenerator = { "fixed-session-token" },
+        )
+
+        val error = assertFailsWith<IllegalStateException> {
+            manager.prepareConnectionSettings(RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.AUTO, null))
+        }
+
+        val message = error.message.orEmpty()
+        listOf("fixed-session-token", "alice", "Library/Caches", bundledPath.toString()).forEach { privateValue ->
+            assertFalse(message.contains(privateValue), message)
+        }
+        assertTrue(message.contains("[redacted"), message)
     }
 
     @Test
@@ -470,6 +595,16 @@ class RuntimeConnectionManagerTest {
         assertFalse(process.isAlive)
         assertEquals(1, process.destroyCalls)
         assertEquals(1, process.destroyForciblyCalls)
+    }
+}
+
+private class RecordingBundledProvider(private val path: Path?) : BundledEngineProvider {
+    var resolveCalls = 0
+        private set
+
+    override fun resolveOrNull(): Path? {
+        resolveCalls += 1
+        return path
     }
 }
 
