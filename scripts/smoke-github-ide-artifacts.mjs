@@ -9,12 +9,10 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const artifactsRoot = path.join(root, "dist", "github-artifacts");
 const vscodeStageDir = path.join(artifactsRoot, "vscode-unzip-first");
-const jetbrainsUnzipFirstDir = path.join(artifactsRoot, "jetbrains-unzip-first");
 const jetbrainsInstallDirectDir = path.join(artifactsRoot, "jetbrains-install-direct");
-const manifestStageDir = path.join(artifactsRoot, "manifest");
 const archiveInspectMaxBuffer = 128 * 1024 * 1024;
 const failures = [];
-const expectedArtifactStageDirs = new Set(["vscode-unzip-first", "jetbrains-unzip-first", "jetbrains-install-direct", "manifest"]);
+const expectedArtifactStageDirs = new Set(["vscode-unzip-first", "jetbrains-install-direct"]);
 const allowedManifestKinds = new Set(["vscode", "jetbrains"]);
 const allowedManifestOs = new Set(["linux", "macos", "windows"]);
 const allowedManifestArch = new Set(["x64", "arm64", "x86", "arm"]);
@@ -25,10 +23,9 @@ const bundledEngineResourcePath = `yet-ai-engine/${binaryFileName}`;
 await checkArtifactsRootRegressionGuards();
 
 const vscodeVsixPath = await checkVscodeUnzipFirst();
-const jetbrainsZipPath = await checkJetBrainsUnzipFirst();
 await checkJetBrainsDirectInstall();
 await checkManifest();
-await checkMixedPluginArtifacts([vscodeStageDir, jetbrainsUnzipFirstDir, jetbrainsInstallDirectDir, manifestStageDir]);
+await checkMixedPluginArtifacts([vscodeStageDir, jetbrainsInstallDirectDir]);
 
 if (failures.length > 0) {
   console.error("GitHub IDE artifact layout smoke failed:");
@@ -39,16 +36,15 @@ if (failures.length > 0) {
 }
 
 console.log("GitHub IDE artifact layout smoke passed.");
-console.log(`VS Code unzip-first flow passed: ${relative(vscodeStageDir)} contains inner VSIX ${path.basename(vscodeVsixPath)} plus matching checksum and README install guidance.`);
-console.log(`JetBrains unzip-first flow passed: ${relative(jetbrainsUnzipFirstDir)} contains inner plugin ZIP ${path.basename(jetbrainsZipPath)} plus matching checksum, README install guidance, and installable plugin structure.`);
+console.log(`VS Code unzip-first flow passed: ${relative(vscodeStageDir)} contains inner VSIX ${path.basename(vscodeVsixPath)} plus matching checksum, README install guidance, and embedded manifest.json.`);
 console.log(`JetBrains direct-install flow passed: ${relative(jetbrainsInstallDirectDir)} contains only JetBrains distribution contents and validates as the outer GitHub artifact ZIP.`);
-console.log(`Manifest flow passed: ${relative(path.join(manifestStageDir, "manifest.json"))} lists vscode and jetbrains artifacts.`);
+console.log(`Embedded manifest flow passed: ${relative(path.join(vscodeStageDir, "manifest.json"))} lists vscode and jetbrains artifacts.`);
 console.log("No provider credentials, IDE launch, hosted backend, marketplace publication, signing, or network access were used.");
 
 async function checkVscodeUnzipFirst() {
   await requireDirectory(vscodeStageDir, "VS Code unzip-first staging folder");
   const vsixPath = await requireSingleFileWithExtension(vscodeStageDir, ".vsix", "VS Code unzip-first staging folder");
-  await requireOnlyArtifactFamilyFiles(vscodeStageDir, [path.basename(vsixPath ?? ""), path.basename(vsixPath === undefined ? "" : `${vsixPath}.sha256`), "README-INSTALL.txt"].filter(Boolean), "VS Code unzip-first artifact");
+  await requireOnlyArtifactFamilyFiles(vscodeStageDir, [path.basename(vsixPath ?? ""), path.basename(vsixPath === undefined ? "" : `${vsixPath}.sha256`), "README-INSTALL.txt", "manifest.json"].filter(Boolean), "VS Code unzip-first artifact");
   if (vsixPath !== undefined) {
     await checkChecksum(vsixPath);
   }
@@ -60,31 +56,27 @@ async function checkVscodeUnzipFirst() {
     requireText(readme, /code --install-extension\s+\S+\.vsix\s+--force/i, `${relative(vscodeStageDir)}/README-INSTALL.txt must show code --install-extension <path-to-vsix> --force for the inner VSIX.`);
     requireText(readme, /platform|os\/arch|linux|macos|windows/i, `${relative(vscodeStageDir)}/README-INSTALL.txt must mention the OS/architecture platform this artifact was built for.`);
   }
+  await checkEmbeddedManifest(vscodeStageDir);
   return vsixPath;
 }
 
-async function checkJetBrainsUnzipFirst() {
-  await requireDirectory(jetbrainsUnzipFirstDir, "JetBrains unzip-first staging folder");
-  const zipPath = await requireSingleFileWithExtension(jetbrainsUnzipFirstDir, ".zip", "JetBrains unzip-first staging folder");
-  await requireOnlyArtifactFamilyFiles(jetbrainsUnzipFirstDir, [path.basename(zipPath ?? ""), path.basename(zipPath === undefined ? "" : `${zipPath}.sha256`), "README-INSTALL.txt"].filter(Boolean), "JetBrains unzip-first artifact");
-  if (zipPath !== undefined) {
-    await checkChecksum(zipPath);
-    await checkJetBrainsZip(zipPath, `${relative(zipPath)} inner plugin ZIP`);
+async function checkEmbeddedManifest(directory) {
+  const manifestPath = path.join(directory, "manifest.json");
+  const manifestText = await readRequiredText(manifestPath, "embedded per-platform manifest");
+  if (manifestText === undefined) {
+    return;
   }
-  const readme = await readRequiredText(path.join(jetbrainsUnzipFirstDir, "README-INSTALL.txt"), "JetBrains unzip-first README-INSTALL.txt");
-  if (readme !== undefined) {
-    requireNoSensitiveText(readme, `${relative(jetbrainsUnzipFirstDir)}/README-INSTALL.txt`);
-    requireText(readme, /platform|os\/arch|linux|macos|windows/i, `${relative(jetbrainsUnzipFirstDir)}/README-INSTALL.txt must mention the OS/architecture platform this artifact was built for.`);
-    requireText(readme, /bundled.*runtime|native.*runtime|cargo build|dev-preview local build output|not a signed/i, `${relative(jetbrainsUnzipFirstDir)}/README-INSTALL.txt must mention the bundled native engine runtime and clarify it is the local dev-preview cargo build output, not a signed production engine.`);
+  requireNoSensitiveText(manifestText, relative(manifestPath));
+  let manifest;
+  try {
+    manifest = JSON.parse(manifestText);
+  } catch (error) {
+    failures.push(`${relative(manifestPath)} must contain valid JSON: ${error instanceof Error ? error.message : String(error)}.`);
+    return;
   }
-  if (readme !== undefined) {
-    requireText(readme, /do not install the downloaded github artifact zip directly/i, `${relative(jetbrainsUnzipFirstDir)}/README-INSTALL.txt must warn not to install the downloaded GitHub artifact ZIP directly.`);
-    requireText(readme, /unzip/i, `${relative(jetbrainsUnzipFirstDir)}/README-INSTALL.txt must tell users to unzip the GitHub artifact first.`);
-    requireText(readme, /install plugin from disk/i, `${relative(jetbrainsUnzipFirstDir)}/README-INSTALL.txt must tell users to use Install Plugin from Disk.`);
-    requireText(readme, /inner plugin zip/i, `${relative(jetbrainsUnzipFirstDir)}/README-INSTALL.txt must identify the inner plugin ZIP as the installable file.`);
-  }
-  return zipPath;
+  validateArtifactManifest(manifest, manifestPath);
 }
+
 
 async function checkJetBrainsDirectInstall() {
   await requireDirectory(jetbrainsInstallDirectDir, "JetBrains direct-install staging folder");
@@ -111,8 +103,8 @@ async function checkJetBrainsDirectInstall() {
 }
 
 async function checkManifest() {
-  await requireDirectory(manifestStageDir, "manifest staging folder");
-  const manifestPath = path.join(manifestStageDir, "manifest.json");
+  await requireDirectory(vscodeStageDir, "embedded manifest staging folder");
+  const manifestPath = path.join(vscodeStageDir, "manifest.json");
   const manifestText = await readRequiredText(manifestPath, "GitHub artifact manifest");
   if (manifestText === undefined) {
     return;
@@ -125,6 +117,10 @@ async function checkManifest() {
     failures.push(`${relative(manifestPath)} must contain valid JSON: ${error instanceof Error ? error.message : String(error)}.`);
     return;
   }
+  validateArtifactManifest(manifest, manifestPath);
+}
+
+function validateArtifactManifest(manifest, manifestPath) {
   const artifacts = Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
   const kinds = new Set(artifacts.map((artifact) => artifact?.kind).filter((kind) => typeof kind === "string"));
   if (artifacts.length !== 2) {

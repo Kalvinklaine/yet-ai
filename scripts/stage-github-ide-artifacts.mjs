@@ -10,9 +10,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distPluginsRoot = path.join(root, "dist", "plugins");
 const githubArtifactsRoot = path.join(root, "dist", "github-artifacts");
 const vscodeStageDir = path.join(githubArtifactsRoot, "vscode-unzip-first");
-const jetbrainsUnzipFirstDir = path.join(githubArtifactsRoot, "jetbrains-unzip-first");
 const jetbrainsInstallDirectDir = path.join(githubArtifactsRoot, "jetbrains-install-direct");
-const manifestStageDir = path.join(githubArtifactsRoot, "manifest");
 const platform = platformSuffixFor();
 
 try {
@@ -26,25 +24,19 @@ try {
 
   await rm(githubArtifactsRoot, { recursive: true, force: true });
   await mkdir(vscodeStageDir, { recursive: true });
-  await mkdir(jetbrainsUnzipFirstDir, { recursive: true });
   await mkdir(jetbrainsInstallDirectDir, { recursive: true });
-  await mkdir(manifestStageDir, { recursive: true });
 
   await copyFile(vscodeArtifact.path, path.join(vscodeStageDir, path.basename(vscodeArtifact.path)));
   await copyFile(vscodeArtifact.checksumPath, path.join(vscodeStageDir, path.basename(vscodeArtifact.checksumPath)));
-  await copyFile(jetbrainsArtifact.path, path.join(jetbrainsUnzipFirstDir, path.basename(jetbrainsArtifact.path)));
-  await copyFile(jetbrainsArtifact.checksumPath, path.join(jetbrainsUnzipFirstDir, path.basename(jetbrainsArtifact.checksumPath)));
-  await copyFile(manifestPath, path.join(manifestStageDir, "manifest.json"));
+  await copyFile(manifestPath, path.join(vscodeStageDir, "manifest.json"));
 
-  await writeInstallReadmes(vscodeArtifact.path, jetbrainsArtifact.path, platform);
+  await writeVscodeReadme(vscodeArtifact.path, platform);
   await stageJetBrainsDirectInstall(jetbrainsArtifact.path);
   await validateJetBrainsDirectInstall();
 
   console.log("GitHub IDE artifact staging complete:");
   console.log(`  ${relative(vscodeStageDir)}`);
-  console.log(`  ${relative(jetbrainsUnzipFirstDir)}`);
   console.log(`  ${relative(jetbrainsInstallDirectDir)}`);
-  console.log(`  ${relative(manifestStageDir)}`);
   console.log("Source VSIX/ZIP checksums were validated before staging. No provider credentials, hosted backend, IDE launch, or network access are required.");
 } catch (error) {
   console.error(`GitHub IDE artifact staging failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -120,7 +112,7 @@ async function readChecksum(checksumPath, artifactPath) {
   return match[1].toLowerCase();
 }
 
-async function writeInstallReadmes(vsixPath, jetbrainsZipPath, platform) {
+async function writeVscodeReadme(vsixPath, platform) {
   const platformTag = `${platform.os}-${platform.arch}`;
   const platformLine = `This artifact was built for ${platform.os}/${platform.arch} (suffix: ${platform.suffix}). Download the matching ${platformTag} artifact for your OS/architecture; mixing platforms will fail because the JetBrains plugin JAR bundles a native ${process.env.YET_AI_ENGINE_BINARY_NAME || "yet-lsp"} runtime staged from the local cargo build output (not a signed or notarized production engine).`;
   await writeTextFile(path.join(vscodeStageDir, "README-INSTALL.txt"), `Yet AI VS Code dev-preview GitHub artifact for ${platformTag}
@@ -134,20 +126,6 @@ GitHub wraps this folder in an outer artifact ZIP. Unzip that GitHub artifact fi
   code --install-extension ${path.basename(vsixPath)} --force
 
 If your shell is in a different directory, replace ${path.basename(vsixPath)} with the full path to the extracted inner VSIX.
-`);
-
-  await writeTextFile(path.join(jetbrainsUnzipFirstDir, "README-INSTALL.txt"), `Yet AI JetBrains dev-preview GitHub artifact for ${platformTag}
-
-IMPORTANT: Do not install the downloaded GitHub artifact ZIP directly.
-
-${platformLine}
-
-GitHub wraps this folder in an outer artifact ZIP. Unzip that GitHub artifact first, then install the inner plugin ZIP in JetBrains:
-
-  Settings/Preferences -> Plugins -> gear -> Install Plugin from Disk...
-  Choose: ${path.basename(jetbrainsZipPath)}
-
-The inner plugin ZIP is the installable file; the outer GitHub artifact ZIP is only packaging. The plugin JAR bundles a native ${process.env.YET_AI_ENGINE_BINARY_NAME || "yet-lsp"} runtime; this bundled runtime is the dev-preview local cargo build output, not a signed or notarized production engine.
 `);
 }
 
