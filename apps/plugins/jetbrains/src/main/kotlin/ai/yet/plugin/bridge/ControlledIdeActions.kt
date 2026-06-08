@@ -127,6 +127,8 @@ object ControlledIdeActions {
         workspaceRelativePath: String? = null,
         range: Range? = null,
         includeContextMetadata: Boolean = false,
+        hasActiveEditor: Boolean = false,
+        workspaceFolderCount: Int = 0,
     ): String = JsonObject().apply {
         addProperty("version", ProductIdentity.bridgeVersion)
         addProperty("type", "host.ideActionResult")
@@ -146,7 +148,8 @@ object ControlledIdeActions {
             if (includeContextMetadata || safeAction == "getContextSnapshot") {
                 add("context", JsonObject().apply {
                     addProperty("source", "jetbrains")
-                    addProperty("kind", "active_editor")
+                    addProperty("hasActiveEditor", hasActiveEditor)
+                    addProperty("workspaceFolderCount", workspaceFolderCount.coerceAtLeast(0))
                 })
             }
         })

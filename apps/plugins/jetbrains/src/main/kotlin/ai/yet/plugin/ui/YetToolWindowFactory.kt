@@ -95,7 +95,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
                 guiReadyRequestId = null
                 return@addHandler null
             }
-            val ideActionHandled = JetBrainsIdeActionBridge.handleReadOnlyIdeActionRequest(raw, ::sendToGui) { logger.info(it) }
+            val ideActionHandled = JetBrainsIdeActionBridge.handleReadOnlyIdeActionRequest(raw, ::sendToGui, JetBrainsIdeActionHost(project)) { logger.info(it) }
             if (ideActionHandled) return@addHandler null
             val guiReady = BridgeMessages.parseGuiReady(raw)
             if (guiReady == null) {
@@ -159,7 +159,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
 }
 
 object JetBrainsIdeActionBridge {
-    fun handleReadOnlyIdeActionRequest(raw: String, send: (String) -> Unit, logStatus: (String) -> Unit = {}): Boolean {
+    fun handleReadOnlyIdeActionRequest(raw: String, send: (String) -> Unit, host: IdeActionHost, logStatus: (String) -> Unit = {}): Boolean {
         val request = ControlledIdeActions.parse(raw)
         if (request == null) {
             val safeRequestId = ControlledIdeActions.safeRequestIdFromRaw(raw) ?: return false
@@ -186,16 +186,51 @@ object JetBrainsIdeActionBridge {
             ),
         )
         send(
-            ControlledIdeActions.ideActionResult(
+            ControlledIdeActions.ideActionProgress(
                 requestId = request.requestId,
-                status = ControlledIdeActions.ResultStatus.Unavailable,
-                message = "JetBrains read-only IDE action execution is not wired yet.",
+                phase = "running",
+                status = ControlledIdeActions.ProgressStatus.InProgress,
+                summary = "Running IDE action.",
                 action = request.action,
                 workspaceRelativePath = workspaceRelativePath(request),
-                range = (request as? ControlledIdeActions.Request.RevealWorkspaceRange)?.range,
-                includeContextMetadata = request is ControlledIdeActions.Request.GetContextSnapshot,
             ),
         )
+        host.execute(request).whenComplete { hostResult, error ->
+            val result = if (error != null || hostResult == null) {
+                IdeActionHostResult(ControlledIdeActions.ResultStatus.Failed, "IDE action failed.")
+            } else {
+                hostResult
+            }
+            val progressStatus = when (result.status) {
+                ControlledIdeActions.ResultStatus.Succeeded -> ControlledIdeActions.ProgressStatus.Succeeded
+                ControlledIdeActions.ResultStatus.Rejected -> ControlledIdeActions.ProgressStatus.Rejected
+                ControlledIdeActions.ResultStatus.Unavailable -> ControlledIdeActions.ProgressStatus.Unavailable
+                ControlledIdeActions.ResultStatus.Failed -> ControlledIdeActions.ProgressStatus.Failed
+            }
+            send(
+                ControlledIdeActions.ideActionProgress(
+                    requestId = request.requestId,
+                    phase = "completed",
+                    status = progressStatus,
+                    summary = result.message,
+                    action = request.action,
+                    workspaceRelativePath = result.workspaceRelativePath ?: workspaceRelativePath(request),
+                ),
+            )
+            send(
+                ControlledIdeActions.ideActionResult(
+                    requestId = request.requestId,
+                    status = result.status,
+                    message = result.message,
+                    action = request.action,
+                    workspaceRelativePath = result.workspaceRelativePath ?: workspaceRelativePath(request),
+                    range = result.range ?: (request as? ControlledIdeActions.Request.RevealWorkspaceRange)?.range,
+                    includeContextMetadata = request is ControlledIdeActions.Request.GetContextSnapshot,
+                    hasActiveEditor = result.hasActiveEditor,
+                    workspaceFolderCount = result.workspaceFolderCount,
+                ),
+            )
+        }
         return true
     }
 
