@@ -222,7 +222,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 npm run smoke:ide-preview
 ```
 
-`npm run smoke:ide-preview` is the cross-IDE preview gate. `npm run smoke:ide-dogfood` is the broader fail-fast ready-to-manual-dogfood closure gate for local and the manual CI workflow: it runs JetBrains Gradle tests, VS Code compile/engine checks, `dogfood:ide-report -- --check-template`, `dogfood:ide-report -- --self-test`, `smoke:ide-preview`, `npm run check`, and prints tracked status as the final labeled step so later steps cannot mask earlier failures. When it passes, it prints the next manual install/report steps and explicitly confirms that the gate is local/mock-only: it does not launch real IDEs, use real provider credentials, call OpenAI/ChatGPT, contact hosted Yet AI services, sign/publish artifacts, or create a production release.
+`npm run smoke:ide-preview` is the cross-IDE preview gate. `npm run smoke:ide-release-candidate` is the local pre-GitHub/manual-dogfood artifact gate: it prepares VS Code and JetBrains dev-preview artifacts, writes the required manifest, stages split GitHub artifacts, runs the GitHub artifact smoke, combines manifests outside `dist/github-artifacts`, validates the IDE artifact workflow, checks the safe report helper, prints the expected public artifact summary, and verifies clean tracked status. It is release-candidate artifact gating only; it does not run the broader dogfood closure, launch real IDEs, call providers, contact hosted services, sign, publish, or claim a production release. `npm run smoke:ide-dogfood` is the broader fail-fast ready-to-manual-dogfood closure gate for local and the manual CI workflow: it runs JetBrains Gradle tests, VS Code compile/engine checks, `dogfood:ide-report -- --check-template`, `dogfood:ide-report -- --self-test`, `smoke:ide-preview`, `npm run check`, and prints tracked status as the final labeled step so later steps cannot mask earlier failures. When it passes, it prints the next manual install/report steps and explicitly confirms that the gate is local/mock-only: it does not launch real IDEs, use real provider credentials, call OpenAI/ChatGPT, contact hosted Yet AI services, sign/publish artifacts, or create a production release.
 
 `npm run smoke:ide-preview` runs these exact local commands in order:
 
@@ -280,13 +280,13 @@ The `Yet AI IDE Artifacts` workflow (`.github/workflows/ide-artifacts.yml`) buil
 
 Open GitHub Actions, choose the `Yet AI IDE Artifacts` workflow, and select a successful run for the commit you want to test. The workflow builds per-platform dev-preview artifacts in a `linux-x64` / `macos-arm64` / `windows-x64` matrix because the JetBrains plugin JAR bundles a native `yet-lsp` runtime staged from the local cargo build output (not a signed or notarized production engine). Download the artifact whose `<os>-<arch>` suffix matches your local OS/architecture; mixing platforms will fail because the plugin JAR contains a platform-specific native binary.
 
-Public artifact names are:
+Public artifact names are exactly 7 total: three `yet-ai-vscode-unzip-first-<os>-<arch>-<sha>` artifacts, three `yet-ai-jetbrains-install-direct-<os>-<arch>-<sha>` artifacts, and one `yet-ai-plugin-manifest-<sha>` combined manifest. To print the sanitized expected public artifact list for a commit without private paths or release/signing claims, run:
 
-- `yet-ai-vscode-unzip-first-<os>-<arch>-<sha>` (e.g. `yet-ai-vscode-unzip-first-linux-x64-<sha>`)
-- `yet-ai-jetbrains-install-direct-<os>-<arch>-<sha>` (e.g. `yet-ai-jetbrains-install-direct-windows-x64-<sha>`)
-- `yet-ai-plugin-manifest-<sha>` (combined manifest)
+```sh
+npm run artifact:github-summary -- --sha <sha>
+```
 
-The combined `yet-ai-plugin-manifest-<sha>` is uploaded once all per-platform builds finish, with a `platforms[]` array aggregating per-platform commit, checksum, platform, runtime, and artifact metadata. Download/read `yet-ai-plugin-manifest-<sha>` for commit, checksum, and platform metadata before installing.
+The combined `yet-ai-plugin-manifest-<sha>` is uploaded once all per-platform builds finish, with a `platforms[]` array aggregating per-platform commit, checksum, platform, runtime, and artifact metadata. VS Code unzip-first artifacts must be unzipped before installing the inner VSIX; JetBrains direct-install artifacts are selected directly in the IDE. Download/read `yet-ai-plugin-manifest-<sha>` for commit, checksum, and platform metadata before installing.
 
 VS Code install:
 
