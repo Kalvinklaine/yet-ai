@@ -24,6 +24,16 @@ if (!skipBuild) {
     stdio: "inherit",
     env: process.env,
   });
+  if (result.error) {
+    if (result.error.code === "ENOENT") {
+      console.error("Cargo was not found on PATH, so the IDE engine could not be built.");
+      console.error(`Platform: ${process.platform}/${process.arch}`);
+      console.error("Install Rust/Cargo and ensure the Cargo bin directory is on PATH (for example, ~/.cargo/bin in bash-compatible shells). Then retry npm run prepare:ide-engine.");
+    } else {
+      console.error(`Failed to run cargo: ${result.error.message}`);
+    }
+    process.exit(1);
+  }
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
