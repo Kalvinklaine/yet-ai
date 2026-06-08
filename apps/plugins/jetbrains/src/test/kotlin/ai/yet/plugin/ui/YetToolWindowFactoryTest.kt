@@ -170,6 +170,9 @@ class YetToolWindowFactoryTest {
         assertContains(html, "event.origin !== frameTargetOrigin")
         assertContains(html, "message.type === \"host.ideActionProgress\"")
         assertContains(html, "message.type === \"host.ideActionResult\"")
+        assertContains(html, "const isHostIdeActionResultContext = (context)")
+        assertContains(html, "hasActiveEditor")
+        assertContains(html, "workspaceFolderCount")
         assertContains(html, "isHostIdeActionProgressPayload(message.payload)")
         assertContains(html, "isHostIdeActionResultPayload(message.payload)")
         assertContains(html, "ideActionRequestTypesRejectedByPolicy")
@@ -178,6 +181,8 @@ class YetToolWindowFactoryTest {
         listOf("writeWorkspaceFile", "applyWorkspaceEdit", "runShellCommand", "gitStatus", "runTask", "executeIdeTool", "callProvider", "readWorkspaceFile", "indexWorkspace").forEach { action ->
             assertFalse(html.contains("\"$action\""), action)
         }
+        assertFalse(html.contains("hasOnlyKeys(payload.context, [\"source\", \"kind\"])") )
+        assertFalse(html.contains("payload.context.kind === \"active_editor\""))
         assertFalse(html.contains("window.postMessage(message"))
     }
 

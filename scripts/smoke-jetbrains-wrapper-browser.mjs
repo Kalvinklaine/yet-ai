@@ -12,7 +12,7 @@ const indexPath = path.join(distRoot, "index.html");
 const requiredVisibleText = ["Yet AI", "Local runtime connection", "Provider setup", "Chat with Yet AI", "Bridge debug"];
 const bridgeVersion = "2026-05-15";
 const failures = [];
-const runtimeToken = `jb-wrapper-runtime-token-${randomUUID()}`;
+const runtimeToken = `jb.wrapper.runtime.${randomUUID().replaceAll("-", "")}`;
 const oauthSentinels = {
   accessToken: `jb-oauth-access-${randomUUID()}`,
   refreshToken: `jb-oauth-refresh-${randomUUID()}`,
@@ -59,7 +59,7 @@ try {
   process.exit(1);
 }
 
-const guiServer = await startStaticServer(distRoot);
+const guiServer = await startStaticServer(distRoot, { injectJetBrainsFrameBridge: true });
 const guiBaseUrl = `http://127.0.0.1:${guiServer.port}`;
 const runtimeServer = await startMockRuntimeServer();
 const runtimeBaseUrl = `http://127.0.0.1:${runtimeServer.port}`;
@@ -320,6 +320,7 @@ try {
 
   await assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocator, bridgeVersion, guiBaseUrl, runtimeBaseUrl, runtimeToken);
   await assertReloadRequiresFreshGuiReady(page, bridgeVersion, guiBaseUrl, runtimeBaseUrl, runtimeToken);
+  await resendCurrentHostReadyAndWaitForRuntimeInput(page, frameLocator, bridgeVersion, runtimeBaseUrl, runtimeToken);
 
   await frameLocator.getByText("State: Experimental OpenAI account / gpt-5-codex", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not use host.ready runtime endpoints to enter connected experimental readiness."));
 
@@ -391,6 +392,7 @@ try {
   await frameLocator.getByText("File: src/main/kotlin/ContextSmoke.kt", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show safe JetBrains context file label."));
   await frameLocator.getByText("Language: kotlin", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context language id."));
   await frameLocator.getByText(activeContextSelectionMarker, { exact: false }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context selected text preview."));
+  await assertJetBrainsIdeActionRoundtrip(page, frameLocator);
   const includeContextToggle = frameLocator.locator("label.attached-context-toggle", { hasText: "Attach to next message" }).getByRole("checkbox");
   if (!await includeContextToggle.isChecked({ timeout: 5000 }).catch(() => false)) {
     failures.push("JetBrains attached context include toggle was not enabled by default.");
@@ -640,6 +642,7 @@ async function assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocat
   await frameLocator.getByLabel("Runtime base URL").inputValue({ timeout: 5000 }).catch(() => failures.push("Current gui.ready path did not keep working after old-document regression."));
 }
 
+
 async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeUrl, token) {
   const beforeUnloadEvents = await page.evaluate(() => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.unloaded").length);
   await page.locator("iframe[title='Yet AI GUI']").evaluate((frame) => {
@@ -665,6 +668,7 @@ async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeU
       count: window.__yetAiHostMessagesPostedCount,
       queueLength: window.__yetAiPendingHostMessages.length,
       bridgeMessages: window.__yetAiBridgeMessages,
+      guiReadySequence: window.__yetAiGuiReadySequence ?? 0,
     };
   }, { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token });
   if (afterReloadState.count !== beforeReloadCount) {
@@ -703,14 +707,19 @@ async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeU
   if (!randomFailureDiagnostic.includes("Secure browser randomness is unavailable")) {
     failures.push("Wrapper did not show a bounded shell diagnostic when secure randomness was unavailable.");
   }
+  await page.evaluate(() => {
+    window.__yetAiLastFrameNonceForSmoke = undefined;
+  });
   await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, url) => {
     frame.src = `${url}/index.html`;
   }, guiUrl);
-  await page.waitForFunction((count) => (window.__yetAiGuiReadySequence ?? 0) > count, afterReloadState.bridgeMessages.filter((message) => message?.type === "gui.ready").length, { timeout: 5000 }).catch(() => failures.push("Wrapper did not observe fresh gui.ready after reload."));
+  await page.waitForFunction(() => window.__yetAiLastFrameNonceForSmoke !== undefined, undefined, { timeout: 5000 }).catch(() => failures.push("Wrapper did not create a fresh frame nonce after reload."));
+  await page.waitForFunction((count) => (window.__yetAiGuiReadySequence ?? 0) > count && window.__yetAiCurrentReadyRequestId !== undefined, afterReloadState.guiReadySequence, { timeout: 5000 }).catch(() => failures.push("Wrapper did not observe fresh gui.ready after reload."));
   const staleDeliveredAfterFreshReady = await page.evaluate((beforeCount) => window.__yetAiHostMessagesPosted?.slice(beforeCount).some((message) => message?.requestId === "stale-before-fresh-ready"), beforeReloadCount);
   if (staleDeliveredAfterFreshReady) {
     failures.push("Wrapper delivered stale old-frame host.ready after fresh gui.ready following reload.");
   }
+  await page.waitForFunction(() => window.__yetAiCurrentReadyRequestId !== undefined, undefined, { timeout: 5000 }).catch(() => failures.push("Wrapper did not expose current ready id after reload."));
   const currentRequestId = await page.evaluate(() => window.__yetAiCurrentReadyRequestId);
   await page.evaluate(({ bridgeVersion, readyUrl, sessionToken, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
@@ -732,6 +741,43 @@ async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeU
       payload: {},
     });
   }, { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token, requestId: currentRequestId });
+}
+
+async function resendCurrentHostReadyAndWaitForRuntimeInput(page, frameLocator, version, runtimeUrl, token) {
+  await page.waitForFunction(() => window.__yetAiCurrentReadyRequestId !== undefined, undefined, { timeout: 5000 }).catch(() => undefined);
+  const requestId = await page.evaluate(() => window.__yetAiCurrentReadyRequestId);
+  assertRandomReadyRequestId(requestId, "post-reload host.ready resend");
+  if (typeof requestId !== "string") return;
+  await page.evaluate(({ bridgeVersion, readyUrl, sessionToken, currentRequestId }) => {
+    window.__yetAiSendHostMessageToFrame({
+      version: bridgeVersion,
+      type: "host.ready",
+      requestId: currentRequestId,
+      payload: {
+        runtimeUrl: readyUrl,
+        sessionToken,
+        productId: "yet-ai",
+        displayName: "Yet AI",
+        cloudRequired: false,
+      },
+    });
+    window.__yetAiSendHostMessageToFrame({
+      version: bridgeVersion,
+      type: "host.openedFromCommand",
+      requestId: currentRequestId,
+      payload: {},
+    });
+  }, { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token, currentRequestId: requestId });
+
+  const runtimeInput = frameLocator.getByLabel("Runtime base URL");
+  const deadline = Date.now() + 5000;
+  let value = "";
+  while (Date.now() < deadline) {
+    value = await runtimeInput.inputValue({ timeout: 1000 }).catch(() => "");
+    if (value === runtimeUrl) return;
+    await page.waitForTimeout(100);
+  }
+  failures.push(`Iframe GUI did not apply post-reload wrapper host.ready runtime settings. Expected ${runtimeUrl}, got ${value || "<empty>"}.`);
 }
 
 async function assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocator, version, guiUrl, runtimeUrl, token) {
@@ -913,6 +959,102 @@ function assertJetBrainsContext(context) {
   }
 }
 
+async function assertJetBrainsIdeActionRoundtrip(page, frameLocator) {
+  await frameLocator.getByText("JetBrains controlled actions", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Iframe GUI did not expose JetBrains controlled action controls."));
+  const before = await page.evaluate(() => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.ideActionRequest").length ?? 0);
+  const ideActionText = await frameLocator.locator("section[aria-label='Agent activity IDE actions']").innerText({ timeout: 5000 }).catch(() => "");
+  if (!ideActionText.includes("Get IDE context")) {
+    failures.push(`Iframe GUI JetBrains IDE action panel did not include Get IDE context. Panel: ${ideActionText}`);
+    return;
+  }
+  await frameLocator.locator("section[aria-label='Agent activity IDE actions'] button").filter({ hasText: "Get IDE context" }).first().click();
+  await page.waitForFunction((count) => (window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.ideActionRequest").length ?? 0) === count + 1, before, { timeout: 5000 })
+    .catch(() => failures.push("Wrapper did not collect exactly one gui.ideActionRequest after Get IDE context click."));
+
+  const requests = await page.evaluate((count) => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.ideActionRequest").slice(count) ?? [], before);
+  if (requests.length !== 1) {
+    failures.push(`Wrapper collected ${requests.length} gui.ideActionRequest messages after one Get IDE context click.`);
+    return;
+  }
+  const request = requests[0];
+  if (!request || request.version !== bridgeVersion || request.payload?.action !== "getContextSnapshot" || Object.keys(request.payload ?? {}).length !== 1) {
+    failures.push(`Wrapper collected malformed gui.ideActionRequest: ${JSON.stringify(request)}`);
+    return;
+  }
+  if (typeof request.requestId !== "string" || request.requestId.length === 0 || request.requestId.length > 128 || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(request.requestId)) {
+    failures.push(`Wrapper collected unbounded or invalid IDE action request id: ${String(request.requestId)}.`);
+    return;
+  }
+
+  await page.evaluate(({ version, requestId }) => {
+    window.__yetAiSendHostMessageToFrame({
+      version,
+      type: "host.ideActionProgress",
+      requestId,
+      payload: { phase: "running", status: "inProgress", summary: "Reading active editor context.", cloudRequired: false, action: "getContextSnapshot" },
+    });
+  }, { version: bridgeVersion, requestId: request.requestId });
+  await frameLocator.getByText("Get IDE context: inProgress", { exact: false }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Iframe GUI did not render JetBrains IDE action progress."));
+
+  const beforeOldContextDelivery = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
+  await page.evaluate(({ version, requestId }) => {
+    window.__yetAiSendHostMessageToFrame({
+      version,
+      type: "host.ideActionResult",
+      requestId,
+      payload: { status: "succeeded", message: "Old context shape should be rejected.", cloudRequired: false, action: "getContextSnapshot", context: { source: "jetbrains", kind: "active_editor" } },
+    });
+  }, { version: bridgeVersion, requestId: request.requestId });
+  await page.waitForTimeout(100);
+  const afterOldContextDelivery = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
+  if (afterOldContextDelivery !== beforeOldContextDelivery) failures.push("Wrapper/private delivery accepted old {source, kind} IDE action result context shape.");
+  const oldContextRendered = await frameLocator.getByText("Old context shape should be rejected.", { exact: false }).first().isVisible().catch(() => false);
+  if (oldContextRendered) failures.push("Iframe GUI rendered rejected old {source, kind} IDE action result context shape.");
+
+  await page.evaluate(({ version, requestId }) => {
+    window.__yetAiSendHostMessageToFrame({
+      version,
+      type: "host.ideActionResult",
+      requestId,
+      payload: {
+        status: "succeeded",
+        message: "IDE context snapshot captured.",
+        cloudRequired: false,
+        action: "getContextSnapshot",
+        context: { source: "jetbrains", hasActiveEditor: true, workspaceFolderCount: 1 },
+      },
+    });
+  }, { version: bridgeVersion, requestId: request.requestId });
+  await frameLocator.getByText("Get IDE context: succeeded", { exact: false }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Iframe GUI did not render JetBrains IDE action success."));
+  await frameLocator.getByText("Result context: source jetbrains · active editor present yes · workspace folders 1", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Iframe GUI did not render sanitized JetBrains IDE action result context metadata."));
+  await assertForbiddenIdeActionMessagesRejected(page, frameLocator);
+}
+
+async function assertForbiddenIdeActionMessagesRejected(page, frameLocator) {
+  const before = await page.evaluate(() => window.__yetAiBridgeMessages?.length ?? 0);
+  await frameLocator.locator("body").evaluate((body, version) => {
+    const target = document.referrer ? new URL(document.referrer).origin : "*";
+    const messages = [
+      { version, type: "gui.applyWorkspaceEditRequest", requestId: "forbidden-apply", payload: {} },
+      { version, type: "gui.openFile", requestId: "forbidden-open", payload: { workspaceRelativePath: "src/App.tsx" } },
+      { version, type: "gui.revealRange", requestId: "forbidden-reveal", payload: { workspaceRelativePath: "src/App.tsx" } },
+      { version, type: "gui.executeIdeTool", requestId: "forbidden-tool", payload: { tool: "anything" } },
+      { version, type: "gui.ideActionRequest", requestId: "unsafe-path", payload: { action: "openWorkspaceFile", workspaceRelativePath: "../secret.txt" } },
+      { version, type: "gui.ideActionRequest", requestId: "unknown-action", payload: { action: "runShellCommand" } },
+    ];
+    for (const message of messages) window.parent.postMessage(message, target);
+  }, bridgeVersion);
+  await page.waitForTimeout(150);
+  const after = await page.evaluate(() => window.__yetAiBridgeMessages?.length ?? 0);
+  if (after !== before) {
+    failures.push("Wrapper forwarded a forbidden or malformed iframe-origin GUI-to-host message.");
+  }
+}
+
 async function requireBuiltGui() {
   try {
     const fileStat = await stat(indexPath);
@@ -987,6 +1129,7 @@ window.__yetAiPendingDiagnostics = ["Queued diagnostic before wrapper init"];
 </script>
 <script defer>
 const bridgeVersion = "${bridgeVersion}";
+const maxIdeActionRequestBytes = 8192;
 const frame = document.querySelector("iframe");
 const frameTargetOrigin = "${guiBaseUrl}";
 const shellStatus = document.getElementById("yet-ai-shell-status");
@@ -1075,6 +1218,7 @@ const resetFrameNonceChallenge = () => {
     showRandomnessDiagnostic();
     return;
   }
+  window.__yetAiLastFrameNonceForSmoke = currentFrameNonce;
   sendFrameNonceChallenge();
 };
 const invalidateFrameAuthority = (reason) => {
@@ -1091,6 +1235,7 @@ const invalidateFrameAuthority = (reason) => {
 const isGuiUnloadedMessage = (message) => isPlainObject(message) && hasOnlyKeys(message, ["version", "type", "payload"]) && message.version === bridgeVersion && message.type === "gui.unloaded" && (message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0));
 const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
 const canDeliverHostMessage = (message) => {
+  if (message.type === "host.ideActionProgress" || message.type === "host.ideActionResult") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
   if (!messageMatchesCurrentReady(message)) return false;
   if (message.type === "host.ready") return true;
   return hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
@@ -1128,6 +1273,7 @@ const isRequestId = (value) => value === undefined || (typeof value === "string"
 const isFrameNonce = (value) => typeof value === "string" && /^[0-9a-f]{32}$/.test(value);
 const optionalString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length <= maxLength);
 const optionalNonEmptyString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength);
+const allowedIdeActionNames = ["getContextSnapshot", "openWorkspaceFile", "revealWorkspaceRange"];
 const requiredLoopbackRuntimeUrl = (value) => {
   if (typeof value !== "string" || value.length === 0 || value.length > 2048) return false;
   try {
@@ -1146,12 +1292,35 @@ const isContextFile = (file) => file === undefined || (isPlainObject(file) && ha
 const isContextSelection = (selection) => selection === undefined || (isPlainObject(selection) && hasOnlyKeys(selection, ["startLine", "startCharacter", "endLine", "endCharacter", "text"]) && Object.keys(selection).length > 0 && optionalNumber(selection.startLine) && optionalNumber(selection.startCharacter) && optionalNumber(selection.endLine) && optionalNumber(selection.endCharacter) && optionalString(selection.text, 8000));
 const isContextSnapshotPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["kind", "source", "file", "selection"]) && payload.kind === "active_editor" && (payload.source === "vscode" || payload.source === "jetbrains" || payload.source === "browser") && isContextFile(payload.file) && isContextSelection(payload.selection);
 const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && requiredLoopbackRuntimeUrl(payload.runtimeUrl) && optionalString(payload.sessionToken, 4096) && optionalNonEmptyString(payload.productId, 256) && optionalNonEmptyString(payload.displayName, 256) && (payload.cloudRequired === undefined || payload.cloudRequired === false);
+const isIdeActionPosition = (position) => isPlainObject(position) && hasOnlyKeys(position, ["line", "character"]) && Number.isInteger(position.line) && position.line >= 0 && position.line <= 1000000 && Number.isInteger(position.character) && position.character >= 0 && position.character <= 1000000;
+const isIdeActionRange = (range) => isPlainObject(range) && hasOnlyKeys(range, ["start", "end"]) && isIdeActionPosition(range.start) && isIdeActionPosition(range.end) && (range.end.line > range.start.line || (range.end.line === range.start.line && range.end.character >= range.start.character));
+const isHostIdeActionProgressPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["phase", "status", "summary", "cloudRequired", "action", "workspaceRelativePath"]) && ["queued", "checkingPolicy", "running", "completed"].includes(payload.phase) && ["pending", "inProgress", "succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.summary === "string" && payload.summary.length > 0 && payload.summary.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512);
+const isHostIdeActionResultContext = (context) => isPlainObject(context) && hasOnlyKeys(context, ["source", "hasActiveEditor", "workspaceFolderCount"]) && context.source === "jetbrains" && typeof context.hasActiveEditor === "boolean" && Number.isInteger(context.workspaceFolderCount) && context.workspaceFolderCount >= 0 && context.workspaceFolderCount <= 100;
+const isHostIdeActionResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "action", "workspaceRelativePath", "range", "context"]) && ["succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512) && (payload.range === undefined || isIdeActionRange(payload.range)) && (payload.context === undefined || isHostIdeActionResultContext(payload.context));
 const isHostMessage = (message) => {
   if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || !isRequestId(message.requestId)) return false;
   if (message.type === "host.ready") return isHostReadyPayload(message.payload);
   if (message.type === "host.contextSnapshot") return isContextSnapshotPayload(message.payload);
   if (message.type === "host.openedFromCommand") return message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0);
+  if (message.type === "host.ideActionProgress") return isHostIdeActionProgressPayload(message.payload);
+  if (message.type === "host.ideActionResult") return isHostIdeActionResultPayload(message.payload);
   return false;
+};
+const requiredRequestId = (value) => typeof value === "string" && value.length > 0 && value.length <= 128 && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value);
+const safeRequiredWorkspacePath = (value) => safePath(value, 512) && !value.includes("%") && !value.includes("?") && !value.includes("#") && !value.includes("//") && !value.endsWith("/") && value.split("/").every((part) => part.length > 0 && !/(?:^|[._-])(?:auth|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:[._-]|$)|^sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(part));
+const isGuiIdeActionPayload = (payload) => {
+  if (!isPlainObject(payload) || typeof payload.action !== "string" || !allowedIdeActionNames.includes(payload.action)) return false;
+  if (payload.action === "getContextSnapshot") return hasOnlyKeys(payload, ["action"]);
+  if (payload.action === "openWorkspaceFile") return hasOnlyKeys(payload, ["action", "workspaceRelativePath"]) && safeRequiredWorkspacePath(payload.workspaceRelativePath);
+  if (payload.action === "revealWorkspaceRange") return hasOnlyKeys(payload, ["action", "workspaceRelativePath", "range"]) && safeRequiredWorkspacePath(payload.workspaceRelativePath) && isIdeActionRange(payload.range);
+  return false;
+};
+const isGuiIdeActionRequest = (message) => {
+  if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.ideActionRequest" || !requiredRequestId(message.requestId)) return false;
+  let serialized;
+  try { serialized = JSON.stringify(message); } catch (_) { return false; }
+  if (typeof serialized !== "string" || new Blob([serialized]).size > maxIdeActionRequestBytes) return false;
+  return isGuiIdeActionPayload(message.payload);
 };
 const isGuiMessage = (message) => {
   if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.ready" || !isRequestId(message.requestId)) return false;
@@ -1160,6 +1329,10 @@ const isGuiMessage = (message) => {
 window.__yetAiSendHostMessageToFrame = sendToFrame;
 window.__yetAiWrapperInitialized = true;
 window.addEventListener("message", (event) => {
+  if (event.source === currentFrameWindow && event.source === frame?.contentWindow && event.data?.__yetAiSmokeFrameNonceRequest === true && isFrameNonce(currentFrameNonce)) {
+    sendFrameNonceChallenge();
+    return;
+  }
   if (event.source === currentFrameWindow && event.source === frame?.contentWindow) {
     if (frameTargetOrigin && frameTargetOrigin !== "*" && event.origin !== frameTargetOrigin) {
       console.log("Yet AI rejected iframe message from unexpected origin");
@@ -1167,6 +1340,12 @@ window.addEventListener("message", (event) => {
     }
     if (isGuiUnloadedMessage(event.data)) {
       invalidateFrameAuthority("gui.unloaded");
+      window.postIntellijMessage(event.data);
+    } else if (isGuiIdeActionRequest(event.data)) {
+      if (!frameReady || !hostReadyAcceptedForCurrentFrame || acceptedHostReadyRequestId !== currentReadyRequestId()) {
+        console.log("Yet AI rejected IDE action request before GUI bridge readiness");
+        return;
+      }
       window.postIntellijMessage(event.data);
     } else if (isGuiMessage(event.data)) {
       if (frameReady && event.data.payload.frameNonce === currentFrameNonce) return;
@@ -1498,7 +1677,7 @@ function assertNoSecretLeak(text, markers) {
   }
 }
 
-async function startStaticServer(staticRoot) {
+async function startStaticServer(staticRoot, options = {}) {
   const realStaticRoot = await realpath(staticRoot);
   const server = http.createServer(async (request, response) => {
     if (request.method !== "GET" && request.method !== "HEAD") {
@@ -1542,6 +1721,11 @@ async function startStaticServer(staticRoot) {
         response.end();
         return;
       }
+      if (options.injectJetBrainsFrameBridge && path.basename(realRequestedPath) === "index.html") {
+        const html = await readFile(realRequestedPath, "utf8");
+        response.end(injectJetBrainsFrameBridge(html));
+        return;
+      }
       const stream = createReadStream(realRequestedPath);
       stream.on("error", () => {
         if (!response.headersSent) {
@@ -1556,6 +1740,46 @@ async function startStaticServer(staticRoot) {
     }
   });
   return listen(server);
+}
+
+function injectJetBrainsFrameBridge(html) {
+  const script = `<script>
+(() => {
+  let frameNonce;
+  let pendingReady;
+  const parentOrigin = () => {
+    try { return document.referrer ? new URL(document.referrer).origin : "*"; } catch (_) { return "*"; }
+  };
+  const send = (message) => window.parent.postMessage(message, parentOrigin());
+  const sendReady = (message) => send({ ...message, payload: { ...(message.payload || {}), frameNonce } });
+  window.addEventListener("message", (event) => {
+    const message = event.data;
+    if (message && message.version === "${bridgeVersion}" && message.type === "host.frameNonce" && message.payload && typeof message.payload.frameNonce === "string") {
+      frameNonce = message.payload.frameNonce;
+      if (pendingReady) {
+        sendReady(pendingReady);
+        pendingReady = undefined;
+      }
+    }
+  });
+  window.postIntellijMessage = (message) => {
+    if (message && message.type === "gui.ready") {
+      if (!frameNonce) {
+        const requestNonce = () => window.parent.postMessage({ __yetAiSmokeFrameNonceRequest: true }, parentOrigin());
+        pendingReady = message;
+        requestNonce();
+        window.setTimeout(() => { if (pendingReady && !frameNonce) requestNonce(); }, 25);
+        window.setTimeout(() => { if (pendingReady && !frameNonce) requestNonce(); }, 100);
+        return;
+      }
+      sendReady(message);
+      return;
+    }
+    send(message);
+  };
+})();
+</script>`;
+  return html.replace("<head>", `<head>${script}`);
 }
 
 function isPathInsideRoot(rootPath, requestedPath) {
