@@ -18,6 +18,12 @@ const authorizationSentinel = `Authorization: Bearer ${runtimeToken}`;
 const rejectedSecretMessage = `Invalid host result must not render ${providerKey}`;
 const progressSummary = "IDE action policy check started.";
 const resultMessage = "Context snapshot delivered.";
+const activeContextPath = "src/smoke-active.ts";
+const activeContextRange = { start: { line: 7, character: 1 }, end: { line: 7, character: 12 } };
+const activeContextSelection = "selectedReadOnlyContext";
+const openResultMessage = "Workspace file opened.";
+const revealProgressSummary = "Reveal policy check started.";
+const revealResultMessage = "Workspace range revealed.";
 const proposalAssistantMessageId = "assistant-proposal-message-001";
 const proposalSummary = "Reveal the reviewed workspace range.";
 const proposalPath = "src/example.ts";
@@ -214,6 +220,30 @@ try {
   await expectVisibleText(page, "Range: 4:2-4:8", "proposal IDE action result range");
   await assertProposalSecretsOnlyInVisibleUi(page, "matched retry proposal result render");
 
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.contextSnapshot",
+    requestId: "host-active-context-smoke-001",
+    payload: {
+      kind: "active_editor",
+      source: "vscode",
+      file: { displayPath: activeContextPath, workspaceRelativePath: activeContextPath, languageId: "typescript" },
+      selection: { startLine: activeContextRange.start.line, startCharacter: activeContextRange.start.character, endLine: activeContextRange.end.line, endCharacter: activeContextRange.end.character, text: activeContextSelection },
+    },
+  });
+  await expectVisibleText(page, "Active editor context", "active context preview card");
+  await expectVisibleText(page, `File: ${activeContextPath}`, "active context safe file label");
+  await expectVisibleText(page, "Selection range: 7:1-7:12", "active context safe selection range");
+  await expectVisibleText(page, activeContextSelection, "bounded active context preview text");
+  await expectVisibleText(page, "Attach to next message", "safe active context default include policy");
+  await expectVisibleText(page, `Active safe path: ${activeContextPath}`, "IDE action safe active path");
+  await expectVisibleText(page, "Active safe range: 7:1-7:12", "IDE action safe active range");
+  const openFileButton = page.getByRole("button", { name: "Open file", exact: true });
+  const revealRangeButton = page.getByRole("button", { name: "Reveal range", exact: true });
+  if (await openFileButton.isDisabled()) failures.push("Open file button stayed disabled after safe active context snapshot.");
+  if (await revealRangeButton.isDisabled()) failures.push("Reveal range button stayed disabled after safe active context snapshot.");
+  await assertBrowserStorageDoesNotContain(page, [activeContextPath, activeContextSelection], "trusted active context preview");
+
   const getContextButton = page.getByRole("button", { name: "Get IDE context", exact: true });
   await getContextButton.waitFor({ state: "visible", timeout: 10_000 });
   if (await getContextButton.isDisabled()) failures.push("Get IDE context button was disabled in VS Code host mode.");
@@ -233,6 +263,12 @@ try {
   }
 
   const requestId = ideRequest?.requestId ?? "gui-ide-action-missing";
+  await expectVisibleText(page, "IDE action pending…", "manual getContext pending button label");
+  const duplicateManualClickCount = await getGuiMessageCount(page, "gui.ideActionRequest");
+  await getContextButton.click({ force: true }).catch(() => undefined);
+  await page.waitForTimeout(100);
+  const duplicateManualPostClickCount = await getGuiMessageCount(page, "gui.ideActionRequest");
+  if (duplicateManualPostClickCount !== duplicateManualClickCount) failures.push("Pending manual getContextSnapshot allowed a duplicate gui.ideActionRequest.");
   await dispatchHostMessage(page, {
     version: bridgeVersion,
     type: "host.ideActionProgress",
@@ -250,7 +286,7 @@ try {
   });
   await expectVisibleText(page, "Get IDE context: succeeded", "correlated IDE action result");
   await expectVisibleText(page, resultMessage, "IDE action result message");
-  await expectVisibleText(page, "Context: active editor true · workspace folders 1", "IDE action result context metadata");
+  await expectVisibleText(page, "Result context: source vscode · active editor present yes · workspace folders 1", "IDE action result context metadata");
 
   await dispatchHostMessage(page, {
     version: bridgeVersion,
@@ -263,13 +299,72 @@ try {
   if (rejectedVisible) failures.push("Schema-invalid/free-form host.ideActionResult with a secret-like message rendered in the DOM.");
   await expectVisibleText(page, "Get IDE context: succeeded", "valid IDE action result remains visible after invalid result");
 
+  const openPreClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
+  await openFileButton.click();
+  const openIdeRequest = await waitForGuiMessageAfter(page, "gui.ideActionRequest", openPreClickIdeRequestCount);
+  if (!openIdeRequest) {
+    failures.push("Clicking Open file did not send gui.ideActionRequest.");
+  } else {
+    if (!deepEqual(openIdeRequest.payload, { action: "openWorkspaceFile", workspaceRelativePath: activeContextPath })) failures.push("Open file IDE action payload did not use the safe active workspace path only.");
+    if (hasForbiddenPrivilegedKeys(openIdeRequest.payload)) failures.push("Open file IDE action request payload contained privileged fields.");
+  }
+  const openRequestId = openIdeRequest?.requestId ?? "gui-ide-action-open-missing";
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.ideActionResult",
+    requestId: openRequestId,
+    payload: { status: "succeeded", message: openResultMessage, cloudRequired: false, action: "openWorkspaceFile", workspaceRelativePath: activeContextPath },
+  });
+  await expectVisibleText(page, "Open file: succeeded", "correlated open file IDE action result");
+  await expectVisibleText(page, openResultMessage, "open file IDE action result message");
+  await expectVisibleText(page, `Result path: ${activeContextPath}`, "open file IDE action result path metadata");
+
+  const revealPreClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
+  await revealRangeButton.click();
+  const revealIdeRequest = await waitForGuiMessageAfter(page, "gui.ideActionRequest", revealPreClickIdeRequestCount);
+  if (!revealIdeRequest) {
+    failures.push("Clicking Reveal range did not send gui.ideActionRequest.");
+  } else {
+    if (!deepEqual(revealIdeRequest.payload, { action: "revealWorkspaceRange", workspaceRelativePath: activeContextPath, range: activeContextRange })) failures.push("Reveal range IDE action payload did not use the safe active path/range only.");
+    if (hasForbiddenPrivilegedKeys(revealIdeRequest.payload)) failures.push("Reveal range IDE action request payload contained privileged fields.");
+  }
+  const revealRequestId = revealIdeRequest?.requestId ?? "gui-ide-action-reveal-missing";
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.ideActionProgress",
+    requestId: revealRequestId,
+    payload: { phase: "checkingPolicy", status: "inProgress", summary: revealProgressSummary, cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: activeContextPath, range: activeContextRange },
+  });
+  await expectVisibleText(page, "Reveal range: inProgress", "correlated reveal range IDE action progress");
+  await expectVisibleText(page, revealProgressSummary, "reveal range IDE action progress summary");
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.ideActionResult",
+    requestId: revealRequestId,
+    payload: { status: "succeeded", message: revealResultMessage, cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: activeContextPath, range: activeContextRange },
+  });
+  await expectVisibleText(page, "Reveal range: succeeded", "correlated reveal range IDE action result");
+  await expectVisibleText(page, revealResultMessage, "reveal range IDE action result message");
+  await expectVisibleText(page, `Result path: ${activeContextPath} · result range: 7:1-7:12`, "reveal range IDE action result path/range metadata");
+
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.ideActionResult",
+    requestId: revealRequestId,
+    payload: { status: "succeeded", message: `Secret-like result must not render ${providerKey}`, cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: `token/${providerKey}.ts`, range: activeContextRange },
+  });
+  await page.waitForTimeout(150);
+  await expectNoVisibleText(page, `Secret-like result must not render ${providerKey}`, "secret-like reveal host result");
+  await expectVisibleText(page, "Reveal range: succeeded", "valid reveal result remains visible after rejected secret-like result");
+  await assertBrowserStorageDoesNotContain(page, [runtimeToken, providerKey, authorizationSentinel, activeContextPath, activeContextSelection], "final storage no-secret/no-context persistence check");
+
   if (!observedRuntimeAuthorization) failures.push("Mock runtime did not observe Authorization from host.ready session token.");
   const visibleState = await collectVisibleState(page);
   assertNoSecretLeak(visibleState, "DOM, browser storage, collected GUI messages, host messages, or console");
 
   if (failures.length > 0) reportFailures();
   console.log("VS Code wrapper browser smoke passed.");
-  console.log("Verified packaged VS Code GUI assets in a VS Code-like browser bridge, gui.ready, trusted host.ready, compact assistant read-only IDE action proposal rendering without auto-post, explicit proposal confirmation with GUI-owned strict request, GUI-only pending clear, stale-result ignore, retry with a fresh request id, matching proposal result rendering, manual controlled getContextSnapshot request, loopback-only networking, invalid host-result rejection, and secret redaction.");
+  console.log("Verified packaged VS Code GUI assets in a VS Code-like browser bridge, gui.ready, trusted loopback host.ready, active context preview and safe include policy, compact assistant read-only IDE action proposal rendering without auto-post, explicit proposal confirmation with GUI-owned strict request, duplicate pending suppression, GUI-only pending clear, stale progress/result ignore, retry with a fresh request id, matching getContextSnapshot/openWorkspaceFile/revealWorkspaceRange progress and result rendering, loopback-only networking, invalid and secret-like host-result rejection/non-rendering, and browser storage no-secret/no-context persistence checks.");
   console.log("No real VS Code launch, provider credentials, OpenAI/ChatGPT calls, hosted Yet AI service, or non-loopback provider call was used.");
 } finally {
   await browser?.close().catch(() => undefined);
@@ -463,6 +558,16 @@ async function assertProposalSecretsOnlyInVisibleUi(page, description) {
   }
 }
 
+async function assertBrowserStorageDoesNotContain(page, markers, description) {
+  const storageState = JSON.stringify(await page.evaluate(() => ({
+    localStorage: Object.fromEntries(Array.from({ length: localStorage.length }, (_, index) => [localStorage.key(index) ?? "", localStorage.getItem(localStorage.key(index) ?? "")])),
+    sessionStorage: Object.fromEntries(Array.from({ length: sessionStorage.length }, (_, index) => [sessionStorage.key(index) ?? "", sessionStorage.getItem(sessionStorage.key(index) ?? "")])),
+  })));
+  for (const marker of markers) {
+    if (marker && storageState.includes(marker)) failures.push(`Browser storage contained ${redactSecrets(marker)} during ${description}.`);
+  }
+}
+
 async function collectVisibleState(page) {
   return JSON.stringify(await page.evaluate(() => ({
     domText: document.documentElement.innerText,
@@ -471,7 +576,7 @@ async function collectVisibleState(page) {
     vscodeMessages: window.__yetAiVsCodeMessages,
     hostMessageTypes: window.__yetAiHostMessages?.map((message) => ({ type: message?.type, requestId: message?.requestId })),
     hostPayloadKeys: window.__yetAiHostMessages?.map((message) => Object.keys(message?.payload ?? {})),
-    hostPayloadValues: window.__yetAiHostMessages?.map((message) => Object.fromEntries(Object.entries(message?.payload ?? {}).filter(([key]) => key !== "sessionToken" && key !== "message"))),
+    hostPayloadValues: window.__yetAiHostMessages?.map((message) => Object.fromEntries(Object.entries(message?.payload ?? {}).filter(([key]) => key !== "sessionToken" && key !== "message" && key !== "workspaceRelativePath"))),
   }))) + JSON.stringify(consoleMessages);
 }
 
