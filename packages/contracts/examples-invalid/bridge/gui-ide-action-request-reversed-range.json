@@ -1,19 +1,13 @@
 {
   "version": "2026-05-15",
   "type": "gui.ideActionRequest",
-  "requestId": "req-ide-action-reveal-001",
+  "requestId": "req-ide-action-reversed-range-001",
   "payload": {
     "action": "revealWorkspaceRange",
     "workspaceRelativePath": "src/main.kt",
     "range": {
-      "start": {
-        "line": 4,
-        "character": 2
-      },
-      "end": {
-        "line": 4,
-        "character": 18
-      }
+      "start": { "line": 8, "character": 12 },
+      "end": { "line": 8, "character": 4 }
     }
   }
 }

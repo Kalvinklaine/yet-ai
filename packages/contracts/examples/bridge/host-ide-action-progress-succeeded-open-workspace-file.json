@@ -8,6 +8,6 @@
     "summary": "Opened workspace file.",
     "cloudRequired": false,
     "action": "openWorkspaceFile",
-    "workspaceRelativePath": "src/example.ts"
+    "workspaceRelativePath": "src/main.kt"
   }
 }
