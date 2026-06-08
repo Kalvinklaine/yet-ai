@@ -804,6 +804,22 @@ try {
       }
     }
 
+    function assertBoundedKillAttemptCount(child, signal, windowsAttemptCount, message) {
+      if (process.platform === "win32") {
+        assert.deepEqual(child.killSignals, Array(windowsAttemptCount).fill(undefined), message);
+      } else {
+        assert.equal(child.killSignals.includes(signal), true, message);
+      }
+    }
+
+    function assertBoundedKillNotAttempted(child, signal, windowsAttemptCount, message) {
+      if (process.platform === "win32") {
+        assert.deepEqual(child.killSignals, Array(windowsAttemptCount).fill(undefined), message);
+      } else {
+        assert.equal(child.killSignals.includes(signal), false, message);
+      }
+    }
+
     const lspSpawns = [];
     const lspOutputLines = [];
     const lspOutput = { appendLine(line) { lspOutputLines.push(line); } };
@@ -1301,10 +1317,10 @@ try {
     assert.equal(lspMessages[0].method, "shutdown", "hard-kill stop did not send shutdown");
     emitLspResponse(hardKillSpawn.child, lspMessages[0].id, null);
     await delayMs(1200);
-    assertKillAttempted(hardKillSpawn.child, "SIGTERM", "bounded stop did not attempt SIGTERM");
-    assertKillNotAttempted(hardKillSpawn.child, "SIGKILL", "bounded stop attempted hard kill before grace elapsed");
+    assertBoundedKillAttemptCount(hardKillSpawn.child, "SIGTERM", 1, "bounded stop did not attempt SIGTERM");
+    assertBoundedKillNotAttempted(hardKillSpawn.child, "SIGKILL", 1, "bounded stop attempted hard kill before grace elapsed");
     await delayMs(700);
-    assertKillAttempted(hardKillSpawn.child, "SIGKILL", "bounded stop did not attempt hard kill");
+    assertBoundedKillAttemptCount(hardKillSpawn.child, "SIGKILL", 2, "bounded stop did not attempt hard kill");
     hardKillSpawn.child.emit("close", null, "SIGKILL");
     await hardKillStop;
 
