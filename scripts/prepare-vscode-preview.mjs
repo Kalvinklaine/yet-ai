@@ -47,6 +47,55 @@ function run(command, commandArgs, options = {}) {
   }
 }
 
+function runArchiveCommand(command, commandArgs, options = {}) {
+  const printable = [command, ...commandArgs].join(" ");
+  console.log(`\n> ${printable}`);
+  const result = spawnSync(platformCommand(command), commandArgs, {
+    cwd: options.cwd ?? root,
+    encoding: "utf8",
+    stdio: ["inherit", "pipe", "pipe"],
+    env: process.env,
+    shell: usesShell(command),
+  });
+  if (result.stdout) {
+    process.stdout.write(result.stdout);
+  }
+  if (result.stderr) {
+    process.stderr.write(result.stderr);
+  }
+  return {
+    command,
+    printable,
+    result,
+    ok: !result.error && result.status === 0,
+  };
+}
+
+function formatArchiveFailure(attempt) {
+  const { command, printable, result } = attempt;
+  const lines = [`${command} attempt failed: ${printable}`];
+  if (result.error?.code === "ENOENT") {
+    lines.push(`  Required command \`${command}\` was not found on PATH.`);
+  } else if (result.error) {
+    const code = result.error.code ? ` (${result.error.code})` : "";
+    lines.push(`  Command spawn error${code}: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    lines.push(`  Exit status: ${result.status ?? "unknown"}${result.signal ? ` (signal ${result.signal})` : ""}`);
+  }
+  if (result.stdout) {
+    lines.push("  stdout:", indentDiagnostic(result.stdout));
+  }
+  if (result.stderr) {
+    lines.push("  stderr:", indentDiagnostic(result.stderr));
+  }
+  return lines.join("\n");
+}
+
+function indentDiagnostic(value) {
+  return value.trimEnd().split("\n").map((line) => `    ${line}`).join("\n");
+}
+
 function usesShell(command) {
   return process.platform === "win32" && command === "npm";
 }
@@ -61,6 +110,7 @@ function platformCommand(command) {
   return {
     npm: "npm.cmd",
     zip: "zip.exe",
+    jar: "jar.exe",
   }[command] ?? command;
 }
 
@@ -100,7 +150,7 @@ async function publishDevPreviewArtifact(distVsixPath, distChecksumPath) {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "yet-ai-vscode-vsix-"));
   try {
     await stageVsix(tempRoot);
-    run("zip", ["-qr", distVsixPath, "."], { cwd: tempRoot });
+    await createVsixArchive(tempRoot, distVsixPath);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -108,6 +158,26 @@ async function publishDevPreviewArtifact(distVsixPath, distChecksumPath) {
   const checksum = createHash("sha256").update(await readFile(distVsixPath)).digest("hex");
   await writeFile(distChecksumPath, `${checksum}  ${path.basename(distVsixPath)}\n`, "utf8");
   return checksum;
+}
+
+async function createVsixArchive(tempRoot, distVsixPath) {
+  const zipAttempt = runArchiveCommand("zip", ["-qr", distVsixPath, "."], { cwd: tempRoot });
+  if (zipAttempt.ok) {
+    return;
+  }
+
+  console.warn("VSIX creation with `zip` failed; falling back to JDK `jar`.");
+  await rm(distVsixPath, { force: true });
+  const jarAttempt = runArchiveCommand("jar", ["cMf", distVsixPath, "-C", tempRoot, "."]);
+  if (jarAttempt.ok) {
+    return;
+  }
+
+  console.error("Unable to create VS Code dev-preview VSIX archive. Tried both `zip` and JDK `jar`.");
+  console.error(formatArchiveFailure(zipAttempt));
+  console.error(formatArchiveFailure(jarAttempt));
+  console.error("Install a local zip archiver or ensure a JDK with `jar` is available on PATH before preparing the VS Code dev-preview VSIX.");
+  process.exit(jarAttempt.result.status ?? zipAttempt.result.status ?? 1);
 }
 
 async function validatePreparedPreview() {
