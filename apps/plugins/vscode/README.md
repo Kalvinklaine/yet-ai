@@ -136,11 +136,16 @@ For a downloadable CI-built dev preview, use GitHub Actions workflow `Yet AI IDE
 
 The workflow builds per-platform artifacts in a `linux-x64` / `macos-arm64` / `windows-x64` matrix because the JetBrains plugin JAR bundles a native `yet-lsp` runtime. Download the artifact whose `<os>-<arch>` suffix matches your local OS/architecture; mixing platforms will fail at install time. The bundled `yet-lsp` is the dev-preview local cargo build output staged from the runner's `target/<profile>/yet-lsp` (or `yet-lsp.exe` on Windows); it is not a signed or notarized production engine and no signing, notarization, marketplace publication, production installer, or production release claim is made.
 
-Public artifact names are:
+Public artifact names are exactly 7 total: three `yet-ai-vscode-unzip-first-<os>-<arch>-<sha>` artifacts, three `yet-ai-jetbrains-install-direct-<os>-<arch>-<sha>` artifacts, and one `yet-ai-plugin-manifest-<sha>` combined manifest. From the repository root, run `npm run artifact:github-summary -- --sha <sha>` to print the sanitized expected public list without private paths or release/signing claims.
 
-- `yet-ai-vscode-unzip-first-<os>-<arch>-<sha>` (e.g. `yet-ai-vscode-unzip-first-linux-x64-<sha>`)
-- `yet-ai-jetbrains-install-direct-<os>-<arch>-<sha>` (e.g. `yet-ai-jetbrains-install-direct-windows-x64-<sha>`)
-- `yet-ai-plugin-manifest-<sha>` (combined manifest)
+Before relying on GitHub Actions artifacts or manual dogfood, run the local release-candidate artifact gate:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+npm run smoke:ide-release-candidate
+```
+
+It validates dev-preview artifact preparation, staging, manifest combination, workflow/report safety checks, and expected public artifact names only. It does not launch real IDEs, call providers, contact hosted services, sign, publish, or claim a production release.
 
 The combined `yet-ai-plugin-manifest-<sha>` is uploaded with a `platforms[]` array aggregating per-platform commit, checksum, platform, runtime, and artifact metadata. VS Code uses the unzip-first artifact; JetBrains uses the platform-specific direct-install artifact because native `yet-lsp` is bundled.
 
