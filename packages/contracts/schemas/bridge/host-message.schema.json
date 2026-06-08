@@ -552,7 +552,8 @@
             "source": {
               "type": "string",
               "enum": [
-                "vscode"
+                "vscode",
+                "jetbrains"
               ]
             },
             "hasActiveEditor": {

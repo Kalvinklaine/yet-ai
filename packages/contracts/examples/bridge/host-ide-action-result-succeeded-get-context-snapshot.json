@@ -8,7 +8,7 @@
     "cloudRequired": false,
     "action": "getContextSnapshot",
     "context": {
-      "source": "vscode",
+      "source": "jetbrains",
       "hasActiveEditor": true,
       "workspaceFolderCount": 1
     }

@@ -8,6 +8,6 @@
     "summary": "Revealing workspace range.",
     "cloudRequired": false,
     "action": "revealWorkspaceRange",
-    "workspaceRelativePath": "src/example.ts"
+    "workspaceRelativePath": "src/main.kt"
   }
 }
