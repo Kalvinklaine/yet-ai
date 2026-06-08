@@ -30,6 +30,7 @@
     "smoke:vscode-edit-proposal": "node scripts/smoke-vscode-edit-proposal.mjs",
     "smoke:jetbrains-preview": "node scripts/smoke-jetbrains-preview.mjs",
     "smoke:jetbrains-installable": "node scripts/smoke-jetbrains-installable.mjs",
+    "smoke:jetbrains-bundled-runtime": "node scripts/smoke-jetbrains-bundled-runtime.mjs",
     "smoke:jetbrains-lsp-foundation": "node scripts/smoke-jetbrains-lsp-foundation.mjs",
     "smoke:jetbrains-gui-browser": "node scripts/smoke-jetbrains-gui-browser.mjs",
     "smoke:jetbrains-wrapper-browser": "node scripts/smoke-jetbrains-wrapper-browser.mjs",
