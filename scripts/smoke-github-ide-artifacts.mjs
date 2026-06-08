@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -25,6 +25,7 @@ await checkArtifactsRootRegressionGuards();
 const vscodeVsixPath = await checkVscodeUnzipFirst();
 await checkJetBrainsDirectInstall();
 await checkManifest();
+await checkLocalCombineDownloadSimulation();
 await checkMixedPluginArtifacts([vscodeStageDir, jetbrainsInstallDirectDir]);
 
 if (failures.length > 0) {
@@ -39,6 +40,7 @@ console.log("GitHub IDE artifact layout smoke passed.");
 console.log(`VS Code unzip-first flow passed: ${relative(vscodeStageDir)} contains inner VSIX ${path.basename(vscodeVsixPath)} plus matching checksum, README install guidance, and embedded manifest.json.`);
 console.log(`JetBrains direct-install flow passed: ${relative(jetbrainsInstallDirectDir)} contains only JetBrains distribution contents and validates as the outer GitHub artifact ZIP.`);
 console.log(`Embedded manifest flow passed: ${relative(path.join(vscodeStageDir, "manifest.json"))} lists vscode and jetbrains artifacts.`);
+console.log("Local combine/download simulation passed: one downloaded VS Code artifact manifest combines into one platform with vscode and jetbrains entries.");
 console.log("No provider credentials, IDE launch, hosted backend, marketplace publication, signing, or network access were used.");
 
 async function checkVscodeUnzipFirst() {
@@ -118,6 +120,49 @@ async function checkManifest() {
     return;
   }
   validateArtifactManifest(manifest, manifestPath);
+}
+
+async function checkLocalCombineDownloadSimulation() {
+  const sourceManifestPath = path.join(vscodeStageDir, "manifest.json");
+  if (!await isFile(sourceManifestPath)) {
+    failures.push(`${relative(sourceManifestPath)} must exist so the combine job can aggregate per-platform manifests from downloaded VS Code artifacts.`);
+    return;
+  }
+
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "yet-ai-github-ide-combine-"));
+  try {
+    const downloadedArtifactDir = path.join(tempDir, "yet-ai-vscode-unzip-first-local");
+    const outputPath = path.join(tempDir, "combined-plugin-manifest", "manifest.json");
+    await mkdir(downloadedArtifactDir, { recursive: true });
+    await copyFile(sourceManifestPath, path.join(downloadedArtifactDir, "manifest.json"));
+
+    const result = spawnSync(process.execPath, ["scripts/combine-plugin-artifact-manifests.mjs", "--input", tempDir, "--output", outputPath], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], shell: false });
+    if (result.status !== 0) {
+      failures.push(`Local combine/download simulation must combine a downloaded VS Code artifact manifest successfully. stderr: ${result.stderr.trim() || "<empty>"}`);
+      return;
+    }
+
+    let combined;
+    try {
+      combined = JSON.parse(await readFile(outputPath, "utf8"));
+    } catch (error) {
+      failures.push(`Local combine/download simulation must write valid combined manifest JSON: ${error instanceof Error ? error.message : String(error)}.`);
+      return;
+    }
+
+    const platforms = Array.isArray(combined?.platforms) ? combined.platforms : [];
+    if (platforms.length !== 1) {
+      failures.push(`Local combine/download simulation combined manifest must contain exactly one local platform entry; found ${platforms.length}.`);
+      return;
+    }
+    const artifacts = Array.isArray(platforms[0]?.artifacts) ? platforms[0].artifacts : [];
+    const kinds = artifacts.map((artifact) => artifact?.kind).sort();
+    if (artifacts.length !== 2 || kinds[0] !== "jetbrains" || kinds[1] !== "vscode") {
+      failures.push(`Local combine/download simulation platform entry must contain exactly vscode and jetbrains artifacts; found ${kinds.join(", ") || "<none>"}.`);
+    }
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
 }
 
 function validateArtifactManifest(manifest, manifestPath) {
@@ -327,6 +372,10 @@ async function isDirectory(directory) {
   } catch {
     return false;
   }
+}
+
+async function isFile(filePath) {
+  return (await stat(filePath).catch(() => undefined))?.isFile() === true;
 }
 
 async function requireSingleFileWithExtension(directory, extension, label) {

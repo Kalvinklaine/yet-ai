@@ -42,7 +42,8 @@
     "validate:identity": "node scripts/validate-product-identity.mjs",
     "validate:hygiene": "node scripts/validate-public-hygiene.mjs",
     "validate:docs": "node scripts/validate-docs-index.mjs",
-    "validate:contracts": "node scripts/validate-contracts.mjs"
+    "validate:contracts": "node scripts/validate-contracts.mjs",
+    "validate:ide-artifact-workflow": "node scripts/validate-ide-artifact-workflow.mjs"
   },
   "devDependencies": {
     "ajv": "^8.20.0",
