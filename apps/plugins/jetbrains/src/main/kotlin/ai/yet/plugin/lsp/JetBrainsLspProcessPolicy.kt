@@ -10,6 +10,7 @@ private val jwtPattern = Regex("\\b[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}\\.[A-
 private val secretValuePattern = Regex("(?i)\\b(?:access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|oauth[_-]?code|code[_-]?verifier|pkce[_-]?verifier|token|secret|api[_-]?key|authorization|cookie|password|credential)[A-Za-z0-9_-]*\\b\\s*[:=]\\s*[^\\s,;)}\\]]+")
 private val absolutePathPattern = Regex("(?:[A-Za-z]:\\\\[^\\r\\n,;)}\\]\\s]+(?:\\\\[^\\r\\n,;)}\\]\\s]+)+|/(?:Users|home|private|var/folders|tmp|Volumes)/[^\\r\\n,;)}\\]\\s]+(?:/[^\\r\\n,;)}\\]\\s]+)*)")
 private val bridgeMarkerPattern = Regex("(?i)\\b(?:bridge|payload|document body|raw document|request body|response body)\\b")
+private const val maxSanitizedDiagnosticLength = 460
 
 fun buildJetBrainsLspCommand(binaryPath: Path): List<String> = listOf(binaryPath.toString(), "--lsp-stdio")
 
@@ -32,8 +33,8 @@ fun sanitizeJetBrainsLspDiagnosticText(value: String): String {
             path.substringAfterLast('/').substringAfterLast('\\')
         }
         .replace(bridgeMarkerPattern, "[redacted]")
-    if (redacted.length > 500) {
-        redacted = redacted.take(500) + "…"
+    if (redacted.length > maxSanitizedDiagnosticLength) {
+        redacted = redacted.take(maxSanitizedDiagnosticLength) + "…"
     }
     return redacted
 }
