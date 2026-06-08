@@ -93,16 +93,38 @@ jobs:
         run: npm ci
         working-directory: apps/plugins/vscode
 
+      - name: Toolchain diagnostics
+        shell: bash
+        run: |
+          set -euxo pipefail
+          pwd
+          node --version
+          npm --version
+          rustc --version
+          cargo --version
+          which cargo
+          command -v cargo
+          java -version
+          gradle --version
+
+      - name: Prepare IDE engine
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PATH="$HOME/.cargo/bin:$PATH"
+          npm run prepare:ide-engine
+
       - name: Build and validate downloadable dev-preview artifacts
         shell: bash
         run: |
+          set -euxo pipefail
           export PATH="$HOME/.cargo/bin:$PATH"
-          npm run prepare:vscode-preview
+          npm run prepare:vscode-preview -- --no-build
           npm run smoke:vscode-installable
           npm run smoke:vscode-preview
           npm run smoke:vscode-wrapper-browser
           npm run smoke:vscode-first-message
-          npm run prepare:jetbrains-preview
+          npm run prepare:jetbrains-preview -- --no-build
           npm run smoke:jetbrains-installable
           npm run smoke:jetbrains-preview
           npm run smoke:jetbrains-gui-browser

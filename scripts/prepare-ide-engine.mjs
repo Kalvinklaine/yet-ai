@@ -19,6 +19,7 @@ if (profile === "release") {
 }
 
 if (!skipBuild) {
+  console.log(`Running cargo command: cargo ${cargoArgs.join(" ")}`);
   const result = spawnSync("cargo", cargoArgs, {
     cwd: root,
     stdio: "inherit",
@@ -35,6 +36,9 @@ if (!skipBuild) {
     process.exit(1);
   }
   if (result.status !== 0) {
+    console.error(`Cargo command failed with exit status ${result.status ?? "unknown"}${result.signal ? ` and signal ${result.signal}` : ""}.`);
+    console.error(`Command: cargo ${cargoArgs.join(" ")}`);
+    console.error("Working directory: repository root");
     process.exit(result.status ?? 1);
   }
 }
