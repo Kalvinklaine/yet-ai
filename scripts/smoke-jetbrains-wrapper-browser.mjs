@@ -707,14 +707,51 @@ async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeU
   if (!randomFailureDiagnostic.includes("Secure browser randomness is unavailable")) {
     failures.push("Wrapper did not show a bounded shell diagnostic when secure randomness was unavailable.");
   }
-  await page.evaluate(() => {
-    window.__yetAiLastFrameNonceForSmoke = undefined;
-  });
+  const previousFrameNonce = await page.evaluate(() => window.__yetAiLastFrameNonceForSmoke ?? window.__yetAiCurrentFrameNonce);
   await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, url) => {
     frame.src = `${url}/index.html`;
   }, guiUrl);
-  await page.waitForFunction(() => window.__yetAiLastFrameNonceForSmoke !== undefined, undefined, { timeout: 5000 }).catch(() => failures.push("Wrapper did not create a fresh frame nonce after reload."));
-  await page.waitForFunction((count) => (window.__yetAiGuiReadySequence ?? 0) > count && window.__yetAiCurrentReadyRequestId !== undefined, afterReloadState.guiReadySequence, { timeout: 5000 }).catch(() => failures.push("Wrapper did not observe fresh gui.ready after reload."));
+  await page.waitForFunction((oldNonce) => {
+    const frameWindow = document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow;
+    const currentNonce = window.__yetAiCurrentFrameNonce;
+    const lastNonce = window.__yetAiLastFrameNonceForSmoke;
+    return frameWindow && typeof currentNonce === "string" && /^[0-9a-f]{32}$/.test(currentNonce) && currentNonce === lastNonce && currentNonce !== oldNonce;
+  }, previousFrameNonce, { timeout: 5000 }).catch(() => failures.push("Wrapper did not create a fresh frame nonce after reload."));
+  const freshReadyState = await page.evaluate(({ bridgeVersion, origin, sequenceBeforeReload }) => new Promise((resolve) => {
+    const readyIdPattern = /^gui-ready-\d+-\d+-[0-9a-f]{32}$/;
+    const deadline = Date.now() + 5000;
+    const sendFreshReady = () => {
+      const frameWindow = document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow;
+      const frameNonce = window.__yetAiCurrentFrameNonce;
+      if (frameWindow && typeof frameNonce === "string" && /^[0-9a-f]{32}$/.test(frameNonce)) {
+        window.dispatchEvent(new MessageEvent("message", {
+          data: {
+            version: bridgeVersion,
+            type: "gui.ready",
+            payload: { supportedBridgeVersion: bridgeVersion, frameNonce },
+          },
+          origin,
+          source: frameWindow,
+        }));
+      }
+      const readySequence = window.__yetAiGuiReadySequence ?? 0;
+      const currentRequestId = window.__yetAiCurrentReadyRequestId;
+      if (readySequence > sequenceBeforeReload && readyIdPattern.test(currentRequestId)) {
+        resolve({ readySequence, currentRequestId });
+        return;
+      }
+      if (Date.now() >= deadline) {
+        resolve({ readySequence, currentRequestId });
+        return;
+      }
+      window.setTimeout(sendFreshReady, 100);
+    };
+    sendFreshReady();
+  }), { bridgeVersion: version, origin: guiUrl, sequenceBeforeReload: afterReloadState.guiReadySequence });
+  if ((freshReadyState.readySequence ?? 0) <= afterReloadState.guiReadySequence) {
+    failures.push("Wrapper did not observe fresh gui.ready after reload.");
+  }
+  assertRandomReadyRequestId(freshReadyState.currentRequestId, "fresh gui.ready after reload");
   const staleDeliveredAfterFreshReady = await page.evaluate((beforeCount) => window.__yetAiHostMessagesPosted?.slice(beforeCount).some((message) => message?.requestId === "stale-before-fresh-ready"), beforeReloadCount);
   if (staleDeliveredAfterFreshReady) {
     failures.push("Wrapper delivered stale old-frame host.ready after fresh gui.ready following reload.");
