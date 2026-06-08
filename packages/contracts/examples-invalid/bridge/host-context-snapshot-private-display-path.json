@@ -1,0 +1,12 @@
+{
+  "version": "2026-05-15",
+  "type": "host.contextSnapshot",
+  "requestId": "bridge-context-private-path-001",
+  "payload": {
+    "kind": "active_editor",
+    "source": "vscode",
+    "file": {
+      "displayPath": "~/project/src/main.ts"
+    }
+  }
+}
