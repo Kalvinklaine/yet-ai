@@ -60,24 +60,7 @@ jobs:
       - name: Verify Gradle availability
         run: gradle --version
 
-      - name: IDE dogfood gate
+      - name: IDE dogfood closure gate
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"
           npm run smoke:ide-dogfood
-
-      - name: Cross-IDE preview gate
-        run: |
-          export PATH="$HOME/.cargo/bin:$PATH"
-          npm run smoke:ide-preview
-
-      - name: Repository validation
-        run: npm run check
-
-      - name: Clean tracked status
-        run: |
-          status="$(git status --short --untracked-files=no)"
-          if [ -n "$status" ]; then
-            printf '%s\n' "$status"
-            exit 1
-          fi
-          echo "Tracked git status is clean."

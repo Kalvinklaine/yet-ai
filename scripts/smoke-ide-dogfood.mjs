@@ -14,6 +14,8 @@ if (process.argv.includes("--check-git-status-only")) {
 const steps = [
   ["JetBrains Gradle tests", "gradle", ["test", "--console=plain"], "apps/plugins/jetbrains"],
   ["VS Code compile and engine connection checks", "npm", ["run", "compile"], "apps/plugins/vscode"],
+  ["Dogfood report template safety check", "npm", ["run", "dogfood:ide-report", "--", "--check-template"], "."],
+  ["Dogfood report helper self-test", "npm", ["run", "dogfood:ide-report", "--", "--self-test"], "."],
   ["Cross-IDE preview and first-message dogfood gate", "npm", ["run", "smoke:ide-preview"], "."],
   ["Repository check", "npm", ["run", "check"], "."],
 ];
@@ -25,7 +27,7 @@ for (const [label, command, args, cwd] of steps) {
 assertCleanTrackedGitStatus();
 
 console.log("\nIDE dogfood closure gate passed.");
-console.log("Verified local IDE dogfood checks fail-fast with clean tracked status and without real provider credentials, OpenAI/ChatGPT calls, hosted Yet AI services, real IDE launch, signing, publishing, or production release claims.");
+printFinalGuidance();
 
 function runStep(label, command, args, cwd) {
   const printable = [command, ...args].join(" ");
@@ -140,4 +142,15 @@ function signalExitCode(signal) {
     SIGINT: 130,
     SIGTERM: 143,
   }[signal] ?? 1;
+}
+
+function printFinalGuidance() {
+  console.log("Verified local/mock-only IDE dogfood checks fail-fast with clean tracked status.");
+  console.log("This gate does NOT launch real VS Code or JetBrains IDEs, use real provider credentials, call OpenAI/ChatGPT, contact hosted Yet AI services, sign or publish artifacts, or create a production release.");
+  console.log("\nNext manual dogfood steps:");
+  console.log("1. Download and install the generated VS Code/JetBrains dev-preview artifacts from the manual GitHub Actions artifact workflow, or use the local generated artifacts under dist/plugins/ after this gate.");
+  console.log("2. Keep the normal plugin-launched runtime path: VS Code launch mode `auto`; JetBrains `Launch mode` as `auto` or `launch`. Use `connect` only for an explicitly manual loopback runtime.");
+  console.log("3. Generate the safe report template with `npm run dogfood:ide-report -- --template` and validate any local report with `npm run dogfood:ide-report -- --check path/to/local-report.md` before sharing.");
+  console.log("4. Record only sanitized status labels, sanitized failure summaries, and `not run` values for untested items.");
+  console.log("5. Never include tokens, provider keys, bearer headers, auth codes, OAuth tokens, cookies, private paths, raw bridge payloads, request bodies, browser storage dumps, raw provider responses, raw prompts, file contents, or screenshots with secrets.");
 }

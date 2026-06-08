@@ -56,7 +56,7 @@ npm install
 
 GitHub Actions runs the Yet AI CI workflow for pull requests and pushes to `main`. It is validation-only: it lints `.github/workflows/*.yml` with actionlint, installs root, GUI, and VS Code dependencies with `npm ci`, uses Rust stable, and runs `npm run check`, `cargo check -p yet-lsp`, `cargo test -p yet-lsp`, GUI tests/build, and VS Code compile/engine-connection checks. CI uses local/mock-only checks and must not use secrets, real provider credentials, hosted Yet AI backend services, real IDE launch/JCEF automation, signing, marketplace publication, production installers, artifact release uploads, or real OpenAI/ChatGPT calls.
 
-The `Yet AI Manual IDE Dogfood` GitHub Actions workflow is `workflow_dispatch`-only for heavier opt-in validation. It bootstraps Node 20, Rust stable, Gradle, Playwright Chromium dependencies, and project-local root/GUI/VS Code installs, then runs `npm run smoke:ide-dogfood`, `npm run smoke:ide-preview`, `npm run check`, and a clean tracked-status assertion. This manual workflow is local-mock/dev-preview validation only: it must not use repository secrets, real provider credentials, OpenAI/ChatGPT calls, hosted Yet AI services, real IDE/JCEF automation, signing, release uploads, marketplace publication, production installers, or production release claims.
+The `Yet AI Manual IDE Dogfood` GitHub Actions workflow is `workflow_dispatch`-only for heavier opt-in validation. It bootstraps Node 20, Rust stable, Gradle, Playwright Chromium dependencies, and project-local root/GUI/VS Code installs, then runs `npm run smoke:ide-dogfood` as the single fail-fast closure gate. This manual workflow is local-mock/dev-preview validation only: it must not use repository secrets, real provider credentials, OpenAI/ChatGPT calls, hosted Yet AI services, real IDE/JCEF automation, signing, release uploads, marketplace publication, production installers, or production release claims.
 
 Run the local smoke test from the root to exercise the engine/provider/chat path without real provider credentials or hosted services:
 
@@ -222,7 +222,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 npm run smoke:ide-preview
 ```
 
-`npm run smoke:ide-preview` is the cross-IDE preview gate. `npm run smoke:ide-dogfood` is the broader fail-fast closure gate: it runs JetBrains Gradle tests, VS Code compile/engine checks, `smoke:ide-preview`, `npm run check`, and prints tracked status as the final labeled step so later steps cannot mask earlier failures.
+`npm run smoke:ide-preview` is the cross-IDE preview gate. `npm run smoke:ide-dogfood` is the broader fail-fast ready-to-manual-dogfood closure gate for local and the manual CI workflow: it runs JetBrains Gradle tests, VS Code compile/engine checks, `dogfood:ide-report -- --check-template`, `dogfood:ide-report -- --self-test`, `smoke:ide-preview`, `npm run check`, and prints tracked status as the final labeled step so later steps cannot mask earlier failures. When it passes, it prints the next manual install/report steps and explicitly confirms that the gate is local/mock-only: it does not launch real IDEs, use real provider credentials, call OpenAI/ChatGPT, contact hosted Yet AI services, sign/publish artifacts, or create a production release.
 
 `npm run smoke:ide-preview` runs these exact local commands in order:
 
@@ -331,10 +331,11 @@ Use the sanitized local report helper before recording manual cross-IDE evidence
 ```sh
 npm run dogfood:ide-report -- --template
 npm run dogfood:ide-report -- --check-template
+npm run dogfood:ide-report -- --self-test
 npm run dogfood:ide-report -- --check path/to/local-report.md
 ```
 
-The template includes VS Code and JetBrains fields for OS/arch, commit, artifact family, checksum status, install result, runtime launch mode, packaged GUI, runtime refresh, provider setup, active context, read-only IDE action, and first-message status. Leave untested items as `not run`. The helper writes nothing by default; if you redirect it to a file, keep that file local unless it contains only sanitized placeholders. Do not commit manual evidence reports that contain local results, machine details, or sanitized failure summaries without an explicit review.
+The template includes VS Code and JetBrains fields for OS/arch, commit, artifact family, checksum status, install result, runtime launch mode, packaged GUI, runtime refresh, provider setup, active context, read-only IDE action, and first-message status. Leave untested items as `not run`. The `--check-template` and `--self-test` modes are part of `npm run smoke:ide-dogfood` so the safe report helper cannot silently rot. The helper writes nothing by default; if you redirect it to a file, keep that file local unless it contains only sanitized placeholders. Do not commit manual evidence reports that contain local results, machine details, or sanitized failure summaries without an explicit review.
 
 Safe report evidence should include OS/IDE version, workflow run/commit, artifact family rather than a private local path, checksum/manifest status, install result, GUI/runtime/provider status, active-context or edit-proposal status, and first-message outcome. Do not include tokens, provider keys, bearer headers, auth codes, OAuth tokens, cookies, raw bridge payloads, request bodies, private paths, browser storage dumps, raw provider responses, raw prompts, file contents, or screenshots containing secrets. Run `npm run dogfood:ide-report -- --check path/to/local-report.md` before sharing or attaching a report.
 
