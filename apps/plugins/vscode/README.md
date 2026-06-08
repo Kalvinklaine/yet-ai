@@ -161,7 +161,14 @@ Manual verification checklist:
 - Read-only IDE action proposals require explicit user confirmation before running. `getContextSnapshot` returns metadata only, open/reveal actions are navigation only, and result metadata does not include raw file contents. Confirmed edit proposals are previewed and require explicit apply plus VS Code confirmation.
 - No shell, git, task, tool, autonomous edit, silent workspace mutation, or unconfirmed apply controls are present.
 
-Safe report template: include OS, VS Code version, workflow run/commit, VSIX path family, manifest/checksum status, install result, GUI/runtime/provider status, active-context/action/edit-proposal result if tested, and first-message outcome. Mark untested items as `not run`; do not imply production release status. Never include tokens, provider keys, bearer headers, auth codes, OAuth tokens, cookies, raw bridge payloads, request bodies, private paths, browser storage dumps, or screenshots containing secrets.
+Use the root sanitized report helper for manual evidence:
+
+```sh
+npm run dogfood:ide-report -- --template
+npm run dogfood:ide-report -- --check path/to/local-report.md
+```
+
+The generated cross-IDE template includes VS Code fields for install result, launch mode, packaged GUI, runtime refresh, provider setup, active context, read-only IDE action, and first-message status. Mark untested items as `not run`; do not imply production release status. The helper writes nothing by default. If you redirect a report to a file, keep manual/local evidence out of tracked files unless it has been explicitly reviewed as sanitized. Never include tokens, provider keys, bearer headers, auth codes, OAuth tokens, cookies, raw bridge payloads, request bodies, private paths, browser storage dumps, raw provider responses, raw prompts, file contents, or screenshots containing secrets.
 
 1. From the repository root, prepare and smoke-check the extension artifacts:
 

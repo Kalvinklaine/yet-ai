@@ -326,7 +326,17 @@ Manual verification checklist for installed artifacts:
 - If confirmed edit proposals are relevant, confirm preview plus explicit apply only; JetBrains remains preview-only for apply in this sprint.
 - Confirm there are no shell, git, task, tool, autonomous edit, silent workspace mutation, or unconfirmed apply controls.
 
-Safe report template: include OS/IDE version, workflow run/commit, artifact path family, checksum/manifest status, install result, GUI/runtime/provider status, active-context or edit-proposal status, and first-message outcome. Do not include tokens, provider keys, bearer headers, auth codes, OAuth tokens, cookies, raw bridge payloads, request bodies, private paths, browser storage dumps, or screenshots containing secrets.
+Use the sanitized local report helper before recording manual cross-IDE evidence:
+
+```sh
+npm run dogfood:ide-report -- --template
+npm run dogfood:ide-report -- --check-template
+npm run dogfood:ide-report -- --check path/to/local-report.md
+```
+
+The template includes VS Code and JetBrains fields for OS/arch, commit, artifact family, checksum status, install result, runtime launch mode, packaged GUI, runtime refresh, provider setup, active context, read-only IDE action, and first-message status. Leave untested items as `not run`. The helper writes nothing by default; if you redirect it to a file, keep that file local unless it contains only sanitized placeholders. Do not commit manual evidence reports that contain local results, machine details, or sanitized failure summaries without an explicit review.
+
+Safe report evidence should include OS/IDE version, workflow run/commit, artifact family rather than a private local path, checksum/manifest status, install result, GUI/runtime/provider status, active-context or edit-proposal status, and first-message outcome. Do not include tokens, provider keys, bearer headers, auth codes, OAuth tokens, cookies, raw bridge payloads, request bodies, private paths, browser storage dumps, raw provider responses, raw prompts, file contents, or screenshots containing secrets. Run `npm run dogfood:ide-report -- --check path/to/local-report.md` before sharing or attaching a report.
 
 Manual launch paths after preparation:
 

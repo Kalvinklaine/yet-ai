@@ -81,7 +81,14 @@ Manual verification checklist:
 - Safe read-only/navigation/context controlled actions (`getContextSnapshot`, `openWorkspaceFile`, and `revealWorkspaceRange`) run only after explicit GUI/user request and return correlated sanitized progress/results; confirmed edit proposals are preview-only and cannot be applied by JetBrains.
 - No shell, git, task, tool, autonomous edit, silent workspace mutation, or unconfirmed apply controls are present.
 
-Safe report template: include OS, IDE version, workflow run/commit, ZIP path family, manifest/checksum status, install result, GUI/runtime/provider status, active-context status if tested, and first-message outcome. Mark untested items as `not run`; do not imply production release status. Never include tokens, provider keys, bearer headers, auth codes, OAuth tokens, cookies, raw bridge payloads, request bodies, private paths, browser storage dumps, or screenshots containing secrets.
+Use the root sanitized report helper for manual evidence:
+
+```sh
+npm run dogfood:ide-report -- --template
+npm run dogfood:ide-report -- --check path/to/local-report.md
+```
+
+The generated cross-IDE template includes JetBrains fields for install result, launch mode, packaged GUI, runtime refresh, provider setup, active context, read-only IDE action, and first-message status. Mark untested items as `not run`; do not imply production release status. The helper writes nothing by default. If you redirect a report to a file, keep manual/local evidence out of tracked files unless it has been explicitly reviewed as sanitized. Never include tokens, provider keys, bearer headers, auth codes, OAuth tokens, cookies, raw bridge payloads, request bodies, private paths, browser storage dumps, raw provider responses, raw prompts, file contents, or screenshots containing secrets.
 
 Manual IntelliJ IDEA install-from-disk steps:
 
