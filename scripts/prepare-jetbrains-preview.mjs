@@ -21,6 +21,7 @@ function run(command, commandArgs, options = {}) {
     encoding: "utf8",
     stdio: ["inherit", "pipe", "pipe"],
     env: process.env,
+    shell: usesShell(command),
   });
   if (result.stdout) {
     process.stdout.write(result.stdout);
@@ -33,6 +34,10 @@ function run(command, commandArgs, options = {}) {
     console.error("Install Gradle/Cargo/Node prerequisites, or use an existing reviewed project wrapper if one is added later.");
     process.exit(1);
   }
+  if (result.error) {
+    const code = result.error.code ? ` (${result.error.code})` : "";
+    console.error(`Command spawn error${code}: ${result.error.message}`);
+  }
   if (result.status !== 0) {
     console.error(`Command failed with status ${result.status ?? "unknown"}${result.signal ? ` (signal ${result.signal})` : ""}: ${printable}`);
     if (options.diagnoseGradleFailure) {
@@ -40,6 +45,10 @@ function run(command, commandArgs, options = {}) {
     }
     process.exit(result.status ?? 1);
   }
+}
+
+function usesShell(command) {
+  return process.platform === "win32" && (command === "npm" || command === "gradle");
 }
 
 function printGradleFailureDiagnostic(output) {
@@ -85,6 +94,9 @@ function isExternalGradleDependencyFailure(output) {
 
 function platformCommand(command) {
   if (process.platform !== "win32") {
+    return command;
+  }
+  if (usesShell(command)) {
     return command;
   }
   return {
