@@ -21,6 +21,7 @@
     "smoke:gui-runtime-e2e": "node scripts/smoke-gui-runtime-e2e.mjs",
     "smoke:ide-preview": "node scripts/smoke-ide-preview.mjs",
     "smoke:ide-dogfood": "node scripts/smoke-ide-dogfood.mjs",
+    "dogfood:ide-report": "node scripts/ide-dogfood-report.mjs",
     "smoke:vscode-preview": "node scripts/smoke-vscode-preview.mjs",
     "smoke:vscode-wrapper-browser": "node scripts/smoke-vscode-wrapper-browser.mjs",
     "smoke:vscode-installable": "node scripts/smoke-vscode-installable.mjs",
