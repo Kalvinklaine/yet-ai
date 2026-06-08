@@ -383,6 +383,7 @@ Notes:
 ## Current limitations
 
 - The plugin shell is a dev-preview MVP, not production-ready.
+- JetBrains read-only LSP is an explicit experimental local-only toggle, off by default, with no provider calls, no edits, and no production completion claim.
 - No marketplace packaging, signed/notarized engine bundle, or production installer is complete.
 - The local launcher is an MVP: it sets token and HTTP port environment variables only, reads `/v1/ping`, and does not add LSP/completion wiring. JetBrains LSP client wiring is explicitly deferred for this sprint until the IntelliJ API path, stdio lifecycle, document bounds, URI policy, diagnostics, and smoke coverage are designed and verified.
 - The bridge accepts `gui.ready` plus strict read-only `gui.ideActionRequest` messages for `getContextSnapshot`, `openWorkspaceFile`, and `revealWorkspaceRange`, and emits `host.ready`, `host.openedFromCommand`, non-privileged active editor/selection `host.contextSnapshot`, and correlated sanitized `host.ideActionProgress` / `host.ideActionResult` messages. Browser fallback remains non-executing, and VS Code remains the only confirmed workspace edit apply host.

@@ -14,6 +14,7 @@ class YetSettingsState : PersistentStateComponent<YetSettingsState.State> {
         var guiDevUrl: String = "",
         var launchMode: String = "auto",
         var engineBinaryPath: String = "",
+        var lspEnabled: Boolean = false,
     )
 
     private var state = State()
