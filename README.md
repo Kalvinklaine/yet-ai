@@ -276,11 +276,11 @@ All generated VSIX/ZIP files, `.sha256` files, packaged GUI assets, copied engin
 
 ### GitHub Actions IDE artifact download and install
 
-The `Yet AI IDE Artifacts` workflow (`.github/workflows/ide-artifacts.yml`) builds split dev-preview IDE artifacts in GitHub Actions. This workflow is local/mock-only validation and upload for manual download: it does not publish, sign, notarize, release, upload to a marketplace, call real providers, require provider credentials, or contact a hosted Yet AI backend.
+The `Yet AI IDE Artifacts` workflow (`.github/workflows/ide-artifacts.yml`) builds split dev-preview IDE artifacts in GitHub Actions. Before artifact upload, CI validates the staged artifacts and starts the JetBrains bundled runtime extracted from the built artifact, verifies authenticated `/v1/ping` on loopback, and stops it without launching IntelliJ. This workflow is local/mock-only validation and upload for manual download: it does not publish, sign, notarize, release, upload to a marketplace, call real providers, require provider credentials, or contact a hosted Yet AI backend.
 
 Open GitHub Actions, choose the `Yet AI IDE Artifacts` workflow, and select a successful run for the commit you want to test. The workflow builds per-platform dev-preview artifacts in a `linux-x64` / `macos-arm64` / `windows-x64` matrix because the JetBrains plugin JAR bundles a native `yet-lsp` runtime staged from the local cargo build output (not a signed or notarized production engine). Download the artifact whose `<os>-<arch>` suffix matches your local OS/architecture; mixing platforms will fail because the plugin JAR contains a platform-specific native binary.
 
-Public artifact names are exactly 7 total: three `yet-ai-vscode-unzip-first-<os>-<arch>-<sha>` artifacts, three `yet-ai-jetbrains-install-direct-<os>-<arch>-<sha>` artifacts, and one `yet-ai-plugin-manifest-<sha>` combined manifest. To print the sanitized expected public artifact list for a commit without private paths or release/signing claims, run:
+Public artifact names are exactly 7 total: three `yet-ai-vscode-unzip-first-<os>-<arch>-<sha>` artifacts, three `yet-ai-jetbrains-install-direct-<os>-<arch>-<sha>` artifacts, and one `yet-ai-plugin-manifest-<sha>` combined manifest. CI writes the same expected public list to the GitHub Step Summary with `artifact:github-summary`; this summary does not add uploaded artifacts. To print the sanitized expected public artifact list for a commit without private paths or release/signing claims, run:
 
 ```sh
 npm run artifact:github-summary -- --sha <sha>

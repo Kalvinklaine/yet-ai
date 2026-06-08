@@ -55,6 +55,15 @@ assert(combineJob !== undefined, "Workflow must include combine-manifests job.")
 if (buildJob !== undefined) {
   const names = uploadArtifactNames(buildJob);
   assertSetEquals(names, matrixUploadNames, "Matrix job upload artifact names must be only the VS Code unzip-first and JetBrains direct-install public families.");
+  assert(buildJob.includes("npm run smoke:jetbrains-bundled-runtime"), "Build job must run npm run smoke:jetbrains-bundled-runtime before uploading artifacts.");
+  assert(buildJob.includes("artifact:github-summary"), "Build job must write the expected public artifact summary with artifact:github-summary.");
+  const firstUploadIndex = buildJob.indexOf("uses: actions/upload-artifact@v4");
+  const bundledSmokeIndex = buildJob.indexOf("npm run smoke:jetbrains-bundled-runtime");
+  const summaryIndex = buildJob.indexOf("artifact:github-summary");
+  if (firstUploadIndex !== -1) {
+    assert(bundledSmokeIndex !== -1 && bundledSmokeIndex < firstUploadIndex, "JetBrains bundled runtime startup smoke must run before matrix artifact uploads.");
+    assert(summaryIndex !== -1 && summaryIndex < firstUploadIndex, "Expected public artifact summary must be generated before matrix artifact uploads.");
+  }
 }
 if (combineJob !== undefined) {
   const names = uploadArtifactNames(combineJob);
