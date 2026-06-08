@@ -5,6 +5,9 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = parseArgs(process.argv.slice(2));
+const allowedKinds = new Set(["vscode", "jetbrains"]);
+const allowedOs = new Set(["linux", "macos", "windows"]);
+const allowedArch = new Set(["x64", "arm64", "x86", "arm"]);
 
 if (args.input === undefined || args.output === undefined) {
   console.error("Usage: combine-plugin-artifact-manifests.mjs --input <per-platform-dir> --output <combined-manifest.json>");
@@ -40,16 +43,45 @@ try {
       }
     }
     const platform = parsed?.platform;
-    if (platform === undefined) {
+    if (platform === undefined || typeof platform !== "object") {
       throw new Error(`${path.relative(root, filePath)} is missing a top-level platform object.`);
     }
+    if (!allowedOs.has(platform.os) || !allowedArch.has(platform.arch)) {
+      throw new Error(`${path.relative(root, filePath)} has unsupported platform metadata; expected bounded linux/macos/windows and x64/arm64/x86/arm values.`);
+    }
+    const runtime = parsed?.runtime;
+    if (runtime === undefined || typeof runtime !== "object" || !isBoundedPath(runtime.bundledEngineResource, "yet-ai-engine/")) {
+      throw new Error(`${path.relative(root, filePath)} is missing bounded runtime.bundledEngineResource metadata under yet-ai-engine/.`);
+    }
     const artifacts = Array.isArray(parsed?.artifacts) ? parsed.artifacts : [];
-    if (artifacts.length === 0) {
-      throw new Error(`${path.relative(root, filePath)} contains no artifacts.`);
+    if (artifacts.length !== 2) {
+      throw new Error(`${path.relative(root, filePath)} must contain exactly two artifacts: one vscode and one jetbrains.`);
+    }
+    const kinds = new Set();
+    for (const artifact of artifacts) {
+      if (!allowedKinds.has(artifact?.kind)) {
+        throw new Error(`${path.relative(root, filePath)} contains an unsupported artifact kind.`);
+      }
+      kinds.add(artifact.kind);
+      if (artifact.os !== platform.os || artifact.arch !== platform.arch) {
+        throw new Error(`${path.relative(root, filePath)} artifact platform metadata must match the top-level platform.`);
+      }
+      if (!isBoundedPath(artifact.path, `dist/plugins/${artifact.kind}/`) || artifact.sha256Path !== `${artifact.path}.sha256` || !/^[a-f0-9]{64}$/i.test(artifact.sha256 ?? "")) {
+        throw new Error(`${path.relative(root, filePath)} artifact entries must include bounded path, sha256Path, and SHA-256 digest metadata.`);
+      }
+      if (artifact.kind === "jetbrains" && artifact.bundledEngineResource !== runtime.bundledEngineResource) {
+        throw new Error(`${path.relative(root, filePath)} JetBrains artifact must carry bundledEngineResource matching runtime metadata.`);
+      }
+      if (artifact.kind === "vscode" && Object.hasOwn(artifact, "bundledEngineResource")) {
+        throw new Error(`${path.relative(root, filePath)} VS Code artifact must not carry JetBrains bundledEngineResource metadata.`);
+      }
+    }
+    if (!kinds.has("vscode") || !kinds.has("jetbrains")) {
+      throw new Error(`${path.relative(root, filePath)} must contain one vscode and one jetbrains artifact entry.`);
     }
     perPlatform.push({
       platform,
-      runtime: parsed?.runtime,
+      runtime,
       artifacts,
     });
   }
@@ -72,6 +104,13 @@ try {
 } catch (error) {
   console.error(`Combine plugin artifact manifest failed: ${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);
+}
+
+function isBoundedPath(value, prefix) {
+  if (typeof value !== "string" || !value.startsWith(prefix) || value.includes("\\") || path.posix.isAbsolute(value) || path.win32.isAbsolute(value) || /^[A-Za-z]:/.test(value)) {
+    return false;
+  }
+  return value.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
 async function findManifestFiles(inputDir) {

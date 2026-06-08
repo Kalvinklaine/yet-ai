@@ -14,6 +14,10 @@ const jetbrainsInstallDirectDir = path.join(artifactsRoot, "jetbrains-install-di
 const manifestStageDir = path.join(artifactsRoot, "manifest");
 const archiveInspectMaxBuffer = 128 * 1024 * 1024;
 const failures = [];
+const expectedArtifactStageDirs = new Set(["vscode-unzip-first", "jetbrains-unzip-first", "jetbrains-install-direct", "manifest"]);
+const allowedManifestKinds = new Set(["vscode", "jetbrains"]);
+const allowedManifestOs = new Set(["linux", "macos", "windows"]);
+const allowedManifestArch = new Set(["x64", "arm64", "x86", "arm"]);
 const identity = JSON.parse(await readFile(path.join(root, "product", "identity.json"), "utf8"));
 const binaryFileName = process.platform === "win32" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
 const bundledEngineResourcePath = `yet-ai-engine/${binaryFileName}`;
@@ -44,11 +48,13 @@ console.log("No provider credentials, IDE launch, hosted backend, marketplace pu
 async function checkVscodeUnzipFirst() {
   await requireDirectory(vscodeStageDir, "VS Code unzip-first staging folder");
   const vsixPath = await requireSingleFileWithExtension(vscodeStageDir, ".vsix", "VS Code unzip-first staging folder");
+  await requireOnlyArtifactFamilyFiles(vscodeStageDir, [path.basename(vsixPath ?? ""), path.basename(vsixPath === undefined ? "" : `${vsixPath}.sha256`), "README-INSTALL.txt"].filter(Boolean), "VS Code unzip-first artifact");
   if (vsixPath !== undefined) {
     await checkChecksum(vsixPath);
   }
   const readme = await readRequiredText(path.join(vscodeStageDir, "README-INSTALL.txt"), "VS Code unzip-first README-INSTALL.txt");
   if (readme !== undefined) {
+    requireNoSensitiveText(readme, `${relative(vscodeStageDir)}/README-INSTALL.txt`);
     requireText(readme, /do not install the downloaded github artifact zip directly/i, `${relative(vscodeStageDir)}/README-INSTALL.txt must warn not to install the downloaded GitHub artifact ZIP directly.`);
     requireText(readme, /unzip/i, `${relative(vscodeStageDir)}/README-INSTALL.txt must tell users to unzip the GitHub artifact first.`);
     requireText(readme, /code --install-extension\s+\S+\.vsix\s+--force/i, `${relative(vscodeStageDir)}/README-INSTALL.txt must show code --install-extension <path-to-vsix> --force for the inner VSIX.`);
@@ -60,12 +66,14 @@ async function checkVscodeUnzipFirst() {
 async function checkJetBrainsUnzipFirst() {
   await requireDirectory(jetbrainsUnzipFirstDir, "JetBrains unzip-first staging folder");
   const zipPath = await requireSingleFileWithExtension(jetbrainsUnzipFirstDir, ".zip", "JetBrains unzip-first staging folder");
+  await requireOnlyArtifactFamilyFiles(jetbrainsUnzipFirstDir, [path.basename(zipPath ?? ""), path.basename(zipPath === undefined ? "" : `${zipPath}.sha256`), "README-INSTALL.txt"].filter(Boolean), "JetBrains unzip-first artifact");
   if (zipPath !== undefined) {
     await checkChecksum(zipPath);
     await checkJetBrainsZip(zipPath, `${relative(zipPath)} inner plugin ZIP`);
   }
   const readme = await readRequiredText(path.join(jetbrainsUnzipFirstDir, "README-INSTALL.txt"), "JetBrains unzip-first README-INSTALL.txt");
   if (readme !== undefined) {
+    requireNoSensitiveText(readme, `${relative(jetbrainsUnzipFirstDir)}/README-INSTALL.txt`);
     requireText(readme, /platform|os\/arch|linux|macos|windows/i, `${relative(jetbrainsUnzipFirstDir)}/README-INSTALL.txt must mention the OS/architecture platform this artifact was built for.`);
     requireText(readme, /bundled.*runtime|native.*runtime|cargo build|dev-preview local build output|not a signed/i, `${relative(jetbrainsUnzipFirstDir)}/README-INSTALL.txt must mention the bundled native engine runtime and clarify it is the local dev-preview cargo build output, not a signed production engine.`);
   }
@@ -84,6 +92,11 @@ async function checkJetBrainsDirectInstall() {
   await collectFilesMatching(jetbrainsInstallDirectDir, forbiddenFiles, (entry) => isForbiddenDirectInstallFile(entry.name));
   if (forbiddenFiles.length > 0) {
     failures.push(`${relative(jetbrainsInstallDirectDir)} must contain installable JetBrains distribution contents only; found metadata/readme/checksum file(s): ${forbiddenFiles.map(relative).join(", ")}.`);
+  }
+  const mixedFiles = [];
+  await collectFilesMatching(jetbrainsInstallDirectDir, mixedFiles, (entry) => entry.name.endsWith(".vsix"));
+  if (mixedFiles.length > 0) {
+    failures.push(`${relative(jetbrainsInstallDirectDir)} must not contain VS Code artifacts; found ${mixedFiles.length} VSIX file(s).`);
   }
 
   const directZipPath = await createZipFromDirectoryContents(jetbrainsInstallDirectDir, "yet-ai-github-jetbrains-direct-");
@@ -104,6 +117,7 @@ async function checkManifest() {
   if (manifestText === undefined) {
     return;
   }
+  requireNoSensitiveText(manifestText, relative(manifestPath));
   let manifest;
   try {
     manifest = JSON.parse(manifestText);
@@ -113,6 +127,14 @@ async function checkManifest() {
   }
   const artifacts = Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
   const kinds = new Set(artifacts.map((artifact) => artifact?.kind).filter((kind) => typeof kind === "string"));
+  if (artifacts.length !== 2) {
+    failures.push(`${relative(manifestPath)} must contain exactly two artifact entries: one vscode and one jetbrains.`);
+  }
+  for (const kind of kinds) {
+    if (!allowedManifestKinds.has(kind)) {
+      failures.push(`${relative(manifestPath)} contains unsupported artifact kind ${JSON.stringify(kind)}; expected only vscode and jetbrains.`);
+    }
+  }
   if (!kinds.has("vscode")) {
     failures.push(`${relative(manifestPath)} must contain a vscode artifact entry.`);
   }
@@ -124,10 +146,10 @@ async function checkManifest() {
   if (platform === undefined || typeof platform !== "object") {
     failures.push(`${relative(manifestPath)} must include a top-level "platform" object identifying the runner OS/architecture.`);
   } else {
-    if (typeof platform.os !== "string" || !["linux", "macos", "windows"].includes(platform.os)) {
+    if (typeof platform.os !== "string" || !allowedManifestOs.has(platform.os)) {
       failures.push(`${relative(manifestPath)} platform.os must be a normalized runner OS string (linux|macos|windows); got ${JSON.stringify(platform?.os)}.`);
     }
-    if (typeof platform.arch !== "string" || !["x64", "arm64", "x86", "arm"].includes(platform.arch)) {
+    if (typeof platform.arch !== "string" || !allowedManifestArch.has(platform.arch)) {
       failures.push(`${relative(manifestPath)} platform.arch must be a normalized runner architecture string (x64|arm64|x86|arm); got ${JSON.stringify(platform?.arch)}.`);
     }
   }
@@ -138,7 +160,7 @@ async function checkManifest() {
   } else {
     if (typeof runtime.bundledEngineResource !== "string" || runtime.bundledEngineResource.length === 0) {
       failures.push(`${relative(manifestPath)} runtime.bundledEngineResource must be a non-empty string path under yet-ai-engine/.`);
-    } else if (!/^yet-ai-engine\//.test(runtime.bundledEngineResource)) {
+    } else if (!isBoundedResourcePath(runtime.bundledEngineResource, "yet-ai-engine/")) {
       failures.push(`${relative(manifestPath)} runtime.bundledEngineResource must live under yet-ai-engine/; got ${JSON.stringify(runtime.bundledEngineResource)}.`);
     }
     if (typeof runtime.engineBinaryName !== "string" || runtime.engineBinaryName.length === 0) {
@@ -148,15 +170,31 @@ async function checkManifest() {
 
   for (const artifact of artifacts) {
     if (typeof artifact?.path !== "string") {
+      failures.push(`${relative(manifestPath)} every artifact entry must include a relative artifact path.`);
       continue;
     }
-    if (typeof artifact.os !== "string" || artifact.os.length === 0) {
+    if (!allowedManifestKinds.has(artifact.kind)) {
+      continue;
+    }
+    if (!isBoundedResourcePath(artifact.path, `dist/plugins/${artifact.kind}/`)) {
+      failures.push(`${relative(manifestPath)} ${artifact.kind} artifact path must stay under dist/plugins/${artifact.kind}/ and use POSIX relative paths.`);
+    }
+    if (typeof artifact.sha256Path !== "string" || artifact.sha256Path !== `${artifact.path}.sha256`) {
+      failures.push(`${relative(manifestPath)} artifact ${artifact.path} must include sha256Path matching path + .sha256.`);
+    }
+    if (typeof artifact.sha256 !== "string" || !/^[a-f0-9]{64}$/i.test(artifact.sha256)) {
+      failures.push(`${relative(manifestPath)} artifact ${artifact.path} must include a SHA-256 digest.`);
+    }
+    if (typeof artifact.os !== "string" || !allowedManifestOs.has(artifact.os) || artifact.os !== platform?.os) {
       failures.push(`${relative(manifestPath)} artifact ${artifact.path} must include "os" matching the runner OS.`);
     }
-    if (typeof artifact.arch !== "string" || artifact.arch.length === 0) {
+    if (typeof artifact.arch !== "string" || !allowedManifestArch.has(artifact.arch) || artifact.arch !== platform?.arch) {
       failures.push(`${relative(manifestPath)} artifact ${artifact.path} must include "arch" matching the runner architecture.`);
     }
-    if (artifact.kind === "jetbrains" && (typeof artifact.bundledEngineResource !== "string" || !/^yet-ai-engine\//.test(artifact.bundledEngineResource))) {
+    if (artifact.kind === "vscode" && Object.hasOwn(artifact, "bundledEngineResource")) {
+      failures.push(`${relative(manifestPath)} vscode artifact ${artifact.path} must not include JetBrains bundledEngineResource metadata.`);
+    }
+    if (artifact.kind === "jetbrains" && (typeof artifact.bundledEngineResource !== "string" || !isBoundedResourcePath(artifact.bundledEngineResource, "yet-ai-engine/") || artifact.bundledEngineResource !== runtime?.bundledEngineResource)) {
       failures.push(`${relative(manifestPath)} jetbrains artifact ${artifact.path} must include "bundledEngineResource" under yet-ai-engine/ describing the bundled native runtime.`);
     }
   }
@@ -165,6 +203,11 @@ async function checkManifest() {
 async function checkArtifactsRootRegressionGuards() {
   await requireDirectory(artifactsRoot, "GitHub artifact staging root");
   const rootEntries = await readdir(artifactsRoot).catch(() => []);
+  for (const entry of rootEntries) {
+    if (!expectedArtifactStageDirs.has(entry)) {
+      failures.push(`${relative(artifactsRoot)} must contain only expected artifact family folders (${[...expectedArtifactStageDirs].join(", ")}); found unexpected entry ${JSON.stringify(entry)}.`);
+    }
+  }
   const hasTopLevelVsix = rootEntries.some((entry) => entry.endsWith(".vsix"));
   const hasTopLevelPluginZip = rootEntries.some((entry) => entry.endsWith(".zip"));
   if (hasTopLevelVsix && hasTopLevelPluginZip) {
@@ -217,11 +260,7 @@ async function checkJetBrainsZip(zipPath, label) {
   if (entries === undefined) {
     return;
   }
-  for (const entry of entries) {
-    if (!isSafeArchiveEntryPath(entry)) {
-      failures.push(`${label} contains unsafe ZIP entry path ${JSON.stringify(entry)}.`);
-    }
-  }
+  validateArchiveEntries(entries, label);
 
   const pluginJarEntry = entries.find((entry) => entry.endsWith(".jar") && entry.includes("/lib/yet-ai-jetbrains-") && !entry.includes("searchableOptions"));
   if (pluginJarEntry === undefined) {
@@ -238,11 +277,7 @@ async function checkJetBrainsZip(zipPath, label) {
     if (jarEntries === undefined) {
       return;
     }
-    for (const entry of jarEntries) {
-      if (!isSafeArchiveEntryPath(entry)) {
-        failures.push(`${label} plugin JAR contains unsafe entry path ${JSON.stringify(entry)}.`);
-      }
-    }
+    validateArchiveEntries(jarEntries, `${label} plugin JAR`);
     requireArchiveEntry(jarEntries, "META-INF/plugin.xml", `${label} plugin JAR must contain META-INF/plugin.xml so JetBrains can load the plugin descriptor.`);
     requireArchiveEntry(jarEntries, "yet-ai-gui/index.html", `${label} plugin JAR must contain packaged GUI resources at yet-ai-gui/index.html.`);
     const indexHtml = await extractArchiveEntryText(pluginJar, "yet-ai-gui/index.html", `${label} plugin JAR must allow reading yet-ai-gui/index.html.`);
@@ -277,7 +312,16 @@ async function createZipFromDirectoryContents(directory, tempPrefix) {
 
 async function requireDirectory(directory, label) {
   if (!await isDirectory(directory)) {
-    failures.push(`Missing ${label}: ${relative(directory)}.`);
+    failures.push(`Missing ${label}: ${relative(directory)}. Run \`npm run prepare:vscode-preview && npm run prepare:jetbrains-preview && npm run artifact:manifest -- --require vscode,jetbrains && npm run artifact:stage-github\` from the repository root to rebuild staged GitHub artifacts.`);
+  }
+}
+
+async function requireOnlyArtifactFamilyFiles(directory, allowedNames, label) {
+  const allowed = new Set(allowedNames);
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+  const unexpected = entries.filter((entry) => entry.isFile() && !allowed.has(entry.name)).map((entry) => entry.name);
+  if (unexpected.length > 0) {
+    failures.push(`${relative(directory)} for ${label} contains unexpected top-level file(s): ${unexpected.sort().join(", ")}.`);
   }
 }
 
@@ -332,6 +376,19 @@ function requireText(text, pattern, message) {
   }
 }
 
+function requireNoSensitiveText(text, label) {
+  const patterns = [
+    /\/Users\/[A-Za-z0-9._-]+\//,
+    /\b(?:[A-Za-z]:\\|\\\\)[^\s"']+/,
+    /\bBearer\s+[A-Za-z0-9._~+/=-]+/i,
+    /\b(?:access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|secret|cookie|authorization|auth[_-]?code)\b\s*[:=]/i,
+    /[?&#](?:access_token|refresh_token|id_token|api_key|key|token|code|secret|cookie)=/i,
+  ];
+  if (patterns.some((pattern) => pattern.test(text))) {
+    failures.push(`${label} must not contain private absolute paths, credentials, bearer headers, cookies, auth codes, API keys, or URL query/fragment secrets.`);
+  }
+}
+
 async function collectFilesMatching(directory, results, predicate) {
   const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
   for (const entry of entries) {
@@ -346,7 +403,22 @@ async function collectFilesMatching(directory, results, predicate) {
 
 function isForbiddenDirectInstallFile(name) {
   const lower = name.toLowerCase();
-  return lower === "readme-install.txt" || lower === "manifest.json" || lower.endsWith(".sha256");
+  return lower === "readme-install.txt" || lower === "manifest.json" || lower.endsWith(".sha256") || lower === ".ds_store" || lower === "__macosx";
+}
+
+function validateArchiveEntries(entries, label) {
+  const seen = new Set();
+  for (const entry of entries) {
+    if (!isSafeArchiveEntryPath(entry)) {
+      failures.push(`${label} contains unsafe ZIP/JAR entry path; entries must be non-empty POSIX relative paths without traversal, backslashes, absolute prefixes, or macOS metadata.`);
+      continue;
+    }
+    const key = entry.replace(/\/+$|^\.\//g, "").toLowerCase();
+    if (seen.has(key)) {
+      failures.push(`${label} contains duplicate archive entry path after normalization.`);
+    }
+    seen.add(key);
+  }
 }
 
 async function listArchiveEntries(archivePath) {
@@ -489,8 +561,15 @@ function toLocalAssetPath(value) {
   return normalized;
 }
 
+function isBoundedResourcePath(value, prefix) {
+  return typeof value === "string" && value.startsWith(prefix) && isSafeArchiveEntryPath(value);
+}
+
 function isSafeArchiveEntryPath(entry) {
   if (typeof entry !== "string" || entry.length === 0) {
+    return false;
+  }
+  if (entry.includes("\\")) {
     return false;
   }
   if (path.posix.isAbsolute(entry) || path.win32.isAbsolute(entry) || /^[A-Za-z]:/.test(entry)) {
@@ -501,6 +580,9 @@ function isSafeArchiveEntryPath(entry) {
     return false;
   }
   const segments = normalized.split("/");
+  if (segments.some((segment) => segment === "__MACOSX" || segment === ".DS_Store")) {
+    return false;
+  }
   return segments.every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
