@@ -206,6 +206,25 @@ async fn demo_mode_api_models_and_chat_stream_local_history() {
     assert!(stream_content.contains("language=typescript"));
     assert!(!stream_content.contains("secret selected source"));
 
+    let assistant_message_added_index = events
+        .iter()
+        .position(|event| {
+            event["type"] == "message_added"
+                && event["payload"]["message"]["role"] == "assistant"
+                && event["payload"]["message"]["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains("Hello from Yet AI Demo Mode"))
+        })
+        .expect("assistant message_added SSE event");
+    let stream_finished_index = events
+        .iter()
+        .position(|event| event["type"] == "stream_finished")
+        .expect("stream_finished SSE event");
+    assert!(assistant_message_added_index < stream_finished_index);
+    assert!(!events.iter().any(|event| {
+        event["type"] == "message_added" && event["payload"]["message"]["role"] == "user"
+    }));
+
     let thread = wait_for_chat_messages(app.clone(), "chat-001", 2).await;
     assert!(thread["messages"]
         .as_array()

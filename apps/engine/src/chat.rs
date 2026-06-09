@@ -366,8 +366,14 @@ impl ChatRuntime {
         {
             return false;
         }
-        let _ =
-            chat_history::append_message(config_dir, chat_id, role, content, Some(status)).await;
+        if let Ok(message) =
+            chat_history::append_message(config_dir, chat_id, role, content, Some(status)).await
+        {
+            if message.role == ChatMessageRole::Assistant {
+                self.push_terminal_event(chat_id, "message_added", json!({ "message": message }))
+                    .await;
+            }
+        }
         self.push_terminal_event(chat_id, event_type, payload).await;
         true
     }
