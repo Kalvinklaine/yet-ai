@@ -240,6 +240,18 @@ try {
   if (runtimeInputValue !== runtimeBaseUrl) {
     failures.push("Iframe GUI did not apply wrapper host.ready runtime settings.");
   }
+  const sessionTokenInputMetadata = await frameLocator.locator('input[type="password"]').first().evaluate((input) => ({ autocomplete: input.autocomplete, placeholder: input.placeholder })).catch(() => undefined);
+  if (sessionTokenInputMetadata?.autocomplete !== "off") {
+    failures.push("Runtime Session token input did not disable browser autocomplete in the JetBrains wrapper GUI.");
+  }
+  const deliveredHostReady = await page.evaluate((readyUrl) => window.__yetAiHostMessagesPosted?.some((message) => message?.type === "host.ready" && message?.payload?.runtimeUrl === readyUrl), runtimeBaseUrl);
+  if (!deliveredHostReady) {
+    failures.push("Wrapper did not deliver trusted host.ready runtime bootstrap to the GUI iframe.");
+  }
+  const bridgeIdentityVisible = await frameLocator.getByText("bridge jetbrains", { exact: true }).first().isVisible({ timeout: 5000 }).catch(() => false);
+  if (!bridgeIdentityVisible) {
+    failures.push("GUI did not expose JetBrains host identity / bridge mode after wrapper bootstrap.");
+  }
   await assertSingleBackslashContextPathRejected(page, bridgeVersion, activeReadyRequestId);
   await page.evaluate(({ version, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
@@ -322,6 +334,8 @@ try {
   await assertReloadRequiresFreshGuiReady(page, bridgeVersion, guiBaseUrl, runtimeBaseUrl, runtimeToken);
   await resendCurrentHostReadyAndWaitForRuntimeInput(page, frameLocator, bridgeVersion, runtimeBaseUrl, runtimeToken);
 
+  await frameLocator.getByText("Runtime connected", { exact: false }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("Runtime refresh did not reach connected/provider-required state after trusted host.ready."));
+  await frameLocator.getByText("Provider setup", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("Provider setup panel was not visible in the JetBrains first-use GUI path."));
   await frameLocator.getByText("State: Experimental OpenAI account / gpt-5-codex", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not use host.ready runtime endpoints to enter connected experimental readiness."));
 
   const refreshButton = frameLocator.getByRole("button", { name: "Refresh runtime" }).first();
