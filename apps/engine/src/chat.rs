@@ -30,7 +30,6 @@ struct ChatState {
     sender: broadcast::Sender<ChatEvent>,
     active_stream: Option<ActiveStream>,
     next_stream_id: u64,
-    terminal_replay_pending: bool,
 }
 
 #[derive(Debug)]
@@ -203,26 +202,26 @@ impl ChatRuntime {
             let state = guard
                 .entry(chat_id.clone())
                 .or_insert_with(|| ChatState::new(&chat_id));
+            state.prune_replay_events_if_terminal();
             let replay = state.events.clone();
-            if state.terminal_replay_pending && state.active_stream.is_none() {
-                state.events.clear();
-                state.terminal_replay_pending = false;
-            }
             (snapshot, replay, state.sender.subscribe())
         };
         let snapshot_stream = futures_util::stream::once(async move { Ok(to_sse_event(snapshot)) });
-        let replay_stream = futures_util::stream::iter(
-            replay
-                .into_iter()
-                .map(|event| Ok::<Event, Infallible>(to_sse_event(event))),
-        );
+        let replay_stream = futures_util::stream::iter(replay.into_iter().map(Ok::<_, Infallible>));
         let live_stream = BroadcastStream::new(receiver).filter_map(|event| async move {
             match event {
-                Ok(event) => Some(Ok(to_sse_event(event))),
+                Ok(event) => Some(Ok(event)),
                 Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(_)) => None,
             }
         });
-        snapshot_stream.chain(replay_stream).chain(live_stream)
+        let event_stream = replay_stream.chain(live_stream).scan(1_u64, |next_seq, event| {
+            let Ok(mut event) = event;
+            let seq = *next_seq;
+            *next_seq += 1;
+            event.seq = seq;
+            futures_util::future::ready(Some(Ok(to_sse_event(event))))
+        });
+        snapshot_stream.chain(event_stream)
     }
 
     async fn push_stream_event(
@@ -689,7 +688,6 @@ impl ChatState {
             sender,
             active_stream: None,
             next_stream_id: 1,
-            terminal_replay_pending: false,
         }
     }
 
@@ -707,7 +705,7 @@ impl ChatState {
 
     fn prune_replay_events_if_terminal(&mut self) {
         if self.active_stream.is_none() {
-            self.terminal_replay_pending = true;
+            self.events.clear();
         }
     }
 }
