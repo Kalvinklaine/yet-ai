@@ -39,14 +39,16 @@ try {
 
   await page.goto(`http://127.0.0.1:${guiServer.port}/index.html`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
-  await page.getByLabel("Runtime base URL").fill(`http://127.0.0.1:${runtimeServer.port}`);
+  await openDetailsBySummary(page, "Local runtime connection", page.getByRole("textbox", { name: "Session token", exact: true }));
   await page.getByRole("textbox", { name: "Session token", exact: true }).fill(runtimeToken);
+  await page.getByLabel("Runtime base URL").fill(`http://127.0.0.1:${runtimeServer.port}`);
+  await openDetailsBySummary(page, "Local runtime connection", page.getByRole("button", { name: "Refresh runtime" }).last());
   await page.getByRole("button", { name: "Refresh runtime" }).last().click();
 
   await expectVisibleText(page, "Runtime connected", "runtime connected");
   await expectVisibleText(page, "Try Demo Mode", "demo-mode offer");
   await page.getByRole("button", { name: "Try Demo Mode" }).first().click();
-  await expectVisibleText(page, "Demo Mode is enabled in the local runtime", "demo enabled status");
+  await expectVisibleText(page, "Demo Mode is active in the local runtime", "demo enabled status");
   await expectVisibleText(page, "Ready to send using Yet AI Demo Chat.", "demo readiness");
 
   const prompt = "Hello local demo mode smoke.";
@@ -55,6 +57,11 @@ try {
   await expectVisibleText(page, prompt, "visible user prompt");
   await expectVisibleText(page, "Hello from Yet AI Demo Mode", "demo assistant response");
   await expectVisibleText(page, "no provider call was made", "demo no-provider copy");
+  await expectVisibleText(page, "Demo Mode ready", "post-response demo ready status");
+  await expectVisibleText(page, "Ready to send", "post-response ready-to-send status");
+  const postResponseBody = await page.evaluate(() => document.body.innerText);
+  assert(!postResponseBody.includes("Ready when the local runtime and provider model are ready"), "post-response body still shows stale provider-ready waiting copy");
+  assert(!postResponseBody.includes("Waiting for engine"), "post-response body still shows stale engine waiting copy");
 
   await page.getByRole("button", { name: "Disable Demo Mode" }).first().click();
   await expectVisibleText(page, "Try Demo Mode", "demo disabled offer");
@@ -109,6 +116,17 @@ async function requireChromium() {
     console.error(`Load error: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
+}
+
+async function openDetailsBySummary(page, summaryText, visibleLocator) {
+  if (await visibleLocator.isVisible().catch(() => false)) return;
+  const summary = page.locator("summary", { hasText: summaryText }).first();
+  await summary.click({ timeout: 5000 }).catch(async () => {
+    await page.locator("details", { hasText: summaryText }).first().evaluate((element) => {
+      if (element instanceof HTMLDetailsElement) element.open = true;
+    });
+  });
+  await visibleLocator.waitFor({ state: "visible", timeout: 10_000 });
 }
 
 async function startStaticServer(staticRoot) {

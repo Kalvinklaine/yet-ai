@@ -32,12 +32,12 @@ export type ChatRecoveryCode =
   | "provider_request_failed";
 
 export const chatLifecycleLabels: Record<ChatLifecycleState, string> = {
-  idle: "Ready when the local runtime and provider model are ready.",
-  command_submitting: "Submitting message command to the local runtime…",
-  command_accepted: "Command accepted; waiting for the local SSE stream.",
-  sse_connecting: "Opening local SSE stream…",
-  streaming: "Assistant is streaming from the local runtime…",
-  stopped: "Stream stopped locally; runtime abort requested for the active stream only.",
+  idle: "Chat is idle. Ready for local input.",
+  command_submitting: "Sending message...",
+  command_accepted: "Message sent; waiting for response stream.",
+  sse_connecting: "Waiting for response stream.",
+  streaming: "Assistant is responding...",
+  stopped: "Response stopped.",
   failed: "Provider/runtime error. No automatic retry was started.",
 };
 

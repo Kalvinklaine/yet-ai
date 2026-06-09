@@ -9,8 +9,8 @@ describe("chatLifecycle", () => {
       expect(chatLifecycleLabels[state].length).toBeGreaterThan(10);
     }
     expect(chatLifecycleLabels.command_accepted).toContain("waiting");
-    expect(chatLifecycleLabels.streaming).toContain("streaming");
-    expect(chatLifecycleLabels.stopped).toContain("abort requested");
+    expect(chatLifecycleLabels.streaming).toContain("Assistant is responding...");
+    expect(chatLifecycleLabels.stopped).toContain("Response stopped.");
     expect(chatLifecycleLabels.failed).toContain("No automatic retry");
   });
 

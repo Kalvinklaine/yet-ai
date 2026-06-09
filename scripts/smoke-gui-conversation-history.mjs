@@ -40,9 +40,12 @@ try {
 
   await page.goto(`http://127.0.0.1:${guiServer.port}/index.html`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
-  await page.getByLabel("Runtime base URL").fill(`http://127.0.0.1:${runtimeServer.port}`);
+  await openDetailsBySummary(page, "Local runtime connection", page.getByRole("textbox", { name: "Session token", exact: true }));
   await page.getByRole("textbox", { name: "Session token", exact: true }).fill(runtimeToken);
-  await page.getByRole("button", { name: "Refresh runtime" }).last().click();
+  await page.getByLabel("Runtime base URL").fill(`http://127.0.0.1:${runtimeServer.port}`);
+  const refreshButton = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
+  await openDetailsBySummary(page, "Local runtime connection", refreshButton);
+  await refreshButton.click();
 
   await expectVisibleText(page, "Alpha local thread", "initial alpha chat");
   await expectVisibleText(page, "Beta local thread", "initial beta chat");
@@ -114,6 +117,17 @@ async function requireChromium() {
     console.error(`Load error: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
+}
+
+async function openDetailsBySummary(page, summaryText, visibleLocator) {
+  if (await visibleLocator.isVisible().catch(() => false)) return;
+  const summary = page.locator("summary", { hasText: summaryText }).first();
+  await summary.click({ timeout: 5000 }).catch(async () => {
+    await page.locator("details", { hasText: summaryText }).first().evaluate((element) => {
+      if (element instanceof HTMLDetailsElement) element.open = true;
+    });
+  });
+  await visibleLocator.waitFor({ state: "visible", timeout: 10_000 });
 }
 
 async function startStaticServer(staticRoot) {

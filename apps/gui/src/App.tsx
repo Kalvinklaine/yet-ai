@@ -263,6 +263,8 @@ export function App() {
   const [attachedContextStatus, setAttachedContextStatus] = useState<string | null>(null);
   const [runtimeRefreshStatus, setRuntimeRefreshStatus] = useState<{ state: "checking" | "connected" | "failed"; attempt: number; checkedAt: string; detail: string } | null>(null);
   const [runtimeRefreshInFlight, setRuntimeRefreshInFlight] = useState(false);
+  const [runtimeDetailsOpen, setRuntimeDetailsOpen] = useState(true);
+  const [providerDetailsOpen, setProviderDetailsOpen] = useState(false);
   const [settingsRevision, setSettingsRevision] = useState(0);
   const runtimeRefreshAttemptRef = useRef(0);
   const runtimeRefreshInFlightRef = useRef(false);
@@ -339,6 +341,9 @@ export function App() {
   const providerAuthMutationInFlight = providerAuthMutation !== null;
   const experimentalOauthChatReady = runtimeConnected && !apiKeyChatReady && !providerAuthMutationInFlight && !apiKeyReadiness.mismatch && activeProviderAuthStatus?.configured === true && activeProviderAuthStatus.authSource === "oauth" && activeProviderAuthStatus.status === "connected";
   const canSendChat = apiKeyChatReady || experimentalOauthChatReady;
+  const selectedModelRawId = selectedModel?.id;
+  const selectedModelProviderRawId = apiKeyReadiness.provider?.id ?? selectedModel?.providerId;
+  const activeSelectedDemoMode = demoModeEnabled && selectedModelProviderRawId === activeDemoMode?.providerId && selectedModelRawId === activeDemoMode?.modelId;
   const selectedModelDisplayName = selectedModel ? sanitizeDisplayText(selectedModel.displayName || selectedModel.id) : undefined;
   const selectedModelProviderId = apiKeyReadiness.provider?.id ? sanitizeDisplayText(apiKeyReadiness.provider.id) : selectedModel?.providerId ? sanitizeDisplayText(selectedModel.providerId) : undefined;
   const chatReadinessLabel = !runtimeConnected
@@ -375,6 +380,14 @@ export function App() {
   const safeActiveWorkspacePath = currentAttachedContext?.file?.workspaceRelativePath;
   const safeActiveRange = rangeFromContextSelection(currentAttachedContext?.selection);
   const chatHistoryStatus = conversationHistoryStatusLabel({ loading: chatHistoryLoading, current: chatHistoryCurrent, count: activeChatSummaries.length, hasError: Boolean(chatHistoryError) });
+
+  useEffect(() => {
+    setRuntimeDetailsOpen(!runtimeConnected);
+  }, [runtimeConnected]);
+
+  useEffect(() => {
+    setProviderDetailsOpen(!canSendChat);
+  }, [canSendChat]);
 
   const addTimeline = useCallback((entry: string) => {
     setTimeline((current) => [entry, ...current].slice(0, 80));
@@ -1453,7 +1466,7 @@ export function App() {
     }
     if (result.ok) {
       addTimeline(`Command accepted ${result.data.requestId}`);
-      setChatLifecycleState("command_accepted");
+      setChatLifecycleState((current) => current === "command_submitting" || current === "sse_connecting" ? "command_accepted" : current);
       setChatView((current) => addAcceptedUserMessage(current, content));
       setChatInput("");
       clearSubmittedAttachedContext(submittedAttachedContext);
@@ -1464,6 +1477,8 @@ export function App() {
       addTimeline(`Command error: ${sanitizeDisplayText(result.error.message)}`);
     }
   };
+
+  const demoModeToggleLabel = demoModeWorking ? "Changing Demo Mode…" : demoModeEnabled ? "Disable Demo Mode" : "Try Demo Mode";
 
   const firstMessageReadiness = useMemo<FirstMessageReadiness>(() => {
     const notes = [
@@ -1499,10 +1514,10 @@ export function App() {
     }
     if (apiKeyChatReady) {
       return {
-        title: demoModeEnabled && selectedModelProviderId === "yet-demo" ? "Demo Mode is ready" : "Ready for your first message",
+        title: activeSelectedDemoMode ? "Demo Mode is ready" : "Ready for your first message",
         reason: `Send is enabled for ${selectedModelDisplayName ?? "the selected model"}${selectedModelProviderId ? ` through ${selectedModelProviderId}` : ""}.`,
         nextAction: "Type a prompt and send it through the local runtime.",
-        actions: [...(demoModeEnabled ? [{ kind: "enable_demo_mode" as const, label: demoModeWorking ? "Changing Demo Mode…" : "Disable Demo Mode" }] : []), { kind: "send_first_message" as const, label: "Send first message" }],
+        actions: [...(demoModeEnabled ? [{ kind: "enable_demo_mode" as const, label: demoModeToggleLabel }] : []), { kind: "send_first_message" as const, label: "Send first message" }],
         notes,
       };
     }
@@ -1531,7 +1546,7 @@ export function App() {
         reason: apiKeyReadiness.message ?? "The runtime selected model does not map to one enabled provider with that model id.",
         nextAction: providerId ? "Test the saved provider, then refresh runtime after fixing the provider/model id." : "Configure an OpenAI-compatible provider, then refresh runtime.",
         actions: [
-          { kind: "enable_demo_mode" as const, label: demoModeWorking ? "Changing Demo Mode…" : "Try Demo Mode" },
+          { kind: "enable_demo_mode" as const, label: demoModeToggleLabel },
           ...(providerId ? [{ kind: "test_provider" as const, label: "Test provider", providerId }] : [{ kind: "api_key_fallback" as const, label: "Use OpenAI API key fallback" }]),
           { kind: "refresh_runtime", label: "Refresh runtime" },
         ],
@@ -1545,7 +1560,7 @@ export function App() {
         reason: apiKeyReadiness.message,
         nextAction: providerId ? "Test the provider, fix credentials/model readiness locally, then refresh runtime." : "Choose the API-key fallback or configure a usable OpenAI-compatible provider.",
         actions: [
-          { kind: "enable_demo_mode" as const, label: demoModeWorking ? "Changing Demo Mode…" : "Try Demo Mode" },
+          { kind: "enable_demo_mode" as const, label: demoModeToggleLabel },
           ...(providerId ? [{ kind: "test_provider" as const, label: "Test provider", providerId }] : [{ kind: "api_key_fallback" as const, label: "Use OpenAI API key fallback" }]),
           { kind: "refresh_runtime", label: "Refresh runtime" },
         ],
@@ -1558,10 +1573,19 @@ export function App() {
         ? "Runtime model refresh failed, so no send-ready model can be selected."
         : "No enabled OpenAI-compatible provider/model is ready for chat streaming.",
       nextAction: "Use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, test provider, then refresh runtime/model readiness.",
-      actions: [{ kind: "enable_demo_mode", label: demoModeWorking ? "Changing Demo Mode…" : "Try Demo Mode" }, { kind: "api_key_fallback", label: "Use OpenAI API key fallback" }, { kind: "refresh_runtime", label: "Refresh runtime" }],
+      actions: [{ kind: "enable_demo_mode", label: demoModeToggleLabel }, { kind: "api_key_fallback", label: "Use OpenAI API key fallback" }, { kind: "refresh_runtime", label: "Refresh runtime" }],
       notes,
     };
-  }, [activeConnectionError, activeModelError, activeProviderAuthStatus, apiKeyChatReady, apiKeyReadiness, bridgeHost, demoModeEnabled, demoModeWorking, enabledProviders, experimentalOauthChatReady, providerAuthMutationInFlight, runtimeConnected, runtimeRefreshInFlight, runtimeRefreshStatus, selectedModelDisplayName, selectedModelProviderId]);
+  }, [activeConnectionError, activeModelError, activeProviderAuthStatus, activeSelectedDemoMode, apiKeyChatReady, apiKeyReadiness, bridgeHost, demoModeEnabled, demoModeToggleLabel, enabledProviders, experimentalOauthChatReady, providerAuthMutationInFlight, runtimeConnected, runtimeRefreshInFlight, runtimeRefreshStatus, selectedModelDisplayName, selectedModelProviderId]);
+  const chatLifecycleLabel = chatLifecycleState === "idle"
+    ? canSendChat
+      ? activeSelectedDemoMode
+        ? "Demo Mode ready — local canned responses, no provider calls. Ready to send."
+        : "Ready to send."
+      : runtimeConnected
+        ? "Configure a provider/model or enable Demo Mode before sending."
+        : "Connect the local runtime before sending."
+    : chatLifecycleLabels[chatLifecycleState];
 
   return (
     <main className="app-shell">
@@ -1601,7 +1625,7 @@ export function App() {
             <span>State: {chatReadinessLabel}</span>
             <span>{chatReadinessMessage}</span>
             {chatModelStatus && <span className="subtle">Model status: {chatModelStatus}</span>}
-            {demoModeEnabled && <span className="subtle">Demo Mode is enabled in the local runtime. It uses canned responses only, makes no provider calls, requires no API key, and is not model quality.</span>}
+            {demoModeEnabled && <span className="subtle">{activeSelectedDemoMode ? "Demo Mode is active in the local runtime. It uses canned responses only, makes no provider calls, requires no API key, and is not model quality." : `Demo Mode is enabled in the local runtime, but the current ready chat path uses ${selectedModelDisplayName ?? "the selected model"}${selectedModelProviderId ? ` (${selectedModelProviderId})` : ""}. Sends may use that configured provider; disable Demo Mode or choose the demo model only when dogfooding canned local responses.`}</span>}
             {activeDemoModeError && <span className="error">Demo Mode status unavailable: {activeDemoModeError.status}: {sanitizeDisplayText(activeDemoModeError.message)}</span>}
             {runtimeConnected && !canSendChat && <span className="subtle">For the quickest path, choose OpenAI API, paste a provider API key once, save, optionally test the provider, then send your first message. For local models, choose an OpenAI-compatible /v1 preset.</span>}
             {experimentalOauthChatReady && <span className="subtle">OpenAI API-key fallback remains the safe/default setup and will be preferred when configured.</span>}
@@ -1662,15 +1686,18 @@ export function App() {
               </div>
               <span className="badge">{sanitizeDisplayText(chatId)}</span>
             </div>
+            <details className="debug-details" data-testid="chat-advanced-controls">
+              <summary>Advanced chat controls</summary>
             <div className="form-grid">
               <label>
                 Chat id
                 <input value={chatId} onChange={updateDirectChatId} />
               </label>
             </div>
+            </details>
             <div className="chat-panel" aria-label="Chat messages">
               {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect()} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeEditProposal={activeEditProposal} activeIdeActionProposal={activeIdeActionProposal} />)}
-              <span className={`chat-lifecycle-state ${chatLifecycleState}`}>{chatLifecycleLabels[chatLifecycleState]}</span>
+              <span className={`chat-lifecycle-state ${chatLifecycleState}`}>{chatLifecycleLabel}</span>
               {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
             </div>
             <EditProposalPanel proposal={activeEditProposal} result={activeEditProposal ? applyResult : null} host={bridgeHost} pendingRequestId={pendingApplyRequestId} note={applyNote} onApply={submitEditProposal} onCancelPending={cancelPendingEditProposalApply} />
@@ -1681,10 +1708,10 @@ export function App() {
               <textarea ref={chatInputRef} value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
               <div className="row chat-actions">
                 <button type="submit" disabled={!canSendChat}>Send</button>
-                <button type="button" className="secondary-button" onClick={stopSse}>Stop SSE</button>
+                <button type="button" className="secondary-button" onClick={stopSse}>Stop response</button>
               </div>
             </form>
-            <details className="debug-details">
+            <details className="debug-details" data-testid="sse-debug-details">
               <summary>SSE debug details</summary>
           <div className="timeline">
             {timeline.length === 0 ? <span>No SSE events yet.</span> : timeline.map((entry, index) => <div className="timeline-entry" key={`${index}:${entry}`}>{entry}</div>)}
@@ -1696,7 +1723,8 @@ export function App() {
 
 
       <section className="card stack secondary-card runtime-card">
-        <h2>Local runtime connection</h2>
+        <details className="debug-details" data-testid="runtime-connection-details" open={runtimeDetailsOpen} onToggle={(event) => setRuntimeDetailsOpen(event.currentTarget.open)}>
+          <summary><h2>Local runtime connection</h2></summary>
         <div className="form-grid">
           <label>
             Runtime base URL
@@ -1720,25 +1748,28 @@ export function App() {
           <StatusBlock title="/v1/ping" value={activePing} />
           <StatusBlock title="/v1/caps" value={activeCaps ? { protocolVersion: activeCaps.protocolVersion, capabilities: activeCaps.capabilities, runtime: activeCaps.runtime, providers: activeCaps.providers.length } : null} />
         </div>
+        </details>
       </section>
 
       <section className="card stack secondary-card agent-progress-card" aria-label="Agent progress">
+        <details className="debug-details" data-testid="agent-progress-details">
+          <summary><h2>Agent progress</h2></summary>
         <div className="row">
-          <h2>Agent progress</h2>
           <button type="button" onClick={() => void refreshAgentProgress()} disabled={agentProgress.state === "loading"}>{agentProgress.state === "loading" ? "Loading agent progress…" : "Refresh agent progress"}</button>
         </div>
         <p className="subtle">Read-only local observability only. This panel does not start agents, run tools, merge git, edit files, execute shell, call providers, or mutate the workspace.</p>
         <AgentProgressPanel progress={agentProgress} />
+        </details>
       </section>
 
       <section className="card stack secondary-card provider-setup-card">
-        <h2>Provider setup</h2>
+        <details className="debug-details" data-testid="provider-setup-details" open={providerDetailsOpen} onToggle={(event) => setProviderDetailsOpen(event.currentTarget.open)}>
+          <summary><h2>Provider setup</h2></summary>
         {runtimeConnected && !apiKeyChatReady && !experimentalOauthChatReady && (
           <div className="guided-setup-card stack" role="status">
             <strong>Runtime connected — provider required for your first GPT message</strong>
-            <span>Try Demo Mode first to dogfood the installed plugin/runtime/GUI/SSE/history path with local canned responses. Demo Mode needs no API key, makes no provider calls, and is not model quality. Configure a BYOK provider for real answers when ready.</span>
+            <span>Primary chat readiness offers Demo Mode for local canned responses. Configure a BYOK provider here for real answers when ready.</span>
             <div className="row">
-              <button type="button" onClick={() => void toggleDemoMode(true)} disabled={demoModeWorking}>{demoModeWorking ? "Changing Demo Mode…" : "Use Demo Mode"}</button>
               <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>
             </div>
           </div>
@@ -1870,11 +1901,12 @@ export function App() {
             ))}
           </div>
         </div>
+        </details>
       </section>
 
 
       <section className="card stack secondary-card debug-card">
-        <details className="debug-details">
+        <details className="debug-details" data-testid="bridge-debug-details">
           <summary>Bridge debug</summary>
           <p className="subtle">Browser mock mode is non-privileged. It only logs bridge messages.</p>
           <div className="timeline">
@@ -2050,9 +2082,12 @@ function FirstMessageReadinessWizard({ readiness, canSendChat, runtimeRefreshInF
       <div className="readiness-action-row">
         {readiness.actions.map((action) => <FirstMessageActionButton key={`${action.kind}:${"providerId" in action ? action.providerId : action.label}`} action={action} runtimeRefreshInFlight={runtimeRefreshInFlight} providerTestState={providerTestState} demoModeEnabled={demoModeEnabled} demoModeWorking={demoModeWorking} onRefreshRuntime={onRefreshRuntime} onToggleDemoMode={onToggleDemoMode} onApiKeyFallback={onApiKeyFallback} onTestProvider={onTestProvider} onFocusPrompt={onFocusPrompt} />)}
       </div>
-      <ol className="first-message-steps">
-        {readiness.notes.map((note) => <li key={note}>{note}</li>)}
-      </ol>
+      <details className="first-message-notes" data-testid="first-message-local-first-notes">
+        <summary>Local-first notes</summary>
+        <ol className="first-message-steps">
+          {readiness.notes.map((note) => <li key={note}>{note}</li>)}
+        </ol>
+      </details>
     </div>
   );
 }
