@@ -66,7 +66,7 @@ pub async fn get(config_dir: &Path) -> Result<DemoModeState, DemoModeError> {
         return Ok(DemoModeState::new(false));
     }
     reject_demo_mode_file_symlink(&path).await?;
-    match tokio::fs::read_to_string(&path).await {
+    match read_demo_mode_file(&path).await {
         Ok(content) => {
             let persisted: PersistedDemoModeState =
                 serde_json::from_str(&content).map_err(|_| DemoModeError::Storage)?;
@@ -75,6 +75,26 @@ pub async fn get(config_dir: &Path) -> Result<DemoModeState, DemoModeError> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(DemoModeState::new(false)),
         Err(_) => Err(DemoModeError::Storage),
     }
+}
+
+#[cfg(unix)]
+async fn read_demo_mode_file(path: &Path) -> std::io::Result<String> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        use std::io::Read;
+
+        let mut file = open_file_no_follow(&path)?;
+        let mut content = String::new();
+        file.read_to_string(&mut content)?;
+        Ok(content)
+    })
+    .await
+    .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "demo mode read task failed"))?
+}
+
+#[cfg(not(unix))]
+async fn read_demo_mode_file(path: &Path) -> std::io::Result<String> {
+    tokio::fs::read_to_string(path).await
 }
 
 pub async fn set(config_dir: &Path, enabled: bool) -> Result<DemoModeState, DemoModeError> {
@@ -406,5 +426,22 @@ mod tests {
             Err(super::DemoModeError::Storage)
         ));
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "outside");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn demo_mode_get_rejects_final_file_symlink_escape() {
+        let dir = temp_dir();
+        let outside = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let target = outside.join("outside-demo-mode.json");
+        std::fs::write(&target, r#"{"enabled":true}"#).unwrap();
+        std::os::unix::fs::symlink(&target, super::demo_mode_path(&dir)).unwrap();
+
+        assert!(matches!(
+            super::get(&dir).await,
+            Err(super::DemoModeError::Storage)
+        ));
     }
 }
