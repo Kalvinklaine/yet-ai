@@ -133,9 +133,12 @@ function applyMessageAdded(state: ChatViewState, payload: SseEvent["payload"]): 
   const viewMessage = toViewMessage(state, message);
   const sameIdIndex = state.messages.findIndex((current) => current.id === viewMessage.id);
   if (sameIdIndex >= 0) {
+    const replayStreamingIndex = viewMessage.role === "assistant"
+      ? findReplayGeneratedStreamingAssistantIndex(state, sameIdIndex)
+      : -1;
     const messages = state.messages
       .map((current, currentIndex) => (currentIndex === sameIdIndex ? viewMessage : current))
-      .filter((current, currentIndex) => currentIndex === sameIdIndex || !isGeneratedStreamingAssistant(state.chatId, current));
+      .filter((_, currentIndex) => currentIndex !== replayStreamingIndex);
     return { ...state, messages };
   }
 
@@ -169,6 +172,25 @@ function applyMessageAdded(state: ChatViewState, payload: SseEvent["payload"]): 
 
 function isGeneratedStreamingAssistant(chatId: string, message: ChatViewMessage): boolean {
   return message.role === "assistant" && message.status === "streaming" && message.id.startsWith(`${chatId}-message-`);
+}
+
+function findReplayGeneratedStreamingAssistantIndex(state: ChatViewState, persistedIndex: number): number {
+  const nextIndex = persistedIndex + 1;
+  if (isGeneratedStreamingAssistantAt(state, nextIndex)) {
+    return nextIndex;
+  }
+
+  const previousIndex = persistedIndex - 1;
+  if (isGeneratedStreamingAssistantAt(state, previousIndex)) {
+    return previousIndex;
+  }
+
+  return -1;
+}
+
+function isGeneratedStreamingAssistantAt(state: ChatViewState, index: number): boolean {
+  const message = state.messages[index];
+  return message !== undefined && isGeneratedStreamingAssistant(state.chatId, message);
 }
 
 export function stopStreamingAssistant(state: ChatViewState): ChatViewState {
