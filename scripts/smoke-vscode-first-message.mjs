@@ -17,6 +17,7 @@ const runtimeToken = `vscode-runtime-token-${randomUUID()}`;
 const providerKey = `sk-vscode-provider-${randomUUID()}`;
 const contextSentinel = `VSCODE_CONTEXT_SENTINEL_${randomUUID()}`;
 const contextText = "safe short VS Code selected text for first-message context";
+const userMessageText = "Say hello through VS Code packaged GUI smoke.";
 const assistantText = "VS Code packaged smoke response.";
 const failures = [];
 const consoleMessages = [];
@@ -25,6 +26,11 @@ let observedRuntimeAuthorization = false;
 let chatCommandRequest;
 let chatCommandRequestCount = 0;
 let chatSubscriptionCount = 0;
+let matchingUserMessageCommandReceived = false;
+let resolveMatchingUserMessageCommand;
+const matchingUserMessageCommand = new Promise((resolve) => {
+  resolveMatchingUserMessageCommand = resolve;
+});
 
 if (packageJson.scripts?.["smoke:gui-runtime-e2e"] !== "node scripts/smoke-gui-runtime-e2e.mjs") {
   failures.push("Root package.json must keep smoke:gui-runtime-e2e available as the deeper local mock-provider runtime/chat verification path.");
@@ -56,7 +62,7 @@ try {
       await route.fulfill({
         status: 200,
         headers: { "content-type": "text/event-stream", "cache-control": "no-cache", "access-control-allow-origin": "*" },
-        body: sseBodyFromUrl(url),
+        body: await commandDrivenSseBodyFromUrl(url),
       });
       return;
     }
@@ -150,9 +156,9 @@ try {
   }, { version: bridgeVersion, text: contextText });
   await expectVisibleText(page, "Active editor context", "VS Code active context bridge delivery");
 
-  await page.locator("textarea").fill("Say hello through VS Code packaged GUI smoke.");
+  await page.locator("textarea").fill(userMessageText);
   await sendButton(page).click();
-  await expectVisibleText(page, "Say hello through VS Code packaged GUI smoke.", "visible user first message", 20_000);
+  await expectVisibleText(page, userMessageText, "visible user first message", 20_000);
   await expectVisibleText(page, assistantText, "mock SSE assistant response", 20_000);
   await assertAssistantAnswerCount(page, assistantText, 1, "mock SSE assistant response");
 
@@ -165,7 +171,7 @@ try {
   if (chatCommandRequest?.type !== "user_message") {
     failures.push("Mock runtime did not receive a user_message command.");
   }
-  if (chatCommandRequest?.payload?.content !== "Say hello through VS Code packaged GUI smoke.") {
+  if (chatCommandRequest?.payload?.content !== userMessageText) {
     failures.push("Mock runtime did not receive the expected first-message content.");
   }
   if (chatCommandRequest?.payload?.context?.source !== "vscode" || chatCommandRequest?.payload?.context?.selection?.text !== contextText) {
@@ -285,6 +291,10 @@ async function startMockRuntimeServer() {
       chatCommandRequestCount += 1;
       chatCommandRequest = JSON.parse(await readRequestBody(request));
       const chatId = decodeURIComponent(commandMatch[1]);
+      if (isMatchingUserMessageCommand(chatCommandRequest)) {
+        matchingUserMessageCommandReceived = true;
+        resolveMatchingUserMessageCommand();
+      }
       json(response, 200, { accepted: true, chatId, requestId: chatCommandRequest.requestId, type: chatCommandRequest.type });
       return;
     }
@@ -297,6 +307,13 @@ async function startMockRuntimeServer() {
   return listen(server);
 }
 
+async function commandDrivenSseBodyFromUrl(value) {
+  if (!matchingUserMessageCommandReceived) {
+    await matchingUserMessageCommand;
+  }
+  return sseBodyFromUrl(value);
+}
+
 function sseBodyFromUrl(value) {
   const url = new URL(value);
   const chatId = url.searchParams.get("chat_id") ?? "chat-001";
@@ -307,6 +324,13 @@ function sseBodyFromUrl(value) {
     { seq: 3, type: "stream_delta", chatId, payload: { delta: { content: "smoke response." } } },
     { seq: 4, type: "stream_finished", chatId, payload: { finishReason: "stop" } },
   ].map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") + "\n";
+}
+
+function isMatchingUserMessageCommand(command) {
+  return command?.type === "user_message"
+    && command?.payload?.content === userMessageText
+    && command?.payload?.context?.source === "vscode"
+    && command?.payload?.context?.selection?.text === contextText;
 }
 
 function mockProvider() {
