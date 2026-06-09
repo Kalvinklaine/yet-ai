@@ -470,8 +470,8 @@ Use `apps/plugins/vscode/README.md#openai-api-key-fallback-milestone-smoke` for 
 1. Run `npm run prepare:vscode-preview` from the repository root.
 2. Open the Extension Development Host, keep `yetai.launchMode = auto`, and run `Yet AI: Open Chat`; do not manually start `yet-lsp` or paste `local-dev-token` for this normal preview path.
 3. Choose the GUI `OpenAI API` preset, paste an API key once in Provider setup, save, and confirm the key field clears.
-4. Confirm the GUI and runtime show only configured/redacted provider status, never the raw key, and never ask for the provider key in VS Code settings or the Session token field.
-5. Use provider test/status as sanitized feedback, then send `Say hello in one sentence.` and verify snapshot plus streaming response behavior.
+4. Confirm the GUI and runtime show only configured/redacted provider status, never the raw key, and never ask for the provider key in VS Code settings, browser storage, or the Session token field.
+5. Use `Test provider`, then `Refresh runtime` so model readiness reflects the saved provider before sending `Say hello in one sentence.` and verifying snapshot plus streaming response behavior.
 
 Current real-provider testing should use an OpenAI API-key or project-key fallback through the local runtime. This remains the safe/default path.
 
