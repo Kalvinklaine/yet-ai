@@ -4458,6 +4458,91 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("Hello from Yet AI");
   });
 
+  it("renders first assistant response from terminal message_added after one Send", async () => {
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      sseEvents: [
+        { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
+        {
+          seq: 1,
+          type: "message_added",
+          chatId: "chat-001",
+          payload: {
+            message: chatMessage("chat-001", "assistant-terminal-1", "assistant", "Terminal message_added answer after first send."),
+          },
+        },
+      ],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "Terminal event please");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("Terminal event please");
+    expect(container?.textContent).toContain("Terminal message_added answer after first send.");
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(1);
+  });
+
+  it("renders consecutive terminal message_added assistant responses without duplicate bubbles", async () => {
+    let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const encoder = new TextEncoder();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/v1/chats/subscribe?chat_id=")) {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            sseController = controller;
+          },
+          cancel() {},
+        });
+        return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+      }
+      return mockRuntimeResponse(input, init, readyRuntimeOptions());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "First terminal prompt");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 0, type: "snapshot", chatId: "chat-001", payload: {} })}\n\n`));
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 1, type: "message_added", chatId: "chat-001", payload: { message: chatMessage("chat-001", "assistant-terminal-1", "assistant", "First terminal answer.") } })}\n\n`));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "Second terminal prompt");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 2, type: "message_added", chatId: "chat-001", payload: { message: chatMessage("chat-001", "assistant-terminal-2", "assistant", "Second terminal answer.") } })}\n\n`));
+      await Promise.resolve();
+    });
+
+    const bubbles = Array.from(container?.querySelectorAll(".chat-bubble") ?? []).map((bubble) => bubble.textContent ?? "");
+    expect(bubbles.filter((text) => text.includes("First terminal answer."))).toHaveLength(1);
+    expect(bubbles.filter((text) => text.includes("Second terminal answer."))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(2);
+  });
+
   it("renders visible safe error bubbles for request and SSE errors", async () => {
     const rawToken = "Bearer abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     mockRuntimeResponses({ ...readyRuntimeOptions(), commandStatus: 500, commandError: `failed ${rawToken}` });

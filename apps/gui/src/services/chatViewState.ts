@@ -77,6 +77,8 @@ export function applyChatViewEvent(state: ChatViewState, event: SseEvent): ChatV
       return applyStreamDelta(state, event.payload);
     case "stream_finished":
       return applyStreamFinished(state);
+    case "message_added":
+      return applyMessageAdded(state, event.payload);
     case "error":
       return appendMessage(stopStreamingAssistant(state), {
         role: "error",
@@ -120,6 +122,46 @@ function applyStreamDelta(state: ChatViewState, payload: SseEvent["payload"]): C
 
 function applyStreamFinished(state: ChatViewState): ChatViewState {
   return stopStreamingAssistant(state);
+}
+
+function applyMessageAdded(state: ChatViewState, payload: SseEvent["payload"]): ChatViewState {
+  const message = readMessageAdded(payload);
+  if (!message || message.chatId !== state.chatId) {
+    return state;
+  }
+
+  const viewMessage = toViewMessage(state, message);
+  const sameIdIndex = state.messages.findIndex((current) => current.id === viewMessage.id);
+  if (sameIdIndex >= 0) {
+    return updateMessage(state, sameIdIndex, viewMessage);
+  }
+
+  if (viewMessage.role === "assistant") {
+    const streamingIndex = findStreamingAssistantIndex(state.messages);
+    if (streamingIndex >= 0) {
+      return updateMessage(state, streamingIndex, viewMessage);
+    }
+
+    const latestIndex = state.messages.length - 1;
+    const latest = state.messages[latestIndex];
+    if (latest?.role === "assistant" && latest.id.startsWith(`${state.chatId}-message-`) && latest.content === viewMessage.content) {
+      return updateMessage(state, latestIndex, viewMessage);
+    }
+  }
+
+  if (viewMessage.role === "user") {
+    const optimisticUserIndex = state.messages.findIndex(
+      (current) => current.role === "user" && current.id.startsWith(`${state.chatId}-message-`) && current.content === viewMessage.content,
+    );
+    if (optimisticUserIndex >= 0) {
+      return updateMessage(state, optimisticUserIndex, viewMessage);
+    }
+  }
+
+  return {
+    ...state,
+    messages: [...state.messages, viewMessage],
+  };
 }
 
 export function stopStreamingAssistant(state: ChatViewState): ChatViewState {
@@ -196,6 +238,26 @@ function isChatHistoryMessage(value: unknown): value is ChatHistoryMessage {
     && typeof message.content === "string"
     && typeof message.createdAt === "string"
     && (message.status === undefined || message.status === "pending" || message.status === "streaming" || message.status === "complete" || message.status === "error");
+}
+
+function readMessageAdded(payload: SseEvent["payload"]): ChatHistoryMessage | null {
+  if (!payload) {
+    return null;
+  }
+  if (isChatHistoryMessage(payload)) {
+    return payload;
+  }
+  const message = payload.message;
+  return isChatHistoryMessage(message) ? message : null;
+}
+
+function toViewMessage(state: ChatViewState, message: ChatHistoryMessage): ChatViewMessage {
+  return {
+    id: message.id || nextMessageId(state),
+    role: message.role,
+    content: message.role === "error" ? sanitizeErrorText(message.content) : message.content,
+    status: message.status ?? (message.role === "error" ? "error" : "complete"),
+  };
 }
 
 function readDeltaContent(payload: SseEvent["payload"]): string | null {
