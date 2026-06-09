@@ -105,6 +105,62 @@ describe("chatViewState", () => {
     expect(finished.messages[0]).toMatchObject({ role: "assistant", content: "Done", status: "complete" });
   });
 
+  it("appends persisted assistant from terminal message_added when no delta arrived", () => {
+    const next = applyChatViewEvent(createInitialChatViewState("chat-1"), event("message_added", {
+      message: { id: "assistant-1", chatId: "chat-1", role: "assistant", content: "Persisted terminal answer", createdAt: "2026-05-29T07:16:00Z", status: "complete" },
+    }));
+
+    expect(next.messages).toEqual([
+      { id: "assistant-1", role: "assistant", content: "Persisted terminal answer", status: "complete" },
+    ]);
+  });
+
+  it("replaces active streaming assistant with persisted message_added instead of duplicating", () => {
+    const started = applyChatViewEvent(createInitialChatViewState("chat-1"), event("stream_delta", { delta: { content: "Partial" } }));
+    const next = applyChatViewEvent(started, event("message_added", {
+      message: { id: "assistant-1", chatId: "chat-1", role: "assistant", content: "Final persisted answer", createdAt: "2026-05-29T07:16:00Z", status: "complete" },
+    }));
+
+    expect(next.messages).toEqual([
+      { id: "assistant-1", role: "assistant", content: "Final persisted answer", status: "complete" },
+    ]);
+  });
+
+  it("replaces an existing message_added message with the same id", () => {
+    const first = applyChatViewEvent(createInitialChatViewState("chat-1"), event("message_added", {
+      message: { id: "assistant-1", chatId: "chat-1", role: "assistant", content: "Old content", createdAt: "2026-05-29T07:16:00Z", status: "complete" },
+    }));
+    const next = applyChatViewEvent(first, event("message_added", {
+      message: { id: "assistant-1", chatId: "chat-1", role: "assistant", content: "Updated content", createdAt: "2026-05-29T07:16:01Z", status: "complete" },
+    }));
+
+    expect(next.messages).toEqual([
+      { id: "assistant-1", role: "assistant", content: "Updated content", status: "complete" },
+    ]);
+  });
+
+  it("ignores message_added for the wrong chat and malformed payloads", () => {
+    const state = addAcceptedUserMessage(createInitialChatViewState("chat-1"), "Hello");
+    const wrongChat = applyChatViewEvent(state, event("message_added", {
+      message: { id: "assistant-1", chatId: "chat-2", role: "assistant", content: "Wrong chat", createdAt: "2026-05-29T07:16:00Z", status: "complete" },
+    }));
+    const malformed = applyChatViewEvent(wrongChat, event("message_added", { message: { id: "broken", content: "missing fields" } }));
+
+    expect(wrongChat).toBe(state);
+    expect(malformed).toBe(state);
+  });
+
+  it("dedupes optimistic user content when persisted message_added arrives", () => {
+    const state = addAcceptedUserMessage(createInitialChatViewState("chat-1"), "Hello");
+    const next = applyChatViewEvent(state, event("message_added", {
+      message: { id: "user-1", chatId: "chat-1", role: "user", content: "Hello", createdAt: "2026-05-29T07:15:00Z", status: "complete" },
+    }));
+
+    expect(next.messages).toEqual([
+      { id: "user-1", role: "user", content: "Hello", status: "complete" },
+    ]);
+  });
+
   it("appends sanitized error messages", () => {
     const state = applyChatViewEvent(
       createInitialChatViewState("chat-1"),
