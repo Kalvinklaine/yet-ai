@@ -20,6 +20,9 @@ let providerHits = 0;
 let chatCommandCount = 0;
 const chats = new Map([["chat-001", thread("chat-001", "Demo smoke chat", [])]]);
 const chatEvents = new Map();
+const chatEventSeq = new Map();
+const chatActiveStreams = new Map();
+const chatTerminalReplayRetention = new Map();
 const subscribers = new Map();
 
 await requireBuiltGui();
@@ -66,6 +69,8 @@ try {
   await expectVisibleText(page, secondPrompt, "visible second user prompt");
   await expectVisibleText(page, firstAnswer, "first terminal message_added assistant response still visible after second send");
   await expectVisibleText(page, secondAnswer, "second terminal message_added assistant response without a third send");
+  await assertAssistantAnswerCount(page, firstAnswer, 1, "first terminal message_added assistant response");
+  await assertAssistantAnswerCount(page, secondAnswer, 1, "second terminal message_added assistant response");
   await expectVisibleText(page, "no provider call was made", "demo no-provider copy");
   await expectVisibleText(page, "Demo Mode ready — local canned responses, no provider calls. Ready to send.", "post-response demo ready status");
   const postResponseBody = await page.evaluate(() => document.body.innerText);
@@ -97,7 +102,7 @@ try {
     throw new Error(`GUI Demo Mode smoke failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
   }
   console.log("GUI Demo Mode smoke passed.");
-  console.log("Verified built GUI toggles local runtime Demo Mode, sends canned chat over local command/SSE/history, uses only loopback, and makes no provider calls or browser-storage secret writes.");
+  console.log("Verified built GUI toggles local runtime Demo Mode, sends canned chat over local command/SSE/history, avoids duplicate assistant bubbles, uses only loopback, and makes no provider calls or browser-storage secret writes.");
 } finally {
   await browser?.close().catch(() => undefined);
   await guiServer?.close().catch(() => undefined);
@@ -232,7 +237,7 @@ function subscribe(response, chatId) {
     connection: "keep-alive",
   }));
   writeSse(response, snapshotEvent(chatId));
-  for (const event of chatEvents.get(chatId) ?? []) writeSse(response, event);
+  for (const event of replayEventsForSubscriber(chatId)) writeSse(response, event);
   const chatSubscribers = subscribers.get(chatId) ?? new Set();
   chatSubscribers.add(response);
   subscribers.set(chatId, chatSubscribers);
@@ -246,9 +251,12 @@ function addTerminalDemoAssistantResponse(chatId, prompt) {
   const assistantMessage = message(chatId, `assistant-${item.messages.length}`, "assistant", content);
   item.messages.push(assistantMessage);
   chats.set(chatId, item);
+  setActiveStream(chatId, true);
   pushChatEvent(chatId, "stream_started", {});
   pushChatEvent(chatId, "message_added", { message: assistantMessage });
+  setActiveStream(chatId, false);
   pushChatEvent(chatId, "stream_finished", { finishReason: "stop" });
+  markTerminalReplayPersisted(chatId);
 }
 function terminalDemoAnswer(prompt) {
   if (prompt === "Terminal message_added second prompt smoke.") return "Terminal message_added second answer from Yet AI Demo Mode — no provider call was made.";
@@ -256,10 +264,36 @@ function terminalDemoAnswer(prompt) {
 }
 function pushChatEvent(chatId, type, payload) {
   const events = chatEvents.get(chatId) ?? [];
-  const event = { seq: events.length + 1, type, chatId, payload };
+  const event = { seq: (chatEventSeq.get(chatId) ?? 0) + 1, type, chatId, payload };
+  chatEventSeq.set(chatId, event.seq);
   events.push(event);
+  chatTerminalReplayRetention.set(chatId, "active_or_unpersisted");
   chatEvents.set(chatId, events);
   for (const response of subscribers.get(chatId) ?? []) writeSse(response, event);
+}
+function replayEventsForSubscriber(chatId) {
+  const activeStream = chatActiveStreams.get(chatId) === true;
+  const retention = chatTerminalReplayRetention.get(chatId) ?? "active_or_unpersisted";
+  if (!activeStream && retention === "snapshot_backed_prunable") {
+    chatEvents.set(chatId, []);
+  }
+  const replay = [...(chatEvents.get(chatId) ?? [])];
+  if (!activeStream && retention === "active_or_unpersisted" && !replay.some(isUnpersistedTerminalEvidence)) {
+    chatEvents.set(chatId, []);
+    chatTerminalReplayRetention.set(chatId, "snapshot_backed_prunable");
+  }
+  return replay;
+}
+function markTerminalReplayPersisted(chatId) {
+  if (chatActiveStreams.get(chatId) === true) return;
+  chatEvents.set(chatId, []);
+  chatTerminalReplayRetention.set(chatId, "snapshot_backed_prunable");
+}
+function setActiveStream(chatId, active) {
+  chatActiveStreams.set(chatId, active);
+}
+function isUnpersistedTerminalEvidence(event) {
+  return event.type === "error" && event.payload?.code === "chat_history_storage_error";
 }
 function snapshotEvent(chatId) {
   const item = chats.get(chatId) ?? thread(chatId, chatId, []);
@@ -276,6 +310,10 @@ function message(chatId, id, role, content) { return { chatId, id, role, content
 function toSummary(item) { return { chatId: item.chatId, title: item.title, createdAt: item.createdAt, updatedAt: item.updatedAt, messageCount: item.messages.length }; }
 async function listen(server) { await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); }); const address = server.address(); if (!address || typeof address === "string") throw new Error("Server did not bind to a TCP port."); return { port: address.port, close: () => new Promise((resolve) => server.close(resolve)) }; }
 async function expectVisibleText(page, text, label, timeout = 20_000) { const visible = await page.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout }).then(() => true).catch(() => false); assert(visible, `Missing visible ${label}: ${text}`); }
+async function assertAssistantAnswerCount(page, text, expected, label) {
+  const count = await page.locator(".chat-bubble.assistant").evaluateAll((elements, answer) => elements.filter((element) => element.textContent?.includes(String(answer))).length, text);
+  assert(count === expected, `Expected ${label} to appear exactly ${expected} time(s) in assistant bubbles, observed ${count}: ${text}`);
+}
 function empty(response, status) { response.writeHead(status, corsHeaders()); response.end(); }
 function json(response, status, payload) { response.writeHead(status, corsHeaders({ "content-type": "application/json" })); response.end(JSON.stringify(payload)); }
 function corsHeaders(extra = {}) { return { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, content-type", "access-control-allow-methods": "GET, POST, DELETE, OPTIONS", ...extra }; }
