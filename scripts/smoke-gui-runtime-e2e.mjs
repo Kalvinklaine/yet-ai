@@ -21,7 +21,8 @@ const modelId = "smoke-model";
 const providerName = "Smoke Mock Provider";
 const userMessageWithContext = "Say hello from GUI runtime smoke with attached context.";
 const userMessageWithoutContext = "Say hello from GUI runtime smoke without attached context.";
-const assistantText = "Hello smoke from mock provider.";
+const assistantTextWithContext = "Hello smoke from mock provider with context.";
+const assistantTextWithoutContext = "Hello smoke from mock provider without context.";
 const activeContextSentinel = `ACTIVE_CONTEXT_SENTINEL_${"x".repeat(64)}`;
 const activeContextText = `function smokeContext() { return "${activeContextSentinel}"; }`;
 const activeContextPath = "src/smoke-context.ts";
@@ -152,7 +153,8 @@ try {
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(userMessageWithContext);
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expectVisibleText(page, userMessageWithContext, "visible included-context user chat bubble", 20_000);
-  await expectVisibleText(page, assistantText, "included-context streamed assistant response", 30_000);
+  await expectVisibleText(page, assistantTextWithContext, "included-context streamed assistant response", 30_000);
+  await assertAssistantAnswerCount(page, assistantTextWithContext, 1, "included-context streamed assistant response");
   await expectVisibleText(page, "Context attached to the last accepted message", "one-shot context attached status", 20_000);
 
   await deliverActiveContext(page);
@@ -163,7 +165,8 @@ try {
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(userMessageWithoutContext);
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expectVisibleText(page, userMessageWithoutContext, "visible omitted-context user chat bubble", 20_000);
-  await expectVisibleText(page, assistantText, "omitted-context streamed assistant response", 30_000);
+  await expectVisibleText(page, assistantTextWithoutContext, "omitted-context streamed assistant response", 30_000);
+  await assertAssistantAnswerCount(page, assistantTextWithoutContext, 1, "omitted-context streamed assistant response");
   await waitForProviderHits(2);
 
   assert(providerAuth === `Bearer ${fakeApiKey}`, "mock provider did not receive the configured fake bearer key");
@@ -343,13 +346,12 @@ async function startMockProvider() {
     });
     request.on("end", () => {
       providerRequestBodies.push(requestBody);
+      const responseText = providerHits === 1 ? assistantTextWithContext : assistantTextWithoutContext;
       response.writeHead(200, {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
       });
-      response.write('data: {"choices":[{"delta":{"content":"Hello "}}]}\n\n');
-      response.write('data: {"choices":[{"delta":{"content":"smoke "}}]}\n\n');
-      response.write('data: {"choices":[{"delta":{"content":"from mock provider."}}]}\n\n');
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: responseText } }] })}\n\n`);
       response.end("data: [DONE]\n\n");
     });
   });
@@ -404,6 +406,14 @@ async function expectVisibleText(page, text, description, timeout = 10_000) {
     const body = await page.locator("body").innerText().catch(() => "");
     throw new Error(`Timed out waiting for ${description}. ${messageOf(error)}\nVisible body excerpt: ${redactSecrets(body).slice(0, 6000)}`);
   }
+}
+
+async function assertAssistantAnswerCount(page, text, expected, description) {
+  const count = await page.locator(".chat-bubble.assistant").evaluateAll(
+    (elements, answer) => elements.filter((element) => element.textContent?.includes(String(answer))).length,
+    text,
+  );
+  assert(count === expected, `Expected ${description} to appear exactly ${expected} time(s) in assistant bubbles, observed ${count}: ${text}`);
 }
 
 async function deliverActiveContext(page) {
@@ -481,7 +491,8 @@ async function exerciseHistoryReload(page, runtimeBaseUrl) {
   await expectVisibleText(page, "Runtime connected", "runtime connection after reload", 20_000);
   await expectVisibleText(page, userMessageWithContext, "persisted included-context message after reload", 20_000);
   await expectVisibleText(page, userMessageWithoutContext, "persisted omitted-context message after reload", 20_000);
-  await expectVisibleText(page, assistantText, "persisted assistant response after reload", 20_000);
+  await expectVisibleText(page, assistantTextWithContext, "persisted included-context assistant response after reload", 20_000);
+  await expectVisibleText(page, assistantTextWithoutContext, "persisted omitted-context assistant response after reload", 20_000);
   await assertContextSentinelNotVisible(page, "reloaded history DOM");
 }
 
