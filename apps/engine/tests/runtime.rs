@@ -709,6 +709,82 @@ async fn start_terminal_ordering_mock_provider() -> String {
     format!("http://{address}")
 }
 
+async fn start_terminal_supersede_mock_provider() -> (
+    String,
+    mpsc::Receiver<Option<String>>,
+    oneshot::Receiver<()>,
+    oneshot::Sender<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (auth_sender, auth_receiver) = mpsc::channel(8);
+    let (second_delta_sender, second_delta_receiver) = oneshot::channel();
+    let (release_second_sender, release_second_receiver) = oneshot::channel();
+    let second_delta_sender = std::sync::Arc::new(std::sync::Mutex::new(Some(second_delta_sender)));
+    let release_second_receiver =
+        std::sync::Arc::new(std::sync::Mutex::new(Some(release_second_receiver)));
+    let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    tokio::spawn(async move {
+        let handler = move |request: axum::http::Request<Body>| {
+            let auth_sender = auth_sender.clone();
+            let second_delta_sender = second_delta_sender.clone();
+            let release_second_receiver = release_second_receiver.clone();
+            let requests = requests.clone();
+            async move {
+                let auth = request
+                    .headers()
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                let _ = auth_sender.send(auth.clone()).await;
+                let request_index = requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if request_index == 0 {
+                    return (
+                        StatusCode::OK,
+                        [(header::CONTENT_TYPE, "text/event-stream")],
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"old\"}}]}\n\ndata: [DONE]\n\n".into_response(),
+                    )
+                        .into_response();
+                }
+
+                let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(8);
+                tokio::spawn(async move {
+                    let _ = tx
+                        .send(Ok(Bytes::from_static(
+                            b"data: {\"choices\":[{\"delta\":{\"content\":\"new\"}}]}\n\n",
+                        )))
+                        .await;
+                    if let Some(sender) = second_delta_sender.lock().unwrap().take() {
+                        let _ = sender.send(());
+                    }
+                    let receiver = release_second_receiver.lock().unwrap().take();
+                    if let Some(receiver) = receiver {
+                        let _ = receiver.await;
+                    }
+                    let _ = tx.send(Ok(Bytes::from_static(b"data: [DONE]\n\n"))).await;
+                });
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "text/event-stream")],
+                    Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx))
+                        .into_response(),
+                )
+                    .into_response()
+            }
+        };
+        let app = axum::Router::new()
+            .route("/chat/completions", axum::routing::post(handler.clone()))
+            .route("/v1/chat/completions", axum::routing::post(handler));
+        axum::serve(listener, app).await.unwrap();
+    });
+    (
+        format!("http://{address}"),
+        auth_receiver,
+        second_delta_receiver,
+        release_second_sender,
+    )
+}
+
 async fn start_replacement_mock_provider() -> (
     String,
     mpsc::Receiver<Option<String>>,
@@ -8839,6 +8915,75 @@ async fn chat_terminal_append_failure_emits_storage_error_without_success_stop_o
         "terminal storage failure",
     )
     .await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn chat_new_message_supersedes_failed_terminal_replay_for_late_subscribers() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-terminal-supersede-secret-abcd";
+    let (base_url, auth_receiver, second_delta_receiver, release_second_sender) =
+        start_terminal_supersede_mock_provider().await;
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    let chat_id = "chat-terminal-supersede-failure";
+    assert_eq!(send_user_message_with_content(app.clone(), chat_id, "first prompt").await, StatusCode::OK);
+    let history_path = paths.config_dir.join("chat-history").join(format!("{chat_id}.json"));
+    for _ in 0..40 {
+        if history_path.is_file() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let target = std::env::temp_dir().join(format!("yet-ai-terminal-supersede-failure-{}", std::process::id()));
+    let _ = std::fs::remove_file(&target);
+    std::fs::rename(&history_path, &target).unwrap();
+    std::os::unix::fs::symlink(&target, &history_path).unwrap();
+
+    let late_text = sse_text_from(app.clone(), &format!("/v1/chats/subscribe?chat_id={chat_id}")).await;
+    let late_events = sse_json_events(&late_text);
+    assert_eq!(late_events[0]["type"], "snapshot");
+    let error = find_error_event(&late_events);
+    assert_eq!(error["payload"]["code"], "chat_history_storage_error");
+    assert!(late_events.iter().any(|event| event["type"] == "stream_delta" && event["payload"]["delta"]["content"] == "old"));
+
+    assert_eq!(send_user_message_with_content(app.clone(), chat_id, "second prompt").await, StatusCode::OK);
+    tokio::time::timeout(std::time::Duration::from_secs(2), second_delta_receiver)
+        .await
+        .expect("second stream should emit a delta")
+        .expect("second stream delta signal should be sent");
+    let during_text = sse_text_from(app.clone(), &format!("/v1/chats/subscribe?chat_id={chat_id}")).await;
+    let during_events = sse_json_events(&during_text);
+    assert_eq!(during_events[0]["type"], "snapshot");
+    assert!(!during_events.iter().any(|event| event["type"] == "error" && event["payload"]["code"] == "chat_history_storage_error"), "subscriber during new stream saw old terminal storage error: {during_events:?}");
+    assert!(!during_events.iter().any(|event| event["type"] == "stream_delta" && event["payload"]["delta"]["content"] == "old"), "subscriber during new stream saw old stream delta: {during_events:?}");
+    assert!(during_events.iter().any(|event| event["type"] == "stream_delta" && event["payload"]["delta"]["content"] == "new"));
+    assert!(!during_text.contains(api_key));
+
+    std::fs::remove_file(&history_path).unwrap();
+    std::fs::rename(&target, &history_path).unwrap();
+    let _ = release_second_sender.send(());
+    let after_text = sse_text_from(app.clone(), &format!("/v1/chats/subscribe?chat_id={chat_id}")).await;
+    let after_events = sse_json_events(&after_text);
+    assert_eq!(after_events[0]["type"], "snapshot");
+    assert!(!after_events.iter().any(|event| event["type"] == "error" && event["payload"]["code"] == "chat_history_storage_error"), "subscriber after new stream saw old terminal storage error: {after_events:?}");
+    assert!(!after_events.iter().any(|event| event["type"] == "stream_delta" && event["payload"]["delta"]["content"] == "old"), "subscriber after new stream saw old stream delta: {after_events:?}");
+    assert!(!after_text.contains(api_key));
+
+    let mut auth_receiver = auth_receiver;
+    for scenario in ["first terminal supersede stream", "second terminal supersede stream"] {
+        let auth = tokio::time::timeout(std::time::Duration::from_secs(2), auth_receiver.recv())
+            .await
+            .unwrap_or_else(|_| panic!("{scenario}: expected auth observation"))
+            .unwrap_or_else(|| panic!("{scenario}: auth observation channel closed"));
+        assert_stored_secret(auth.as_deref(), "Bearer sk-terminal-supersede-secret-abcd");
+    }
+    assert_no_observed_auth(auth_receiver).await;
 }
 
 #[tokio::test]
