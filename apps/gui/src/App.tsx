@@ -6,6 +6,7 @@ import { EditProposalPanel, type ApplyResultState, type EditProposalState } from
 import { IdeActionProposalPanel, IdeActionsPanel, type IdeActionAttemptState } from "./components/IdeActionsPanel";
 import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
+import { modelStatusText, resolveProviderModelReadiness } from "./services/providerReadiness";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
 import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
@@ -1400,6 +1401,7 @@ export function App() {
     const notes = [
       "Session token unlocks this GUI to the local runtime only; Provider API key unlocks the upstream model through the runtime.",
       "Provider setup stays local-first BYOK: no Yet AI hosted backend, account, cloud workspace, or credit balance is required.",
+      "After saving or updating a provider, test provider, then refresh runtime/model readiness before the first message.",
     ];
     const authStatus = activeProviderAuthStatus?.status;
     if (activeProviderAuthStatus?.configured && activeProviderAuthStatus.authSource === "oauth") {
@@ -1484,7 +1486,7 @@ export function App() {
       reason: activeModelError
         ? "Runtime model refresh failed, so no send-ready model can be selected."
         : "No enabled OpenAI-compatible provider/model is ready for chat streaming.",
-      nextAction: "Use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, optionally test it, then refresh runtime.",
+      nextAction: "Use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, test provider, then refresh runtime/model readiness.",
       actions: [{ kind: "api_key_fallback", label: "Use OpenAI API key fallback" }, { kind: "refresh_runtime", label: "Refresh runtime" }],
       notes,
     };
@@ -1657,11 +1659,11 @@ export function App() {
         {runtimeConnected && !apiKeyChatReady && !experimentalOauthChatReady && (
           <div className="guided-setup-card stack" role="status">
             <strong>Runtime connected — provider required for your first GPT message</strong>
-            <span>Choose OpenAI API to paste an API key once, or configure a local OpenAI-compatible /v1 provider such as LM Studio, LocalAI, or Ollama. No hosted Yet AI account, cloud workspace, or credit balance is required.</span>
+            <span>Choose OpenAI API to paste an API key once, or configure a local OpenAI-compatible /v1 provider such as LM Studio, LocalAI, or Ollama. After save/update, run Test provider, then Refresh runtime to confirm model readiness before sending. No hosted Yet AI account, cloud workspace, or credit balance is required.</span>
             <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>
           </div>
         )}
-        <p className="subtle">Provider requests go to the local runtime. A provider API key is sent to the local runtime only, cleared from this form after save, never written to browser storage, and is distinct from the runtime Session token.</p>
+        <p className="subtle">Provider requests go to the local runtime. A provider API key is sent to the local runtime only on save, cleared from this form immediately after save/update is submitted, never written to browser storage, and is distinct from the runtime Session token.</p>
         <p className="subtle">ChatGPT/OpenAI account login is planned where officially supported. OpenAI API-key setup is the current safe fallback.</p>
         <p className="subtle">Current chat uses OpenAI-compatible providers only. Ollama is available here through its OpenAI-compatible /v1 endpoint; native Ollama chat is future work.</p>
         {providerError && <ErrorBox error={providerError} />}
@@ -1814,127 +1816,6 @@ function upsertChatSummary(current: ChatSummary[], thread: { chatId: string; tit
   };
   const withoutExisting = current.filter((item) => item.chatId !== summary.chatId);
   return [summary, ...withoutExisting].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-}
-
-type ProviderModelReadiness = {
-  ready: boolean;
-  mismatch: boolean;
-  model?: ModelSummary;
-  provider?: ProviderSummary;
-  message?: string;
-};
-
-function resolveProviderModelReadiness(models: ModelSummary[], enabledProviders: ProviderSummary[], modelError: RuntimeError | null): ProviderModelReadiness {
-  if (modelError) {
-    return { ready: false, mismatch: false };
-  }
-  const firstRuntimeModel = models[0];
-  if (firstRuntimeModel) {
-    const modelId = firstRuntimeModel.id.trim();
-    if (!modelId) {
-      return { ready: false, mismatch: true, model: firstRuntimeModel, message: modelProviderMismatchMessage(firstRuntimeModel) };
-    }
-    const provider = resolveRuntimeModelProvider(firstRuntimeModel, enabledProviders);
-    if (!provider || !provider.models.some((model) => model.id.trim() === modelId)) {
-      return { ready: false, mismatch: true, model: firstRuntimeModel, provider, message: modelProviderMismatchMessage(firstRuntimeModel, provider) };
-    }
-    return modelReadinessResult(firstRuntimeModel, provider);
-  }
-  const provider = enabledProviders.find((item) => item.models.some((model) => model.id.trim()));
-  const model = provider?.models.find((item) => item.id.trim());
-  if (!provider || !model) {
-    return { ready: false, mismatch: false };
-  }
-  return modelReadinessResult({ ...model, providerId: model.providerId ?? provider.id }, provider);
-}
-
-function modelReadinessResult(model: ModelSummary, provider: ProviderSummary): ProviderModelReadiness {
-  const missingMessage = missingModelMetadataMessage(model);
-  if (missingMessage) {
-    return { ready: false, mismatch: false, model, provider, message: missingMessage };
-  }
-  if (model.readiness?.status !== "ready") {
-    return { ready: false, mismatch: false, model, provider, message: modelUnreadyMessage(model) };
-  }
-  if (!model.capabilities?.chat || !model.capabilities.streaming) {
-    return { ready: false, mismatch: false, model, provider, message: modelUnsupportedMessage(model) };
-  }
-  return { ready: true, mismatch: false, model, provider };
-}
-
-function missingModelMetadataMessage(model: ModelSummary): string | undefined {
-  if (!model.capabilities || !model.readiness) {
-    return `Model ${sanitizeDisplayText(model.displayName || model.id || "selected model")} is missing readiness metadata from the runtime. Refresh the runtime after updating it before sending.`;
-  }
-  return undefined;
-}
-
-function modelUnreadyMessage(model: ModelSummary): string {
-  const modelName = sanitizeDisplayText(model.displayName || model.id || "selected model");
-  const status = sanitizeDisplayText(readinessStatusLabel(model.readiness?.status));
-  const reason = model.readiness?.reason ? ` ${sanitizeDisplayText(model.readiness.reason)}` : "";
-  return `Model ${modelName} is not ready for chat streaming: ${status}.${reason}`;
-}
-
-function modelUnsupportedMessage(model: ModelSummary): string {
-  const modelName = sanitizeDisplayText(model.displayName || model.id || "selected model");
-  const support = modelCapabilitySummary(model);
-  return `Model ${modelName} cannot send chat because required capabilities are unavailable: ${support}.`;
-}
-
-function resolveRuntimeModelProvider(model: ModelSummary, enabledProviders: ProviderSummary[]): ProviderSummary | undefined {
-  const providerId = model.providerId?.trim();
-  if (providerId) {
-    return enabledProviders.find((provider) => provider.id === providerId);
-  }
-  const matchingProviders = enabledProviders.filter((provider) => provider.models.some((providerModel) => providerModel.id.trim() === model.id.trim()));
-  return matchingProviders.length === 1 ? matchingProviders[0] : undefined;
-}
-
-function modelStatusText(model: ModelSummary, provider?: ProviderSummary): string {
-  const modelName = sanitizeDisplayText(model.displayName || model.id || "selected model");
-  const providerName = provider ? sanitizeDisplayText(provider.displayName || provider.id) : model.providerId ? sanitizeDisplayText(model.providerId) : undefined;
-  const providerText = providerName ? ` (${providerName})` : "";
-  if (!model.capabilities || !model.readiness) {
-    return `${modelName}${providerText}: readiness metadata missing`;
-  }
-  const reason = model.readiness.reason ? `, ${sanitizeDisplayText(model.readiness.reason)}` : "";
-  return `${modelName}${providerText}: ${sanitizeDisplayText(readinessStatusLabel(model.readiness.status))}${reason}; ${modelCapabilitySummary(model)}`;
-}
-
-function modelCapabilitySummary(model: ModelSummary): string {
-  if (!model.capabilities) {
-    return "capabilities missing";
-  }
-  return `chat ${capabilityLabel(model.capabilities.chat)}, streaming ${capabilityLabel(model.capabilities.streaming)}, tools ${capabilityLabel(model.capabilities.tools)}, reasoning ${capabilityLabel(model.capabilities.reasoning)}`;
-}
-
-function capabilityLabel(value: boolean): string {
-  return value ? "supported" : "unsupported";
-}
-
-function readinessStatusLabel(status: NonNullable<ModelSummary["readiness"]>["status"] | undefined): string {
-  switch (status) {
-    case "ready":
-      return "ready";
-    case "disabled":
-      return "disabled";
-    case "missing_credentials":
-      return "missing credentials";
-    case "missing_model":
-      return "missing model";
-    case "unsupported":
-      return "unsupported";
-    default:
-      return "unknown readiness";
-  }
-}
-
-function modelProviderMismatchMessage(model: ModelSummary, provider?: ProviderSummary): string {
-  const modelName = sanitizeDisplayText(model.displayName || model.id || "selected model");
-  const providerName = provider ? sanitizeDisplayText(provider.displayName || provider.id) : model.providerId ? sanitizeDisplayText(model.providerId) : undefined;
-  const detail = providerName ? ` Model ${modelName} is not available on enabled provider ${providerName}.` : ` Model ${modelName} does not map to exactly one enabled provider.`;
-  return `Runtime model/provider mismatch. Refresh runtime or test/save provider before sending.${detail}`;
 }
 
 function ideActionLabel(action: IdeActionType): string {

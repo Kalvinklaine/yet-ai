@@ -131,6 +131,7 @@ try {
   await expectVisibleText(page, "Active editor context", "active editor context card", 20_000);
   await expectVisibleText(page, activeContextPath, "active context file path", 20_000);
   await expectVisibleText(page, "Selected characters:", "active context selected character count", 20_000);
+  await acknowledgeHiddenContextIfNeeded(page);
   await expectVisibleText(page, "Attach to next message", "active context include state", 20_000);
   await assertContextSentinelNotVisible(page, "bounded active context preview");
 
@@ -141,6 +142,7 @@ try {
   await expectVisibleText(page, "Context attached to the last accepted message", "one-shot context attached status", 20_000);
 
   await deliverActiveContext(page);
+  await acknowledgeHiddenContextIfNeeded(page);
   await expectVisibleText(page, "Attach to next message", "refreshed active context include state", 20_000);
   await page.locator("label.attached-context-toggle", { hasText: "Attach to next message" }).getByRole("checkbox").uncheck();
   await expectVisibleText(page, "Do not attach", "active context omit state", 20_000);
@@ -414,6 +416,14 @@ async function deliverActiveContext(page) {
       },
     }, window.location.origin);
   }, { text: activeContextText, path: activeContextPath });
+}
+
+async function acknowledgeHiddenContextIfNeeded(page) {
+  const acknowledgementLabel = page.locator("label.attached-context-toggle", { hasText: "I understand the hidden selected text may be included" });
+  if (await acknowledgementLabel.isVisible().catch(() => false)) {
+    await acknowledgementLabel.click();
+    await page.locator("label.attached-context-toggle", { hasText: "Do not attach" }).getByRole("checkbox").check();
+  }
 }
 
 async function assertContextSentinelNotVisible(page, description) {

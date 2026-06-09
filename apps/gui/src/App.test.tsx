@@ -791,7 +791,7 @@ describe("provider secret boundary", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("This local runtime token authorizes the GUI to the loopback runtime");
-    expect(container?.textContent).toContain("provider API key is sent to the local runtime only, cleared from this form after save, never written to browser storage, and is distinct from the runtime Session token");
+    expect(container?.textContent).toContain("provider API key is sent to the local runtime only on save, cleared from this form immediately after save/update is submitted, never written to browser storage, and is distinct from the runtime Session token");
     expect(apiKeyInput().placeholder).toBe("Provider API key, not the runtime Session token");
     expect(container?.textContent).toContain("This is your provider/OpenAI API key, not the runtime Session token.");
   });
@@ -818,6 +818,52 @@ describe("provider secret boundary", () => {
     expect(fetchMock.mock.calls.every(([url]) => String(url).startsWith("http://127.0.0.1:8001/"))).toBe(true);
     const providerSaveCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/providers") && init?.method === "POST");
     expect(providerSaveCall?.[1]?.body).toContain(secret);
+  });
+
+  it("update existing provider clears API key input and keeps secrets out of browser storage", async () => {
+    const secret = "sk-test-update-secret";
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Edit").click();
+    });
+    expect(apiKeyInput().value).toBe("");
+    await act(async () => {
+      setInputValue(apiKeyInput(), secret);
+    });
+    expect(apiKeyInput().value).toBe(secret);
+
+    await act(async () => {
+      findButton("Update provider").click();
+    });
+
+    expect(apiKeyInput().value).toBe("");
+    expect(browserStorageDump()).not.toContain(secret);
+    const providerUpdateCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/providers/openai-api") && init?.method === "PATCH");
+    expect(providerUpdateCall?.[1]?.body).toContain(secret);
+  });
+
+  it("failed provider save does not restore raw secret into the DOM or browser storage", async () => {
+    const secret = "sk-failed-save-secret";
+    mockRuntimeResponses({ ...readyRuntimeOptions(), providerSaveStatus: 500, providerSaveResponse: { error: `save failed api_key=${secret}` } });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setInputValue(apiKeyInput(), secret);
+    });
+
+    await act(async () => {
+      findButton("Create provider").click();
+    });
+
+    expect(apiKeyInput().value).toBe("");
+    expect(container?.textContent).toContain("save failed [redacted]");
+    expect(container?.textContent).not.toContain(secret);
+    expect(container?.textContent).not.toContain("api_key");
+    expect(browserStorageDump()).not.toContain(secret);
   });
 
   it("provider mutation invalidates readiness until provider refresh completes", async () => {
@@ -911,6 +957,7 @@ describe("provider secret boundary", () => {
 
     expect(container?.textContent).not.toContain("stale save failed");
     expect(container?.textContent).not.toContain("verysecrettokenvalue");
+    expect(apiKeyInput().value).toBe("");
     expect(browserStorageDump()).not.toContain(secret);
   });
 
@@ -1149,6 +1196,7 @@ describe("provider secret boundary", () => {
 
     expect(container?.textContent).not.toContain("Provider test succeeded");
     expect(container?.textContent).not.toContain("stale provider test success");
+    expect(browserStorageDump()).not.toContain("stale provider test success");
   });
 
   it("clears and ignores stale provider test results when provider mutation starts", async () => {
@@ -1805,7 +1853,7 @@ describe("host.ready runtime bootstrap", () => {
     expect(text).toContain("Provider setup");
     expect(text).toContain("State: Provider required");
     expect(text).toContain("Provider required: choose OpenAI API for the API-key fallback or configure a local OpenAI-compatible /v1 provider with a model before sending the first GPT message.");
-    expect(text).toContain("Next safest action: Use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, optionally test it, then refresh runtime.");
+    expect(text).toContain("Next safest action: Use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, test provider, then refresh runtime/model readiness.");
     expect(findButton("Use OpenAI API key fallback")).toBeDefined();
     expect(findButton("Send").disabled).toBe(true);
   });
@@ -3393,7 +3441,7 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("choose OpenAI API, paste a provider API key once, save, optionally test the provider");
     expect(container?.textContent).toContain("Provider required for first message");
     expect(container?.textContent).toContain("Why: No enabled OpenAI-compatible provider/model is ready for chat streaming.");
-    expect(container?.textContent).toContain("Next safest action: Use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, optionally test it, then refresh runtime.");
+    expect(container?.textContent).toContain("Next safest action: Use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, test provider, then refresh runtime/model readiness.");
     expect(container?.textContent).toContain("Provider setup stays local-first BYOK");
     expect(findButton("Send").disabled).toBe(true);
   });
@@ -5976,6 +6024,8 @@ type MockRuntimeOptions = {
   capsResponse?: unknown;
   providerTestResponse?: unknown;
   providerTestStatus?: number;
+  providerSaveResponse?: unknown;
+  providerSaveStatus?: number;
   chats?: unknown[];
   chatThreads?: Record<string, unknown>;
   createChatThread?: unknown;
@@ -6258,7 +6308,7 @@ function mockRuntimeResponse(input: RequestInfo | URL, init: RequestInit | undef
     return Promise.resolve(jsonResponse({ ...providerAuthResponse("not_configured"), success: true }));
   }
   if (init?.method === "POST" && url.endsWith("/v1/providers")) {
-    return Promise.resolve(jsonResponse({
+    return Promise.resolve(jsonResponse(options.providerSaveResponse ?? {
       id: "openai-compatible-custom",
       kind: "openai-compatible",
       displayName: "OpenAI-Compatible Provider",
@@ -6267,7 +6317,10 @@ function mockRuntimeResponse(input: RequestInfo | URL, init: RequestInit | undef
       auth: { type: "api_key", configured: true, redacted: "sk-...test" },
       models: [readyModel({ displayName: "gpt-4o-mini" })],
       capabilities: { chat: true, completion: false, embeddings: false },
-    }));
+    }, options.providerSaveStatus ?? 200));
+  }
+  if (init?.method === "PATCH" && url.includes("/v1/providers/")) {
+    return Promise.resolve(jsonResponse(options.providerSaveResponse ?? enabledProvider(), options.providerSaveStatus ?? 200));
   }
   if (init?.method === "POST" && url.includes("/v1/providers/") && url.endsWith("/test")) {
     return Promise.resolve(jsonResponse(options.providerTestResponse ?? {
