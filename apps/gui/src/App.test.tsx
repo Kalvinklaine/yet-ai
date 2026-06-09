@@ -4914,8 +4914,8 @@ describe("edit proposal preview", () => {
     expect(text).toContain("Files: 1");
     expect(text).toContain("Text edits: 1");
     expect(text).toContain("const label = \"Yet AI\";");
-    expect(text).toContain("This MVP can apply workspace edits only from VS Code");
-    expect(Array.from(container?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Request host apply after review")).toBe(false);
+    expect(text).toContain("Browser and JetBrains are preview-only for confirmed edits");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Request VS Code host apply after review")).toBe(false);
     expect(browserStorageDump()).toContain("sentinel");
     expect(browserStorageDump()).not.toContain("Replace one visible editor line");
   });
@@ -4958,7 +4958,7 @@ describe("edit proposal preview", () => {
     expect(browserStorageDump()).toContain("sentinel");
     expect(browserStorageDump()).not.toContain(rawToken);
     expect(browserStorageDump()).not.toContain(longToken);
-    expect(Array.from(container?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Request host apply after review")).toBe(false);
+    expect(Array.from(container?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Request VS Code host apply after review")).toBe(false);
   });
 
   it("disables apply for redacted replacement preview until acknowledged, then emits gui.applyWorkspaceEditRequest on click in VS Code", async () => {
@@ -5000,7 +5000,7 @@ describe("edit proposal preview", () => {
     expect(browserStorageDump()).not.toContain(rawToken);
     expect(browserStorageDump()).not.toContain(longToken);
 
-    const applyButton = findButton("Request host apply after review");
+    const applyButton = findButton("Request VS Code host apply after review");
     expect(applyButton.disabled).toBe(true);
 
     // Even if the user tries to click while disabled, no apply is emitted.
@@ -5015,11 +5015,11 @@ describe("edit proposal preview", () => {
     await act(async () => {
       ack!.click();
     });
-    expect(findButton("Request host apply after review").disabled).toBe(false);
+    expect(findButton("Request VS Code host apply after review").disabled).toBe(false);
 
     // Clicking now emits the apply request with the raw proposal text.
     await act(async () => {
-      findButton("Request host apply after review").click();
+      findButton("Request VS Code host apply after review").click();
     });
     const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
     expect(applyCalls).toHaveLength(1);
@@ -5046,10 +5046,10 @@ describe("edit proposal preview", () => {
     expect(text).not.toContain("Replacement preview was redacted or shortened");
     expect(text).not.toContain("I understand the raw replacement text may differ from the redacted preview.");
     expect(container?.querySelector("[data-testid='edit-proposal-acknowledge-redaction']")).toBeNull();
-    expect(findButton("Request host apply after review").disabled).toBe(false);
+    expect(findButton("Request VS Code host apply after review").disabled).toBe(false);
 
     await act(async () => {
-      findButton("Request host apply after review").click();
+      findButton("Request VS Code host apply after review").click();
     });
     const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
     expect(applyCalls).toHaveLength(1);
@@ -5096,7 +5096,7 @@ describe("edit proposal preview", () => {
     expect(browserStorageDump()).not.toContain(rawToken);
     expect(browserStorageDump()).not.toContain(longToken);
     // In browser mode the apply button is not rendered; in VS Code it would be disabled. Either way the acknowledgement control is required before any apply can be issued.
-    expect(Array.from(container?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Request host apply after review")).toBe(false);
+    expect(Array.from(container?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Request VS Code host apply after review")).toBe(false);
   });
 
   it("resets acknowledgement when the edit proposal payload changes", async () => {
@@ -5149,11 +5149,11 @@ describe("edit proposal preview", () => {
 
     const firstAck = container?.querySelector<HTMLInputElement>("[data-testid='edit-proposal-acknowledge-redaction']");
     expect(firstAck).not.toBeNull();
-    expect(findButton("Request host apply after review").disabled).toBe(true);
+    expect(findButton("Request VS Code host apply after review").disabled).toBe(true);
     await act(async () => {
       firstAck!.click();
     });
-    expect(findButton("Request host apply after review").disabled).toBe(false);
+    expect(findButton("Request VS Code host apply after review").disabled).toBe(false);
 
     // Send a new user message that produces a new (changed) assistant edit proposal.
     await act(async () => {
@@ -5181,7 +5181,7 @@ describe("edit proposal preview", () => {
     const secondAck = container?.querySelector<HTMLInputElement>("[data-testid='edit-proposal-acknowledge-redaction']");
     expect(secondAck).not.toBeNull();
     expect(secondAck?.checked).toBe(false);
-    expect(findButton("Request host apply after review").disabled).toBe(true);
+    expect(findButton("Request VS Code host apply after review").disabled).toBe(true);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
 
@@ -5232,7 +5232,7 @@ describe("edit proposal preview", () => {
 
     const text = container?.textContent ?? "";
     expect(text).not.toContain("Confirmed edit proposal");
-    expect(text).not.toContain("Request host apply after review");
+    expect(text).not.toContain("Request VS Code host apply after review");
     expect(container?.querySelector("[data-testid='edit-proposal-unique-files']")).toBeNull();
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
@@ -5315,8 +5315,8 @@ describe("edit proposal preview", () => {
     expect(text).toContain("Confirmed edit proposal");
     expect(text).toContain("Replace one visible editor line after user review.");
     expect(text).toContain("src/example.ts");
-    expect(text).toContain("This MVP can apply workspace edits only from VS Code");
-    expect(Array.from(container?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Request host apply after review")).toBe(false);
+    expect(text).toContain("Browser and JetBrains are preview-only for confirmed edits");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Request VS Code host apply after review")).toBe(false);
     expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
 
@@ -5336,13 +5336,41 @@ describe("edit proposal preview", () => {
 
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
     await act(async () => {
-      findButton("Request host apply after review").click();
+      findButton("Request VS Code host apply after review").click();
     });
 
     const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
     expect(applyCalls).toHaveLength(1);
     expect(applyCalls[0][0]).toMatchObject({ version: bridgeVersion, type: "gui.applyWorkspaceEditRequest", payload: proposal });
     expect(applyCalls[0][0].requestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
+  });
+
+  it("uses a GUI-owned bounded apply request id and ignores an assistant-supplied requestId", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    const assistantRequestId = "assistant-request-id-must-not-correlate";
+    const envelope = { type: "gui.applyWorkspaceEditRequest", version: bridgeVersion, requestId: assistantRequestId, payload: proposal };
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Assistant request id ignored", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Assistant request id ignored", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(envelope))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.textContent ?? "").toContain("Confirmed edit proposal");
+    expect(container?.textContent ?? "").not.toContain(assistantRequestId);
+    await act(async () => {
+      findButton("Request VS Code host apply after review").click();
+    });
+    const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
+    expect(applyCalls).toHaveLength(1);
+    expect(applyCalls[0][0].requestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
+    expect(applyCalls[0][0].requestId).not.toBe(assistantRequestId);
+    expect(applyCalls[0][0].payload).toEqual(proposal);
   });
 
   it("clears proposal apply state synchronously on direct chat id changes", async () => {
@@ -5362,9 +5390,9 @@ describe("edit proposal preview", () => {
     await flushAsync();
     await flushAsync();
 
-    expect(findButton("Request host apply after review")).toBeDefined();
+    expect(findButton("Request VS Code host apply after review")).toBeDefined();
     await act(async () => {
-      findButton("Request host apply after review").click();
+      findButton("Request VS Code host apply after review").click();
     });
     const oldRequestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
     expect(oldRequestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
@@ -5375,7 +5403,7 @@ describe("edit proposal preview", () => {
 
     let text = container?.textContent ?? "";
     expect(text).not.toContain("Confirmed edit proposal");
-    expect(text).not.toContain("Request host apply after review");
+    expect(text).not.toContain("Request VS Code host apply after review");
     expect(text).not.toContain(oldRequestId);
 
     await dispatchHostApplyResult(oldRequestId, {
@@ -5417,13 +5445,13 @@ describe("edit proposal preview", () => {
     });
 
     expect(editProposalRequestId()).toBe(initialRequestId);
-    const applyButton = findButton("Request host apply after review");
+    const applyButton = findButton("Request VS Code host apply after review");
     await act(async () => {
       applyButton.click();
       applyButton.click();
     });
 
-    expect(findButton("Host apply pending…").disabled).toBe(true);
+    expect(findButton("VS Code host apply pending…").disabled).toBe(true);
     const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
     expect(applyCalls).toHaveLength(1);
 
@@ -5464,16 +5492,16 @@ describe("edit proposal preview", () => {
     await flushAsync();
 
     await act(async () => {
-      findButton("Request host apply after review").click();
+      findButton("Request VS Code host apply after review").click();
     });
     const requestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
-    expect(findButton("Host apply pending…").disabled).toBe(true);
+    expect(findButton("VS Code host apply pending…").disabled).toBe(true);
 
     await act(async () => {
       findButton("Clear pending apply state").click();
     });
 
-    expect(findButton("Request host apply after review").disabled).toBe(false);
+    expect(findButton("Request VS Code host apply after review").disabled).toBe(false);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(1);
 
     await dispatchHostApplyResult(requestId, {
@@ -5501,7 +5529,7 @@ describe("edit proposal preview", () => {
     await flushAsync();
 
     await act(async () => {
-      findButton("Request host apply after review").click();
+      findButton("Request VS Code host apply after review").click();
     });
     const firstApplyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
     const firstRequestId = firstApplyCalls[firstApplyCalls.length - 1]?.[0].requestId;
@@ -5511,7 +5539,7 @@ describe("edit proposal preview", () => {
       findButton("Clear pending apply state").click();
     });
     await act(async () => {
-      findButton("Request host apply after review").click();
+      findButton("Request VS Code host apply after review").click();
     });
     const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
     const secondRequestId = applyCalls[applyCalls.length - 1]?.[0].requestId;
@@ -5536,7 +5564,7 @@ describe("edit proposal preview", () => {
       affectedFiles: ["src/example.ts"],
     });
     expect(container?.textContent ?? "").not.toContain("Stale first apply result.");
-    expect(findButton("Host apply pending…").disabled).toBe(true);
+    expect(findButton("VS Code host apply pending…").disabled).toBe(true);
 
     await dispatchHostApplyResult(secondRequestId, {
       status: "applied",
@@ -5577,7 +5605,7 @@ describe("edit proposal preview", () => {
 
     const text = container?.textContent ?? "";
     expect(text).not.toContain("Confirmed edit proposal");
-    expect(text).not.toContain("Request host apply after review");
+    expect(text).not.toContain("Request VS Code host apply after review");
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
 
@@ -5632,7 +5660,7 @@ describe("edit proposal preview", () => {
     await flushAsync();
     await flushAsync();
 
-    expect(findButton("Request host apply after review")).toBeDefined();
+    expect(findButton("Request VS Code host apply after review")).toBeDefined();
     const staleRequestId = editProposalRequestId();
     await act(async () => {
       setTextareaValue(chatInput(), "open dynamic proposal stream");
@@ -5658,7 +5686,7 @@ describe("edit proposal preview", () => {
     });
 
     expect(container?.textContent ?? "").not.toContain("Confirmed edit proposal");
-    expect(container?.textContent ?? "").not.toContain("Request host apply after review");
+    expect(container?.textContent ?? "").not.toContain("Request VS Code host apply after review");
     expect(container?.querySelector(".edit-proposal-card")).toBeNull();
 
     await act(async () => {
@@ -5710,7 +5738,7 @@ describe("edit proposal preview", () => {
     expect(container?.textContent ?? "").not.toContain("Unsolicited apply result.");
 
     await act(async () => {
-      findButton("Request host apply after review").click();
+      findButton("Request VS Code host apply after review").click();
     });
     const requestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
 
@@ -5788,7 +5816,7 @@ describe("edit proposal preview", () => {
     await flushAsync();
 
     await act(async () => {
-      findButton("Request host apply after review").click();
+      findButton("Request VS Code host apply after review").click();
     });
     const requestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
     expect(requestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
@@ -5815,6 +5843,43 @@ describe("edit proposal preview", () => {
     expect(text).not.toContain("Duplicate host apply result should not render.");
   });
 
+  it("redacts and bounds unsafe host apply result messages and paths", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Sanitized result chat", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Sanitized result chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Request VS Code host apply after review").click();
+    });
+    const requestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
+    const secret = "sk-" + "d".repeat(40);
+    await dispatchHostApplyResult(requestId, {
+      status: "failed",
+      message: `Failed with Bearer ${secret} at /Users/private/me/.config/auth.json ${"detail ".repeat(80)}`,
+      cloudRequired: false,
+      appliedEditCount: 0,
+      affectedFiles: ["src/example.ts", "credentials/private-token.txt"],
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Host apply result: failed");
+    expect(text).toContain("[redacted]");
+    expect(text).toContain("src/example.ts");
+    expect(text).not.toContain(secret);
+    expect(text).not.toContain("Bearer");
+    expect(text).not.toContain("/Users/private/me");
+    expect(text).not.toContain("credentials/private-token.txt");
+    expect(text.length).toBeLessThan(12000);
+  });
+
   it("ignores stale host apply result while a different apply request is pending in the same chat", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
@@ -5839,7 +5904,7 @@ describe("edit proposal preview", () => {
     expect(container?.textContent ?? "").not.toContain("Ignored stale host apply result.");
 
     await act(async () => {
-      findButton("Request host apply after review").click();
+      findButton("Request VS Code host apply after review").click();
     });
     const pendingRequestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
     expect(pendingRequestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
@@ -5854,7 +5919,7 @@ describe("edit proposal preview", () => {
     const text = container?.textContent ?? "";
     expect(text).toContain("Ignored stale host apply result.");
     expect(text).not.toContain("Mismatched stale host apply result should not render.");
-    expect(findButton("Host apply pending…").disabled).toBe(true);
+    expect(findButton("VS Code host apply pending…").disabled).toBe(true);
 
     await dispatchHostApplyResult(pendingRequestId, {
       status: "applied",
@@ -5884,7 +5949,7 @@ describe("edit proposal preview", () => {
     await flushAsync();
 
     await act(async () => {
-      findButton("Request host apply after review").click();
+      findButton("Request VS Code host apply after review").click();
     });
     const requestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
     expect(requestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
@@ -5939,7 +6004,7 @@ describe("edit proposal preview", () => {
     expect(initialText).toContain("Replace one visible editor line after user review.");
     expect(initialText).not.toContain(rawJson);
     expect(container?.querySelector(".chat-bubble.assistant pre[aria-label='Assistant edit proposal JSON']")).toBeNull();
-    expect(findButton("Request host apply after review").disabled).toBe(false);
+    expect(findButton("Request VS Code host apply after review").disabled).toBe(false);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("Replace one visible editor line");
@@ -5984,7 +6049,7 @@ describe("edit proposal preview", () => {
     expect(text).not.toContain("Confirmed edit proposal");
     expect(text).not.toContain("Replace one visible editor line after user review.");
     expect(container?.querySelector(".edit-proposal-card")).toBeNull();
-    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Request host apply after review");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Request VS Code host apply after review");
     expect(container?.querySelectorAll("pre[aria-label=\"Assistant edit proposal JSON\"]")).toHaveLength(0);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
@@ -6102,16 +6167,16 @@ describe("edit proposal preview", () => {
     expect(text).not.toContain("Proposed a confirmed edit.");
     expect(text).not.toContain("Confirmed edit proposal");
     expect(container?.querySelector(".edit-proposal-card")).toBeNull();
-    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Request host apply after review");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Request VS Code host apply after review");
     expect(container?.querySelector(".chat-bubble.assistant pre[aria-label='Assistant edit proposal JSON']")).toBeNull();
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
 
   it.each([
     ["applied", "Edits were applied by the host after confirmation."],
-    ["denied", "The host/user declined the edit. Review the proposal and request apply again only if you still want it."],
-    ["rejected", "The host rejected the edit by policy or validation. Ask for a smaller/safe proposal or regenerate the edit."],
-    ["failed", "The host failed while applying. The file may have changed; ask for an updated proposal or retry after checking the target range."],
+    ["denied", "The host/user declined the edit. Review the host confirmation and request apply again only if you still want it."],
+    ["rejected", "The host rejected the edit by policy or validation. Ask for a smaller/safe proposal before trying again."],
+    ["failed", "The host failed while applying. The file may have changed; refresh context and ask for an updated proposal before retrying."],
   ] satisfies Array<["applied" | "denied" | "rejected" | "failed", string]>)(
     "renders per-status repair guidance with the host apply result for %s",
     async (status, guidance) => {
@@ -6128,7 +6193,7 @@ describe("edit proposal preview", () => {
       await flushAsync();
 
       await act(async () => {
-        findButton("Request host apply after review").click();
+        findButton("Request VS Code host apply after review").click();
       });
       const requestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
       expect(requestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);

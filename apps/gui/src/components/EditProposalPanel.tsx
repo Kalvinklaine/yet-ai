@@ -110,7 +110,7 @@ export function EditProposalPreview({ proposal, host, pending, onApply, onCancel
         ))}
       </div>
       {host !== "vscode" ? (
-        <div className="readiness-card warn" role="status">This MVP can apply workspace edits only from VS Code. Browser and JetBrains preview mode cannot request apply yet.</div>
+        <div className="readiness-card warn" role="status">Browser and JetBrains are preview-only for confirmed edits. Host apply is unsupported there; only VS Code can receive an apply request after your review.</div>
       ) : (
         <div className="row">
           <button
@@ -119,7 +119,7 @@ export function EditProposalPreview({ proposal, host, pending, onApply, onCancel
             disabled={applyDisabled}
             data-testid="edit-proposal-apply-button"
           >
-            {pending ? "Host apply pending…" : "Request host apply after review"}
+            {pending ? "VS Code host apply pending…" : "Request VS Code host apply after review"}
           </button>
           {pending && <button type="button" onClick={onCancelPending}>Clear pending apply state</button>}
         </div>
@@ -135,9 +135,9 @@ export type ApplyResultPreviewProps = {
 
 const APPLY_RESULT_REPAIR_GUIDANCE: Readonly<Record<ApplyWorkspaceEditResultPayload["status"], string>> = Object.freeze({
   applied: "Edits were applied by the host after confirmation.",
-  denied: "The host/user declined the edit. Review the proposal and request apply again only if you still want it.",
-  rejected: "The host rejected the edit by policy or validation. Ask for a smaller/safe proposal or regenerate the edit.",
-  failed: "The host failed while applying. The file may have changed; ask for an updated proposal or retry after checking the target range.",
+  denied: "The host/user declined the edit. Review the host confirmation and request apply again only if you still want it.",
+  rejected: "The host rejected the edit by policy or validation. Ask for a smaller/safe proposal before trying again.",
+  failed: "The host failed while applying. The file may have changed; refresh context and ask for an updated proposal before retrying.",
 });
 
 export function ApplyResultPreview({ result }: ApplyResultPreviewProps) {
@@ -147,10 +147,17 @@ export function ApplyResultPreview({ result }: ApplyResultPreviewProps) {
       <strong>Host apply result: {sanitizeDisplayText(result.payload.status)}</strong>
       <span>{sanitizeDisplayText(result.payload.message)}</span>
       <span>Request: {sanitizeDisplayText(result.requestId)} · applied edits: {result.payload.appliedEditCount ?? 0} · cloud required: false</span>
-      {result.payload.affectedFiles && result.payload.affectedFiles.length > 0 && <span>Affected files: {result.payload.affectedFiles.map((file) => sanitizeDisplayText(file)).join(", ")}</span>}
+      {result.payload.affectedFiles && result.payload.affectedFiles.length > 0 && <span>Affected files: {result.payload.affectedFiles.map((file) => sanitizeDisplayText(safeDisplayPath(file))).join(", ")}</span>}
       {guidance && <span className="subtle" data-testid="apply-result-guidance">{sanitizeDisplayText(guidance)}</span>}
     </div>
   );
+}
+
+function safeDisplayPath(path: string): string {
+  if (/^\/|^~|^[A-Za-z]:[\\/]|\\|:|\?|#|(^|\/)\.\.?($|\/)|(?:^|[._\/-])(?:auth|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:[._\/-]|$)|^sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(path)) {
+    return "[redacted]";
+  }
+  return path;
 }
 
 const replacementPreviewLimit = 320;
