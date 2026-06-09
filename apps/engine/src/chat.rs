@@ -168,6 +168,8 @@ impl ChatRuntime {
                     json!({ "finishReason": "abort" }),
                 );
                 state.mark_terminal_replay_persisted();
+            } else {
+                state.supersede_unpersisted_terminal_replay();
             }
             let stream_id = state.next_stream_id;
             state.next_stream_id += 1;
@@ -759,6 +761,15 @@ impl ChatState {
 
     fn mark_terminal_replay_persisted(&mut self) {
         if self.active_stream.is_none() {
+            self.events.clear();
+            self.terminal_replay = TerminalReplayRetention::SnapshotBackedPrunable;
+        }
+    }
+
+    fn supersede_unpersisted_terminal_replay(&mut self) {
+        if self.terminal_replay == TerminalReplayRetention::ActiveOrUnpersisted
+            && self.events.iter().any(is_unpersisted_terminal_evidence)
+        {
             self.events.clear();
             self.terminal_replay = TerminalReplayRetention::SnapshotBackedPrunable;
         }
