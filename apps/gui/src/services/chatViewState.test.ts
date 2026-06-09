@@ -139,6 +139,24 @@ describe("chatViewState", () => {
     ]);
   });
 
+  it("reconciles replayed streaming duplicate when snapshot already has the persisted assistant", () => {
+    const snapshotted = applyChatViewEvent(createInitialChatViewState("chat-1"), event("snapshot", {
+      messages: [
+        { id: "assistant-1", chatId: "chat-1", role: "assistant", content: "Persisted answer", createdAt: "2026-05-29T07:16:00Z", status: "complete" },
+      ],
+    }));
+    const started = applyChatViewEvent(snapshotted, event("stream_started", { role: "assistant" }));
+    const delta = applyChatViewEvent(started, event("stream_delta", { delta: { content: "Replayed partial" } }));
+    const added = applyChatViewEvent(delta, event("message_added", {
+      message: { id: "assistant-1", chatId: "chat-1", role: "assistant", content: "Final persisted answer", createdAt: "2026-05-29T07:16:01Z", status: "complete" },
+    }));
+    const finished = applyChatViewEvent(added, event("stream_finished", { finishReason: "stop" }));
+
+    expect(finished.messages).toEqual([
+      { id: "assistant-1", role: "assistant", content: "Final persisted answer", status: "complete" },
+    ]);
+  });
+
   it("ignores message_added for the wrong chat and malformed payloads", () => {
     const state = addAcceptedUserMessage(createInitialChatViewState("chat-1"), "Hello");
     const wrongChat = applyChatViewEvent(state, event("message_added", {

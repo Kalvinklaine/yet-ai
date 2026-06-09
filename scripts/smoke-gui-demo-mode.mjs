@@ -67,8 +67,9 @@ try {
   await expectVisibleText(page, firstAnswer, "first terminal message_added assistant response still visible after second send");
   await expectVisibleText(page, secondAnswer, "second terminal message_added assistant response without a third send");
   await expectVisibleText(page, "no provider call was made", "demo no-provider copy");
-  await expectVisibleText(page, "Message sent; waiting for response stream.", "post-response terminal command accepted status");
+  await expectVisibleText(page, "Demo Mode ready — local canned responses, no provider calls. Ready to send.", "post-response demo ready status");
   const postResponseBody = await page.evaluate(() => document.body.innerText);
+  assert(!postResponseBody.includes("Message sent; waiting for response stream."), "post-response body still shows stale command-accepted waiting copy");
   assert(!postResponseBody.includes("Ready when the local runtime and provider model are ready"), "post-response body still shows stale provider-ready waiting copy");
   assert(!postResponseBody.includes("Waiting for engine"), "post-response body still shows stale engine waiting copy");
 
@@ -245,7 +246,9 @@ function addTerminalDemoAssistantResponse(chatId, prompt) {
   const assistantMessage = message(chatId, `assistant-${item.messages.length}`, "assistant", content);
   item.messages.push(assistantMessage);
   chats.set(chatId, item);
+  pushChatEvent(chatId, "stream_started", {});
   pushChatEvent(chatId, "message_added", { message: assistantMessage });
+  pushChatEvent(chatId, "stream_finished", { finishReason: "stop" });
 }
 function terminalDemoAnswer(prompt) {
   if (prompt === "Terminal message_added second prompt smoke.") return "Terminal message_added second answer from Yet AI Demo Mode — no provider call was made.";

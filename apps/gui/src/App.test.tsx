@@ -4473,14 +4473,16 @@ describe("chat panel", () => {
       ...readyRuntimeOptions(),
       sseEvents: [
         { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
+        { seq: 1, type: "stream_started", chatId: "chat-001", payload: {} },
         {
-          seq: 1,
+          seq: 2,
           type: "message_added",
           chatId: "chat-001",
           payload: {
             message: chatMessage("chat-001", "assistant-terminal-1", "assistant", "Terminal message_added answer after first send."),
           },
         },
+        { seq: 3, type: "stream_finished", chatId: "chat-001", payload: { finishReason: "stop" } },
       ],
     });
     renderApp();
@@ -4498,6 +4500,8 @@ describe("chat panel", () => {
 
     expect(container?.textContent).toContain("Terminal event please");
     expect(container?.textContent).toContain("Terminal message_added answer after first send.");
+    expect(chatLifecycleText()).toBe("Ready to send.");
+    expect(chatLifecycleText()).not.toContain("waiting");
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(1);
   });
 
@@ -4534,6 +4538,7 @@ describe("chat panel", () => {
       sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 1, type: "message_added", chatId: "chat-001", payload: { message: chatMessage("chat-001", "assistant-terminal-1", "assistant", "First terminal answer.") } })}\n\n`));
       await Promise.resolve();
     });
+    expect(container?.textContent).toContain("First terminal answer.");
 
     await act(async () => {
       setTextareaValue(chatInput(), "Second terminal prompt");

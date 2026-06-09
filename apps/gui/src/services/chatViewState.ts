@@ -133,7 +133,10 @@ function applyMessageAdded(state: ChatViewState, payload: SseEvent["payload"]): 
   const viewMessage = toViewMessage(state, message);
   const sameIdIndex = state.messages.findIndex((current) => current.id === viewMessage.id);
   if (sameIdIndex >= 0) {
-    return updateMessage(state, sameIdIndex, viewMessage);
+    const messages = state.messages
+      .map((current, currentIndex) => (currentIndex === sameIdIndex ? viewMessage : current))
+      .filter((current, currentIndex) => currentIndex === sameIdIndex || !isGeneratedStreamingAssistant(state.chatId, current));
+    return { ...state, messages };
   }
 
   if (viewMessage.role === "assistant") {
@@ -162,6 +165,10 @@ function applyMessageAdded(state: ChatViewState, payload: SseEvent["payload"]): 
     ...state,
     messages: [...state.messages, viewMessage],
   };
+}
+
+function isGeneratedStreamingAssistant(chatId: string, message: ChatViewMessage): boolean {
+  return message.role === "assistant" && message.status === "streaming" && message.id.startsWith(`${chatId}-message-`);
 }
 
 export function stopStreamingAssistant(state: ChatViewState): ChatViewState {
