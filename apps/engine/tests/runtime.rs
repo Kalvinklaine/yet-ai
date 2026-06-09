@@ -1313,9 +1313,9 @@ async fn send_abort(app: axum::Router, chat_id: &str, request_id: &str) {
     assert_eq!(body["type"], "abort");
 }
 
-fn find_error_event(events: &[Value]) -> &Value {
+fn find_error_event(events: &[Value]) -> Value {
     if let Some(event) = events.iter().find(|event| event["type"] == "error") {
-        return event;
+        return event.clone();
     }
     let message = events
         .first()
@@ -1336,10 +1336,10 @@ fn find_error_event(events: &[Value]) -> &Value {
         "Provider configuration is invalid." => "provider_config_error",
         _ => "provider_request_failed",
     };
-    Box::leak(Box::new(json!({
+    json!({
         "type": "error",
         "payload": { "code": code, "message": message }
-    })))
+    })
 }
 
 fn assert_sanitized_sse_error(text: &str) {
@@ -8761,6 +8761,80 @@ async fn chat_success_persists_user_and_assistant_messages_for_snapshot_and_rest
         auth_receiver,
         "Bearer sk-history-success-secret-abcd",
         "history success persistence",
+    )
+    .await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn chat_terminal_append_failure_emits_storage_error_without_success_stop_or_prune() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-history-terminal-storage-secret-abcd";
+    let (base_url, auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"unsaved assistant\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    let chat_id = "chat-terminal-storage-failure";
+    let command = json!({
+        "requestId": "req-terminal-storage-failure",
+        "type": "user_message",
+        "payload": { "content": "persist terminal failure" }
+    });
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            &format!("/v1/chats/{chat_id}/commands"),
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accepted"], true);
+
+    let history_path = paths.config_dir.join("chat-history").join(format!("{chat_id}.json"));
+    for _ in 0..40 {
+        if history_path.is_file() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let target = std::env::temp_dir().join(format!(
+        "yet-ai-terminal-storage-failure-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&target);
+    std::fs::rename(&history_path, &target).unwrap();
+    std::os::unix::fs::symlink(&target, &history_path).unwrap();
+
+    let text = sse_text_from(app.clone(), &format!("/v1/chats/subscribe?chat_id={chat_id}")).await;
+    let events = sse_json_events(&text);
+    let error = find_error_event(&events);
+    assert_eq!(error["payload"]["code"], "chat_history_storage_error");
+    assert_eq!(
+        error["payload"]["message"],
+        "Chat response could not be saved to local storage."
+    );
+    assert!(!events.iter().any(|event| {
+        event["type"] == "stream_finished" && event["payload"]["finishReason"] == "stop"
+    }));
+    assert!(events.iter().any(|event| event["type"] == "stream_delta"));
+    assert!(!events.iter().any(|event| event["type"] == "message_added"));
+    assert_sanitized_sse_error(&text);
+    assert!(!text.contains(api_key));
+    assert!(!text.contains(&paths.config_dir.to_string_lossy().to_string()));
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer sk-history-terminal-storage-secret-abcd",
+        "terminal storage failure",
     )
     .await;
 }
