@@ -8,6 +8,10 @@ The plugin stays thin. Chat runtime, provider configuration, tool policy, storag
 
 The plugin connects the GUI to the local Yet AI runtime for local-first BYOK workflows. It does not require a Yet AI cloud workspace, account, hosted model gateway, or managed credit balance for normal operation. It must not persist provider API keys or duplicate provider adapters.
 
+## IDE surface parity
+
+The repository-level parity contract is `scripts/ide-surface-contract.mjs`; validate it with `npm run validate:ide-surface-contract` and run `npm run smoke:ide-parity` for local-only parity smoke coverage. Current parity is intentional, not identical: both IDEs support the packaged GUI, trusted `host.ready`, active editor context, provider setup, first-message smoke, and explicit read-only IDE action proposals. VS Code is the only host with confirmed edit proposal apply, still bounded to explicit GUI apply plus host user confirmation; JetBrains remains preview-only/no-apply for that surface. VS Code LSP is an off-by-default read-only MVP/status proof, while JetBrains LSP native/client behavior is foundation/deferred only. Artifact installability is dev-preview only for both IDEs, with JetBrains also covered by bundled runtime startup smoke. These checks do not launch real IDEs, call providers, require hosted services, sign, publish, or claim production release status.
+
 ## Commands
 
 VS Code command palette commands:
