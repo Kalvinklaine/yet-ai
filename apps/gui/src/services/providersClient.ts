@@ -1,6 +1,6 @@
 import { runtimeFetch, type ModelSummary, type RuntimeResult, type RuntimeSettings } from "./runtimeClient";
 
-export type ProviderKind = "openai-compatible" | "ollama" | "custom";
+export type ProviderKind = "openai-compatible" | "ollama" | "custom" | "demo-local";
 export type AuthType = "none" | "api_key";
 
 export type ProviderSummary = {

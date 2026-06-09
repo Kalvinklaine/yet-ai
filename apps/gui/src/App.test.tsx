@@ -1858,6 +1858,69 @@ describe("host.ready runtime bootstrap", () => {
     expect(findButton("Send").disabled).toBe(true);
   });
 
+  it("offers runtime-owned Demo Mode and keeps it out of browser storage", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+    expect(container?.textContent).toContain("Try Demo Mode");
+    expect(findButton("Send").disabled).toBe(true);
+
+    fetchMock.mockClear();
+    mockRuntimeResponses({
+      demoMode: demoModeResponse(true),
+      providers: [demoProvider()],
+      models: [readyModel({ id: "yet-demo-chat", displayName: "Yet AI Demo Chat", providerId: "yet-demo" })],
+    });
+    await act(async () => {
+      findButton("Try Demo Mode").click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+    await flushAsync();
+
+    const setCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/demo-mode") && init?.method === "POST");
+    expect(setCall?.[1]?.body).toBe(JSON.stringify({ enabled: true }));
+    expect(container?.textContent).toContain("Demo Mode is enabled in the local runtime");
+    expect(container?.textContent).toContain("no provider calls");
+    expect(container?.textContent).toContain("not model quality");
+    expect(container?.textContent).toContain("State: Yet AI Demo Chat (yet-demo)");
+    expect(findButton("Send").disabled).toBe(false);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("yet-demo-chat");
+  });
+
+  it("ignores stale Demo Mode toggle responses after runtime settings change", async () => {
+    const demoSet = deferred<Response>();
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url === "http://127.0.0.1:8001/v1/demo-mode") {
+        return demoSet.promise;
+      }
+      return mockRuntimeResponse(input, init);
+    });
+
+    await act(async () => {
+      findButton("Try Demo Mode").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
+    });
+    demoSet.resolve(jsonResponse(demoModeResponse(true)));
+    await flushAsync();
+
+    expect(container?.textContent).not.toContain("Demo Mode enabled in local runtime");
+    expect(container?.textContent).not.toContain("State: Yet AI Demo Chat (yet-demo)");
+    expect(findButton("Send").disabled).toBe(true);
+    expect(browserStorageDump()).not.toContain("yet-demo-chat");
+  });
+
   it("first-message readiness distinguishes runtime unavailable provider required and ready to send", async () => {
     mockRuntimeResponses({ runtimeFailure: true });
     renderApp();
@@ -3641,8 +3704,8 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("Chat readiness");
     expect(container?.textContent).toContain("0 enabled providers");
     expect(container?.textContent).toContain("Runtime connected — provider required for your first GPT message");
-    expect(container?.textContent).toContain("Choose OpenAI API to paste an API key once, or configure a local OpenAI-compatible /v1 provider");
-    expect(container?.textContent).toContain("No hosted Yet AI account, cloud workspace, or credit balance is required.");
+    expect(container?.textContent).toContain("Use the OpenAI API-key fallback or a local OpenAI-compatible /v1 server");
+    expect(container?.textContent).toContain("Provider setup stays local-first BYOK: no Yet AI hosted backend, account, cloud workspace, or credit balance is required.");
     expect(container?.textContent).toContain("State: Provider required");
     expect(container?.textContent).toContain("Provider required: choose OpenAI API for the API-key fallback or configure a local OpenAI-compatible /v1 provider with a model before sending the first GPT message.");
     expect(container?.textContent).toContain("choose OpenAI API, paste a provider API key once, save, optionally test the provider");
@@ -6350,6 +6413,10 @@ type MockRuntimeOptions = {
   providers?: unknown[];
   models?: unknown[];
   modelsFailure?: boolean;
+  demoMode?: unknown;
+  demoModeStatus?: number;
+  demoModeSetResponse?: unknown;
+  demoModeSetStatus?: number;
   runtimeFailure?: boolean;
   pingResponse?: unknown;
   capsResponse?: unknown;
@@ -6405,6 +6472,31 @@ function connectedExperimentalAuthResponse(): ProviderAuthResponse & { success: 
     ...providerAuthResponse("connected"),
     success: true,
     message: "OpenAI login is connected.",
+  };
+}
+
+function demoModeResponse(enabled: boolean) {
+  return {
+    enabled,
+    providerId: "yet-demo",
+    modelId: "yet-demo-chat",
+    displayName: "Yet AI Demo Mode",
+    cloudRequired: false,
+    providerAccess: "direct",
+    message: "Demo Mode uses local canned responses from the runtime. It requires no API key, makes no provider calls, and is not model quality.",
+  };
+}
+
+function demoProvider() {
+  return {
+    id: "yet-demo",
+    kind: "demo-local",
+    displayName: "Yet AI Demo Mode",
+    enabled: true,
+    baseUrl: "local-runtime-demo-mode",
+    auth: { type: "none", configured: true },
+    models: [readyModel({ id: "yet-demo-chat", displayName: "Yet AI Demo Chat" })],
+    capabilities: { chat: true, completion: false, embeddings: false },
   };
 }
 
@@ -6731,6 +6823,12 @@ function mockRuntimeResponse(input: RequestInfo | URL, init: RequestInit | undef
       return Promise.resolve(jsonResponse({ error: "models unavailable" }, 503));
     }
     return Promise.resolve(jsonResponse({ models: options.models ?? [] }));
+  }
+  if (init?.method === "POST" && url.endsWith("/v1/demo-mode")) {
+    return Promise.resolve(jsonResponse(options.demoModeSetResponse ?? demoModeResponse(JSON.parse(String(init.body)).enabled === true), options.demoModeSetStatus ?? 200));
+  }
+  if (url.endsWith("/v1/demo-mode")) {
+    return Promise.resolve(jsonResponse(options.demoMode ?? demoModeResponse(false), options.demoModeStatus ?? 200));
   }
   if (url.endsWith("/v1/providers")) {
     return Promise.resolve(jsonResponse({ providers: options.providers ?? [], cloudRequired: false, providerAccess: "direct" }));

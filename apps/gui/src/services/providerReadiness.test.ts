@@ -46,6 +46,24 @@ describe("provider readiness", () => {
     expect(readiness.model?.providerId).toBe("openai-api");
   });
 
+  it("accepts the local demo provider/model as normal runtime-owned readiness", () => {
+    const demoModel = model({ id: "yet-demo-chat", displayName: "Yet AI Demo Chat", providerId: "yet-demo" });
+    const demoProvider = provider({
+      id: "yet-demo",
+      kind: "demo-local",
+      displayName: "Yet AI Demo Mode",
+      baseUrl: "local-runtime-demo-mode",
+      auth: { type: "none", configured: true },
+      models: [demoModel],
+    });
+
+    const readiness = resolveProviderModelReadiness([demoModel], [demoProvider], null);
+
+    expect(readiness.ready).toBe(true);
+    expect(readiness.provider?.id).toBe("yet-demo");
+    expect(modelStatusText(demoModel, demoProvider)).toBe("Yet AI Demo Chat (Yet AI Demo Mode): ready; chat supported, streaming supported, tools unsupported, reasoning unsupported");
+  });
+
   it("keeps model errors and missing provider metadata send-blocking", () => {
     expect(resolveProviderModelReadiness([model()], [provider()], { status: "network", message: "failed" })).toEqual({ ready: false, mismatch: false });
     expect(resolveProviderModelReadiness([], [], null)).toEqual({ ready: false, mismatch: false });

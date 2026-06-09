@@ -451,6 +451,10 @@ async function startMockRuntimeServer() {
       json(response, 200, { productId: "yet-ai", protocolVersion: bridgeVersion, runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: ["chat"], features: {}, providers: [], ide: { bridge: true, lsp: false, host: "vscode-wrapper-browser-smoke" } });
       return;
     }
+    if ((request.method === "GET" || request.method === "POST") && requestUrl.pathname === "/v1/demo-mode") {
+      json(response, 200, demoModeDisabledResponse());
+      return;
+    }
     if (request.method === "GET" && requestUrl.pathname === "/v1/models") {
       json(response, 200, { models: [] });
       return;
@@ -583,6 +587,10 @@ async function collectVisibleState(page) {
 function json(response, status, body) {
   response.writeHead(status, { ...corsHeaders(), "content-type": "application/json; charset=utf-8" });
   response.end(JSON.stringify(body));
+}
+
+function demoModeDisabledResponse() {
+  return { enabled: false, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "Demo Mode uses local canned responses from the runtime. It requires no API key, makes no provider calls, and is not model quality. Configure a BYOK provider for real answers." };
 }
 
 function corsHeaders() {

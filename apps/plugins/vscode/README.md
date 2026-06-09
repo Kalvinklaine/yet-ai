@@ -108,6 +108,9 @@ npm run smoke:vscode-first-message
 
 The first-message smoke uses a loopback mock runtime/provider with fake credentials and validates packaged GUI bootstrap, provider-required gating, active-context delivery, streamed assistant rendering, and no token/key leakage. It does not launch VS Code, use real provider credentials, call OpenAI/ChatGPT, or contact hosted Yet AI services.
 
+Installed-plugin dogfood can also start with GUI Demo Mode before configuring a real BYOK provider. Demo Mode is owned by the local runtime (`/v1/demo-mode` plus normal model/provider readiness), not the VS Code extension or browser storage. It returns canned local responses through the same command/SSE/history path, requires no API key, makes no OpenAI/ChatGPT or other provider call, and is not evidence of model quality. Disable Demo Mode and configure a local BYOK provider for real answers.
+
+
 Run the confirmed edit-proposal smoke directly when changing the VS Code apply-edit bridge or GUI edit proposal preview:
 
 ```sh

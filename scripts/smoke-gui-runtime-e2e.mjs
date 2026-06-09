@@ -69,6 +69,17 @@ try {
   }
 
   const page = await browser.newPage();
+  await page.route("http://127.0.0.1:8001/v1/demo-mode", async (route) => {
+    if (route.request().method() !== "GET" && route.request().method() !== "POST") {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8", "access-control-allow-origin": "*" },
+      body: JSON.stringify(demoModeDisabledResponse()),
+    });
+  });
   const browserVisible = [];
   page.on("console", (message) => {
     const text = message.text();
@@ -460,6 +471,10 @@ async function exerciseHistoryReload(page, runtimeBaseUrl) {
 
 function authHeaders() {
   return { Authorization: `Bearer ${token}` };
+}
+
+function demoModeDisabledResponse() {
+  return { enabled: false, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "Demo Mode uses local canned responses from the runtime. It requires no API key, makes no provider calls, and is not model quality. Configure a BYOK provider for real answers." };
 }
 
 async function freePort() {

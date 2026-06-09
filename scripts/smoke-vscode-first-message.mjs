@@ -243,6 +243,10 @@ async function startMockRuntimeServer() {
       json(response, 200, { productId: "yet-ai", protocolVersion: bridgeVersion, runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: ["chat"], features: {}, providers: [], ide: { bridge: true, lsp: false, host: "vscode-preview-smoke" } });
       return;
     }
+    if ((request.method === "GET" || request.method === "POST") && requestUrl.pathname === "/v1/demo-mode") {
+      json(response, 200, demoModeDisabledResponse());
+      return;
+    }
     if (request.method === "GET" && requestUrl.pathname === "/v1/providers") {
       json(response, 200, { providers: runtimeReady ? [mockProvider()] : [], cloudRequired: false, providerAccess: "direct" });
       return;
@@ -299,6 +303,10 @@ function mockProvider() {
 
 function mockModel() {
   return { id: "vscode-smoke-model", providerId: "vscode-smoke-provider", displayName: "VS Code Smoke Model", capabilities: { chat: true, streaming: true, tools: false, reasoning: false }, readiness: { status: "ready" } };
+}
+
+function demoModeDisabledResponse() {
+  return { enabled: false, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "Demo Mode uses local canned responses from the runtime. It requires no API key, makes no provider calls, and is not model quality. Configure a BYOK provider for real answers." };
 }
 
 async function startStaticServer(staticRoot) {

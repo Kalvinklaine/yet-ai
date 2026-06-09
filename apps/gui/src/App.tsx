@@ -10,7 +10,7 @@ import { conversationHistoryStatusLabel, resolveChatAfterList, resolveFallbackCh
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { modelStatusText, resolveProviderModelReadiness } from "./services/providerReadiness";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
-import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
+import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type DemoModeResponse, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
 import { editProposalCandidateIdentityMatches, editProposalPayloadKey, isCompleteAssistantEditProposalStatus, latestEditProposalCandidateFromMessages, parseEditProposalContent, type EditProposalIdentity } from "./services/editProposal";
@@ -91,6 +91,7 @@ type AgentProgressState = {
 
 type FirstMessageAction =
   | { kind: "refresh_runtime"; label: string }
+  | { kind: "enable_demo_mode"; label: string }
   | { kind: "api_key_fallback"; label: string }
   | { kind: "test_provider"; label: string; providerId: string }
   | { kind: "send_first_message"; label: string };
@@ -226,6 +227,9 @@ export function App() {
   const [ping, setPing] = useState<PingResponse | null>(null);
   const [caps, setCaps] = useState<CapsResponse | null>(null);
   const [models, setModels] = useState<ModelSummary[]>([]);
+  const [demoMode, setDemoModeState] = useState<DemoModeResponse | null>(null);
+  const [demoModeError, setDemoModeError] = useState<RuntimeError | null>(null);
+  const [demoModeWorking, setDemoModeWorking] = useState(false);
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
   const [connectionError, setConnectionError] = useState<RuntimeError | null>(null);
   const [modelError, setModelError] = useState<RuntimeError | null>(null);
@@ -273,6 +277,7 @@ export function App() {
   const [runtimeDataRevision, setRuntimeDataRevision] = useState<number | null>(null);
   const [providerDataRevision, setProviderDataRevision] = useState<number | null>(null);
   const [providerAuthDataRevision, setProviderAuthDataRevision] = useState<number | null>(null);
+  const [demoModeDataRevision, setDemoModeDataRevision] = useState<number | null>(null);
   const [agentProgress, setAgentProgress] = useState<AgentProgressState>({ state: "not_checked", response: null, error: null });
   const activeStreamRef = useRef<ActiveStream | null>(null);
   const [editProposal, setEditProposal] = useState<EditProposalState | null>(null);
@@ -309,6 +314,7 @@ export function App() {
   const runtimeDataCurrent = runtimeDataRevision === settingsRevision;
   const providerDataCurrent = providerDataRevision === settingsRevision;
   const providerAuthDataCurrent = providerAuthDataRevision === settingsRevision;
+  const demoModeDataCurrent = demoModeDataRevision === settingsRevision;
   const chatHistoryCurrent = chatHistoryRevision === settingsRevision;
   const activePing = runtimeDataCurrent ? ping : null;
   const activeCaps = runtimeDataCurrent ? caps : null;
@@ -317,6 +323,8 @@ export function App() {
   const activeModelError = runtimeDataCurrent ? modelError : null;
   const activeIdentityWarnings = runtimeDataCurrent ? identityWarnings : [];
   const activeProviders = providerDataCurrent ? providers : [];
+  const activeDemoMode = demoModeDataCurrent ? demoMode : null;
+  const activeDemoModeError = demoModeDataCurrent ? demoModeError : null;
   const activeProviderAuthStatus = providerAuthDataCurrent ? providerAuthStatus : null;
   const activeChatSummaries = chatHistoryCurrent ? chatSummaries : [];
   const activeChatSummary = activeChatSummaries.find((item) => item.chatId === chatId);
@@ -327,6 +335,7 @@ export function App() {
   const apiKeyReadiness = useMemo(() => resolveProviderModelReadiness(activeModels, enabledProviders, activeModelError), [activeModels, activeModelError, enabledProviders]);
   const selectedModel = apiKeyReadiness.model;
   const apiKeyChatReady = runtimeConnected && apiKeyReadiness.ready;
+  const demoModeEnabled = activeDemoMode?.enabled === true;
   const providerAuthMutationInFlight = providerAuthMutation !== null;
   const experimentalOauthChatReady = runtimeConnected && !apiKeyChatReady && !providerAuthMutationInFlight && !apiKeyReadiness.mismatch && activeProviderAuthStatus?.configured === true && activeProviderAuthStatus.authSource === "oauth" && activeProviderAuthStatus.status === "connected";
   const canSendChat = apiKeyChatReady || experimentalOauthChatReady;
@@ -434,6 +443,8 @@ export function App() {
     setRuntimeDataRevision(null);
     setProviderDataRevision(null);
     setProviderAuthDataRevision(null);
+    setDemoModeDataRevision(null);
+    setDemoModeWorking(false);
     chatHistoryAttemptRef.current += 1;
     setChatHistoryRevision(null);
     setChatSummaries([]);
@@ -618,10 +629,11 @@ export function App() {
     setModelError(null);
     setIdentityWarnings([]);
     try {
-      const [nextPing, nextCaps, nextModels] = await Promise.all([
+      const [nextPing, nextCaps, nextModels, nextDemoMode] = await Promise.all([
         getPing(targetSettings),
         getCaps(targetSettings),
         getModels(targetSettings),
+        getDemoMode(targetSettings),
       ]);
       if (!isCurrentRefresh(revision)) {
         return;
@@ -657,8 +669,16 @@ export function App() {
         setModelError(nextModels.error);
         lastError = nextModels.error;
       }
+      if (nextDemoMode.ok) {
+        setDemoModeState(nextDemoMode.data);
+        setDemoModeError(null);
+      } else {
+        setDemoModeState(null);
+        setDemoModeError(nextDemoMode.error.status === 404 ? null : nextDemoMode.error);
+      }
       setIdentityWarnings(warnings);
       setRuntimeDataRevision(revision);
+      setDemoModeDataRevision(revision);
       setRuntimeRefreshStatus({
         state: lastError ? "failed" : "connected",
         attempt,
@@ -676,10 +696,13 @@ export function App() {
       setPing(null);
       setCaps(null);
       setModels([]);
+      setDemoModeState(null);
       setIdentityWarnings([]);
       setConnectionError(runtimeError);
       setModelError(runtimeError);
+      setDemoModeError(runtimeError);
       setRuntimeDataRevision(revision);
+      setDemoModeDataRevision(revision);
       setRuntimeRefreshStatus({
         state: "failed",
         attempt,
@@ -709,6 +732,29 @@ export function App() {
       setProviderDataRevision(revision);
     }
   }, [isCurrentRefresh]);
+
+  const toggleDemoMode = useCallback(async (enabled: boolean) => {
+    const targetSettings = settingsRef.current;
+    const targetRevision = settingsRevisionRef.current;
+    setDemoModeWorking(true);
+    setDemoModeError(null);
+    const result = await setDemoMode(targetSettings, enabled);
+    if (!isCurrentRefresh(targetRevision)) {
+      return;
+    }
+    setDemoModeWorking(false);
+    if (result.ok) {
+      setDemoModeState(result.data);
+      setDemoModeDataRevision(targetRevision);
+      addTimeline(`Demo Mode ${enabled ? "enabled" : "disabled"} in local runtime`);
+      await refreshRuntime(targetSettings, targetRevision);
+      await refreshProviders(targetSettings, targetRevision);
+    } else {
+      setDemoModeError(result.error);
+      setDemoModeDataRevision(targetRevision);
+      addTimeline(`Demo Mode error: ${sanitizeDisplayText(result.error.message)}`);
+    }
+  }, [addTimeline, isCurrentRefresh, refreshProviders, refreshRuntime]);
 
   const refreshProviderAuthStatus = useCallback(async (targetSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
     setProviderAuthError(null);
@@ -979,6 +1025,9 @@ export function App() {
   };
 
   const editProvider = (provider: ProviderSummary) => {
+    if (provider.kind === "demo-local") {
+      return;
+    }
     setSelectedProviderId(provider.id);
     setProviderForm({
       providerId: provider.id,
@@ -1420,6 +1469,7 @@ export function App() {
     const notes = [
       "Session token unlocks this GUI to the local runtime only; Provider API key unlocks the upstream model through the runtime.",
       "Provider setup stays local-first BYOK: no Yet AI hosted backend, account, cloud workspace, or credit balance is required.",
+      "Demo Mode uses runtime-owned local canned responses only: no API key, no provider calls, and not model quality.",
       "After saving or updating a provider, test provider, then refresh runtime/model readiness before the first message.",
     ];
     const authStatus = activeProviderAuthStatus?.status;
@@ -1449,10 +1499,10 @@ export function App() {
     }
     if (apiKeyChatReady) {
       return {
-        title: "Ready for your first message",
+        title: demoModeEnabled && selectedModelProviderId === "yet-demo" ? "Demo Mode is ready" : "Ready for your first message",
         reason: `Send is enabled for ${selectedModelDisplayName ?? "the selected model"}${selectedModelProviderId ? ` through ${selectedModelProviderId}` : ""}.`,
         nextAction: "Type a prompt and send it through the local runtime.",
-        actions: [{ kind: "send_first_message", label: "Send first message" }],
+        actions: [...(demoModeEnabled ? [{ kind: "enable_demo_mode" as const, label: demoModeWorking ? "Changing Demo Mode…" : "Disable Demo Mode" }] : []), { kind: "send_first_message" as const, label: "Send first message" }],
         notes,
       };
     }
@@ -1481,6 +1531,7 @@ export function App() {
         reason: apiKeyReadiness.message ?? "The runtime selected model does not map to one enabled provider with that model id.",
         nextAction: providerId ? "Test the saved provider, then refresh runtime after fixing the provider/model id." : "Configure an OpenAI-compatible provider, then refresh runtime.",
         actions: [
+          { kind: "enable_demo_mode" as const, label: demoModeWorking ? "Changing Demo Mode…" : "Try Demo Mode" },
           ...(providerId ? [{ kind: "test_provider" as const, label: "Test provider", providerId }] : [{ kind: "api_key_fallback" as const, label: "Use OpenAI API key fallback" }]),
           { kind: "refresh_runtime", label: "Refresh runtime" },
         ],
@@ -1494,6 +1545,7 @@ export function App() {
         reason: apiKeyReadiness.message,
         nextAction: providerId ? "Test the provider, fix credentials/model readiness locally, then refresh runtime." : "Choose the API-key fallback or configure a usable OpenAI-compatible provider.",
         actions: [
+          { kind: "enable_demo_mode" as const, label: demoModeWorking ? "Changing Demo Mode…" : "Try Demo Mode" },
           ...(providerId ? [{ kind: "test_provider" as const, label: "Test provider", providerId }] : [{ kind: "api_key_fallback" as const, label: "Use OpenAI API key fallback" }]),
           { kind: "refresh_runtime", label: "Refresh runtime" },
         ],
@@ -1506,10 +1558,10 @@ export function App() {
         ? "Runtime model refresh failed, so no send-ready model can be selected."
         : "No enabled OpenAI-compatible provider/model is ready for chat streaming.",
       nextAction: "Use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, test provider, then refresh runtime/model readiness.",
-      actions: [{ kind: "api_key_fallback", label: "Use OpenAI API key fallback" }, { kind: "refresh_runtime", label: "Refresh runtime" }],
+      actions: [{ kind: "enable_demo_mode", label: demoModeWorking ? "Changing Demo Mode…" : "Try Demo Mode" }, { kind: "api_key_fallback", label: "Use OpenAI API key fallback" }, { kind: "refresh_runtime", label: "Refresh runtime" }],
       notes,
     };
-  }, [activeConnectionError, activeModelError, activeProviderAuthStatus, apiKeyChatReady, apiKeyReadiness, bridgeHost, enabledProviders, experimentalOauthChatReady, providerAuthMutationInFlight, runtimeConnected, runtimeRefreshInFlight, runtimeRefreshStatus, selectedModelDisplayName, selectedModelProviderId]);
+  }, [activeConnectionError, activeModelError, activeProviderAuthStatus, apiKeyChatReady, apiKeyReadiness, bridgeHost, demoModeEnabled, demoModeWorking, enabledProviders, experimentalOauthChatReady, providerAuthMutationInFlight, runtimeConnected, runtimeRefreshInFlight, runtimeRefreshStatus, selectedModelDisplayName, selectedModelProviderId]);
 
   return (
     <main className="app-shell">
@@ -1549,6 +1601,8 @@ export function App() {
             <span>State: {chatReadinessLabel}</span>
             <span>{chatReadinessMessage}</span>
             {chatModelStatus && <span className="subtle">Model status: {chatModelStatus}</span>}
+            {demoModeEnabled && <span className="subtle">Demo Mode is enabled in the local runtime. It uses canned responses only, makes no provider calls, requires no API key, and is not model quality.</span>}
+            {activeDemoModeError && <span className="error">Demo Mode status unavailable: {activeDemoModeError.status}: {sanitizeDisplayText(activeDemoModeError.message)}</span>}
             {runtimeConnected && !canSendChat && <span className="subtle">For the quickest path, choose OpenAI API, paste a provider API key once, save, optionally test the provider, then send your first message. For local models, choose an OpenAI-compatible /v1 preset.</span>}
             {experimentalOauthChatReady && <span className="subtle">OpenAI API-key fallback remains the safe/default setup and will be preferred when configured.</span>}
             {!canSendChat && <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>}
@@ -1558,7 +1612,10 @@ export function App() {
             canSendChat={canSendChat}
             runtimeRefreshInFlight={runtimeRefreshInFlight}
             providerTestState={providerTestState}
+            demoModeEnabled={demoModeEnabled}
+            demoModeWorking={demoModeWorking}
             onRefreshRuntime={() => void connect()}
+            onToggleDemoMode={(enabled) => void toggleDemoMode(enabled)}
             onApiKeyFallback={applyOpenAiApiPreset}
             onTestProvider={(providerId) => void runProviderTest(providerId)}
             onFocusPrompt={() => chatInputRef.current?.focus()}
@@ -1679,8 +1736,11 @@ export function App() {
         {runtimeConnected && !apiKeyChatReady && !experimentalOauthChatReady && (
           <div className="guided-setup-card stack" role="status">
             <strong>Runtime connected — provider required for your first GPT message</strong>
-            <span>Choose OpenAI API to paste an API key once, or configure a local OpenAI-compatible /v1 provider such as LM Studio, LocalAI, or Ollama. After save/update, run Test provider, then Refresh runtime to confirm model readiness before sending. No hosted Yet AI account, cloud workspace, or credit balance is required.</span>
-            <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>
+            <span>Try Demo Mode first to dogfood the installed plugin/runtime/GUI/SSE/history path with local canned responses. Demo Mode needs no API key, makes no provider calls, and is not model quality. Configure a BYOK provider for real answers when ready.</span>
+            <div className="row">
+              <button type="button" onClick={() => void toggleDemoMode(true)} disabled={demoModeWorking}>{demoModeWorking ? "Changing Demo Mode…" : "Use Demo Mode"}</button>
+              <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>
+            </div>
           </div>
         )}
         <p className="subtle">Provider requests go to the local runtime. A provider API key is sent to the local runtime only on save, cleared from this form immediately after save/update is submitted, never written to browser storage, and is distinct from the runtime Session token.</p>
@@ -1964,12 +2024,15 @@ function ChatBubble({ message, activeEditProposal, activeIdeActionProposal }: { 
   );
 }
 
-function FirstMessageReadinessWizard({ readiness, canSendChat, runtimeRefreshInFlight, providerTestState, onRefreshRuntime, onApiKeyFallback, onTestProvider, onFocusPrompt }: {
+function FirstMessageReadinessWizard({ readiness, canSendChat, runtimeRefreshInFlight, providerTestState, demoModeEnabled, demoModeWorking, onRefreshRuntime, onToggleDemoMode, onApiKeyFallback, onTestProvider, onFocusPrompt }: {
   readiness: FirstMessageReadiness;
   canSendChat: boolean;
   runtimeRefreshInFlight: boolean;
   providerTestState: ProviderTestState | null;
+  demoModeEnabled: boolean;
+  demoModeWorking: boolean;
   onRefreshRuntime: () => void;
+  onToggleDemoMode: (enabled: boolean) => void;
   onApiKeyFallback: () => void;
   onTestProvider: (providerId: string) => void;
   onFocusPrompt: () => void;
@@ -1985,7 +2048,7 @@ function FirstMessageReadinessWizard({ readiness, canSendChat, runtimeRefreshInF
         <span>Next safest action: {readiness.nextAction}</span>
       </div>
       <div className="readiness-action-row">
-        {readiness.actions.map((action) => <FirstMessageActionButton key={`${action.kind}:${"providerId" in action ? action.providerId : action.label}`} action={action} runtimeRefreshInFlight={runtimeRefreshInFlight} providerTestState={providerTestState} onRefreshRuntime={onRefreshRuntime} onApiKeyFallback={onApiKeyFallback} onTestProvider={onTestProvider} onFocusPrompt={onFocusPrompt} />)}
+        {readiness.actions.map((action) => <FirstMessageActionButton key={`${action.kind}:${"providerId" in action ? action.providerId : action.label}`} action={action} runtimeRefreshInFlight={runtimeRefreshInFlight} providerTestState={providerTestState} demoModeEnabled={demoModeEnabled} demoModeWorking={demoModeWorking} onRefreshRuntime={onRefreshRuntime} onToggleDemoMode={onToggleDemoMode} onApiKeyFallback={onApiKeyFallback} onTestProvider={onTestProvider} onFocusPrompt={onFocusPrompt} />)}
       </div>
       <ol className="first-message-steps">
         {readiness.notes.map((note) => <li key={note}>{note}</li>)}
@@ -1994,11 +2057,14 @@ function FirstMessageReadinessWizard({ readiness, canSendChat, runtimeRefreshInF
   );
 }
 
-function FirstMessageActionButton({ action, runtimeRefreshInFlight, providerTestState, onRefreshRuntime, onApiKeyFallback, onTestProvider, onFocusPrompt }: {
+function FirstMessageActionButton({ action, runtimeRefreshInFlight, providerTestState, demoModeEnabled, demoModeWorking, onRefreshRuntime, onToggleDemoMode, onApiKeyFallback, onTestProvider, onFocusPrompt }: {
   action: FirstMessageAction;
   runtimeRefreshInFlight: boolean;
   providerTestState: ProviderTestState | null;
+  demoModeEnabled: boolean;
+  demoModeWorking: boolean;
   onRefreshRuntime: () => void;
+  onToggleDemoMode: (enabled: boolean) => void;
   onApiKeyFallback: () => void;
   onTestProvider: (providerId: string) => void;
   onFocusPrompt: () => void;
@@ -2008,6 +2074,9 @@ function FirstMessageActionButton({ action, runtimeRefreshInFlight, providerTest
   }
   if (action.kind === "api_key_fallback") {
     return <button type="button" onClick={onApiKeyFallback}>{action.label}</button>;
+  }
+  if (action.kind === "enable_demo_mode") {
+    return <button type="button" onClick={() => onToggleDemoMode(!demoModeEnabled)} disabled={demoModeWorking}>{demoModeWorking ? "Changing Demo Mode…" : action.label}</button>;
   }
   if (action.kind === "test_provider") {
     const testing = providerTestState?.providerId === action.providerId && providerTestState.state === "testing";

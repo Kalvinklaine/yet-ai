@@ -106,6 +106,9 @@ Manual IntelliJ IDEA install-from-disk steps:
 
 Installed IDEA first-message checklist:
 
+Installed-plugin dogfood may use GUI Demo Mode before a real provider is configured. Demo Mode is local runtime-owned (`/v1/demo-mode` plus normal model/provider readiness), not a JetBrains/JCEF/browser-storage fake. It streams canned local responses through the same command/SSE/history path, requires no API key, makes no OpenAI/ChatGPT or other provider call, and is not model-quality validation. Disable Demo Mode and configure a BYOK provider for real answers.
+
+
 1. Run the preflight commands from the repository root: `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, `npm run smoke:jetbrains-bundled-runtime`, `npm run smoke:jetbrains-gui-browser`, and `npm run smoke:jetbrains-first-message`. Use `npm run smoke:ide-preview` when validating both IDEs together.
 2. Install the stable root ZIP through Install Plugin from Disk, restart IntelliJ IDEA, and keep `Launch mode` as `auto` or `launch` for the normal plugin-launched runtime path.
 3. Do not manually start `yet-lsp` and do not paste `local-dev-token` for the normal installed path. The plugin-launched runtime supplies its loopback URL and session token to the packaged GUI through trusted `host.ready`; there is no manual user paste step for the local runtime token. Set `Engine binary path` only if bundled runtime discovery and `PATH` discovery both fail.
