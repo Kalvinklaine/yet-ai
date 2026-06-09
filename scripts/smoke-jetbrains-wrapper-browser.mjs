@@ -421,6 +421,7 @@ try {
   await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill("Send without JetBrains context.");
   await frameLocator.getByRole("button", { name: "Send", exact: true }).click();
   await frameLocator.getByText("JetBrains login smoke", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not render the assistant response from mock SSE."));
+  await assertAssistantAnswerCount(frameLocator, "JetBrains login smoke", 1, "first JetBrains mock SSE assistant response");
   if (chatCommandRequestCount !== 1) {
     failures.push(`Mock runtime received ${chatCommandRequestCount} chat command requests after disabled-toggle send instead of exactly one.`);
   }
@@ -448,6 +449,7 @@ try {
   await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill("Say hello through JetBrains login-shaped smoke.");
   await frameLocator.getByRole("button", { name: "Send", exact: true }).click();
   await frameLocator.getByText("JetBrains login smoke", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not render the assistant response from mock SSE after context send."));
+  await assertAssistantAnswerCount(frameLocator, "JetBrains login smoke", 2, "JetBrains mock SSE assistant response after two sends");
   if (chatCommandRequestCount !== 2) {
     failures.push(`Mock runtime received ${chatCommandRequestCount} chat command requests instead of exactly two.`);
   }
@@ -497,6 +499,16 @@ try {
 function assertRandomReadyRequestId(requestId, label) {
   if (typeof requestId !== "string" || !/^gui-ready-\d+-\d+-[0-9a-f]{32}$/.test(requestId)) {
     failures.push(`Wrapper did not synthesize a random authoritative ready id for ${label}, got ${String(requestId)}.`);
+  }
+}
+
+async function assertAssistantAnswerCount(frameLocator, text, expected, description) {
+  const count = await frameLocator.locator(".chat-bubble.assistant").evaluateAll(
+    (elements, answer) => elements.filter((element) => element.textContent?.includes(String(answer))).length,
+    text,
+  );
+  if (count !== expected) {
+    failures.push(`Expected ${description} to appear exactly ${expected} time(s) in assistant bubbles, observed ${count}: ${text}`);
   }
 }
 
@@ -1621,10 +1633,11 @@ async function startMockRuntimeServer() {
 
 function registerChatSseSubscriber(chatId, response) {
   const subscribers = chatSseSubscribers.get(chatId) ?? new Set();
-  subscribers.add(response);
+  const subscriber = { response, nextSeq: 1 };
+  subscribers.add(subscriber);
   chatSseSubscribers.set(chatId, subscribers);
   response.on("close", () => {
-    subscribers.delete(response);
+    subscribers.delete(subscriber);
     if (subscribers.size === 0) {
       chatSseSubscribers.delete(chatId);
     }
@@ -1650,12 +1663,50 @@ function emitAssistantResponse(chatId) {
     pendingAssistantResponsesByChat.set(chatId, (pendingAssistantResponsesByChat.get(chatId) ?? 0) + 1);
     return;
   }
-  const [response] = subscribers;
-  writeSse(response, { seq: 1, type: "stream_started", chatId, payload: { role: "assistant" } });
-  writeSse(response, { seq: 2, type: "stream_delta", chatId, payload: { delta: { content: "JetBrains" } } });
-  writeSse(response, { seq: 3, type: "stream_delta", chatId, payload: { delta: { content: " login smoke" } } });
-  writeSse(response, { seq: 4, type: "stream_finished", chatId, payload: { finishReason: "stop" } });
-  response.end();
+  for (const subscriber of Array.from(subscribers).reverse()) {
+    if (!isWritableSseResponse(subscriber.response)) {
+      subscribers.delete(subscriber);
+      continue;
+    }
+    if (emitAssistantResponseToSubscriber(chatId, subscriber)) {
+      return;
+    }
+    subscribers.delete(subscriber);
+  }
+  if (subscribers.size === 0) {
+    chatSseSubscribers.delete(chatId);
+  }
+  pendingAssistantResponsesByChat.set(chatId, (pendingAssistantResponsesByChat.get(chatId) ?? 0) + 1);
+}
+
+function emitAssistantResponseToSubscriber(chatId, subscriber) {
+  const events = [
+    { type: "stream_started", chatId, payload: { role: "assistant" } },
+    { type: "stream_delta", chatId, payload: { delta: { content: "JetBrains" } } },
+    { type: "stream_delta", chatId, payload: { delta: { content: " login smoke" } } },
+    { type: "stream_finished", chatId, payload: { finishReason: "stop" } },
+  ];
+  try {
+    for (const event of events) {
+      writeSseToSubscriber(subscriber, event);
+    }
+    subscriber.response.end();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function writeSseToSubscriber(subscriber, event) {
+  if (!isWritableSseResponse(subscriber.response)) {
+    throw new Error("SSE subscriber is no longer writable.");
+  }
+  writeSse(subscriber.response, { seq: subscriber.nextSeq, ...event });
+  subscriber.nextSeq += 1;
+}
+
+function isWritableSseResponse(response) {
+  return !response.destroyed && !response.writableEnded;
 }
 
 function writeSse(response, event) {
