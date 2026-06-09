@@ -1415,10 +1415,13 @@ export function App() {
         : runtimeRefreshStatus?.state === "checking"
           ? "Runtime check is in progress or has not completed for the current settings."
           : "Runtime has not been checked for the current settings.";
+      const ideRuntimeHint = bridgeHost === "jetbrains"
+        ? " In JetBrains installed mode, also use Tools → Yet AI: Show Runtime Status or Restart Runtime if Refresh runtime keeps failing."
+        : "";
       return {
         title: activeConnectionError?.status === 401 ? "Runtime authorization needs attention" : "Connect the local runtime first",
         reason,
-        nextAction: "Refresh runtime, then fix the loopback URL or Session token if the check fails.",
+        nextAction: `Refresh runtime, then fix the loopback URL or Session token if the check fails.${ideRuntimeHint}`,
         actions: [{ kind: "refresh_runtime", label: runtimeRefreshInFlight ? "Checking runtime…" : "Refresh runtime" }],
         notes,
       };
@@ -1485,7 +1488,7 @@ export function App() {
       actions: [{ kind: "api_key_fallback", label: "Use OpenAI API key fallback" }, { kind: "refresh_runtime", label: "Refresh runtime" }],
       notes,
     };
-  }, [activeConnectionError, activeModelError, activeProviderAuthStatus, apiKeyChatReady, apiKeyReadiness, enabledProviders, experimentalOauthChatReady, providerAuthMutationInFlight, runtimeConnected, runtimeRefreshInFlight, runtimeRefreshStatus, selectedModelDisplayName, selectedModelProviderId]);
+  }, [activeConnectionError, activeModelError, activeProviderAuthStatus, apiKeyChatReady, apiKeyReadiness, bridgeHost, enabledProviders, experimentalOauthChatReady, providerAuthMutationInFlight, runtimeConnected, runtimeRefreshInFlight, runtimeRefreshStatus, selectedModelDisplayName, selectedModelProviderId]);
 
   return (
     <main className="app-shell">

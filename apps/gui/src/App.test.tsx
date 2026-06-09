@@ -1752,6 +1752,98 @@ describe("host.ready runtime bootstrap", () => {
     expect(browserStorageDump()).not.toContain(token);
   });
 
+  it("JetBrains host.ready uses host runtime settings without storing token in browser storage", async () => {
+    const postIntellijMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const token = "jetbrainsHostReadyLocalValue";
+    window.postIntellijMessage = postIntellijMessage;
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: token });
+    await flushAsync();
+
+    expect(postIntellijMessage.mock.calls.some(([message]) => message?.type === "gui.ready" && message?.version === bridgeVersion)).toBe(true);
+    expect(container?.textContent).toContain("bridge jetbrains");
+    expect(findInputValue("http://127.0.0.1:8765")).toBeDefined();
+    expect(sessionTokenInput().value).toBe(token);
+    expect(container?.textContent).toContain("Host runtime settings received");
+    const retargetedCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("http://127.0.0.1:8765/"));
+    expect(retargetedCalls.length).toBeGreaterThan(0);
+    expect(retargetedCalls.every(([, init]) => new Headers(init?.headers).get("Authorization") === `Bearer ${token}`)).toBe(true);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(token);
+  });
+
+  it("JetBrains runtime unavailable first-message state points to Refresh runtime and runtime status commands", async () => {
+    window.postIntellijMessage = vi.fn();
+    mockRuntimeResponses({ runtimeFailure: true });
+    renderApp();
+
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("bridge jetbrains");
+    expect(text).toContain("State: Runtime unavailable");
+    expect(text).toContain("Runtime is not connected. Refresh runtime and fix the local runtime problem before sending the first GPT message.");
+    expect(text).toContain("Next safest action: Refresh runtime, then fix the loopback URL or Session token if the check fails. In JetBrains installed mode, also use Tools → Yet AI: Show Runtime Status or Restart Runtime if Refresh runtime keeps failing.");
+    expect(findButton("Refresh runtime")).toBeDefined();
+    expect(findButton("Send").disabled).toBe(true);
+  });
+
+  it("provider-required first-message state keeps provider setup visible with API-key and local-provider actions", async () => {
+    window.postIntellijMessage = vi.fn();
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("bridge jetbrains");
+    expect(text).toContain("Runtime connected — provider required for your first GPT message");
+    expect(text).toContain("Provider setup");
+    expect(text).toContain("State: Provider required");
+    expect(text).toContain("Provider required: choose OpenAI API for the API-key fallback or configure a local OpenAI-compatible /v1 provider with a model before sending the first GPT message.");
+    expect(text).toContain("Next safest action: Use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, optionally test it, then refresh runtime.");
+    expect(findButton("Use OpenAI API key fallback")).toBeDefined();
+    expect(findButton("Send").disabled).toBe(true);
+  });
+
+  it("first-message readiness distinguishes runtime unavailable provider required and ready to send", async () => {
+    mockRuntimeResponses({ runtimeFailure: true });
+    renderApp();
+    await flushAsync();
+    expect(container?.textContent).toContain("State: Runtime unavailable");
+    expect(findButton("Send").disabled).toBe(true);
+
+    act(() => root?.unmount());
+    root = undefined;
+    (container as HTMLDivElement | undefined)?.remove();
+    container = undefined;
+    fetchMock.mockReset();
+
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+    expect((container as HTMLDivElement | undefined)?.textContent).toContain("State: Provider required");
+    expect(findButton("Send").disabled).toBe(true);
+
+    act(() => root?.unmount());
+    root = undefined;
+    (container as HTMLDivElement | undefined)?.remove();
+    container = undefined;
+    fetchMock.mockReset();
+
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+    expect((container as HTMLDivElement | undefined)?.textContent).toContain("State: GPT-4o mini (openai-api)");
+    expect((container as HTMLDivElement | undefined)?.textContent).toContain("Ready to send using GPT-4o mini.");
+    expect((container as HTMLDivElement | undefined)?.textContent).toContain("Ready for your first message");
+    expect(findButton("Send").disabled).toBe(false);
+  });
+
   it("keeps an existing token when URL-only host.ready repeats the same runtime URL", async () => {
     const token = "sameUrlLocalValue";
     mockRuntimeResponses();
