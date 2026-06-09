@@ -36,6 +36,27 @@ npm run check
 
 The command checks product identity, public hygiene, and whether every `docs/architecture/*.md` file is listed in this index.
 
+### Chat response refresh verification bundle
+
+For local chat response refresh fixes, run this existing-command bundle from a clean checkout with Node, Rust, and GUI dependencies installed. The bundle stays local/mock-only and does not add a new build or smoke command:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+cargo test -p yet-lsp
+cd apps/gui && npm test -- chatViewState App && npm run build
+cd ../..
+npm run smoke:gui-demo-mode
+npm run smoke:gui-runtime-e2e
+npm run smoke:gui-conversation-history
+npm run prepare:vscode-preview
+npm run smoke:vscode-first-message
+npm run prepare:jetbrains-preview
+npm run smoke:jetbrains-first-message
+npm run check
+```
+
+Use the focused GUI test filter above for the chat view reducer and `App` refresh behavior, then keep the browser/runtime, conversation history, and packaged first-message smokes in the same local pass before the final docs/identity check.
+
 ## Documentation rules
 
 - Write in Russian or bilingual style when useful; keep technical identifiers in English.
