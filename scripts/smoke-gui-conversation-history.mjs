@@ -50,8 +50,20 @@ try {
   await expectVisibleText(page, "Alpha local thread", "initial alpha chat");
   await expectVisibleText(page, "Beta local thread", "initial beta chat");
   await expectVisibleText(page, "2 local runtime conversations returned.", "initial conversation count");
+  await expectConversationRow(page, {
+    title: "Alpha local thread",
+    updatedAt: "2026-05-29T07:16:30Z",
+    messageCountLabel: "1 persisted message",
+    positionLabel: "Conversation 1 of 2",
+  });
+  await expectConversationRow(page, {
+    title: "Beta local thread",
+    updatedAt: "2026-05-29T07:16:30Z",
+    messageCountLabel: "2 persisted messages",
+    positionLabel: "Conversation 2 of 2",
+  });
 
-  await page.getByRole("button", { name: /Beta local thread/ }).click();
+  await page.getByRole("button", { name: /^Open conversation: Beta local thread$/ }).click();
   await expectVisibleText(page, "Beta persisted prompt", "selected beta thread prompt");
   await expectVisibleText(page, "Beta persisted answer", "selected beta thread answer");
 
@@ -59,7 +71,7 @@ try {
   await expectVisibleText(page, "Created smoke thread", "created chat title");
   await expectVisibleText(page, providerSecret, "created chat visible runtime message");
 
-  await page.getByRole("button", { name: "Delete current" }).click();
+  await page.getByRole("button", { name: /^Delete conversation: Created smoke thread \(current\)$/ }).click();
   await expectVisibleText(page, "Beta local thread", "fallback chat after delete");
   await page.waitForFunction(() => !document.body.innerText.includes("Created smoke thread"), undefined, { timeout: 5000 }).catch(() => undefined);
   const bodyAfterDelete = await page.locator("body").innerText();
@@ -229,6 +241,47 @@ async function listen(server) {
 async function expectVisibleText(page, text, label, timeout = 20_000) {
   const visible = await page.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout }).then(() => true).catch(() => false);
   assert(visible, `Missing visible ${label}: ${text}`);
+}
+
+async function expectConversationRow(page, { title, updatedAt, messageCountLabel, positionLabel }) {
+  const openButton = page.getByRole("button", { name: new RegExp(`^Open conversation: ${escapeRegExp(title)}$`) });
+  await openButton.waitFor({ state: "visible", timeout: 10_000 }).catch(() => undefined);
+  assert(await openButton.count() === 1, `Expected exactly one accessible open-conversation button for ${title}`);
+
+  const row = page.locator(".conversation-item", { has: openButton }).first();
+  await row.waitFor({ state: "visible", timeout: 10_000 }).catch(() => undefined);
+  assert(await row.count() === 1, `Missing readable conversation row for ${title}`);
+
+  const rowParts = await row.evaluate((element) => {
+    const text = (selector) => element.querySelector(selector)?.textContent?.trim() ?? "";
+    return {
+      label: element.getAttribute("aria-label") ?? "",
+      titleLine: text(".conversation-title-line"),
+      title: text(".conversation-title"),
+      metaLine: text(".conversation-meta-line"),
+      updated: text(".conversation-updated"),
+      messageCount: text(".conversation-message-count"),
+      position: text(".conversation-position"),
+    };
+  }).catch(() => undefined);
+
+  assert(rowParts?.label === `${title} conversation row`, `Conversation row aria-label is not readable for ${title}`);
+  assert(rowParts?.title === title, `Conversation row title is not structured/readable for ${title}`);
+  assert(rowParts?.titleLine.includes(title), `Conversation row title line is missing ${title}`);
+  assert(rowParts?.updated === `Updated ${updatedAt}`, `Conversation row updated label is not structured/readable for ${title}`);
+  assert(rowParts?.messageCount === messageCountLabel, `Conversation row message-count label is not structured/readable for ${title}`);
+  assert(rowParts?.position === positionLabel, `Conversation row position label is not structured/readable for ${title}`);
+  assert(rowParts?.metaLine.includes(`Updated ${updatedAt}`), `Conversation row meta line is missing updated text for ${title}`);
+  assert(rowParts?.metaLine.includes(messageCountLabel), `Conversation row meta line is missing message count for ${title}`);
+  assert(rowParts?.metaLine.includes(positionLabel), `Conversation row meta line is missing position for ${title}`);
+
+  const deleteButton = page.getByRole("button", { name: new RegExp(`^Delete conversation: ${escapeRegExp(title)}(?: \\(current\\))?$`) });
+  await deleteButton.waitFor({ state: "visible", timeout: 10_000 }).catch(() => undefined);
+  assert(await deleteButton.count() === 1, `Expected one clear delete-conversation label for ${title}`);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function thread(chatId, title, messages) {
