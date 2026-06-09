@@ -5843,7 +5843,7 @@ describe("edit proposal preview", () => {
     expect(text).not.toContain("Duplicate host apply result should not render.");
   });
 
-  it("redacts and bounds unsafe host apply result messages and paths", async () => {
+  it("rejects unsafe host apply result messages and paths before rendering", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
     const proposal = safeEditProposalPayload();
@@ -5870,9 +5870,9 @@ describe("edit proposal preview", () => {
     });
 
     const text = container?.textContent ?? "";
-    expect(text).toContain("Host apply result: failed");
-    expect(text).toContain("[redacted]");
-    expect(text).toContain("src/example.ts");
+    expect(text).toContain("Rejected invalid host bridge message");
+    expect(text).not.toContain("Host apply result: failed");
+    expect(text).not.toContain("[redacted]");
     expect(text).not.toContain(secret);
     expect(text).not.toContain("Bearer");
     expect(text).not.toContain("/Users/private/me");

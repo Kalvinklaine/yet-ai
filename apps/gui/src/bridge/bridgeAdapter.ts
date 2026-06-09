@@ -574,7 +574,7 @@ function isOptionalAffectedFiles(value: unknown): boolean {
 }
 
 function isOptionalApplyAffectedFiles(value: unknown): boolean {
-  return value === undefined || (Array.isArray(value) && value.length <= 4 && value.every((item) => typeof item === "string" && item.length > 0 && item.length <= 512));
+  return value === undefined || (Array.isArray(value) && value.length <= 4 && value.every((item) => requiredSafeRelativePath(item)));
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -721,7 +721,7 @@ function safeMessage(value: unknown): boolean {
 }
 
 function safeApplyResultMessage(value: unknown): boolean {
-  return typeof value === "string" && value.length > 0 && value.length <= 1000 && !hasControlCharacters(value);
+  return safeMessage(value);
 }
 
 function hasControlCharacters(value: string): boolean {
