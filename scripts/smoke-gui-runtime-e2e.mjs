@@ -116,9 +116,11 @@ try {
   await page.goto(`${guiBaseUrl}/index.html`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
 
-  await page.getByLabel("Runtime base URL").fill(runtimeBaseUrl);
+  await openDetailsBySummary(page, "Local runtime connection", page.getByRole("textbox", { name: "Session token", exact: true }));
   await page.getByRole("textbox", { name: "Session token", exact: true }).fill(token);
+  await page.getByLabel("Runtime base URL").fill(runtimeBaseUrl);
   const refreshButton = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
+  await openDetailsBySummary(page, "Local runtime connection", refreshButton);
   await refreshButton.waitFor({ state: "visible", timeout: 20_000 });
   await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Refresh runtime" && !button.disabled), undefined, { timeout: 20_000 });
   await refreshButton.click();
@@ -137,6 +139,7 @@ try {
   await expectVisibleText(page, providerName, "created provider", 20_000);
   await expectVisibleText(page, `Ready to send using ${modelId}.`, "chat readiness", 20_000);
 
+  await openDetailsBySummary(page, "Advanced chat controls", page.getByLabel("Chat id"));
   await page.getByLabel("Chat id").fill(chatId);
   await deliverActiveContext(page);
   await expectVisibleText(page, "Active editor context", "active editor context card", 20_000);
@@ -442,6 +445,17 @@ async function assertContextSentinelNotVisible(page, description) {
   assert(!body.includes(activeContextSentinel), `${description} leaked the active context sentinel`);
 }
 
+async function openDetailsBySummary(page, summaryText, visibleLocator) {
+  if (await visibleLocator.isVisible().catch(() => false)) return;
+  const summary = page.locator("summary", { hasText: summaryText }).first();
+  await summary.click({ timeout: 5000 }).catch(async () => {
+    await page.locator("details", { hasText: summaryText }).first().evaluate((element) => {
+      if (element instanceof HTMLDetailsElement) element.open = true;
+    });
+  });
+  await visibleLocator.waitFor({ state: "visible", timeout: 10_000 });
+}
+
 async function waitForProviderHits(expected) {
   const started = Date.now();
   while (Date.now() - started < 20_000) {
@@ -456,10 +470,12 @@ async function waitForProviderHits(expected) {
 async function exerciseHistoryReload(page, runtimeBaseUrl) {
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
-  await page.getByLabel("Runtime base URL").fill(runtimeBaseUrl);
+  await openDetailsBySummary(page, "Local runtime connection", page.getByRole("textbox", { name: "Session token", exact: true }));
   await page.getByRole("textbox", { name: "Session token", exact: true }).fill(token);
+  await page.getByLabel("Runtime base URL").fill(runtimeBaseUrl);
   await assertContextSentinelNotVisible(page, "browser storage after reload before refresh");
   const refreshButton = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
+  await openDetailsBySummary(page, "Local runtime connection", refreshButton);
   await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Refresh runtime" && !button.disabled), undefined, { timeout: 20_000 });
   await refreshButton.click();
   await expectVisibleText(page, "Runtime connected", "runtime connection after reload", 20_000);

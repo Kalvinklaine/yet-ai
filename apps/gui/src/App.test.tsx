@@ -1858,6 +1858,27 @@ describe("host.ready runtime bootstrap", () => {
     expect(findButton("Send").disabled).toBe(true);
   });
 
+  it("labels enabled Demo Mode as disable and keeps provider setup open when no chat-ready provider/model exists", async () => {
+    mockRuntimeResponses({ demoMode: demoModeResponse(true), providers: [], models: [] });
+    renderApp();
+
+    await flushAsync();
+
+    expect(findButton("Disable Demo Mode")).toBeDefined();
+    expect(buttonsNamed("Try Demo Mode")).toHaveLength(0);
+    expect(findButton("Send").disabled).toBe(true);
+    expect(findDetails("provider-setup-details").open).toBe(true);
+
+    fetchMock.mockClear();
+    await act(async () => {
+      findButton("Disable Demo Mode").click();
+      await Promise.resolve();
+    });
+
+    const setCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/demo-mode") && init?.method === "POST");
+    expect(setCall?.[1]?.body).toBe(JSON.stringify({ enabled: false }));
+  });
+
   it("offers runtime-owned Demo Mode and keeps it out of browser storage", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     mockRuntimeResponses();
@@ -1882,13 +1903,101 @@ describe("host.ready runtime bootstrap", () => {
 
     const setCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/demo-mode") && init?.method === "POST");
     expect(setCall?.[1]?.body).toBe(JSON.stringify({ enabled: true }));
-    expect(container?.textContent).toContain("Demo Mode is enabled in the local runtime");
+    expect(container?.textContent).toContain("Demo Mode is active in the local runtime");
     expect(container?.textContent).toContain("no provider calls");
     expect(container?.textContent).toContain("not model quality");
     expect(container?.textContent).toContain("State: Yet AI Demo Chat (yet-demo)");
+    expect(chatLifecycleText()).toBe("Demo Mode ready — local canned responses, no provider calls. Ready to send.");
     expect(findButton("Send").disabled).toBe(false);
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("yet-demo-chat");
+  });
+
+  it("keeps the lifecycle ready label real-provider-specific when Demo Mode is enabled but a real provider/model is active", async () => {
+    mockRuntimeResponses({
+      demoMode: demoModeResponse(true),
+      providers: [enabledProvider(), demoProvider()],
+      models: [readyModel({ providerId: "openai-api" })],
+    });
+    renderApp();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Demo Mode is enabled in the local runtime, but the current ready chat path uses");
+    expect(container?.textContent).toContain("GPT-4o mini (openai-api)");
+    expect(container?.textContent).toContain("Sends may use that configured provider");
+    expect(container?.textContent).not.toContain("Demo Mode is enabled in the local runtime. It uses canned responses only, makes no provider calls");
+    expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
+    expect(findButton("Send").disabled).toBe(false);
+    expect(chatLifecycleText()).toBe("Ready to send.");
+    expect(chatLifecycleText()).not.toContain("local canned responses");
+    expect(chatLifecycleText()).not.toContain("no provider calls");
+  });
+
+  it("shows contextual Demo Mode ready status after the assistant response and hides stale waiting copy", async () => {
+    mockRuntimeResponses({
+      demoMode: demoModeResponse(true),
+      providers: [demoProvider()],
+      models: [readyModel({ id: "yet-demo-chat", displayName: "Yet AI Demo Chat", providerId: "yet-demo" })],
+      sseEvents: [
+        { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
+        { seq: 1, type: "stream_started", chatId: "chat-001", payload: {} },
+        { seq: 2, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: "Hello from Demo Mode." } } },
+        { seq: 3, type: "stream_finished", chatId: "chat-001", payload: { finishReason: "stop" } },
+      ],
+    });
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "demo status prompt");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Hello from Demo Mode.");
+    expect(chatLifecycleText()).toBe("Demo Mode ready — local canned responses, no provider calls. Ready to send.");
+    expect(chatLifecycleText()).not.toContain("Ready when the local runtime and provider model are ready");
+    expect(chatLifecycleText()).not.toContain("Waiting for engine");
+  });
+
+  it("collapses installed-host advanced controls while Demo Mode is ready", async () => {
+    window.postIntellijMessage = vi.fn();
+    mockRuntimeResponses({
+      demoMode: demoModeResponse(true),
+      providers: [demoProvider()],
+      models: [readyModel({ id: "yet-demo-chat", displayName: "Yet AI Demo Chat", providerId: "yet-demo" })],
+    });
+    renderApp();
+    await flushAsync();
+
+    expect(findDetails("runtime-connection-details").open).toBe(false);
+    expect(findDetails("provider-setup-details").open).toBe(false);
+    expect(findDetails("agent-progress-details").open).toBe(false);
+    expect(findDetails("chat-advanced-controls").open).toBe(false);
+    expect(findDetails("first-message-local-first-notes").open).toBe(false);
+    expect(container?.textContent).not.toContain("Use Demo Mode");
+    expect(findButton("Disable Demo Mode")).toBeDefined();
+    expect(findButton("Send").disabled).toBe(false);
+  });
+
+  it("keeps browser runtime connection details open and usable before the runtime connects", async () => {
+    delete window.postIntellijMessage;
+    delete window.acquireVsCodeApi;
+    mockRuntimeResponses({ runtimeFailure: true });
+    renderApp();
+    await flushAsync();
+
+    const runtimeDetails = findDetails("runtime-connection-details");
+    expect(runtimeDetails.open).toBe(true);
+    expect(sessionTokenInput()).toBeDefined();
+
+    await act(async () => {
+      setInputValue(sessionTokenInput(), "manual-browser-token");
+    });
+    expect(sessionTokenInput().value).toBe("manual-browser-token");
   });
 
   it("ignores stale Demo Mode toggle responses after runtime settings change", async () => {
@@ -4624,14 +4733,15 @@ describe("chat panel", () => {
     expect(browserStorageDump()).not.toContain(secret);
   });
 
-  it("Stop SSE with no active stream sends no abort", async () => {
+  it("Stop response with no active stream sends no abort", async () => {
     mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
 
     await flushAsync();
 
+    expect(() => findButton("Stop SSE")).toThrow();
     await act(async () => {
-      findButton("Stop SSE").click();
+      findButton("Stop response").click();
       await Promise.resolve();
     });
 
@@ -4646,7 +4756,7 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("SSE stopped");
   });
 
-  it("Stop SSE during active streaming sends abort and removes streaming indicator", async () => {
+  it("Stop response during active streaming sends abort and removes streaming indicator", async () => {
     let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
     const encoder = new TextEncoder();
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -4700,9 +4810,10 @@ describe("chat panel", () => {
     fetchMock.mockClear();
 
     expect(container?.textContent).toContain("Assistant is streaming…");
+    expect(() => findButton("Stop SSE")).toThrow();
 
     await act(async () => {
-      findButton("Stop SSE").click();
+      findButton("Stop response").click();
       await Promise.resolve();
     });
 
@@ -6899,6 +7010,14 @@ function buttonsNamed(name: string) {
   return Array.from(container?.querySelectorAll<HTMLButtonElement>("button") ?? []).filter((item) => item.textContent === name);
 }
 
+function findDetails(id: string) {
+  const details = container?.querySelector(`[data-testid='${id}']`);
+  if (!(details instanceof HTMLDetailsElement)) {
+    throw new Error(`Details not found: ${id}`);
+  }
+  return details;
+}
+
 function findInputValue(value: string) {
   return Array.from(container?.querySelectorAll<HTMLInputElement>("input") ?? []).find((input) => input.value === value);
 }
@@ -6941,6 +7060,14 @@ function chatInput() {
     throw new Error("Chat textarea not found");
   }
   return textarea;
+}
+
+function chatLifecycleText() {
+  const lifecycle = container?.querySelector<HTMLElement>(".chat-lifecycle-state");
+  if (!lifecycle) {
+    throw new Error("Chat lifecycle state not found");
+  }
+  return lifecycle.textContent ?? "";
 }
 
 function attachedContextToggle() {
