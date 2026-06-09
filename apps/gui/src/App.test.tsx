@@ -3362,6 +3362,16 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("Updated 2026-05-29T07:16:30Z");
     expect(container?.textContent).toContain("2 persisted messages");
     expect(container?.textContent).toContain("current");
+    expectConversationRowParts("Alpha thread", {
+      updated: "Updated 2026-05-29T07:16:30Z",
+      messages: "1 persisted message",
+      position: "Conversation 1 of 2",
+    });
+    expectConversationRowParts("Beta thread", {
+      updated: "Updated 2026-05-29T07:16:30Z",
+      messages: "2 persisted messages",
+      position: "Conversation 2 of 2",
+    });
   });
 
   it("renders conversation empty and loading states", async () => {
@@ -3506,7 +3516,7 @@ describe("chat panel", () => {
     await flushAsync();
     await flushAsync();
     await act(async () => {
-      findButton("Beta threadUpdated 2026-05-29T07:16:30Z2 persisted messagesConversation 2 of 2").click();
+      findConversationButton(/Open conversation: Beta thread/).click();
       await Promise.resolve();
     });
 
@@ -3623,7 +3633,7 @@ describe("chat panel", () => {
       setInputValue(findInputValue("")!, runtimeToken);
     });
     await act(async () => {
-      findButton("Beta threadUpdated 2026-05-29T07:16:30Z1 persisted messageConversation 2 of 2").click();
+      findConversationButton(/Open conversation: Beta thread/).click();
       await Promise.resolve();
     });
     await act(async () => {
@@ -3792,7 +3802,7 @@ describe("chat panel", () => {
       await Promise.resolve();
     });
     await act(async () => {
-      findButton("Beta threadUpdated 2026-05-29T07:16:30Z1 persisted messageConversation 2 of 2").click();
+      findConversationButton(/Open conversation: Beta thread/).click();
       await Promise.resolve();
     });
     await act(async () => {
@@ -7089,6 +7099,28 @@ function findButton(name: string) {
     throw new Error(`Button not found: ${name}`);
   }
   return button;
+}
+
+function findConversationButton(label: RegExp) {
+  const button = Array.from(container?.querySelectorAll<HTMLButtonElement>("button.conversation-select") ?? []).find((item) => label.test(item.getAttribute("aria-label") ?? ""));
+  if (!button) {
+    throw new Error(`Conversation button not found: ${label}`);
+  }
+  return button;
+}
+
+function expectConversationRowParts(title: string, expected: { updated: string; messages: string; position: string }) {
+  const button = findConversationButton(new RegExp(`^Open conversation: ${escapeRegExp(title)}$`));
+  const titleLine = button.querySelector<HTMLElement>(".conversation-title-line");
+  const metaLine = button.querySelector<HTMLElement>(".conversation-meta-line");
+  expect(titleLine?.querySelector(".conversation-title")?.textContent).toBe(title);
+  expect(metaLine?.querySelector(".conversation-updated")?.textContent).toBe(expected.updated);
+  expect(metaLine?.querySelector(".conversation-message-count")?.textContent).toBe(expected.messages);
+  expect(metaLine?.querySelector(".conversation-position")?.textContent).toBe(expected.position);
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function buttonsNamed(name: string) {
