@@ -95,6 +95,7 @@ struct PersistedDemoModeState {
 
 async fn ensure_existing_demo_mode_directory(path: &Path) -> Result<bool, DemoModeError> {
     let dir = path.parent().ok_or(DemoModeError::Storage)?;
+    reject_existing_ancestor_symlinks(dir).await?;
     match tokio::fs::symlink_metadata(dir).await {
         Ok(metadata) => {
             if !metadata.is_dir() || metadata.file_type().is_symlink() {
@@ -110,6 +111,7 @@ async fn ensure_existing_demo_mode_directory(path: &Path) -> Result<bool, DemoMo
 
 async fn ensure_demo_mode_directory(path: &Path) -> Result<(), DemoModeError> {
     let dir = path.parent().ok_or(DemoModeError::Storage)?;
+    reject_existing_ancestor_symlinks(dir).await?;
     match tokio::fs::symlink_metadata(dir).await {
         Ok(metadata) => {
             if !metadata.is_dir() || metadata.file_type().is_symlink() {
@@ -128,7 +130,47 @@ async fn ensure_demo_mode_directory(path: &Path) -> Result<(), DemoModeError> {
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
         return Err(DemoModeError::Storage);
     }
+    reject_existing_ancestor_symlinks(dir).await?;
     set_private_directory_permissions(dir).await
+}
+
+async fn reject_existing_ancestor_symlinks(path: &Path) -> Result<(), DemoModeError> {
+    let mut current = PathBuf::new();
+    let mut components = path.components().peekable();
+    while let Some(component) = components.next() {
+        current.push(component.as_os_str());
+        if matches!(component, std::path::Component::RootDir) {
+            let canonical_root =
+                std::fs::canonicalize(&current).map_err(|_| DemoModeError::Storage)?;
+            if canonical_root != current {
+                current = canonical_root;
+            }
+            continue;
+        }
+        match tokio::fs::symlink_metadata(&current).await {
+            Ok(metadata)
+                if metadata.file_type().is_symlink() && !is_platform_root_alias(&current) =>
+            {
+                return Err(DemoModeError::Storage);
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(_) => return Err(DemoModeError::Storage),
+        }
+    }
+    Ok(())
+}
+
+fn is_platform_root_alias(path: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        path == Path::new("/var")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        false
+    }
 }
 
 async fn reject_demo_mode_file_symlink(path: &Path) -> Result<(), DemoModeError> {
@@ -329,6 +371,23 @@ mod tests {
             Err(super::DemoModeError::Storage)
         ));
         assert!(!outside.join("demo-mode.json").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn demo_mode_rejects_symlinked_config_dir_ancestor_escape() {
+        let root = temp_dir();
+        let outside = temp_dir();
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+        let config_dir = root.join("link").join("config");
+
+        assert!(matches!(
+            super::set(&config_dir, true).await,
+            Err(super::DemoModeError::Storage)
+        ));
+        assert!(!outside.join("config").join("demo-mode.json").exists());
     }
 
     #[cfg(unix)]

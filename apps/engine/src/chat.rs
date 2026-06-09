@@ -26,11 +26,17 @@ pub struct ChatRuntime {
 #[derive(Debug)]
 struct ChatState {
     events: Vec<ChatEvent>,
-    terminal_replay_prunable: bool,
+    terminal_replay: TerminalReplayRetention,
     next_seq: u64,
     sender: broadcast::Sender<ChatEvent>,
     active_stream: Option<ActiveStream>,
     next_stream_id: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TerminalReplayRetention {
+    ActiveOrUnpersisted,
+    SnapshotBackedPrunable,
 }
 
 #[derive(Debug)]
@@ -730,7 +736,7 @@ impl ChatState {
         let (sender, _) = broadcast::channel(64);
         Self {
             events: Vec::new(),
-            terminal_replay_prunable: false,
+            terminal_replay: TerminalReplayRetention::ActiveOrUnpersisted,
             next_seq: 1,
             sender,
             active_stream: None,
@@ -747,28 +753,38 @@ impl ChatState {
         };
         self.next_seq += 1;
         self.events.push(event.clone());
-        self.terminal_replay_prunable = false;
+        self.terminal_replay = TerminalReplayRetention::ActiveOrUnpersisted;
         let _ = self.sender.send(event);
     }
 
     fn mark_terminal_replay_persisted(&mut self) {
         if self.active_stream.is_none() {
             self.events.clear();
-            self.terminal_replay_prunable = true;
+            self.terminal_replay = TerminalReplayRetention::SnapshotBackedPrunable;
         }
     }
 
     fn replay_events_for_subscriber(&mut self) -> Vec<ChatEvent> {
-        if self.active_stream.is_none() && self.terminal_replay_prunable {
+        if matches!(
+            (self.active_stream.is_none(), self.terminal_replay),
+            (true, TerminalReplayRetention::SnapshotBackedPrunable)
+        ) {
             self.events.clear();
         }
         let replay = self.events.clone();
-        if self.active_stream.is_none() && !self.terminal_replay_prunable {
+        if self.active_stream.is_none()
+            && self.terminal_replay == TerminalReplayRetention::ActiveOrUnpersisted
+            && !self.events.iter().any(is_unpersisted_terminal_evidence)
+        {
             self.events.clear();
-            self.terminal_replay_prunable = true;
+            self.terminal_replay = TerminalReplayRetention::SnapshotBackedPrunable;
         }
         replay
     }
+}
+
+fn is_unpersisted_terminal_evidence(event: &ChatEvent) -> bool {
+    event.event_type == "error" && event.payload["code"] == "chat_history_storage_error"
 }
 
 impl ChatError {
