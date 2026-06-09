@@ -1662,18 +1662,24 @@ export function App() {
             ) : activeChatSummaries.map((summary, index) => {
               const active = summary.chatId === chatId;
               const deleting = deletingChatId === summary.chatId;
+              const title = sanitizeDisplayText(summary.title || "Untitled chat");
+              const updatedAt = sanitizeDisplayText(summary.updatedAt);
+              const positionLabel = `Conversation ${index + 1} of ${activeChatSummaries.length}`;
+              const messageCountLabel = `${summary.messageCount} persisted message${summary.messageCount === 1 ? "" : "s"}`;
               return (
-                <div className={`conversation-item ${active ? "active" : ""}`} key={summary.chatId}>
-                  <button type="button" className="conversation-select" onClick={() => selectChat(summary.chatId)} disabled={deleting} aria-current={active ? "true" : undefined}>
-                    <span className="conversation-title-row">
-                      <strong>{sanitizeDisplayText(summary.title || "Untitled chat")}</strong>
+                <div className={`conversation-item ${active ? "active" : ""}`} key={summary.chatId} aria-label={`${title} conversation row`}>
+                  <button type="button" className="conversation-select" onClick={() => selectChat(summary.chatId)} disabled={deleting} aria-current={active ? "true" : undefined} aria-label={`Open conversation: ${title}`}>
+                    <span className="conversation-title-line">
+                      <strong className="conversation-title">{title}</strong>
                       {active && <span className="badge ok">current</span>}
                     </span>
-                    <span>Updated {sanitizeDisplayText(summary.updatedAt)}</span>
-                    <span>{summary.messageCount} persisted message{summary.messageCount === 1 ? "" : "s"}</span>
-                    <span className="subtle">Conversation {index + 1} of {activeChatSummaries.length}</span>
+                    <span className="conversation-meta-line">
+                      <span className="conversation-updated">Updated {updatedAt}</span>
+                      <span className="conversation-message-count">{messageCountLabel}</span>
+                      <span className="conversation-position subtle">{positionLabel}</span>
+                    </span>
                   </button>
-                  <button type="button" className="danger-button" onClick={() => void deleteCurrentChat(summary.chatId)} disabled={deleting || chatHistoryLoading}>{deleting ? "Deleting…" : active ? "Delete current" : "Delete"}</button>
+                  <button type="button" className="danger-button conversation-delete" onClick={() => void deleteCurrentChat(summary.chatId)} disabled={deleting || chatHistoryLoading} aria-label={`Delete conversation: ${title}${active ? " (current)" : ""}`}>{deleting ? "Deleting…" : active ? "Delete current" : "Delete"}</button>
                 </div>
               );
             })}

@@ -557,12 +557,12 @@ pre,
 .conversation-item {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 8px;
-  align-items: stretch;
+  gap: 10px;
+  align-items: start;
   border: 1px solid #e2e7f0;
   border-radius: 12px;
   background: white;
-  padding: 8px;
+  padding: 10px;
 }
 
 .conversation-item.active {
@@ -578,27 +578,54 @@ pre,
   padding: 10px;
 }
 
-.conversation-title-row {
+.conversation-title-line {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+  min-width: 0;
+}
+
+.conversation-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conversation-select {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
   border-radius: 8px;
   background: transparent;
   color: #172033;
-  padding: 6px;
+  padding: 6px 8px;
   text-align: left;
 }
 
-.conversation-select span {
+.conversation-meta-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.conversation-updated,
+.conversation-message-count,
+.conversation-position {
   color: #65728a;
   font-size: 13px;
+  line-height: 1.35;
+}
+
+.conversation-message-count {
+  color: #45546c;
+}
+
+.conversation-delete {
+  align-self: start;
+  white-space: nowrap;
 }
 
 .chat-panel {
