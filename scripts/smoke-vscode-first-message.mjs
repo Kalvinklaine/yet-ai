@@ -212,9 +212,20 @@ async function requireChromium() {
 
 async function refreshRuntime(page) {
   const button = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
-  await button.waitFor({ state: "visible", timeout: 10_000 });
+  await openDetailsBySummary(page, "Local runtime connection", button);
   await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some((item) => item.textContent?.trim() === "Refresh runtime" && !item.disabled), undefined, { timeout: 20_000 });
   await button.click();
+}
+
+async function openDetailsBySummary(page, summaryText, visibleLocator) {
+  if (await visibleLocator.isVisible().catch(() => false)) return;
+  const summary = page.locator("summary", { hasText: summaryText }).first();
+  await summary.click({ timeout: 5000 }).catch(async () => {
+    await page.locator("details", { hasText: summaryText }).first().evaluate((element) => {
+      if (element instanceof HTMLDetailsElement) element.open = true;
+    });
+  });
+  await visibleLocator.waitFor({ state: "visible", timeout: 10_000 });
 }
 
 function sendButton(page) {

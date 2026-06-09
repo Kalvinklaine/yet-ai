@@ -338,7 +338,8 @@ try {
   await frameLocator.getByText("Provider setup", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("Provider setup panel was not visible in the JetBrains first-use GUI path."));
   await frameLocator.getByText("State: Experimental OpenAI account / gpt-5-codex", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not use host.ready runtime endpoints to enter connected experimental readiness."));
 
-  const refreshButton = frameLocator.getByRole("button", { name: "Refresh runtime" }).first();
+  const refreshButton = frameLocator.locator("section", { has: frameLocator.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
+  await openDetailsBySummary(frameLocator, "Local runtime connection", refreshButton);
   await refreshButton.click();
   await refreshButton.click();
   await page.waitForTimeout(500);
@@ -360,7 +361,10 @@ try {
     failures.push("Mock runtime did not observe the wrapper-supplied runtime session token.");
   }
 
-  await frameLocator.getByText("OpenAI account connected", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show connected OpenAI account login state."));
+  const openAiAccountConnectedText = frameLocator.getByText("OpenAI account connected", { exact: true }).first();
+  await openDetailsBySummary(frameLocator, "Provider setup", openAiAccountConnectedText)
+    .catch(() => failures.push("Provider setup details could not be opened for connected OpenAI account assertions."));
+  await openAiAccountConnectedText.waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show connected OpenAI account login state."));
   await frameLocator.locator("body").evaluate(() => document.documentElement.innerText).then((text) => {
     if (!text.includes("Experimental OpenAI account / gpt-5-codex")) failures.push(`GUI did not show experimental account chat readiness. Body: ${text}`);
   });
@@ -1104,6 +1108,17 @@ async function assertForbiddenIdeActionMessagesRejected(page, frameLocator) {
   if (after !== before) {
     failures.push("Wrapper forwarded a forbidden or malformed iframe-origin GUI-to-host message.");
   }
+}
+
+async function openDetailsBySummary(scope, summaryText, visibleLocator) {
+  if (await visibleLocator.isVisible().catch(() => false)) return;
+  const summary = scope.locator("summary", { hasText: summaryText }).first();
+  await summary.click({ timeout: 5000 }).catch(async () => {
+    await scope.locator("details", { hasText: summaryText }).first().evaluate((element) => {
+      if (element instanceof HTMLDetailsElement) element.open = true;
+    });
+  });
+  await visibleLocator.waitFor({ state: "visible", timeout: 10_000 });
 }
 
 async function requireBuiltGui() {
