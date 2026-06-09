@@ -8815,22 +8815,24 @@ async fn chat_terminal_append_failure_emits_storage_error_without_success_stop_o
     std::fs::rename(&history_path, &target).unwrap();
     std::os::unix::fs::symlink(&target, &history_path).unwrap();
 
-    let text = sse_text_from(app.clone(), &format!("/v1/chats/subscribe?chat_id={chat_id}")).await;
-    let events = sse_json_events(&text);
-    let error = find_error_event(&events);
-    assert_eq!(error["payload"]["code"], "chat_history_storage_error");
-    assert_eq!(
-        error["payload"]["message"],
-        "Chat response could not be saved to local storage."
-    );
-    assert!(!events.iter().any(|event| {
-        event["type"] == "stream_finished" && event["payload"]["finishReason"] == "stop"
-    }));
-    assert!(events.iter().any(|event| event["type"] == "stream_delta"));
-    assert!(!events.iter().any(|event| event["type"] == "message_added"));
-    assert_sanitized_sse_error(&text);
-    assert!(!text.contains(api_key));
-    assert!(!text.contains(&paths.config_dir.to_string_lossy().to_string()));
+    for subscriber_index in 0..2 {
+        let text = sse_text_from(app.clone(), &format!("/v1/chats/subscribe?chat_id={chat_id}")).await;
+        let events = sse_json_events(&text);
+        let error = find_error_event(&events);
+        assert_eq!(error["payload"]["code"], "chat_history_storage_error", "late subscriber {subscriber_index} did not receive storage error evidence");
+        assert_eq!(
+            error["payload"]["message"],
+            "Chat response could not be saved to local storage."
+        );
+        assert!(!events.iter().any(|event| {
+            event["type"] == "stream_finished" && event["payload"]["finishReason"] == "stop"
+        }), "late subscriber {subscriber_index} saw a successful stop despite terminal append failure");
+        assert!(events.iter().any(|event| event["type"] == "stream_delta"));
+        assert!(!events.iter().any(|event| event["type"] == "message_added"));
+        assert_sanitized_sse_error(&text);
+        assert!(!text.contains(api_key));
+        assert!(!text.contains(&paths.config_dir.to_string_lossy().to_string()));
+    }
     assert_first_auth_and_no_immediate_extra_auth(
         auth_receiver,
         "Bearer sk-history-terminal-storage-secret-abcd",
