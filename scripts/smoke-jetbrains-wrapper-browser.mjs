@@ -1489,6 +1489,10 @@ async function startMockRuntimeServer() {
       });
       return;
     }
+    if ((request.method === "GET" || request.method === "POST") && requestUrl.pathname === "/v1/demo-mode") {
+      json(response, 200, demoModeDisabledResponse());
+      return;
+    }
     if (request.method === "GET" && requestUrl.pathname === "/v1/models") {
       json(response, 200, { models: [] });
       return;
@@ -1582,6 +1586,10 @@ function connectedProviderAuthStatus() {
     expiresAt: "2030-01-01T00:00:00Z",
     message: "Experimental Codex-like account path connected by mock runtime.",
   };
+}
+
+function demoModeDisabledResponse() {
+  return { enabled: false, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "Demo Mode uses local canned responses from the runtime. It requires no API key, makes no provider calls, and is not model quality. Configure a BYOK provider for real answers." };
 }
 
 function isAuthorizedRuntimeRequest(request) {

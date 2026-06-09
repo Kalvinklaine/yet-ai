@@ -381,6 +381,9 @@ function mockRuntimeResponse(value, method) {
   if (url.pathname === "/v1/caps") {
     return json({ productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } });
   }
+  if (url.pathname === "/v1/demo-mode") {
+    return json(demoModeDisabledResponse());
+  }
   if (url.pathname === "/v1/models") {
     return json({ models: [] });
   }
@@ -400,6 +403,10 @@ function mockRuntimeResponse(value, method) {
     return json(agentProgressResponse);
   }
   return undefined;
+}
+
+function demoModeDisabledResponse() {
+  return { enabled: false, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "Demo Mode uses local canned responses from the runtime. It requires no API key, makes no provider calls, and is not model quality. Configure a BYOK provider for real answers." };
 }
 
 function json(body, status = 200) {

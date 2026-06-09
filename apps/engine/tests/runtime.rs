@@ -2,6 +2,7 @@ use axum::body::Bytes;
 use axum::body::{to_bytes, Body};
 use axum::http::{header, HeaderValue, Method, Request, StatusCode};
 use axum::response::IntoResponse;
+use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
@@ -64,6 +65,13 @@ async fn json_response_from(app: axum::Router, request: Request<Body>) -> (Statu
 }
 
 async fn sse_text_from(app: axum::Router, uri: &str) -> String {
+    sse_text_from_with_timeout(app, uri, std::time::Duration::from_secs(2)).await
+}
+
+async fn sse_text_from_with_timeout(app: axum::Router, uri: &str, duration: std::time::Duration) -> String {
+    if duration <= std::time::Duration::from_secs(3) {
+        return sse_text_prefix_from(app, uri, duration).await;
+    }
     let response = app
         .oneshot(authed_request(Method::GET, uri, Body::empty()))
         .await
@@ -79,7 +87,7 @@ async fn sse_text_from(app: axum::Router, uri: &str) -> String {
         "text/event-stream"
     );
     let bytes = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
+        duration,
         http_body_util::BodyExt::collect(response.into_body()),
     )
     .await
@@ -87,6 +95,155 @@ async fn sse_text_from(app: axum::Router, uri: &str) -> String {
     .unwrap()
     .to_bytes();
     String::from_utf8(bytes.to_vec()).unwrap()
+}
+
+async fn sse_text_prefix_from(app: axum::Router, uri: &str, duration: std::time::Duration) -> String {
+    let response = app
+        .oneshot(authed_request(Method::GET, uri, Body::empty()))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body();
+    let mut bytes = Vec::new();
+    let _ = tokio::time::timeout(duration, async {
+        while let Some(frame) = body.frame().await {
+            let frame = frame.unwrap();
+            if let Ok(data) = frame.into_data() {
+                bytes.extend_from_slice(&data);
+            }
+        }
+    })
+    .await;
+    String::from_utf8(bytes).unwrap()
+}
+
+#[tokio::test]
+async fn demo_mode_api_models_and_chat_stream_local_history() {
+    let app = test_app();
+    let (status, initial) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/demo-mode", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(initial["enabled"], false);
+    assert_eq!(initial["providerId"], "yet-demo");
+
+    let (status, enabled) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/demo-mode",
+            Body::from(json!({ "enabled": true }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(enabled["enabled"], true);
+    assert_eq!(enabled["cloudRequired"], false);
+    assert_eq!(enabled["providerAccess"], "direct");
+
+    let (status, providers) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/providers", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(providers["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|provider| provider["id"] == "yet-demo" && provider["kind"] == "demo-local"));
+
+    let (status, models) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/models", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(models["models"][0]["id"], "yet-demo-chat");
+    assert_eq!(models["models"][0]["readiness"]["status"], "ready");
+
+    let command = json!({
+        "requestId": "demo-message-1",
+        "type": "user_message",
+        "payload": {
+            "content": "hello demo",
+            "context": {
+                "kind": "active_editor",
+                "source": "vscode",
+                "file": { "workspaceRelativePath": "src/lib.ts", "languageId": "typescript" },
+                "selection": { "startLine": 1, "startCharacter": 0, "endLine": 2, "endCharacter": 4, "text": "secret selected source" }
+            }
+        }
+    });
+    let (status, accepted) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-001/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(accepted["accepted"], true);
+
+    let text = sse_text_from_with_timeout(
+        app.clone(),
+        "/v1/chats/subscribe?chat_id=chat-001",
+        std::time::Duration::from_secs(3),
+    )
+    .await;
+    let events = sse_json_events(&text);
+    let stream_content = events
+        .iter()
+        .filter(|event| event["type"] == "stream_delta")
+        .filter_map(|event| event["payload"]["delta"]["content"].as_str())
+        .collect::<String>();
+    assert!(stream_content.contains("Hello from Yet AI Demo Mode"));
+    assert!(stream_content.contains("path=src/lib.ts"));
+    assert!(stream_content.contains("language=typescript"));
+    assert!(!stream_content.contains("secret selected source"));
+
+    let thread = wait_for_chat_messages(app.clone(), "chat-001", 2).await;
+    assert!(thread["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["role"] == "assistant" && message["content"].as_str().unwrap().contains("no provider call was made")));
+}
+
+#[tokio::test]
+async fn demo_mode_disable_removes_demo_readiness() {
+    let app = test_app();
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/demo-mode",
+            Body::from(json!({ "enabled": true }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/demo-mode",
+            Body::from(json!({ "enabled": false }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, models) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/models", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(models["models"].as_array().unwrap().is_empty());
 }
 
 async fn configure_openai_provider(app: axum::Router, base_url: String, api_key: &str) {

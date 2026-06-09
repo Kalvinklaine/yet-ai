@@ -13,6 +13,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use crate::agent_progress;
 use crate::chat::ChatContext;
 use crate::chat_history;
+use crate::demo_mode;
 use crate::provider_auth;
 use crate::providers;
 use crate::security::Authenticated;
@@ -27,6 +28,7 @@ pub fn router(state: AppState) -> Router {
             Router::new()
                 .route("/ping", get(ping))
                 .route("/caps", get(caps))
+                .route("/demo-mode", get(demo_mode_get).post(demo_mode_set))
                 .route("/providers", get(providers_list).post(providers_create))
                 .route(
                     "/providers/:provider_id",
@@ -234,6 +236,32 @@ async fn providers_list(_auth: Authenticated, State(state): State<AppState>) -> 
         Ok(registry) => Json(registry).into_response(),
         Err(error) => provider_error(error),
     }
+}
+
+async fn demo_mode_get(_auth: Authenticated, State(state): State<AppState>) -> Response {
+    match demo_mode::get(&state.storage_paths.config_dir).await {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => demo_mode_error(error),
+    }
+}
+
+async fn demo_mode_set(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    request: Result<Json<demo_mode::DemoModeWriteRequest>, JsonRejection>,
+) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return invalid_json_body(rejection),
+    };
+    match demo_mode::set(&state.storage_paths.config_dir, request.enabled).await {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => demo_mode_error(error),
+    }
+}
+
+fn demo_mode_error(error: demo_mode::DemoModeError) -> Response {
+    (error.status(), Json(json!({ "error": error.to_string() }))).into_response()
 }
 
 async fn providers_create(

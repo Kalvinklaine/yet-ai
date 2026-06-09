@@ -1,6 +1,7 @@
 pub mod agent_progress;
 pub mod chat;
 pub mod chat_history;
+pub mod demo_mode;
 pub mod http;
 pub mod identity;
 pub mod lsp;

@@ -12,6 +12,7 @@ use tokio::task::JoinHandle;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::chat_history::{self, ChatMessageRole, ChatMessageStatus};
+use crate::demo_mode;
 use crate::provider_auth::{self, ExperimentalCodexChatAuth};
 use crate::providers::{self, AuthType, ModelReadinessStatus, ProviderKind, StoredProviderConfig};
 
@@ -311,7 +312,7 @@ impl ChatRuntime {
         }
         let prompt = assemble_provider_prompt(&content, context.as_ref());
         let result = self
-            .stream_provider(&config_dir, &chat_id, stream_id, &prompt)
+            .stream_provider(&config_dir, &chat_id, stream_id, &prompt, &content, context.as_ref())
             .await;
         if !self.is_active_stream(&chat_id, stream_id).await {
             return;
@@ -402,6 +403,8 @@ impl ChatRuntime {
         chat_id: &str,
         stream_id: u64,
         content: &str,
+        original_content: &str,
+        context: Option<&ChatContext>,
     ) -> Result<String, ChatError> {
         let selected = select_chat_provider(config_dir).await?;
         match selected {
@@ -421,6 +424,7 @@ impl ChatRuntime {
                 )
                 .await
             }
+            ChatProvider::DemoLocal => demo_stream(self, chat_id, stream_id, original_content, context).await,
             ChatProvider::ExperimentalCodex(auth) => {
                 bearer_stream_with_unauthorized_retry(
                     self,
@@ -632,6 +636,13 @@ async fn select_chat_provider(config_dir: &std::path::Path) -> Result<ChatProvid
         Ok(None) | Err(provider_auth::ProviderAuthError::InvalidRequest) => {}
         Err(_) => return Err(ChatError::ProviderConfig),
     }
+    if demo_mode::get(config_dir)
+        .await
+        .map_err(|_| ChatError::ProviderConfig)?
+        .enabled
+    {
+        return Ok(ChatProvider::DemoLocal);
+    }
     if saw_missing_credentials_capable_model {
         Err(ChatError::Unauthorized)
     } else if saw_enabled_openai_compatible {
@@ -643,6 +654,7 @@ async fn select_chat_provider(config_dir: &std::path::Path) -> Result<ChatProvid
 
 enum ChatProvider {
     OpenAiCompatible { provider_id: String, model: String },
+    DemoLocal,
     ExperimentalCodex(ExperimentalCodexChatAuth),
 }
 
@@ -739,6 +751,87 @@ fn to_sse_event(event: ChatEvent) -> Event {
     Event::default()
         .event(event.event_type.clone())
         .data(serde_json::to_string(&event).unwrap())
+}
+
+async fn demo_stream(
+    runtime: &ChatRuntime,
+    chat_id: &str,
+    stream_id: u64,
+    content: &str,
+    context: Option<&ChatContext>,
+) -> Result<String, ChatError> {
+    let response = demo_response(content, context);
+    for delta in response.split_inclusive([' ', '\n']) {
+        if !runtime
+            .push_stream_event(
+                chat_id,
+                stream_id,
+                "stream_delta",
+                json!({ "delta": { "content": delta } }),
+            )
+            .await
+        {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    Ok(response)
+}
+
+fn demo_response(content: &str, context: Option<&ChatContext>) -> String {
+    if content.to_ascii_lowercase().contains("demo edit proposal") {
+        return serde_json::to_string_pretty(&json!({
+            "type": "confirmed_edit_proposal",
+            "version": "2026-05-15",
+            "summary": "Yet AI Demo Mode proposes a safe local preview-only edit. No provider call was made and nothing is applied automatically.",
+            "edits": [{
+                "workspaceRelativePath": "src/example.ts",
+                "oldText": "export const demo = false;\n",
+                "newText": "export const demo = true;\n",
+                "range": {
+                    "startLine": 1,
+                    "startCharacter": 0,
+                    "endLine": 1,
+                    "endCharacter": 26
+                }
+            }]
+        }))
+        .unwrap_or_else(|_| "Yet AI Demo Mode could not render the edit proposal JSON.".to_string());
+    }
+    let mut response = "Hello from Yet AI Demo Mode — your local plugin, runtime, GUI, chat, SSE, and history path is working. Configure a BYOK provider for real model answers. This is a local canned response, not model quality, and no provider call was made.".to_string();
+    if let Some(context) = context {
+        response.push_str("\n\nAttached context metadata received (raw selected text omitted):");
+        response.push_str(&format!(" source={}", context.source));
+        if let Some(file) = &context.file {
+            if let Some(path) = file
+                .workspace_relative_path
+                .as_ref()
+                .or(file.display_path.as_ref())
+            {
+                response.push_str(&format!(", path={path}"));
+            }
+            if let Some(language) = &file.language_id {
+                response.push_str(&format!(", language={language}"));
+            }
+        }
+        if let Some(selection) = &context.selection {
+            if selection.start_line.is_some()
+                || selection.start_character.is_some()
+                || selection.end_line.is_some()
+                || selection.end_character.is_some()
+            {
+                response.push_str(&format!(
+                    ", range={}:{}-{}:{}",
+                    selection.start_line.unwrap_or(0),
+                    selection.start_character.unwrap_or(0),
+                    selection.end_line.unwrap_or(0),
+                    selection.end_character.unwrap_or(0)
+                ));
+            }
+        }
+        response.push_str(". No selected text was included in this demo response.");
+    }
+    response
 }
 
 async fn openai_compatible_stream(

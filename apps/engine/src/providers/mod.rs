@@ -6,6 +6,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
+use crate::demo_mode;
 use crate::secret_store::{
     provider_secret_store, redact_secret, ProviderSecretStore, SecretKind, SecretStoreError,
 };
@@ -19,6 +20,8 @@ pub enum ProviderKind {
     OpenAiCompatible,
     Ollama,
     Custom,
+    #[serde(rename = "demo-local")]
+    DemoLocal,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -275,6 +278,7 @@ impl fmt::Display for ProviderKind {
             Self::OpenAiCompatible => "openai-compatible",
             Self::Ollama => "ollama",
             Self::Custom => "custom",
+            Self::DemoLocal => "demo-local",
         };
         formatter.write_str(value)
     }
@@ -585,6 +589,13 @@ pub async fn provider_summaries(config_dir: &Path) -> Result<Vec<ProviderSummary
     for provider in list_provider_configs(config_dir).await? {
         summaries.push(summary_for_config(config_dir, &provider).await?);
     }
+    if demo_mode::get(config_dir)
+        .await
+        .map_err(|_| ProviderError::Storage)?
+        .enabled
+    {
+        summaries.push(demo_provider_summary());
+    }
     Ok(summaries)
 }
 
@@ -597,6 +608,13 @@ pub async fn models(config_dir: &Path) -> Result<ModelListResponse, ProviderErro
             models.push(model);
         }
     }
+    if demo_mode::get(config_dir)
+        .await
+        .map_err(|_| ProviderError::Storage)?
+        .enabled
+    {
+        models.push(demo_model_summary());
+    }
     Ok(ModelListResponse { models })
 }
 
@@ -607,7 +625,7 @@ pub async fn test_provider(
     let provider = get_provider_config_with_secrets(config_dir, id).await?;
     Ok(match provider.kind {
         ProviderKind::OpenAiCompatible => test_openai_compatible_provider(&provider).await,
-        ProviderKind::Ollama | ProviderKind::Custom => ProviderTestResponse {
+        ProviderKind::Ollama | ProviderKind::Custom | ProviderKind::DemoLocal => ProviderTestResponse {
             ok: false,
             provider_id: provider.id,
             status: ProviderTestStatus::UnsupportedKind,
@@ -1094,6 +1112,45 @@ fn clean(value: String) -> Option<String> {
         None
     } else {
         Some(value.to_string())
+    }
+}
+
+pub fn demo_model_summary() -> ModelSummary {
+    ModelSummary {
+        id: demo_mode::DEMO_MODEL_ID.to_string(),
+        display_name: demo_mode::DEMO_MODEL_DISPLAY_NAME.to_string(),
+        provider_id: Some(demo_mode::DEMO_PROVIDER_ID.to_string()),
+        capabilities: ModelCapabilities {
+            chat: true,
+            streaming: true,
+            tools: false,
+            reasoning: false,
+        },
+        readiness: ModelReadiness {
+            status: ModelReadinessStatus::Ready,
+            reason: None,
+        },
+    }
+}
+
+fn demo_provider_summary() -> ProviderSummary {
+    ProviderSummary {
+        id: demo_mode::DEMO_PROVIDER_ID.to_string(),
+        kind: ProviderKind::DemoLocal,
+        display_name: demo_mode::DEMO_DISPLAY_NAME.to_string(),
+        enabled: true,
+        base_url: "local-runtime-demo-mode".to_string(),
+        auth: ProviderAuthSummary {
+            auth_type: AuthType::None,
+            configured: true,
+            redacted: None,
+        },
+        models: vec![demo_model_summary()],
+        capabilities: ProviderCapabilities {
+            chat: true,
+            completion: false,
+            embeddings: false,
+        },
     }
 }
 

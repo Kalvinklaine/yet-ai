@@ -69,6 +69,16 @@ export type ModelsResponse = {
   models: ModelSummary[];
 };
 
+export type DemoModeResponse = {
+  enabled: boolean;
+  providerId: "yet-demo";
+  modelId: "yet-demo-chat";
+  displayName: "Yet AI Demo Mode";
+  cloudRequired: false;
+  providerAccess: "direct";
+  message: string;
+};
+
 export type ChatContext = {
   kind: "active_editor";
   source: "browser" | "vscode" | "jetbrains";
@@ -279,6 +289,17 @@ export function getCaps(settings: RuntimeSettings): Promise<RuntimeResult<CapsRe
 
 export function getModels(settings: RuntimeSettings): Promise<RuntimeResult<ModelsResponse>> {
   return runtimeFetch<ModelsResponse>(settings, "/v1/models");
+}
+
+export function getDemoMode(settings: RuntimeSettings): Promise<RuntimeResult<DemoModeResponse>> {
+  return runtimeFetch<DemoModeResponse>(settings, "/v1/demo-mode");
+}
+
+export function setDemoMode(settings: RuntimeSettings, enabled: boolean): Promise<RuntimeResult<DemoModeResponse>> {
+  return runtimeFetch<DemoModeResponse>(settings, "/v1/demo-mode", {
+    method: "POST",
+    body: JSON.stringify({ enabled }),
+  });
 }
 
 export function listChats(settings: RuntimeSettings): Promise<RuntimeResult<ChatListResponse>> {
