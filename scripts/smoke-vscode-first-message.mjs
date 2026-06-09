@@ -154,6 +154,7 @@ try {
   await sendButton(page).click();
   await expectVisibleText(page, "Say hello through VS Code packaged GUI smoke.", "visible user first message", 20_000);
   await expectVisibleText(page, assistantText, "mock SSE assistant response", 20_000);
+  await assertAssistantAnswerCount(page, assistantText, 1, "mock SSE assistant response");
 
   if (chatCommandRequestCount !== 1) {
     failures.push(`Mock runtime received ${chatCommandRequestCount} chat command requests instead of exactly one.`);
@@ -382,6 +383,16 @@ async function expectAttachedText(page, text, description, timeout = 10_000) {
   } catch (error) {
     const body = await page.locator("body").innerText().catch(() => "");
     throw new Error(`Timed out waiting for ${description}. ${messageOf(error)}\nVisible body excerpt: ${redactSecrets(body).slice(0, 4000)}`);
+  }
+}
+
+async function assertAssistantAnswerCount(page, text, expected, description) {
+  const count = await page.locator(".chat-bubble.assistant").evaluateAll(
+    (elements, answer) => elements.filter((element) => element.textContent?.includes(String(answer))).length,
+    text,
+  );
+  if (count !== expected) {
+    failures.push(`Expected ${description} to appear exactly ${expected} time(s) in assistant bubbles, observed ${count}: ${text}`);
   }
 }
 
