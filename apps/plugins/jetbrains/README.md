@@ -10,6 +10,10 @@ The plugin connects the GUI to the local Yet AI runtime for local-first BYOK wor
 
 JetBrains now supports only the safe read-only/navigation/context controlled IDE actions: `getContextSnapshot`, `openWorkspaceFile`, and `revealWorkspaceRange`. Execution is local-first, requires an explicit GUI/user request, passes through strict wrapper/Kotlin policy, and returns only correlated `host.ideActionProgress` / `host.ideActionResult` messages. Controlled `getContextSnapshot` result metadata is metadata only (source, active-editor boolean, workspace folder count) and does not include file paths, selected text, or raw file contents; the separate `host.contextSnapshot` active editor/selection prompt-context bridge may include bounded selected text only for visible opt-in first-message attachment. Confirmed edit proposals are not applied by JetBrains; the only implemented write/apply path remains the VS Code confirmed edit-proposal flow with explicit user confirmation.
 
+## IDE surface parity
+
+The repository-level parity contract is `scripts/ide-surface-contract.mjs`; validate it with `npm run validate:ide-surface-contract` and run `npm run smoke:ide-parity` for local-only parity smoke coverage. Current parity is intentional, not identical: both IDEs support the packaged GUI, trusted `host.ready`, active editor context, provider setup, first-message smoke, and explicit read-only IDE action proposals. VS Code is the only host with confirmed edit proposal apply; JetBrains stays preview-only/no-apply for edit proposals by design. LSP is also bounded: VS Code has an off-by-default read-only MVP/status proof, while JetBrains native/client behavior is foundation/deferred only and not production enabled. Artifact installability is dev-preview only for both IDEs; JetBrains additionally has bundled runtime startup smoke. These checks do not launch real IDEs, call providers, require hosted services, sign, publish, or claim production release status.
+
 ## Commands
 
 ```sh

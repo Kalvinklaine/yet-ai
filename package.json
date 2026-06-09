@@ -20,6 +20,7 @@
     "smoke:gui-browser": "node scripts/smoke-gui-browser.mjs",
     "smoke:gui-runtime-e2e": "node scripts/smoke-gui-runtime-e2e.mjs",
     "smoke:ide-preview": "node scripts/smoke-ide-preview.mjs",
+    "smoke:ide-parity": "node scripts/smoke-ide-parity.mjs",
     "smoke:ide-dogfood": "node scripts/smoke-ide-dogfood.mjs",
     "smoke:ide-release-candidate": "node scripts/smoke-ide-release-candidate.mjs",
     "dogfood:ide-report": "node scripts/ide-dogfood-report.mjs",
@@ -47,7 +48,8 @@
     "validate:docs": "node scripts/validate-docs-index.mjs",
     "validate:contracts": "node scripts/validate-contracts.mjs",
     "validate:ide-artifact-contract": "node scripts/validate-ide-artifact-contract.mjs",
-    "validate:ide-artifact-workflow": "node scripts/validate-ide-artifact-workflow.mjs"
+    "validate:ide-artifact-workflow": "node scripts/validate-ide-artifact-workflow.mjs",
+    "validate:ide-surface-contract": "node scripts/validate-ide-surface-contract.mjs"
   },
   "devDependencies": {
     "ajv": "^8.20.0",
