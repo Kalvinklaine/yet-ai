@@ -157,6 +157,29 @@ describe("chatViewState", () => {
     ]);
   });
 
+  it("keeps a newer active streaming assistant when reconciling an older duplicate message_added", () => {
+    const state: ChatViewState = {
+      chatId: "chat-1",
+      subscriptionReady: true,
+      messages: [
+        { id: "assistant-1", role: "assistant", content: "Persisted answer", status: "complete" },
+        { id: "chat-1-message-2", role: "assistant", content: "Replayed partial", status: "streaming" },
+        { id: "user-2", role: "user", content: "New prompt", status: "complete" },
+        { id: "chat-1-message-4", role: "assistant", content: "New active partial", status: "streaming" },
+      ],
+    };
+
+    const next = applyChatViewEvent(state, event("message_added", {
+      message: { id: "assistant-1", chatId: "chat-1", role: "assistant", content: "Updated older answer", createdAt: "2026-05-29T07:16:01Z", status: "complete" },
+    }));
+
+    expect(next.messages).toEqual([
+      { id: "assistant-1", role: "assistant", content: "Updated older answer", status: "complete" },
+      { id: "user-2", role: "user", content: "New prompt", status: "complete" },
+      { id: "chat-1-message-4", role: "assistant", content: "New active partial", status: "streaming" },
+    ]);
+  });
+
   it("ignores message_added for the wrong chat and malformed payloads", () => {
     const state = addAcceptedUserMessage(createInitialChatViewState("chat-1"), "Hello");
     const wrongChat = applyChatViewEvent(state, event("message_added", {
