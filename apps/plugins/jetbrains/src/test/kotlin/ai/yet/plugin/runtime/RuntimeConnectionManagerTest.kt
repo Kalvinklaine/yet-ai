@@ -448,6 +448,78 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun diagnosticsFor401MentionTokenMismatchWithoutTokenValue() {
+        val token = "runtime-session-token-that-must-not-leak-1234567890"
+        val diagnostics = formatRuntimeDiagnostics(
+            RuntimeDiagnostics(
+                "connect",
+                "http://127.0.0.1:8123",
+                false,
+                "not used in connect mode",
+                false,
+                "HTTP 401 from /v1/ping with Bearer $token",
+                "Yet AI local runtime connection failed: HTTP 401 token=$token",
+            ),
+        )
+
+        assertTrue(diagnostics.contains("HTTP 401 token mismatch"), diagnostics)
+        assertTrue(diagnostics.contains("session token"), diagnostics)
+        assertTrue(diagnostics.contains("not a provider API key"), diagnostics)
+        assertFalse(diagnostics.contains(token), diagnostics)
+    }
+
+    @Test
+    fun diagnosticsForMissingBinaryMentionAutoLaunchNextAction() {
+        val diagnostics = formatRuntimeDiagnostics(
+            RuntimeDiagnostics("auto", "http://127.0.0.1:8123", false, "no configured or discovered binary; connect-only fallback", false, null, null),
+        )
+
+        assertTrue(diagnostics.contains("no launchable bundled, configured, or PATH engine binary was found"), diagnostics)
+        assertTrue(diagnostics.contains("Keep Launch mode auto/launch"), diagnostics)
+        assertTrue(diagnostics.contains("leave Engine binary path empty when the bundled runtime is available"), diagnostics)
+    }
+
+    @Test
+    fun diagnosticsForInvalidLaunchUrlMentionExplicitHttpNonzeroPort() {
+        val diagnostics = formatRuntimeDiagnostics(
+            RuntimeDiagnostics(
+                "launch",
+                "https://127.0.0.1",
+                false,
+                "bundled plugin binary available",
+                false,
+                null,
+                "Yet AI launch mode requires runtime URL with an explicit nonzero port such as http://127.0.0.1:8001",
+            ),
+        )
+
+        assertTrue(diagnostics.contains("launch URL is invalid"), diagnostics)
+        assertTrue(diagnostics.contains("http loopback URL with an explicit nonzero port"), diagnostics)
+        assertTrue(diagnostics.contains("https is not supported"), diagnostics)
+    }
+
+    @Test
+    fun diagnosticsForPingFailureMentionRefreshRestartStatusNextActions() {
+        val diagnostics = formatRuntimeDiagnostics(
+            RuntimeDiagnostics(
+                "auto",
+                "http://127.0.0.1:8123",
+                false,
+                "bundled plugin binary available",
+                true,
+                null,
+                "Yet AI local runtime health check failed at /v1/ping: connection refused",
+                process = "process exited with code 1",
+            ),
+        )
+
+        assertTrue(diagnostics.contains("/v1/ping"), diagnostics)
+        assertTrue(diagnostics.contains("Click Refresh runtime"), diagnostics)
+        assertTrue(diagnostics.contains("Yet AI: Restart Runtime"), diagnostics)
+        assertTrue(diagnostics.contains("Yet AI: Show Runtime Status"), diagnostics)
+    }
+
+    @Test
     fun diagnosticsDescribeModeGuidanceAndBinaryStatus() {
         val diagnostics = formatRuntimeDiagnostics(
             RuntimeDiagnostics(

@@ -30,6 +30,7 @@ class RuntimeConnectionManager(
     private var launchedConnection: RuntimeSettings? = null
     private var lastHealthResult: String? = null
     private var lastConnectionError: String? = null
+    private var lastProcessExit: String? = null
 
     @Synchronized
     fun prepare(): RuntimeConnectionResult {
@@ -56,6 +57,7 @@ class RuntimeConnectionManager(
             checkHealth(connection)
             lastHealthResult = "/v1/ping returned 2xx"
             lastConnectionError = null
+            lastProcessExit = null
             RuntimeConnectionResult(connection, "Connected to Yet AI local runtime at ${connection.runtimeUrl}.", null)
         } catch (error: Exception) {
             val result = failedRuntimeConnection(settings, connection, "Yet AI local runtime connection failed", error)
@@ -89,6 +91,7 @@ class RuntimeConnectionManager(
                     launchedByPlugin = launchedProcess?.isAlive == true,
                     health = null,
                     error = sanitizedRuntimeError("Yet AI runtime settings are invalid", error),
+                    process = lastProcessExit,
                 ),
             )
         }
@@ -101,6 +104,7 @@ class RuntimeConnectionManager(
                 launchedByPlugin = launchedProcess?.isAlive == true,
                 health = lastHealthResult,
                 error = lastConnectionError,
+                process = lastProcessExit,
             ),
         )
     }
@@ -144,6 +148,7 @@ class RuntimeConnectionManager(
         stopLaunchedProcess()
         val token = tokenGenerator()
         val command = buildEngineLaunchCommand(settings.runtimeUrl, binaryPath, token)
+        lastProcessExit = null
         val process = try {
             processStarter(command)
         } catch (error: Exception) {
@@ -157,6 +162,7 @@ class RuntimeConnectionManager(
             val code = process.waitFor()
             logger.info("Yet AI local runtime exited with code $code")
             synchronized(this@RuntimeConnectionManager) {
+                lastProcessExit = "process exited with code $code"
                 if (launchedProcess == process) {
                     launchedProcess = null
                     launchedConnection = null
@@ -186,6 +192,7 @@ class RuntimeConnectionManager(
         launchedProcess = null
         launchedConnection = null
         lastHealthResult = null
+        lastProcessExit = null
         stopProcess(process)
     }
 
@@ -233,6 +240,7 @@ data class RuntimeDiagnostics(
     val launchedByPlugin: Boolean,
     val health: String?,
     val error: String?,
+    val process: String? = null,
 )
 
 fun formatRuntimeDiagnostics(diagnostics: RuntimeDiagnostics): String {
@@ -242,6 +250,8 @@ fun formatRuntimeDiagnostics(diagnostics: RuntimeDiagnostics): String {
         "launch" -> "Launch mode requires an executable ${ProductIdentity.engineBinaryName} path and an http runtime URL with an explicit nonzero port."
         else -> "Auto mode launches ${ProductIdentity.engineBinaryName} when a binary is configured or discoverable on PATH; otherwise it connects to the configured loopback URL."
     }
+    val diagnosis = runtimeDiagnosis(diagnostics)
+    val nextAction = runtimeNextAction(diagnostics, diagnosis)
     return listOf(
         "Yet AI Runtime Status",
         "Launch mode: $mode",
@@ -250,10 +260,55 @@ fun formatRuntimeDiagnostics(diagnostics: RuntimeDiagnostics): String {
         "Binary status: ${redactLogText(diagnostics.binaryStatus, "")}",
         "Plugin-launched process: ${if (diagnostics.launchedByPlugin) "running" else "not running"}",
         "Last health: ${diagnostics.health?.let { redactLogText(it, "") } ?: "not checked yet"}",
+        "Last process: ${diagnostics.process?.let { redactLogText(it, "") } ?: "no plugin-launched exit recorded"}",
         "Last error: ${diagnostics.error?.let { redactLogText(it, "") } ?: "none"}",
+        "Diagnosis: $diagnosis",
+        "Next action: $nextAction",
         "Guidance: $guidance",
         "Restart: Yet AI: Restart Runtime stops only a process launched by this plugin, then prepares the current settings again.",
     ).joinToString("\n")
+}
+
+private fun runtimeDiagnosis(diagnostics: RuntimeDiagnostics): String {
+    val combined = listOfNotNull(diagnostics.binaryStatus, diagnostics.health, diagnostics.process, diagnostics.error).joinToString("\n").lowercase()
+    val url = diagnostics.runtimeUrl.lowercase()
+    return when {
+        diagnostics.launchMode.lowercase() == "connect" && diagnostics.error == null && diagnostics.health == null ->
+            "connect mode is waiting for an externally managed local runtime"
+        diagnostics.binaryStatus.contains("not executable", ignoreCase = true) ->
+            "configured engine binary is missing or not executable"
+        diagnostics.binaryStatus.contains("no configured path", ignoreCase = true) || diagnostics.binaryStatus.contains("no configured or discovered binary", ignoreCase = true) ->
+            "no launchable bundled, configured, or PATH engine binary was found"
+        url.startsWith("https://") || combined.contains("requires runtime url to use http") || combined.contains("explicit nonzero port") || Regex("^http://[^:]+$").containsMatchIn(url) ->
+            "launch URL is invalid for plugin-managed runtime launch"
+        combined.contains("http 401") ->
+            "local runtime rejected the session token (HTTP 401 token mismatch)"
+        combined.contains("address already in use") || combined.contains("address in use") || combined.contains("port already in use") || combined.contains("eaddrinuse") ->
+            "loopback port is already in use by another process"
+        combined.contains("/v1/ping") || combined.contains("health check failed") || combined.contains("failed to connect") || combined.contains("connection refused") ->
+            "runtime process did not answer authenticated /v1/ping"
+        diagnostics.process?.contains("exited", ignoreCase = true) == true ->
+            "plugin-launched runtime process exited before it became healthy"
+        diagnostics.error != null ->
+            "runtime failure detected; details are sanitized above"
+        else -> "no runtime failure recorded"
+    }
+}
+
+private fun runtimeNextAction(diagnostics: RuntimeDiagnostics, diagnosis: String): String = when {
+    diagnosis.contains("token mismatch") ->
+        "Click Refresh runtime, then use Yet AI: Restart Runtime. In connect mode, make the IDE debug/session token match the external runtime; this is not a provider API key."
+    diagnosis.contains("engine binary") ->
+        "Keep Launch mode auto/launch and leave Engine binary path empty when the bundled runtime is available; otherwise reinstall the matching artifact or configure an absolute executable ${ProductIdentity.engineBinaryName} path."
+    diagnosis.contains("launch URL") ->
+        "Set Runtime URL to an http loopback URL with an explicit nonzero port, for example http://127.0.0.1:8001; https is not supported for plugin launch mode."
+    diagnosis.contains("port") ->
+        "Use Yet AI: Restart Runtime, stop the other local process, or change the loopback Runtime URL port."
+    diagnosis.contains("/v1/ping") || diagnosis.contains("exited") ->
+        "Click Refresh runtime, then run Yet AI: Restart Runtime. If it still fails, open Yet AI: Show Runtime Status and check for port conflict or binary diagnostics."
+    diagnostics.launchMode.lowercase() == "connect" ->
+        "Start the external loopback runtime yourself, verify the URL/port/token, then click Refresh runtime or Show Runtime Status."
+    else -> "Click Refresh runtime or run Yet AI: Restart Runtime, then open Yet AI: Show Runtime Status if the GUI still reports runtime unavailable."
 }
 
 fun sanitizeRuntimeUrlForDiagnostics(value: String): String {

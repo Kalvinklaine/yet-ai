@@ -41,10 +41,17 @@ internal class RuntimeRestartActionRunner(
     }
 
     private fun toRestartPresentation(result: RuntimeConnectionResult): RestartPresentation {
-        val message = result.status ?: result.error ?: runCatching { diagnostics() }.getOrElse { error ->
+        if (result.status != null && result.error == null) {
+            return RestartPresentation(true, result.status)
+        }
+        val status = runCatching { diagnostics() }.getOrElse { error ->
             return RestartPresentation(false, sanitizeRestartDiagnosticsError(error))
         }
-        return RestartPresentation(result.error == null, message)
+        val message = listOfNotNull(
+            result.error?.let { "Restart failed: ${redactLogText(it, "")}" },
+            redactLogText(status, ""),
+        ).joinToString("\n\n")
+        return RestartPresentation(false, message)
     }
 }
 
