@@ -17,6 +17,7 @@ let runtimeServer;
 let browser;
 let demoEnabled = false;
 let providerHits = 0;
+let chatCommandCount = 0;
 const chats = new Map([["chat-001", thread("chat-001", "Demo smoke chat", [])]]);
 const chatEvents = new Map();
 const subscribers = new Map();
@@ -51,14 +52,22 @@ try {
   await expectVisibleText(page, "Demo Mode is active in the local runtime", "demo enabled status");
   await expectVisibleText(page, "Ready to send using Yet AI Demo Chat.", "demo readiness");
 
-  const prompt = "Hello local demo mode smoke.";
-  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(prompt);
+  const firstPrompt = "Terminal message_added first prompt smoke.";
+  const firstAnswer = "Terminal message_added first answer from Yet AI Demo Mode — no provider call was made.";
+  const secondPrompt = "Terminal message_added second prompt smoke.";
+  const secondAnswer = "Terminal message_added second answer from Yet AI Demo Mode — no provider call was made.";
+  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(firstPrompt);
   await page.getByRole("button", { name: "Send", exact: true }).click();
-  await expectVisibleText(page, prompt, "visible user prompt");
-  await expectVisibleText(page, "Hello from Yet AI Demo Mode", "demo assistant response");
+  await expectVisibleText(page, firstPrompt, "visible first user prompt");
+  await expectVisibleText(page, firstAnswer, "first terminal message_added assistant response");
+
+  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(secondPrompt);
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expectVisibleText(page, secondPrompt, "visible second user prompt");
+  await expectVisibleText(page, firstAnswer, "first terminal message_added assistant response still visible after second send");
+  await expectVisibleText(page, secondAnswer, "second terminal message_added assistant response without a third send");
   await expectVisibleText(page, "no provider call was made", "demo no-provider copy");
-  await expectVisibleText(page, "Demo Mode ready", "post-response demo ready status");
-  await expectVisibleText(page, "Ready to send", "post-response ready-to-send status");
+  await expectVisibleText(page, "Message sent; waiting for response stream.", "post-response terminal command accepted status");
   const postResponseBody = await page.evaluate(() => document.body.innerText);
   assert(!postResponseBody.includes("Ready when the local runtime and provider model are ready"), "post-response body still shows stale provider-ready waiting copy");
   assert(!postResponseBody.includes("Waiting for engine"), "post-response body still shows stale engine waiting copy");
@@ -81,6 +90,7 @@ try {
     assert(!pageState.includes(marker), `browser state leaked ${marker}`);
   }
   assert(providerHits === 0, `demo smoke unexpectedly hit provider ${providerHits} time(s)`);
+  assert(chatCommandCount === 2, `demo smoke expected exactly two chat sends without a third send, observed ${chatCommandCount}`);
 
   if (failures.length > 0) {
     throw new Error(`GUI Demo Mode smoke failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
@@ -193,9 +203,10 @@ async function startRuntimeServer() {
       const body = JSON.parse(await readBody(request));
       const item = chats.get(chatId) ?? thread(chatId, chatId, []);
       if (body.type === "user_message") {
+        chatCommandCount += 1;
         item.messages.push(message(chatId, `user-${item.messages.length}`, "user", body.payload?.content ?? ""));
         chats.set(chatId, item);
-        setTimeout(() => streamDemoAssistantResponse(chatId), 25);
+        setTimeout(() => addTerminalDemoAssistantResponse(chatId, body.payload?.content ?? ""), 25);
       }
       return json(response, 200, { accepted: true, chatId, requestId: body.requestId ?? "request-001", type: body.type });
     }
@@ -228,14 +239,17 @@ function subscribe(response, chatId) {
   response.on("close", remove);
   response.on("error", remove);
 }
-function streamDemoAssistantResponse(chatId) {
-  pushChatEvent(chatId, "stream_started", { role: "assistant" });
-  const chunks = ["Hello from Yet AI Demo Mode", " — no provider call was made."];
-  for (const content of chunks) pushChatEvent(chatId, "stream_delta", { delta: { content } });
+function addTerminalDemoAssistantResponse(chatId, prompt) {
+  const content = terminalDemoAnswer(prompt);
   const item = chats.get(chatId) ?? thread(chatId, chatId, []);
-  item.messages.push(message(chatId, `assistant-${item.messages.length}`, "assistant", chunks.join("")));
+  const assistantMessage = message(chatId, `assistant-${item.messages.length}`, "assistant", content);
+  item.messages.push(assistantMessage);
   chats.set(chatId, item);
-  pushChatEvent(chatId, "stream_finished", { finishReason: "stop" });
+  pushChatEvent(chatId, "message_added", { message: assistantMessage });
+}
+function terminalDemoAnswer(prompt) {
+  if (prompt === "Terminal message_added second prompt smoke.") return "Terminal message_added second answer from Yet AI Demo Mode — no provider call was made.";
+  return "Terminal message_added first answer from Yet AI Demo Mode — no provider call was made.";
 }
 function pushChatEvent(chatId, type, payload) {
   const events = chatEvents.get(chatId) ?? [];
