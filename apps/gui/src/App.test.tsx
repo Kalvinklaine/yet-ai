@@ -4508,6 +4508,11 @@ describe("chat panel", () => {
   it("renders consecutive terminal message_added assistant responses without duplicate bubbles", async () => {
     let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
     const encoder = new TextEncoder();
+    let nextSeq = 0;
+    const enqueueSseEvent = (type: string, payload: Record<string, unknown> = {}) => {
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: nextSeq, type, chatId: "chat-001", payload })}\n\n`));
+      nextSeq += 1;
+    };
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/v1/chats/subscribe?chat_id=")) {
@@ -4534,11 +4539,14 @@ describe("chat panel", () => {
       await Promise.resolve();
     });
     await act(async () => {
-      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 0, type: "snapshot", chatId: "chat-001", payload: {} })}\n\n`));
-      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 1, type: "message_added", chatId: "chat-001", payload: { message: chatMessage("chat-001", "assistant-terminal-1", "assistant", "First terminal answer.") } })}\n\n`));
+      enqueueSseEvent("snapshot");
+      enqueueSseEvent("stream_started");
+      enqueueSseEvent("message_added", { message: chatMessage("chat-001", "assistant-terminal-1", "assistant", "First terminal answer.") });
+      enqueueSseEvent("stream_finished", { finishReason: "stop" });
       await Promise.resolve();
     });
     expect(container?.textContent).toContain("First terminal answer.");
+    expect(chatLifecycleText()).toBe("Ready to send.");
 
     await act(async () => {
       setTextareaValue(chatInput(), "Second terminal prompt");
@@ -4548,11 +4556,14 @@ describe("chat panel", () => {
       await Promise.resolve();
     });
     await act(async () => {
-      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 2, type: "message_added", chatId: "chat-001", payload: { message: chatMessage("chat-001", "assistant-terminal-2", "assistant", "Second terminal answer.") } })}\n\n`));
+      enqueueSseEvent("stream_started");
+      enqueueSseEvent("message_added", { message: chatMessage("chat-001", "assistant-terminal-2", "assistant", "Second terminal answer.") });
+      enqueueSseEvent("stream_finished", { finishReason: "stop" });
       await Promise.resolve();
     });
 
     const bubbles = Array.from(container?.querySelectorAll(".chat-bubble") ?? []).map((bubble) => bubble.textContent ?? "");
+    expect(chatLifecycleText()).toBe("Ready to send.");
     expect(bubbles.filter((text) => text.includes("First terminal answer."))).toHaveLength(1);
     expect(bubbles.filter((text) => text.includes("Second terminal answer."))).toHaveLength(1);
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(2);
