@@ -330,7 +330,17 @@ Use Tools → `Yet AI: Show Runtime Status` when the tool window cannot connect,
 
 Use Tools → `Yet AI: Restart Runtime` to stop only the process launched by this plugin and prepare the current settings again. It does not stop externally managed runtimes used in `connect` mode, does not inspect provider configuration, and does not expose the local runtime session token. If restart reports a missing binary, invalid configured path, port conflict, runtime-down health failure, or 401/token mismatch, copy the sanitized status text and verify the settings above before reinstalling the ZIP.
 
-Diagnostics and restart output must not include session tokens, bearer/authorization headers, raw bridge payloads, provider API keys, environment dumps, provider tokens, or raw process output containing secrets. Runtime process logs and connection failures are redacted before IDE display/logging.
+Concise troubleshooting matrix:
+
+| Symptom/status | Next action |
+| --- | --- |
+| Runtime unavailable in the GUI or `Failed to fetch` | Click GUI `Refresh runtime`, then open Tools → `Yet AI: Show Runtime Status` for sanitized launch/binary/process/ping details. |
+| Bundled runtime available | Keep `Launch mode` as `auto` or `launch` and leave `Engine binary path` empty unless diagnostics says the bundled runtime is missing or invalid. |
+| Runtime `401` | Treat it as a local runtime session-token mismatch between the IDE and `YET_AI_AUTH_TOKEN`, not a provider API-key failure. Refresh/restart the plugin-launched runtime, or align the token for an external runtime in `connect` mode. |
+| Missing or non-executable binary | Reinstall the matching platform artifact, or configure an absolute executable `yet-lsp` binary path. Do not paste provider credentials into plugin settings. |
+| `/v1/ping` failure, process exited early, or port conflict/address in use | Use Tools → `Yet AI: Restart Runtime`; if the port is occupied, stop the other local process or change the loopback Runtime URL port. |
+
+Diagnostics and restart output must not include session tokens, bearer/authorization headers, raw bridge payloads, provider API keys, environment dumps, provider tokens, private absolute paths, or raw process output containing secrets. Runtime process logs and connection failures are redacted before IDE display/logging. Runtime diagnostics/restart do not require provider credentials, a hosted backend, signing, marketplace publication, or production-release claims.
 
 ## Manual preview report template
 

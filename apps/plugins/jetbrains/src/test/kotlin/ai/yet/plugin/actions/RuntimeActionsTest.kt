@@ -106,6 +106,7 @@ class RuntimeActionsTest {
         val presenter = RecordingRestartActionPresenter()
         val runner = RuntimeRestartActionRunner(
             restartRuntime = { RuntimeConnectionResult(runtimeSettings(), null, "restart failed") },
+            diagnostics = { "Yet AI Runtime Status\nNext action: Yet AI: Show Runtime Status" },
             scheduler = scheduler,
             presenter = presenter,
         )
@@ -114,7 +115,44 @@ class RuntimeActionsTest {
         scheduler.runNextBackground()
         scheduler.runNextUi()
 
-        assertEquals(listOf(Presentation("error", "restart failed")), presenter.events)
+        val event = presenter.events.single()
+        assertEquals("error", event.kind)
+        assertContains(event.message, "restart failed")
+        assertContains(event.message, "Yet AI Runtime Status")
+        assertContains(event.message, "Next action")
+    }
+
+    @Test
+    fun restartFailureIncludesDiagnosticsAndRedactsTokenAndPrivatePath() {
+        val scheduler = RecordingStatusActionScheduler()
+        val presenter = RecordingRestartActionPresenter()
+        val token = "restart-runtime-token-that-must-not-leak-1234567890"
+        val privatePath = "/Users/alice/Library/Caches/yet-ai/engine/yet-lsp"
+        val runner = RuntimeRestartActionRunner(
+            restartRuntime = { RuntimeConnectionResult(runtimeSettings(), null, "spawn failed at $privatePath with Authorization: Bearer $token") },
+            diagnostics = {
+                "Yet AI Runtime Status\n" +
+                    "Last error: HTTP 401 token=$token at $privatePath\n" +
+                    "Diagnosis: local runtime rejected the session token (HTTP 401 token mismatch)\n" +
+                    "Next action: Click Refresh runtime, then use Yet AI: Restart Runtime. This is not a provider API key."
+            },
+            scheduler = scheduler,
+            presenter = presenter,
+        )
+
+        runner.restart(null)
+        scheduler.runNextBackground()
+        scheduler.runNextUi()
+
+        val event = presenter.events.single()
+        assertEquals("error", event.kind)
+        assertContains(event.message, "Yet AI Runtime Status")
+        assertContains(event.message, "HTTP 401 token mismatch")
+        assertContains(event.message, "Restart Runtime")
+        assertContains(event.message, "[redacted")
+        assertFalse(event.message.contains(token), event.message)
+        assertFalse(event.message.contains(privatePath), event.message)
+        assertFalse(event.message.contains("alice"), event.message)
     }
 
     @Test
