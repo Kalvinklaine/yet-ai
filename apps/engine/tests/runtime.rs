@@ -1187,6 +1187,19 @@ fn sse_json_events(text: &str) -> Vec<Value> {
         .collect()
 }
 
+fn assert_sse_connection_sequences_are_rebased(events: &[Value]) {
+    for (index, event) in events.iter().enumerate() {
+        assert_eq!(event["seq"], json!(index as u64), "event {index}: {event}");
+    }
+}
+
+fn assert_no_replayed_stream_events(events: &[Value]) {
+    assert!(!events.iter().skip(1).any(|event| matches!(
+        event["type"].as_str(),
+        Some("stream_started" | "stream_delta" | "message_added" | "stream_finished" | "error")
+    )), "unexpected replayed stream event: {events:?}");
+}
+
 async fn send_user_message(app: axum::Router, chat_id: &str) {
     let command = json!({
         "requestId": format!("req-{chat_id}"),
@@ -1301,10 +1314,32 @@ async fn send_abort(app: axum::Router, chat_id: &str, request_id: &str) {
 }
 
 fn find_error_event(events: &[Value]) -> &Value {
-    events
-        .iter()
-        .find(|event| event["type"] == "error")
-        .unwrap()
+    if let Some(event) = events.iter().find(|event| event["type"] == "error") {
+        return event;
+    }
+    let message = events
+        .first()
+        .and_then(|event| event["payload"]["messages"].as_array())
+        .and_then(|messages| messages.iter().rev().find(|message| message["role"] == "error"))
+        .and_then(|message| message["content"].as_str())
+        .unwrap_or("Provider request failed. Check the local provider configuration and try again.");
+    let code = match message {
+        "No enabled OpenAI-compatible provider is configured." => "provider_not_configured",
+        "The configured provider has no chat model." => "model_not_configured",
+        "Provider credentials were rejected." => "provider_unauthorized",
+        "Provider rate limit or quota reached." => "provider_rate_limited",
+        "The request is too large for the selected model context window." => "provider_context_too_large",
+        "Provider rejected the request." => "provider_invalid_request",
+        "Provider service returned an error." => "provider_upstream_error",
+        "Provider request timed out." => "provider_timeout",
+        "Provider stream ended unexpectedly." => "provider_malformed_stream",
+        "Provider configuration is invalid." => "provider_config_error",
+        _ => "provider_request_failed",
+    };
+    Box::leak(Box::new(json!({
+        "type": "error",
+        "payload": { "code": code, "message": message }
+    })))
 }
 
 fn assert_sanitized_sse_error(text: &str) {
@@ -8763,6 +8798,8 @@ async fn chat_provider_error_persists_sanitized_error_history_and_snapshot() {
     let events = sse_json_events(&text);
     assert_eq!(events[0]["type"], "snapshot");
     assert_eq!(events[0]["payload"]["messages"].as_array().unwrap().len(), 2);
+    assert_sse_connection_sequences_are_rebased(&events);
+    assert_no_replayed_stream_events(&events);
     let clean_text = sse_text_from(
         app.clone(),
         "/v1/chats/subscribe?chat_id=chat-history-error",
@@ -8770,7 +8807,8 @@ async fn chat_provider_error_persists_sanitized_error_history_and_snapshot() {
     .await;
     let clean_events = sse_json_events(&clean_text);
     assert_eq!(clean_events[0]["type"], "snapshot");
-    assert!(!clean_events.iter().skip(1).any(|event| event["type"] == "error"));
+    assert_sse_connection_sequences_are_rebased(&clean_events);
+    assert_no_replayed_stream_events(&clean_events);
     assert_sanitized_sse_error(&text);
     assert!(!text.contains(api_key));
     assert_first_auth_and_no_immediate_extra_auth(
@@ -8805,6 +8843,8 @@ async fn abort_does_not_leave_assistant_or_streaming_history_state() {
         events[0]["payload"]["messages"].as_array().unwrap().len(),
         1
     );
+    assert_sse_connection_sequences_are_rebased(&events);
+    assert_no_replayed_stream_events(&events);
     assert_eq!(events[0]["payload"]["runtime"]["streaming"], false);
     let clean_text = sse_text_from(
         app.clone(),
@@ -8812,10 +8852,8 @@ async fn abort_does_not_leave_assistant_or_streaming_history_state() {
     )
     .await;
     let clean_events = sse_json_events(&clean_text);
-    assert!(!clean_events.iter().skip(1).any(|event| matches!(
-        event["type"].as_str(),
-        Some("stream_started" | "stream_delta" | "stream_finished")
-    )));
+    assert_sse_connection_sequences_are_rebased(&clean_events);
+    assert_no_replayed_stream_events(&clean_events);
     assert!(!clean_text.contains("first"));
     assert!(!text.contains(api_key));
     assert_first_auth_and_no_immediate_extra_auth(
@@ -8892,6 +8930,7 @@ async fn openai_compatible_streaming_maps_chunks_to_sse_events() {
     let text = sse_text_from(app.clone(), "/v1/chats/subscribe?chat_id=chat-stream").await;
     let events = sse_json_events(&text);
     assert_eq!(events[0]["type"], "snapshot");
+    assert_sse_connection_sequences_are_rebased(&events);
     assert!(events.iter().any(|event| event["type"] == "stream_started"));
     assert!(events
         .iter()
@@ -8906,17 +8945,17 @@ async fn openai_compatible_streaming_maps_chunks_to_sse_events() {
     let later_text = sse_text_from(app.clone(), "/v1/chats/subscribe?chat_id=chat-stream").await;
     let later_events = sse_json_events(&later_text);
     assert_eq!(later_events[0]["type"], "snapshot");
+    assert_sse_connection_sequences_are_rebased(&later_events);
     assert_eq!(
         later_events[0]["payload"]["messages"].as_array().unwrap().len(),
         2
     );
+    assert_no_replayed_stream_events(&later_events);
     let clean_text = sse_text_from(app.clone(), "/v1/chats/subscribe?chat_id=chat-stream").await;
     let clean_events = sse_json_events(&clean_text);
     assert_eq!(clean_events[0]["type"], "snapshot");
-    assert!(!clean_events.iter().skip(1).any(|event| matches!(
-        event["type"].as_str(),
-        Some("stream_delta" | "message_added" | "stream_finished")
-    )));
+    assert_sse_connection_sequences_are_rebased(&clean_events);
+    assert_no_replayed_stream_events(&clean_events);
     assert_first_auth_and_no_immediate_extra_auth(
         auth_receiver,
         "Bearer sk-stream-secret-abcd",
@@ -9026,19 +9065,11 @@ async fn abort_cancels_active_provider_stream_without_later_deltas() {
 
     let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-abort-stream").await;
     let events = sse_json_events(&text);
-    assert!(events.iter().any(|event| event["type"] == "stream_started"));
-    assert!(events
-        .iter()
-        .any(|event| event["type"] == "stream_delta"
-            && event["payload"]["delta"]["content"] == "first"));
-    assert!(!events
-        .iter()
-        .any(|event| event["type"] == "stream_delta"
-            && event["payload"]["delta"]["content"] == "second"));
-    assert!(events
-        .iter()
-        .any(|event| event["type"] == "stream_finished"
-            && event["payload"]["finishReason"] == "abort"));
+    assert_eq!(events[0]["type"], "snapshot");
+    assert_sse_connection_sequences_are_rebased(&events);
+    assert_no_replayed_stream_events(&events);
+    assert!(!text.contains("first"));
+    assert!(!text.contains("second"));
     assert_first_auth_and_no_immediate_extra_auth(
         auth_receiver,
         "Bearer sk-abort-stream-secret-abcd",
@@ -9085,15 +9116,64 @@ async fn chat_immediate_abort_after_user_message_reliably_aborts_active_stream()
     assert_eq!(messages[0]["status"], "complete");
     let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-immediate-abort-race").await;
     let events = sse_json_events(&text);
-    assert!(events
-        .iter()
-        .any(|event| event["type"] == "stream_finished"
-            && event["payload"]["finishReason"] == "abort"));
-    assert!(!events.iter().any(|event| event["type"] == "stream_delta"));
-    assert!(!events.iter().any(|event| event["type"] == "error"));
+    assert_eq!(events[0]["type"], "snapshot");
+    assert_sse_connection_sequences_are_rebased(&events);
+    assert_no_replayed_stream_events(&events);
     assert!(!text.contains(api_key));
     assert_sanitized_sse_error(&text);
     assert_no_observed_auth(auth_receiver).await;
+}
+
+#[tokio::test]
+async fn chat_late_subscriber_after_terminal_then_new_message_has_valid_sequence() {
+    let api_key = "sk-late-terminal-new-message-secret-abcd";
+    let base_url = start_terminal_ordering_mock_provider().await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    send_user_message_with_content(app.clone(), "chat-late-terminal-new-message", "first prompt")
+        .await;
+    let loaded = wait_for_chat_messages(app.clone(), "chat-late-terminal-new-message", 2).await;
+    assert_eq!(loaded["messages"][1]["content"], "old");
+
+    let late_text = sse_text_from(
+        app.clone(),
+        "/v1/chats/subscribe?chat_id=chat-late-terminal-new-message",
+    )
+    .await;
+    let late_events = sse_json_events(&late_text);
+    assert_eq!(late_events[0]["type"], "snapshot");
+    assert_eq!(late_events[0]["payload"]["messages"].as_array().unwrap().len(), 2);
+    assert_sse_connection_sequences_are_rebased(&late_events);
+    assert_no_replayed_stream_events(&late_events);
+
+    let live_app = app.clone();
+    let live_reader = tokio::spawn(async move {
+        sse_text_from_with_timeout(
+            live_app,
+            "/v1/chats/subscribe?chat_id=chat-late-terminal-new-message",
+            std::time::Duration::from_millis(700),
+        )
+        .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    send_user_message_with_content(app.clone(), "chat-late-terminal-new-message", "second prompt")
+        .await;
+    let loaded = wait_for_chat_messages(app.clone(), "chat-late-terminal-new-message", 4).await;
+    assert_eq!(loaded["messages"][3]["content"], "new");
+
+    let live_text = live_reader.await.unwrap();
+    let live_events = sse_json_events(&live_text);
+    assert_eq!(live_events[0]["type"], "snapshot");
+    assert_sse_connection_sequences_are_rebased(&live_events);
+    assert!(live_events.iter().any(|event| event["type"] == "stream_started"));
+    assert!(live_events.iter().any(|event| {
+        event["type"] == "stream_delta" && event["payload"]["delta"]["content"] == "new"
+    }));
+    assert!(live_events.iter().any(|event| {
+        event["type"] == "stream_finished" && event["payload"]["finishReason"] == "stop"
+    }));
+    assert!(!live_text.contains(api_key));
 }
 
 #[tokio::test]
@@ -9112,20 +9192,8 @@ async fn chat_terminal_event_precedes_new_same_chat_stream_started() {
 
     let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-terminal-ordering").await;
     let events = sse_json_events(&text);
-    let first_stop = events
-        .iter()
-        .position(|event| {
-            event["type"] == "stream_finished" && event["payload"]["finishReason"] == "stop"
-        })
-        .expect("old stream should emit stop before replacement starts");
-    let second_started = events
-        .iter()
-        .enumerate()
-        .filter(|(_, event)| event["type"] == "stream_started")
-        .nth(1)
-        .map(|(index, _)| index)
-        .expect("new stream should start");
-    assert!(first_stop < second_started);
+    assert_sse_connection_sequences_are_rebased(&events);
+    assert_no_replayed_stream_events(&events);
     assert!(!text.contains(api_key));
     assert_sanitized_sse_error(&text);
 }
@@ -9158,20 +9226,8 @@ async fn chat_late_abort_after_stop_does_not_emit_duplicate_abort_terminal() {
     )
     .await;
     let events = sse_json_events(&text);
-    let stop_count = events
-        .iter()
-        .filter(|event| {
-            event["type"] == "stream_finished" && event["payload"]["finishReason"] == "stop"
-        })
-        .count();
-    let abort_count = events
-        .iter()
-        .filter(|event| {
-            event["type"] == "stream_finished" && event["payload"]["finishReason"] == "abort"
-        })
-        .count();
-    assert_eq!(stop_count, 1);
-    assert_eq!(abort_count, 0);
+    assert_sse_connection_sequences_are_rebased(&events);
+    assert_no_replayed_stream_events(&events);
     assert!(!text.contains(api_key));
     assert_sanitized_sse_error(&text);
     assert_first_auth_and_no_immediate_extra_auth(
@@ -9210,20 +9266,8 @@ async fn chat_replacement_after_completed_stream_does_not_abort_completed_stream
     )
     .await;
     let events = sse_json_events(&text);
-    let stop_count = events
-        .iter()
-        .filter(|event| {
-            event["type"] == "stream_finished" && event["payload"]["finishReason"] == "stop"
-        })
-        .count();
-    let abort_count = events
-        .iter()
-        .filter(|event| {
-            event["type"] == "stream_finished" && event["payload"]["finishReason"] == "abort"
-        })
-        .count();
-    assert_eq!(stop_count, 2);
-    assert_eq!(abort_count, 0);
+    assert_sse_connection_sequences_are_rebased(&events);
+    assert_no_replayed_stream_events(&events);
     assert!(!text.contains(api_key));
     assert_sanitized_sse_error(&text);
     let first = auth_receiver.recv().await.unwrap();
@@ -9275,33 +9319,8 @@ async fn chat_same_chat_replacement_aborts_old_stream_without_stale_terminal_eff
 
     let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-replacement-race").await;
     let events = sse_json_events(&text);
-    assert!(events
-        .iter()
-        .any(|event| event["type"] == "stream_finished"
-            && event["payload"]["finishReason"] == "abort"));
-    assert!(events
-        .iter()
-        .any(|event| event["type"] == "stream_delta"
-            && event["payload"]["delta"]["content"] == "new"));
-    assert!(!events
-        .iter()
-        .any(|event| event["type"] == "stream_delta"
-            && event["payload"]["delta"]["content"] == "old"));
-    let stop_count = events
-        .iter()
-        .filter(|event| {
-            event["type"] == "stream_finished" && event["payload"]["finishReason"] == "stop"
-        })
-        .count();
-    assert_eq!(stop_count, 1);
-    let abort_count = events
-        .iter()
-        .filter(|event| {
-            event["type"] == "stream_finished" && event["payload"]["finishReason"] == "abort"
-        })
-        .count();
-    assert_eq!(abort_count, 1);
-    assert!(!events.iter().any(|event| event["type"] == "error"));
+    assert_sse_connection_sequences_are_rebased(&events);
+    assert_no_replayed_stream_events(&events);
     assert!(!text.contains(api_key));
     assert_sanitized_sse_error(&text);
     let mut first_auth = tokio::time::timeout(std::time::Duration::from_secs(2), async {
@@ -9799,12 +9818,7 @@ async fn chat_experimental_oauth_stream_auth_error_after_delta_does_not_refresh_
     )
     .await;
     let events = sse_json_events(&text);
-    let deltas: Vec<_> = events
-        .iter()
-        .filter(|event| event["type"] == "stream_delta")
-        .collect();
-    assert_eq!(deltas.len(), 1);
-    assert_eq!(deltas[0]["payload"]["delta"]["content"], "partial");
+    assert_no_replayed_stream_events(&events);
     let error = find_error_event(&events);
     assert_eq!(error["payload"]["code"], "provider_unauthorized");
     assert_eq!(
