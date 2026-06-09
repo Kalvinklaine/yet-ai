@@ -38,6 +38,12 @@ struct ActiveStream {
     handle: JoinHandle<()>,
 }
 
+#[derive(Debug)]
+enum SubscriptionEvent {
+    Event(ChatEvent),
+    Lagged(u64),
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatEvent {
@@ -207,20 +213,24 @@ impl ChatRuntime {
             (snapshot, replay, state.sender.subscribe())
         };
         let snapshot_stream = futures_util::stream::once(async move { Ok(to_sse_event(snapshot)) });
-        let replay_stream = futures_util::stream::iter(replay.into_iter().map(Ok::<_, Infallible>));
-        let live_stream = BroadcastStream::new(receiver).filter_map(|event| async move {
-            match event {
-                Ok(event) => Some(Ok(event)),
-                Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(_)) => None,
+        let replay_stream =
+            futures_util::stream::iter(replay.into_iter().map(SubscriptionEvent::Event));
+        let live_stream = BroadcastStream::new(receiver).map(|event| match event {
+            Ok(event) => SubscriptionEvent::Event(event),
+            Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(count)) => {
+                SubscriptionEvent::Lagged(count)
             }
         });
-        let event_stream = replay_stream.chain(live_stream).scan(1_u64, |next_seq, event| {
-            let Ok(mut event) = event;
-            let seq = *next_seq;
-            *next_seq += 1;
-            event.seq = seq;
-            futures_util::future::ready(Some(Ok(to_sse_event(event))))
-        });
+        let event_stream = replay_stream
+            .chain(live_stream)
+            .scan(1_u64, |next_seq, event| {
+                futures_util::future::ready(Some(
+                    sequence_subscription_event(next_seq, event)
+                        .map(to_sse_event)
+                        .map(Ok),
+                ))
+            })
+            .filter_map(|event| async move { event });
         snapshot_stream.chain(event_stream)
     }
 
@@ -319,7 +329,14 @@ impl ChatRuntime {
         }
         let prompt = assemble_provider_prompt(&content, context.as_ref());
         let result = self
-            .stream_provider(&config_dir, &chat_id, stream_id, &prompt, &content, context.as_ref())
+            .stream_provider(
+                &config_dir,
+                &chat_id,
+                stream_id,
+                &prompt,
+                &content,
+                context.as_ref(),
+            )
             .await;
         if !self.is_active_stream(&chat_id, stream_id).await {
             return;
@@ -373,16 +390,34 @@ impl ChatRuntime {
         {
             return false;
         }
-        if let Ok(message) =
-            chat_history::append_message(config_dir, chat_id, role, content, Some(status)).await
-        {
-            if message.role == ChatMessageRole::Assistant {
-                self.push_terminal_event(chat_id, "message_added", json!({ "message": message }))
+        let append_result =
+            chat_history::append_message(config_dir, chat_id, role, content, Some(status)).await;
+        let terminal = match append_result {
+            Ok(message) => {
+                if message.role == ChatMessageRole::Assistant {
+                    self.push_terminal_event(
+                        chat_id,
+                        "message_added",
+                        json!({ "message": message }),
+                    )
                     .await;
+                }
+                (event_type, payload, true)
             }
+            Err(_) => (
+                "error",
+                json!({
+                    "code": "chat_history_storage_error",
+                    "message": "Chat response could not be saved to local storage."
+                }),
+                false,
+            ),
+        };
+        self.push_terminal_event(chat_id, terminal.0, terminal.1)
+            .await;
+        if terminal.2 {
+            self.prune_terminal_replay_events(chat_id).await;
         }
-        self.push_terminal_event(chat_id, event_type, payload).await;
-        self.prune_terminal_replay_events(chat_id).await;
         true
     }
 
@@ -445,7 +480,9 @@ impl ChatRuntime {
                 )
                 .await
             }
-            ChatProvider::DemoLocal => demo_stream(self, chat_id, stream_id, original_content, context).await,
+            ChatProvider::DemoLocal => {
+                demo_stream(self, chat_id, stream_id, original_content, context).await
+            }
             ChatProvider::ExperimentalCodex(auth) => {
                 bearer_stream_with_unauthorized_retry(
                     self,
@@ -771,6 +808,20 @@ fn snapshot_event(chat_id: &str, thread: Option<chat_history::ChatThread>) -> Ch
                 "waitingForResponse": false
             }
         }),
+    }
+}
+
+fn sequence_subscription_event(next_seq: &mut u64, event: SubscriptionEvent) -> Option<ChatEvent> {
+    match event {
+        SubscriptionEvent::Event(mut event) => {
+            event.seq = *next_seq;
+            *next_seq += 1;
+            Some(event)
+        }
+        SubscriptionEvent::Lagged(count) => {
+            *next_seq = next_seq.saturating_add(count);
+            None
+        }
     }
 }
 
@@ -1273,8 +1324,8 @@ fn chat_completions_url(base_url: &str) -> Result<String, ChatError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        chat_completions_url, OpenAiSseParser, PROVIDER_STREAM_EVENT_DATA_LIMIT,
-        PROVIDER_STREAM_LINE_BUFFER_LIMIT,
+        chat_completions_url, sequence_subscription_event, ChatEvent, OpenAiSseParser,
+        SubscriptionEvent, PROVIDER_STREAM_EVENT_DATA_LIMIT, PROVIDER_STREAM_LINE_BUFFER_LIMIT,
     };
 
     #[test]
@@ -1297,6 +1348,37 @@ mod tests {
     fn chat_completions_url_rejects_invalid_base_url() {
         assert!(chat_completions_url("file:///tmp/socket").is_err());
         assert!(chat_completions_url("http://user:pass@127.0.0.1:8080/v1").is_err());
+    }
+
+    #[test]
+    fn subscription_sequence_rebase_exposes_broadcast_lag_gap() {
+        let mut next_seq = 1;
+        let first = ChatEvent {
+            seq: 42,
+            event_type: "stream_delta".to_string(),
+            chat_id: "chat-lag".to_string(),
+            payload: serde_json::json!({ "delta": { "content": "first" } }),
+        };
+        let second = ChatEvent {
+            seq: 43,
+            event_type: "stream_delta".to_string(),
+            chat_id: "chat-lag".to_string(),
+            payload: serde_json::json!({ "delta": { "content": "second" } }),
+        };
+
+        assert_eq!(
+            sequence_subscription_event(&mut next_seq, SubscriptionEvent::Event(first))
+                .unwrap()
+                .seq,
+            1
+        );
+        assert!(sequence_subscription_event(&mut next_seq, SubscriptionEvent::Lagged(3)).is_none());
+        assert_eq!(
+            sequence_subscription_event(&mut next_seq, SubscriptionEvent::Event(second))
+                .unwrap()
+                .seq,
+            5
+        );
     }
 
     #[test]
