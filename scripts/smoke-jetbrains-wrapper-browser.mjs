@@ -43,6 +43,8 @@ let observedRuntimeAuthorization = false;
 let chatCommandRequest;
 let chatCommandRequestCount = 0;
 let chatSubscriptionCount = 0;
+const chatSseSubscribers = new Map();
+const pendingAssistantResponsesByChat = new Map();
 const maxRuntimeRequestBodyBytes = 1024 * 1024;
 
 class RequestBodyTooLargeError extends Error {}
@@ -1579,12 +1581,16 @@ async function startMockRuntimeServer() {
       }
       chatCommandRequestCount += 1;
       chatCommandRequest = parsedBody;
+      const chatId = decodeURIComponent(commandMatch[1]);
       json(response, 200, {
         accepted: true,
-        chatId: decodeURIComponent(commandMatch[1]),
+        chatId,
         requestId: chatCommandRequest.requestId,
         type: chatCommandRequest.type,
       });
+      if (chatCommandRequest?.type === "user_message") {
+        emitAssistantResponseAfterUserMessage(chatId);
+      }
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/chats/subscribe") {
@@ -1605,18 +1611,55 @@ async function startMockRuntimeServer() {
           runtime: { streaming: false },
         },
       })}\n\n`);
-      setTimeout(() => {
-        response.write(`data: ${JSON.stringify({ seq: 1, type: "stream_started", chatId, payload: { role: "assistant" } })}\n\n`);
-        response.write(`data: ${JSON.stringify({ seq: 2, type: "stream_delta", chatId, payload: { delta: { content: "JetBrains" } } })}\n\n`);
-        response.write(`data: ${JSON.stringify({ seq: 3, type: "stream_delta", chatId, payload: { delta: { content: " login smoke" } } })}\n\n`);
-        response.write(`data: ${JSON.stringify({ seq: 4, type: "stream_finished", chatId, payload: { finishReason: "stop" } })}\n\n`);
-        response.end();
-      }, 100);
+      registerChatSseSubscriber(chatId, response);
       return;
     }
     json(response, 404, { error: "Not found" });
   });
   return listen(server);
+}
+
+function registerChatSseSubscriber(chatId, response) {
+  const subscribers = chatSseSubscribers.get(chatId) ?? new Set();
+  subscribers.add(response);
+  chatSseSubscribers.set(chatId, subscribers);
+  response.on("close", () => {
+    subscribers.delete(response);
+    if (subscribers.size === 0) {
+      chatSseSubscribers.delete(chatId);
+    }
+  });
+  const pendingCount = pendingAssistantResponsesByChat.get(chatId) ?? 0;
+  if (pendingCount > 0) {
+    pendingAssistantResponsesByChat.set(chatId, pendingCount - 1);
+    setTimeout(() => emitAssistantResponse(chatId), 0);
+  }
+}
+
+function emitAssistantResponseAfterUserMessage(chatId) {
+  if (chatSseSubscribers.has(chatId)) {
+    setTimeout(() => emitAssistantResponse(chatId), 0);
+    return;
+  }
+  pendingAssistantResponsesByChat.set(chatId, (pendingAssistantResponsesByChat.get(chatId) ?? 0) + 1);
+}
+
+function emitAssistantResponse(chatId) {
+  const subscribers = chatSseSubscribers.get(chatId);
+  if (!subscribers || subscribers.size === 0) {
+    pendingAssistantResponsesByChat.set(chatId, (pendingAssistantResponsesByChat.get(chatId) ?? 0) + 1);
+    return;
+  }
+  const [response] = subscribers;
+  writeSse(response, { seq: 1, type: "stream_started", chatId, payload: { role: "assistant" } });
+  writeSse(response, { seq: 2, type: "stream_delta", chatId, payload: { delta: { content: "JetBrains" } } });
+  writeSse(response, { seq: 3, type: "stream_delta", chatId, payload: { delta: { content: " login smoke" } } });
+  writeSse(response, { seq: 4, type: "stream_finished", chatId, payload: { finishReason: "stop" } });
+  response.end();
+}
+
+function writeSse(response, event) {
+  response.write(`data: ${JSON.stringify(event)}\n\n`);
 }
 
 function connectedProviderAuthStatus() {
