@@ -215,6 +215,8 @@ The GUI should not own provider secrets, filesystem mutation, shell execution, o
 
 Provider setup screens should render provider availability, status, model summaries, validation errors, and secret placeholders returned by the engine. They must not persist raw provider secrets in GUI storage and must not call model providers directly.
 
+A dedicated visual/browser GUI smoke is planned in GitHub issue #2. Until that issue is implemented and verified, docs and reports should describe it as planned only. The planned smoke must stay local-first, use loopback/mock fixtures, and require no provider credentials, hosted Yet AI backend, managed model gateway, product credit balance, or cloud workspace.
+
 ### `apps/plugins/vscode`
 
 The VS Code plugin should own:
