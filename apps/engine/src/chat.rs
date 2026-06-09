@@ -26,6 +26,7 @@ pub struct ChatRuntime {
 #[derive(Debug)]
 struct ChatState {
     events: Vec<ChatEvent>,
+    terminal_replay_prunable: bool,
     next_seq: u64,
     sender: broadcast::Sender<ChatEvent>,
     active_stream: Option<ActiveStream>,
@@ -160,7 +161,7 @@ impl ChatRuntime {
                     "stream_finished",
                     json!({ "finishReason": "abort" }),
                 );
-                state.prune_replay_events_if_terminal();
+                state.mark_terminal_replay_persisted();
             }
             let stream_id = state.next_stream_id;
             state.next_stream_id += 1;
@@ -208,8 +209,7 @@ impl ChatRuntime {
             let state = guard
                 .entry(chat_id.clone())
                 .or_insert_with(|| ChatState::new(&chat_id));
-            state.prune_replay_events_if_terminal();
-            let replay = state.events.clone();
+            let replay = state.replay_events_for_subscriber();
             (snapshot, replay, state.sender.subscribe())
         };
         let snapshot_stream = futures_util::stream::once(async move { Ok(to_sse_event(snapshot)) });
@@ -285,6 +285,20 @@ impl ChatRuntime {
         state.push_event(chat_id, event_type, payload);
     }
 
+    async fn push_persisted_terminal_event(
+        &self,
+        chat_id: &str,
+        event_type: &str,
+        payload: serde_json::Value,
+    ) {
+        let mut guard = self.inner.lock().await;
+        let state = guard
+            .entry(chat_id.to_string())
+            .or_insert_with(|| ChatState::new(chat_id));
+        state.push_event(chat_id, event_type, payload);
+        state.mark_terminal_replay_persisted();
+    }
+
     async fn abort_active_stream(&self, chat_id: &str) -> bool {
         let lock = self.history_lock(chat_id).await;
         let _history_guard = lock.lock().await;
@@ -301,7 +315,7 @@ impl ChatRuntime {
             "stream_finished",
             json!({ "finishReason": "abort" }),
         );
-        state.prune_replay_events_if_terminal();
+        state.mark_terminal_replay_persisted();
         true
     }
 
@@ -413,19 +427,14 @@ impl ChatRuntime {
                 false,
             ),
         };
-        self.push_terminal_event(chat_id, terminal.0, terminal.1)
-            .await;
         if terminal.2 {
-            self.prune_terminal_replay_events(chat_id).await;
+            self.push_persisted_terminal_event(chat_id, terminal.0, terminal.1)
+                .await;
+        } else {
+            self.push_terminal_event(chat_id, terminal.0, terminal.1)
+                .await;
         }
         true
-    }
-
-    async fn prune_terminal_replay_events(&self, chat_id: &str) {
-        let mut guard = self.inner.lock().await;
-        if let Some(state) = guard.get_mut(chat_id) {
-            state.prune_replay_events_if_terminal();
-        }
     }
 
     async fn snapshot_event(&self, config_dir: &std::path::Path, chat_id: &str) -> ChatEvent {
@@ -721,6 +730,7 @@ impl ChatState {
         let (sender, _) = broadcast::channel(64);
         Self {
             events: Vec::new(),
+            terminal_replay_prunable: false,
             next_seq: 1,
             sender,
             active_stream: None,
@@ -737,13 +747,27 @@ impl ChatState {
         };
         self.next_seq += 1;
         self.events.push(event.clone());
+        self.terminal_replay_prunable = false;
         let _ = self.sender.send(event);
     }
 
-    fn prune_replay_events_if_terminal(&mut self) {
+    fn mark_terminal_replay_persisted(&mut self) {
         if self.active_stream.is_none() {
             self.events.clear();
+            self.terminal_replay_prunable = true;
         }
+    }
+
+    fn replay_events_for_subscriber(&mut self) -> Vec<ChatEvent> {
+        if self.active_stream.is_none() && self.terminal_replay_prunable {
+            self.events.clear();
+        }
+        let replay = self.events.clone();
+        if self.active_stream.is_none() && !self.terminal_replay_prunable {
+            self.events.clear();
+            self.terminal_replay_prunable = true;
+        }
+        replay
     }
 }
 
