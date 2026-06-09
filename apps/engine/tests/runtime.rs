@@ -8694,6 +8694,10 @@ async fn chat_success_persists_user_and_assistant_messages_for_snapshot_and_rest
         events[0]["payload"]["thread"]["messages"][0]["content"],
         "persist me"
     );
+    assert!(!events.iter().skip(1).any(|event| matches!(
+        event["type"].as_str(),
+        Some("stream_started" | "stream_delta" | "message_added" | "stream_finished")
+    )));
     assert!(!text.contains(api_key));
 
     let restarted = yet_lsp::app(AppState::with_storage_paths(
@@ -8751,6 +8755,24 @@ async fn chat_provider_error_persists_sanitized_error_history_and_snapshot() {
         .contains("Provider credentials were rejected"));
     assert_sanitized_sse_error(&loaded.to_string());
     assert!(!loaded.to_string().contains(api_key));
+    let text = sse_text_from(
+        app.clone(),
+        "/v1/chats/subscribe?chat_id=chat-history-error",
+    )
+    .await;
+    let events = sse_json_events(&text);
+    assert_eq!(events[0]["type"], "snapshot");
+    assert_eq!(events[0]["payload"]["messages"].as_array().unwrap().len(), 2);
+    let clean_text = sse_text_from(
+        app.clone(),
+        "/v1/chats/subscribe?chat_id=chat-history-error",
+    )
+    .await;
+    let clean_events = sse_json_events(&clean_text);
+    assert_eq!(clean_events[0]["type"], "snapshot");
+    assert!(!clean_events.iter().skip(1).any(|event| event["type"] == "error"));
+    assert_sanitized_sse_error(&text);
+    assert!(!text.contains(api_key));
     assert_first_auth_and_no_immediate_extra_auth(
         auth_receiver,
         "Bearer sk-history-error-secret-abcd",
@@ -8777,13 +8799,24 @@ async fn abort_does_not_leave_assistant_or_streaming_history_state() {
     assert_eq!(loaded["messages"][0]["role"], "user");
     assert_eq!(loaded["messages"][0]["status"], "complete");
     assert_ne!(loaded["messages"][0]["status"], "streaming");
-    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-history-abort").await;
+    let text = sse_text_from(app.clone(), "/v1/chats/subscribe?chat_id=chat-history-abort").await;
     let events = sse_json_events(&text);
     assert_eq!(
         events[0]["payload"]["messages"].as_array().unwrap().len(),
         1
     );
     assert_eq!(events[0]["payload"]["runtime"]["streaming"], false);
+    let clean_text = sse_text_from(
+        app.clone(),
+        "/v1/chats/subscribe?chat_id=chat-history-abort",
+    )
+    .await;
+    let clean_events = sse_json_events(&clean_text);
+    assert!(!clean_events.iter().skip(1).any(|event| matches!(
+        event["type"].as_str(),
+        Some("stream_started" | "stream_delta" | "stream_finished")
+    )));
+    assert!(!clean_text.contains("first"));
     assert!(!text.contains(api_key));
     assert_first_auth_and_no_immediate_extra_auth(
         auth_receiver,
@@ -8856,7 +8889,7 @@ async fn openai_compatible_streaming_maps_chunks_to_sse_events() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["accepted"], true);
 
-    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-stream").await;
+    let text = sse_text_from(app.clone(), "/v1/chats/subscribe?chat_id=chat-stream").await;
     let events = sse_json_events(&text);
     assert_eq!(events[0]["type"], "snapshot");
     assert!(events.iter().any(|event| event["type"] == "stream_started"));
@@ -8870,6 +8903,20 @@ async fn openai_compatible_streaming_maps_chunks_to_sse_events() {
     assert!(events
         .iter()
         .any(|event| event["type"] == "stream_finished"));
+    let later_text = sse_text_from(app.clone(), "/v1/chats/subscribe?chat_id=chat-stream").await;
+    let later_events = sse_json_events(&later_text);
+    assert_eq!(later_events[0]["type"], "snapshot");
+    assert_eq!(
+        later_events[0]["payload"]["messages"].as_array().unwrap().len(),
+        2
+    );
+    let clean_text = sse_text_from(app.clone(), "/v1/chats/subscribe?chat_id=chat-stream").await;
+    let clean_events = sse_json_events(&clean_text);
+    assert_eq!(clean_events[0]["type"], "snapshot");
+    assert!(!clean_events.iter().skip(1).any(|event| matches!(
+        event["type"].as_str(),
+        Some("stream_delta" | "message_added" | "stream_finished")
+    )));
     assert_first_auth_and_no_immediate_extra_auth(
         auth_receiver,
         "Bearer sk-stream-secret-abcd",
