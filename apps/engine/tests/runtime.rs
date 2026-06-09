@@ -97,6 +97,34 @@ async fn sse_text_from_with_timeout(app: axum::Router, uri: &str, duration: std:
     String::from_utf8(bytes.to_vec()).unwrap()
 }
 
+async fn sse_text_prefix_from_response(
+    response: axum::response::Response,
+    duration: std::time::Duration,
+) -> String {
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "text/event-stream"
+    );
+    let mut body = response.into_body();
+    let mut bytes = Vec::new();
+    let _ = tokio::time::timeout(duration, async {
+        while let Some(frame) = body.frame().await {
+            let frame = frame.unwrap();
+            if let Ok(data) = frame.into_data() {
+                bytes.extend_from_slice(&data);
+            }
+        }
+    })
+    .await;
+    String::from_utf8(bytes).unwrap()
+}
+
 async fn sse_text_prefix_from(app: axum::Router, uri: &str, duration: std::time::Duration) -> String {
     let response = app
         .oneshot(authed_request(Method::GET, uri, Body::empty()))
@@ -9181,6 +9209,76 @@ async fn openai_compatible_streaming_maps_chunks_to_sse_events() {
         auth_receiver,
         "Bearer sk-stream-secret-abcd",
         "streaming maps chunks",
+    )
+    .await;
+    assert!(!text.contains(api_key));
+}
+
+#[tokio::test]
+async fn chat_sse_live_subscriber_exposes_sequence_gap_after_broadcast_lag() {
+    let api_key = "sk-lag-secret-abcd";
+    let mut stream_body = String::new();
+    for index in 0..80 {
+        stream_body.push_str(&format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"content\":\"chunk-{index};\"}}}}]}}\n\n"
+        ));
+    }
+    stream_body.push_str("data: [DONE]\n\n");
+    let (base_url, auth_receiver) =
+        start_chunked_mock_provider(vec![stream_body.into_bytes()]).await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    let subscribe_response = app
+        .clone()
+        .oneshot(authed_request(
+            Method::GET,
+            "/v1/chats/subscribe?chat_id=chat-broadcast-lag",
+            Body::empty(),
+        ))
+        .await
+        .unwrap();
+
+    let command = json!({
+        "requestId": "req-broadcast-lag",
+        "type": "user_message",
+        "payload": { "content": "produce many chunks" }
+    });
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-broadcast-lag/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accepted"], true);
+    let loaded = wait_for_chat_messages(app.clone(), "chat-broadcast-lag", 2).await;
+    assert_eq!(loaded["messages"].as_array().unwrap().len(), 2);
+
+    let text =
+        sse_text_prefix_from_response(subscribe_response, std::time::Duration::from_millis(250))
+            .await;
+    let events = sse_json_events(&text);
+    assert_eq!(events[0]["type"], "snapshot");
+    assert!(
+        events.iter().any(|event| event["type"] == "stream_delta"),
+        "lagged subscriber should still receive retained live deltas: {events:?}"
+    );
+    let sequences = events
+        .iter()
+        .map(|event| event["seq"].as_u64().expect("numeric SSE seq"))
+        .collect::<Vec<_>>();
+    assert!(
+        sequences.windows(2).any(|pair| pair[1] > pair[0] + 1),
+        "BroadcastStream lag must be externally detectable as a sequence gap, not silently accepted as contiguous: {sequences:?}"
+    );
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer sk-lag-secret-abcd",
+        "broadcast lag stream",
     )
     .await;
     assert!(!text.contains(api_key));
