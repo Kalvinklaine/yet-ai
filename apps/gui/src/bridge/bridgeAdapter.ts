@@ -419,10 +419,10 @@ export function isApplyWorkspaceEditResultPayload(value: unknown): value is Appl
   }
   return (
     (value.status === "applied" || value.status === "denied" || value.status === "rejected" || value.status === "failed") &&
-    safeMessage(value.message) &&
+    safeApplyResultMessage(value.message) &&
     value.cloudRequired === false &&
     optionalBoundedInteger(value.appliedEditCount, 0, 64) &&
-    isOptionalAffectedFiles(value.affectedFiles)
+    isOptionalApplyAffectedFiles(value.affectedFiles)
   );
 }
 
@@ -573,6 +573,10 @@ function isOptionalAffectedFiles(value: unknown): boolean {
   return value === undefined || (Array.isArray(value) && value.length <= 4 && value.every((item) => requiredSafeRelativePath(item)));
 }
 
+function isOptionalApplyAffectedFiles(value: unknown): boolean {
+  return value === undefined || (Array.isArray(value) && value.length <= 4 && value.every((item) => typeof item === "string" && item.length > 0 && item.length <= 512));
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -714,6 +718,10 @@ function safeSummary(value: unknown): boolean {
 
 function safeMessage(value: unknown): boolean {
   return typeof value === "string" && value.length > 0 && value.length <= 1000 && !hasControlCharacters(value) && !unsafeDisplayText(value) && !hasPrivatePathLikeText(value) && !hasKeyLikeSecretText(value);
+}
+
+function safeApplyResultMessage(value: unknown): boolean {
+  return typeof value === "string" && value.length > 0 && value.length <= 1000 && !hasControlCharacters(value);
 }
 
 function hasControlCharacters(value: string): boolean {

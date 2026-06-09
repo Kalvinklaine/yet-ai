@@ -90,10 +90,10 @@ describe("parseEditProposalContent", () => {
     expect(parseEditProposalContent(JSON.stringify(proposal) + " " + JSON.stringify(proposal))).toBeNull();
   });
 
-  it("rejects an assistant-supplied requestId envelope", () => {
+  it("ignores an assistant-supplied requestId envelope for proposal parsing", () => {
     const proposal = safeEditProposalPayload();
     const envelopeWithRequestId = { type: "gui.applyWorkspaceEditRequest", version: bridgeVersion, requestId: "assistant-supplied", payload: proposal };
-    expect(parseEditProposalContent(JSON.stringify(envelopeWithRequestId))).toBeNull();
+    expect(parseEditProposalContent(JSON.stringify(envelopeWithRequestId))).toEqual(proposal);
   });
 
   it("rejects envelope with unknown fields or wrong version", () => {
@@ -117,12 +117,24 @@ describe("parseEditProposalContent", () => {
     expect(parseEditProposalContent(JSON.stringify({ ...proposal, cloudRequired: true }))).toBeNull();
   });
 
+  it("rejects unsafe paths, duplicate file groups, and unsupported edit operations", () => {
+    const proposal = safeEditProposalPayload();
+    expect(parseEditProposalContent(JSON.stringify({ ...proposal, edits: [{ ...proposal.edits[0], workspaceRelativePath: "../secret.txt" }] }))).toBeNull();
+    expect(parseEditProposalContent(JSON.stringify({ ...proposal, edits: [{ ...proposal.edits[0], workspaceRelativePath: "/Users/private/project/src/example.ts" }] }))).toBeNull();
+    expect(parseEditProposalContent(JSON.stringify({ ...proposal, edits: [proposal.edits[0], { ...proposal.edits[0] }] }))).toBeNull();
+    expect(parseEditProposalContent(JSON.stringify({ ...proposal, edits: [{ ...proposal.edits[0], operation: "deleteFile" }] }))).toBeNull();
+  });
+
   it("rejects non-string and oversized content", () => {
     expect(parseEditProposalContent("")).toBeNull();
     // @ts-expect-error - intentionally passing a non-string to confirm runtime guard
     expect(parseEditProposalContent(undefined)).toBeNull();
     // @ts-expect-error - intentionally passing a non-string to confirm runtime guard
     expect(parseEditProposalContent(null)).toBeNull();
+  });
+
+  it("rejects oversized content before parsing", () => {
+    expect(parseEditProposalContent(`{"summary":"${"safe ".repeat(12000)}"}`)).toBeNull();
   });
 });
 
