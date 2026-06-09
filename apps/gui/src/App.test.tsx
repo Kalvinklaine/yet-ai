@@ -4044,7 +4044,8 @@ describe("chat panel", () => {
       await Promise.resolve();
     });
 
-    expect(container?.textContent).toContain("Chat is not ready for the current runtime settings. Refresh runtime and configure a provider before sending.");
+    expect(container?.textContent).toContain("Chat is not ready for the current runtime settings. Refresh runtime and configure a provider/model before sending.");
+    expect(container?.textContent).toContain("Recovery: configure and test a local BYOK provider/model, refresh runtime, then send again.");
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/v1/chats/subscribe"))).toBe(false);
     expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes("/v1/chats/") && String(url).endsWith("/commands") && init?.method === "POST")).toBe(false);
     expect(chatInput().value).toBe("Blocked message");
@@ -4095,7 +4096,64 @@ describe("chat panel", () => {
 
     expect(container?.textContent).toContain("Error");
     expect(container?.textContent).toContain("failed [redacted]");
+    expect(container?.textContent).toContain("Recovery: Refresh runtime and resend after the local command endpoint is healthy. No automatic retry was started.");
     expect(container?.textContent).not.toContain("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
+  });
+
+  it("stale command acceptance after chat change does not clear the current draft", async () => {
+    const command = deferred<Response>();
+    mockRuntimeResponses({ ...readyRuntimeOptions(), commandResponse: command.promise });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setTextareaValue(chatInput(), "do not clear stale command");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      setInputValue(findInputValue("chat-001")!, "chat-002");
+    });
+    await act(async () => {
+      setTextareaValue(chatInput(), "new chat draft");
+    });
+    command.resolve(jsonResponse({ accepted: true, chatId: "chat-001", requestId: "stale-command", type: "user_message" }));
+    await flushAsync();
+
+    expect(chatInput().value).toBe("new chat draft");
+    expect(container?.textContent).not.toContain("do not clear stale command");
+    expect(container?.textContent).not.toContain("stale-command");
+  });
+
+  it("stale command failure after runtime change is ignored and sanitized", async () => {
+    const secret = "stale-command-secret-token";
+    const command = deferred<Response>();
+    mockRuntimeResponses({ ...readyRuntimeOptions(), commandResponse: command.promise });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setTextareaValue(chatInput(), "stale failure message");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
+    });
+    await act(async () => {
+      setTextareaValue(chatInput(), "new runtime draft");
+    });
+    command.resolve(jsonResponse({ error: `late command error Bearer ${secret}` }, 500));
+    await flushAsync();
+
+    expect(chatInput().value).toBe("new runtime draft");
+    expect(container?.textContent).not.toContain("late command error");
+    expect(container?.textContent).not.toContain(secret);
+    expect(browserStorageDump()).not.toContain(secret);
   });
 
   it("redacts terminal command runtime errors before rendering", async () => {
@@ -4247,7 +4305,7 @@ describe("chat panel", () => {
 
     const text = container?.textContent ?? "";
     expect(text).toContain("The request is too large [redacted]");
-    expect(text).toContain("Recovery: shorten the prompt or reduce attached editor context, then retry.");
+    expect(text).toContain("Recovery: reduce the prompt or attached editor context, then send again.");
     expect(text).not.toContain("access_token");
     expect(text).not.toContain("chat-cookie");
     expect(text).not.toContain("g".repeat(64));
@@ -6014,6 +6072,7 @@ type MockRuntimeOptions = {
   startAuthMessage?: string;
   exchangeResponse?: ProviderAuthResponse & { success: boolean };
   sseEvents?: unknown[];
+  commandResponse?: Promise<Response>;
   commandStatus?: number;
   commandError?: string;
   providers?: unknown[];
@@ -6356,6 +6415,9 @@ function mockRuntimeResponse(input: RequestInfo | URL, init: RequestInit | undef
     return Promise.resolve(sseResponse(options.sseEvents ?? []));
   }
   if (init?.method === "POST" && url.includes("/v1/chats/") && url.endsWith("/commands")) {
+    if (options.commandResponse) {
+      return options.commandResponse;
+    }
     if (options.commandStatus) {
       return Promise.resolve(jsonResponse({ error: options.commandError ?? "command failed" }, options.commandStatus));
     }

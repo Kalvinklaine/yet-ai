@@ -5,6 +5,7 @@ import { activeEditorSourceLabel, attachedContextFileLabel, attachedContextRequi
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
 import { IdeActionProposalPanel, IdeActionsPanel, type IdeActionAttemptState } from "./components/IdeActionsPanel";
 import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
+import { chatLifecycleLabels, chatRecoveryCodeForRuntimeError, type ChatLifecycleState } from "./services/chatLifecycle";
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { modelStatusText, resolveProviderModelReadiness } from "./services/providerReadiness";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
@@ -247,6 +248,7 @@ export function App() {
   const [deletingChatId, setDeletingChatId] = useState<string | null>(null);
   const [chatInput, setChatInput] = useState("");
   const [chatView, setChatView] = useState(() => createInitialChatViewState("chat-001"));
+  const [chatLifecycleState, setChatLifecycleState] = useState<ChatLifecycleState>("idle");
   const [timeline, setTimeline] = useState<string[]>([]);
   const [bridgeLog, setBridgeLog] = useState<string[]>([]);
   const [bridgeHost, setBridgeHost] = useState<BridgeHost>("browser");
@@ -409,6 +411,7 @@ export function App() {
     if (finalizeStreaming) {
       setChatView((current) => stopStreamingAssistant(current));
     }
+    setChatLifecycleState("stopped");
     void sendAbort(activeStream.settings, activeStream.chatId).then((result) => {
       if (reportAbortErrors && !result.ok) {
         addTimeline(`Abort command error: ${sanitizeDisplayText(result.error.message)}`);
@@ -422,6 +425,7 @@ export function App() {
 
   const markSettingsChanged = useCallback(() => {
     abortActiveStream("SSE stopped and abort requested for previous runtime settings");
+    setChatLifecycleState("idle");
     settingsRevisionRef.current += 1;
     providerTestAttemptRef.current += 1;
     setSettingsRevision(settingsRevisionRef.current);
@@ -575,12 +579,12 @@ export function App() {
     };
   }, [applyHostReady]);
 
-  const appendChatError = useCallback((message: string) => {
+  const appendChatError = useCallback((message: string, code?: string) => {
     setChatView((current) => applyChatViewEvent(current, {
       seq: 0,
       type: "error",
       chatId: current.chatId,
-      payload: { message },
+      payload: { message, code },
     }));
   }, []);
 
@@ -1208,6 +1212,7 @@ export function App() {
       chatId: targetChatId,
     };
     activeStreamRef.current = stream;
+    setChatLifecycleState("sse_connecting");
     addTimeline(`Opening SSE for ${targetChatId}`);
     void subscribeToChat(
       stream.settings,
@@ -1220,6 +1225,13 @@ export function App() {
           }
           const safeEvent = sanitizeSseEvent(event);
           setChatView((current) => applyChatViewEvent(current, safeEvent));
+          if (event.type === "stream_started" || event.type === "stream_delta") {
+            setChatLifecycleState("streaming");
+          } else if (event.type === "stream_finished") {
+            setChatLifecycleState("idle");
+          } else if (event.type === "error") {
+            setChatLifecycleState("failed");
+          }
           addTimeline(sanitizeTimelineText(`${event.seq} ${event.type}\n${JSON.stringify(safeEvent.payload ?? {}, null, 2)}`));
         },
         onError: (error) => {
@@ -1228,7 +1240,8 @@ export function App() {
             return;
           }
           setChatError(error);
-          appendChatError(error.message);
+          setChatLifecycleState("failed");
+          appendChatError(error.message, chatRecoveryCodeForRuntimeError(error, "sse"));
           addTimeline(`SSE error: ${sanitizeDisplayText(error.message)}`);
         },
       },
@@ -1370,10 +1383,11 @@ export function App() {
     if (!canSendChat) {
       const runtimeError: RuntimeError = {
         status: "configuration",
-        message: "Chat is not ready for the current runtime settings. Refresh runtime and configure a provider before sending.",
+        message: "Chat is not ready for the current runtime settings. Refresh runtime and configure a provider/model before sending.",
       };
       setChatError(runtimeError);
-      appendChatError(runtimeError.message);
+      setChatLifecycleState("failed");
+      appendChatError(runtimeError.message, chatRecoveryCodeForRuntimeError(runtimeError, "command"));
       addTimeline("Command blocked until current runtime settings are ready");
       return;
     }
@@ -1381,18 +1395,21 @@ export function App() {
     const submittedAttachedContext = includeAttachedContext && attachedContextAllowed && attachedContextRef.current?.settingsRevision === targetRevision && attachedContextRef.current.chatId === targetChatId && currentAttachedContext && hasUsableAttachedContext(currentAttachedContext) ? attachedContextRef.current : null;
     const context = submittedAttachedContext?.payload;
     startSse(targetChatId);
+    setChatLifecycleState("command_submitting");
     const result = await sendUserMessage(targetSettings, targetChatId, content, context);
     if (!isCurrentRefresh(targetRevision) || chatIdRef.current !== targetChatId) {
       return;
     }
     if (result.ok) {
       addTimeline(`Command accepted ${result.data.requestId}`);
+      setChatLifecycleState("command_accepted");
       setChatView((current) => addAcceptedUserMessage(current, content));
       setChatInput("");
       clearSubmittedAttachedContext(submittedAttachedContext);
     } else {
       setChatError(result.error);
-      appendChatError(result.error.message);
+      setChatLifecycleState("failed");
+      appendChatError(result.error.message, chatRecoveryCodeForRuntimeError(result.error, "command"));
       addTimeline(`Command error: ${sanitizeDisplayText(result.error.message)}`);
     }
   };
@@ -1594,6 +1611,7 @@ export function App() {
             </div>
             <div className="chat-panel" aria-label="Chat messages">
               {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect()} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeEditProposal={activeEditProposal} activeIdeActionProposal={activeIdeActionProposal} />)}
+              <span className={`chat-lifecycle-state ${chatLifecycleState}`}>{chatLifecycleLabels[chatLifecycleState]}</span>
               {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
             </div>
             <EditProposalPanel proposal={activeEditProposal} result={activeEditProposal ? applyResult : null} host={bridgeHost} pendingRequestId={pendingApplyRequestId} note={applyNote} onApply={submitEditProposal} onCancelPending={cancelPendingEditProposalApply} />

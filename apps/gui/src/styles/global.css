@@ -649,6 +649,36 @@ pre,
   color: #a11212;
 }
 
+.chat-lifecycle-state {
+  justify-self: start;
+  border: 1px solid #d8e1f6;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #45546c;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.chat-lifecycle-state.streaming,
+.chat-lifecycle-state.command_accepted,
+.chat-lifecycle-state.sse_connecting,
+.chat-lifecycle-state.command_submitting {
+  border-color: #b8cafb;
+  color: #2441a1;
+}
+
+.chat-lifecycle-state.stopped {
+  border-color: #ffe2a3;
+  background: #fffaf0;
+  color: #8a5a00;
+}
+
+.chat-lifecycle-state.failed {
+  border-color: #ffc9c9;
+  background: #fff0f0;
+  color: #a11212;
+}
+
 .debug-card .timeline,
 .debug-details .timeline {
   max-height: 240px;
