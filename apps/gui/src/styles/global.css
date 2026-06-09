@@ -542,7 +542,7 @@ pre,
 
 .conversations-layout {
   display: grid;
-  grid-template-columns: minmax(220px, 300px) 1fr;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
   gap: 16px;
 }
 
@@ -556,7 +556,7 @@ pre,
 
 .conversation-item {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: start;
   border: 1px solid #e2e7f0;
@@ -581,12 +581,14 @@ pre,
 .conversation-title-line {
   display: flex;
   flex-wrap: wrap;
+  min-width: 0;
   gap: 8px;
   align-items: center;
-  min-width: 0;
 }
 
 .conversation-title {
+  display: block;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
