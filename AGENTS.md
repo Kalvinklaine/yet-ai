@@ -43,6 +43,7 @@ Read these before architecture or scaffold work:
 ## Working style
 
 - Keep changes small and report clear verification steps.
+- When asked to add something to the backlog, leave it for later, create a task, or do it later, create a GitHub Issue in the Yet AI repository using local `gh` under the user's authenticated GitHub account. Do not treat it as backlogged until an issue URL is returned; if the request is ambiguous, summarize the proposed issue title/body and ask for confirmation first.
 - Do not claim a subsystem is implemented if only a plan or documentation scaffold exists.
 - Prefer bilingual or Russian documentation when useful for the current owner; keep technical identifiers in English.
 - If you introduce a new build or test command, add it to the appropriate README or docs page.
