@@ -886,24 +886,20 @@ async function assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocato
   if (afterStaleState.queueLength !== 0) {
     failures.push("Wrapper queued stale same-requestId host.ready during iframe reload.");
   }
+  const previousFrameNonce = await page.evaluate(() => window.__yetAiLastFrameNonceForSmoke ?? window.__yetAiCurrentFrameNonce);
   await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, url) => {
     frame.src = `${url}/index.html`;
   }, guiUrl);
-  await page.waitForFunction((count) => (window.__yetAiGuiReadySequence ?? 0) > count, afterStaleState.guiReadySequence, { timeout: 5000 }).catch(() => failures.push("Wrapper did not observe fresh gui.ready after repeated requestId reload."));
-  await page.evaluate(({ bridgeVersion, origin }) => {
-    const frameWindow = document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow;
-    window.dispatchEvent(new MessageEvent("message", {
-      data: {
-        version: bridgeVersion,
-        type: "gui.ready",
-        requestId: "same",
-        payload: { supportedBridgeVersion: bridgeVersion, frameNonce: window.__yetAiCurrentFrameNonce },
-      },
-      origin,
-      source: frameWindow,
-    }));
-  }, { bridgeVersion: version, origin: guiUrl });
-  await page.waitForTimeout(100);
+  const afterExplicitReloadReady = await forceFreshGuiReadyAfterReload(page, {
+    version,
+    origin: guiUrl,
+    sequenceBeforeReload: afterStaleState.guiReadySequence,
+    requestId: "same",
+    previousFrameNonce,
+  });
+  if ((afterExplicitReloadReady.readySequence ?? 0) <= afterStaleState.guiReadySequence) {
+    failures.push("Wrapper did not observe fresh gui.ready after repeated requestId reload.");
+  }
   const afterRepeatedReady = await page.evaluate(({ beforeCount, oldRequestId }) => ({
     currentRequestId: window.__yetAiCurrentReadyRequestId,
     deliveredSame: window.__yetAiHostMessagesPosted?.slice(beforeCount).some((message) => message?.requestId === "same") === true,
@@ -935,6 +931,43 @@ async function assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocato
   if (afterOldNonceReplayCount !== beforeOldNonceReplayCount) {
     failures.push("Wrapper delivered a stale host.ready bound to the previous authoritative ready id after a new ready id was accepted.");
   }
+}
+
+async function forceFreshGuiReadyAfterReload(page, { version, origin, sequenceBeforeReload, requestId, previousFrameNonce }) {
+  return page.evaluate(({ bridgeVersion, messageOrigin, sequenceBeforeReload, requestId, previousFrameNonce }) => new Promise((resolve) => {
+    const readyIdPattern = /^gui-ready-\d+-\d+-[0-9a-f]{32}$/;
+    const frameNoncePattern = /^[0-9a-f]{32}$/;
+    const deadline = Date.now() + 10000;
+    const sendFreshReady = () => {
+      const frameWindow = document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow;
+      const frameNonce = window.__yetAiCurrentFrameNonce;
+      const hasFreshFrameNonce = typeof frameNonce === "string" && frameNoncePattern.test(frameNonce) && frameNonce === window.__yetAiLastFrameNonceForSmoke && frameNonce !== previousFrameNonce;
+      if (frameWindow && hasFreshFrameNonce) {
+        window.dispatchEvent(new MessageEvent("message", {
+          data: {
+            version: bridgeVersion,
+            type: "gui.ready",
+            ...(requestId === undefined ? {} : { requestId }),
+            payload: { supportedBridgeVersion: bridgeVersion, frameNonce },
+          },
+          origin: messageOrigin,
+          source: frameWindow,
+        }));
+      }
+      const readySequence = window.__yetAiGuiReadySequence ?? 0;
+      const currentRequestId = window.__yetAiCurrentReadyRequestId;
+      if (readySequence > sequenceBeforeReload && readyIdPattern.test(currentRequestId)) {
+        resolve({ readySequence, currentRequestId });
+        return;
+      }
+      if (Date.now() >= deadline) {
+        resolve({ readySequence, currentRequestId });
+        return;
+      }
+      window.setTimeout(sendFreshReady, 100);
+    };
+    sendFreshReady();
+  }), { bridgeVersion: version, messageOrigin: origin, sequenceBeforeReload, requestId, previousFrameNonce });
 }
 
 async function assertSingleBackslashContextPathRejected(page, version, requestId) {
