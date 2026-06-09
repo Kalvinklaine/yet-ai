@@ -6,6 +6,7 @@ import { EditProposalPanel, type ApplyResultState, type EditProposalState } from
 import { IdeActionProposalPanel, IdeActionsPanel, type IdeActionAttemptState } from "./components/IdeActionsPanel";
 import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
 import { chatLifecycleLabels, chatRecoveryCodeForRuntimeError, type ChatLifecycleState } from "./services/chatLifecycle";
+import { conversationHistoryStatusLabel, resolveChatAfterList, resolveFallbackChatAfterDelete } from "./services/conversationHistory";
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { modelStatusText, resolveProviderModelReadiness } from "./services/providerReadiness";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
@@ -364,6 +365,7 @@ export function App() {
   const activeIdeActionProposal = ideActionProposalMatchesCandidate(ideActionProposal, ideActionProposalCandidate) ? ideActionProposal : null;
   const safeActiveWorkspacePath = currentAttachedContext?.file?.workspaceRelativePath;
   const safeActiveRange = rangeFromContextSelection(currentAttachedContext?.selection);
+  const chatHistoryStatus = conversationHistoryStatusLabel({ loading: chatHistoryLoading, current: chatHistoryCurrent, count: activeChatSummaries.length, hasError: Boolean(chatHistoryError) });
 
   const addTimeline = useCallback((entry: string) => {
     setTimeline((current) => [entry, ...current].slice(0, 80));
@@ -432,9 +434,11 @@ export function App() {
     setRuntimeDataRevision(null);
     setProviderDataRevision(null);
     setProviderAuthDataRevision(null);
+    chatHistoryAttemptRef.current += 1;
     setChatHistoryRevision(null);
     setChatSummaries([]);
     setChatHistoryError(null);
+    setChatHistoryLoading(false);
     setDeletingChatId(null);
     setRuntimeRefreshStatus({
       state: "checking",
@@ -737,22 +741,13 @@ export function App() {
       const summaries = result.data.chats ?? [];
       setChatSummaries(summaries);
       setChatHistoryRevision(revision);
-      const currentChat = chatIdRef.current;
-      if (summaries.length > 0 && !summaries.some((summary) => summary.chatId === currentChat)) {
-        const nextChatId = summaries[0].chatId;
+      const resolution = resolveChatAfterList({ currentChatId: chatIdRef.current, summaries, defaultChatId: "chat-001" });
+      if (resolution.shouldResetView) {
         clearEditProposalState();
         clearIdeActionState();
         setChatInput("");
-        setChatView(resetChatViewState(nextChatId));
-        setChatId(nextChatId);
-      }
-      if (summaries.length === 0 && currentChat !== "chat-001") {
-        const nextChatId = "chat-001";
-        clearEditProposalState();
-        clearIdeActionState();
-        setChatInput("");
-        setChatView(resetChatViewState(nextChatId));
-        setChatId(nextChatId);
+        setChatView(resetChatViewState(resolution.nextChatId));
+        setChatId(resolution.nextChatId);
       }
     } else {
       setChatSummaries([]);
@@ -848,8 +843,18 @@ export function App() {
     const targetRevision = settingsRevisionRef.current;
     const attempt = chatHistoryAttemptRef.current + 1;
     chatHistoryAttemptRef.current = attempt;
-    if (chatIdRef.current === targetChatId) {
+    const deletingCurrent = chatIdRef.current === targetChatId;
+    if (deletingCurrent) {
       abortActiveStream("SSE stopped and abort requested before deleting the current chat");
+      setChatView(resetChatViewState(targetChatId));
+      setChatInput("");
+      setTimeline([]);
+      setAttachedContext(null);
+      setIncludeAttachedContext(false);
+      setAttachedContextAcknowledged(false);
+      setAttachedContextStatus(null);
+      clearEditProposalState();
+      clearIdeActionState();
     }
     setDeletingChatId(targetChatId);
     setChatHistoryLoading(true);
@@ -860,14 +865,12 @@ export function App() {
       return;
     }
     if (result.ok) {
-      const remaining = chatSummaries.filter((summary) => summary.chatId !== targetChatId);
-      setChatSummaries(remaining);
+      const fallback = resolveFallbackChatAfterDelete({ summariesBeforeDelete: chatSummaries, deletedChatId: targetChatId, activeChatId: chatIdRef.current, defaultChatId: "chat-001" });
+      setChatSummaries(fallback.remainingSummaries);
       setChatHistoryRevision(targetRevision);
-      if (chatIdRef.current === targetChatId) {
-        const deletedIndex = chatSummaries.findIndex((summary) => summary.chatId === targetChatId);
-        const nextChatId = remaining[Math.max(0, Math.min(deletedIndex, remaining.length - 1))]?.chatId ?? "chat-001";
-        setChatId(nextChatId);
-        setChatView(resetChatViewState(nextChatId));
+      if (fallback.deletedCurrent) {
+        setChatId(fallback.nextChatId);
+        setChatView(resetChatViewState(fallback.nextChatId));
         setChatInput("");
         setTimeline([]);
         setAttachedContext(null);
@@ -884,7 +887,6 @@ export function App() {
     setDeletingChatId(null);
     setChatHistoryLoading(false);
   }, [abortActiveStream, chatSummaries, clearEditProposalState, clearIdeActionState, isCurrentRefresh]);
-
   const connect = useCallback(async () => {
     if (runtimeRefreshInFlightRef.current) {
       runtimeRefreshQueuedRef.current = true;
@@ -1568,11 +1570,11 @@ export function App() {
           <aside className="conversations-panel stack" aria-label="Local conversations">
             <div className="row">
               <h3>Conversations</h3>
-              <button type="button" onClick={() => void createNewChat()} disabled={chatHistoryLoading}>{chatHistoryLoading ? "Loading…" : "New chat"}</button>
+              <button type="button" onClick={() => void createNewChat()}>{chatHistoryLoading ? "Loading…" : "New chat"}</button>
             </div>
             <span className="subtle">Engine-owned local history. Messages are not written to browser storage.</span>
             <div className="conversation-status" role="status">
-              {chatHistoryLoading ? "Loading local conversations…" : chatHistoryCurrent ? `${activeChatSummaries.length} local conversation${activeChatSummaries.length === 1 ? "" : "s"}` : "Conversation history has not loaded yet."}
+              {chatHistoryStatus}
             </div>
             {activeChatSummaries.length === 0 ? (
               <p className="subtle">{chatHistoryLoading ? "Loading saved conversations from the local runtime…" : chatHistoryError ? "Conversation history is unavailable." : "No saved conversations yet. Start a new local chat or send a message in the current chat."}</p>

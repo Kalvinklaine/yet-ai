@@ -3186,7 +3186,7 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("Conversations");
     expect(container?.textContent).toContain("Alpha thread");
     expect(container?.textContent).toContain("Beta thread");
-    expect(container?.textContent).toContain("2 local conversations");
+    expect(container?.textContent).toContain("2 local runtime conversations returned.");
     expect(container?.textContent).toContain("Updated 2026-05-29T07:16:30Z");
     expect(container?.textContent).toContain("2 persisted messages");
     expect(container?.textContent).toContain("current");
@@ -3206,15 +3206,98 @@ describe("chat panel", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("Loading local conversations…");
+    expect(container?.textContent).toContain("Loading local runtime conversations…");
     expect(container?.textContent).toContain("Loading saved conversations from the local runtime…");
 
     chats.resolve(jsonResponse({ chats: [] }));
     await flushAsync();
 
-    expect(container?.textContent).toContain("0 local conversations");
+    expect(container?.textContent).toContain("No local runtime conversations returned.");
     expect(container?.textContent).toContain("No saved conversations yet. Start a new local chat or send a message in the current chat.");
     expect(chatInput().value).toBe("");
+  });
+
+  it("ignores stale chat list after settings change and clears loading state", async () => {
+    const oldChats = deferred<Response>();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/chats") && init?.method !== "POST") {
+        if (url.startsWith("http://127.0.0.1:8001")) {
+          return oldChats.promise;
+        }
+        return Promise.resolve(jsonResponse({ chats: [] }));
+      }
+      return mockRuntimeResponse(input, init, readyRuntimeOptions());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+
+    await flushAsync();
+    expect(container?.textContent).toContain("Loading local runtime conversations…");
+
+    await act(async () => {
+      setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
+      await Promise.resolve();
+    });
+    oldChats.resolve(jsonResponse({ chats: [chatSummary("chat-stale", "Stale old list title", 1)] }));
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.textContent).not.toContain("Stale old list title");
+    expect(container?.textContent).toContain("No local runtime conversations returned.");
+    expect(container?.textContent).not.toContain("Loading local runtime conversations…");
+  });
+
+  it("ignores stale chat lists after create and delete attempts", async () => {
+    const staleInitialList = deferred<Response>();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/chats") && init?.method !== "POST") {
+        return staleInitialList.promise;
+      }
+      return mockRuntimeResponse(input, init, {
+        ...readyRuntimeOptions(),
+        createChatThread: chatThread("chat-created", "Created current", []),
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Loading…").click();
+      await Promise.resolve();
+    });
+    staleInitialList.resolve(jsonResponse({ chats: [chatSummary("chat-stale-list", "Stale list after create", 1)] }));
+    await flushAsync();
+
+    expect(container?.textContent).toContain("chat-created");
+    expect(container?.textContent).not.toContain("Stale list after create");
+
+    const staleDeleteList = deferred<Response>();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/chats") && init?.method !== "POST") {
+        return staleDeleteList.promise;
+      }
+      return mockRuntimeResponse(input, init, {
+        ...readyRuntimeOptions(),
+        chats: [chatSummary("chat-created", "Created current", 0)],
+      });
+    });
+    await act(async () => {
+      findButton("Refresh runtime").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      findButton("Delete current").click();
+      await Promise.resolve();
+    });
+    staleDeleteList.resolve(jsonResponse({ chats: [chatSummary("chat-deleted-stale", "Deleted stale sentinel", 1)] }));
+    await flushAsync();
+
+    expect(container?.textContent).not.toContain("Deleted stale sentinel");
+    expect(browserStorageDump()).not.toContain("Deleted stale sentinel");
   });
 
   it("creates a new chat and selects it", async () => {
@@ -3299,7 +3382,7 @@ describe("chat panel", () => {
     });
 
     expect(findInputValue("chat-001")).toBeDefined();
-    expect(container?.textContent).toContain("0 local conversations");
+    expect(container?.textContent).toContain("No local runtime conversations returned.");
     expect(container?.textContent).toContain("fresh local chat");
     expect(container?.textContent).not.toContain("Solo persisted");
   });
@@ -3347,6 +3430,45 @@ describe("chat panel", () => {
     expect(browserStorageDump()).not.toContain(secret);
   });
 
+  it("browser storage remains free after create switch and delete", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const runtimeToken = "history-runtime-token-secret";
+    const providerKey = "sk-history-provider-secret";
+    const deletedSentinel = "deleted-chat-storage-sentinel";
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-alpha", "Alpha thread", 1), chatSummary("chat-beta", "Beta thread", 1)],
+      createChatThread: chatThread("chat-created", "Created thread", [chatMessage("chat-created", "msg-created", "user", providerKey)]),
+      chatThreads: {
+        "chat-alpha": chatThread("chat-alpha", "Alpha thread", [chatMessage("chat-alpha", "msg-alpha", "user", deletedSentinel)]),
+        "chat-beta": chatThread("chat-beta", "Beta thread", [chatMessage("chat-beta", "msg-beta", "user", "Beta visible")]),
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setInputValue(findInputValue("")!, runtimeToken);
+    });
+    await act(async () => {
+      findButton("Beta threadUpdated 2026-05-29T07:16:30Z1 persisted messageConversation 2 of 2").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      findButton("New chat").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      findButton("Delete current").click();
+      await Promise.resolve();
+    });
+
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(runtimeToken);
+    expect(browserStorageDump()).not.toContain(providerKey);
+    expect(browserStorageDump()).not.toContain(deletedSentinel);
+  });
+
   it("ignores stale chat thread responses after chat selection changes", async () => {
     const alphaThread = deferred<Response>();
     mockRuntimeResponses({ chats: [chatSummary("chat-alpha", "Alpha thread", 1), chatSummary("chat-beta", "Beta thread", 1)] });
@@ -3377,6 +3499,91 @@ describe("chat panel", () => {
 
     expect(container?.textContent).toContain("Beta current");
     expect(container?.textContent).not.toContain("Alpha stale secret");
+  });
+
+  it("ignores in-flight thread load after deleting the current chat", async () => {
+    const oldThread = deferred<Response>();
+    mockRuntimeResponses({
+      chats: [chatSummary("chat-old", "Old thread", 1), chatSummary("chat-next", "Next thread", 0)],
+      chatThreads: {
+        "chat-next": chatThread("chat-next", "Next thread", []),
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/chats/chat-old") && init?.method !== "DELETE") {
+        return oldThread.promise;
+      }
+      return mockRuntimeResponse(input, init, {
+        chats: [chatSummary("chat-old", "Old thread", 1), chatSummary("chat-next", "Next thread", 0)],
+        chatThreads: {
+          "chat-next": chatThread("chat-next", "Next thread", []),
+        },
+      });
+    });
+    await act(async () => {
+      setInputValue(chatIdInput(), "chat-old");
+      await Promise.resolve();
+    });
+    await act(async () => {
+      findButton("Delete current").click();
+      await Promise.resolve();
+    });
+    oldThread.resolve(jsonResponse(chatThread("chat-old", "Old thread", [chatMessage("chat-old", "msg-old", "user", "deleted stale thread secret")] )));
+    await flushAsync();
+
+    expect(findInputValue("chat-next")).toBeDefined();
+    expect(container?.textContent).not.toContain("deleted stale thread secret");
+    expect(container?.textContent).not.toContain("Old thread");
+  });
+
+  it("delete current active chat aborts old stream and ignores later SSE", async () => {
+    let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const encoder = new TextEncoder();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/v1/chats/subscribe?chat_id=")) {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            sseController = controller;
+          },
+          cancel() {},
+        });
+        return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+      }
+      return mockRuntimeResponse(input, init, {
+        ...readyRuntimeOptions(),
+        chats: [chatSummary("chat-001", "Current stream", 1), chatSummary("chat-next", "Next thread", 0)],
+        chatThreads: {
+          "chat-next": chatThread("chat-next", "Next thread", []),
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setTextareaValue(chatInput(), "stream then delete");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      findButton("Delete current").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 3, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: "late deleted chat stream secret" } } })}\n\n`));
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).not.toContain("late deleted chat stream secret");
+    expect(container?.textContent).toContain("Next thread");
   });
 
   it("ignores active SSE events from an old chat after switching conversations", async () => {

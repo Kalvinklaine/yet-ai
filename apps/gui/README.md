@@ -4,7 +4,7 @@ Minimal React/Vite browser shell for local-first Yet AI workflows.
 
 ## Boundary
 
-The GUI talks only to the local Yet AI runtime and logical IDE host bridge. It does not call hosted model providers directly, does not own provider adapters, and does not store raw provider secrets in browser storage. Chat history is also engine-owned local state: the GUI renders conversations returned by the runtime but must not persist messages in browser `localStorage` or `sessionStorage`. Provider-auth pending/session state is local engine-owned state; raw provider secrets, tokens, authorization codes, PKCE verifiers, cookies, browser profiles, local runtime session tokens, and credential file paths are never GUI-owned or GUI-facing.
+The GUI talks only to the local Yet AI runtime and logical IDE host bridge. It does not call hosted model providers directly, does not own provider adapters, and does not store raw provider secrets in browser storage. Conversations are engine-owned local runtime history: the GUI lists runtime-returned chats, renders runtime-returned threads, and must not persist messages in browser `localStorage` or `sessionStorage`. Deleting a conversation removes only the local Yet AI runtime conversation; it does not delete provider-side, account-side, or upstream records. Switching or deleting chats retires stale thread, SSE, and command results so old responses cannot overwrite the active local conversation. Provider-auth pending/session state is local engine-owned state; raw provider secrets, tokens, authorization codes, PKCE verifiers, cookies, browser profiles, local runtime session tokens, and credential file paths are never GUI-owned or GUI-facing.
 
 ## Commands
 
@@ -22,6 +22,7 @@ Repository validation and the local browser non-blank smoke remain available fro
 npm run check
 npm run smoke:gui-browser
 npm run smoke:gui-runtime-e2e
+npm run smoke:gui-conversation-history
 ```
 
 Agent progress read-only panel coverage is available from the root:
@@ -46,8 +47,7 @@ cargo test -p yet-lsp agent_progress
 Use it when changing GUI controlled-action copy, fallback rendering, or progress/action metadata display. The browser shell can render sanitized progress/result messages in harnesses, but it does not execute controlled IDE actions itself. VS Code and JetBrains host execution is limited to safe read-only/navigation/context controlled actions (`getContextSnapshot`, `openWorkspaceFile`, and `revealWorkspaceRange`), with JetBrains execution guarded by strict wrapper/Kotlin policy and correlated `host.ideActionProgress` / `host.ideActionResult` only after explicit GUI/user request. Controlled `getContextSnapshot` result metadata is metadata only (source, active-editor boolean, workspace folder count) and carries no file path, selected text, or raw content; selected text belongs only to the separate `host.contextSnapshot` first-message prompt-attachment flow. These automated smokes are loopback/mock harnesses and are not a substitute for manual IDE dogfood.
 
 Build the GUI first with `cd apps/gui && npm run build`. The browser smoke serves `apps/gui/dist` on `127.0.0.1`, opens the built page with Playwright Chromium, and fails on blank UI, page JavaScript errors, or broken local JS/CSS assets without requiring the engine or provider credentials. If Playwright or Chromium is missing, run `npm install` from the repository root and `npx playwright install chromium`.
-
-The runtime e2e smoke also requires `cargo build -p yet-lsp`. It starts `target/debug/yet-lsp` with a generated local runtime token and isolated temp HOME/config/cache, starts a loopback mock OpenAI-compatible streaming provider, drives the built GUI in Playwright, configures a fake API-key provider, simulates an IDE active-editor context snapshot, sends messages with context included and omitted, verifies the runtime/provider prompt boundary, verifies streamed assistant text and history reload, and checks DOM text, browser storage, console/page errors, and smoke output boundaries for generated-token/API-key/context-sentinel leaks. It uses only loopback URLs and fake credentials.
+The runtime e2e smoke also requires `cargo build -p yet-lsp`. It starts `target/debug/yet-lsp` with a generated local runtime token and isolated temp HOME/config/cache, starts a loopback mock OpenAI-compatible streaming provider, drives the built GUI in Playwright, configures a fake API-key provider, simulates an IDE active-editor context snapshot, sends messages with context included and omitted, verifies the runtime/provider prompt boundary, verifies streamed assistant text and history reload, and checks DOM text, browser storage, console/page errors, and smoke output boundaries for generated-token/API-key/context-sentinel leaks. It uses only loopback URLs and fake credentials. The focused `smoke:gui-conversation-history` gate uses the built GUI plus a mock loopback runtime to cover list, select, create, delete fallback, and browser-storage leak checks without a real provider or engine.
 
 Chat send lifecycle is owned by the local runtime: the GUI submits a local command, opens fetch-based SSE, renders sanitized runtime/provider events, and does not auto-retry provider calls. Stop sends a local abort command only for the active stream using that stream's original runtime URL/chat/session token; if settings, chat id, or runtime readiness changes, stale command/SSE results are ignored. Recovery copy distinguishes Provider API key problems from local Session token mismatches and asks users to Refresh runtime or fix provider/model readiness before sending again.
 
@@ -57,6 +57,7 @@ Use this focused first-message GUI gate when polishing the IDE chat happy path:
 cd apps/gui && npm test && npm run typecheck && npm run build
 cd ../..
 npm run smoke:gui-runtime-e2e
+npm run smoke:gui-conversation-history
 ```
 
 For docs-only updates, the repository gate remains `npm run check && git status --short` from the root.

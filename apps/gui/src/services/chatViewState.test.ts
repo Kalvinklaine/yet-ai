@@ -127,11 +127,11 @@ describe("chatViewState", () => {
   });
 
   it.each([
-    ["provider_unauthorized", "update or check the provider API key"],
+    ["provider_unauthorized", "fix the Provider API key or account login in Provider setup"],
     ["provider_rate_limited", "check provider quota or billing"],
-    ["provider_context_too_large", "shorten the prompt or reduce attached editor context"],
+    ["provider_context_too_large", "reduce the prompt or attached editor context"],
     ["provider_invalid_request", "check the model id, provider endpoint, and saved provider settings"],
-    ["provider_timeout", "check network connectivity or the local provider server"],
+    ["provider_timeout", "checking network connectivity or the local provider server"],
     ["provider_upstream_error", "the provider or local server failed"],
     ["provider_malformed_stream", "invalid streaming data"],
     ["provider_config_error", "review provider setup"],
@@ -156,9 +156,9 @@ describe("chatViewState", () => {
     ].reduce<ChatViewState>(applyChatViewEvent, createInitialChatViewState("chat-1"));
 
     expect(state.messages[0].content).toContain("Future provider failure.");
-    expect(state.messages[0].content).toContain("Recovery: check local provider configuration and readiness, then retry.");
+    expect(state.messages[0].content).toContain("Recovery: fix the provider/runtime issue shown here, then send again. No automatic retry was started.");
     expect(state.messages[1].content).toContain("Malformed code failure.");
-    expect(state.messages[1].content).toContain("Recovery: check local provider configuration and readiness, then retry.");
+    expect(state.messages[1].content).toContain("Recovery: fix the provider/runtime issue shown here, then send again. No automatic retry was started.");
   });
 
   it("redacts secret-bearing payloads while preserving recovery guidance", () => {
@@ -171,7 +171,7 @@ describe("chatViewState", () => {
     );
 
     expect(state.messages[0].content).toContain("Provider rejected [redacted]");
-    expect(state.messages[0].content).toContain("Recovery: update or check the provider API key");
+    expect(state.messages[0].content).toContain("Recovery: fix the Provider API key or account login in Provider setup");
     expect(state.messages[0].content).not.toContain("provider-secret-token");
     expect(state.messages[0].content).not.toContain("access_token");
     expect(state.messages[0].content).not.toContain("session=secret");
@@ -188,7 +188,7 @@ describe("chatViewState", () => {
     );
 
     expect(state.messages[0].content.length).toBeLessThanOrEqual(501);
-    expect(state.messages[0].content).toContain("Recovery: shorten the prompt or reduce attached editor context, then retry.");
+    expect(state.messages[0].content).toContain("Recovery: reduce the prompt or attached editor context, then send again.");
     expect(state.messages[0].content).not.toContain("long-provider-secret");
     expect(state.messages[0].content).not.toContain("access_token");
     expect(state.messages[0].content).not.toContain("x".repeat(64));
@@ -234,7 +234,7 @@ describe("chatViewState", () => {
     expect(() => malformedEvents.reduce<ChatViewState>(applyChatViewEvent, state)).not.toThrow();
     const next = malformedEvents.reduce<ChatViewState>(applyChatViewEvent, state);
     expect(next.messages).toEqual([
-      { id: "chat-1-message-1", role: "error", content: "Chat error\nRecovery: check local provider configuration and readiness, then retry.", status: "error" },
+      { id: "chat-1-message-1", role: "error", content: "Chat error\nRecovery: fix the provider/runtime issue shown here, then send again. No automatic retry was started.", status: "error" },
     ]);
   });
 });
