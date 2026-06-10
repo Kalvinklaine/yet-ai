@@ -25,15 +25,15 @@ const ignoredDuplicateApplyResultNote = sanitizeDisplayText("Ignored duplicate h
 const ignoredStaleApplyResultNote = sanitizeDisplayText("Ignored stale host apply result.");
 
 const providerAuthStatusCopy: Record<ProviderAuthStatus, string> = {
-  not_configured: "No account login is configured yet. Use Login with OpenAI when available or the API key fallback.",
-  api_key_configured: "OpenAI API key fallback is configured locally. Account login is not required.",
-  login_available: "OpenAI account login is available through the local runtime.",
-  login_unavailable: "OpenAI account login is planned/not available yet; use API key fallback.",
-  pending: "OpenAI account login is pending. Finish the browser or device verification flow, then refresh the status.",
-  connected: "OpenAI account login is connected through the local runtime.",
-  expired: "OpenAI account login expired. Start login again or use the API key fallback.",
-  revoked: "OpenAI account login was revoked. Disconnect it or use the API key fallback.",
-  error: "OpenAI account login reported an error. Review the sanitized details or use the API key fallback.",
+  not_configured: "No production OpenAI account login is configured. Use the OpenAI API-key fallback as the safe/default real-provider path.",
+  api_key_configured: "OpenAI API-key fallback is configured locally. Account login is not required for the default real-provider path.",
+  login_available: "OpenAI account login is exposed by the local runtime, but it is experimental/non-default until official production support is approved.",
+  login_unavailable: "OpenAI account login is planned/not available for production; use the OpenAI API-key fallback.",
+  pending: "Experimental OpenAI account login is pending. Finish the browser/device step, then refresh status; use API-key fallback for the default path.",
+  connected: "Experimental OpenAI account login is connected through the local runtime, but API-key fallback remains the default real-provider path.",
+  expired: "Experimental OpenAI account login expired. Start it again only if you accept the risk, or use the API-key fallback.",
+  revoked: "Experimental OpenAI account login was revoked. Disconnect it or use the API-key fallback.",
+  error: "Experimental OpenAI account login reported an error. Review sanitized details or use the API-key fallback.",
 };
 
 function sanitizeSseEvent(event: SseEvent): SseEvent {
@@ -119,8 +119,8 @@ const emptyProviderForm: ProviderForm = {
 const providerPresets: ProviderPreset[] = [
   {
     id: "openai-api",
-    label: "OpenAI API",
-    description: "Official OpenAI API endpoint. ChatGPT/OpenAI account login is planned where officially supported; API key is the current safe fallback.",
+    label: "OpenAI API key fallback (safe default)",
+    description: "Official OpenAI API endpoint. Paste an API key into the local runtime for the current safe/default real-provider path; account login stays experimental/non-default.",
     form: {
       providerId: "openai-api",
       kind: "openai-compatible",
@@ -1484,10 +1484,10 @@ export function App() {
 
   const firstMessageReadiness = useMemo<FirstMessageReadiness>(() => {
     const notes = [
-      "Session token unlocks this GUI to the local runtime only; Provider API key unlocks the upstream model through the runtime.",
-      "Provider setup stays local-first BYOK: no Yet AI hosted backend, account, cloud workspace, or credit balance is required.",
-      "Demo Mode uses runtime-owned local canned responses only: no API key, no provider calls, and not model quality.",
-      "After saving or updating a provider, test provider, then refresh runtime/model readiness before the first message.",
+      "Runtime Session token unlocks this GUI to the loopback runtime only; Provider API key unlocks the upstream model through the runtime. They are different secrets.",
+      "OpenAI API-key fallback is the current safe/default real-provider path for first-message GPT; provider setup stays local-first BYOK with no Yet AI hosted backend, account, cloud workspace, or credit balance required.",
+      "Demo Mode is only a try-without-provider-calls path: runtime-owned local canned responses, no API key, no provider calls, and not model quality.",
+      "After saving or updating a provider: test provider, refresh runtime/model readiness, then send when the readiness card says Send is available.",
     ];
     const authStatus = activeProviderAuthStatus?.status;
     if (activeProviderAuthStatus?.configured && activeProviderAuthStatus.authSource === "oauth") {
@@ -1495,7 +1495,7 @@ export function App() {
     } else if (authStatus === "login_available") {
       notes.push("Account login may be available, but it is not the default first-message path; use an API-key provider unless you intentionally choose the experimental flow.");
     } else if (authStatus === "api_key_configured") {
-      notes.push("API-key fallback status is available locally; configure or refresh an OpenAI-compatible provider/model if Send is still disabled.");
+      notes.push("API-key fallback status is available locally; test the saved provider and refresh runtime/model readiness if Send is still disabled.");
     }
     if (!runtimeConnected) {
       const reason = activeConnectionError
@@ -1518,7 +1518,7 @@ export function App() {
       return {
         title: activeSelectedDemoMode ? "Demo Mode is ready" : "Ready for your first message",
         reason: activeSelectedDemoMode ? "Send is enabled for local canned responses; this verifies chat UX without a provider API key." : `Send is enabled for ${selectedModelDisplayName ?? "the selected model"}${selectedModelProviderId ? ` through ${selectedModelProviderId}` : ""}.`,
-        nextAction: activeSelectedDemoMode ? "Type a prompt to try the local flow, then configure a BYOK provider when you need real model quality." : "Type a prompt and send it through the local runtime.",
+        nextAction: activeSelectedDemoMode ? "Type a prompt and click Send to try the local flow without provider calls; configure a BYOK provider when you need real model quality." : "Type a prompt and click Send through the local runtime.",
         actions: [...(demoModeEnabled ? [{ kind: "enable_demo_mode" as const, label: demoModeToggleLabel }] : []), { kind: "send_first_message" as const, label: "Send first message" }],
         notes,
       };
@@ -1574,7 +1574,7 @@ export function App() {
       reason: activeModelError
         ? "Runtime model refresh failed, so no send-ready model can be selected."
         : "No enabled OpenAI-compatible provider/model is ready for chat streaming.",
-      nextAction: "For a no-key trial, enable Demo Mode. For real answers, use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, test provider, then refresh runtime/model readiness.",
+      nextAction: "For real answers, use the OpenAI API-key fallback (safe/default), paste a provider API key, save, test provider, refresh runtime/model readiness, then send. Choose Demo Mode only to try the chat flow without provider calls.",
       actions: [{ kind: "enable_demo_mode", label: demoModeToggleLabel }, { kind: "api_key_fallback", label: "Use OpenAI API key fallback" }, { kind: "refresh_runtime", label: "Refresh runtime" }],
       notes,
     };
@@ -1638,7 +1638,7 @@ export function App() {
             {chatModelStatus && <span className="subtle">Model status: {chatModelStatus}</span>}
             {demoModeEnabled && <span className="subtle">{activeSelectedDemoMode ? "Demo Mode is active in the local runtime. It uses canned responses only, makes no provider calls, requires no API key, and is not model quality." : `Demo Mode is enabled in the local runtime, but the current ready chat path uses ${selectedModelDisplayName ?? "the selected model"}${selectedModelProviderId ? ` (${selectedModelProviderId})` : ""}. Sends may use that configured provider; disable Demo Mode or choose the demo model only when dogfooding canned local responses.`}</span>}
             {activeDemoModeError && <span className="error">Demo Mode status unavailable: {activeDemoModeError.status}: {sanitizeDisplayText(activeDemoModeError.message)}</span>}
-            {runtimeConnected && !canSendChat && <span className="subtle">For the quickest path, choose OpenAI API, paste a provider API key once, save, optionally test the provider, then send your first message. For local models, choose an OpenAI-compatible /v1 preset.</span>}
+            {runtimeConnected && !canSendChat && <span className="subtle">For the quickest real-provider path, choose OpenAI API-key fallback, paste a provider API key once, save, test provider, refresh runtime/model readiness, then send your first message. Demo Mode is only for trying the chat flow without provider calls.</span>}
             {experimentalOauthChatReady && <span className="subtle">OpenAI API-key fallback remains the safe/default setup and will be preferred when configured.</span>}
             {!canSendChat && <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>}
           </div>
@@ -1784,26 +1784,28 @@ export function App() {
           <summary><h2>Provider setup</h2></summary>
         {runtimeConnected && !apiKeyChatReady && !experimentalOauthChatReady && (
           <div className="guided-setup-card stack" role="status">
-            <strong>Runtime connected — provider required for your first GPT message</strong>
-            <span>Primary chat readiness offers Demo Mode for local canned responses. Configure a BYOK provider here for real answers when ready.</span>
+            <strong>Runtime connected — choose the first-message path</strong>
+            <span><strong>Real provider (safe default):</strong> use OpenAI API-key fallback, paste a provider API key once, save, test provider, refresh runtime/model readiness, then send.</span>
+            <span><strong>Try without provider calls:</strong> enable Demo Mode from Chat readiness. It uses local canned responses only and is not model quality.</span>
             <div className="row">
               <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>
             </div>
           </div>
         )}
-        <p className="subtle">Provider requests go to the local runtime. A provider API key is sent to the local runtime only on save, cleared from this form immediately after save/update is submitted, never written to browser storage, and is distinct from the runtime Session token.</p>
-        <p className="subtle">ChatGPT/OpenAI account login is planned where officially supported. OpenAI API-key setup is the current safe fallback.</p>
+        <p className="subtle"><strong>Runtime Session token</strong> is only for this GUI talking to the local loopback runtime. <strong>Provider API key</strong> is for the upstream OpenAI-compatible provider and is sent to the local runtime only on save, cleared from this form immediately after save/update is submitted, and never written to browser storage.</p>
+        <p className="subtle">ChatGPT/OpenAI account login is experimental/non-default until officially supported and reviewed. It is not production official login. OpenAI API-key setup is the current safe/default real-provider path.</p>
         <p className="subtle">Current chat uses OpenAI-compatible providers only. Ollama is available here through its OpenAI-compatible /v1 endpoint; native Ollama chat is future work.</p>
         {providerError && <ErrorBox error={providerError} />}
         <div className="provider-item account-login-card stack">
           <div className="row">
-            <h3>OpenAI account login</h3>
+            <h3>Experimental account login (non-default)</h3>
+            <span className="badge warn">experimental</span>
             <span className={activeProviderAuthStatus?.configured ? "badge ok" : "badge warn"}>{activeProviderAuthStatus?.status ?? "not checked"}</span>
           </div>
-          <p className="subtle">Account login is guided by the local runtime only. The GUI opens safe authorization URLs, renders sanitized account status, and does not store provider auth state in browser storage.</p>
+          <p className="subtle">This card is not production official OpenAI login. The local runtime owns the experimental account state, the GUI opens only safe authorization URLs and renders sanitized status, and browser storage never stores provider auth state.</p>
           <div className="risk-card stack">
             <strong>Experimental Codex-like account login risk</strong>
-            <span>This OpenAI account path is high-risk and private-endpoint-style. It is not official public OpenAI OAuth support, not production-ready, and must not replace the safe API-key fallback.</span>
+            <span>This OpenAI account path is high-risk and private-endpoint-style. It is not official public OpenAI OAuth support, not production-ready, and must not replace the OpenAI API-key fallback as the safe/default real-provider path.</span>
           </div>
           {providerAuthError && <ErrorBox error={providerAuthError} />}
           {providerAuthUrlWarning && <div className="error">{providerAuthUrlWarning}</div>}
@@ -1844,7 +1846,7 @@ export function App() {
                   </button>
                 ))}
               </div>
-              <span className="subtle">Presets only fill provider fields. They never include API keys and do not contact providers from the GUI.</span>
+              <span className="subtle">Presets only fill provider fields. They never include API keys and do not contact providers from the GUI. The OpenAI API-key fallback preset is the safe/default real-provider starting point.</span>
             </div>
             <div className="form-grid">
               <label>
@@ -1896,6 +1898,7 @@ export function App() {
               <button type="submit">{selectedProviderId ? "Update provider" : "Create provider"}</button>
               <button type="button" onClick={() => { setSelectedProviderId(undefined); setProviderForm(emptyProviderForm); }}>New provider</button>
             </div>
+            <span className="field-help">After Save/Update: click Test provider in the Providers list, click Refresh runtime to reload model readiness, then use Send when Chat readiness says Send available.</span>
           </form>
           <div className="stack">
             <h3>Providers</h3>
@@ -1909,7 +1912,7 @@ export function App() {
                 <span>Secret configured: {String(provider.auth.configured)} {provider.auth.redacted ? `(${sanitizeDisplayText(provider.auth.redacted)})` : ""}</span>
                 <span>Models: {provider.models.map((model) => sanitizeDisplayText(model.displayName)).join(", ") || "none"}</span>
                 {provider.models.length > 0 && <span className="subtle">Model readiness: {provider.models.map((model) => modelStatusText(model, provider)).join("; ")}</span>}
-                {providerTestState?.providerId === provider.id && <div className={`provider-test-status ${providerTestState.state}`} role="status"><strong>{providerTestState.state === "testing" ? "Provider test running" : providerTestState.state === "success" ? "Provider test succeeded" : "Provider test failed"}</strong><span>{providerTestState.status}: {providerTestState.detail}</span>{providerTestState.state === "failed" && <span>{providerTestAction(providerTestState.status)}</span>}</div>}
+                {providerTestState?.providerId === provider.id && <div className={`provider-test-status ${providerTestState.state}`} role="status"><strong>{providerTestState.state === "testing" ? "Provider test running" : providerTestState.state === "success" ? "Provider test succeeded" : "Provider test failed"}</strong><span>{providerTestState.status}: {providerTestState.detail}</span>{providerTestState.state === "success" && <span>Next: refresh runtime/model readiness, then send when Chat readiness says Send available.</span>}{providerTestState.state === "failed" && <span>{providerTestAction(providerTestState.status)}</span>}</div>}
                 <div className="row">
                   <button type="button" onClick={() => editProvider(provider)}>Edit</button>
                   <button type="button" onClick={() => void runProviderTest(provider.id)} disabled={providerTestState?.providerId === provider.id && providerTestState.state === "testing"}>{providerTestState?.providerId === provider.id && providerTestState.state === "testing" ? "Testing provider…" : "Test provider"}</button>
@@ -2576,10 +2579,10 @@ function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError
       )}
       <div className="row">
         <button type="button" onClick={onRefresh}>Refresh login status</button>
-        {(status.status === "login_available" || status.status === "not_configured") && <button type="button" onClick={onLogin} disabled={!canLogin}>Login with OpenAI</button>}
-        {status.status === "login_unavailable" && <button type="button" onClick={onLogin} disabled>Login with OpenAI</button>}
+        {(status.status === "login_available" || status.status === "not_configured") && <button type="button" onClick={onLogin} disabled={!canLogin}>Start experimental OpenAI login</button>}
+        {status.status === "login_unavailable" && <button type="button" onClick={onLogin} disabled>Experimental login unavailable</button>}
         {(status.status === "pending" || status.status === "expired" || status.status === "revoked" || status.status === "error") && <button type="button" onClick={onLogin} disabled={!canLogin}>{reconnectLabel}</button>}
-        {status.status !== "connected" && <button type="button" className="danger-button" onClick={onExperimentalLogin}>Experimental Login with OpenAI account</button>}
+        {status.status !== "connected" && <button type="button" className="danger-button" onClick={onExperimentalLogin}>Experimental high-risk account login</button>}
         {status.status === "connected" && <button type="button" className="danger-button" onClick={onExperimentalLogin}>Reconnect experimental account</button>}
         <button type="button" onClick={onDisconnect} disabled={!canDisconnect}>{status.status === "pending" ? "Cancel or disconnect login" : "Disconnect login"}</button>
         <button type="button" onClick={onApiKeyFallback}>Use OpenAI API key fallback</button>
@@ -2590,7 +2593,7 @@ function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError
 
 function ProviderAuthStateBody({ status }: { status: ProviderAuthResponse }) {
   if (status.status === "login_unavailable") {
-    return <span className="subtle">Account login is unavailable in this runtime. Use the OpenAI API-key fallback: create an API key in the provider console, paste it once below, save, and the GUI clears it from the form.</span>;
+    return <span className="subtle">Production account login is unavailable in this runtime. Use the OpenAI API-key fallback: create an API key in the provider console, paste it once below, save, test provider, refresh runtime/model readiness, then send. The GUI clears the key from the form.</span>;
   }
   if (status.status === "pending") {
     return (
@@ -2610,7 +2613,7 @@ function ProviderAuthStateBody({ status }: { status: ProviderAuthResponse }) {
         {status.scopes && status.scopes.length > 0 && <span>Scopes: {sanitizeDisplayText(status.scopes.join(", "))}</span>}
         {status.expiresAt && <span>Expires: {sanitizeDisplayText(status.expiresAt)}</span>}
         {status.redacted && <span>Token hint: {sanitizeDisplayText(status.redacted)}</span>}
-        <span className="subtle">Raw tokens, cookies, auth codes, and runtime Session token values are not shown here.</span>
+        <span className="subtle">Raw provider tokens, cookies, auth codes, provider API keys, and runtime Session token values are not shown here. Runtime Session token and provider credentials are separate secrets.</span>
       </div>
     );
   }
