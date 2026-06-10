@@ -60,21 +60,32 @@ class WrapperScriptDelivery {
 
 class YetToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        val contentFactory = ContentFactory.getInstance()
-        val component = if (JBCefApp.isSupported()) {
-            YetBrowserPanel(project)
-        } else {
-            JPanel(BorderLayout()).apply {
-                add(JLabel("Yet AI requires JCEF support to host the GUI shell."), BorderLayout.CENTER)
+        ensureContent(project, toolWindow)
+    }
+
+    companion object {
+        fun ensureContent(project: Project, toolWindow: ToolWindow) {
+            val contentManager = toolWindow.contentManager
+            if (!shouldCreateYetToolWindowContent(contentManager.contentCount)) return
+
+            val contentFactory = ContentFactory.getInstance()
+            val component = if (JBCefApp.isSupported()) {
+                YetBrowserPanel(project)
+            } else {
+                JPanel(BorderLayout()).apply {
+                    add(JLabel("Yet AI requires JCEF support to host the GUI shell."), BorderLayout.CENTER)
+                }
             }
+            val content = contentFactory.createContent(component, ProductIdentity.pluginName, false)
+            if (component is Disposable) {
+                Disposer.register(content, component)
+            }
+            contentManager.addContent(content)
         }
-        val content = contentFactory.createContent(component, ProductIdentity.pluginName, false)
-        if (component is Disposable) {
-            Disposer.register(content, component)
-        }
-        toolWindow.contentManager.addContent(content)
     }
 }
+
+internal fun shouldCreateYetToolWindowContent(contentCount: Int): Boolean = contentCount == 0
 
 class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
     private val logger = Logger.getInstance(YetBrowserPanel::class.java)

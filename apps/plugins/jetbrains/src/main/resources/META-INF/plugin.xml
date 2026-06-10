@@ -14,7 +14,7 @@
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="Yet AI"
                     anchor="right"
-                    canCloseContents="true"
+                    canCloseContents="false"
                     factoryClass="ai.yet.plugin.ui.YetToolWindowFactory"/>
         <applicationConfigurable parentId="tools"
                                  instance="ai.yet.plugin.settings.YetSettingsConfigurable"
