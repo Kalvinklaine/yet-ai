@@ -391,6 +391,105 @@ describe("provider secret boundary", () => {
     expect(browserStorageDump()).not.toContain(secret);
   });
 
+  it("saves OpenAI API-key fallback, clears the raw key, and refreshes to send readiness", async () => {
+    const secret = "sk-save-refresh-secret-value";
+    let savedProvider = false;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url.endsWith("/v1/providers")) {
+        const body = JSON.parse(String(init.body)) as { auth?: { apiKey?: string } };
+        expect(body.auth?.apiKey).toBe(secret);
+        savedProvider = true;
+        return Promise.resolve(jsonResponse(enabledProvider()));
+      }
+      return mockRuntimeResponse(input, init, savedProvider ? {
+        ...readyRuntimeOptions(),
+        authResponse: providerAuthResponse("api_key_configured"),
+      } : {
+        authResponse: providerAuthResponse("login_unavailable"),
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    renderApp();
+
+    await flushAsync();
+    expect(findButton("Send").disabled).toBe(true);
+
+    await act(async () => {
+      findButton("Use OpenAI API key fallback").click();
+    });
+    await act(async () => {
+      setInputValue(apiKeyInput(), secret);
+    });
+    expect(apiKeyInput().value).toBe(secret);
+
+    await act(async () => {
+      findButton("Create provider").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(apiKeyInput().value).toBe("");
+    expect(container?.textContent).toContain("API-key fallback configured");
+    expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
+    expect(container?.textContent).toContain("Next safest action: Type a prompt and click Send through the local runtime.");
+    expect(findButton("Send").disabled).toBe(false);
+    expect(container?.textContent).not.toContain(secret);
+    expect(browserStorageDump()).not.toContain(secret);
+    expect(localSetItem).not.toHaveBeenCalled();
+  });
+
+  it("successful provider test refreshes model readiness without persisting provider secrets", async () => {
+    const secret = "sk-test-refresh-secret-value";
+    let providerTested = false;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url.endsWith("/v1/providers/openai-api/test")) {
+        providerTested = true;
+        return Promise.resolve(jsonResponse({
+          ok: true,
+          providerId: "openai-api",
+          status: "reachable",
+          message: "Provider is reachable and accepted the configured credentials.",
+          modelId: "gpt-4o-mini",
+          cloudRequired: false,
+        }));
+      }
+      return mockRuntimeResponse(input, init, {
+        providers: [enabledProvider()],
+        models: providerTested ? [readyModel({ providerId: "openai-api" })] : [readyModel({ providerId: "openai-api", readiness: { status: "missing_credentials", reason: "Provider test has not confirmed the saved key yet." } })],
+        authResponse: providerAuthResponse("api_key_configured"),
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    renderApp();
+
+    await flushAsync();
+    expect(container?.textContent).toContain("Model is not ready yet");
+    expect(findButton("Send").disabled).toBe(true);
+
+    await act(async () => {
+      setInputValue(apiKeyInput(), secret);
+    });
+    await act(async () => {
+      findButton("Test provider").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(apiKeyInput().value).toBe(secret);
+    expect(container?.textContent).toContain("Provider test succeeded");
+    expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
+    expect(container?.textContent).toContain("Next safest action: Type a prompt and click Send through the local runtime.");
+    expect(findButton("Send").disabled).toBe(false);
+    expect(browserStorageDump()).not.toContain(secret);
+    expect(localSetItem).not.toHaveBeenCalled();
+  });
+
   it("does not open invalid provider auth URLs", async () => {
     const openMock = vi.spyOn(window, "open").mockImplementation(() => null);
     mockRuntimeResponses({ authSupportsLogin: true, startAuthUrl: "file:///tmp/provider-token" });
