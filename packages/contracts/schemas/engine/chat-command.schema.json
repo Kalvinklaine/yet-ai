@@ -25,13 +25,13 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 512,
-      "pattern": "^(?!/)(?!~)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)\\.\\.?(?:/|$))[^\\u0000-\\u001f]+$"
+      "pattern": "^(?!/)(?!~)(?!.*//)(?!.*/$)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*(?:^|/)(?:auth|authorization|bearer|cookie|credential|credentials|password|secret|token|access[_-]?token|accesstoken|api[_-]?key|apikey)(?:[._-]|/|$))(?!.*(?:^|/)[^/]*(?:[._-])(?:auth|credential|credentials|password|secret|token|access[_-]?token|accesstoken|api[_-]?key|apikey)(?:[._-]|/|$))(?!.*(?:^|/)sk-(?:proj-)?[A-Za-z0-9_-]{8,})[A-Za-z0-9/._@+=-]+$"
     },
     "safeDisplayPath": {
       "type": "string",
       "minLength": 1,
       "maxLength": 256,
-      "pattern": "^(?!/)(?!~)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)\\.\\.?(?:/|$))[^\\u0000-\\u001f]+$"
+      "pattern": "^(?!/)(?!~)(?!.*//)(?!.*/$)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*(?:^|/)(?:auth|authorization|bearer|cookie|credential|credentials|password|secret|token|access[_-]?token|accesstoken|api[_-]?key|apikey)(?:[._-]|/|$))(?!.*(?:^|/)[^/]*(?:[._-])(?:auth|credential|credentials|password|secret|token|access[_-]?token|accesstoken|api[_-]?key|apikey)(?:[._-]|/|$))(?!.*(?:^|/)sk-(?:proj-)?[A-Za-z0-9_-]{8,})[A-Za-z0-9/._@+=-]+$"
     },
     "activeEditorContext": {
       "type": "object",

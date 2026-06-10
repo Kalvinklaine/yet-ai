@@ -34,6 +34,8 @@ class ControlledIdeActionsTest {
         assertNull(ControlledIdeActions.parse("""{"version":"old","type":"gui.ideActionRequest","requestId":"req-1","payload":{"action":"getContextSnapshot"}}"""))
         assertNull(ControlledIdeActions.parse("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.ideActionRequest","payload":{"action":"getContextSnapshot"}}"""))
         assertNull(ControlledIdeActions.parse(message("token-abc", """{"action":"getContextSnapshot"}""")))
+        assertNull(ControlledIdeActions.parse(message("provider_key", """{"action":"getContextSnapshot"}""")))
+        assertNull(ControlledIdeActions.parse(message("openai_api_key", """{"action":"getContextSnapshot"}""")))
         assertNull(ControlledIdeActions.parse(message("sk-proj-12345678", """{"action":"getContextSnapshot"}""")))
         assertNull(ControlledIdeActions.parse(message("bad id", """{"action":"getContextSnapshot"}""")))
         assertNull(ControlledIdeActions.parse(message("req-1", """{"action":"getContextSnapshot"}""", extra = ""","unexpected":true""")))
@@ -46,6 +48,8 @@ class ControlledIdeActionsTest {
             ControlledIdeActions.safeRequestIdFromRaw(message("req-1", """{"action":"runShellCommand"}""")),
         )
         assertNull(ControlledIdeActions.safeRequestIdFromRaw(message("token-abc", """{"action":"runShellCommand"}""")))
+        assertNull(ControlledIdeActions.safeRequestIdFromRaw(message("provider_key", """{"action":"runShellCommand"}""")))
+        assertNull(ControlledIdeActions.safeRequestIdFromRaw(message("openai_api_key", """{"action":"runShellCommand"}""")))
         assertNull(ControlledIdeActions.safeRequestIdFromRaw("not-json"))
         assertNull(ControlledIdeActions.safeRequestIdFromRaw("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.ready","requestId":"req-1","payload":{}}"""))
         assertNull(ControlledIdeActions.safeRequestIdFromRaw(message("req-1", """{"action":"runShellCommand"}""", extra = ""","extra":true""")))

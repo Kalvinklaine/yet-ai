@@ -109,7 +109,12 @@ object BridgeMessages {
         .replace("\u2029", "\\u2029")
 
     private fun isValidRequestId(value: String): Boolean =
-        value.isNotEmpty() && value.length <= MaxRequestIdLength && value.none { it.isISOControl() }
+        value.isNotEmpty() &&
+            value.length <= MaxRequestIdLength &&
+            value.none { it.isISOControl() } &&
+            !SecretRequestIdRegex.containsMatchIn(value)
+
+    private val SecretRequestIdRegex = Regex("authorization|bearer|api[_-]?key|token|secret|access[_-]?token|provider[_-]?key|openai[_-]?api[_-]?key|sk-(?:proj-)?[A-Za-z0-9_-]{8,}", RegexOption.IGNORE_CASE)
 
     private fun JsonObject.stringValue(name: String): String? {
         val element = get(name) ?: return null

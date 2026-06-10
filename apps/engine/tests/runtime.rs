@@ -8438,6 +8438,11 @@ async fn invalid_chat_command_contract_fixtures_are_rejected_safely() {
             ["~/private", "../src/main.ts"].as_slice(),
         ),
         (
+            include_str!("../../../packages/contracts/examples-invalid/engine/chat-command-context-secret-like-path.json"),
+            StatusCode::BAD_REQUEST,
+            ["credentials/api_key.txt"].as_slice(),
+        ),
+        (
             include_str!("../../../packages/contracts/examples-invalid/engine/chat-command-context-tool-smuggling.json"),
             StatusCode::BAD_REQUEST,
             ["workspace.edit", "toolCall"].as_slice(),

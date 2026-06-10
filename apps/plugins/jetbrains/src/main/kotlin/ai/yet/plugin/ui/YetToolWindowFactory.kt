@@ -280,6 +280,7 @@ object JetBrainsReadyMessageDelivery {
             (scheme == "http" || scheme == "https") &&
             (host == "127.0.0.1" || host == "localhost" || host == "::1") &&
             uri.rawUserInfo == null &&
+            uri.port in 1..65535 &&
             uri.rawQuery == null &&
             uri.rawFragment == null &&
             (path.isEmpty() || path == "/")
@@ -416,14 +417,14 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const allowedIdeActionNames = ["getContextSnapshot", "openWorkspaceFile", "revealWorkspaceRange"];
         const optionalString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length <= maxLength);
         const optionalNonEmptyString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength);
-        const requiredRequestId = (value) => typeof value === "string" && value.length > 0 && value.length <= 128 && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value) && !/(authorization|bearer|api[_-]?key|token|secret|access[_-]?token|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value);
+        const requiredRequestId = (value) => typeof value === "string" && value.length > 0 && value.length <= 128 && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value) && !/(authorization|bearer|api[_-]?key|token|secret|access[_-]?token|provider[_-]?key|openai[_-]?api[_-]?key|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value);
         const requiredLoopbackRuntimeUrl = (value) => {
           if (typeof value !== "string" || value.length === 0 || value.length > 2048) return false;
           try {
             const parsed = new URL(value);
             const hostname = parsed.hostname.toLowerCase();
             const isLoopback = hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1" || hostname === "[::1]";
-            return (parsed.protocol === "http:" || parsed.protocol === "https:") && isLoopback && parsed.username === "" && parsed.password === "" && parsed.search === "" && parsed.hash === "" && (parsed.pathname === "" || parsed.pathname === "/");
+            return (parsed.protocol === "http:" || parsed.protocol === "https:") && isLoopback && /^[1-9][0-9]{0,4}$/.test(parsed.port) && Number(parsed.port) <= 65535 && parsed.username === "" && parsed.password === "" && parsed.search === "" && parsed.hash === "" && (parsed.pathname === "" || parsed.pathname === "/");
           } catch (_) {
             return false;
           }
@@ -459,7 +460,6 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         };
         const isGuiIdeActionRequest = (message) => {
           if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.ideActionRequest" || !requiredRequestId(message.requestId)) return false;
-          if (ideActionRequestTypesRejectedByPolicy.includes(message.type)) return false;
           let serialized;
           try { serialized = JSON.stringify(message); } catch (_) { return false; }
           if (typeof serialized !== "string" || new Blob([serialized]).size > maxIdeActionRequestBytes) return false;

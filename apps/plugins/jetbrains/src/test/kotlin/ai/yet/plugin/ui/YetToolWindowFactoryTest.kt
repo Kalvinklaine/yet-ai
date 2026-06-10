@@ -247,6 +247,7 @@ class YetToolWindowFactoryTest {
         assertContains(html, "hasOnlyKeys(payload, [\"runtimeUrl\", \"sessionToken\", \"productId\", \"displayName\", \"cloudRequired\"])")
         assertContains(html, "requiredLoopbackRuntimeUrl(payload.runtimeUrl)")
         assertContains(html, "hostname === \"127.0.0.1\" || hostname === \"localhost\" || hostname === \"::1\" || hostname === \"[::1]\"")
+        assertContains(html, "/^[1-9][0-9]{0,4}$/.test(parsed.port) && Number(parsed.port) <= 65535")
         assertContains(html, "parsed.username === \"\" && parsed.password === \"\"")
         assertContains(html, "parsed.search === \"\" && parsed.hash === \"\"")
         assertContains(html, "parsed.pathname === \"\" || parsed.pathname === \"/\"")
@@ -261,6 +262,7 @@ class YetToolWindowFactoryTest {
         assertContains(html, "if (message.type === \"host.ready\") {")
         assertContains(html, "acceptedHostReadyRequestId = message.requestId;")
         assertContains(html, "hostReadyAcceptedForCurrentFrame = true;")
+        assertFalse(html.contains("ideActionRequestTypesRejectedByPolicy.includes(message.type)"))
     }
 
     @Test

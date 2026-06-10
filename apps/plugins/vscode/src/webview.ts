@@ -5,12 +5,10 @@ import * as path from "node:path";
 import { EngineConnection, getLoopbackOrigin, isBridgeSafeSessionToken, validateRuntimeUrl } from "./engineConnection";
 import { ProductIdentity, bridgeVersion, configurationPrefix } from "./identity";
 
-export type HostMessage = {
-  version: string;
-  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult";
-  requestId?: string;
-  payload?: Record<string, unknown>;
-};
+export type HostMessage =
+  | { version: string; type: "host.ready"; requestId?: string; payload?: Record<string, unknown> }
+  | { version: string; type: "host.openedFromCommand"; requestId?: never; payload?: Record<string, unknown> }
+  | { version: string; type: "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult"; requestId?: string; payload?: Record<string, unknown> };
 
 type HostContextPayload = {
   kind: "active_editor";
