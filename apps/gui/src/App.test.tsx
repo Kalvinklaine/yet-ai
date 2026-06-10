@@ -3593,6 +3593,82 @@ describe("active editor attached context", () => {
 });
 
 describe("chat panel", () => {
+  it("uses adaptive chat workbench structure with composer pinned outside the scroll region", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const proposal = ideActionProposal({ action: "getContextSnapshot", summary: "Inspect context." });
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-alpha", "Alpha thread", 2), chatSummary("chat-beta", "Beta thread", 1)],
+      chatThreads: {
+        "chat-alpha": chatThread("chat-alpha", "Alpha thread", [
+          chatMessage("chat-alpha", "msg-1", "user", "Hello layout"),
+          chatMessage("chat-alpha", "msg-2", "assistant", JSON.stringify(proposal)),
+        ]),
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+    await flushAsync();
+
+    const workbench = container?.querySelector(".chat-workbench");
+    const threadPane = container?.querySelector(".chat-thread-pane");
+    const scrollRegion = container?.querySelector(".chat-scroll-region");
+    const composer = container?.querySelector(".chat-composer");
+    const list = container?.querySelector(".conversation-list");
+    expect(workbench).toBeTruthy();
+    expect(threadPane).toBeTruthy();
+    expect(scrollRegion).toBeTruthy();
+    expect(composer).toBeTruthy();
+    expect(list).toBeTruthy();
+    expect(scrollRegion?.contains(composer ?? null)).toBe(false);
+    expect(scrollRegion?.textContent).toContain("Hello layout");
+    expect(scrollRegion?.querySelector(".ide-action-proposal-card")?.textContent).toContain("Inspect context.");
+    expect(list?.querySelectorAll(".conversation-item")).toHaveLength(2);
+    expect(container?.querySelectorAll("#delete-current-conversation-help-rail")).toHaveLength(1);
+    expect(container?.querySelectorAll("#delete-current-conversation-help-drawer")).toHaveLength(1);
+    expect(container?.querySelector("[aria-describedby='delete-current-conversation-help-rail']")).toBeTruthy();
+    expect(composer?.textContent).toContain("Coding Actions");
+    expect(composer?.textContent).toContain("Attached context");
+    expect(localSetItem).not.toHaveBeenCalled();
+  });
+
+  it("opens the compact chats drawer and closes it after selecting a chat", async () => {
+    mockRuntimeResponses({
+      chats: [chatSummary("chat-alpha", "Alpha thread", 1), chatSummary("chat-beta", "Beta thread", 1)],
+      chatThreads: {
+        "chat-alpha": chatThread("chat-alpha", "Alpha thread", [chatMessage("chat-alpha", "msg-1", "user", "Alpha message")]),
+        "chat-beta": chatThread("chat-beta", "Beta thread", [chatMessage("chat-beta", "msg-2", "assistant", "Beta answer")]),
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+    await flushAsync();
+
+    const drawer = () => container?.querySelector<HTMLElement>(".conversations-drawer");
+    expect(drawer()?.classList.contains("open")).toBe(false);
+    expect(drawer()?.hidden).toBe(true);
+    await act(async () => {
+      findButton("Chats").click();
+    });
+    expect(drawer()?.classList.contains("open")).toBe(true);
+    expect(drawer()?.hidden).toBe(false);
+    expect(drawer()?.querySelector("[aria-describedby='delete-current-conversation-help-drawer']")).toBeTruthy();
+
+    const betaInDrawer = Array.from(drawer()?.querySelectorAll<HTMLButtonElement>("button.conversation-select") ?? []).find((button) => /Open conversation: Beta thread/.test(button.getAttribute("aria-label") ?? ""));
+    expect(betaInDrawer).toBeTruthy();
+    await act(async () => {
+      betaInDrawer?.click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(drawer()?.classList.contains("open")).toBe(false);
+    expect(drawer()?.hidden).toBe(true);
+    expect(container?.textContent).toContain("Beta answer");
+  });
+
   it("loads conversation list after runtime refresh", async () => {
     mockRuntimeResponses({
       chats: [chatSummary("chat-alpha", "Alpha thread", 2), chatSummary("chat-beta", "Beta thread", 2)],

@@ -255,6 +255,7 @@ export function App() {
   const [chatHistoryLoading, setChatHistoryLoading] = useState(false);
   const [deletingChatId, setDeletingChatId] = useState<string | null>(null);
   const [conversationNotice, setConversationNotice] = useState<string | null>(null);
+  const [compactConversationsOpen, setCompactConversationsOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [chatView, setChatView] = useState(() => createInitialChatViewState("chat-001"));
   const [chatLifecycleState, setChatLifecycleState] = useState<ChatLifecycleState>("idle");
@@ -312,6 +313,7 @@ export function App() {
   const attachedContextRef = useRef<typeof attachedContext>(null);
   const agentProgressAttemptRef = useRef(0);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const chatScrollRegionRef = useRef<HTMLDivElement | null>(null);
   const optimisticUserMessageCounterRef = useRef(0);
 
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
@@ -874,6 +876,7 @@ export function App() {
     if (result.ok) {
       setChatSummaries((current) => upsertChatSummary(current, result.data));
       setChatHistoryRevision(targetRevision);
+      setCompactConversationsOpen(false);
       setChatId(result.data.chatId);
       setConversationNotice(`Created and selected ${sanitizeDisplayText(result.data.title || result.data.chatId)}.`);
       setChatView(hydrateChatViewFromThread(resetChatViewState(result.data.chatId), result.data));
@@ -892,6 +895,7 @@ export function App() {
   }, [abortActiveStream, clearEditProposalState, clearIdeActionState, isCurrentRefresh]);
 
   const selectChat = useCallback((nextChatId: string) => {
+    setCompactConversationsOpen(false);
     if (nextChatId === chatIdRef.current) {
       return;
     }
@@ -924,6 +928,7 @@ export function App() {
     const targetSummary = chatSummaries.find((summary) => summary.chatId === targetChatId);
     const targetTitle = sanitizeDisplayText(targetSummary?.title || targetChatId);
     const deletingCurrent = chatIdRef.current === targetChatId;
+    setCompactConversationsOpen(false);
     const confirmation = deletingCurrent
       ? `Delete the current conversation "${targetTitle}"? This removes it from engine-owned local history and selects the next available local chat.`
       : `Delete conversation "${targetTitle}" from engine-owned local history?`;
@@ -1306,6 +1311,14 @@ export function App() {
     abortActiveStream("SSE stopped and abort requested on cleanup", { finalizeStreaming: false, addTimelineEntry: false, reportAbortErrors: false });
   }, [abortActiveStream]);
 
+  useEffect(() => {
+    const scrollRegion = chatScrollRegionRef.current;
+    if (!scrollRegion) {
+      return;
+    }
+    scrollRegion.scrollTop = scrollRegion.scrollHeight;
+  }, [chatView.messages, activeEditProposal, activeIdeActionProposal, applyResult, applyNote, ideActionNote]);
+
   const startSse = useCallback((targetChatId = chatId) => {
     if (activeStreamRef.current) {
       return;
@@ -1648,6 +1661,42 @@ export function App() {
         ? "Configure a provider/model or enable Demo Mode before sending."
         : "Connect the local runtime before sending."
     : chatLifecycleLabels[chatLifecycleState];
+  const currentChatTitle = sanitizeDisplayText(activeChatSummary?.title ?? chatId);
+  const renderConversationList = (deleteHelpId: string) => (
+    <div className="conversation-list" role="list" aria-label="Local conversations list">
+      {activeChatSummaries.length === 0 ? (
+        <div className="conversation-empty-state" role="status">
+          <strong>{chatHistoryLoading ? "Loading conversations…" : chatHistoryError ? "Conversation history unavailable" : "No saved conversations"}</strong>
+          <span>{chatHistoryLoading ? "Loading saved conversations from the local runtime…" : chatHistoryError ? "Conversation history is unavailable." : "No saved conversations remain. The prompt is ready for a fresh local chat, and nothing is written to browser storage."}</span>
+        </div>
+      ) : activeChatSummaries.map((summary, index) => {
+        const active = summary.chatId === chatId;
+        const deleting = deletingChatId === summary.chatId;
+        const title = sanitizeDisplayText(summary.title || "Untitled chat");
+        const updatedAt = sanitizeDisplayText(summary.updatedAt);
+        const positionLabel = `Conversation ${index + 1} of ${activeChatSummaries.length}`;
+        const messageCountLabel = `${summary.messageCount} persisted message${summary.messageCount === 1 ? "" : "s"}`;
+        const rowLabel = `${positionLabel}: ${title}${active ? ", current conversation" : ""}. Updated ${updatedAt}. ${messageCountLabel}.`;
+        return (
+          <div className={`conversation-item ${active ? "active" : ""}`} key={summary.chatId} role="listitem" aria-label={rowLabel}>
+            <button type="button" className="conversation-select" onClick={() => selectChat(summary.chatId)} disabled={deleting || active} aria-current={active ? "page" : undefined} aria-label={`${active ? "Current conversation" : "Open conversation"}: ${title}. ${positionLabel}. ${messageCountLabel}.`}>
+              <span className="conversation-title-line">
+                <strong className="conversation-title">{title}</strong>
+                {active && <span className="badge ok">active conversation</span>}
+              </span>
+              <span className="conversation-meta-line">
+                <span className="conversation-updated">Updated {updatedAt}</span>
+                <span className="conversation-message-count">{messageCountLabel}</span>
+                <span className="conversation-position subtle">{positionLabel}</span>
+              </span>
+              {active && <span className="conversation-active-copy">Currently selected. New messages will be sent here.</span>}
+            </button>
+            <button type="button" className="danger-button conversation-delete" onClick={() => void deleteCurrentChat(summary.chatId)} disabled={deleting || chatHistoryLoading} aria-describedby={active ? deleteHelpId : undefined} aria-label={`Delete conversation: ${title}${active ? " (current; confirmation required)" : " (confirmation required)"}`}>{deleting ? "Deleting…" : active ? "Delete current" : "Delete"}</button>
+          </div>
+        );
+      })}
+    </div>
+  );
 
   return (
     <main className="app-shell">
@@ -1718,77 +1767,65 @@ export function App() {
         </div>
         {chatError && <ErrorBox error={chatError} />}
         {chatHistoryError && <ErrorBox error={chatHistoryError} />}
-        <div className="conversations-layout">
-          <aside className="conversations-panel stack" aria-label="Local conversations">
+        <div className="chat-workbench">
+          <aside className="conversations-panel conversations-rail stack" aria-label="Local conversations">
             <div className="row">
               <h3>Conversations</h3>
               <button type="button" onClick={() => void createNewChat()}>{chatHistoryLoading ? "Loading…" : "New chat"}</button>
             </div>
             <span className="subtle">Engine-owned local history. Messages are not written to browser storage.</span>
-            <span id="delete-current-conversation-help" className="sr-only">Deleting the current conversation asks for confirmation, removes it from engine-owned local history, and selects the next available conversation or a fresh local chat.</span>
+            <span id="delete-current-conversation-help-rail" className="sr-only">Deleting the current conversation asks for confirmation, removes it from engine-owned local history, and selects the next available conversation or a fresh local chat.</span>
             <div className="conversation-status" role="status">
               {conversationNotice ? `${chatHistoryStatus} ${conversationNotice}` : chatHistoryStatus}
             </div>
-            {activeChatSummaries.length === 0 ? (
-              <div className="conversation-empty-state" role="status">
-                <strong>{chatHistoryLoading ? "Loading conversations…" : chatHistoryError ? "Conversation history unavailable" : "No saved conversations"}</strong>
-                <span>{chatHistoryLoading ? "Loading saved conversations from the local runtime…" : chatHistoryError ? "Conversation history is unavailable." : "No saved conversations remain. The prompt is ready for a fresh local chat, and nothing is written to browser storage."}</span>
-              </div>
-            ) : activeChatSummaries.map((summary, index) => {
-              const active = summary.chatId === chatId;
-              const deleting = deletingChatId === summary.chatId;
-              const title = sanitizeDisplayText(summary.title || "Untitled chat");
-              const updatedAt = sanitizeDisplayText(summary.updatedAt);
-              const positionLabel = `Conversation ${index + 1} of ${activeChatSummaries.length}`;
-              const messageCountLabel = `${summary.messageCount} persisted message${summary.messageCount === 1 ? "" : "s"}`;
-              const rowLabel = `${positionLabel}: ${title}${active ? ", current conversation" : ""}. Updated ${updatedAt}. ${messageCountLabel}.`;
-              return (
-                <div className={`conversation-item ${active ? "active" : ""}`} key={summary.chatId} role="listitem" aria-label={rowLabel}>
-                  <button type="button" className="conversation-select" onClick={() => selectChat(summary.chatId)} disabled={deleting || active} aria-current={active ? "page" : undefined} aria-label={`${active ? "Current conversation" : "Open conversation"}: ${title}. ${positionLabel}. ${messageCountLabel}.`}>
-                    <span className="conversation-title-line">
-                      <strong className="conversation-title">{title}</strong>
-                      {active && <span className="badge ok">active conversation</span>}
-                    </span>
-                    <span className="conversation-meta-line">
-                      <span className="conversation-updated">Updated {updatedAt}</span>
-                      <span className="conversation-message-count">{messageCountLabel}</span>
-                      <span className="conversation-position subtle">{positionLabel}</span>
-                    </span>
-                    {active && <span className="conversation-active-copy">Currently selected. New messages will be sent here.</span>}
-                  </button>
-                  <button type="button" className="danger-button conversation-delete" onClick={() => void deleteCurrentChat(summary.chatId)} disabled={deleting || chatHistoryLoading} aria-describedby={active ? "delete-current-conversation-help" : undefined} aria-label={`Delete conversation: ${title}${active ? " (current; confirmation required)" : " (confirmation required)"}`}>{deleting ? "Deleting…" : active ? "Delete current" : "Delete"}</button>
-                </div>
-              );
-            })}
+            {renderConversationList("delete-current-conversation-help-rail")}
           </aside>
-          <div className="stack">
-            <div className="chat-title-card row">
+          {compactConversationsOpen && <button type="button" className="conversation-drawer-backdrop" aria-label="Close chats drawer" onClick={() => setCompactConversationsOpen(false)} />}
+          <aside className={`conversations-panel conversations-drawer stack ${compactConversationsOpen ? "open" : ""}`} aria-label="Local conversations drawer" aria-hidden={!compactConversationsOpen} hidden={!compactConversationsOpen}>
+            <div className="row">
+              <h3>Chats</h3>
+              <button type="button" className="secondary-button" onClick={() => setCompactConversationsOpen(false)}>Close</button>
+            </div>
+            <button type="button" onClick={() => void createNewChat()}>{chatHistoryLoading ? "Loading…" : "New chat"}</button>
+            <span className="subtle">Engine-owned local history. Messages are not written to browser storage.</span>
+            <span id="delete-current-conversation-help-drawer" className="sr-only">Deleting the current conversation asks for confirmation, removes it from engine-owned local history, and selects the next available conversation or a fresh local chat.</span>
+            <div className="conversation-status" role="status">
+              {conversationNotice ? `${chatHistoryStatus} ${conversationNotice}` : chatHistoryStatus}
+            </div>
+            {renderConversationList("delete-current-conversation-help-drawer")}
+          </aside>
+          <section className="chat-thread-pane" aria-label="Current chat thread">
+            <div className="chat-title-card chat-compact-header row">
+              <button type="button" className="secondary-button chats-toggle" aria-expanded={compactConversationsOpen} onClick={() => setCompactConversationsOpen((open) => !open)}>Chats</button>
               <div className="stack">
-                <strong>{sanitizeDisplayText(activeChatSummary?.title ?? chatId)}</strong>
+                <strong>{currentChatTitle}</strong>
                 <span className="subtle">{activeChatIndex >= 0 ? `Conversation ${activeChatIndex + 1} of ${activeChatSummaries.length} · ` : ""}{chatView.messages.length} visible message{chatView.messages.length === 1 ? "" : "s"} · {chatView.subscriptionReady ? "snapshot loaded" : activeChatSummary ? `${activeChatSummary.messageCount} persisted message${activeChatSummary.messageCount === 1 ? "" : "s"}` : "fresh local chat"}</span>
               </div>
-              <span className="badge">{sanitizeDisplayText(chatId)}</span>
+              <button type="button" onClick={() => void createNewChat()}>{chatHistoryLoading ? "Loading…" : "New"}</button>
+              <span className="badge chat-id-badge">{sanitizeDisplayText(chatId)}</span>
             </div>
             <details className="debug-details" data-testid="chat-advanced-controls">
               <summary>Advanced chat controls</summary>
-            <div className="form-grid">
-              <label>
-                Chat id
-                <input value={chatId} onChange={updateDirectChatId} />
-              </label>
-            </div>
+              <div className="form-grid">
+                <label>
+                  Chat id
+                  <input value={chatId} onChange={updateDirectChatId} />
+                </label>
+              </div>
             </details>
-            <div className="chat-panel" aria-label="Chat messages">
-              {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} activeDemoMode={activeSelectedDemoMode} selectedModelDisplayName={selectedModelDisplayName} selectedModelProviderId={selectedModelProviderId} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect()} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeEditProposal={activeEditProposal} activeIdeActionProposal={activeIdeActionProposal} />)}
-              <span className={`chat-lifecycle-state ${chatLifecycleState}`}>{chatLifecycleLabel}</span>
-              {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
+            <div className="chat-scroll-region" ref={chatScrollRegionRef} aria-label="Chat messages">
+              <div className="chat-panel">
+                {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} activeDemoMode={activeSelectedDemoMode} selectedModelDisplayName={selectedModelDisplayName} selectedModelProviderId={selectedModelProviderId} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect()} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeEditProposal={activeEditProposal} activeIdeActionProposal={activeIdeActionProposal} />)}
+                <span className={`chat-lifecycle-state ${chatLifecycleState}`}>{chatLifecycleLabel}</span>
+                {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
+              </div>
+              <EditProposalPanel proposal={activeEditProposal} result={activeEditProposal ? applyResult : null} host={bridgeHost} pendingRequestId={pendingApplyRequestId} note={applyNote} onApply={submitEditProposal} onCancelPending={cancelPendingEditProposalApply} />
+              <IdeActionProposalPanel proposal={activeIdeActionProposal} host={bridgeHost} pending={pendingIdeActionRequestIdRef.current !== null} onRun={(payload) => requestIdeAction(payload, "gui-ide-proposal-action")} />
             </div>
-            <EditProposalPanel proposal={activeEditProposal} result={activeEditProposal ? applyResult : null} host={bridgeHost} pendingRequestId={pendingApplyRequestId} note={applyNote} onApply={submitEditProposal} onCancelPending={cancelPendingEditProposalApply} />
-            <IdeActionProposalPanel proposal={activeIdeActionProposal} host={bridgeHost} pending={pendingIdeActionRequestIdRef.current !== null} onRun={(payload) => requestIdeAction(payload, "gui-ide-proposal-action")} />
-            <IdeActionsPanel host={bridgeHost} attempt={ideActionAttempt} note={ideActionNote} workspaceRelativePath={safeActiveWorkspacePath} range={safeActiveRange} onGetContext={() => requestIdeAction({ action: "getContextSnapshot" })} onOpenFile={(workspaceRelativePath) => requestIdeAction({ action: "openWorkspaceFile", workspaceRelativePath })} onRevealRange={(workspaceRelativePath, range) => requestIdeAction({ action: "revealWorkspaceRange", workspaceRelativePath, range })} onClearPendingIdeAction={clearPendingIdeActionState} />
             <form className="stack chat-composer" onSubmit={(event) => void submitChat(event)}>
               <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} acknowledged={attachedContextAcknowledged} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} onAcknowledgeChange={setAttachedContextAcknowledged} />
               <CodingActionsPanel canUseContext={codingActionsCanUseContext} context={currentAttachedContext} onAction={applyCodingAction} />
+              <IdeActionsPanel host={bridgeHost} attempt={ideActionAttempt} note={ideActionNote} workspaceRelativePath={safeActiveWorkspacePath} range={safeActiveRange} onGetContext={() => requestIdeAction({ action: "getContextSnapshot" })} onOpenFile={(workspaceRelativePath) => requestIdeAction({ action: "openWorkspaceFile", workspaceRelativePath })} onRevealRange={(workspaceRelativePath, range) => requestIdeAction({ action: "revealWorkspaceRange", workspaceRelativePath, range })} onClearPendingIdeAction={clearPendingIdeActionState} />
               <textarea ref={chatInputRef} value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
               <div className="row chat-actions">
                 <button type="submit" disabled={!canSendChat}>Send</button>
@@ -1797,11 +1834,11 @@ export function App() {
             </form>
             <details className="debug-details" data-testid="sse-debug-details">
               <summary>SSE debug details</summary>
-          <div className="timeline">
-            {timeline.length === 0 ? <span>No SSE events yet.</span> : timeline.map((entry, index) => <div className="timeline-entry" key={`${index}:${entry}`}>{entry}</div>)}
-          </div>
-        </details>
-          </div>
+              <div className="timeline">
+                {timeline.length === 0 ? <span>No SSE events yet.</span> : timeline.map((entry, index) => <div className="timeline-entry" key={`${index}:${entry}`}>{entry}</div>)}
+              </div>
+            </details>
+          </section>
         </div>
       </section>
 
