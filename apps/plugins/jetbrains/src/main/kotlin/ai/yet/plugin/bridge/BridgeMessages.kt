@@ -68,10 +68,9 @@ object BridgeMessages {
         return message.toString()
     }
 
-    fun openedFromCommand(requestId: String?): String = JsonObject().apply {
+    fun openedFromCommand(): String = JsonObject().apply {
         addProperty("version", ProductIdentity.bridgeVersion)
         addProperty("type", "host.openedFromCommand")
-        requestId?.takeIf(::isValidRequestId)?.let { addProperty("requestId", it) }
         add("payload", JsonObject())
     }.toString()
 

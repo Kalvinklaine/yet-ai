@@ -254,7 +254,7 @@ object JetBrainsReadyMessageDelivery {
             return
         }
         send(BridgeMessages.hostReady(settings, requestId))
-        send(BridgeMessages.openedFromCommand(requestId))
+        send(BridgeMessages.openedFromCommand())
         val snapshot = try {
             contextSupplier()
         } catch (_: Exception) {
@@ -441,10 +441,11 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isHostIdeActionResultContext = (context) => isPlainObject(context) && hasOnlyKeys(context, ["source", "hasActiveEditor", "workspaceFolderCount"]) && context.source === "jetbrains" && typeof context.hasActiveEditor === "boolean" && Number.isInteger(context.workspaceFolderCount) && context.workspaceFolderCount >= 0 && context.workspaceFolderCount <= 100;
         const isHostIdeActionResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "action", "workspaceRelativePath", "range", "context"]) && ["succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512) && (payload.range === undefined || isIdeActionRange(payload.range)) && (payload.context === undefined || isHostIdeActionResultContext(payload.context));
         const isHostMessage = (message) => {
-          if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || !isRequestId(message.requestId)) return false;
+          if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion) return false;
+          if (message.type === "host.openedFromCommand") return message.requestId === undefined && (message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0));
+          if (!isRequestId(message.requestId)) return false;
           if (message.type === "host.ready") return isHostReadyPayload(message.payload);
           if (message.type === "host.contextSnapshot") return isContextSnapshotPayload(message.payload);
-          if (message.type === "host.openedFromCommand") return message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0);
           if (message.type === "host.ideActionProgress") return isHostIdeActionProgressPayload(message.payload);
           if (message.type === "host.ideActionResult") return isHostIdeActionResultPayload(message.payload);
           return false;
@@ -514,6 +515,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
         const canDeliverHostMessage = (message) => {
           if (message.type === "host.ideActionProgress" || message.type === "host.ideActionResult") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
+          if (message.type === "host.openedFromCommand") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId() && message.requestId === undefined;
           if (!messageMatchesCurrentReady(message)) return false;
           if (message.type === "host.ready") return true;
           return hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
