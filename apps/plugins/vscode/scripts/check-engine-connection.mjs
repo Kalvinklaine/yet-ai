@@ -211,9 +211,9 @@ try {
   assert.equal(isBridgeSafeSessionToken("local-dev-token"), true);
   assert.equal(isBridgeSafeSessionToken("sk-abcdefghijkl"), false);
   assert.equal(isBridgeSafeSessionToken("manual sk-abcdefghijkl"), false);
-  assert.match(hostReadyRuntimeDeliveryStatus({ launchMode: "launch", sessionTokenSource: "none" }), /IDE-launched ephemeral runtime token; delivered to the webview by trusted host\.ready/);
-  assert.match(hostReadyRuntimeDeliveryStatus({ launchMode: "connect", sessionTokenSource: "none" }), /runtime URL only; no token configured/);
-  assert.match(hostReadyRuntimeDeliveryStatus({ launchMode: "connect", sessionTokenSource: "secretStorage" }), /runtime URL plus SecretStorage token/);
+  assert.match(hostReadyRuntimeDeliveryStatus({ willLaunch: true, sessionTokenSource: "none" }), /IDE-launched ephemeral runtime token; delivered to the webview by trusted host\.ready/);
+  assert.match(hostReadyRuntimeDeliveryStatus({ willLaunch: false, sessionTokenSource: "none" }), /runtime URL only; no token configured/);
+  assert.match(hostReadyRuntimeDeliveryStatus({ willLaunch: false, sessionTokenSource: "secretStorage" }), /runtime URL plus SecretStorage token/);
 
   assert.doesNotThrow(() => validateLoopbackUrl("https://127.0.0.1:5173", "yetai.guiDevUrl"));
   assert.doesNotThrow(() => validateRuntimeUrl("http://127.0.0.1:8001", "yetai.runtimeUrl"));
@@ -655,14 +655,19 @@ try {
   try {
     const privateDirectory = path.join(tempRoot, "private-user-path");
     fs.mkdirSync(privateDirectory);
+    const bundledBinDirectory = path.join(tempRoot, "bin");
+    fs.mkdirSync(bundledBinDirectory);
     const nonExecutable = path.join(privateDirectory, "yet-lsp-non-executable");
     const executable = path.join(privateDirectory, "yet-lsp-executable");
+    const bundledExecutable = path.join(bundledBinDirectory, "yet-lsp");
     fs.writeFileSync(nonExecutable, "not launchable");
     fs.writeFileSync(executable, "launchable");
+    fs.writeFileSync(bundledExecutable, "bundled launchable");
 
     if (process.platform !== "win32") {
       fs.chmodSync(nonExecutable, 0o600);
       fs.chmodSync(executable, 0o700);
+      fs.chmodSync(bundledExecutable, 0o700);
       const startMessage = formatStartedRuntimeMessage(executable);
       assert.equal(startMessage.includes(executable), false);
       assert.equal(startMessage.includes(privateDirectory), false);
@@ -1462,6 +1467,21 @@ try {
     assert.match(diagnostics.engineBinaryStatus, /found configured binary: yet-lsp-executable/);
     assert.equal(diagnostics.engineBinaryStatus.includes(tempRoot), false, "diagnostics exposed a private temp path");
     assert.equal(diagnostics.engineBinaryStatus.includes(privateDirectory), false, "diagnostics exposed a private directory path");
+
+    configValues = {
+      runtimeUrl: "http://127.0.0.1:8001",
+      launchMode: "auto",
+      sessionToken: "legacy-token-must-not-be-reported-for-discovered-runtime",
+    };
+    const autoDiscoveredDiagnostics = await collectRuntimeDiagnostics(
+      { ...fakeContext, extensionPath: tempRoot },
+      { engine: { binaryName: "yet-lsp" } },
+    );
+    assert.match(autoDiscoveredDiagnostics.engineBinaryStatus, /found discovered binary: yet-lsp/);
+    assert.match(autoDiscoveredDiagnostics.hostReadyRuntimeDelivery, /IDE-launched ephemeral runtime token/);
+    assert.doesNotMatch(autoDiscoveredDiagnostics.hostReadyRuntimeDelivery, /legacy setting token/);
+    assert.equal(autoDiscoveredDiagnostics.configuredEngineBinaryPath, false);
+    fs.rmSync(bundledExecutable, { force: true });
 
     const staleConfiguredPath = path.join(privateDirectory, "missing-yet-lsp");
     configValues = {

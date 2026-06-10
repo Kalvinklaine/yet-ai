@@ -73,7 +73,7 @@ export async function collectRuntimeDiagnostics(
     launchMode: settings.launchMode,
     configuredEngineBinaryPath: settings.engineBinaryPath !== undefined,
     sessionTokenSource: settings.sessionTokenSource,
-    hostReadyRuntimeDelivery: hostReadyRuntimeDeliveryStatus(settings),
+    hostReadyRuntimeDelivery: hostReadyRuntimeDeliveryStatus({ ...settings, willLaunch: false }),
     engineBinaryStatus: "not checked",
     pluginLaunchedProcessStatus: launchedEngine && !launchedEngine.process.killed ? "running" : "not running",
     pingStatus: "not checked",
@@ -108,11 +108,13 @@ export async function collectRuntimeDiagnostics(
   }
 
   if (settings.launchMode === "launch" && binaryPath === undefined) {
+    diagnostics.hostReadyRuntimeDelivery = hostReadyRuntimeDeliveryStatus({ ...settings, willLaunch: false });
     diagnostics.pingStatus = "skipped: engine binary not usable";
     return diagnostics;
   }
 
   const shouldLaunch = settings.launchMode === "launch" || (settings.launchMode === "auto" && binaryPath !== undefined);
+  diagnostics.hostReadyRuntimeDelivery = hostReadyRuntimeDeliveryStatus({ ...settings, willLaunch: shouldLaunch });
   try {
     validateRuntimeLaunchProtocol(settings.runtimeUrl, settings.launchMode, shouldLaunch);
   } catch (error) {
@@ -396,8 +398,8 @@ export function runtimeDiagnosticsGuidance(launchMode: LaunchMode): string {
   return "Auto mode launches a configured or discovered engine binary when available; otherwise it falls back to connect-only mode and pings the configured loopback runtime.";
 }
 
-export function hostReadyRuntimeDeliveryStatus(settings: Pick<EngineConnectionSettings, "launchMode" | "sessionTokenSource" | "engineBinaryPath">): string {
-  const source = settings.launchMode === "launch" || (settings.launchMode === "auto" && settings.engineBinaryPath !== undefined)
+export function hostReadyRuntimeDeliveryStatus(settings: Pick<EngineConnectionSettings, "sessionTokenSource"> & { willLaunch: boolean }): string {
+  const source = settings.willLaunch
     ? "IDE-launched ephemeral runtime token"
     : settings.sessionTokenSource === "none"
       ? "runtime URL only; no token configured"
