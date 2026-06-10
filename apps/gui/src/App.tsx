@@ -1126,6 +1126,7 @@ export function App() {
         detail: `${sanitizeDisplayText(result.data.message)}${model}`,
       });
       if (result.data.ok) {
+        setProviderForm((current) => ({ ...current, apiKey: "" }));
         await connect();
       }
     } else {
@@ -1969,7 +1970,7 @@ export function App() {
                 <span>Secret configured: {String(provider.auth.configured)} {provider.auth.redacted ? `(${sanitizeDisplayText(provider.auth.redacted)})` : ""}</span>
                 <span>Models: {provider.models.map((model) => sanitizeDisplayText(model.displayName)).join(", ") || "none"}</span>
                 {provider.models.length > 0 && <span className="subtle">Model readiness: {provider.models.map((model) => modelStatusText(model, provider)).join("; ")}</span>}
-                {providerTestState?.providerId === provider.id && <div className={`provider-test-status ${providerTestState.state}`} role="status"><strong>{providerTestState.state === "testing" ? "Provider test running" : providerTestState.state === "success" ? "Provider test succeeded" : "Provider test failed"}</strong><span>{providerTestState.status}: {providerTestState.detail}</span>{providerTestState.state === "success" && <span>Next: refresh runtime/model readiness, then send when Chat readiness says Send available.</span>}{providerTestState.state === "failed" && <span>{providerTestAction(providerTestState.status)}</span>}</div>}
+                {providerTestState?.providerId === provider.id && <div className={`provider-test-status ${providerTestState.state}`} role="status"><strong>{providerTestState.state === "testing" ? "Provider test running" : providerTestState.state === "success" ? "Provider test succeeded" : "Provider test failed"}</strong><span>{providerTestState.status}: {providerTestState.detail}</span>{providerTestState.state === "success" && <span>The raw API-key field was cleared; Test provider uses the saved local runtime credential. Next: refresh runtime/model readiness, then send when Chat readiness says Send available.</span>}{providerTestState.state === "failed" && <span>{providerTestAction(providerTestState.status)}</span>}</div>}
                 <div className="row">
                   <button type="button" onClick={() => editProvider(provider)}>Edit</button>
                   <button type="button" onClick={() => void runProviderTest(provider.id)} disabled={providerTestState?.providerId === provider.id && providerTestState.state === "testing"}>{providerTestState?.providerId === provider.id && providerTestState.state === "testing" ? "Testing provider…" : "Test provider"}</button>

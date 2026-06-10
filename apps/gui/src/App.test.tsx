@@ -460,7 +460,7 @@ describe("provider secret boundary", () => {
     expect(localSetItem).not.toHaveBeenCalled();
   });
 
-  it("successful provider test refreshes model readiness without persisting provider secrets", async () => {
+  it("successful provider test clears raw API key input and refreshes model readiness without persisting provider secrets", async () => {
     const secret = "sk-test-refresh-secret-value";
     let providerTested = false;
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -500,11 +500,13 @@ describe("provider secret boundary", () => {
     });
     await flushAsync();
 
-    expect(apiKeyInput().value).toBe(secret);
+    expect(apiKeyInput().value).toBe("");
     expect(container?.textContent).toContain("Provider test succeeded");
+    expect(container?.textContent).toContain("The raw API-key field was cleared; Test provider uses the saved local runtime credential.");
     expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
     expect(container?.textContent).toContain("Next safest action: Type a prompt and click Send through the local runtime.");
     expect(findButton("Send").disabled).toBe(false);
+    expect(container?.textContent).not.toContain(secret);
     expect(browserStorageDump()).not.toContain(secret);
     expect(localSetItem).not.toHaveBeenCalled();
   });
