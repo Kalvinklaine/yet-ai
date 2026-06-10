@@ -130,7 +130,7 @@ try {
 
   runtimeReady = true;
   await refreshRuntime(page);
-  await expectVisibleText(page, "Ready to send using VS Code Smoke Model.", "safe mock provider/model readiness", 20_000);
+  await expectVisibleText(page, "Ready to send using VS Code Smoke Model", "safe mock provider/model readiness", 20_000);
   if (await sendButton(page).isDisabled()) {
     failures.push("Send stayed disabled after safe mock provider/model readiness.");
   }
