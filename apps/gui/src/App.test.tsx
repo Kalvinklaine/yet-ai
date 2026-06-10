@@ -2322,6 +2322,7 @@ describe("active editor attached context", () => {
     expect(container?.textContent).toContain("Coding Actions");
     expect(container?.textContent).toContain("Attach active editor context first");
     expect(findButton("Explain selection").disabled).toBe(true);
+    expect(findButton("Improve safely").disabled).toBe(true);
     expect(findButton("Safe edit").disabled).toBe(true);
   });
 
@@ -2340,6 +2341,7 @@ describe("active editor attached context", () => {
     });
 
     expect(chatInput().value).toContain("Explain the selected code clearly");
+    expect(chatInput().value).toContain("Coding action: explain_selection");
     expect(chatInput().value).toContain("Use only the attached one-shot editor context for src/example.ts (typescript), selection range 10:2-12:4.");
     expect(attachedContextToggle().checked).toBe(true);
     expect(document.activeElement).toBe(chatInput());
@@ -2361,6 +2363,7 @@ describe("active editor attached context", () => {
     });
 
     expect(chatInput().value).toContain("Propose a safe edit for the selected code");
+    expect(chatInput().value).toContain("Coding action: propose_safe_edit");
     expect(chatInput().value).toContain("Nothing is applied automatically");
     expect(chatInput().value).toContain("wait for explicit review/approval");
     expect(attachedContextToggle().checked).toBe(true);
@@ -2374,6 +2377,34 @@ describe("active editor attached context", () => {
     expect(body.payload?.context).toMatchObject({ file: { workspaceRelativePath: "src/edit.ts" } });
     expect(container?.textContent).toContain("Context attached to the last accepted message from vscode src/edit.ts.");
     expect(attachedContextToggleOptional()).toBeUndefined();
+  });
+
+  it("fills stable coding action markers for issue, improve, and tests prompts", async () => {
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+    await dispatchHostContextSnapshot({
+      file: { displayPath: "src/example.ts", workspaceRelativePath: "src/example.ts", languageId: "typescript" },
+      selection: { startLine: 10, startCharacter: 2, endLine: 12, endCharacter: 4, text: "function demo() { return 1; }" },
+    });
+
+    await act(async () => {
+      findButton("Find issue").click();
+    });
+    expect(chatInput().value).toContain("Coding action: find_issue");
+    expect(chatInput().value).toContain("Review the selected code for likely bugs");
+
+    await act(async () => {
+      findButton("Improve safely").click();
+    });
+    expect(chatInput().value).toContain("Coding action: improve_selection");
+    expect(chatInput().value).toContain("Suggest a focused improvement for the selected code");
+
+    await act(async () => {
+      findButton("Generate tests").click();
+    });
+    expect(chatInput().value).toContain("Coding action: generate_tests");
+    expect(chatInput().value).toContain("Generate focused tests for the selected code");
   });
 
   it("renders Agent activity IDE actions panel in browser mode without privileged posting", async () => {

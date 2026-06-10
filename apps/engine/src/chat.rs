@@ -909,17 +909,27 @@ async fn demo_stream(
 
 fn demo_response(content: &str, context: Option<&ChatContext>) -> String {
     let normalized = content.to_ascii_lowercase();
-    if normalized.contains("propose safe edit") || normalized.contains("demo edit proposal") {
+    if normalized.contains("coding action: propose_safe_edit")
+        || normalized.contains("propose a safe edit")
+    {
         return demo_edit_proposal_response(context);
     }
 
-    let mut response = if normalized.contains("explain selection") {
+    let mut response = if normalized.contains("coding action: explain_selection")
+        || normalized.contains("explain the selected code clearly")
+    {
         "Demo Mode explanation: no provider call was made, and this is a local canned coding response, not model quality. The selected code would normally be summarized here with its purpose, inputs, outputs, and important control flow. In Demo Mode, Yet AI only proves the coding-action path works without sending code to a model."
-    } else if normalized.contains("find issue") {
+    } else if normalized.contains("coding action: find_issue")
+        || normalized.contains("review the selected code for likely bugs")
+    {
         "Demo Mode issue review: no provider call was made, and this is a local canned coding response, not model quality. A real model would inspect the selection for correctness, edge cases, error handling, and maintainability. Demo Mode suggests manually checking null/empty inputs, boundary conditions, and whether names still match the current behavior."
-    } else if normalized.contains(&format!("{}factor selection", "re")) {
+    } else if normalized.contains("coding action: improve_selection")
+        || normalized.contains("suggest a focused improvement")
+    {
         "Demo Mode rework plan: no provider call was made, and this is a local canned coding response, not model quality. A real model would propose behavior-preserving changes. Safe local cleanup ideas include extracting repeated logic, renaming unclear local variables, and adding small helper functions only after tests or review confirm behavior."
-    } else if normalized.contains("generate tests") {
+    } else if normalized.contains("coding action: generate_tests")
+        || normalized.contains("generate focused tests")
+    {
         "Demo Mode test ideas: no provider call was made, and this is a local canned coding response, not model quality. A real model would tailor tests to the selection. Start with one happy-path test, one boundary/empty-input test, and one failure-path test that asserts the expected error or fallback behavior."
     } else {
         "Hello from Yet AI Demo Mode — your local plugin, runtime, GUI, chat, SSE, and history path is working. Configure a BYOK provider for real model answers. This is a local canned response, not model quality, and no provider call was made."
@@ -1457,6 +1467,27 @@ mod tests {
         PROVIDER_STREAM_LINE_BUFFER_LIMIT,
     };
 
+    fn representative_gui_coding_action_prompts() -> [String; 5] {
+        let context = "Use only the attached one-shot editor context for src/example.ts (typescript), selection range 10:2-12:4.";
+        [
+            format!(
+                "{context}\nCoding action: explain_selection\n\nExplain the selected code clearly. Cover purpose, inputs/outputs, important control flow, and any assumptions. Do not read other files unless I explicitly attach them."
+            ),
+            format!(
+                "{context}\nCoding action: find_issue\n\nReview the selected code for likely bugs, edge cases, security/privacy concerns, or maintainability risks. Prioritize concrete issues and explain how to verify them. Do not apply changes."
+            ),
+            format!(
+                "{context}\nCoding action: improve_selection\n\nSuggest a focused improvement for the selected code that preserves behavior. Explain the tradeoffs and show the proposed replacement in a code block. Do not apply changes automatically."
+            ),
+            format!(
+                "{context}\nCoding action: generate_tests\n\nGenerate focused tests for the selected code. Include meaningful cases, edge cases, and any setup/mocking needed. Keep the answer reviewable and do not modify files automatically."
+            ),
+            format!(
+                "{context}\nCoding action: propose_safe_edit\n\nPropose a safe edit for the selected code. Nothing is applied automatically: provide a reviewable proposal only, explain why it is safe, list risks, and wait for explicit review/approval before any workspace edit is requested. If you output machine-readable edit JSON, use only the bounded safe edit proposal payload shape with requiresUserConfirmation true and no requestId; the GUI hides raw JSON until I explicitly inspect it."
+            ),
+        ]
+    }
+
     #[test]
     fn chat_completions_url_normalizes_api_roots() {
         assert_eq!(
@@ -1512,12 +1543,7 @@ mod tests {
 
     #[test]
     fn demo_coding_actions_disclose_local_canned_mode() {
-        for prompt in [
-            "Explain selection",
-            "Find issue",
-            &format!("{}factor selection", "Re"),
-            "Generate tests",
-        ] {
+        for prompt in representative_gui_coding_action_prompts().iter().take(4) {
             let response = demo_response(prompt, None);
             assert!(response.contains("Demo Mode"), "{prompt}: {response}");
             assert!(
@@ -1533,7 +1559,8 @@ mod tests {
 
     #[test]
     fn demo_safe_edit_returns_gui_apply_workspace_edit_envelope() {
-        let response = demo_response("Propose safe edit", None);
+        let prompts = representative_gui_coding_action_prompts();
+        let response = demo_response(&prompts[4], None);
         let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
 
         assert_eq!(parsed["type"], "gui.applyWorkspaceEditRequest");
