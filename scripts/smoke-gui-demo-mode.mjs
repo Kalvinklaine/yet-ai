@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import process from "node:process";
@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = path.join(root, "apps", "gui", "dist");
 const indexPath = path.join(distRoot, "index.html");
+const evidenceRoot = path.join(root, "dist", "visual-smoke", "gui-demo-mode");
 const runtimeToken = `demo-runtime-token-${randomUUID()}`;
 const providerSecret = `sk-demo-provider-${randomUUID()}`;
 const failures = [];
@@ -71,6 +72,10 @@ try {
   await expectVisibleText(page, secondAnswer, "second terminal message_added assistant response without a third send");
   await assertAssistantAnswerCount(page, firstAnswer, 1, "first terminal message_added assistant response");
   await assertAssistantAnswerCount(page, secondAnswer, 1, "second terminal message_added assistant response");
+  await expectVisibleText(page, "Conversations", "conversation list heading");
+  await expectVisibleText(page, "Demo smoke chat", "readable active conversation title");
+  await expectVisibleText(page, "current", "active conversation marker");
+  await expectVisibleText(page, "4 visible messages", "active conversation readable visible message count after sends");
   await expectVisibleText(page, "no provider call was made", "demo no-provider copy");
   await expectVisibleText(page, "Demo Mode ready — local canned responses, no provider calls. Ready to send.", "post-response demo ready status");
   const postResponseBody = await page.evaluate(() => document.body.innerText);
@@ -98,11 +103,14 @@ try {
   assert(providerHits === 0, `demo smoke unexpectedly hit provider ${providerHits} time(s)`);
   assert(chatCommandCount === 2, `demo smoke expected exactly two chat sends without a third send, observed ${chatCommandCount}`);
 
+  const evidence = await saveVisualEvidence(page);
+
   if (failures.length > 0) {
     throw new Error(`GUI Demo Mode smoke failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
   }
   console.log("GUI Demo Mode smoke passed.");
-  console.log("Verified built GUI toggles local runtime Demo Mode, sends canned chat over local command/SSE/history, avoids duplicate assistant bubbles, uses only loopback, and makes no provider calls or browser-storage secret writes.");
+  console.log("Verified built GUI toggles local runtime Demo Mode, sends canned chat over local command/SSE/history, renders readable active conversation text, avoids duplicate assistant bubbles, uses only loopback, and makes no provider calls or browser-storage secret writes.");
+  console.log(`Saved sanitized visual evidence under ${path.relative(root, evidence.dir)}/ (${path.basename(evidence.screenshotPath)}, ${path.basename(evidence.domPath)}).`);
 } finally {
   await browser?.close().catch(() => undefined);
   await guiServer?.close().catch(() => undefined);
@@ -132,6 +140,27 @@ async function requireChromium() {
     console.error(`Load error: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
+}
+
+async function saveVisualEvidence(page) {
+  await mkdir(evidenceRoot, { recursive: true });
+  const screenshotPath = path.join(evidenceRoot, "gui-demo-mode.png");
+  const domPath = path.join(evidenceRoot, "gui-demo-mode.dom.txt");
+  await page.screenshot({ path: screenshotPath, fullPage: true });
+  const sanitizedText = await page.evaluate(() => document.body.innerText)
+    .then((text) => sanitizeEvidenceText(text));
+  await writeFile(domPath, sanitizedText, "utf8");
+  return { dir: evidenceRoot, screenshotPath, domPath };
+}
+
+function sanitizeEvidenceText(text) {
+  return text
+    .replaceAll(runtimeToken, "[redacted-runtime-token]")
+    .replaceAll(providerSecret, "[redacted-provider-secret]")
+    .replace(/sk-[A-Za-z0-9._-]+/g, "[redacted-api-key]")
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer [redacted]")
+    .replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]")
+    .replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]");
 }
 
 async function openDetailsBySummary(page, summaryText, visibleLocator) {
