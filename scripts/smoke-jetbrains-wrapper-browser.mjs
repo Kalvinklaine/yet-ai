@@ -1690,7 +1690,6 @@ function emitAssistantResponseToSubscriber(chatId, subscriber) {
     for (const event of events) {
       writeSseToSubscriber(subscriber, event);
     }
-    subscriber.response.end();
     return true;
   } catch {
     return false;
