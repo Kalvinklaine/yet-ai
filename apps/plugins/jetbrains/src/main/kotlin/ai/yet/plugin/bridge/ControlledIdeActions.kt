@@ -236,7 +236,7 @@ object ControlledIdeActions {
     }
 
     private val RequestIdRegex = Regex("^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
-    private val SecretRequestIdRegex = Regex("authorization|bearer|api[_-]?key|token|secret|access[_-]?token|sk-(?:proj-)?[A-Za-z0-9_-]{8,}", RegexOption.IGNORE_CASE)
+    private val SecretRequestIdRegex = Regex("authorization|bearer|api[_-]?key|token|secret|access[_-]?token|provider[_-]?key|openai[_-]?api[_-]?key|sk-(?:proj-)?[A-Za-z0-9_-]{8,}", RegexOption.IGNORE_CASE)
     private val SecretPathSegmentPrefixRegex = Regex("^(?:auth|authorization|bearer|cookie|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:[._-]|$)", RegexOption.IGNORE_CASE)
     private val SecretPathSegmentMarkerRegex = Regex("(?:^|[._-])(?:auth|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:[._-]|$)", RegexOption.IGNORE_CASE)
     private val SecretPathSegmentTokenRegex = Regex("^sk-(?:proj-)?[A-Za-z0-9_-]{8,}", RegexOption.IGNORE_CASE)

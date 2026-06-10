@@ -313,6 +313,23 @@ try {
     failures.push("Wrapper relayed a schema-invalid host message into the iframe.");
   }
 
+  const bridgeMessageCountBeforeSecretRequestIds = await page.evaluate(() => window.__yetAiBridgeMessages?.length ?? 0);
+  await frameLocator.locator("body").evaluate((body, version) => {
+    for (const requestId of ["provider_key", "openai_api_key"]) {
+      window.parent.postMessage({
+        version,
+        type: "gui.ideActionRequest",
+        requestId,
+        payload: { action: "getContextSnapshot" },
+      }, document.referrer ? new URL(document.referrer).origin : "*");
+    }
+  }, bridgeVersion);
+  await page.waitForTimeout(100);
+  const bridgeMessageCountAfterSecretRequestIds = await page.evaluate(() => window.__yetAiBridgeMessages?.length ?? 0);
+  if (bridgeMessageCountAfterSecretRequestIds !== bridgeMessageCountBeforeSecretRequestIds) {
+    failures.push("Wrapper forwarded IDE action request ids containing provider_key/openai_api_key secret markers.");
+  }
+
   await page.evaluate((version) => {
     window.postMessage({
       version,
@@ -521,6 +538,9 @@ async function assertInvalidRuntimeUrlsRejected(page, version, currentReadyReque
     "",
     "https://example.com/",
     "http://user@127.0.0.1/",
+    "http://127.0.0.1",
+    "http://127.0.0.1:0",
+    "http://127.0.0.1:65536",
     "http://127.0.0.1/?token=unsafe",
     "http://127.0.0.1/#token",
     "http://127.0.0.1/v1",
@@ -544,7 +564,7 @@ async function assertInvalidRuntimeUrlsRejected(page, version, currentReadyReque
   await page.waitForTimeout(100);
   const after = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
   if (after !== before) {
-    failures.push("Wrapper relayed host.ready with a non-loopback, credentialed, queried, fragmented, or non-root runtime URL.");
+    failures.push("Wrapper relayed host.ready with a non-loopback, missing/invalid port, credentialed, queried, fragmented, or non-root runtime URL.");
   }
   const batchBefore = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
   await page.evaluate(({ bridgeVersion, requestId }) => {
@@ -1406,7 +1426,7 @@ const requiredLoopbackRuntimeUrl = (value) => {
     const parsed = new URL(value);
     const hostname = parsed.hostname.toLowerCase();
     const isLoopback = hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1" || hostname === "[::1]";
-    return (parsed.protocol === "http:" || parsed.protocol === "https:") && isLoopback && parsed.username === "" && parsed.password === "" && parsed.search === "" && parsed.hash === "" && (parsed.pathname === "" || parsed.pathname === "/");
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && isLoopback && /^[1-9][0-9]{0,4}$/.test(parsed.port) && Number(parsed.port) <= 65535 && parsed.username === "" && parsed.password === "" && parsed.search === "" && parsed.hash === "" && (parsed.pathname === "" || parsed.pathname === "/");
   } catch (_) {
     return false;
   }
@@ -1433,7 +1453,7 @@ const isHostMessage = (message) => {
   if (message.type === "host.ideActionResult") return isHostIdeActionResultPayload(message.payload);
   return false;
 };
-const requiredRequestId = (value) => typeof value === "string" && value.length > 0 && value.length <= 128 && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value);
+const requiredRequestId = (value) => typeof value === "string" && value.length > 0 && value.length <= 128 && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value) && !/(authorization|bearer|api[_-]?key|token|secret|access[_-]?token|provider[_-]?key|openai[_-]?api[_-]?key|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value);
 const safeRequiredWorkspacePath = (value) => safePath(value, 512) && !value.includes("%") && !value.includes("?") && !value.includes("#") && !value.includes("//") && !value.endsWith("/") && value.split("/").every((part) => part.length > 0 && !/(?:^|[._-])(?:auth|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:[._-]|$)|^sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(part));
 const isGuiIdeActionPayload = (payload) => {
   if (!isPlainObject(payload) || typeof payload.action !== "string" || !allowedIdeActionNames.includes(payload.action)) return false;

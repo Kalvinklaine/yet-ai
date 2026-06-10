@@ -175,6 +175,10 @@ const invalidMappings = [
     "packages/contracts/schemas/engine/chat-command.schema.json"
   ],
   [
+    "packages/contracts/examples-invalid/engine/chat-command-context-secret-like-path.json",
+    "packages/contracts/schemas/engine/chat-command.schema.json"
+  ],
+  [
     "packages/contracts/examples-invalid/engine/chat-command-context-oversized-selection-text.json",
     "packages/contracts/schemas/engine/chat-command.schema.json"
   ],
@@ -236,6 +240,7 @@ const invalidMappings = [
     "gui-ready-frame-nonce-uppercase.json",
     "gui-ready-secret-request-id.json",
     "gui-ready-authorization-bearer-request-id.json",
+    "gui-ready-provider-key-request-id.json",
     "gui-ready-sk-proj-request-id.json",
     "gui-ready-traversal-request-id.json",
     "gui-ide-action-request-oversized-path.json",
@@ -283,6 +288,7 @@ const invalidMappings = [
     "host-ide-action-result-provider-response-field.json",
     "host-ide-action-progress-cloud-required-true.json",
     "host-ide-action-progress-authorization-bearer-request-id.json",
+    "host-ide-action-progress-openai-api-key-request-id.json",
     "host-ide-action-progress-sk-proj-request-id.json",
     "host-ide-action-result-traversal-request-id.json",
     "host-ide-action-progress-secret-summary.json",

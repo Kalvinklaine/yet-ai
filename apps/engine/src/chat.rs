@@ -617,12 +617,63 @@ fn valid_context_path(value: &str, max_chars: usize) -> bool {
         && value.chars().count() <= max_chars
         && !value.starts_with('/')
         && !value.starts_with('~')
-        && !value.contains('\\')
-        && !value.contains(':')
-        && !value.chars().any(|value| value.is_control())
+        && !value
+            .chars()
+            .any(|value| !is_safe_context_path_char(value))
         && value
             .split('/')
-            .all(|part| !matches!(part, "" | "." | ".."))
+            .all(|part| !matches!(part, "" | "." | "..") && !is_secret_like_path_segment(part))
+}
+
+fn is_safe_context_path_char(value: char) -> bool {
+    value.is_ascii_alphanumeric() || matches!(value, '/' | '.' | '_' | '@' | '+' | '=' | '-')
+}
+
+fn is_secret_like_path_segment(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    if lower.starts_with("sk-") {
+        let suffix = lower.strip_prefix("sk-proj-").or_else(|| lower.strip_prefix("sk-"));
+        if suffix.is_some_and(|suffix| {
+            suffix
+                .chars()
+                .take(8)
+                .all(|value| value.is_ascii_alphanumeric() || matches!(value, '_' | '-'))
+                && suffix.chars().count() >= 8
+        }) {
+            return true;
+        }
+    }
+    let separators: &[_] = &['.', '_', '-'];
+    let secret_markers = [
+        "auth",
+        "authorization",
+        "bearer",
+        "cookie",
+        "credential",
+        "credentials",
+        "password",
+        "secret",
+        "token",
+        "accesstoken",
+        "access_token",
+        "access-token",
+        "apikey",
+        "api_key",
+        "api-key",
+    ];
+    for marker in secret_markers {
+        if lower == marker
+            || lower
+                .strip_prefix(marker)
+                .is_some_and(|rest| rest.starts_with(separators))
+            || lower
+                .split(separators)
+                .any(|part| part == marker)
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn valid_context_language(value: &str) -> bool {
@@ -1505,6 +1556,59 @@ mod tests {
                 "{context}\nCoding action: propose_safe_edit\n\nPropose a safe edit for the selected code. Nothing is applied automatically: provide a reviewable proposal only, explain why it is safe, list risks, and wait for explicit review/approval before any workspace edit is requested. If you output machine-readable edit JSON, use only the bounded safe edit proposal payload shape with requiresUserConfirmation true and no requestId; the GUI hides raw JSON until I explicitly inspect it."
             ),
         ]
+    }
+
+    #[test]
+    fn chat_context_file_rejects_unsafe_workspace_relative_paths() {
+        for path in [
+            "/src/main.ts",
+            "~/project/src/main.ts",
+            "src\\main.ts",
+            "C:/project/src/main.ts",
+            "src/../main.ts",
+            "src/./main.ts",
+            "src//main.ts",
+            "src/main.ts/",
+            "src/main.ts?raw=true",
+            "src/main.ts#fragment",
+            "src/%2e%2e/main.ts",
+            "credentials/api_key.txt",
+            "auth/token.json",
+            "src/access-token.txt",
+            "src/api-key.json",
+            "src/apikey.json",
+            "src/my.secret.env",
+            "src/SK-proj-abcdef1234567890.txt",
+            "src/main\u{0}.ts",
+            "src/main\u{7f}.ts",
+        ] {
+            let context = ChatContext {
+                kind: "active_editor".to_string(),
+                source: "vscode".to_string(),
+                file: Some(ChatContextFile {
+                    display_path: None,
+                    workspace_relative_path: Some(path.to_string()),
+                    language_id: Some("typescript".to_string()),
+                }),
+                selection: None,
+            };
+            assert!(!context.is_valid(), "accepted unsafe path: {path:?}");
+        }
+    }
+
+    #[test]
+    fn chat_context_file_accepts_bounded_safe_workspace_relative_path() {
+        let context = ChatContext {
+            kind: "active_editor".to_string(),
+            source: "vscode".to_string(),
+            file: Some(ChatContextFile {
+                display_path: Some("src/main.test.ts".to_string()),
+                workspace_relative_path: Some("src/components/App.test+demo@2.ts".to_string()),
+                language_id: Some("typescript".to_string()),
+            }),
+            selection: None,
+        };
+        assert!(context.is_valid());
     }
 
     #[test]
