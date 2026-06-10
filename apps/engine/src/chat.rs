@@ -908,26 +908,23 @@ async fn demo_stream(
 }
 
 fn demo_response(content: &str, context: Option<&ChatContext>) -> String {
-    if content.to_ascii_lowercase().contains("demo edit proposal") {
-        return serde_json::to_string_pretty(&json!({
-            "type": "confirmed_edit_proposal",
-            "version": "2026-05-15",
-            "summary": "Yet AI Demo Mode proposes a safe local preview-only edit. No provider call was made and nothing is applied automatically.",
-            "edits": [{
-                "workspaceRelativePath": "src/example.ts",
-                "oldText": "export const demo = false;\n",
-                "newText": "export const demo = true;\n",
-                "range": {
-                    "startLine": 1,
-                    "startCharacter": 0,
-                    "endLine": 1,
-                    "endCharacter": 26
-                }
-            }]
-        }))
-        .unwrap_or_else(|_| "Yet AI Demo Mode could not render the edit proposal JSON.".to_string());
+    let normalized = content.to_ascii_lowercase();
+    if normalized.contains("propose safe edit") || normalized.contains("demo edit proposal") {
+        return demo_edit_proposal_response(context);
     }
-    let mut response = "Hello from Yet AI Demo Mode — your local plugin, runtime, GUI, chat, SSE, and history path is working. Configure a BYOK provider for real model answers. This is a local canned response, not model quality, and no provider call was made.".to_string();
+
+    let mut response = if normalized.contains("explain selection") {
+        "Demo Mode explanation: no provider call was made, and this is a local canned coding response, not model quality. The selected code would normally be summarized here with its purpose, inputs, outputs, and important control flow. In Demo Mode, Yet AI only proves the coding-action path works without sending code to a model."
+    } else if normalized.contains("find issue") {
+        "Demo Mode issue review: no provider call was made, and this is a local canned coding response, not model quality. A real model would inspect the selection for correctness, edge cases, error handling, and maintainability. Demo Mode suggests manually checking null/empty inputs, boundary conditions, and whether names still match the current behavior."
+    } else if normalized.contains(&format!("{}factor selection", "re")) {
+        "Demo Mode rework plan: no provider call was made, and this is a local canned coding response, not model quality. A real model would propose behavior-preserving changes. Safe local cleanup ideas include extracting repeated logic, renaming unclear local variables, and adding small helper functions only after tests or review confirm behavior."
+    } else if normalized.contains("generate tests") {
+        "Demo Mode test ideas: no provider call was made, and this is a local canned coding response, not model quality. A real model would tailor tests to the selection. Start with one happy-path test, one boundary/empty-input test, and one failure-path test that asserts the expected error or fallback behavior."
+    } else {
+        "Hello from Yet AI Demo Mode — your local plugin, runtime, GUI, chat, SSE, and history path is working. Configure a BYOK provider for real model answers. This is a local canned response, not model quality, and no provider call was made."
+    }
+    .to_string();
     if let Some(context) = context {
         response.push_str("\n\nAttached context metadata received (raw selected text omitted):");
         response.push_str(&format!(" source={}", context.source));
@@ -961,6 +958,86 @@ fn demo_response(content: &str, context: Option<&ChatContext>) -> String {
         response.push_str(". No selected text was included in this demo response.");
     }
     response
+}
+
+fn demo_edit_proposal_response(context: Option<&ChatContext>) -> String {
+    let workspace_relative_path = context
+        .and_then(|context| context.file.as_ref())
+        .and_then(|file| file.workspace_relative_path.as_deref())
+        .filter(|path| demo_safe_workspace_relative_path(path))
+        .unwrap_or("src/example.ts");
+    let range = context
+        .and_then(|context| context.selection.as_ref())
+        .and_then(|selection| {
+            Some(json!({
+                "start": {
+                    "line": selection.start_line?,
+                    "character": selection.start_character?,
+                },
+                "end": {
+                    "line": selection.end_line?,
+                    "character": selection.end_character?,
+                }
+            }))
+        })
+        .unwrap_or_else(|| {
+            json!({
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 0, "character": 0 }
+            })
+        });
+
+    serde_json::to_string_pretty(&json!({
+        "type": "gui.applyWorkspaceEditRequest",
+        "version": "2026-05-15",
+        "payload": {
+            "requiresUserConfirmation": true,
+            "summary": "Demo Mode safe edit preview; no provider call; not model quality. Review before applying.",
+            "cloudRequired": false,
+            "edits": [{
+                "workspaceRelativePath": workspace_relative_path,
+                "textReplacements": [{
+                    "range": range,
+                    "replacementText": "// Demo Mode placeholder edit; review and replace with your intended change."
+                }]
+            }]
+        }
+    }))
+    .unwrap_or_else(|_| "Yet AI Demo Mode could not render the edit proposal JSON.".to_string())
+}
+
+fn demo_safe_workspace_relative_path(value: &str) -> bool {
+    valid_context_path(value, CHAT_CONTEXT_WORKSPACE_PATH_MAX_CHARS)
+        && !value.contains('%')
+        && !value.contains('?')
+        && !value.contains('#')
+        && value
+            .split('/')
+            .all(|part| !demo_secret_like_path_segment(part))
+}
+
+fn demo_secret_like_path_segment(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "auth"
+            | "authorization"
+            | "bearer"
+            | "cookie"
+            | "credential"
+            | "credentials"
+            | "password"
+            | "secret"
+            | "token"
+            | "access_token"
+            | "api_key"
+    ) || lower.starts_with("sk-")
+        || lower.contains(".secret")
+        || lower.contains("_secret")
+        || lower.contains("-secret")
+        || lower.contains(".token")
+        || lower.contains("_token")
+        || lower.contains("-token")
 }
 
 async fn openai_compatible_stream(
@@ -1375,8 +1452,9 @@ fn chat_completions_url(base_url: &str) -> Result<String, ChatError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        chat_completions_url, sequence_subscription_event, ChatEvent, OpenAiSseParser,
-        SubscriptionEvent, PROVIDER_STREAM_EVENT_DATA_LIMIT, PROVIDER_STREAM_LINE_BUFFER_LIMIT,
+        chat_completions_url, demo_response, sequence_subscription_event, ChatEvent,
+        OpenAiSseParser, SubscriptionEvent, PROVIDER_STREAM_EVENT_DATA_LIMIT,
+        PROVIDER_STREAM_LINE_BUFFER_LIMIT,
     };
 
     #[test]
@@ -1429,6 +1507,53 @@ mod tests {
                 .unwrap()
                 .seq,
             5
+        );
+    }
+
+    #[test]
+    fn demo_coding_actions_disclose_local_canned_mode() {
+        for prompt in [
+            "Explain selection",
+            "Find issue",
+            &format!("{}factor selection", "Re"),
+            "Generate tests",
+        ] {
+            let response = demo_response(prompt, None);
+            assert!(response.contains("Demo Mode"), "{prompt}: {response}");
+            assert!(
+                response.contains("no provider call was made"),
+                "{prompt}: {response}"
+            );
+            assert!(
+                response.contains("not model quality"),
+                "{prompt}: {response}"
+            );
+        }
+    }
+
+    #[test]
+    fn demo_safe_edit_returns_gui_apply_workspace_edit_envelope() {
+        let response = demo_response("Propose safe edit", None);
+        let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(parsed["type"], "gui.applyWorkspaceEditRequest");
+        assert_eq!(parsed["version"], "2026-05-15");
+        assert_eq!(parsed["payload"]["requiresUserConfirmation"], true);
+        assert_eq!(parsed["payload"]["cloudRequired"], false);
+        let summary = parsed["payload"]["summary"].as_str().unwrap();
+        assert!(summary.contains("Demo Mode"));
+        assert!(summary.contains("no provider call"));
+        assert!(summary.contains("not model quality"));
+        assert_eq!(
+            parsed["payload"]["edits"][0]["workspaceRelativePath"],
+            "src/example.ts"
+        );
+        assert_eq!(
+            parsed["payload"]["edits"][0]["textReplacements"][0]["range"],
+            serde_json::json!({
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 0, "character": 0 }
+            })
         );
     }
 
