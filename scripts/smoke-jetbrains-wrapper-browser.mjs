@@ -652,15 +652,25 @@ async function assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocat
   if (staleAttempt.postedCount !== beforePostedCount) {
     failures.push("Wrapper allowed rejected stale gui.ready to authorize host delivery.");
   }
+  const previousFrameNonce = await page.evaluate(() => window.__yetAiLastFrameNonceForSmoke ?? window.__yetAiCurrentFrameNonce);
   await page.locator("iframe[title='Yet AI GUI']").evaluate((frame) => {
     frame.src = "about:blank";
   });
-  await page.waitForTimeout(100);
-  await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, url) => {
-    frame.src = `${url}/index.html`;
-  }, guiUrl);
-  await page.waitForFunction((count) => (window.__yetAiGuiReadySequence ?? 0) > count, beforeReadySequence, { timeout: 5000 }).catch(() => failures.push("Wrapper did not observe fresh gui.ready after old-document regression reload."));
-  const currentRequestId = await page.evaluate(() => window.__yetAiCurrentReadyRequestId);
+  await page.waitForFunction(() => document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow?.location.href === "about:blank", undefined, { timeout: 5000 })
+    .catch(() => failures.push("Wrapper did not navigate iframe to about:blank during old-document regression reload."));
+  await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, { url, cacheBust }) => {
+    frame.src = `${url}/index.html?old-document-regression=${cacheBust}`;
+  }, { url: guiUrl, cacheBust: randomUUID() });
+  const freshReadyState = await forceFreshGuiReadyAfterReload(page, {
+    version,
+    origin: guiUrl,
+    sequenceBeforeReload: beforeReadySequence,
+    previousFrameNonce,
+  });
+  if ((freshReadyState.readySequence ?? 0) <= beforeReadySequence) {
+    failures.push("Wrapper did not observe fresh gui.ready after old-document regression reload.");
+  }
+  const currentRequestId = freshReadyState.currentRequestId;
   assertRandomReadyRequestId(currentRequestId, "fresh gui.ready after old-document regression");
   await page.evaluate(({ bridgeVersion, readyUrl, sessionToken, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
@@ -1069,6 +1079,9 @@ function assertJetBrainsContext(context) {
 async function assertJetBrainsIdeActionRoundtrip(page, frameLocator) {
   await frameLocator.getByText("JetBrains controlled actions", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
     .catch(() => failures.push("Iframe GUI did not expose JetBrains controlled action controls."));
+  await frameLocator.locator("section[aria-label='Agent activity IDE actions'] details").first().evaluate((element) => {
+    if (element instanceof HTMLDetailsElement) element.open = true;
+  }).catch(() => undefined);
   const before = await page.evaluate(() => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.ideActionRequest").length ?? 0);
   const ideActionText = await frameLocator.locator("section[aria-label='Agent activity IDE actions']").innerText({ timeout: 5000 }).catch(() => "");
   if (!ideActionText.includes("Get IDE context")) {
