@@ -32,13 +32,13 @@ export type ChatRecoveryCode =
   | "provider_request_failed";
 
 export const chatLifecycleLabels: Record<ChatLifecycleState, string> = {
-  idle: "Chat is idle. Ready for local input.",
-  command_submitting: "Sending message...",
-  command_accepted: "Message sent; waiting for response stream.",
-  sse_connecting: "Waiting for response stream.",
-  streaming: "Assistant is responding...",
-  stopped: "Response stopped.",
-  failed: "Provider/runtime error. No automatic retry was started.",
+  idle: "Ready for local input.",
+  command_submitting: "Sending your message through the local runtime…",
+  command_accepted: "Message accepted; opening the response stream…",
+  sse_connecting: "Connecting to the local response stream…",
+  streaming: "Assistant is responding. You can stop the stream locally.",
+  stopped: "Response stopped locally. Edit the prompt or send a new message.",
+  failed: "Runtime or provider error. Review the message above, fix locally, then send again.",
 };
 
 const chatRecoveryCopy: Record<ChatRecoveryCode, string> = {

@@ -358,9 +358,11 @@ export function App() {
             ? "Experimental OpenAI account / gpt-5-codex"
             : "Provider required";
   const chatReadinessMessage = !runtimeConnected
-    ? "Runtime is not connected. Refresh runtime and fix the local runtime problem before sending the first GPT message."
+    ? "Runtime is not connected yet. Refresh runtime or start the IDE-managed local runtime, then return here to send."
     : apiKeyChatReady
-      ? `Ready to send using ${selectedModelDisplayName ?? "the default model"}.`
+      ? activeSelectedDemoMode
+        ? "Demo Mode is ready: send a prompt to try the chat flow with local canned responses. No provider call or API key is used."
+        : `Ready to send using ${selectedModelDisplayName ?? "the default model"} through the local runtime.`
       : apiKeyReadiness.message
         ? apiKeyReadiness.message
         : providerAuthMutationInFlight && activeProviderAuthStatus?.authSource === "oauth" && !apiKeyChatReady
@@ -368,8 +370,8 @@ export function App() {
           : experimentalOauthChatReady
             ? "Experimental Codex-like OpenAI account chat is connected through the local runtime. This private-endpoint path is high-risk, not official public OAuth support, and not production-ready."
             : activeModelError
-              ? "Runtime model refresh failed. Refresh runtime again before sending the first GPT message."
-              : "Provider required: choose OpenAI API for the API-key fallback or configure a local OpenAI-compatible /v1 provider with a model before sending the first GPT message.";
+              ? "Runtime model refresh failed. Refresh runtime again before sending the first message."
+              : "Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK OpenAI-compatible provider/model for real answers.";
   const chatModelStatus = apiKeyReadiness.model ? modelStatusText(apiKeyReadiness.model, apiKeyReadiness.provider) : null;
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
   const currentAttachedContext = attachedContext?.settingsRevision === settingsRevision && attachedContext.chatId === chatId ? attachedContext.payload : null;
@@ -1507,7 +1509,7 @@ export function App() {
       return {
         title: activeConnectionError?.status === 401 ? "Runtime authorization needs attention" : "Connect the local runtime first",
         reason,
-        nextAction: `Refresh runtime, then fix the loopback URL or Session token if the check fails.${ideRuntimeHint}`,
+        nextAction: `Use Refresh runtime from this chat page. If it still fails, fix the loopback URL or Session token in Local runtime connection.${ideRuntimeHint}`,
         actions: [{ kind: "refresh_runtime", label: runtimeRefreshInFlight ? "Checking runtime…" : "Refresh runtime" }],
         notes,
       };
@@ -1515,8 +1517,8 @@ export function App() {
     if (apiKeyChatReady) {
       return {
         title: activeSelectedDemoMode ? "Demo Mode is ready" : "Ready for your first message",
-        reason: `Send is enabled for ${selectedModelDisplayName ?? "the selected model"}${selectedModelProviderId ? ` through ${selectedModelProviderId}` : ""}.`,
-        nextAction: "Type a prompt and send it through the local runtime.",
+        reason: activeSelectedDemoMode ? "Send is enabled for local canned responses; this verifies chat UX without a provider API key." : `Send is enabled for ${selectedModelDisplayName ?? "the selected model"}${selectedModelProviderId ? ` through ${selectedModelProviderId}` : ""}.`,
+        nextAction: activeSelectedDemoMode ? "Type a prompt to try the local flow, then configure a BYOK provider when you need real model quality." : "Type a prompt and send it through the local runtime.",
         actions: [...(demoModeEnabled ? [{ kind: "enable_demo_mode" as const, label: demoModeToggleLabel }] : []), { kind: "send_first_message" as const, label: "Send first message" }],
         notes,
       };
@@ -1572,7 +1574,7 @@ export function App() {
       reason: activeModelError
         ? "Runtime model refresh failed, so no send-ready model can be selected."
         : "No enabled OpenAI-compatible provider/model is ready for chat streaming.",
-      nextAction: "Use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, test provider, then refresh runtime/model readiness.",
+      nextAction: "For a no-key trial, enable Demo Mode. For real answers, use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, test provider, then refresh runtime/model readiness.",
       actions: [{ kind: "enable_demo_mode", label: demoModeToggleLabel }, { kind: "api_key_fallback", label: "Use OpenAI API key fallback" }, { kind: "refresh_runtime", label: "Refresh runtime" }],
       notes,
     };
@@ -1621,9 +1623,18 @@ export function App() {
             <span className={`badge ${connectionStatus === "connected" ? "ok" : connectionStatus === "error" ? "warn" : ""}`}>runtime {connectionStatus}</span>
             <span className={enabledProviders.length > 0 ? "badge ok" : "badge warn"}>{enabledProviders.length} enabled provider{enabledProviders.length === 1 ? "" : "s"}</span>
           </div>
+          <div className="chat-readiness-summary">
+            <div className="chat-readiness-copy stack">
+              <span>State: {chatReadinessLabel}</span>
+              <span>{chatReadinessMessage}</span>
+            </div>
+            <div className="chat-readiness-tiles" aria-label="Chat readiness checkpoints">
+              <span className={`readiness-pill ${runtimeConnected ? "ok" : "warn"}`}>{runtimeConnected ? "Runtime ready" : "Runtime needs refresh"}</span>
+              <span className={`readiness-pill ${canSendChat ? "ok" : "warn"}`}>{canSendChat ? activeSelectedDemoMode ? "Demo send ready" : "Provider send ready" : "Provider or Demo Mode needed"}</span>
+              <span className="readiness-pill ok">Local-first BYOK</span>
+            </div>
+          </div>
           <div className="stack">
-            <span>State: {chatReadinessLabel}</span>
-            <span>{chatReadinessMessage}</span>
             {chatModelStatus && <span className="subtle">Model status: {chatModelStatus}</span>}
             {demoModeEnabled && <span className="subtle">{activeSelectedDemoMode ? "Demo Mode is active in the local runtime. It uses canned responses only, makes no provider calls, requires no API key, and is not model quality." : `Demo Mode is enabled in the local runtime, but the current ready chat path uses ${selectedModelDisplayName ?? "the selected model"}${selectedModelProviderId ? ` (${selectedModelProviderId})` : ""}. Sends may use that configured provider; disable Demo Mode or choose the demo model only when dogfooding canned local responses.`}</span>}
             {activeDemoModeError && <span className="error">Demo Mode status unavailable: {activeDemoModeError.status}: {sanitizeDisplayText(activeDemoModeError.message)}</span>}
@@ -1702,7 +1713,7 @@ export function App() {
             </div>
             </details>
             <div className="chat-panel" aria-label="Chat messages">
-              {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect()} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeEditProposal={activeEditProposal} activeIdeActionProposal={activeIdeActionProposal} />)}
+              {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} activeDemoMode={activeSelectedDemoMode} selectedModelDisplayName={selectedModelDisplayName} selectedModelProviderId={selectedModelProviderId} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect()} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeEditProposal={activeEditProposal} activeIdeActionProposal={activeIdeActionProposal} />)}
               <span className={`chat-lifecycle-state ${chatLifecycleState}`}>{chatLifecycleLabel}</span>
               {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
             </div>
@@ -1985,12 +1996,13 @@ export function rememberCompletedApplyRequest(completedRequests: Map<string, str
   }
 }
 
-function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, context, hasLocalConversations, onProviderSetup, onRefreshRuntime }: { runtimeConnected: boolean; canSendChat: boolean; providerReady: boolean; context: HostContextSnapshotPayload | null; hasLocalConversations: boolean; onProviderSetup: () => void; onRefreshRuntime: () => void }) {
+function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, activeDemoMode, selectedModelDisplayName, selectedModelProviderId, context, hasLocalConversations, onProviderSetup, onRefreshRuntime }: { runtimeConnected: boolean; canSendChat: boolean; providerReady: boolean; activeDemoMode: boolean; selectedModelDisplayName?: string; selectedModelProviderId?: string; context: HostContextSnapshotPayload | null; hasLocalConversations: boolean; onProviderSetup: () => void; onRefreshRuntime: () => void }) {
   if (!runtimeConnected) {
     return (
       <div className="chat-empty-state" role="status">
-        <strong>Connect the local runtime to start chatting.</strong>
-        <span>Refresh the loopback runtime connection or start the IDE-managed runtime. No hosted Yet AI backend, account, cloud workspace, or credit balance is required.</span>
+        <span className="badge warn">Runtime unavailable</span>
+        <strong>Start here: connect the local runtime.</strong>
+        <span>Click Refresh runtime, or start the IDE-managed local runtime if this installed host did not start it. Chat, providers, and history stay local-first; no hosted Yet AI backend, account, cloud workspace, or credit balance is required.</span>
         <button type="button" onClick={onRefreshRuntime}>Refresh runtime</button>
       </div>
     );
@@ -1998,8 +2010,9 @@ function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, context,
   if (!providerReady) {
     return (
       <div className="chat-empty-state" role="status">
-        <strong>Configure a provider or model before sending.</strong>
-        <span>Use the OpenAI API-key fallback or a local OpenAI-compatible /v1 server. Provider credentials stay local to the runtime and are not stored by the GUI.</span>
+        <span className="badge warn">Provider required</span>
+        <strong>Choose how this first chat should answer.</strong>
+        <span>Try Demo Mode from Chat readiness for local canned responses with no API key, or configure a BYOK OpenAI-compatible provider for real model answers. Provider credentials are sent only to the local runtime and are not stored by the GUI.</span>
         <button type="button" onClick={onProviderSetup}>Use OpenAI API key fallback</button>
       </div>
     );
@@ -2008,15 +2021,17 @@ function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, context,
     const fileLabel = sanitizeDisplayText(context.file?.displayPath ?? context.file?.workspaceRelativePath ?? "the active editor");
     return (
       <div className="chat-empty-state ready" role="status">
+        <span className="badge ok">{activeDemoMode ? "Demo Mode ready" : "Ready"}</span>
         <strong>Ready to ask about {fileLabel}.</strong>
-        <span>Send a question about the attached file or selection, or turn off attached context before sending.</span>
+        <span>{activeDemoMode ? "Send to try the attached-context flow with local canned responses; no provider call will be made." : `Send through ${selectedModelDisplayName ?? "the selected model"}${selectedModelProviderId ? ` (${selectedModelProviderId})` : ""}, or turn off attached context before sending.`}</span>
       </div>
     );
   }
   return (
     <div className="chat-empty-state ready" role="status">
-      <strong>{hasLocalConversations ? "This local conversation is empty." : "Ready for your first local conversation."}</strong>
-      <span>Ask about code, architecture, tests, or the current task. Local conversation history is owned by the engine, not browser storage.</span>
+      <span className="badge ok">{activeDemoMode ? "Demo Mode ready" : "Ready"}</span>
+      <strong>{activeDemoMode ? "Demo Mode is ready for a no-key first message." : hasLocalConversations ? "This local conversation is empty." : "Ready for your first local conversation."}</strong>
+      <span>{activeDemoMode ? "Send a prompt to verify chat UX with runtime-owned canned responses. Configure a BYOK provider when you need real model quality." : `Ask about code, architecture, tests, or the current task. Sends go through ${selectedModelDisplayName ?? "the selected model"}${selectedModelProviderId ? ` (${selectedModelProviderId})` : ""} via the local runtime, and history is engine-owned local storage.`}</span>
     </div>
   );
 }
