@@ -561,6 +561,20 @@ pre,
   padding: 8px 10px;
 }
 
+.coding-actions-card {
+  padding: 10px 12px;
+}
+
+.coding-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.coding-actions-row button {
+  padding: 7px 10px;
+}
+
 .ide-action-proposal-card {
   border-color: #b9e6d3;
   background: #f5fffb;
