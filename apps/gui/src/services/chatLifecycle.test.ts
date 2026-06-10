@@ -8,10 +8,10 @@ describe("chatLifecycle", () => {
       expect(chatLifecycleLabels[state]).toEqual(expect.any(String));
       expect(chatLifecycleLabels[state].length).toBeGreaterThan(10);
     }
-    expect(chatLifecycleLabels.command_accepted).toContain("waiting");
-    expect(chatLifecycleLabels.streaming).toContain("Assistant is responding...");
-    expect(chatLifecycleLabels.stopped).toContain("Response stopped.");
-    expect(chatLifecycleLabels.failed).toContain("No automatic retry");
+    expect(chatLifecycleLabels.command_accepted).toContain("opening the response stream");
+    expect(chatLifecycleLabels.streaming).toContain("Assistant is responding.");
+    expect(chatLifecycleLabels.stopped).toContain("Response stopped locally.");
+    expect(chatLifecycleLabels.failed).toContain("fix locally");
   });
 
   it("returns actionable recovery copy for runtime, command, SSE, provider, and Stop cases", () => {
