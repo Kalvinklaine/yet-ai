@@ -58,13 +58,13 @@ try {
   await expectVisibleText(page, "Demo Mode ready — local canned responses, no provider calls. Ready to send.", "demo readiness");
 
   const firstPrompt = "Terminal message_added first prompt smoke.";
-  const firstAnswer = "Terminal message_added first answer from Yet AI Demo Mode — no provider call was made.";
+  const assistantAnswer = "Terminal message_added canned answer from Yet AI Demo Mode — no provider call was made.";
   const secondPrompt = "Terminal message_added second prompt smoke.";
-  const secondAnswer = "Terminal message_added second answer from Yet AI Demo Mode — no provider call was made.";
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(firstPrompt);
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expectVisibleText(page, firstPrompt, "visible first user prompt");
-  await expectVisibleText(page, firstAnswer, "first terminal message_added assistant response");
+  await expectVisibleText(page, assistantAnswer, "first terminal message_added assistant response");
+  await assertAssistantBubbleSequence(page, [assistantAnswer], "assistant response sequence after first send");
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
@@ -76,15 +76,14 @@ try {
   await expectVisibleText(page, "Runtime connected", "runtime connected after browser refresh");
   await expectVisibleText(page, "Demo Mode is active in the local runtime", "demo enabled status after browser refresh");
   await expectVisibleText(page, firstPrompt, "visible first user prompt after browser refresh");
-  await expectVisibleText(page, firstAnswer, "first assistant response after browser refresh");
+  await expectVisibleText(page, assistantAnswer, "first assistant response after browser refresh");
+  await assertAssistantBubbleSequence(page, [assistantAnswer], "assistant response sequence after browser refresh");
 
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(secondPrompt);
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expectVisibleText(page, secondPrompt, "visible second user prompt");
-  await expectVisibleText(page, firstAnswer, "first terminal message_added assistant response still visible after second send");
-  await expectVisibleText(page, secondAnswer, "second terminal message_added assistant response without a third send");
-  await assertAssistantAnswerCount(page, firstAnswer, 1, "first terminal message_added assistant response");
-  await assertAssistantAnswerCount(page, secondAnswer, 1, "second terminal message_added assistant response");
+  await expectVisibleText(page, assistantAnswer, "identical terminal message_added assistant responses after second send");
+  await assertAssistantBubbleSequence(page, [assistantAnswer, assistantAnswer], "assistant response sequence after second send");
   await expectVisibleText(page, "Conversations", "conversation list heading");
   await expectVisibleText(page, "Demo smoke chat", "readable active conversation title");
   await expectVisibleText(page, "current", "active conversation marker");
@@ -306,9 +305,8 @@ function addTerminalDemoAssistantResponse(chatId, prompt) {
   pushChatEvent(chatId, "stream_finished", { finishReason: "stop" });
   markTerminalReplayPersisted(chatId);
 }
-function terminalDemoAnswer(prompt) {
-  if (prompt === "Terminal message_added second prompt smoke.") return "Terminal message_added second answer from Yet AI Demo Mode — no provider call was made.";
-  return "Terminal message_added first answer from Yet AI Demo Mode — no provider call was made.";
+function terminalDemoAnswer(_prompt) {
+  return "Terminal message_added canned answer from Yet AI Demo Mode — no provider call was made.";
 }
 function pushChatEvent(chatId, type, payload) {
   const events = chatEvents.get(chatId) ?? [];
@@ -358,9 +356,20 @@ function message(chatId, id, role, content) { return { chatId, id, role, content
 function toSummary(item) { return { chatId: item.chatId, title: item.title, createdAt: item.createdAt, updatedAt: item.updatedAt, messageCount: item.messages.length }; }
 async function listen(server) { await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); }); const address = server.address(); if (!address || typeof address === "string") throw new Error("Server did not bind to a TCP port."); return { port: address.port, close: () => new Promise((resolve) => server.close(resolve)) }; }
 async function expectVisibleText(page, text, label, timeout = 20_000) { const visible = await page.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout }).then(() => true).catch(() => false); assert(visible, `Missing visible ${label}: ${text}`); }
-async function assertAssistantAnswerCount(page, text, expected, label) {
-  const count = await page.locator(".chat-bubble.assistant").evaluateAll((elements, answer) => elements.filter((element) => element.textContent?.includes(String(answer))).length, text);
-  assert(count === expected, `Expected ${label} to appear exactly ${expected} time(s) in assistant bubbles, observed ${count}: ${text}`);
+async function assertAssistantBubbleSequence(page, expectedAnswers, label) {
+  await page.waitForFunction(
+    ({ expectedCount, expected }) => {
+      const actual = Array.from(document.querySelectorAll(".chat-bubble.assistant"), (element) => element.textContent ?? "");
+      return actual.length === expectedCount && expected.every((answer, index) => actual[index]?.includes(answer));
+    },
+    { expectedCount: expectedAnswers.length, expected: expectedAnswers },
+    { timeout: 20_000 },
+  ).catch(() => undefined);
+  const actualAnswers = await page.locator(".chat-bubble.assistant").evaluateAll((elements) => elements.map((element) => element.textContent ?? ""));
+  assert(actualAnswers.length === expectedAnswers.length, `Expected ${label} to have ${expectedAnswers.length} assistant bubble(s), observed ${actualAnswers.length}.`);
+  for (const [index, expectedAnswer] of expectedAnswers.entries()) {
+    assert(actualAnswers[index]?.includes(expectedAnswer), `Expected ${label} bubble ${index + 1} to contain: ${expectedAnswer}`);
+  }
 }
 function empty(response, status) { response.writeHead(status, corsHeaders()); response.end(); }
 function json(response, status, payload) { response.writeHead(status, corsHeaders({ "content-type": "application/json" })); response.end(JSON.stringify(payload)); }

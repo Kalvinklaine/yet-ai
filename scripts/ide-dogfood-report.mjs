@@ -23,7 +23,7 @@ Local-only sanitized evidence template. Keep every untested field as \`not run\`
 - Runtime launch mode: <auto | launch | connect | not run>
 - Runtime status: <connected | sanitized runtime error | not run>
 - Packaged GUI status: <loaded | placeholder | blank | failed with sanitized summary | not run>
-- Provider path: <api-key fallback | official login | experimental login | local mock | unavailable | not run>
+- Provider path: <api-key fallback | official login (future/not implemented) | experimental login | local mock | unavailable | not run>
 - Provider setup status: <configured and redacted | local mock | unavailable | failed with sanitized summary | not run>
 - Active context status: <not shown | shown and omitted | shown and attached safe selection | not run>
 - Read-only IDE action status: <explicitly confirmed and succeeded | explicitly confirmed and failed with sanitized summary | not run>
@@ -36,7 +36,7 @@ Local-only sanitized evidence template. Keep every untested field as \`not run\`
 - Runtime launch mode: <auto | launch | connect | not run>
 - Packaged GUI status: <loaded | placeholder | blank | failed with sanitized summary | not run>
 - Runtime status: <connected | sanitized runtime error | not run>
-- Provider path: <api-key fallback | official login | experimental login | local mock | unavailable | not run>
+- Provider path: <api-key fallback | official login (future/not implemented) | experimental login | local mock | unavailable | not run>
 - Provider setup status: <configured and redacted | local mock | unavailable | failed with sanitized summary | not run>
 - Active context status: <not shown | shown and omitted | shown and attached safe selection | not run>
 - Read-only IDE action status: <explicitly confirmed and succeeded | explicitly confirmed and failed with sanitized summary | not run>
