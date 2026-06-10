@@ -255,6 +255,7 @@ try {
     failures.push("GUI did not expose JetBrains host identity / bridge mode after wrapper bootstrap.");
   }
   await assertSingleBackslashContextPathRejected(page, bridgeVersion, activeReadyRequestId);
+  await assertSecretLikeContextPathRejected(page, bridgeVersion, activeReadyRequestId);
   await page.evaluate(({ version }) => {
     window.__yetAiSendHostMessageToFrame({
       version,
@@ -1039,6 +1040,35 @@ async function assertSingleBackslashContextPathRejected(page, version, requestId
   }
 }
 
+async function assertSecretLikeContextPathRejected(page, version, requestId) {
+  for (const file of [
+    { displayPath: "credentials/api_key.txt", workspaceRelativePath: "credentials/api_key.txt" },
+    { displayPath: "auth/token.json", workspaceRelativePath: "auth/token.json" },
+  ]) {
+    const before = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
+    await page.evaluate(({ bridgeVersion, activeRequestId, file }) => {
+      window.__yetAiSendHostMessageToFrame({
+        version: bridgeVersion,
+        type: "host.contextSnapshot",
+        requestId: activeRequestId,
+        payload: {
+          kind: "active_editor",
+          source: "jetbrains",
+          file: {
+            ...file,
+            languageId: "text",
+          },
+        },
+      });
+    }, { bridgeVersion: version, activeRequestId: requestId, file });
+    await page.waitForTimeout(100);
+    const after = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
+    if (after !== before) {
+      failures.push(`Wrapper relayed host.contextSnapshot with a secret-like path: ${file.workspaceRelativePath}.`);
+    }
+  }
+}
+
 async function assertMockRuntimeRejectsBadChatBodies(baseUrl) {
   const malformed = await fetch(`${baseUrl}/v1/chats/chat-001/commands`, {
     method: "POST",
@@ -1433,7 +1463,8 @@ const requiredLoopbackRuntimeUrl = (value) => {
 };
 const optionalNumber = (value) => value === undefined || (Number.isInteger(value) && value >= 0 && value <= 1000000);
 // This Node template literal emits browser JavaScript, so "\\\\" here becomes the browser-side single-backslash check used by the production wrapper.
-const safePath = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength && !value.startsWith("/") && !value.startsWith("~") && !value.includes("\\\\") && !value.includes(":") && value.split("").every((char) => char >= " ") && value.split("/").every((part) => part !== "." && part !== ".."));
+const isSecretLikePathSegment = (value) => /^(?:auth|authorization|bearer|cookie|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:\.|-|_|$)/i.test(value) || /(?:^|[._-])(?:auth|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:[._-]|$)/i.test(value) || /^sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value);
+const safePath = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength && !value.startsWith("/") && !value.startsWith("~") && !value.includes("%") && !value.includes("\\\\") && !value.includes(":") && !value.includes("?") && !value.includes("#") && value.split("").every((char) => char >= " " && (char < "\u007f" || char > "\u009f")) && value.split("/").every((part) => part.length > 0 && part !== "." && part !== ".." && !isSecretLikePathSegment(part)));
 const isContextFile = (file) => file === undefined || (isPlainObject(file) && hasOnlyKeys(file, ["displayPath", "workspaceRelativePath", "languageId"]) && Object.keys(file).length > 0 && safePath(file.displayPath, 256) && safePath(file.workspaceRelativePath, 512) && (file.languageId === undefined || (typeof file.languageId === "string" && file.languageId.length > 0 && file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(file.languageId))));
 const isContextSelection = (selection) => selection === undefined || (isPlainObject(selection) && hasOnlyKeys(selection, ["startLine", "startCharacter", "endLine", "endCharacter", "text"]) && Object.keys(selection).length > 0 && optionalNumber(selection.startLine) && optionalNumber(selection.startCharacter) && optionalNumber(selection.endLine) && optionalNumber(selection.endCharacter) && optionalString(selection.text, 8000));
 const isContextSnapshotPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["kind", "source", "file", "selection"]) && payload.kind === "active_editor" && (payload.source === "vscode" || payload.source === "jetbrains" || payload.source === "browser") && isContextFile(payload.file) && isContextSelection(payload.selection);

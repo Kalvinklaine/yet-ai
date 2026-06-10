@@ -32,6 +32,8 @@ const requiredSnippets = [
   "message.type === \"gui.ideActionRequest\" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)",
   "message.type === \"gui.applyWorkspaceEditRequest\" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)",
   "latestHostReady = event.data",
+  "const isEmptyHostPayload = (payload) => payload === undefined || (isPlainObject(payload) && Object.keys(payload).length === 0)",
+  "message.type === \"host.openedFromCommand\" ? message.requestId === undefined && isEmptyHostPayload(message.payload)",
   "host.contextSnapshot",
   "host.ideActionProgress",
   "host.ideActionResult",

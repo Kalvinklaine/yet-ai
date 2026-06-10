@@ -175,7 +175,6 @@ class YetToolWindowFactoryTest {
         assertContains(html, "workspaceFolderCount")
         assertContains(html, "isHostIdeActionProgressPayload(message.payload)")
         assertContains(html, "isHostIdeActionResultPayload(message.payload)")
-        assertContains(html, "ideActionRequestTypesRejectedByPolicy")
         assertContains(html, "gui.applyWorkspaceEditRequest")
 
         listOf("writeWorkspaceFile", "applyWorkspaceEdit", "runShellCommand", "gitStatus", "runTask", "executeIdeTool", "callProvider", "readWorkspaceFile", "indexWorkspace").forEach { action ->
@@ -253,6 +252,11 @@ class YetToolWindowFactoryTest {
         assertContains(html, "parsed.pathname === \"\" || parsed.pathname === \"/\"")
         assertContains(html, "optionalString(payload.sessionToken, 4096)")
         assertContains(html, "payload.cloudRequired === undefined || payload.cloudRequired === false")
+        assertContains(html, "const isSecretLikePathSegment = (value)")
+        assertContains(html, "!isSecretLikePathSegment(part)")
+        assertContains(html, "!value.includes(\"%\")")
+        assertContains(html, "!value.includes(\"?\")")
+        assertContains(html, "!value.includes(\"#\")")
         assertContains(html, "if (message.type === \"host.contextSnapshot\") return isContextSnapshotPayload(message.payload)")
         assertContains(html, "if (message.type === \"host.openedFromCommand\") return message.requestId === undefined && (message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0))")
         assertContains(html, "if (message.type === \"host.ideActionProgress\") return isHostIdeActionProgressPayload(message.payload)")
@@ -262,7 +266,7 @@ class YetToolWindowFactoryTest {
         assertContains(html, "if (message.type === \"host.ready\") {")
         assertContains(html, "acceptedHostReadyRequestId = message.requestId;")
         assertContains(html, "hostReadyAcceptedForCurrentFrame = true;")
-        assertFalse(html.contains("ideActionRequestTypesRejectedByPolicy.includes(message.type)"))
+        assertFalse(html.contains("ideActionRequestTypesRejectedByPolicy"))
     }
 
     @Test
