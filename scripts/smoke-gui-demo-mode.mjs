@@ -59,7 +59,15 @@ try {
 
   const firstPrompt = "Terminal message_added first prompt smoke.";
   const assistantAnswer = "Terminal message_added canned answer from Yet AI Demo Mode — no provider call was made.";
+  const explainAnswer = "Demo Mode Coding Actions explanation: selected code returns a greeting; no provider call was made.";
+  const editProposalSummary = "Demo Mode safe edit proposal for selected code. no provider call was made.";
   const secondPrompt = "Terminal message_added second prompt smoke.";
+  const codingActionsContext = {
+    kind: "active_editor",
+    source: "browser",
+    file: { displayPath: "src/demo.ts", workspaceRelativePath: "src/demo.ts", languageId: "typescript" },
+    selection: { startLine: 1, startCharacter: 0, endLine: 3, endCharacter: 1, text: "export function greet(name: string) {\n  return `Hello, ${name}`;\n}" },
+  };
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(firstPrompt);
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expectVisibleText(page, firstPrompt, "visible first user prompt");
@@ -79,15 +87,36 @@ try {
   await expectVisibleText(page, assistantAnswer, "first assistant response after browser refresh");
   await assertAssistantBubbleSequence(page, [assistantAnswer], "assistant response sequence after browser refresh");
 
+  await injectActiveEditorContext(page, codingActionsContext);
+  await expectVisibleText(page, "Coding Actions", "coding actions panel");
+  await expectVisibleText(page, "attached context ready", "coding actions attached context ready");
+  await page.getByRole("button", { name: "Explain selection", exact: true }).click();
+  await expectComposerValue(page, "Explain the selected code", "explain selection prompt");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expectVisibleText(page, explainAnswer, "coding actions explain demo answer");
+  await expectVisibleText(page, "no provider call was made", "coding actions explain no-provider copy");
+  await assertAssistantBubbleSequence(page, [assistantAnswer, explainAnswer], "assistant response sequence after coding explain");
+
+  await injectActiveEditorContext(page, codingActionsContext);
+  await expectVisibleText(page, "Coding Actions", "coding actions panel before safe edit");
+  await page.getByRole("button", { name: "Safe edit", exact: true }).click();
+  await expectComposerValue(page, "Propose a safe edit", "propose safe edit prompt");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expectVisibleText(page, "Proposed a safe edit. Review the proposal card below. It will not apply automatically.", "compact safe edit proposal copy");
+  await expectVisibleText(page, "Propose safe edit", "safe edit proposal card");
+  await expectVisibleText(page, editProposalSummary, "safe edit proposal summary");
+  await expectVisibleText(page, "Preview only in this host. Browser and JetBrains cannot apply proposed edits", "browser preview-only safe edit copy");
+  await assertAssistantBubbleSequence(page, [assistantAnswer, explainAnswer, "Proposed a safe edit"], "assistant response sequence after coding safe edit");
+
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(secondPrompt);
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expectVisibleText(page, secondPrompt, "visible second user prompt");
   await expectVisibleText(page, assistantAnswer, "identical terminal message_added assistant responses after second send");
-  await assertAssistantBubbleSequence(page, [assistantAnswer, assistantAnswer], "assistant response sequence after second send");
+  await assertAssistantBubbleSequence(page, [assistantAnswer, explainAnswer, "Earlier safe edit proposal", assistantAnswer], "assistant response sequence after second send");
   await expectVisibleText(page, "Conversations", "conversation list heading");
   await expectVisibleText(page, "Demo smoke chat", "readable active conversation title");
   await expectVisibleText(page, "current", "active conversation marker");
-  await expectVisibleText(page, "4 visible messages", "active conversation readable visible message count after sends");
+  await expectVisibleText(page, "8 visible messages", "active conversation readable visible message count after sends");
   await expectVisibleText(page, "no provider call was made", "demo no-provider copy");
   await expectVisibleText(page, "Demo Mode ready — local canned responses, no provider calls. Ready to send.", "post-response demo ready status");
   const postResponseBody = await page.evaluate(() => document.body.innerText);
@@ -113,7 +142,7 @@ try {
     assert(!pageState.includes(marker), `browser state leaked ${marker}`);
   }
   assert(providerHits === 0, `demo smoke unexpectedly hit provider ${providerHits} time(s)`);
-  assert(chatCommandCount === 2, `demo smoke expected exactly two chat sends without a third send, observed ${chatCommandCount}`);
+  assert(chatCommandCount === 4, `demo smoke expected exactly four chat sends including Coding Actions, observed ${chatCommandCount}`);
   assert(secondResponseHadActiveSse, "demo smoke expected the second response to be delivered while a browser SSE subscriber was active");
 
   const evidence = await saveVisualEvidence(page);
@@ -122,7 +151,7 @@ try {
     throw new Error(`GUI Demo Mode smoke failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
   }
   console.log("GUI Demo Mode smoke passed.");
-  console.log("Verified built GUI toggles local runtime Demo Mode, sends canned chat over local command/SSE/history, renders readable active conversation text, avoids duplicate assistant bubbles, uses only loopback, and makes no provider calls or browser-storage secret writes.");
+  console.log("Verified built GUI toggles local runtime Demo Mode, sends canned chat over local command/SSE/history, exercises Coding Actions with selected code via real Explain selection/Propose safe edit clicks and real Send clicks, renders preview-only safe edit proposals, avoids duplicate assistant bubbles, uses only loopback, and makes no provider calls or browser-storage secret writes.");
   console.log(`Saved sanitized visual evidence under ${path.relative(root, evidence.dir)}/ (${path.basename(evidence.screenshotPath)}, ${path.basename(evidence.domPath)}).`);
 } finally {
   await browser?.close().catch(() => undefined);
@@ -305,8 +334,28 @@ function addTerminalDemoAssistantResponse(chatId, prompt) {
   pushChatEvent(chatId, "stream_finished", { finishReason: "stop" });
   markTerminalReplayPersisted(chatId);
 }
-function terminalDemoAnswer(_prompt) {
+function terminalDemoAnswer(prompt) {
+  if (prompt.includes("Explain the selected code")) {
+    return "Demo Mode Coding Actions explanation: selected code returns a greeting; no provider call was made.";
+  }
+  if (prompt.includes("Propose a safe edit")) {
+    return JSON.stringify(safeEditProposalPayload());
+  }
   return "Terminal message_added canned answer from Yet AI Demo Mode — no provider call was made.";
+}
+function safeEditProposalPayload() {
+  return {
+    requiresUserConfirmation: true,
+    summary: "Demo Mode safe edit proposal for selected code. no provider call was made.",
+    cloudRequired: false,
+    edits: [{
+      workspaceRelativePath: "src/demo.ts",
+      textReplacements: [{
+        range: { start: { line: 2, character: 9 }, end: { line: 2, character: 15 } },
+        replacementText: "`Hello from Demo Mode, ${name}`",
+      }],
+    }],
+  };
 }
 function pushChatEvent(chatId, type, payload) {
   const events = chatEvents.get(chatId) ?? [];
@@ -345,6 +394,17 @@ function snapshotEvent(chatId) {
   const item = chats.get(chatId) ?? thread(chatId, chatId, []);
   return { seq: 0, type: "snapshot", chatId, payload: { thread: { id: chatId, title: item.title, messages: item.messages }, messages: item.messages, runtime: { streaming: false, waitingForResponse: false } } };
 }
+async function injectActiveEditorContext(page, payload) {
+  await page.evaluate((contextPayload) => {
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version: "2026-05-15",
+        type: "host.contextSnapshot",
+        payload: contextPayload,
+      },
+    }));
+  }, payload);
+}
 function writeSse(response, event) {
   response.write(`event: ${event.type}\n`);
   response.write(`data: ${JSON.stringify(event)}\n\n`);
@@ -356,6 +416,10 @@ function message(chatId, id, role, content) { return { chatId, id, role, content
 function toSummary(item) { return { chatId: item.chatId, title: item.title, createdAt: item.createdAt, updatedAt: item.updatedAt, messageCount: item.messages.length }; }
 async function listen(server) { await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); }); const address = server.address(); if (!address || typeof address === "string") throw new Error("Server did not bind to a TCP port."); return { port: address.port, close: () => new Promise((resolve) => server.close(resolve)) }; }
 async function expectVisibleText(page, text, label, timeout = 20_000) { const visible = await page.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout }).then(() => true).catch(() => false); assert(visible, `Missing visible ${label}: ${text}`); }
+async function expectComposerValue(page, text, label) {
+  const ok = await page.getByPlaceholder("Ask about the current file, selection, or project...").evaluate((element, expected) => element instanceof HTMLTextAreaElement && element.value.includes(expected), text).catch(() => false);
+  assert(ok, `Missing ${label} in composer: ${text}`);
+}
 async function assertAssistantBubbleSequence(page, expectedAnswers, label) {
   await page.waitForFunction(
     ({ expectedCount, expected }) => {

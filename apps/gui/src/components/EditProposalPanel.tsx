@@ -30,10 +30,11 @@ export function EditProposalPanel({ proposal, result, host, pendingRequestId, no
     return null;
   }
   return (
-    <section className="edit-proposal-card stack" aria-label="Edit proposal preview">
+    <section className="edit-proposal-card stack" aria-label="Propose safe edit preview">
       <div className="row">
-        <strong>Confirmed edit proposal</strong>
-        <span className="badge warn">preview only</span>
+        <strong>Propose safe edit</strong>
+        <span className="badge warn">review required</span>
+        <span className="badge ok">no auto-apply</span>
       </div>
       {proposal ? <EditProposalPreview proposal={proposal} host={host} pending={pendingRequestId !== null} onApply={onApply} onCancelPending={onCancelPending} /> : <span className="subtle">No valid bounded edit proposal is available.</span>}
       {result && <ApplyResultPreview result={result} />}
@@ -75,14 +76,14 @@ export function EditProposalPreview({ proposal, host, pending, onApply, onCancel
     <div className="stack">
       <span>{sanitizeDisplayText(proposal.payload.summary)}</span>
       <div className="edit-proposal-grid">
-        <span>Request: {sanitizeDisplayText(proposal.requestId)}</span>
+        <span>Proposal id: {sanitizeDisplayText(proposal.requestId)}</span>
         <span data-testid="edit-proposal-unique-files">Files: {fileCount}</span>
         <span data-testid="edit-proposal-edit-count">Text edits: {editCount}</span>
         <span>Cloud required: false</span>
       </div>
       {hasRedactedPreview && (
         <div className="readiness-card warn" role="status" data-testid="edit-proposal-redaction-warning">
-          Replacement preview was redacted or shortened. Applying uses the raw proposal text; inspect proposal JSON before applying.
+          Replacement preview was redacted or shortened. VS Code apply uses the raw proposal text; inspect proposal JSON before requesting apply.
           <label className="stack edit-proposal-ack" style={{ marginTop: 4 }}>
             <input
               type="checkbox"
@@ -110,7 +111,7 @@ export function EditProposalPreview({ proposal, host, pending, onApply, onCancel
         ))}
       </div>
       {host !== "vscode" ? (
-        <div className="readiness-card warn" role="status">Browser and JetBrains are preview-only for confirmed edits. Host apply is unsupported there; only VS Code can receive an apply request after your review.</div>
+        <div className="readiness-card warn" role="status">Preview only in this host. Browser and JetBrains cannot apply proposed edits; only VS Code can receive an apply request after you review and click.</div>
       ) : (
         <div className="row">
           <button
@@ -119,12 +120,12 @@ export function EditProposalPreview({ proposal, host, pending, onApply, onCancel
             disabled={applyDisabled}
             data-testid="edit-proposal-apply-button"
           >
-            {pending ? "VS Code host apply pending…" : "Request VS Code host apply after review"}
+            {pending ? "VS Code apply request pending…" : "Apply in VS Code after review"}
           </button>
           {pending && <button type="button" onClick={onCancelPending}>Clear pending apply state</button>}
         </div>
       )}
-      <span className="subtle">The GUI never edits files directly. The host must confirm and apply any workspace mutation. Clearing pending state only lets the GUI ignore an old host result; it does not close an already-open VS Code confirmation dialog.</span>
+      <span className="subtle">Nothing is applied automatically. The GUI never edits files directly; VS Code must confirm and apply any workspace mutation. Clearing pending state only lets the GUI ignore an old host result; it does not close an already-open VS Code confirmation dialog.</span>
     </div>
   );
 }

@@ -14,6 +14,7 @@ import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
 import { editProposalCandidateIdentityMatches, editProposalPayloadKey, isCompleteAssistantEditProposalStatus, latestEditProposalCandidateFromMessages, parseEditProposalContent, type EditProposalIdentity } from "./services/editProposal";
+import { codingActions, type CodingAction } from "./services/codingActions";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
@@ -381,6 +382,7 @@ export function App() {
   const chatModelStatus = apiKeyReadiness.model ? modelStatusText(apiKeyReadiness.model, apiKeyReadiness.provider) : null;
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
   const currentAttachedContext = attachedContext?.settingsRevision === settingsRevision && attachedContext.chatId === chatId ? attachedContext.payload : null;
+  const codingActionsCanUseContext = Boolean(currentAttachedContext && hasUsableAttachedContext(currentAttachedContext) && (!attachedContextRequiresAcknowledgement(currentAttachedContext) || attachedContextAcknowledged));
   const editProposalCandidate = latestEditProposalCandidateFromMessages(chatView.messages);
   const activeEditProposal = editProposalCandidateIdentityMatches(editProposal, editProposalCandidate) ? editProposal : null;
   const ideActionProposalCandidate = useMemo(() => latestIdeActionProposalCandidateFromMessages(chatView.messages), [chatView.messages]);
@@ -1473,6 +1475,17 @@ export function App() {
     }
   }, [chatView.messages, clearEditProposalState]);
 
+  const applyCodingAction = (action: CodingAction) => {
+    if (!currentAttachedContext || !codingActionsCanUseContext) {
+      chatInputRef.current?.focus();
+      return;
+    }
+    setAttachedContext({ payload: currentAttachedContext, settingsRevision: settingsRevisionRef.current, chatId: chatIdRef.current });
+    setChatInput(action.buildPrompt(currentAttachedContext));
+    setIncludeAttachedContext(true);
+    chatInputRef.current?.focus();
+  };
+
   const submitChat = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const content = chatInput.trim();
@@ -1775,6 +1788,7 @@ export function App() {
             <IdeActionsPanel host={bridgeHost} attempt={ideActionAttempt} note={ideActionNote} workspaceRelativePath={safeActiveWorkspacePath} range={safeActiveRange} onGetContext={() => requestIdeAction({ action: "getContextSnapshot" })} onOpenFile={(workspaceRelativePath) => requestIdeAction({ action: "openWorkspaceFile", workspaceRelativePath })} onRevealRange={(workspaceRelativePath, range) => requestIdeAction({ action: "revealWorkspaceRange", workspaceRelativePath, range })} onClearPendingIdeAction={clearPendingIdeActionState} />
             <form className="stack chat-composer" onSubmit={(event) => void submitChat(event)}>
               <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} acknowledged={attachedContextAcknowledged} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} onAcknowledgeChange={setAttachedContextAcknowledged} />
+              <CodingActionsPanel canUseContext={codingActionsCanUseContext} context={currentAttachedContext} onAction={applyCodingAction} />
               <textarea ref={chatInputRef} value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
               <div className="row chat-actions">
                 <button type="submit" disabled={!canSendChat}>Send</button>
@@ -2121,7 +2135,7 @@ function ChatBubble({ message, activeEditProposal, activeIdeActionProposal }: { 
       <strong>{message.role === "user" ? "You" : message.role === "assistant" ? "Yet AI" : "Error"}</strong>
       {editProposal && editProposalJson && editProposalKey ? (
         <div className="assistant-proposal-compact stack">
-          <span>{isActiveEditProposal ? "Proposed a confirmed edit. Review the edit proposal card below. It will not apply automatically." : "Earlier confirmed edit proposal. Only the latest valid proposal can be requested from the proposal card."}</span>
+          <span>{isActiveEditProposal ? "Proposed a safe edit. Review the proposal card below. It will not apply automatically." : "Earlier safe edit proposal. Only the latest valid proposal can be requested from the proposal card."}</span>
           <button type="button" className="link-button" onClick={() => setInspectedEditProposalKey(editProposalJsonVisible ? null : editProposalKey)}>{editProposalJsonVisible ? "Hide proposal JSON" : "Inspect proposal JSON"}</button>
           {editProposalJsonVisible && <pre aria-label="Assistant edit proposal JSON">{editProposalJson}</pre>}
         </div>
@@ -2255,6 +2269,25 @@ function AttachedContextPreview({ context, include, acknowledged, status, onIncl
         </label>
       </div>
     </div>
+  );
+}
+
+function CodingActionsPanel({ canUseContext, context, onAction }: { canUseContext: boolean; context: HostContextSnapshotPayload | null; onAction: (action: CodingAction) => void }) {
+  const hasContext = Boolean(context && hasUsableAttachedContext(context));
+  return (
+    <section className={`readiness-card ${canUseContext ? "ready" : "warn"} coding-actions-card`} aria-label="Coding Actions">
+      <div className="stack">
+        <div className="row">
+          <strong>Coding Actions</strong>
+          <span className={`badge ${canUseContext ? "ok" : "warn"}`}>{canUseContext ? "attached context ready" : "needs attached context"}</span>
+        </div>
+        <div className="coding-actions-row">
+          {codingActions.map((action) => <button type="button" key={action.id} disabled={!canUseContext} title={action.description} onClick={() => onAction(action)}>{action.label}</button>)}
+        </div>
+        <span className="subtle">{canUseContext ? "Actions only fill the prompt and enable the one-shot attached-context toggle. They never auto-send, read hidden files, write browser storage, or apply edits." : hasContext ? "Acknowledge the attached-context warning before using coding actions. Nothing will be included until you opt in." : "Attach active editor context first. Coding actions stay disabled until there is usable selected code or file context."}</span>
+        <span className="subtle"><strong>Safe edit:</strong> nothing is applied automatically; proposals require explicit review before any workspace edit can be requested.</span>
+      </div>
+    </section>
   );
 }
 
