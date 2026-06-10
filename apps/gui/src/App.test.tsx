@@ -120,7 +120,7 @@ describe("runtime refresh feedback", () => {
     expect(container?.textContent).toContain("Runtime check failed: 503 models unavailable");
     expect(container?.textContent).toContain("Models refresh failed: 503: models unavailable");
     expect(container?.textContent).toContain("State: Provider required");
-    expect(container?.textContent).toContain("Runtime model refresh failed. Refresh runtime again before sending the first GPT message.");
+    expect(container?.textContent).toContain("Runtime model refresh failed. Refresh runtime again before sending the first message.");
     expect(findButton("Send").disabled).toBe(true);
   });
 
@@ -1834,8 +1834,10 @@ describe("host.ready runtime bootstrap", () => {
     const text = container?.textContent ?? "";
     expect(text).toContain("bridge jetbrains");
     expect(text).toContain("State: Runtime unavailable");
-    expect(text).toContain("Runtime is not connected. Refresh runtime and fix the local runtime problem before sending the first GPT message.");
-    expect(text).toContain("Next safest action: Refresh runtime, then fix the loopback URL or Session token if the check fails. In JetBrains installed mode, also use Tools → Yet AI: Show Runtime Status or Restart Runtime if Refresh runtime keeps failing.");
+    expect(text).toContain("Runtime is not connected yet. Refresh runtime or start the IDE-managed local runtime, then return here to send.");
+    expect(text).toContain("Start here: connect the local runtime.");
+    expect(text).toContain("Runtime needs refresh");
+    expect(text).toContain("Next safest action: Use Refresh runtime from this chat page. If it still fails, fix the loopback URL or Session token in Local runtime connection. In JetBrains installed mode, also use Tools → Yet AI: Show Runtime Status or Restart Runtime if Refresh runtime keeps failing.");
     expect(findButton("Refresh runtime")).toBeDefined();
     expect(findButton("Send").disabled).toBe(true);
   });
@@ -1852,8 +1854,10 @@ describe("host.ready runtime bootstrap", () => {
     expect(text).toContain("Runtime connected — provider required for your first GPT message");
     expect(text).toContain("Provider setup");
     expect(text).toContain("State: Provider required");
-    expect(text).toContain("Provider required: choose OpenAI API for the API-key fallback or configure a local OpenAI-compatible /v1 provider with a model before sending the first GPT message.");
-    expect(text).toContain("Next safest action: Use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, test provider, then refresh runtime/model readiness.");
+    expect(text).toContain("Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK OpenAI-compatible provider/model for real answers.");
+    expect(text).toContain("Choose how this first chat should answer.");
+    expect(text).toContain("Provider or Demo Mode needed");
+    expect(text).toContain("Next safest action: For a no-key trial, enable Demo Mode. For real answers, use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, test provider, then refresh runtime/model readiness.");
     expect(findButton("Use OpenAI API key fallback")).toBeDefined();
     expect(findButton("Send").disabled).toBe(true);
   });
@@ -1906,6 +1910,8 @@ describe("host.ready runtime bootstrap", () => {
     expect(container?.textContent).toContain("Demo Mode is active in the local runtime");
     expect(container?.textContent).toContain("no provider calls");
     expect(container?.textContent).toContain("not model quality");
+    expect(container?.textContent).toContain("Demo Mode is ready for a no-key first message.");
+    expect(container?.textContent).toContain("Send a prompt to verify chat UX with runtime-owned canned responses.");
     expect(container?.textContent).toContain("State: Yet AI Demo Chat (yet-demo)");
     expect(chatLifecycleText()).toBe("Demo Mode ready — local canned responses, no provider calls. Ready to send.");
     expect(findButton("Send").disabled).toBe(false);
@@ -2059,8 +2065,9 @@ describe("host.ready runtime bootstrap", () => {
     renderApp();
     await flushAsync();
     expect((container as HTMLDivElement | undefined)?.textContent).toContain("State: GPT-4o mini (openai-api)");
-    expect((container as HTMLDivElement | undefined)?.textContent).toContain("Ready to send using GPT-4o mini.");
+    expect((container as HTMLDivElement | undefined)?.textContent).toContain("Ready to send using GPT-4o mini through the local runtime.");
     expect((container as HTMLDivElement | undefined)?.textContent).toContain("Ready for your first message");
+    expect((container as HTMLDivElement | undefined)?.textContent).toContain("Provider send ready");
     expect(findButton("Send").disabled).toBe(false);
   });
 
@@ -2815,7 +2822,7 @@ describe("active editor attached context", () => {
     });
 
     expect(container?.textContent).toContain("Ready to ask about src/main.ts.");
-    expect(container?.textContent).toContain("Send a question about the attached file or selection");
+    expect(container?.textContent).toContain("Send through GPT-4o mini (openai-api), or turn off attached context before sending.");
   });
 
 
@@ -3823,14 +3830,14 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("Chat readiness");
     expect(container?.textContent).toContain("0 enabled providers");
     expect(container?.textContent).toContain("Runtime connected — provider required for your first GPT message");
-    expect(container?.textContent).toContain("Use the OpenAI API-key fallback or a local OpenAI-compatible /v1 server");
+    expect(container?.textContent).toContain("Primary chat readiness offers Demo Mode for local canned responses. Configure a BYOK provider here for real answers when ready.");
     expect(container?.textContent).toContain("Provider setup stays local-first BYOK: no Yet AI hosted backend, account, cloud workspace, or credit balance is required.");
     expect(container?.textContent).toContain("State: Provider required");
-    expect(container?.textContent).toContain("Provider required: choose OpenAI API for the API-key fallback or configure a local OpenAI-compatible /v1 provider with a model before sending the first GPT message.");
+    expect(container?.textContent).toContain("Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK OpenAI-compatible provider/model for real answers.");
     expect(container?.textContent).toContain("choose OpenAI API, paste a provider API key once, save, optionally test the provider");
     expect(container?.textContent).toContain("Provider required for first message");
     expect(container?.textContent).toContain("Why: No enabled OpenAI-compatible provider/model is ready for chat streaming.");
-    expect(container?.textContent).toContain("Next safest action: Use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, test provider, then refresh runtime/model readiness.");
+    expect(container?.textContent).toContain("Next safest action: For a no-key trial, enable Demo Mode. For real answers, use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, test provider, then refresh runtime/model readiness.");
     expect(container?.textContent).toContain("Provider setup stays local-first BYOK");
     expect(findButton("Send").disabled).toBe(true);
   });
@@ -3842,8 +3849,8 @@ describe("chat panel", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("Chat with Yet AI");
-    expect(container?.textContent).toContain("Configure a provider or model before sending.");
-    expect(container?.textContent).toContain("Provider credentials stay local to the runtime and are not stored by the GUI.");
+    expect(container?.textContent).toContain("Choose how this first chat should answer.");
+    expect(container?.textContent).toContain("Provider credentials are sent only to the local runtime and are not stored by the GUI.");
   });
 
 
@@ -4030,7 +4037,7 @@ describe("chat panel", () => {
 
     expect(container?.textContent).toContain("1 enabled provider");
     expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
-    expect(container?.textContent).toContain("Ready to send using GPT-4o mini.");
+    expect(container?.textContent).toContain("Ready to send using GPT-4o mini through the local runtime.");
     expect(container?.textContent).not.toContain("State: Experimental OpenAI account / gpt-5-codex");
     expect(findButton("Send").disabled).toBe(false);
   });
@@ -4076,7 +4083,7 @@ describe("chat panel", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
-    expect(container?.textContent).toContain("Ready to send using GPT-4o mini.");
+    expect(container?.textContent).toContain("Ready to send using GPT-4o mini through the local runtime.");
     expect(findButton("Send").disabled).toBe(false);
   });
 
@@ -4123,7 +4130,7 @@ describe("chat panel", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("State: Provider required");
-    expect(container?.textContent).toContain("Provider required: choose OpenAI API for the API-key fallback or configure a local OpenAI-compatible /v1 provider with a model before sending the first GPT message.");
+    expect(container?.textContent).toContain("Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK OpenAI-compatible provider/model for real answers.");
     expect(findButton("Send").disabled).toBe(true);
   });
 
@@ -4135,7 +4142,7 @@ describe("chat panel", () => {
 
     expect(container?.textContent).toContain("State: Runtime unavailable");
     expect(container?.textContent).toContain("Connect the local runtime first");
-    expect(container?.textContent).toContain("Next safest action: Refresh runtime, then fix the loopback URL or Session token if the check fails.");
+    expect(container?.textContent).toContain("Next safest action: Use Refresh runtime from this chat page. If it still fails, fix the loopback URL or Session token in Local runtime connection.");
     expect(container?.textContent).toContain("Session token unlocks this GUI to the local runtime only; Provider API key unlocks the upstream model through the runtime.");
     expect(findButton("Send").disabled).toBe(true);
 
@@ -4158,7 +4165,7 @@ describe("chat panel", () => {
 
     expect(container?.textContent).toContain("1 enabled provider");
     expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
-    expect(container?.textContent).toContain("Ready to send using GPT-4o mini.");
+    expect(container?.textContent).toContain("Ready to send using GPT-4o mini through the local runtime.");
     expect(container?.textContent).toContain("Ready for your first message");
     expect(container?.textContent).toContain("Next safest action: Type a prompt and send it through the local runtime.");
     expect(container?.textContent).toContain("Send available");
@@ -4176,7 +4183,7 @@ describe("chat panel", () => {
 
     expect(container?.textContent).toContain("1 enabled provider");
     expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
-    expect(container?.textContent).toContain("Ready to send using GPT-4o mini.");
+    expect(container?.textContent).toContain("Ready to send using GPT-4o mini through the local runtime.");
     expect(findButton("Send").disabled).toBe(false);
   });
 
@@ -4265,7 +4272,7 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("runtime error");
     expect(container?.textContent).toContain("1 enabled provider");
     expect(container?.textContent).toContain("State: Runtime unavailable");
-    expect(container?.textContent).toContain("Runtime is not connected. Refresh runtime and fix the local runtime problem before sending the first GPT message.");
+    expect(container?.textContent).toContain("Runtime is not connected yet. Refresh runtime or start the IDE-managed local runtime, then return here to send.");
     expect(findButton("Send").disabled).toBe(true);
   });
 
@@ -4275,8 +4282,8 @@ describe("chat panel", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("Connect the local runtime to start chatting.");
-    expect(container?.textContent).toContain("No hosted Yet AI backend, account, cloud workspace, or credit balance is required.");
+    expect(container?.textContent).toContain("Start here: connect the local runtime.");
+    expect(container?.textContent).toContain("no hosted Yet AI backend, account, cloud workspace, or credit balance is required.");
   });
 
 
@@ -4287,7 +4294,7 @@ describe("chat panel", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("State: Runtime unavailable");
-    expect(container?.textContent).toContain("Runtime is not connected. Refresh runtime and fix the local runtime problem before sending the first GPT message.");
+    expect(container?.textContent).toContain("Runtime is not connected yet. Refresh runtime or start the IDE-managed local runtime, then return here to send.");
     expect(findButton("Send").disabled).toBe(true);
   });
 
