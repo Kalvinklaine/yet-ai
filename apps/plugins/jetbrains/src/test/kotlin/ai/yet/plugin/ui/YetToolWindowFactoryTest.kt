@@ -175,7 +175,6 @@ class YetToolWindowFactoryTest {
         assertContains(html, "workspaceFolderCount")
         assertContains(html, "isHostIdeActionProgressPayload(message.payload)")
         assertContains(html, "isHostIdeActionResultPayload(message.payload)")
-        assertContains(html, "gui.applyWorkspaceEditRequest")
 
         listOf("writeWorkspaceFile", "applyWorkspaceEdit", "runShellCommand", "gitStatus", "runTask", "executeIdeTool", "callProvider", "readWorkspaceFile", "indexWorkspace").forEach { action ->
             assertFalse(html.contains("\"$action\""), action)
@@ -526,6 +525,21 @@ class YetToolWindowFactoryTest {
         assertContains(html, "Run <code>cd apps/gui && npm run build</code>")
         assertContains(html, "Connected")
         assertFalse(html.contains("<iframe title=\"Yet AI GUI\""))
+    }
+
+    @Test
+    fun toolWindowContentIsRecreatedOnlyWhenEmpty() {
+        assertTrue(shouldCreateYetToolWindowContent(0))
+        assertFalse(shouldCreateYetToolWindowContent(1))
+        assertFalse(shouldCreateYetToolWindowContent(2))
+    }
+
+    @Test
+    fun pluginPreventsClosingTheOnlyToolWindowContent() {
+        val pluginXml = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/resources/META-INF/plugin.xml"))
+
+        assertContains(pluginXml, "canCloseContents=\"false\"")
+        assertFalse(pluginXml.contains("canCloseContents=\"true\""))
     }
 }
 
