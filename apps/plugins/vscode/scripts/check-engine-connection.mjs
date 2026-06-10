@@ -186,6 +186,7 @@ try {
     formatRuntimeDiagnostics,
     formatStartedRuntimeMessage,
     pingEngineOnce,
+    hostReadyRuntimeDeliveryStatus,
     redactRuntimeDiagnosticText,
     resolveSessionToken,
     safeRuntimeUrl,
@@ -210,6 +211,9 @@ try {
   assert.equal(isBridgeSafeSessionToken("local-dev-token"), true);
   assert.equal(isBridgeSafeSessionToken("sk-abcdefghijkl"), false);
   assert.equal(isBridgeSafeSessionToken("manual sk-abcdefghijkl"), false);
+  assert.match(hostReadyRuntimeDeliveryStatus({ launchMode: "launch", sessionTokenSource: "none" }), /IDE-launched ephemeral runtime token; delivered to the webview by trusted host\.ready/);
+  assert.match(hostReadyRuntimeDeliveryStatus({ launchMode: "connect", sessionTokenSource: "none" }), /runtime URL only; no token configured/);
+  assert.match(hostReadyRuntimeDeliveryStatus({ launchMode: "connect", sessionTokenSource: "secretStorage" }), /runtime URL plus SecretStorage token/);
 
   assert.doesNotThrow(() => validateLoopbackUrl("https://127.0.0.1:5173", "yetai.guiDevUrl"));
   assert.doesNotThrow(() => validateRuntimeUrl("http://127.0.0.1:8001", "yetai.runtimeUrl"));
@@ -506,6 +510,8 @@ try {
     runtimeUrl: "http://127.0.0.1:8001/",
     launchMode: "launch",
     configuredEngineBinaryPath: true,
+    sessionTokenSource: "secretStorage",
+    hostReadyRuntimeDelivery: "runtime URL plus SecretStorage token; delivered to the webview by trusted host.ready and not printed in diagnostics. Authorization: Bearer formatted-delivery-token",
     engineBinaryStatus: `configured binary failed at ${fakePrivatePath} with OPENAI_API_KEY=provider-secret`,
     pluginLaunchedProcessStatus: "not running",
     pingStatus: "skipped: Authorization: Bearer formatted-secret-token /Users/private/runtime.sock",
@@ -513,11 +519,13 @@ try {
   });
   assert.match(formattedDiagnostics, /^Yet AI Runtime Status\n/);
   assert.match(formattedDiagnostics, /Launch mode: launch/);
+  assert.match(formattedDiagnostics, /Runtime credential source: secretStorage/);
+  assert.match(formattedDiagnostics, /host\.ready delivery: runtime URL plus SecretStorage token/);
   assert.match(formattedDiagnostics, /Engine binary path configured: yes/);
   assert.match(formattedDiagnostics, /Plugin-launched process: not running/);
   assert.match(formattedDiagnostics, /Last\/ping health: skipped:/);
   assert.match(formattedDiagnostics, /Guidance: Launch mode requires/);
-  for (const forbidden of [fakePrivatePath, os.homedir(), "provider-secret", "formatted-secret-token", "/Users/private/runtime.sock"]) {
+  for (const forbidden of [fakePrivatePath, os.homedir(), "provider-secret", "formatted-secret-token", "formatted-delivery-token", "/Users/private/runtime.sock"]) {
     assert.equal(formattedDiagnostics.includes(forbidden), false, `formatted diagnostics leaked ${forbidden}`);
   }
 

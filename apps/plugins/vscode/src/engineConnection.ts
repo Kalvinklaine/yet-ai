@@ -16,6 +16,8 @@ export type RuntimeDiagnostics = {
   runtimeUrl: string;
   launchMode: LaunchMode;
   configuredEngineBinaryPath: boolean;
+  sessionTokenSource: SessionTokenSource;
+  hostReadyRuntimeDelivery: string;
   engineBinaryStatus: string;
   pluginLaunchedProcessStatus: string;
   pingStatus: string;
@@ -70,6 +72,8 @@ export async function collectRuntimeDiagnostics(
     runtimeUrl: safeRuntimeUrl(settings.runtimeUrl),
     launchMode: settings.launchMode,
     configuredEngineBinaryPath: settings.engineBinaryPath !== undefined,
+    sessionTokenSource: settings.sessionTokenSource,
+    hostReadyRuntimeDelivery: hostReadyRuntimeDeliveryStatus(settings),
     engineBinaryStatus: "not checked",
     pluginLaunchedProcessStatus: launchedEngine && !launchedEngine.process.killed ? "running" : "not running",
     pingStatus: "not checked",
@@ -132,6 +136,7 @@ export async function prepareEngineConnection(
   const shouldLaunch = settings.launchMode === "launch" || (settings.launchMode === "auto" && binaryPath !== undefined);
 
   if (shouldLaunch) {
+    output.appendLine(`Preparing Yet AI local runtime in ${settings.launchMode} mode (launching IDE-managed runtime).`);
     validateRuntimeLaunchProtocol(settings.runtimeUrl, settings.launchMode, shouldLaunch);
     if (!binaryPath) {
       throw new Error(`${configurationPrefix}.engineBinaryPath must point to ${identity.engine.binaryName} when launch mode is enabled.`);
@@ -145,6 +150,7 @@ export async function prepareEngineConnection(
     };
   }
 
+  output.appendLine(`Preparing Yet AI local runtime in ${settings.launchMode} mode (connecting to existing loopback runtime).`);
   const connection = {
     runtimeUrl: settings.runtimeUrl,
     sessionToken: settings.sessionToken,
@@ -155,6 +161,8 @@ export async function prepareEngineConnection(
   }
   if (settings.sessionTokenSource === "legacySetting") {
     output.appendLine(`Warning: ${configurationPrefix}.sessionToken is deprecated. Use the Yet AI command to store the local runtime session token in VS Code SecretStorage.`);
+  } else if (settings.sessionTokenSource === "none") {
+    output.appendLine("No stored local runtime session token configured; host.ready will deliver only the loopback runtime URL. If the runtime requires auth, use the Yet AI runtime status command instead of copying raw tokens into chat.");
   }
   await checkEngineHealth(connection, output);
   return connection;
@@ -388,11 +396,24 @@ export function runtimeDiagnosticsGuidance(launchMode: LaunchMode): string {
   return "Auto mode launches a configured or discovered engine binary when available; otherwise it falls back to connect-only mode and pings the configured loopback runtime.";
 }
 
+export function hostReadyRuntimeDeliveryStatus(settings: Pick<EngineConnectionSettings, "launchMode" | "sessionTokenSource" | "engineBinaryPath">): string {
+  const source = settings.launchMode === "launch" || (settings.launchMode === "auto" && settings.engineBinaryPath !== undefined)
+    ? "IDE-launched ephemeral runtime token"
+    : settings.sessionTokenSource === "none"
+      ? "runtime URL only; no token configured"
+      : settings.sessionTokenSource === "secretStorage"
+        ? "runtime URL plus SecretStorage token"
+        : "runtime URL plus deprecated legacy setting token";
+  return `${source}; delivered to the webview by trusted host.ready and not printed in diagnostics.`;
+}
+
 export function formatRuntimeDiagnostics(diagnostics: RuntimeDiagnostics): string {
   return [
     "Yet AI Runtime Status",
     `Launch mode: ${diagnostics.launchMode}`,
     `Runtime URL: ${diagnostics.runtimeUrl}`,
+    `Runtime credential source: ${diagnostics.sessionTokenSource}`,
+    `host.ready delivery: ${redactRuntimeDiagnosticText(diagnostics.hostReadyRuntimeDelivery)}`,
     `Engine binary path configured: ${diagnostics.configuredEngineBinaryPath ? "yes" : "no"}`,
     `Binary status: ${redactRuntimeDiagnosticText(diagnostics.engineBinaryStatus)}`,
     `Plugin-launched process: ${redactRuntimeDiagnosticText(diagnostics.pluginLaunchedProcessStatus)}`,
