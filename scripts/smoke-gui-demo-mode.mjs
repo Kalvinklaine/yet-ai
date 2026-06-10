@@ -444,9 +444,10 @@ async function assertChatWorkbenchLayout(page, label) {
     }
     const style = window.getComputedStyle(scrollRegion);
     const overflowY = style.overflowY;
+    const composerStyle = window.getComputedStyle(composer);
     return {
-      ok: (overflowY === "auto" || overflowY === "scroll") && !scrollRegion.contains(composer) && (!codingActions || composer.contains(codingActions)),
-      reason: `overflowY=${overflowY}, composerInsideScroll=${scrollRegion.contains(composer)}, codingActionsInComposer=${codingActions ? composer.contains(codingActions) : "missing"}`,
+      ok: (overflowY === "auto" || overflowY === "scroll") && !scrollRegion.contains(composer) && composerStyle.position !== "sticky" && (!codingActions || composer.contains(codingActions)),
+      reason: `overflowY=${overflowY}, composerInsideScroll=${scrollRegion.contains(composer)}, composerPosition=${composerStyle.position}, codingActionsInComposer=${codingActions ? composer.contains(codingActions) : "missing"}`,
     };
   });
   assert(result.ok, `chat workbench layout failed for ${label}: ${result.reason}`);

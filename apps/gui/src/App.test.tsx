@@ -3615,13 +3615,24 @@ describe("chat panel", () => {
     const threadPane = container?.querySelector(".chat-thread-pane");
     const scrollRegion = container?.querySelector(".chat-scroll-region");
     const composer = container?.querySelector(".chat-composer");
+    const composers = container?.querySelectorAll(".chat-composer");
     const list = container?.querySelector(".conversation-list");
     expect(workbench).toBeTruthy();
     expect(threadPane).toBeTruthy();
     expect(scrollRegion).toBeTruthy();
     expect(composer).toBeTruthy();
+    expect(composers).toHaveLength(1);
     expect(list).toBeTruthy();
     expect(scrollRegion?.contains(composer ?? null)).toBe(false);
+    expect(Array.from(threadPane?.children ?? []).map((child) => child.className)).toEqual([
+      "chat-title-card chat-compact-header row",
+      "debug-details",
+      "chat-scroll-region",
+      "stack chat-composer",
+      "debug-details chat-secondary-debug",
+    ]);
+    expect(threadPane?.classList.contains("chat-thread-pane")).toBe(true);
+    expect(getComputedStyle(composer as Element).position).not.toBe("sticky");
     expect(scrollRegion?.textContent).toContain("Hello layout");
     expect(scrollRegion?.querySelector(".ide-action-proposal-card")?.textContent).toContain("Inspect context.");
     expect(list?.querySelectorAll(".conversation-item")).toHaveLength(2);
