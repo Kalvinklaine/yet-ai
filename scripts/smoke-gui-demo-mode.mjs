@@ -56,6 +56,13 @@ try {
   await page.getByRole("button", { name: "Try Demo Mode" }).first().click();
   await expectVisibleText(page, "Demo Mode is active in the local runtime", "demo enabled status");
   await expectVisibleText(page, "Demo Mode ready — local canned responses, no provider calls. Ready to send.", "demo readiness");
+  await assertChatWorkbenchLayout(page, "initial wide layout");
+  await page.setViewportSize({ width: 760, height: 900 });
+  await assertChatWorkbenchLayout(page, "compact layout");
+  await page.getByRole("button", { name: "Chats", exact: true }).click();
+  const drawerOpen = await page.locator(".conversations-drawer.open").isVisible().catch(() => false);
+  assert(drawerOpen, "compact Chats toggle did not open the conversations drawer");
+  await page.getByRole("button", { name: "Close", exact: true }).click();
 
   const firstPrompt = "Terminal message_added first prompt smoke.";
   const assistantAnswer = "Terminal message_added canned answer from Yet AI Demo Mode — no provider call was made.";
@@ -88,6 +95,7 @@ try {
   await assertAssistantBubbleSequence(page, [assistantAnswer], "assistant response sequence after browser refresh");
 
   await injectActiveEditorContext(page, codingActionsContext);
+  await assertChatWorkbenchLayout(page, "compact layout before coding actions");
   await expectVisibleText(page, "Coding Actions", "coding actions panel");
   await expectVisibleText(page, "attached context ready", "coding actions attached context ready");
   await page.getByRole("button", { name: "Explain selection", exact: true }).click();
@@ -98,6 +106,7 @@ try {
   await assertAssistantBubbleSequence(page, [assistantAnswer, explainAnswer], "assistant response sequence after coding explain");
 
   await injectActiveEditorContext(page, codingActionsContext);
+  await assertChatWorkbenchLayout(page, "compact layout before safe edit");
   await expectVisibleText(page, "Coding Actions", "coding actions panel before safe edit");
   await page.getByRole("button", { name: "Safe edit", exact: true }).click();
   await expectComposerValue(page, "Propose a safe edit", "propose safe edit prompt");
@@ -115,6 +124,7 @@ try {
   await expectVisibleText(page, secondPrompt, "visible second user prompt");
   await expectVisibleText(page, assistantAnswer, "identical terminal message_added assistant responses after second send");
   await assertAssistantBubbleSequence(page, [assistantAnswer, explainAnswer, "Earlier safe edit proposal", assistantAnswer], "assistant response sequence after second send");
+  await page.setViewportSize({ width: 1280, height: 900 });
   await expectVisibleText(page, "Conversations", "conversation list heading");
   await expectVisibleText(page, "Demo smoke chat", "readable active conversation title");
   await expectVisibleText(page, "current", "active conversation marker");
@@ -423,6 +433,23 @@ async function assertNoVisibleText(page, text, label) { const visible = await pa
 async function expectComposerValue(page, text, label) {
   const ok = await page.getByPlaceholder("Ask about the current file, selection, or project...").evaluate((element, expected) => element instanceof HTMLTextAreaElement && element.value.includes(expected), text).catch(() => false);
   assert(ok, `Missing ${label} in composer: ${text}`);
+}
+async function assertChatWorkbenchLayout(page, label) {
+  const result = await page.evaluate(() => {
+    const scrollRegion = document.querySelector(".chat-scroll-region");
+    const composer = document.querySelector(".chat-composer");
+    const codingActions = document.querySelector(".ide-actions-card");
+    if (!(scrollRegion instanceof HTMLElement) || !(composer instanceof HTMLElement)) {
+      return { ok: false, reason: "missing chat-scroll-region or chat-composer" };
+    }
+    const style = window.getComputedStyle(scrollRegion);
+    const overflowY = style.overflowY;
+    return {
+      ok: (overflowY === "auto" || overflowY === "scroll") && !scrollRegion.contains(composer) && (!codingActions || composer.contains(codingActions)),
+      reason: `overflowY=${overflowY}, composerInsideScroll=${scrollRegion.contains(composer)}, codingActionsInComposer=${codingActions ? composer.contains(codingActions) : "missing"}`,
+    };
+  });
+  assert(result.ok, `chat workbench layout failed for ${label}: ${result.reason}`);
 }
 async function assertAssistantBubbleSequence(page, expectedAnswers, label) {
   await page.waitForFunction(
