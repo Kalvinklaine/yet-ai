@@ -15,27 +15,33 @@ Local-only sanitized evidence template. Keep every untested field as \`not run\`
 - Artifact family: <local-dev-preview | github-vscode-unzip-first | github-jetbrains-direct-install | other-sanitized-family>
 - Checksum status: <matched | mismatch | missing | not run>
 
-## VS Code
+## VS Code installed first-message dogfood
 
-- Install path/result: <sanitized artifact family only; installed | failed with sanitized summary | not run>
+- VS Code artifact: <sanitized artifact family/name only; no absolute path | not run>
+- VS Code checksum: <matched | mismatch | missing | not run>
+- Install result: <installed | failed with sanitized summary | not run>
 - Runtime launch mode: <auto | launch | connect | not run>
+- Runtime status: <connected | sanitized runtime error | not run>
 - Packaged GUI status: <loaded | placeholder | blank | failed with sanitized summary | not run>
-- Runtime refresh status: <connected | sanitized runtime error | not run>
+- Provider path: <api-key fallback | official login | experimental login | local mock | unavailable | not run>
 - Provider setup status: <configured and redacted | local mock | unavailable | failed with sanitized summary | not run>
 - Active context status: <not shown | shown and omitted | shown and attached safe selection | not run>
 - Read-only IDE action status: <explicitly confirmed and succeeded | explicitly confirmed and failed with sanitized summary | not run>
-- First-message status: <accepted and assistant response visible | failed with sanitized summary | not run>
+- First-message result: <accepted and assistant response visible | failed with sanitized summary | not run>
+- Second-message refresh result: <new assistant response visible after second send/history refresh | failed with sanitized summary | not run>
 
 ## JetBrains
 
 - Install path/result: <sanitized artifact family only; installed | failed with sanitized summary | not run>
 - Runtime launch mode: <auto | launch | connect | not run>
 - Packaged GUI status: <loaded | placeholder | blank | failed with sanitized summary | not run>
-- Runtime refresh status: <connected | sanitized runtime error | not run>
+- Runtime status: <connected | sanitized runtime error | not run>
+- Provider path: <api-key fallback | official login | experimental login | local mock | unavailable | not run>
 - Provider setup status: <configured and redacted | local mock | unavailable | failed with sanitized summary | not run>
 - Active context status: <not shown | shown and omitted | shown and attached safe selection | not run>
 - Read-only IDE action status: <explicitly confirmed and succeeded | explicitly confirmed and failed with sanitized summary | not run>
-- First-message status: <accepted and assistant response visible | failed with sanitized summary | not run>
+- First-message result: <accepted and assistant response visible | failed with sanitized summary | not run>
+- Second-message refresh result: <new assistant response visible after second send/history refresh | failed with sanitized summary | not run>
 
 ## Sanitized notes
 
@@ -47,21 +53,25 @@ Local-only sanitized evidence template. Keep every untested field as \`not run\`
 const requiredPatterns = [
   ["top-level heading", /^# Yet AI Cross-IDE Manual Dogfood Report$/m],
   ["run metadata heading", /^## Run metadata$/m],
-  ["VS Code heading", /^## VS Code$/m],
+  ["VS Code installed first-message heading", /^## VS Code installed first-message dogfood$/m],
   ["JetBrains heading", /^## JetBrains$/m],
   ["OS/arch field", /- OS\/arch:/],
   ["commit hash field", /- Commit hash:/],
   ["artifact family field", /- Artifact family:/],
   ["checksum status field", /- Checksum status:/],
-  ["VS Code install path/result field", /^## VS Code[\s\S]*- Install path\/result:/m],
+  ["VS Code artifact field", /^## VS Code installed first-message dogfood[\s\S]*- VS Code artifact:/m],
+  ["VS Code checksum field", /^## VS Code installed first-message dogfood[\s\S]*- VS Code checksum:/m],
+  ["VS Code install result field", /^## VS Code installed first-message dogfood[\s\S]*- Install result:/m],
   ["JetBrains install path/result field", /^## JetBrains[\s\S]*- Install path\/result:/m],
   ["runtime launch mode field", /- Runtime launch mode:/],
   ["packaged GUI status field", /- Packaged GUI status:/],
-  ["runtime refresh status field", /- Runtime refresh status:/],
+  ["runtime status field", /- Runtime status:/],
+  ["provider path field", /- Provider path:/],
   ["provider setup status field", /- Provider setup status:/],
   ["active context status field", /- Active context status:/],
   ["read-only IDE action status field", /- Read-only IDE action status:/],
-  ["first-message status field", /- First-message status:/],
+  ["first-message result field", /- First-message result:/],
+  ["second-message refresh result field", /- Second-message refresh result:/],
   ["explicit not run values", /not run/],
 ];
 

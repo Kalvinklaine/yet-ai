@@ -134,11 +134,12 @@ Manual real-provider testing must be explicit, outside CI, and safe to share onl
 - redirect/device/manual exchange behavior, without copying authorization URLs that contain codes, cookies, or account-private query data;
 - scopes and consent copy, limited to non-secret visible scope names and consent summaries;
 - connect status and first GPT message success after sanitized connected status;
+- VS Code installed first-message evidence, using `npm run dogfood:ide-report -- --template` for the shareable report shape, including sanitized VS Code artifact name/family, checksum status, Extension Development Host or installed launch behavior, runtime launch mode, runtime status, provider path, first-message result, and second-message refresh result;
 - expired, denied, unavailable-model, provider-outage, retry, disconnect, and reconnect behavior when feasible;
 - token refresh and revoke behavior when supported by the flow;
 - sanitized status/errors screenshots or logs with no secrets.
 
-Manual reports must not include raw provider API keys, local runtime session tokens, bearer or Authorization headers, auth codes, access tokens, refresh tokens, cookies, PKCE verifiers, raw provider responses, private credential-file paths, bridge payloads, or screenshots showing secrets.
+Manual reports must not include raw provider API keys, local runtime session tokens, bearer or Authorization headers, auth codes, access tokens, refresh tokens, cookies, PKCE verifiers, query strings or URL fragments carrying secrets, private absolute paths, raw provider responses, bridge payloads, request/response body dumps, browser storage dumps, raw prompt text, source text, or screenshots showing secrets.
 
 ### Privacy and security review
 
