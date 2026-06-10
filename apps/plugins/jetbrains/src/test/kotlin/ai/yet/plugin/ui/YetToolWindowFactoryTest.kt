@@ -365,6 +365,59 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
+    fun contextRefreshDeliverySendsFreshSnapshotWithCurrentReadyRequest() {
+        val sent = mutableListOf<String>()
+        val logs = mutableListOf<String>()
+        val snapshot = ActiveEditorContext.snapshot(
+            displayPath = "src/Fresh.kt",
+            workspaceRelativePath = "src/Fresh.kt",
+            languageId = "kotlin",
+            selectionStartLine = 2,
+            selectionStartCharacter = 0,
+            selectionEndLine = 2,
+            selectionEndCharacter = 12,
+            selectionText = "fresh select",
+        )
+
+        JetBrainsContextSnapshotDelivery.deliver(
+            requestId = "gui-ready-current",
+            send = { sent.add(it) },
+            contextSupplier = { snapshot },
+            logContextStatus = { logs.add(it) },
+        )
+
+        assertEquals(listOf("host.contextSnapshot"), sent.map(::messageType))
+        val message = JsonParser.parseString(sent.single()).asJsonObject
+        assertEquals("gui-ready-current", message.get("requestId").asString)
+        assertContains(sent.single(), "fresh select")
+        assertEquals(emptyList(), logs)
+    }
+
+    @Test
+    fun contextRefreshDeliverySkipsNullAndLogsFailuresWithoutRawContext() {
+        val sent = mutableListOf<String>()
+        val logs = mutableListOf<String>()
+
+        JetBrainsContextSnapshotDelivery.deliver(
+            requestId = "gui-ready-current",
+            send = { sent.add(it) },
+            contextSupplier = { null },
+            logContextStatus = { logs.add(it) },
+        )
+        JetBrainsContextSnapshotDelivery.deliver(
+            requestId = "gui-ready-current",
+            send = { sent.add(it) },
+            contextSupplier = { throw IllegalStateException("raw selected secret /Users/person/private.kt") },
+            logContextStatus = { logs.add(it) },
+        )
+
+        assertEquals(emptyList(), sent)
+        assertEquals(listOf("Yet AI active editor context refresh failed"), logs)
+        assertFalse(logs.joinToString("\n").contains("raw selected secret"))
+        assertFalse(logs.joinToString("\n").contains("/Users/person/private.kt"))
+    }
+
+    @Test
     fun readyDeliverySkipsContextWhenSupplierReturnsNull() {
         val sent = mutableListOf<String>()
 
@@ -458,6 +511,7 @@ class YetToolWindowFactoryTest {
     @Test
     fun panelSourceContainsDisposalGuardForAsyncDelivery() {
         val source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/kotlin/ai/yet/plugin/ui/YetToolWindowFactory.kt"))
+        val actionSource = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/kotlin/ai/yet/plugin/actions/OpenChatAction.kt"))
 
         assertContains(source, "private var disposed = false")
         assertContains(source, "invokeLater {")
@@ -469,6 +523,11 @@ class YetToolWindowFactoryTest {
         assertContains(source, "window.__yetAiPendingDiagnostics.push(message)")
         assertContains(source, "isGuiUnloadedBridgeMessage(raw)")
         assertContains(source, "guiReadyRequestId = null")
+        assertContains(source, "fun refreshActiveEditorContext()")
+        assertContains(source, "val requestId = guiReadyRequestId ?: return")
+        assertContains(source, "ToolWindowManagerListener.TOPIC")
+        assertContains(source, "override fun toolWindowShown(toolWindow: ToolWindow)")
+        assertContains(actionSource, "toolWindow.activate({ YetToolWindowFactory.refreshActiveEditorContext(toolWindow) })")
         assertContains(source, "disposed = true")
     }
 

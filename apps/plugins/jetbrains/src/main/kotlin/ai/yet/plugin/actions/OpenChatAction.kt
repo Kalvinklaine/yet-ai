@@ -10,6 +10,6 @@ class OpenChatAction : AnAction() {
         val project = event.project ?: return
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("Yet AI") ?: return
         YetToolWindowFactory.ensureContent(project, toolWindow)
-        toolWindow.activate(null)
+        toolWindow.activate({ YetToolWindowFactory.refreshActiveEditorContext(toolWindow) })
     }
 }
