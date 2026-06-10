@@ -1,7 +1,7 @@
 import type { HostContextSnapshotPayload } from "../bridge/bridgeAdapter";
 import { attachedContextFileLabel, formatSelectionRange } from "./activeEditorContext";
 
-export type CodingActionId = "explain_selection" | "find_issue" | "refactor_selection" | "generate_tests" | "propose_safe_edit";
+export type CodingActionId = "explain_selection" | "find_issue" | "improve_selection" | "generate_tests" | "propose_safe_edit";
 
 export type CodingAction = {
   id: CodingActionId;
@@ -34,11 +34,11 @@ export const codingActions: CodingAction[] = [
     buildPrompt: (context) => `${contextLine(context)}\n\nReview the selected code for likely bugs, edge cases, security/privacy concerns, or maintainability risks. Prioritize concrete issues and explain how to verify them. Do not apply changes.`,
   },
   {
-    id: "refactor_selection",
-    label: "Refactor selection",
-    shortLabel: "Refactor",
-    description: "Suggest a local refactor for the selected code.",
-    buildPrompt: (context) => `${contextLine(context)}\n\nSuggest a focused refactor for the selected code that preserves behavior. Explain the tradeoffs and show the proposed replacement in a code block. Do not apply changes automatically.`,
+    id: "improve_selection",
+    label: "Improve selection",
+    shortLabel: "Improve",
+    description: "Suggest a local improvement for the selected code.",
+    buildPrompt: (context) => `${contextLine(context)}\n\nSuggest a focused improvement for the selected code that preserves behavior. Explain the tradeoffs and show the proposed replacement in a code block. Do not apply changes automatically.`,
   },
   {
     id: "generate_tests",
