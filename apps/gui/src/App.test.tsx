@@ -216,6 +216,25 @@ describe("runtime refresh feedback", () => {
     expect(retargetedCalls.every(([, init]) => new Headers(init?.headers).get("Authorization") === `Bearer ${hostToken}`)).toBe(true);
   });
 
+  it("uses hosted runtime copy without exposing a host.ready token", async () => {
+    const hostToken = "hostReadyLocalRuntimeValue";
+    mockRuntimeResponses({ runtimeFailure: true });
+    renderApp();
+
+    await flushAsync();
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: hostToken });
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Runtime connection is IDE-managed");
+    expect(container?.textContent).toContain("Trusted host.ready supplied the loopback URL and an in-memory Session token");
+    expect(container?.textContent).toContain("there is no visible token to copy");
+    expect(container?.textContent).toContain("IDE-managed runtime recovery");
+    expect(container?.textContent).toContain("do not copy raw runtime tokens into chat");
+    expect(container?.textContent).not.toContain(hostToken);
+    expect(runtimeSessionTokenInputOptional()).toBeUndefined();
+    expect(browserStorageDump()).not.toContain(hostToken);
+  });
+
   it("clears stale ping caps and identity warnings after unexpected refresh exceptions", async () => {
     mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
@@ -1894,8 +1913,10 @@ describe("host.ready runtime bootstrap", () => {
     await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: token });
 
     expect(findInputValue("http://127.0.0.1:8765")).toBeDefined();
-    expect(sessionTokenInput().value).toBe(token);
+    expect(runtimeSessionTokenInputOptional()).toBeUndefined();
     expect(container?.textContent).toContain("Host runtime settings received");
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url).startsWith("http://127.0.0.1:8765/") && new Headers(init?.headers).get("Authorization") === `Bearer ${token}`)).toBe(true);
+    expect(container?.textContent).not.toContain(token);
     expect(browserStorageDump()).not.toContain(token);
   });
 
@@ -1914,11 +1935,12 @@ describe("host.ready runtime bootstrap", () => {
     expect(postIntellijMessage.mock.calls.some(([message]) => message?.type === "gui.ready" && message?.version === bridgeVersion)).toBe(true);
     expect(container?.textContent).toContain("bridge jetbrains");
     expect(findInputValue("http://127.0.0.1:8765")).toBeDefined();
-    expect(sessionTokenInput().value).toBe(token);
+    expect(runtimeSessionTokenInputOptional()).toBeUndefined();
     expect(container?.textContent).toContain("Host runtime settings received");
     const retargetedCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("http://127.0.0.1:8765/"));
     expect(retargetedCalls.length).toBeGreaterThan(0);
     expect(retargetedCalls.every(([, init]) => new Headers(init?.headers).get("Authorization") === `Bearer ${token}`)).toBe(true);
+    expect(container?.textContent).not.toContain(token);
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain(token);
   });
@@ -1936,7 +1958,7 @@ describe("host.ready runtime bootstrap", () => {
     expect(text).toContain("Runtime is not connected yet. Refresh runtime or start the IDE-managed local runtime, then return here to send.");
     expect(text).toContain("Start here: connect the local runtime.");
     expect(text).toContain("Runtime needs refresh");
-    expect(text).toContain("Next safest action: Use Refresh runtime from this chat page. If it still fails, fix the loopback URL or Session token in Local runtime connection. In JetBrains installed mode, also use Tools → Yet AI: Show Runtime Status or Restart Runtime if Refresh runtime keeps failing.");
+    expect(text).toContain("Next safest action: Use Refresh runtime from this chat page; the IDE host will re-deliver trusted runtime settings automatically. If it still fails, use the IDE runtime status/restart command instead of copying a token. In JetBrains installed mode, also use Tools → Yet AI: Show Runtime Status or Restart Runtime if Refresh runtime keeps failing.");
     expect(findButton("Refresh runtime")).toBeDefined();
     expect(findButton("Send").disabled).toBe(true);
   });
@@ -2182,7 +2204,9 @@ describe("host.ready runtime bootstrap", () => {
     await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
 
     expect(findInputValue("http://127.0.0.1:8001")).toBeDefined();
-    expect(sessionTokenInput().value).toBe(token);
+    expect(runtimeSessionTokenInputOptional()).toBeUndefined();
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url).startsWith("http://127.0.0.1:8001/") && new Headers(init?.headers).get("Authorization") === `Bearer ${token}`)).toBe(true);
+    expect(container?.textContent).not.toContain(token);
     expect(browserStorageDump()).not.toContain(token);
   });
 
@@ -2199,7 +2223,7 @@ describe("host.ready runtime bootstrap", () => {
     await flushAsync();
 
     expect(findInputValue("http://127.0.0.1:8765")).toBeDefined();
-    expect(sessionTokenInput().value).toBe("");
+    expect(runtimeSessionTokenInputOptional()).toBeUndefined();
     const retargetedCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("http://127.0.0.1:8765/"));
     expect(retargetedCalls.length).toBeGreaterThan(0);
     expect(retargetedCalls.every(([, init]) => !new Headers(init?.headers).get("Authorization")?.includes(token))).toBe(true);
@@ -7337,15 +7361,19 @@ function findSelectValue(value: string) {
 }
 
 function sessionTokenInput() {
-  const input = Array.from(container?.querySelectorAll<HTMLInputElement>('input[type="password"]') ?? [])[0];
+  const input = runtimeSessionTokenInputOptional();
   if (!input) {
     throw new Error("Session token input not found");
   }
   return input;
 }
 
+function runtimeSessionTokenInputOptional() {
+  return Array.from(container?.querySelectorAll<HTMLInputElement>('input[type="password"]') ?? []).find((input) => input.placeholder === "Bearer token for local runtime");
+}
+
 function apiKeyInput() {
-  const input = Array.from(container?.querySelectorAll<HTMLInputElement>('input[type="password"]') ?? [])[1];
+  const input = Array.from(container?.querySelectorAll<HTMLInputElement>('input[type="password"]') ?? []).find((item) => item.placeholder === "Provider API key, not the runtime Session token");
   if (!input) {
     throw new Error("API key input not found");
   }

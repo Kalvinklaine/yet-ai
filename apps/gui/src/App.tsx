@@ -104,6 +104,8 @@ type FirstMessageReadiness = {
   notes: string[];
 };
 
+type RuntimeConnectionSource = "manual" | "host.ready";
+
 const emptyProviderForm: ProviderForm = {
   providerId: "openai-local",
   kind: "openai-compatible",
@@ -264,6 +266,7 @@ export function App() {
   const [attachedContextStatus, setAttachedContextStatus] = useState<string | null>(null);
   const [runtimeRefreshStatus, setRuntimeRefreshStatus] = useState<{ state: "checking" | "connected" | "failed"; attempt: number; checkedAt: string; detail: string } | null>(null);
   const [runtimeRefreshInFlight, setRuntimeRefreshInFlight] = useState(false);
+  const [runtimeConnectionSource, setRuntimeConnectionSource] = useState<RuntimeConnectionSource>("manual");
   const [runtimeDetailsOpen, setRuntimeDetailsOpen] = useState(true);
   const [providerDetailsOpen, setProviderDetailsOpen] = useState(false);
   const [settingsRevision, setSettingsRevision] = useState(0);
@@ -335,6 +338,7 @@ export function App() {
   const activeChatIndex = activeChatSummaries.findIndex((item) => item.chatId === chatId);
   const runtimeConnected = activePing?.ready === true && !activeConnectionError;
   const connectionStatus = activeConnectionError ? "error" : activePing?.ready ? "connected" : "not checked";
+  const hostedRuntimeConnection = bridgeHost !== "browser" || runtimeConnectionSource === "host.ready";
   const enabledProviders = useMemo(() => activeProviders.filter((provider) => provider.enabled), [activeProviders]);
   const apiKeyReadiness = useMemo(() => resolveProviderModelReadiness(activeModels, enabledProviders, activeModelError), [activeModels, activeModelError, enabledProviders]);
   const selectedModel = apiKeyReadiness.model;
@@ -501,10 +505,12 @@ export function App() {
   }, [markSettingsChanged]);
 
   const updateBaseUrl = useCallback((nextBaseUrl: string) => {
+    setRuntimeConnectionSource("manual");
     updateRuntimeSettings({ ...settingsRef.current, baseUrl: nextBaseUrl });
   }, [updateRuntimeSettings]);
 
   const updateToken = useCallback((nextToken: string) => {
+    setRuntimeConnectionSource("manual");
     updateRuntimeSettings({ ...settingsRef.current, token: nextToken });
   }, [updateRuntimeSettings]);
 
@@ -519,6 +525,7 @@ export function App() {
       : normalizeRuntimeUrl(hostRuntimeUrl) !== normalizeRuntimeUrl(currentBaseUrl)
         ? ""
         : settingsRef.current.token;
+    setRuntimeConnectionSource("host.ready");
     updateRuntimeSettings({ baseUrl: hostRuntimeUrl, token: nextToken });
     setTimeline((current) => ["Host runtime settings received", ...current].slice(0, 80));
   }, [updateRuntimeSettings]);
@@ -1540,11 +1547,15 @@ export function App() {
           : "Runtime has not been checked for the current settings.";
       const ideRuntimeHint = bridgeHost === "jetbrains"
         ? " In JetBrains installed mode, also use Tools → Yet AI: Show Runtime Status or Restart Runtime if Refresh runtime keeps failing."
+        : bridgeHost === "vscode"
+          ? " In VS Code installed mode, the extension auto/launch/connect lifecycle supplies the runtime URL and token through trusted host.ready. Use Yet AI: Show Runtime Status if recovery keeps failing."
         : "";
       return {
         title: activeConnectionError?.status === 401 ? "Runtime authorization needs attention" : "Connect the local runtime first",
         reason,
-        nextAction: `Use Refresh runtime from this chat page. If it still fails, fix the loopback URL or Session token in Local runtime connection.${ideRuntimeHint}`,
+        nextAction: hostedRuntimeConnection
+          ? `Use Refresh runtime from this chat page; the IDE host will re-deliver trusted runtime settings automatically. If it still fails, use the IDE runtime status/restart command instead of copying a token.${ideRuntimeHint}`
+          : `Use Refresh runtime from this chat page. If it still fails, fix the loopback URL or Session token in Local runtime connection.${ideRuntimeHint}`,
         actions: [{ kind: "refresh_runtime", label: runtimeRefreshInFlight ? "Checking runtime…" : "Refresh runtime" }],
         notes,
       };
@@ -1613,7 +1624,7 @@ export function App() {
       actions: [{ kind: "enable_demo_mode", label: demoModeToggleLabel }, { kind: "api_key_fallback", label: "Use OpenAI API key fallback" }, { kind: "refresh_runtime", label: "Refresh runtime" }],
       notes,
     };
-  }, [activeConnectionError, activeModelError, activeProviderAuthStatus, activeSelectedDemoMode, apiKeyChatReady, apiKeyReadiness, bridgeHost, demoModeEnabled, demoModeToggleLabel, enabledProviders, experimentalOauthChatReady, providerAuthMutationInFlight, runtimeConnected, runtimeRefreshInFlight, runtimeRefreshStatus, selectedModelDisplayName, selectedModelProviderId]);
+  }, [activeConnectionError, activeModelError, activeProviderAuthStatus, activeSelectedDemoMode, apiKeyChatReady, apiKeyReadiness, bridgeHost, demoModeToggleLabel, enabledProviders, experimentalOauthChatReady, hostedRuntimeConnection, providerAuthMutationInFlight, runtimeConnected, runtimeRefreshInFlight, runtimeRefreshStatus, selectedModelDisplayName, selectedModelProviderId]);
   const chatLifecycleLabel = chatLifecycleState === "idle"
     ? canSendChat
       ? activeSelectedDemoMode
@@ -1786,14 +1797,19 @@ export function App() {
         <div className="form-grid">
           <label>
             Runtime base URL
-            <input value={baseUrl} onChange={(event) => updateBaseUrl(event.target.value)} />
+            <input value={baseUrl} onChange={(event) => updateBaseUrl(event.target.value)} readOnly={hostedRuntimeConnection} aria-readonly={hostedRuntimeConnection} />
           </label>
-          <label>
-            Session token
-            <input type="password" value={token} onChange={(event) => updateToken(event.target.value)} placeholder="Bearer token for local runtime" autoComplete="off" />
-          </label>
+          {!hostedRuntimeConnection && (
+            <label>
+              Session token
+              <input type="password" value={token} onChange={(event) => updateToken(event.target.value)} placeholder="Bearer token for local runtime" autoComplete="off" />
+            </label>
+          )}
         </div>
-        <p className="subtle">In VS Code or JetBrains, the local runtime Session token is normally supplied automatically by the IDE host through trusted host.ready. Paste a token only when connecting to a manually started runtime such as one launched with YET_AI_AUTH_TOKEN=.... This local runtime token authorizes the GUI to the loopback runtime; it is not an OpenAI key or provider API key.</p>
+        {hostedRuntimeConnection
+          ? <p className="subtle">Runtime connection is IDE-managed. Trusted host.ready supplied the loopback URL{token ? " and an in-memory Session token" : ""}; there is no visible token to copy, and provider API keys are still configured only in the local runtime.</p>
+          : <p className="subtle">In VS Code or JetBrains, the local runtime Session token is normally supplied automatically by the IDE host through trusted host.ready. Paste a token only when connecting to a manually started runtime such as one launched with YET_AI_AUTH_TOKEN=.... This local runtime token authorizes the GUI to the loopback runtime; it is not an OpenAI key or provider API key.</p>}
+        {!runtimeConnected && hostedRuntimeConnection && <div className="recovery-card" role="status"><strong>IDE-managed runtime recovery</strong><span>Refresh runtime asks the host-delivered URL/token to reconnect. If the runtime is stale, missing, or unauthorized, use the IDE runtime status/restart command; do not copy raw runtime tokens into chat.</span></div>}
         <div className="row">
           <button onClick={() => void connect()} disabled={runtimeRefreshInFlight}>{runtimeRefreshInFlight ? "Checking runtime…" : "Refresh runtime"}</button>
           <span className="subtle">Authorization header is sent only to validated loopback runtime URLs.</span>
