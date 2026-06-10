@@ -1832,7 +1832,7 @@ export function App() {
                 <button type="button" className="secondary-button" onClick={stopSse}>Stop response</button>
               </div>
             </form>
-            <details className="debug-details" data-testid="sse-debug-details">
+            <details className="debug-details chat-secondary-debug" data-testid="sse-debug-details">
               <summary>SSE debug details</summary>
               <div className="timeline">
                 {timeline.length === 0 ? <span>No SSE events yet.</span> : timeline.map((entry, index) => <div className="timeline-entry" key={`${index}:${entry}`}>{entry}</div>)}
