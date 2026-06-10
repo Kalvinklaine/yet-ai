@@ -335,10 +335,10 @@ function addTerminalDemoAssistantResponse(chatId, prompt) {
   markTerminalReplayPersisted(chatId);
 }
 function terminalDemoAnswer(prompt) {
-  if (prompt.includes("Explain the selected code")) {
+  if (prompt.includes("Coding action: explain_selection")) {
     return "Demo Mode Coding Actions explanation: selected code returns a greeting; no provider call was made.";
   }
-  if (prompt.includes("Propose a safe edit")) {
+  if (prompt.includes("Coding action: propose_safe_edit")) {
     return JSON.stringify(safeEditProposalPayload());
   }
   return "Terminal message_added canned answer from Yet AI Demo Mode — no provider call was made.";

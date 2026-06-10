@@ -55,15 +55,6 @@ export function EditProposalPreview({ proposal, host, pending, onApply, onCancel
   const files = proposal.payload.edits;
   const editCount = files.reduce((count, file) => count + file.textReplacements.length, 0);
   const fileCount = files.length;
-  const replacementPreviewSummaries = files.flatMap((file) =>
-    file.textReplacements.map((replacement) => ({
-      workspaceRelativePath: file.workspaceRelativePath,
-      replacementText: replacement.replacementText,
-      preview: boundedReplacementPreview(replacement.replacementText),
-      isRedacted: isReplacementPreviewRedacted(replacement.replacementText),
-    })),
-  );
-  const redactedPreviewCount = replacementPreviewSummaries.filter((entry) => entry.isRedacted).length;
   const hasRedactedPreview = hasRedactedReplacementPreview(proposal);
   const acknowledgementKey = proposal.payloadKey || proposal.requestId;
   const [acknowledgedRedactedPreview, setAcknowledgedRedactedPreview] = useState(false);
