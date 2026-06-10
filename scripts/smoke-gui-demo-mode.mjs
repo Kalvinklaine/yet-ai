@@ -19,6 +19,7 @@ let browser;
 let demoEnabled = false;
 let providerHits = 0;
 let chatCommandCount = 0;
+let secondResponseHadActiveSse = false;
 const chats = new Map([["chat-001", thread("chat-001", "Demo smoke chat", [])]]);
 const chatEvents = new Map();
 const chatEventSeq = new Map();
@@ -65,6 +66,18 @@ try {
   await expectVisibleText(page, firstPrompt, "visible first user prompt");
   await expectVisibleText(page, firstAnswer, "first terminal message_added assistant response");
 
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
+  await openDetailsBySummary(page, "Local runtime connection", page.getByRole("textbox", { name: "Session token", exact: true }));
+  await page.getByRole("textbox", { name: "Session token", exact: true }).fill(runtimeToken);
+  await page.getByLabel("Runtime base URL").fill(`http://127.0.0.1:${runtimeServer.port}`);
+  await openDetailsBySummary(page, "Local runtime connection", page.getByRole("button", { name: "Refresh runtime" }).last());
+  await page.getByRole("button", { name: "Refresh runtime" }).last().click();
+  await expectVisibleText(page, "Runtime connected", "runtime connected after browser refresh");
+  await expectVisibleText(page, "Demo Mode is active in the local runtime", "demo enabled status after browser refresh");
+  await expectVisibleText(page, firstPrompt, "visible first user prompt after browser refresh");
+  await expectVisibleText(page, firstAnswer, "first assistant response after browser refresh");
+
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(secondPrompt);
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expectVisibleText(page, secondPrompt, "visible second user prompt");
@@ -102,6 +115,7 @@ try {
   }
   assert(providerHits === 0, `demo smoke unexpectedly hit provider ${providerHits} time(s)`);
   assert(chatCommandCount === 2, `demo smoke expected exactly two chat sends without a third send, observed ${chatCommandCount}`);
+  assert(secondResponseHadActiveSse, "demo smoke expected the second response to be delivered while a browser SSE subscriber was active");
 
   const evidence = await saveVisualEvidence(page);
 
@@ -265,8 +279,10 @@ function subscribe(response, chatId) {
     "cache-control": "no-cache, no-transform",
     connection: "keep-alive",
   }));
+  const replay = replayEventsForSubscriber(chatId).map((event, index) => ({ ...event, seq: index + 1 }));
+  chatEventSeq.set(chatId, replay.length);
   writeSse(response, snapshotEvent(chatId));
-  for (const event of replayEventsForSubscriber(chatId)) writeSse(response, event);
+  for (const event of replay) writeSse(response, event);
   const chatSubscribers = subscribers.get(chatId) ?? new Set();
   chatSubscribers.add(response);
   subscribers.set(chatId, chatSubscribers);
@@ -280,6 +296,9 @@ function addTerminalDemoAssistantResponse(chatId, prompt) {
   const assistantMessage = message(chatId, `assistant-${item.messages.length}`, "assistant", content);
   item.messages.push(assistantMessage);
   chats.set(chatId, item);
+  if (prompt === "Terminal message_added second prompt smoke." && (subscribers.get(chatId)?.size ?? 0) > 0) {
+    secondResponseHadActiveSse = true;
+  }
   setActiveStream(chatId, true);
   pushChatEvent(chatId, "stream_started", {});
   pushChatEvent(chatId, "message_added", { message: assistantMessage });
