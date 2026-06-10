@@ -24,21 +24,29 @@ export function resetChatViewState(chatId: string): ChatViewState {
   return { chatId, messages: [], subscriptionReady: false };
 }
 
-export function addAcceptedUserMessage(state: ChatViewState, content: string): ChatViewState {
-  if (state.messages.some((message) => message.role === "user" && message.content === content && message.status === "complete")) {
-    return state;
-  }
+export function addAcceptedUserMessage(state: ChatViewState, content: string, id = nextMessageId(state)): ChatViewState {
   return {
     ...state,
     messages: [
       ...state.messages,
       {
-        id: nextMessageId(state),
+        id,
         role: "user",
         content,
         status: "complete",
       },
     ],
+  };
+}
+
+export function removeOptimisticUserMessage(state: ChatViewState, id: string): ChatViewState {
+  const index = state.messages.findIndex((message) => message.id === id && isOptimisticUserMessage(state.chatId, message));
+  if (index < 0) {
+    return state;
+  }
+  return {
+    ...state,
+    messages: state.messages.filter((_, currentIndex) => currentIndex !== index),
   };
 }
 
@@ -157,7 +165,7 @@ function applyMessageAdded(state: ChatViewState, payload: SseEvent["payload"]): 
 
   if (viewMessage.role === "user") {
     const optimisticUserIndex = state.messages.findIndex(
-      (current) => current.role === "user" && current.id.startsWith(`${state.chatId}-message-`) && current.content === viewMessage.content,
+      (current) => isOptimisticUserMessage(state.chatId, current) && current.content === viewMessage.content,
     );
     if (optimisticUserIndex >= 0) {
       return updateMessage(state, optimisticUserIndex, viewMessage);
@@ -172,6 +180,10 @@ function applyMessageAdded(state: ChatViewState, payload: SseEvent["payload"]): 
 
 function isGeneratedStreamingAssistant(chatId: string, message: ChatViewMessage): boolean {
   return message.role === "assistant" && message.status === "streaming" && message.id.startsWith(`${chatId}-message-`);
+}
+
+function isOptimisticUserMessage(chatId: string, message: ChatViewMessage): boolean {
+  return message.role === "user" && message.id.startsWith(`${chatId}-optimistic-user-`);
 }
 
 function findReplayGeneratedStreamingAssistantIndex(state: ChatViewState, persistedIndex: number): number {

@@ -2197,7 +2197,11 @@ describe("active editor attached context", () => {
 
     expect(container?.textContent).toContain("Agent activity · IDE actions");
     expect(container?.textContent).toContain("browser unsupported");
+    expect(container?.textContent).toContain("idle");
+    expect(findDetails("ide-actions-compact-details").open).toBe(false);
+    findDetails("ide-actions-compact-details").open = true;
     expect(container?.textContent).toContain("No controlled IDE action requested yet.");
+    expect(container?.textContent).toContain("Safe local navigation/context actions only.");
     expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Get IDE context");
     expect(postMessage).not.toHaveBeenCalled();
   });
@@ -2707,12 +2711,16 @@ describe("active editor attached context", () => {
       await Promise.resolve();
     });
     await flushAsync();
+    expect(container?.textContent ?? "").toContain("Agent activity · IDE actions");
+    expect(findDetails("ide-actions-compact-details").open).toBe(false);
+    findDetails("ide-actions-compact-details").open = true;
     expect(container?.textContent ?? "").toContain("No controlled IDE action requested yet.");
 
     await dispatchHostIdeActionProgress(requestId, { phase: "running", status: "inProgress", summary: "Old chat progress should not show.", cloudRequired: false, action: "getContextSnapshot" });
     await dispatchHostIdeActionResult(requestId, { status: "succeeded", message: "Old chat result should not show.", cloudRequired: false, action: "getContextSnapshot", context: { source: "vscode", hasActiveEditor: true, workspaceFolderCount: 1 } });
 
     const text = container?.textContent ?? "";
+    expect(text).toContain("Agent activity · IDE actions");
     expect(text).toContain("No controlled IDE action requested yet.");
     expect(text).not.toContain("Old chat progress should not show.");
     expect(text).not.toContain("Old chat result should not show.");
@@ -2737,6 +2745,9 @@ describe("active editor attached context", () => {
     await flushAsync();
     await dispatchHostIdeActionResult("gui-ide-action-1", { status: "failed", message: "Old chat duplicate should not render.", cloudRequired: false, action: "getContextSnapshot", context: { source: "vscode", hasActiveEditor: true, workspaceFolderCount: 1 } });
 
+    expect(container?.textContent ?? "").toContain("Agent activity · IDE actions");
+    expect(findDetails("ide-actions-compact-details").open).toBe(false);
+    findDetails("ide-actions-compact-details").open = true;
     const text = container?.textContent ?? "";
     expect(text).toContain("No controlled IDE action requested yet.");
     expect(text).not.toContain("Old chat duplicate should not render.");
@@ -2847,6 +2858,10 @@ describe("active editor attached context", () => {
 
     await flushAsync();
 
+    expect(container?.textContent).toContain("Attached context");
+    expect(container?.textContent).toContain("not attached");
+    expect(findDetails("attached-context-compact-details").open).toBe(false);
+    findDetails("attached-context-compact-details").open = true;
     expect(container?.textContent).toContain("No valid active editor context is attached. Nothing will be included with the next message.");
     expect(attachedContextToggleOptional()).toBeUndefined();
 
@@ -2865,6 +2880,7 @@ describe("active editor attached context", () => {
       }));
     });
 
+    findDetails("attached-context-compact-details").open = true;
     expect(container?.textContent).toContain("No valid active editor context is attached. Nothing will be included with the next message.");
     expect(container?.textContent).toContain("Rejected invalid host bridge message");
     expect(container?.textContent).not.toContain("replaceRange");
@@ -3076,6 +3092,9 @@ describe("active editor attached context", () => {
       },
     });
     expect(container?.textContent).toContain("Context attached to the last accepted message from jetbrains src/Main.kt.");
+    expect(container?.textContent).toContain("Attached context");
+    expect(container?.textContent).toContain("not attached");
+    findDetails("attached-context-compact-details").open = true;
     expect(container?.textContent).toContain("No valid active editor context is attached. Nothing will be included with the next message.");
     expect(attachedContextToggleOptional()).toBeUndefined();
 
@@ -3171,6 +3190,9 @@ describe("active editor attached context", () => {
       },
     });
     expect(container?.textContent).toContain("Context attached to the last accepted message from vscode active editor.");
+    expect(container?.textContent).toContain("Attached context");
+    expect(container?.textContent).toContain("not attached");
+    findDetails("attached-context-compact-details").open = true;
     expect(container?.textContent).toContain("No valid active editor context is attached. Nothing will be included with the next message.");
     expect(attachedContextToggleOptional()).toBeUndefined();
 
@@ -3305,6 +3327,9 @@ describe("active editor attached context", () => {
     });
     await flushAsync();
 
+    expect(container?.textContent).toContain("Attached context");
+    expect(container?.textContent).toContain("not attached");
+    findDetails("attached-context-compact-details").open = true;
     expect(container?.textContent).toContain("No valid active editor context is attached. Nothing will be included with the next message.");
     expect(attachedContextToggleOptional()).toBeUndefined();
     fetchMock.mockClear();
@@ -4585,18 +4610,31 @@ describe("chat panel", () => {
       await Promise.resolve();
     });
     await act(async () => {
-      commands[1].resolve(jsonResponse({ accepted: true, chatId: "chat-001", requestId: "request-002", type: "user_message" }));
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await act(async () => {
       enqueueSseEvent("stream_started");
       enqueueSseEvent("message_added", { message: chatMessage("chat-001", "assistant-terminal-2", "assistant", "Demo Mode canned response.") });
       enqueueSseEvent("stream_finished", { finishReason: "stop" });
       await Promise.resolve();
     });
 
-    const bubbles = Array.from(container?.querySelectorAll(".chat-bubble") ?? []).map((bubble) => bubble.textContent ?? "");
+    let bubbles = Array.from(container?.querySelectorAll(".chat-bubble") ?? []).map((bubble) => bubble.textContent ?? "");
+    expect(bubbles.filter((text) => text.includes("Demo Mode canned response."))).toHaveLength(2);
+    const secondPromptIndexBeforeAck = bubbles.findIndex((text) => text.includes("Second terminal prompt"));
+    let secondResponseIndexBeforeAck = -1;
+    bubbles.forEach((text, index) => {
+      if (text.includes("Demo Mode canned response.")) {
+        secondResponseIndexBeforeAck = index;
+      }
+    });
+    expect(secondPromptIndexBeforeAck).toBeGreaterThan(-1);
+    expect(secondPromptIndexBeforeAck).toBeLessThan(secondResponseIndexBeforeAck);
+
+    await act(async () => {
+      commands[1].resolve(jsonResponse({ accepted: true, chatId: "chat-001", requestId: "request-002", type: "user_message" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    bubbles = Array.from(container?.querySelectorAll(".chat-bubble") ?? []).map((bubble) => bubble.textContent ?? "");
     expect(chatLifecycleText()).toBe("Ready to send.");
     expect(bubbles).toEqual(expect.arrayContaining([
       expect.stringContaining("First terminal prompt"),

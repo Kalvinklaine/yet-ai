@@ -30,22 +30,20 @@ export function IdeActionsPanel({ host, attempt, note, workspaceRelativePath, ra
   const supported = host === "vscode" || host === "jetbrains";
   const badgeCopy = host === "vscode" ? "VS Code controlled actions" : host === "jetbrains" ? "JetBrains controlled actions" : "browser unsupported";
   const pending = attempt?.status === "pending" || attempt?.status === "inProgress";
-  return (
-    <section className="ide-actions-card stack" aria-label="Agent activity IDE actions">
-      <div className="row">
-        <strong>Agent activity · IDE actions</strong>
-        <span className={`badge ${supported ? "ok" : "warn"}`}>{badgeCopy}</span>
-      </div>
+  const compact = !attempt && !note;
+  const controls = !supported ? (
+    <div className="readiness-card warn" role="status">Controlled IDE actions are unsupported in browser. No privileged action will be posted.</div>
+  ) : (
+    <div className="row">
+      <button type="button" onClick={onGetContext} disabled={pending}>{pending ? "IDE action pending…" : "Get IDE context"}</button>
+      <button type="button" onClick={() => workspaceRelativePath && onOpenFile(workspaceRelativePath)} disabled={pending || !workspaceRelativePath}>Open file</button>
+      <button type="button" onClick={() => workspaceRelativePath && range && onRevealRange(workspaceRelativePath, range)} disabled={pending || !workspaceRelativePath || !range}>Reveal range</button>
+    </div>
+  );
+  const body = (
+    <>
       <p className="subtle">Safe local navigation/context actions only. This panel cannot edit files, run shell commands, call tools, read arbitrary file content, or send raw payloads.</p>
-      {!supported ? (
-        <div className="readiness-card warn" role="status">Controlled IDE actions are unsupported in browser. No privileged action will be posted.</div>
-      ) : (
-        <div className="row">
-          <button type="button" onClick={onGetContext} disabled={pending}>{pending ? "IDE action pending…" : "Get IDE context"}</button>
-          <button type="button" onClick={() => workspaceRelativePath && onOpenFile(workspaceRelativePath)} disabled={pending || !workspaceRelativePath}>Open file</button>
-          <button type="button" onClick={() => workspaceRelativePath && range && onRevealRange(workspaceRelativePath, range)} disabled={pending || !workspaceRelativePath || !range}>Reveal range</button>
-        </div>
-      )}
+      {controls}
       {supported && pending && (
         <button type="button" className="secondary-button" onClick={onClearPendingIdeAction}>Clear pending IDE action state</button>
       )}
@@ -53,6 +51,28 @@ export function IdeActionsPanel({ host, attempt, note, workspaceRelativePath, ra
       {range && <span className="subtle">Active safe range: {formatEditRange(range)}</span>}
       {attempt ? <IdeActionAttemptPreview attempt={attempt} /> : <span className="subtle">No controlled IDE action requested yet.</span>}
       {note && <span className="subtle" role="status">{sanitizeDisplayText(note)}</span>}
+    </>
+  );
+  return (
+    <section className="ide-actions-card stack" aria-label="Agent activity IDE actions">
+      {compact ? (
+        <details className="compact-safety-details" data-testid="ide-actions-compact-details">
+          <summary>
+            <span className="compact-summary-title">🛡️ Agent activity · IDE actions</span>
+            <span className={`badge ${supported ? "ok" : "warn"}`}>{badgeCopy}</span>
+            <span className="badge">idle</span>
+          </summary>
+          <div className="stack compact-details-body">{body}</div>
+        </details>
+      ) : (
+        <>
+          <div className="row">
+            <strong>Agent activity · IDE actions</strong>
+            <span className={`badge ${supported ? "ok" : "warn"}`}>{badgeCopy}</span>
+          </div>
+          {body}
+        </>
+      )}
     </section>
   );
 }

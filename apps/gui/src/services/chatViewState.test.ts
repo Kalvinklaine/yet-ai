@@ -3,6 +3,7 @@ import {
   addAcceptedUserMessage,
   applyChatViewEvent,
   createInitialChatViewState,
+  removeOptimisticUserMessage,
   resetChatViewState,
   stopStreamingAssistant,
   type ChatViewState,
@@ -34,6 +35,18 @@ describe("chatViewState", () => {
     expect(state.messages).toEqual([
       { id: "chat-1-message-1", role: "user", content: "Hello", status: "complete" },
     ]);
+  });
+
+  it("rolls back only the targeted optimistic user bubble", () => {
+    const state = [
+      "chat-1-optimistic-user-1",
+      "chat-1-optimistic-user-2",
+    ].reduce((current, id) => addAcceptedUserMessage(current, "Repeat", id), createInitialChatViewState("chat-1"));
+
+    expect(removeOptimisticUserMessage(state, "chat-1-optimistic-user-1").messages).toEqual([
+      { id: "chat-1-optimistic-user-2", role: "user", content: "Repeat", status: "complete" },
+    ]);
+    expect(removeOptimisticUserMessage(state, "chat-1-message-1")).toBe(state);
   });
 
   it("marks snapshot ready and keeps same-chat messages", () => {
@@ -192,7 +205,7 @@ describe("chatViewState", () => {
   });
 
   it("dedupes optimistic user content when persisted message_added arrives", () => {
-    const state = addAcceptedUserMessage(createInitialChatViewState("chat-1"), "Hello");
+    const state = addAcceptedUserMessage(createInitialChatViewState("chat-1"), "Hello", "chat-1-optimistic-user-1");
     const next = applyChatViewEvent(state, event("message_added", {
       message: { id: "user-1", chatId: "chat-1", role: "user", content: "Hello", createdAt: "2026-05-29T07:15:00Z", status: "complete" },
     }));

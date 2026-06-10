@@ -1,6 +1,6 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType } from "./bridge/bridgeAdapter";
-import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
+import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, removeOptimisticUserMessage, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { activeEditorSourceLabel, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, rangeFromContextSelection } from "./services/activeEditorContext";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
 import { IdeActionProposalPanel, IdeActionsPanel, type IdeActionAttemptState } from "./components/IdeActionsPanel";
@@ -308,6 +308,7 @@ export function App() {
   const attachedContextRef = useRef<typeof attachedContext>(null);
   const agentProgressAttemptRef = useRef(0);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const optimisticUserMessageCounterRef = useRef(0);
 
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
   settingsRef.current = settings;
@@ -1487,20 +1488,25 @@ export function App() {
     const submittedAttachedContext = includeAttachedContext && attachedContextAllowed && attachedContextRef.current?.settingsRevision === targetRevision && attachedContextRef.current.chatId === targetChatId && currentAttachedContext && hasUsableAttachedContext(currentAttachedContext) ? attachedContextRef.current : null;
     const context = submittedAttachedContext?.payload;
     setChatLifecycleState("command_submitting");
+    optimisticUserMessageCounterRef.current += 1;
+    const optimisticUserMessageId = `${targetChatId}-optimistic-user-${optimisticUserMessageCounterRef.current}`;
+    setChatView((current) => addAcceptedUserMessage(current, content, optimisticUserMessageId));
+    setChatInput("");
     const result = await sendUserMessage(targetSettings, targetChatId, content, context);
     if (!isCurrentRefresh(targetRevision) || chatIdRef.current !== targetChatId) {
+      setChatView((current) => removeOptimisticUserMessage(current, optimisticUserMessageId));
       return;
     }
     if (result.ok) {
       addTimeline(`Command accepted ${result.data.requestId}`);
-      setChatView((current) => addAcceptedUserMessage(current, content));
-      setChatInput("");
       clearSubmittedAttachedContext(submittedAttachedContext);
       startSse(targetChatId);
       setChatLifecycleState((current) => current === "command_submitting" || current === "sse_connecting" ? "command_accepted" : current);
     } else {
       setChatError(result.error);
       setChatLifecycleState("failed");
+      setChatInput(content);
+      setChatView((current) => removeOptimisticUserMessage(current, optimisticUserMessageId));
       appendChatError(result.error.message, chatRecoveryCodeForRuntimeError(result.error, "command"));
       addTimeline(`Command error: ${sanitizeDisplayText(result.error.message)}`);
     }
@@ -2179,13 +2185,16 @@ function FirstMessageActionButton({ action, runtimeRefreshInFlight, providerTest
 function AttachedContextPreview({ context, include, acknowledged, status, onIncludeChange, onAcknowledgeChange }: { context: HostContextSnapshotPayload | null; include: boolean; acknowledged: boolean; status: string | null; onIncludeChange: (include: boolean) => void; onAcknowledgeChange: (acknowledged: boolean) => void }) {
   if (!context || !hasUsableAttachedContext(context)) {
     return (
-      <div className="readiness-card warn" role="status">
-        <div className="stack">
-          <strong>Attached context</strong>
-          {status && <span>{sanitizeDisplayText(status)}</span>}
+      <details className="readiness-card warn compact-safety-details attached-context-compact" data-testid="attached-context-compact-details" role="status">
+        <summary>
+          <span className="compact-summary-title">📎 Attached context</span>
+          <span className="badge warn">not attached</span>
+          {status && <span className="compact-summary-note">{sanitizeDisplayText(status)}</span>}
+        </summary>
+        <div className="stack compact-details-body">
           <span className="subtle">No valid active editor context is attached. Nothing will be included with the next message.</span>
         </div>
-      </div>
+      </details>
     );
   }
   const fileLabel = attachedContextFileLabel(context);
