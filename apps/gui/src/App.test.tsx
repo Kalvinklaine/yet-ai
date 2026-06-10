@@ -4518,9 +4518,11 @@ describe("chat panel", () => {
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(1);
   });
 
-  it("renders consecutive terminal message_added assistant responses without duplicate bubbles", async () => {
+  it("renders consecutive identical terminal message_added assistant responses after their user prompts", async () => {
     let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
     const encoder = new TextEncoder();
+    const commands = [deferred<Response>(), deferred<Response>()];
+    let commandIndex = 0;
     let nextSeq = 0;
     const enqueueSseEvent = (type: string, payload: Record<string, unknown> = {}) => {
       sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: nextSeq, type, chatId: "chat-001", payload })}\n\n`));
@@ -4537,6 +4539,15 @@ describe("chat panel", () => {
         });
         return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
       }
+      if (init?.method === "POST" && url.endsWith("/v1/chats/chat-001/commands")) {
+        const body = JSON.parse(String(init.body)) as { type?: string };
+        if (body.type === "user_message") {
+          const command = commands[commandIndex];
+          commandIndex += 1;
+          return command.promise;
+        }
+        return mockRuntimeResponse(input, init, readyRuntimeOptions());
+      }
       return mockRuntimeResponse(input, init, readyRuntimeOptions());
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -4551,14 +4562,19 @@ describe("chat panel", () => {
       findButton("Send").click();
       await Promise.resolve();
     });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/v1/chats/subscribe"))).toBe(false);
+    await act(async () => {
+      commands[0].resolve(jsonResponse({ accepted: true, chatId: "chat-001", requestId: "request-001", type: "user_message" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     await act(async () => {
       enqueueSseEvent("snapshot");
       enqueueSseEvent("stream_started");
-      enqueueSseEvent("message_added", { message: chatMessage("chat-001", "assistant-terminal-1", "assistant", "First terminal answer.") });
+      enqueueSseEvent("message_added", { message: chatMessage("chat-001", "assistant-terminal-1", "assistant", "Demo Mode canned response.") });
       enqueueSseEvent("stream_finished", { finishReason: "stop" });
       await Promise.resolve();
     });
-    expect(container?.textContent).toContain("First terminal answer.");
     expect(chatLifecycleText()).toBe("Ready to send.");
 
     await act(async () => {
@@ -4569,16 +4585,27 @@ describe("chat panel", () => {
       await Promise.resolve();
     });
     await act(async () => {
+      commands[1].resolve(jsonResponse({ accepted: true, chatId: "chat-001", requestId: "request-002", type: "user_message" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
       enqueueSseEvent("stream_started");
-      enqueueSseEvent("message_added", { message: chatMessage("chat-001", "assistant-terminal-2", "assistant", "Second terminal answer.") });
+      enqueueSseEvent("message_added", { message: chatMessage("chat-001", "assistant-terminal-2", "assistant", "Demo Mode canned response.") });
       enqueueSseEvent("stream_finished", { finishReason: "stop" });
       await Promise.resolve();
     });
 
     const bubbles = Array.from(container?.querySelectorAll(".chat-bubble") ?? []).map((bubble) => bubble.textContent ?? "");
     expect(chatLifecycleText()).toBe("Ready to send.");
-    expect(bubbles.filter((text) => text.includes("First terminal answer."))).toHaveLength(1);
-    expect(bubbles.filter((text) => text.includes("Second terminal answer."))).toHaveLength(1);
+    expect(bubbles).toEqual(expect.arrayContaining([
+      expect.stringContaining("First terminal prompt"),
+      expect.stringContaining("Second terminal prompt"),
+    ]));
+    expect(bubbles.filter((text) => text.includes("Demo Mode canned response."))).toHaveLength(2);
+    expect(bubbles.findIndex((text) => text.includes("First terminal prompt"))).toBeLessThan(bubbles.findIndex((text) => text.includes("Demo Mode canned response.")));
+    const lastDemoResponseIndex = bubbles.reduce((lastIndex, text, index) => text.includes("Demo Mode canned response.") ? index : lastIndex, -1);
+    expect(bubbles.findIndex((text) => text.includes("Second terminal prompt"))).toBeLessThan(lastDemoResponseIndex);
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(2);
   });
 
