@@ -1486,7 +1486,6 @@ export function App() {
     const attachedContextAllowed = currentAttachedContext && (!attachedContextRequiresAcknowledgement(currentAttachedContext) || attachedContextAcknowledged);
     const submittedAttachedContext = includeAttachedContext && attachedContextAllowed && attachedContextRef.current?.settingsRevision === targetRevision && attachedContextRef.current.chatId === targetChatId && currentAttachedContext && hasUsableAttachedContext(currentAttachedContext) ? attachedContextRef.current : null;
     const context = submittedAttachedContext?.payload;
-    startSse(targetChatId);
     setChatLifecycleState("command_submitting");
     const result = await sendUserMessage(targetSettings, targetChatId, content, context);
     if (!isCurrentRefresh(targetRevision) || chatIdRef.current !== targetChatId) {
@@ -1494,10 +1493,11 @@ export function App() {
     }
     if (result.ok) {
       addTimeline(`Command accepted ${result.data.requestId}`);
-      setChatLifecycleState((current) => current === "command_submitting" || current === "sse_connecting" ? "command_accepted" : current);
       setChatView((current) => addAcceptedUserMessage(current, content));
       setChatInput("");
       clearSubmittedAttachedContext(submittedAttachedContext);
+      startSse(targetChatId);
+      setChatLifecycleState((current) => current === "command_submitting" || current === "sse_connecting" ? "command_accepted" : current);
     } else {
       setChatError(result.error);
       setChatLifecycleState("failed");
