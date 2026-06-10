@@ -448,7 +448,7 @@ try {
   }
   await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill("Say hello through JetBrains login-shaped smoke.");
   await frameLocator.getByRole("button", { name: "Send", exact: true }).click();
-  await frameLocator.getByText("JetBrains login smoke", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not render the assistant response from mock SSE after context send."));
+  await waitForAssistantAnswerCount(frameLocator, "JetBrains login smoke", 2, "JetBrains mock SSE assistant response after two sends");
   await assertAssistantAnswerCount(frameLocator, "JetBrains login smoke", 2, "JetBrains mock SSE assistant response after two sends");
   if (chatCommandRequestCount !== 2) {
     failures.push(`Mock runtime received ${chatCommandRequestCount} chat command requests instead of exactly two.`);
@@ -500,6 +500,11 @@ function assertRandomReadyRequestId(requestId, label) {
   if (typeof requestId !== "string" || !/^gui-ready-\d+-\d+-[0-9a-f]{32}$/.test(requestId)) {
     failures.push(`Wrapper did not synthesize a random authoritative ready id for ${label}, got ${String(requestId)}.`);
   }
+}
+
+async function waitForAssistantAnswerCount(frameLocator, text, expected, description) {
+  await frameLocator.locator(".chat-bubble.assistant", { hasText: text }).nth(expected - 1).waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push(`Expected ${description} to appear at least ${expected} time(s) in assistant bubbles before assertion: ${text}`));
 }
 
 async function assertAssistantAnswerCount(frameLocator, text, expected, description) {
