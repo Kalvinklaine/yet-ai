@@ -368,8 +368,8 @@ describe("provider secret boundary", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("OpenAI account login");
-    expect(container?.textContent).toContain("OpenAI account login is planned/not available yet; use API key fallback.");
+    expect(container?.textContent).toContain("Experimental account login (non-default)");
+    expect(container?.textContent).toContain("OpenAI account login is planned/not available for production; use the OpenAI API-key fallback.");
     expect(container?.textContent).toContain("Create an API key in the provider console");
 
     await act(async () => {
@@ -399,7 +399,7 @@ describe("provider secret boundary", () => {
     await flushAsync();
 
     await act(async () => {
-      findButton("Login with OpenAI").click();
+      findButton("Start experimental OpenAI login").click();
     });
 
     expect(openMock).not.toHaveBeenCalled();
@@ -418,7 +418,7 @@ describe("provider secret boundary", () => {
     await flushAsync();
 
     await act(async () => {
-      findButton("Experimental Login with OpenAI account").click();
+      findButton("Experimental high-risk account login").click();
     });
 
     const startCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/provider-auth/openai/start") && init?.method === "POST");
@@ -463,7 +463,7 @@ describe("provider secret boundary", () => {
     });
 
     await act(async () => {
-      findButton("Login with OpenAI").click();
+      findButton("Start experimental OpenAI login").click();
       await Promise.resolve();
     });
     await act(async () => {
@@ -533,7 +533,7 @@ describe("provider secret boundary", () => {
       await Promise.resolve();
     });
 
-    expect(container?.textContent).toContain("OpenAI account login is connected through the local runtime.");
+    expect(container?.textContent).toContain("Experimental OpenAI account login is connected through the local runtime, but API-key fallback remains the default real-provider path.");
     expect(container?.textContent).toContain("Account: user@example.test");
     expect(container?.textContent).not.toContain("manual-code-789");
     expect(container?.textContent).not.toContain("access_token");
@@ -549,7 +549,7 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).toContain("Ready for chat through the local runtime");
     expect(container?.textContent).toContain("Account: user@example.test");
     expect(container?.textContent).toContain("Token hint: oauth-...test");
-    expect(container?.textContent).toContain("Raw tokens, cookies, auth codes, and runtime Session token values are not shown here.");
+    expect(container?.textContent).toContain("Raw provider tokens, cookies, auth codes, provider API keys, and runtime Session token values are not shown here. Runtime Session token and provider credentials are separate secrets.");
     expect(container?.textContent).toContain("Use OpenAI API key fallback");
     expect(container?.textContent).not.toContain("provider-login-session");
     expect(browserStorageDump()).not.toContain("oauth");
@@ -611,7 +611,7 @@ describe("provider secret boundary", () => {
     await flushAsync();
 
     await act(async () => {
-      findButton("Login with OpenAI").click();
+      findButton("Start experimental OpenAI login").click();
     });
 
     const startCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/provider-auth/openai/start") && init?.method === "POST");
@@ -629,12 +629,12 @@ describe("provider secret boundary", () => {
   });
 
   it.each([
-    ["login_unavailable", "OpenAI account login is planned/not available yet; use API key fallback."],
-    ["api_key_configured", "OpenAI API key fallback is configured locally. Account login is not required."],
-    ["pending", "OpenAI account login is pending. Finish the browser or device verification flow, then refresh the status."],
-    ["connected", "OpenAI account login is connected through the local runtime."],
-    ["expired", "OpenAI account login expired. Start login again or use the API key fallback."],
-    ["revoked", "OpenAI account login was revoked. Disconnect it or use the API key fallback."],
+    ["login_unavailable", "OpenAI account login is planned/not available for production; use the OpenAI API-key fallback."],
+    ["api_key_configured", "OpenAI API-key fallback is configured locally. Account login is not required for the default real-provider path."],
+    ["pending", "Experimental OpenAI account login is pending. Finish the browser/device step, then refresh status; use API-key fallback for the default path."],
+    ["connected", "Experimental OpenAI account login is connected through the local runtime, but API-key fallback remains the default real-provider path."],
+    ["expired", "Experimental OpenAI account login expired. Start it again only if you accept the risk, or use the API-key fallback."],
+    ["revoked", "Experimental OpenAI account login was revoked. Disconnect it or use the API-key fallback."],
   ] satisfies Array<[ProviderAuthStatus, string]>)("renders provider auth status %s", async (status, copy) => {
     mockRuntimeResponses({ authResponse: providerAuthResponse(status) });
     renderApp();
@@ -750,7 +750,7 @@ describe("provider secret boundary", () => {
     fetchMock.mockClear();
 
     await act(async () => {
-      findButton("OpenAI API").click();
+      findButton("OpenAI API key fallback (safe default)").click();
     });
 
     expect(findInputValue("openai-api")).toBeDefined();
@@ -791,7 +791,7 @@ describe("provider secret boundary", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("This local runtime token authorizes the GUI to the loopback runtime");
-    expect(container?.textContent).toContain("provider API key is sent to the local runtime only on save, cleared from this form immediately after save/update is submitted, never written to browser storage, and is distinct from the runtime Session token");
+    expect(container?.textContent).toContain("Provider API key is for the upstream OpenAI-compatible provider and is sent to the local runtime only on save, cleared from this form immediately after save/update is submitted, and never written to browser storage");
     expect(apiKeyInput().placeholder).toBe("Provider API key, not the runtime Session token");
     expect(container?.textContent).toContain("This is your provider/OpenAI API key, not the runtime Session token.");
   });
@@ -802,7 +802,7 @@ describe("provider secret boundary", () => {
     renderApp();
 
     await act(async () => {
-      findButton("OpenAI API").click();
+      findButton("OpenAI API key fallback (safe default)").click();
     });
     await act(async () => {
       setInputValue(apiKeyInput(), secret);
@@ -1705,7 +1705,7 @@ describe("agent progress panel", () => {
     expect(text).toContain("6 more summaries hidden.");
     expect(text).not.toContain("T-BOUND-20 / run-20");
     expect(text).not.toContain("safe recent summary 17");
-    expect(text.length).toBeLessThan(32000);
+    expect(text.length).toBeLessThan(32500);
   });
 
   it("endpoint unavailable or corrupt runtime error is sanitized and non-fatal", async () => {
@@ -1851,13 +1851,13 @@ describe("host.ready runtime bootstrap", () => {
 
     const text = container?.textContent ?? "";
     expect(text).toContain("bridge jetbrains");
-    expect(text).toContain("Runtime connected — provider required for your first GPT message");
+    expect(text).toContain("Runtime connected — choose the first-message path");
     expect(text).toContain("Provider setup");
     expect(text).toContain("State: Provider required");
     expect(text).toContain("Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK OpenAI-compatible provider/model for real answers.");
     expect(text).toContain("Choose how this first chat should answer.");
     expect(text).toContain("Provider or Demo Mode needed");
-    expect(text).toContain("Next safest action: For a no-key trial, enable Demo Mode. For real answers, use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, test provider, then refresh runtime/model readiness.");
+    expect(text).toContain("Next safest action: For real answers, use the OpenAI API-key fallback (safe/default), paste a provider API key, save, test provider, refresh runtime/model readiness, then send. Choose Demo Mode only to try the chat flow without provider calls.");
     expect(findButton("Use OpenAI API key fallback")).toBeDefined();
     expect(findButton("Send").disabled).toBe(true);
   });
@@ -3829,16 +3829,16 @@ describe("chat panel", () => {
 
     expect(container?.textContent).toContain("Chat readiness");
     expect(container?.textContent).toContain("0 enabled providers");
-    expect(container?.textContent).toContain("Runtime connected — provider required for your first GPT message");
-    expect(container?.textContent).toContain("Primary chat readiness offers Demo Mode for local canned responses. Configure a BYOK provider here for real answers when ready.");
-    expect(container?.textContent).toContain("Provider setup stays local-first BYOK: no Yet AI hosted backend, account, cloud workspace, or credit balance is required.");
+    expect(container?.textContent).toContain("Runtime connected — choose the first-message path");
+    expect(container?.textContent).toContain("Real provider (safe default): use OpenAI API-key fallback, paste a provider API key once, save, test provider, refresh runtime/model readiness, then send.");
+    expect(container?.textContent).toContain("OpenAI API-key fallback is the current safe/default real-provider path for first-message GPT; provider setup stays local-first BYOK with no Yet AI hosted backend, account, cloud workspace, or credit balance required.");
     expect(container?.textContent).toContain("State: Provider required");
     expect(container?.textContent).toContain("Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK OpenAI-compatible provider/model for real answers.");
-    expect(container?.textContent).toContain("choose OpenAI API, paste a provider API key once, save, optionally test the provider");
+    expect(container?.textContent).toContain("For the quickest real-provider path, choose OpenAI API-key fallback, paste a provider API key once, save, test provider, refresh runtime/model readiness");
     expect(container?.textContent).toContain("Provider required for first message");
     expect(container?.textContent).toContain("Why: No enabled OpenAI-compatible provider/model is ready for chat streaming.");
-    expect(container?.textContent).toContain("Next safest action: For a no-key trial, enable Demo Mode. For real answers, use the OpenAI API key fallback or configure a local OpenAI-compatible /v1 provider, save it, test provider, then refresh runtime/model readiness.");
-    expect(container?.textContent).toContain("Provider setup stays local-first BYOK");
+    expect(container?.textContent).toContain("Next safest action: For real answers, use the OpenAI API-key fallback (safe/default), paste a provider API key, save, test provider, refresh runtime/model readiness, then send. Choose Demo Mode only to try the chat flow without provider calls.");
+    expect(container?.textContent).toContain("OpenAI API-key fallback is the current safe/default real-provider path for first-message GPT; provider setup stays local-first BYOK");
     expect(findButton("Send").disabled).toBe(true);
   });
 
@@ -4143,7 +4143,7 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("State: Runtime unavailable");
     expect(container?.textContent).toContain("Connect the local runtime first");
     expect(container?.textContent).toContain("Next safest action: Use Refresh runtime from this chat page. If it still fails, fix the loopback URL or Session token in Local runtime connection.");
-    expect(container?.textContent).toContain("Session token unlocks this GUI to the local runtime only; Provider API key unlocks the upstream model through the runtime.");
+    expect(container?.textContent).toContain("Runtime Session token unlocks this GUI to the loopback runtime only; Provider API key unlocks the upstream model through the runtime. They are different secrets.");
     expect(findButton("Send").disabled).toBe(true);
 
     mockRuntimeResponses();
@@ -4167,7 +4167,7 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
     expect(container?.textContent).toContain("Ready to send using GPT-4o mini through the local runtime.");
     expect(container?.textContent).toContain("Ready for your first message");
-    expect(container?.textContent).toContain("Next safest action: Type a prompt and send it through the local runtime.");
+    expect(container?.textContent).toContain("Next safest action: Type a prompt and click Send through the local runtime.");
     expect(container?.textContent).toContain("Send available");
     expect(findButton("Send").disabled).toBe(false);
   });
@@ -6933,7 +6933,7 @@ function mockRuntimeResponse(input: RequestInfo | URL, init: RequestInit | undef
       supportsLogin: options.authSupportsLogin ?? false,
       supportsApiKey: true,
       cloudRequired: false,
-      message: options.authMessage ?? "OpenAI account login is not available for this local provider path. Create an API key in the provider console and paste it once into Yet AI.",
+      message: options.authMessage ?? "Experimental account login (non-default) is not available for this local provider path. Create an API key in the provider console and paste it once into Yet AI.",
     }));
   }
   if (init?.method === "POST" && url.endsWith("/v1/provider-auth/openai/start")) {
