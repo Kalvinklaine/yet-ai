@@ -251,6 +251,7 @@ export function App() {
   const [chatHistoryRevision, setChatHistoryRevision] = useState<number | null>(null);
   const [chatHistoryLoading, setChatHistoryLoading] = useState(false);
   const [deletingChatId, setDeletingChatId] = useState<string | null>(null);
+  const [conversationNotice, setConversationNotice] = useState<string | null>(null);
   const [chatInput, setChatInput] = useState("");
   const [chatView, setChatView] = useState(() => createInitialChatViewState("chat-001"));
   const [chatLifecycleState, setChatLifecycleState] = useState<ChatLifecycleState>("idle");
@@ -803,6 +804,13 @@ export function App() {
       setChatSummaries(summaries);
       setChatHistoryRevision(revision);
       const resolution = resolveChatAfterList({ currentChatId: chatIdRef.current, summaries, defaultChatId: "chat-001" });
+      if (resolution.reason === "first_summary") {
+        setConversationNotice(`Selected ${sanitizeDisplayText(summaries[0]?.title || resolution.nextChatId)} because the previous chat is not in this local runtime list.`);
+      } else if (resolution.reason === "default_chat") {
+        setConversationNotice("No saved conversations are available; showing a fresh local chat.");
+      } else {
+        setConversationNotice(null);
+      }
       if (resolution.shouldResetView) {
         clearEditProposalState();
         clearIdeActionState();
@@ -857,6 +865,7 @@ export function App() {
       setChatSummaries((current) => upsertChatSummary(current, result.data));
       setChatHistoryRevision(targetRevision);
       setChatId(result.data.chatId);
+      setConversationNotice(`Created and selected ${sanitizeDisplayText(result.data.title || result.data.chatId)}.`);
       setChatView(hydrateChatViewFromThread(resetChatViewState(result.data.chatId), result.data));
       setTimeline([]);
       setAttachedContext(null);
@@ -882,9 +891,11 @@ export function App() {
     clearIdeActionState();
     setAttachedContextAcknowledged(false);
     setChatId(nextChatId);
+    const selectedSummary = chatSummaries.find((summary) => summary.chatId === nextChatId);
+    setConversationNotice(`Switched to ${sanitizeDisplayText(selectedSummary?.title || nextChatId)}.`);
     setChatView(resetChatViewState(nextChatId));
     void loadChatThread(nextChatId);
-  }, [abortActiveStream, clearEditProposalState, clearIdeActionState, loadChatThread]);
+  }, [abortActiveStream, chatSummaries, clearEditProposalState, clearIdeActionState, loadChatThread]);
 
   const updateDirectChatId = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const nextChatId = event.target.value;
@@ -900,11 +911,21 @@ export function App() {
   }, [abortActiveStream, clearEditProposalState, clearIdeActionState]);
 
   const deleteCurrentChat = useCallback(async (targetChatId: string) => {
+    const targetSummary = chatSummaries.find((summary) => summary.chatId === targetChatId);
+    const targetTitle = sanitizeDisplayText(targetSummary?.title || targetChatId);
+    const deletingCurrent = chatIdRef.current === targetChatId;
+    const confirmation = deletingCurrent
+      ? `Delete the current conversation "${targetTitle}"? This removes it from engine-owned local history and selects the next available local chat.`
+      : `Delete conversation "${targetTitle}" from engine-owned local history?`;
+    if (!window.confirm(confirmation)) {
+      setConversationNotice(`Kept ${targetTitle}; delete was cancelled.`);
+      return;
+    }
+    setConversationNotice(`Deleting ${targetTitle}…`);
     const targetSettings = settingsRef.current;
     const targetRevision = settingsRevisionRef.current;
     const attempt = chatHistoryAttemptRef.current + 1;
     chatHistoryAttemptRef.current = attempt;
-    const deletingCurrent = chatIdRef.current === targetChatId;
     if (deletingCurrent) {
       abortActiveStream("SSE stopped and abort requested before deleting the current chat");
       setChatView(resetChatViewState(targetChatId));
@@ -930,6 +951,8 @@ export function App() {
       setChatSummaries(fallback.remainingSummaries);
       setChatHistoryRevision(targetRevision);
       if (fallback.deletedCurrent) {
+        const fallbackSummary = fallback.remainingSummaries.find((summary) => summary.chatId === fallback.nextChatId);
+        setConversationNotice(fallbackSummary ? `Deleted ${targetTitle}. Selected ${sanitizeDisplayText(fallbackSummary.title || fallback.nextChatId)}.` : `Deleted ${targetTitle}. No saved conversations remain; showing a fresh local chat.`);
         setChatId(fallback.nextChatId);
         setChatView(resetChatViewState(fallback.nextChatId));
         setChatInput("");
@@ -940,9 +963,12 @@ export function App() {
         setAttachedContextStatus(null);
         clearEditProposalState();
         clearIdeActionState();
+      } else {
+        setConversationNotice(`Deleted ${targetTitle}.`);
       }
     } else {
       setChatHistoryError(result.error);
+      setConversationNotice(`Could not delete ${targetTitle}: ${sanitizeDisplayText(result.error.message)}`);
       setChatHistoryRevision(targetRevision);
     }
     setDeletingChatId(null);
@@ -1665,11 +1691,15 @@ export function App() {
               <button type="button" onClick={() => void createNewChat()}>{chatHistoryLoading ? "Loading…" : "New chat"}</button>
             </div>
             <span className="subtle">Engine-owned local history. Messages are not written to browser storage.</span>
+            <span id="delete-current-conversation-help" className="sr-only">Deleting the current conversation asks for confirmation, removes it from engine-owned local history, and selects the next available conversation or a fresh local chat.</span>
             <div className="conversation-status" role="status">
-              {chatHistoryStatus}
+              {conversationNotice ? `${chatHistoryStatus} ${conversationNotice}` : chatHistoryStatus}
             </div>
             {activeChatSummaries.length === 0 ? (
-              <p className="subtle">{chatHistoryLoading ? "Loading saved conversations from the local runtime…" : chatHistoryError ? "Conversation history is unavailable." : "No saved conversations yet. Start a new local chat or send a message in the current chat."}</p>
+              <div className="conversation-empty-state" role="status">
+                <strong>{chatHistoryLoading ? "Loading conversations…" : chatHistoryError ? "Conversation history unavailable" : "No saved conversations"}</strong>
+                <span>{chatHistoryLoading ? "Loading saved conversations from the local runtime…" : chatHistoryError ? "Conversation history is unavailable." : "No saved conversations remain. The prompt is ready for a fresh local chat, and nothing is written to browser storage."}</span>
+              </div>
             ) : activeChatSummaries.map((summary, index) => {
               const active = summary.chatId === chatId;
               const deleting = deletingChatId === summary.chatId;
@@ -1677,20 +1707,22 @@ export function App() {
               const updatedAt = sanitizeDisplayText(summary.updatedAt);
               const positionLabel = `Conversation ${index + 1} of ${activeChatSummaries.length}`;
               const messageCountLabel = `${summary.messageCount} persisted message${summary.messageCount === 1 ? "" : "s"}`;
+              const rowLabel = `${positionLabel}: ${title}${active ? ", current conversation" : ""}. Updated ${updatedAt}. ${messageCountLabel}.`;
               return (
-                <div className={`conversation-item ${active ? "active" : ""}`} key={summary.chatId} aria-label={`${title} conversation row`}>
-                  <button type="button" className="conversation-select" onClick={() => selectChat(summary.chatId)} disabled={deleting} aria-current={active ? "true" : undefined} aria-label={`Open conversation: ${title}`}>
+                <div className={`conversation-item ${active ? "active" : ""}`} key={summary.chatId} role="listitem" aria-label={rowLabel}>
+                  <button type="button" className="conversation-select" onClick={() => selectChat(summary.chatId)} disabled={deleting || active} aria-current={active ? "page" : undefined} aria-label={`${active ? "Current conversation" : "Open conversation"}: ${title}. ${positionLabel}. ${messageCountLabel}.`}>
                     <span className="conversation-title-line">
                       <strong className="conversation-title">{title}</strong>
-                      {active && <span className="badge ok">current</span>}
+                      {active && <span className="badge ok">active conversation</span>}
                     </span>
                     <span className="conversation-meta-line">
                       <span className="conversation-updated">Updated {updatedAt}</span>
                       <span className="conversation-message-count">{messageCountLabel}</span>
                       <span className="conversation-position subtle">{positionLabel}</span>
                     </span>
+                    {active && <span className="conversation-active-copy">Currently selected. New messages will be sent here.</span>}
                   </button>
-                  <button type="button" className="danger-button conversation-delete" onClick={() => void deleteCurrentChat(summary.chatId)} disabled={deleting || chatHistoryLoading} aria-label={`Delete conversation: ${title}${active ? " (current)" : ""}`}>{deleting ? "Deleting…" : active ? "Delete current" : "Delete"}</button>
+                  <button type="button" className="danger-button conversation-delete" onClick={() => void deleteCurrentChat(summary.chatId)} disabled={deleting || chatHistoryLoading} aria-describedby={active ? "delete-current-conversation-help" : undefined} aria-label={`Delete conversation: ${title}${active ? " (current; confirmation required)" : " (confirmation required)"}`}>{deleting ? "Deleting…" : active ? "Delete current" : "Delete"}</button>
                 </div>
               );
             })}

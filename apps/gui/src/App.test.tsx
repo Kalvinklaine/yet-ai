@@ -3368,7 +3368,7 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("2 local runtime conversations returned.");
     expect(container?.textContent).toContain("Updated 2026-05-29T07:16:30Z");
     expect(container?.textContent).toContain("2 persisted messages");
-    expect(container?.textContent).toContain("current");
+    expect(container?.textContent).toContain("active conversation");
     expectConversationRowParts("Alpha thread", {
       updated: "Updated 2026-05-29T07:16:30Z",
       messages: "1 persisted message",
@@ -3402,7 +3402,7 @@ describe("chat panel", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("No local runtime conversations returned.");
-    expect(container?.textContent).toContain("No saved conversations yet. Start a new local chat or send a message in the current chat.");
+    expect(container?.textContent).toContain("No saved conversations remain. The prompt is ready for a fresh local chat, and nothing is written to browser storage.");
     expect(chatInput().value).toBe("");
   });
 
@@ -3478,6 +3478,7 @@ describe("chat panel", () => {
       findButton("Refresh runtime").click();
       await Promise.resolve();
     });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     await act(async () => {
       findButton("Delete current").click();
       await Promise.resolve();
@@ -3485,7 +3486,7 @@ describe("chat panel", () => {
     staleDeleteList.resolve(jsonResponse({ chats: [chatSummary("chat-deleted-stale", "Deleted stale sentinel", 1)] }));
     await flushAsync();
 
-    expect(container?.textContent).not.toContain("Deleted stale sentinel");
+    expect(container?.textContent).toContain("Selected Deleted stale sentinel because the previous chat is not in this local runtime list.");
     expect(browserStorageDump()).not.toContain("Deleted stale sentinel");
   });
 
@@ -3544,12 +3545,13 @@ describe("chat panel", () => {
 
     await flushAsync();
     await flushAsync();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     await act(async () => {
       Array.from(container?.querySelectorAll<HTMLButtonElement>("button") ?? []).find((button) => button.textContent === "Delete current")?.click();
       await Promise.resolve();
     });
 
-    expect(container?.textContent).not.toContain("Alpha thread");
+    expect(container?.textContent).toContain("Deleted Alpha thread. Selected Beta thread.");
     expect(container?.textContent).toContain("Beta thread");
     expect(findInputValue("chat-beta")).toBeDefined();
   });
@@ -3565,6 +3567,7 @@ describe("chat panel", () => {
 
     await flushAsync();
     await flushAsync();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     await act(async () => {
       findButton("Delete current").click();
       await Promise.resolve();
@@ -3647,6 +3650,7 @@ describe("chat panel", () => {
       findButton("New chat").click();
       await Promise.resolve();
     });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     await act(async () => {
       findButton("Delete current").click();
       await Promise.resolve();
@@ -3717,6 +3721,7 @@ describe("chat panel", () => {
       setInputValue(chatIdInput(), "chat-old");
       await Promise.resolve();
     });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     await act(async () => {
       findButton("Delete current").click();
       await Promise.resolve();
@@ -3762,6 +3767,7 @@ describe("chat panel", () => {
       findButton("Send").click();
       await Promise.resolve();
     });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     await act(async () => {
       findButton("Delete current").click();
       await Promise.resolve();
@@ -7133,7 +7139,7 @@ function findConversationButton(label: RegExp) {
 }
 
 function expectConversationRowParts(title: string, expected: { updated: string; messages: string; position: string }) {
-  const button = findConversationButton(new RegExp(`^Open conversation: ${escapeRegExp(title)}$`));
+  const button = findConversationButton(new RegExp(`^(Open conversation|Current conversation): ${escapeRegExp(title)}`));
   const titleLine = button.querySelector<HTMLElement>(".conversation-title-line");
   const metaLine = button.querySelector<HTMLElement>(".conversation-meta-line");
   expect(titleLine?.querySelector(".conversation-title")?.textContent).toBe(title);
