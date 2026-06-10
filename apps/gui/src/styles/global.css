@@ -504,6 +504,41 @@ pre,
   background: #fbfcff;
 }
 
+.ide-actions-card:has(.compact-safety-details) {
+  padding: 8px 10px;
+}
+
+.compact-safety-details {
+  display: grid;
+  gap: 8px;
+}
+
+.compact-safety-details summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.compact-summary-title {
+  font-weight: 800;
+}
+
+.compact-summary-note {
+  color: #34405a;
+  font-size: 13px;
+}
+
+.compact-details-body {
+  margin-top: 8px;
+}
+
+.attached-context-compact {
+  padding: 8px 10px;
+}
+
 .ide-action-proposal-card {
   border-color: #b9e6d3;
   background: #f5fffb;
