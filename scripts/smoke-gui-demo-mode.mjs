@@ -60,7 +60,7 @@ try {
   const firstPrompt = "Terminal message_added first prompt smoke.";
   const assistantAnswer = "Terminal message_added canned answer from Yet AI Demo Mode — no provider call was made.";
   const explainAnswer = "Demo Mode Coding Actions explanation: selected code returns a greeting; no provider call was made.";
-  const editProposalSummary = "Demo Mode safe edit no-op preview. Selected text is preserved exactly for this browser demo.";
+  const editProposalSummary = "Demo Mode safe edit no-op preview. No provider call was made; this is a local canned response, not model quality. Selected text is preserved exactly for this browser demo because the context includes a valid workspace-relative path.";
   const secondPrompt = "Terminal message_added second prompt smoke.";
   const codingActionsContext = {
     kind: "active_editor",
@@ -349,7 +349,7 @@ function safeEditProposalPayload() {
   const selectedText = "export function greet(name: string) {\n  return `Hello, ${name}`;\n}";
   return {
     requiresUserConfirmation: true,
-    summary: "Demo Mode safe edit no-op preview. Selected text is preserved exactly for this browser demo.",
+    summary: "Demo Mode safe edit no-op preview. No provider call was made; this is a local canned response, not model quality. Selected text is preserved exactly for this browser demo because the context includes a valid workspace-relative path.",
     cloudRequired: false,
     edits: [{
       workspaceRelativePath: "src/demo.ts",

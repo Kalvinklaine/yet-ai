@@ -1022,12 +1022,14 @@ fn demo_response(content: &str, context: Option<&ChatContext>) -> String {
 }
 
 fn demo_edit_proposal_response(context: Option<&ChatContext>) -> String {
-    let workspace_relative_path = context
+    let valid_workspace_relative_path = context
         .and_then(|context| context.file.as_ref())
         .and_then(|file| file.workspace_relative_path.as_deref())
-        .filter(|path| demo_safe_workspace_relative_path(path))
-        .unwrap_or("src/example.ts");
-    let selection = context.and_then(|context| context.selection.as_ref());
+        .filter(|path| demo_safe_workspace_relative_path(path));
+    let workspace_relative_path = valid_workspace_relative_path.unwrap_or("src/example.ts");
+    let selection = valid_workspace_relative_path
+        .and(context)
+        .and_then(|context| context.selection.as_ref());
     let has_selected_text = selection
         .and_then(|selection| selection.text.as_deref())
         .is_some_and(|text| !text.is_empty());
@@ -1072,7 +1074,7 @@ fn demo_edit_proposal_response(context: Option<&ChatContext>) -> String {
         "version": "2026-05-15",
         "payload": {
             "requiresUserConfirmation": true,
-            "summary": "Demo Mode safe edit no-op preview. This proposal preserves the current selection as-is, or uses an empty zero-length preview when no selection text is available.",
+            "summary": "Demo Mode safe edit no-op preview. No provider call was made; this is a local canned response, not model quality. This proposal preserves the current selection only when the same context includes a valid workspace-relative path; otherwise it uses an empty zero-length preview fallback.",
             "cloudRequired": false,
             "edits": [{
                 "workspaceRelativePath": workspace_relative_path,
@@ -1694,8 +1696,9 @@ mod tests {
         assert!(summary.contains("Demo Mode"));
         assert!(summary.contains("no-op preview"));
         assert!(summary.contains("zero-length preview"));
-        assert!(!summary.contains("no provider call"));
-        assert!(!summary.contains("not model quality"));
+        assert!(summary.contains("No provider call was made"));
+        assert!(summary.contains("local canned response"));
+        assert!(summary.contains("not model quality"));
         assert_eq!(
             parsed["payload"]["edits"][0]["workspaceRelativePath"],
             "src/example.ts"
@@ -1714,7 +1717,7 @@ mod tests {
     }
 
     #[test]
-    fn demo_safe_edit_preserves_selected_text_as_no_op_replacement() {
+    fn demo_safe_edit_with_valid_workspace_path_preserves_selected_text_as_no_op_replacement() {
         let prompts = representative_gui_coding_action_prompts();
         let selected_text = "export function greet(name: string) {\n  return `Hello, ${name}`;\n}";
         let context = ChatContext {
@@ -1755,6 +1758,49 @@ mod tests {
             parsed["payload"]["edits"][0]["textReplacements"][0]["replacementText"],
             "// Demo Mode placeholder edit; review and replace with your intended change."
         );
+    }
+
+    #[test]
+    fn demo_safe_edit_without_valid_workspace_path_uses_empty_zero_length_fallback() {
+        let prompts = representative_gui_coding_action_prompts();
+        let selected_text = "destructive unrelated selected text must not be carried to fallback";
+        for workspace_relative_path in [None, Some("src/token.txt".to_string())] {
+            let context = ChatContext {
+                kind: "active_editor".to_string(),
+                source: "vscode".to_string(),
+                file: Some(ChatContextFile {
+                    display_path: Some("src/demo.ts".to_string()),
+                    workspace_relative_path,
+                    language_id: Some("typescript".to_string()),
+                }),
+                selection: Some(ChatContextSelection {
+                    start_line: Some(5),
+                    start_character: Some(6),
+                    end_line: Some(7),
+                    end_character: Some(8),
+                    text: Some(selected_text.to_string()),
+                }),
+            };
+            let response = demo_response(&prompts[4], Some(&context));
+            let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
+
+            assert_eq!(
+                parsed["payload"]["edits"][0]["workspaceRelativePath"],
+                "src/example.ts"
+            );
+            assert_eq!(
+                parsed["payload"]["edits"][0]["textReplacements"][0]["range"],
+                serde_json::json!({
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 0 }
+                })
+            );
+            assert_eq!(
+                parsed["payload"]["edits"][0]["textReplacements"][0]["replacementText"],
+                ""
+            );
+            assert!(!response.contains(selected_text));
+        }
     }
 
     #[test]
