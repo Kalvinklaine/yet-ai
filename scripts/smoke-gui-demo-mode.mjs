@@ -54,7 +54,7 @@ try {
   await expectVisibleText(page, "Try Demo Mode", "demo-mode offer");
   await page.getByRole("button", { name: "Try Demo Mode" }).first().click();
   await expectVisibleText(page, "Demo Mode is active in the local runtime", "demo enabled status");
-  await expectVisibleText(page, "Ready to send using Yet AI Demo Chat.", "demo readiness");
+  await expectVisibleText(page, "Demo Mode ready — local canned responses, no provider calls. Ready to send.", "demo readiness");
 
   const firstPrompt = "Terminal message_added first prompt smoke.";
   const firstAnswer = "Terminal message_added first answer from Yet AI Demo Mode — no provider call was made.";
