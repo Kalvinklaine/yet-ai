@@ -253,7 +253,7 @@ class YetToolWindowFactoryTest {
         assertContains(html, "optionalString(payload.sessionToken, 4096)")
         assertContains(html, "payload.cloudRequired === undefined || payload.cloudRequired === false")
         assertContains(html, "if (message.type === \"host.contextSnapshot\") return isContextSnapshotPayload(message.payload)")
-        assertContains(html, "if (message.type === \"host.openedFromCommand\") return message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0)")
+        assertContains(html, "if (message.type === \"host.openedFromCommand\") return message.requestId === undefined && (message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0))")
         assertContains(html, "if (message.type === \"host.ideActionProgress\") return isHostIdeActionProgressPayload(message.payload)")
         assertContains(html, "if (message.type === \"host.ideActionResult\") return isHostIdeActionResultPayload(message.payload)")
         assertContains(html, "const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();")
@@ -353,7 +353,7 @@ class YetToolWindowFactoryTest {
 
         assertEquals(listOf("host.ready", "host.openedFromCommand", "host.contextSnapshot"), sent.map(::messageType))
         assertContains(sent[0], "\"sessionToken\":\"session-token\"")
-        assertContains(sent[1], "\"requestId\":\"ready-1\"")
+        assertFalse(JsonParser.parseString(sent[1]).asJsonObject.has("requestId"))
         assertContains(sent[2], "\"source\":\"jetbrains\"")
         assertContains(sent[2], "safe text")
         assertEquals(emptyList(), logs)

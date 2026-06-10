@@ -255,14 +255,13 @@ try {
     failures.push("GUI did not expose JetBrains host identity / bridge mode after wrapper bootstrap.");
   }
   await assertSingleBackslashContextPathRejected(page, bridgeVersion, activeReadyRequestId);
-  await page.evaluate(({ version, requestId }) => {
+  await page.evaluate(({ version }) => {
     window.__yetAiSendHostMessageToFrame({
       version,
       type: "host.openedFromCommand",
-      requestId,
       payload: {},
     });
-  }, { version: bridgeVersion, requestId: activeReadyRequestId });
+  }, { version: bridgeVersion });
   const hostMessagesPostedBeforeInvalidOpened = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
   await page.evaluate(({ version, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
@@ -396,7 +395,6 @@ try {
     window.__yetAiSendHostMessageToFrame({
       version,
       type: "host.openedFromCommand",
-      requestId,
       payload: {},
     });
     window.__yetAiSendHostMessageToFrame({
@@ -564,7 +562,6 @@ async function assertInvalidRuntimeUrlsRejected(page, version, currentReadyReque
     window.__yetAiSendHostMessageToFrame({
       version: bridgeVersion,
       type: "host.openedFromCommand",
-      requestId,
       payload: {},
     });
     window.__yetAiSendHostMessageToFrame({
@@ -821,7 +818,6 @@ async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeU
     window.__yetAiSendHostMessageToFrame({
       version: bridgeVersion,
       type: "host.openedFromCommand",
-      requestId,
       payload: {},
     });
   }, { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token, requestId: currentRequestId });
@@ -848,7 +844,6 @@ async function resendCurrentHostReadyAndWaitForRuntimeInput(page, frameLocator, 
     window.__yetAiSendHostMessageToFrame({
       version: bridgeVersion,
       type: "host.openedFromCommand",
-      requestId: currentRequestId,
       payload: {},
     });
   }, { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token, currentRequestId: requestId });
@@ -1253,7 +1248,6 @@ window.__yetAiPendingHostMessages = [{
 }, {
   version: "${bridgeVersion}",
   type: "host.openedFromCommand",
-  requestId: "gui-ready",
   payload: {},
 }];
 window.__yetAiPendingDiagnostics = ["Queued diagnostic before wrapper init"];
@@ -1367,6 +1361,7 @@ const isGuiUnloadedMessage = (message) => isPlainObject(message) && hasOnlyKeys(
 const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
 const canDeliverHostMessage = (message) => {
   if (message.type === "host.ideActionProgress" || message.type === "host.ideActionResult") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
+  if (message.type === "host.openedFromCommand") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId() && message.requestId === undefined;
   if (!messageMatchesCurrentReady(message)) return false;
   if (message.type === "host.ready") return true;
   return hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
@@ -1381,7 +1376,7 @@ const postToFrame = (message) => {
       hostReadyAcceptedForCurrentFrame = true;
     }
     if (message?.type === "host.ready" && message?.requestId === "gui-ready") window.__yetAiPreInitHostFlushed = true;
-    if (message?.type === "host.openedFromCommand" && message?.requestId === "gui-ready") window.__yetAiPreInitOpenedFlushed = true;
+    if (message?.type === "host.openedFromCommand" && message?.requestId === undefined) window.__yetAiPreInitOpenedFlushed = true;
   }
 };
 const flushPending = () => {
@@ -1429,10 +1424,11 @@ const isHostIdeActionProgressPayload = (payload) => isPlainObject(payload) && ha
 const isHostIdeActionResultContext = (context) => isPlainObject(context) && hasOnlyKeys(context, ["source", "hasActiveEditor", "workspaceFolderCount"]) && context.source === "jetbrains" && typeof context.hasActiveEditor === "boolean" && Number.isInteger(context.workspaceFolderCount) && context.workspaceFolderCount >= 0 && context.workspaceFolderCount <= 100;
 const isHostIdeActionResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "action", "workspaceRelativePath", "range", "context"]) && ["succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512) && (payload.range === undefined || isIdeActionRange(payload.range)) && (payload.context === undefined || isHostIdeActionResultContext(payload.context));
 const isHostMessage = (message) => {
-  if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || !isRequestId(message.requestId)) return false;
+  if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion) return false;
+  if (message.type === "host.openedFromCommand") return message.requestId === undefined && (message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0));
+  if (!isRequestId(message.requestId)) return false;
   if (message.type === "host.ready") return isHostReadyPayload(message.payload);
   if (message.type === "host.contextSnapshot") return isContextSnapshotPayload(message.payload);
-  if (message.type === "host.openedFromCommand") return message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0);
   if (message.type === "host.ideActionProgress") return isHostIdeActionProgressPayload(message.payload);
   if (message.type === "host.ideActionResult") return isHostIdeActionResultPayload(message.payload);
   return false;
