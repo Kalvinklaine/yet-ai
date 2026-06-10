@@ -60,7 +60,7 @@ try {
   const firstPrompt = "Terminal message_added first prompt smoke.";
   const assistantAnswer = "Terminal message_added canned answer from Yet AI Demo Mode — no provider call was made.";
   const explainAnswer = "Demo Mode Coding Actions explanation: selected code returns a greeting; no provider call was made.";
-  const editProposalSummary = "Demo Mode safe edit proposal for selected code. no provider call was made.";
+  const editProposalSummary = "Demo Mode safe edit no-op preview. Selected text is preserved exactly for this browser demo.";
   const secondPrompt = "Terminal message_added second prompt smoke.";
   const codingActionsContext = {
     kind: "active_editor",
@@ -105,7 +105,9 @@ try {
   await expectVisibleText(page, "Proposed a safe edit. Review the proposal card below. It will not apply automatically.", "compact safe edit proposal copy");
   await expectVisibleText(page, "Propose safe edit", "safe edit proposal card");
   await expectVisibleText(page, editProposalSummary, "safe edit proposal summary");
+  await expectVisibleText(page, codingActionsContext.selection.text, "safe edit no-op replacement preserves selected text");
   await expectVisibleText(page, "Preview only in this host. Browser and JetBrains cannot apply proposed edits", "browser preview-only safe edit copy");
+  await assertNoVisibleText(page, "Apply in VS Code after review", "VS Code apply button in browser Demo Mode smoke");
   await assertAssistantBubbleSequence(page, [assistantAnswer, explainAnswer, "Proposed a safe edit"], "assistant response sequence after coding safe edit");
 
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(secondPrompt);
@@ -344,15 +346,16 @@ function terminalDemoAnswer(prompt) {
   return "Terminal message_added canned answer from Yet AI Demo Mode — no provider call was made.";
 }
 function safeEditProposalPayload() {
+  const selectedText = "export function greet(name: string) {\n  return `Hello, ${name}`;\n}";
   return {
     requiresUserConfirmation: true,
-    summary: "Demo Mode safe edit proposal for selected code. no provider call was made.",
+    summary: "Demo Mode safe edit no-op preview. Selected text is preserved exactly for this browser demo.",
     cloudRequired: false,
     edits: [{
       workspaceRelativePath: "src/demo.ts",
       textReplacements: [{
-        range: { start: { line: 2, character: 9 }, end: { line: 2, character: 15 } },
-        replacementText: "`Hello from Demo Mode, ${name}`",
+        range: { start: { line: 1, character: 0 }, end: { line: 3, character: 1 } },
+        replacementText: selectedText,
       }],
     }],
   };
@@ -416,6 +419,7 @@ function message(chatId, id, role, content) { return { chatId, id, role, content
 function toSummary(item) { return { chatId: item.chatId, title: item.title, createdAt: item.createdAt, updatedAt: item.updatedAt, messageCount: item.messages.length }; }
 async function listen(server) { await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); }); const address = server.address(); if (!address || typeof address === "string") throw new Error("Server did not bind to a TCP port."); return { port: address.port, close: () => new Promise((resolve) => server.close(resolve)) }; }
 async function expectVisibleText(page, text, label, timeout = 20_000) { const visible = await page.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout }).then(() => true).catch(() => false); assert(visible, `Missing visible ${label}: ${text}`); }
+async function assertNoVisibleText(page, text, label) { const visible = await page.getByText(text, { exact: false }).first().isVisible().catch(() => false); assert(!visible, `Unexpected visible ${label}: ${text}`); }
 async function expectComposerValue(page, text, label) {
   const ok = await page.getByPlaceholder("Ask about the current file, selection, or project...").evaluate((element, expected) => element instanceof HTMLTextAreaElement && element.value.includes(expected), text).catch(() => false);
   assert(ok, `Missing ${label} in composer: ${text}`);

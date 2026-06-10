@@ -976,17 +976,36 @@ fn demo_edit_proposal_response(context: Option<&ChatContext>) -> String {
         .and_then(|file| file.workspace_relative_path.as_deref())
         .filter(|path| demo_safe_workspace_relative_path(path))
         .unwrap_or("src/example.ts");
-    let range = context
-        .and_then(|context| context.selection.as_ref())
+    let selection = context.and_then(|context| context.selection.as_ref());
+    let has_selected_text = selection
+        .and_then(|selection| selection.text.as_deref())
+        .is_some_and(|text| !text.is_empty());
+    let replacement_text = selection
+        .and_then(|selection| selection.text.as_deref())
+        .filter(|text| !text.is_empty())
+        .unwrap_or("");
+    let range = selection
         .and_then(|selection| {
+            let start_line = selection.start_line?;
+            let start_character = selection.start_character?;
+            let end_line = if has_selected_text {
+                selection.end_line?
+            } else {
+                start_line
+            };
+            let end_character = if has_selected_text {
+                selection.end_character?
+            } else {
+                start_character
+            };
             Some(json!({
                 "start": {
-                    "line": selection.start_line?,
-                    "character": selection.start_character?,
+                    "line": start_line,
+                    "character": start_character,
                 },
                 "end": {
-                    "line": selection.end_line?,
-                    "character": selection.end_character?,
+                    "line": end_line,
+                    "character": end_character,
                 }
             }))
         })
@@ -1002,13 +1021,13 @@ fn demo_edit_proposal_response(context: Option<&ChatContext>) -> String {
         "version": "2026-05-15",
         "payload": {
             "requiresUserConfirmation": true,
-            "summary": "Demo Mode safe edit preview; no provider call; not model quality. Review before applying.",
+            "summary": "Demo Mode safe edit no-op preview. This proposal preserves the current selection as-is, or uses an empty zero-length preview when no selection text is available.",
             "cloudRequired": false,
             "edits": [{
                 "workspaceRelativePath": workspace_relative_path,
                 "textReplacements": [{
                     "range": range,
-                    "replacementText": "// Demo Mode placeholder edit; review and replace with your intended change."
+                    "replacementText": replacement_text
                 }]
             }]
         }
@@ -1462,9 +1481,9 @@ fn chat_completions_url(base_url: &str) -> Result<String, ChatError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        chat_completions_url, demo_response, sequence_subscription_event, ChatEvent,
-        OpenAiSseParser, SubscriptionEvent, PROVIDER_STREAM_EVENT_DATA_LIMIT,
-        PROVIDER_STREAM_LINE_BUFFER_LIMIT,
+        chat_completions_url, demo_response, sequence_subscription_event, ChatContext,
+        ChatContextFile, ChatContextSelection, ChatEvent, OpenAiSseParser, SubscriptionEvent,
+        PROVIDER_STREAM_EVENT_DATA_LIMIT, PROVIDER_STREAM_LINE_BUFFER_LIMIT,
     };
 
     fn representative_gui_coding_action_prompts() -> [String; 5] {
@@ -1569,8 +1588,10 @@ mod tests {
         assert_eq!(parsed["payload"]["cloudRequired"], false);
         let summary = parsed["payload"]["summary"].as_str().unwrap();
         assert!(summary.contains("Demo Mode"));
-        assert!(summary.contains("no provider call"));
-        assert!(summary.contains("not model quality"));
+        assert!(summary.contains("no-op preview"));
+        assert!(summary.contains("zero-length preview"));
+        assert!(!summary.contains("no provider call"));
+        assert!(!summary.contains("not model quality"));
         assert_eq!(
             parsed["payload"]["edits"][0]["workspaceRelativePath"],
             "src/example.ts"
@@ -1581,6 +1602,54 @@ mod tests {
                 "start": { "line": 0, "character": 0 },
                 "end": { "line": 0, "character": 0 }
             })
+        );
+        assert_eq!(
+            parsed["payload"]["edits"][0]["textReplacements"][0]["replacementText"],
+            ""
+        );
+    }
+
+    #[test]
+    fn demo_safe_edit_preserves_selected_text_as_no_op_replacement() {
+        let prompts = representative_gui_coding_action_prompts();
+        let selected_text = "export function greet(name: string) {\n  return `Hello, ${name}`;\n}";
+        let context = ChatContext {
+            kind: "active_editor".to_string(),
+            source: "vscode".to_string(),
+            file: Some(ChatContextFile {
+                display_path: Some("src/demo.ts".to_string()),
+                workspace_relative_path: Some("src/demo.ts".to_string()),
+                language_id: Some("typescript".to_string()),
+            }),
+            selection: Some(ChatContextSelection {
+                start_line: Some(1),
+                start_character: Some(0),
+                end_line: Some(3),
+                end_character: Some(1),
+                text: Some(selected_text.to_string()),
+            }),
+        };
+        let response = demo_response(&prompts[4], Some(&context));
+        let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(
+            parsed["payload"]["edits"][0]["workspaceRelativePath"],
+            "src/demo.ts"
+        );
+        assert_eq!(
+            parsed["payload"]["edits"][0]["textReplacements"][0]["range"],
+            serde_json::json!({
+                "start": { "line": 1, "character": 0 },
+                "end": { "line": 3, "character": 1 }
+            })
+        );
+        assert_eq!(
+            parsed["payload"]["edits"][0]["textReplacements"][0]["replacementText"],
+            selected_text
+        );
+        assert_ne!(
+            parsed["payload"]["edits"][0]["textReplacements"][0]["replacementText"],
+            "// Demo Mode placeholder edit; review and replace with your intended change."
         );
     }
 
