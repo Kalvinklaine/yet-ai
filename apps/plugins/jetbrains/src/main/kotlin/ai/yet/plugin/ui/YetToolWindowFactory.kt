@@ -19,6 +19,8 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
+import com.intellij.openapi.wm.ex.ToolWindowManagerListener
+import com.intellij.ui.content.Content
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.jcef.JBCefApp
 import com.intellij.ui.jcef.JBCefBrowser
@@ -66,7 +68,10 @@ class YetToolWindowFactory : ToolWindowFactory {
     companion object {
         fun ensureContent(project: Project, toolWindow: ToolWindow) {
             val contentManager = toolWindow.contentManager
-            if (!shouldCreateYetToolWindowContent(contentManager.contentCount)) return
+            if (!shouldCreateYetToolWindowContent(contentManager.contentCount)) {
+                refreshActiveEditorContext(toolWindow)
+                return
+            }
 
             val contentFactory = ContentFactory.getInstance()
             val component = if (JBCefApp.isSupported()) {
@@ -81,6 +86,27 @@ class YetToolWindowFactory : ToolWindowFactory {
                 Disposer.register(content, component)
             }
             contentManager.addContent(content)
+            registerActivationRefresh(project, content)
+            refreshActiveEditorContext(toolWindow)
+        }
+
+        fun refreshActiveEditorContext(toolWindow: ToolWindow) {
+            for (content in toolWindow.contentManager.contents) {
+                (content.component as? YetBrowserPanel)?.refreshActiveEditorContext()
+            }
+        }
+
+        private fun registerActivationRefresh(project: Project, content: Content) {
+            project.messageBus.connect(content).subscribe(
+                ToolWindowManagerListener.TOPIC,
+                object : ToolWindowManagerListener {
+                    override fun toolWindowShown(toolWindow: ToolWindow) {
+                        if (toolWindow.id == "Yet AI") {
+                            refreshActiveEditorContext(toolWindow)
+                        }
+                    }
+                },
+            )
         }
     }
 }
@@ -139,6 +165,16 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
     private fun deliverReadyMessages(settings: RuntimeSettings, requestId: String?) {
         JetBrainsReadyMessageDelivery.deliver(
             settings = settings,
+            requestId = requestId,
+            send = ::sendToGui,
+            contextSupplier = { ActiveEditorContextCollector.snapshot(project) },
+            logContextStatus = { logger.info(it) },
+        )
+    }
+
+    fun refreshActiveEditorContext() {
+        val requestId = guiReadyRequestId ?: return
+        JetBrainsContextSnapshotDelivery.deliver(
             requestId = requestId,
             send = ::sendToGui,
             contextSupplier = { ActiveEditorContextCollector.snapshot(project) },
@@ -295,6 +331,25 @@ object JetBrainsReadyMessageDelivery {
             uri.rawQuery == null &&
             uri.rawFragment == null &&
             (path.isEmpty() || path == "/")
+    }
+}
+
+object JetBrainsContextSnapshotDelivery {
+    fun deliver(
+        requestId: String?,
+        send: (String) -> Unit,
+        contextSupplier: () -> ActiveEditorContext.Snapshot?,
+        logContextStatus: (String) -> Unit,
+    ) {
+        val snapshot = try {
+            contextSupplier()
+        } catch (_: Exception) {
+            logContextStatus("Yet AI active editor context refresh failed")
+            null
+        }
+        if (snapshot != null) {
+            send(BridgeMessages.contextSnapshot(snapshot, requestId))
+        }
     }
 }
 
