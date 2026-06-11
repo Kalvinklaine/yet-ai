@@ -1698,8 +1698,10 @@ export function App() {
     </div>
   );
 
+  const hostedWebview = bridgeHost === "vscode" || bridgeHost === "jetbrains";
+
   return (
-    <main className="app-shell">
+    <main className={`app-shell host-${bridgeHost}`}>
       <section className="hero">
         <div>
           <span className="badge ok">local-first</span>
@@ -1822,22 +1824,26 @@ export function App() {
               <EditProposalPanel proposal={activeEditProposal} result={activeEditProposal ? applyResult : null} host={bridgeHost} pendingRequestId={pendingApplyRequestId} note={applyNote} onApply={submitEditProposal} onCancelPending={cancelPendingEditProposalApply} />
               <IdeActionProposalPanel proposal={activeIdeActionProposal} host={bridgeHost} pending={pendingIdeActionRequestIdRef.current !== null} onRun={(payload) => requestIdeAction(payload, "gui-ide-proposal-action")} />
             </div>
-            <form className="stack chat-composer" onSubmit={(event) => void submitChat(event)}>
-              <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} acknowledged={attachedContextAcknowledged} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} onAcknowledgeChange={setAttachedContextAcknowledged} />
-              <CodingActionsPanel canUseContext={codingActionsCanUseContext} context={currentAttachedContext} onAction={applyCodingAction} />
-              <IdeActionsPanel host={bridgeHost} attempt={ideActionAttempt} note={ideActionNote} workspaceRelativePath={safeActiveWorkspacePath} range={safeActiveRange} onGetContext={() => requestIdeAction({ action: "getContextSnapshot" })} onOpenFile={(workspaceRelativePath) => requestIdeAction({ action: "openWorkspaceFile", workspaceRelativePath })} onRevealRange={(workspaceRelativePath, range) => requestIdeAction({ action: "revealWorkspaceRange", workspaceRelativePath, range })} onClearPendingIdeAction={clearPendingIdeActionState} />
-              <textarea ref={chatInputRef} value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
-              <div className="row chat-actions">
-                <button type="submit" disabled={!canSendChat}>Send</button>
-                <button type="button" className="secondary-button" onClick={stopSse}>Stop response</button>
+            <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
+              <div className="composer-tools">
+                <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} acknowledged={attachedContextAcknowledged} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} onAcknowledgeChange={setAttachedContextAcknowledged} />
+                <CodingActionsPanel canUseContext={codingActionsCanUseContext} context={currentAttachedContext} onAction={applyCodingAction} />
+                <IdeActionsPanel host={bridgeHost} attempt={ideActionAttempt} note={ideActionNote} workspaceRelativePath={safeActiveWorkspacePath} range={safeActiveRange} onGetContext={() => requestIdeAction({ action: "getContextSnapshot" })} onOpenFile={(workspaceRelativePath) => requestIdeAction({ action: "openWorkspaceFile", workspaceRelativePath })} onRevealRange={(workspaceRelativePath, range) => requestIdeAction({ action: "revealWorkspaceRange", workspaceRelativePath, range })} onClearPendingIdeAction={clearPendingIdeActionState} />
+              </div>
+              <div className="composer-input-area">
+                <textarea ref={chatInputRef} value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
+                <div className="row chat-actions">
+                  <button type="submit" disabled={!canSendChat}>Send</button>
+                  <button type="button" className="secondary-button" onClick={stopSse}>Stop response</button>
+                </div>
               </div>
             </form>
-            <details className="debug-details chat-secondary-debug" data-testid="sse-debug-details">
+            {!hostedWebview && <details className="debug-details chat-secondary-debug" data-testid="sse-debug-details">
               <summary>SSE debug details</summary>
               <div className="timeline">
                 {timeline.length === 0 ? <span>No SSE events yet.</span> : timeline.map((entry, index) => <div className="timeline-entry" key={`${index}:${entry}`}>{entry}</div>)}
               </div>
-            </details>
+            </details>}
           </section>
         </div>
       </section>
@@ -2276,13 +2282,14 @@ function AttachedContextPreview({ context, include, acknowledged, status, onIncl
   const requiresAcknowledgement = preview.redacted || preview.truncated;
   const canAttach = !requiresAcknowledgement || acknowledged;
   return (
-    <div className="readiness-card ready attached-context-card" role="status">
-      <div className="stack">
-        <div className="row">
-          <strong>Active editor context</strong>
-          <span className="badge ok">{activeEditorSourceLabel(context.source)}</span>
-          <span className={include && canAttach ? "badge ok" : "badge warn"}>{include && canAttach ? "Attach to next message" : "Do not attach"}</span>
-        </div>
+    <details className="readiness-card ready compact-safety-details attached-context-card attached-context-compact" data-testid="attached-context-active-details" role="status">
+      <summary>
+        <span className="compact-summary-title">Active editor context</span>
+        <span className="badge ok">{activeEditorSourceLabel(context.source)}</span>
+        <span className={include && canAttach ? "badge ok" : "badge warn"}>{include && canAttach ? "Attach to next message" : "Do not attach"}</span>
+        <span className="compact-summary-note">{fileLabel} · {range} · {text.length} chars</span>
+      </summary>
+      <div className="stack compact-details-body">
         <div className="attached-context-grid">
           <span>Source host: {activeEditorSourceLabel(context.source)}</span>
           <span>File: {fileLabel}</span>
@@ -2296,16 +2303,16 @@ function AttachedContextPreview({ context, include, acknowledged, status, onIncl
         </div>
         {requiresAcknowledgement && <div className="readiness-card warn" role="alert"><strong>Context preview requires acknowledgement</strong><span>Selected text preview was {preview.redacted && preview.truncated ? "redacted and shortened" : preview.redacted ? "redacted" : "shortened"}. Raw selected text will not be attached unless you acknowledge this warning and enable attachment.</span></div>}
         <span className="subtle">Context stays in React state only. It is one-shot and is attached only to the next accepted message while enabled.</span>
-        {requiresAcknowledgement && <label className="row attached-context-toggle">
-          <input style={{ width: "auto" }} type="checkbox" checked={acknowledged} onChange={(event) => onAcknowledgeChange(event.target.checked)} />
-          I understand the hidden selected text may be included
-        </label>}
-        <label className="row attached-context-toggle">
-          <input style={{ width: "auto" }} type="checkbox" checked={include} disabled={requiresAcknowledgement && !acknowledged} onChange={(event) => onIncludeChange(event.target.checked)} />
-          {include && canAttach ? "Attach to next message" : "Do not attach"}
-        </label>
       </div>
-    </div>
+      {requiresAcknowledgement && <label className="row attached-context-toggle">
+        <input style={{ width: "auto" }} type="checkbox" checked={acknowledged} onChange={(event) => onAcknowledgeChange(event.target.checked)} />
+        I understand the hidden selected text may be included
+      </label>}
+      <label className="row attached-context-toggle">
+        <input style={{ width: "auto" }} type="checkbox" checked={include} disabled={requiresAcknowledgement && !acknowledged} onChange={(event) => onIncludeChange(event.target.checked)} />
+        {include && canAttach ? "Attach to next message" : "Do not attach"}
+      </label>
+    </details>
   );
 }
 
