@@ -13,6 +13,7 @@ const evidenceRoot = path.join(root, "dist", "visual-smoke", "jetbrains-wrapper-
 const requiredVisibleText = ["Chat readiness", "Conversations", "Coding Actions"];
 const bridgeVersion = "2026-05-15";
 const pluginLikeViewport = { width: 800, height: 800 };
+const headed = process.argv.includes("--headed");
 const failures = [];
 const runtimeToken = `jb.wrapper.runtime.${randomUUID().replaceAll("-", "")}`;
 const oauthSentinels = {
@@ -112,7 +113,7 @@ let browser;
 
 try {
   try {
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: !headed });
   } catch (error) {
     console.error("JetBrains wrapper browser smoke failed: Playwright Chromium is not installed or cannot be launched.");
     console.error("Run `npm install` from the repository root if needed, then run `npx playwright install chromium`.");
@@ -402,21 +403,27 @@ try {
   await resendCurrentHostReadyAndWaitForRuntimeInput(page, frameLocator, bridgeVersion, runtimeBaseUrl, runtimeToken);
 
   await frameLocator.getByText("Runtime connected", { exact: false }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("Runtime refresh did not reach connected/provider-required state after trusted host.ready."));
-  await frameLocator.getByText("Provider setup", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("Provider setup panel was not visible in the JetBrains first-use GUI path."));
-  await frameLocator.getByText("Experimental Codex-like OpenAI account chat is connected through the local runtime.", { exact: false }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not use host.ready runtime endpoints to enter connected experimental readiness."));
+  await frameLocator.getByText("Provider setup", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("Provider setup panel was not mounted in the JetBrains first-use GUI path."));
 
   const refreshButton = frameLocator.locator("section", { has: frameLocator.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
-  await openDetailsBySummary(frameLocator, "Local runtime connection", refreshButton);
-  await refreshButton.click();
-  await refreshButton.click();
-  await page.waitForTimeout(500);
-  const refreshFeedbackVisible = await frameLocator.getByText(/Runtime (connected|check failed)|Checking runtime…/).first().isVisible({ timeout: 5000 }).catch(() => false);
-  if (!refreshFeedbackVisible) {
-    failures.push("Refresh runtime click did not produce visible iframe feedback.");
-  }
-  const refreshAttemptVisible = await frameLocator.getByText(/Attempt \d+ at/).first().isVisible({ timeout: 5000 }).catch(() => false);
-  if (!refreshAttemptVisible) {
-    failures.push("Refresh runtime feedback did not include a visible attempt/timestamp marker.");
+  if (await refreshButton.isVisible().catch(() => false)) {
+    await openDetailsBySummary(frameLocator, "Local runtime connection", refreshButton);
+    await refreshButton.click();
+    await refreshButton.click();
+    await page.waitForTimeout(500);
+    const refreshFeedbackVisible = await frameLocator.getByText(/Runtime (connected|check failed)|Checking runtime…/).first().isVisible({ timeout: 5000 }).catch(() => false);
+    if (!refreshFeedbackVisible) {
+      failures.push("Refresh runtime click did not produce visible iframe feedback.");
+    }
+    const refreshAttemptVisible = await frameLocator.getByText(/Attempt \d+ at/).first().isVisible({ timeout: 5000 }).catch(() => false);
+    if (!refreshAttemptVisible) {
+      failures.push("Refresh runtime feedback did not include a visible attempt/timestamp marker.");
+    }
+  } else {
+    const runtimeDetailsVisible = await frameLocator.locator("[data-testid='runtime-connection-details']").isVisible().catch(() => false);
+    if (runtimeDetailsVisible) {
+      failures.push("Runtime connection details are visible while Refresh runtime is hidden in compact hosted layout.");
+    }
   }
 
   const targetOrigin = await page.evaluate(() => window.__yetAiFrameTargetOrigin);
@@ -428,14 +435,7 @@ try {
     failures.push("Mock runtime did not observe the wrapper-supplied runtime session token.");
   }
 
-  const openAiAccountConnectedText = frameLocator.getByText("OpenAI account connected", { exact: true }).first();
-  await openDetailsBySummary(frameLocator, "Provider setup", openAiAccountConnectedText)
-    .catch(() => failures.push("Provider setup details could not be opened for connected OpenAI account assertions."));
-  await openAiAccountConnectedText.waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show connected OpenAI account login state."));
-  await frameLocator.locator("body").evaluate(() => document.documentElement.innerText).then((text) => {
-    if (!text.includes("Ready for chat through the local runtime when the experimental account path is selected and no API-key provider is configured.")) failures.push(`GUI did not show experimental account chat readiness. Body: ${text}`);
-  });
-  await frameLocator.getByText(/Ready to send using|Ready for chat through the local runtime when the experimental account path is selected/).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show chat readiness for the experimental account path."));
+  await frameLocator.getByText("Ready to send.", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show compact ready-to-send status for the experimental account path."));
   if (failures.length > 0) {
     reportFailures();
   }
@@ -1105,6 +1105,7 @@ async function collectJetBrainsIframeLayoutMetrics(frameLocator) {
     const composerTools = document.querySelector(".composer-tools");
     const inputArea = document.querySelector(".composer-input-area");
     const main = document.querySelector("main.app-shell");
+    const conversationsRail = document.querySelector(".conversations-rail");
     const sendRect = rectFor(send);
     const viewport = { width: window.innerWidth, height: window.innerHeight };
     const documentElement = document.documentElement;
@@ -1149,6 +1150,9 @@ async function collectJetBrainsIframeLayoutMetrics(frameLocator) {
       hostBrowserClass: main instanceof HTMLElement && main.classList.contains("host-browser"),
       advancedChatControlsVisible: textVisible("Advanced chat controls"),
       sseDebugDetailsVisible: textVisible("SSE debug details"),
+      conversationsRailVisible: visible(conversationsRail),
+      chatReadinessCardVisible: visible(document.querySelector(".chat-primary-card > .readiness-card")),
+      firstMessageWizardVisible: textVisible("Provider required for first message") || textVisible("Ready for first message"),
       sendVisible: send instanceof HTMLElement && visible(send),
       sendEnabled: send instanceof HTMLButtonElement && !send.disabled,
       sendWithinViewport: Boolean(sendRect && sendRect.top >= 0 && sendRect.left >= 0 && sendRect.bottom <= viewport.height && sendRect.right <= viewport.width),
@@ -1157,6 +1161,8 @@ async function collectJetBrainsIframeLayoutMetrics(frameLocator) {
       sendRect,
       sendRectAfterInnerScroll,
       chatScrollHeight: rectFor(scroll)?.height ?? 0,
+      composerHeight: rectFor(composer)?.height ?? 0,
+      composerToolsHeight: rectFor(composerTools)?.height ?? 0,
       composerRect: rectFor(composer),
       composerRectAfterInnerScroll,
       chatScrollRectAfterInnerScroll,
@@ -1174,10 +1180,15 @@ function assertJetBrainsHostedLayout(metrics, label) {
   if (metrics.hostBrowserClass) failures.push(`${label}: iframe shell still has host-browser class.`);
   if (metrics.advancedChatControlsVisible) failures.push(`${label}: Advanced chat controls are visible in hosted layout.`);
   if (metrics.sseDebugDetailsVisible) failures.push(`${label}: SSE debug details are visible in hosted layout.`);
+  if (metrics.conversationsRailVisible) failures.push(`${label}: left conversations rail is visible in compact hosted layout.`);
+  if (metrics.chatReadinessCardVisible) failures.push(`${label}: full chat readiness card is visible in compact hosted layout.`);
+  if (metrics.firstMessageWizardVisible) failures.push(`${label}: verbose first-message wizard is visible in compact hosted layout.`);
   if (!metrics.sendVisible || !metrics.sendEnabled || !metrics.sendReachableAfterInnerScroll) failures.push(`${label}: Send is not visible/enabled/reachable after inner panel scroll (${JSON.stringify(metrics.sendRectAfterInnerScroll)} in ${JSON.stringify(metrics.viewport)}).`);
   if (!metrics.sendHitTestAfterInnerScroll?.ok) failures.push(`${label}: Send center is covered or not hit-testable after inner scroll (${JSON.stringify(metrics.sendHitTestAfterInnerScroll)}).`);
   if (metrics.outerOverflow && !metrics.hasUsablePanelScrollOwner) failures.push(`${label}: hosted iframe overflows without a usable panel scroll owner (document ${metrics.documentScrollHeight} > ${metrics.documentClientHeight}, outer moved: ${metrics.outerScrollMoves}, chat moved: ${metrics.chatScrollMoves}).`);
-  if (metrics.chatScrollHeight < 120) failures.push(`${label}: chat message region is too small to contribute useful hosted panel scrolling (${metrics.chatScrollHeight}).`);
+  if (metrics.chatScrollHeight < 280) failures.push(`${label}: chat message region is too small for compact hosted chat (${metrics.chatScrollHeight}).`);
+  if (metrics.composerHeight > 230) failures.push(`${label}: composer is too tall for compact hosted chat (${metrics.composerHeight}).`);
+  if (metrics.composerToolsHeight > 100) failures.push(`${label}: composer tools area is too tall for compact hosted chat (${metrics.composerToolsHeight}).`);
   if (metrics.composerToolsOverflow && !metrics.composerToolsScrollMoves) failures.push(`${label}: composer status/context cards overflow but their tool region did not scroll.`);
   if (metrics.chatScrollComposerOverlapAfterInnerScroll) failures.push(`${label}: chat scroll region overlaps the composer after inner scrolling (${JSON.stringify(metrics.chatScrollRectAfterInnerScroll)} vs ${JSON.stringify(metrics.composerRectAfterInnerScroll)}).`);
   if (metrics.composerToolsInputOverlapAfterInnerScroll) failures.push(`${label}: composer status/context cards overlap the input controls after inner scrolling (${JSON.stringify(metrics.composerToolsRectAfterInnerScroll)} vs ${JSON.stringify(metrics.inputAreaRectAfterInnerScroll)}).`);
