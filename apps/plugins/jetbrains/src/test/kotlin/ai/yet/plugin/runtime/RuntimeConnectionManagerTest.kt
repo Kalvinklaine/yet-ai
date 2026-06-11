@@ -192,6 +192,42 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun manualKillOfPluginOwnedRuntimeRelaunchesOnNextPrepareWithFreshToken() {
+        val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
+        val launched = mutableListOf<EngineLaunchCommand>()
+        val firstProcess = FakeManuallyKillableProcess(exitCode = 137)
+        val secondProcess = FakeManuallyKillableProcess()
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(bundledPath),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { command ->
+                launched += command
+                if (launched.size == 1) firstProcess else secondProcess
+            },
+            tokenGenerator = { if (launched.isEmpty()) "first-plugin-token" else "second-plugin-token" },
+            healthChecker = {},
+        )
+        val settings = RuntimeSettings("http://127.0.0.1:8125", null, null, LaunchMode.AUTO, null)
+
+        val first = manager.prepareForTest(settings)
+        firstProcess.killManually()
+        val diagnosticsAfterKill = manager.runtimeDiagnosticsForTest(settings)
+        val second = manager.prepareForTest(settings)
+        firstProcess.killManually()
+
+        assertEquals("first-plugin-token", first.settings.sessionToken)
+        assertEquals("second-plugin-token", second.settings.sessionToken)
+        assertEquals(listOf("first-plugin-token", "second-plugin-token"), launched.map { it.environment.getValue("YET_AI_AUTH_TOKEN") })
+        assertTrue(diagnosticsAfterKill.contains("plugin-launched process exited with code 137"), diagnosticsAfterKill)
+        assertTrue(diagnosticsAfterKill.contains("Refresh runtime"), diagnosticsAfterKill)
+        assertTrue(diagnosticsAfterKill.contains("Yet AI: Restart Runtime"), diagnosticsAfterKill)
+        assertFalse(diagnosticsAfterKill.contains("first-plugin-token"), diagnosticsAfterKill)
+        assertFalse(diagnosticsAfterKill.contains("Authorization"), diagnosticsAfterKill)
+        assertFalse(diagnosticsAfterKill.contains("/Users/alice"), diagnosticsAfterKill)
+        manager.dispose()
+    }
+
+    @Test
     fun prepareRetriesPluginOwnedHttp401OnceWithFreshToken() {
         val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
         val launched = mutableListOf<EngineLaunchCommand>()
@@ -852,6 +888,47 @@ private class FakeProcess(private val destroyWaitResults: List<Boolean>) : Proce
 
     override fun destroyForcibly(): Process {
         destroyForciblyCalls += 1
+        return this
+    }
+
+    override fun isAlive(): Boolean = alive
+}
+
+private class FakeManuallyKillableProcess(private val exitCode: Int = 0) : Process() {
+    @Volatile
+    private var alive = true
+
+    override fun getOutputStream(): OutputStream = ByteArrayOutputStream()
+    override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+    override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    fun killManually() {
+        alive = false
+    }
+
+    override fun waitFor(): Int {
+        while (alive) {
+            Thread.sleep(10)
+        }
+        return exitCode
+    }
+
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean {
+        alive = false
+        return true
+    }
+
+    override fun exitValue(): Int {
+        if (alive) throw IllegalThreadStateException("process is alive")
+        return exitCode
+    }
+
+    override fun destroy() {
+        alive = false
+    }
+
+    override fun destroyForcibly(): Process {
+        alive = false
         return this
     }
 

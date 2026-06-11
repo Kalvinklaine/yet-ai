@@ -218,6 +218,40 @@ class RuntimeActionsTest {
     }
 
     @Test
+    fun restartFailurePresentationKeepsManualKillGuidanceSanitized() {
+        val scheduler = RecordingStatusActionScheduler()
+        val presenter = RecordingRestartActionPresenter()
+        val runner = RuntimeRestartActionRunner(
+            restartRuntime = {
+                RuntimeConnectionResult(
+                    runtimeSettings(),
+                    null,
+                    "Yet AI local runtime connection failed after plugin-launched process exited with code 137 Authorization: Bearer ${"a".repeat(64)} /Users/alice/private/yet-lsp",
+                )
+            },
+            diagnostics = {
+                "Last process: plugin-launched process exited with code 137; click Refresh runtime or run Yet AI: Restart Runtime to relaunch\n" +
+                    "Next action: Click Refresh runtime, then run Yet AI: Restart Runtime. Authorization: Bearer ${"b".repeat(64)} /Users/alice/private/auth.json"
+            },
+            scheduler = scheduler,
+            presenter = presenter,
+        )
+
+        runner.restart(null)
+        scheduler.runNextBackground()
+        scheduler.runNextUi()
+
+        val message = presenter.events.single().message
+        assertContains(message, "plugin-launched process exited")
+        assertContains(message, "Refresh runtime")
+        assertContains(message, "Yet AI: Restart Runtime")
+        assertFalse(message.contains("Authorization"), message)
+        assertFalse(message.contains("/Users/alice"), message)
+        assertFalse(message.contains("${"a".repeat(64)}"), message)
+        assertFalse(message.contains("${"b".repeat(64)}"), message)
+    }
+
+    @Test
     fun restartActionRunsRestartOffActionThreadAndShowsFailuresAsErrors() {
         val source = projectFile("src/main/kotlin/ai/yet/plugin/actions/RestartRuntimeAction.kt").toFile().readText() +
             projectFile("src/main/kotlin/ai/yet/plugin/runtime/RuntimeConnectionManager.kt").toFile().readText()
@@ -225,6 +259,8 @@ class RuntimeActionsTest {
         assertContains(source, "DumbAwareAction")
         assertContains(source, "RuntimeRestartActionRunner().restart(event.project)")
         assertContains(source, "RuntimeConnectionManager.getInstance().restartRuntime()")
+        assertContains(source, "stopLaunchedProcess()")
+        assertContains(source, "prepareCurrent(publishUpdates = false)")
         assertContains(source, "RuntimeConnectionListener.TOPIC")
         assertContains(source, "runtimeConnectionUpdated(result)")
         assertContains(source, "project?.isDisposed == true")
