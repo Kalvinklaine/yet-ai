@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { GuiAssetFreshnessError, assertPackagedGuiFreshnessInArchive } from "./gui-asset-freshness.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const artifactsRoot = path.join(root, "dist", "github-artifacts");
@@ -17,6 +18,7 @@ const allowedManifestKinds = new Set(["vscode", "jetbrains"]);
 const allowedManifestOs = new Set(["linux", "macos", "windows"]);
 const allowedManifestArch = new Set(["x64", "arm64", "x86", "arm"]);
 const identity = JSON.parse(await readFile(path.join(root, "product", "identity.json"), "utf8"));
+const guiDistRoot = path.join(root, "apps", "gui", "dist");
 const binaryFileName = process.platform === "win32" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
 const bundledEngineResourcePath = `yet-ai-engine/${binaryFileName}`;
 
@@ -49,6 +51,7 @@ async function checkVscodeUnzipFirst() {
   await requireOnlyArtifactFamilyFiles(vscodeStageDir, [path.basename(vsixPath ?? ""), path.basename(vsixPath === undefined ? "" : `${vsixPath}.sha256`), "README-INSTALL.txt", "manifest.json"].filter(Boolean), "VS Code unzip-first artifact");
   if (vsixPath !== undefined) {
     await checkChecksum(vsixPath);
+    await checkVscodeVsix(vsixPath);
   }
   const readme = await readRequiredText(path.join(vscodeStageDir, "README-INSTALL.txt"), "VS Code unzip-first README-INSTALL.txt");
   if (readme !== undefined) {
@@ -60,6 +63,21 @@ async function checkVscodeUnzipFirst() {
   }
   await checkEmbeddedManifest(vscodeStageDir);
   return vsixPath;
+}
+
+async function checkVscodeVsix(vsixPath) {
+  const entries = await listArchiveEntries(vsixPath);
+  if (entries === undefined) {
+    return;
+  }
+  validateArchiveEntries(entries, `${relative(vsixPath)} VSIX`);
+  await checkArchiveGuiFreshness({
+    archivePath: vsixPath,
+    entries,
+    packagedPrefix: "extension/media/gui/",
+    label: `${relative(vsixPath)} VSIX packaged GUI`,
+    guidance: "Run `npm run prepare:vscode-preview -- --skip-engine-prepare`, then restage GitHub artifacts.",
+  });
 }
 
 async function checkEmbeddedManifest(directory) {
@@ -320,7 +338,13 @@ async function checkJetBrainsZip(zipPath, label) {
     }
     validateArchiveEntries(jarEntries, `${label} plugin JAR`);
     requireArchiveEntry(jarEntries, "META-INF/plugin.xml", `${label} plugin JAR must contain META-INF/plugin.xml so JetBrains can load the plugin descriptor.`);
-    requireArchiveEntry(jarEntries, "yet-ai-gui/index.html", `${label} plugin JAR must contain packaged GUI resources at yet-ai-gui/index.html.`);
+    await checkArchiveGuiFreshness({
+      archivePath: pluginJar,
+      entries: jarEntries,
+      packagedPrefix: "yet-ai-gui/",
+      label: `${label} plugin JAR packaged GUI`,
+      guidance: "Run `npm run prepare:jetbrains-preview -- --skip-engine-prepare`, then restage GitHub artifacts.",
+    });
     const indexHtml = await extractArchiveEntryText(pluginJar, "yet-ai-gui/index.html", `${label} plugin JAR must allow reading yet-ai-gui/index.html.`);
     if (indexHtml !== undefined) {
       requireReferencedGuiAssets(jarEntries, indexHtml, label);
@@ -332,6 +356,25 @@ async function checkJetBrainsZip(zipPath, label) {
     }
   } finally {
     await rm(path.dirname(pluginJar), { recursive: true, force: true });
+  }
+}
+
+async function checkArchiveGuiFreshness({ archivePath, entries, packagedPrefix, label, guidance }) {
+  try {
+    await assertPackagedGuiFreshnessInArchive({
+      sourceRoot: guiDistRoot,
+      entries,
+      packagedPrefix,
+      label,
+      guidance,
+      readEntryBytes: async (entry) => extractArchiveEntryBytes(archivePath, entry, `${label} must allow extracting ${entry}.`),
+    });
+  } catch (error) {
+    if (error instanceof GuiAssetFreshnessError) {
+      failures.push(error.message);
+      return;
+    }
+    throw error;
   }
 }
 

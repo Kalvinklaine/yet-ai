@@ -126,18 +126,20 @@ jobs:
         run: |
           set -euxo pipefail
           export PATH="$HOME/.cargo/bin:$PATH"
+          npm run prepare:jetbrains-preview -- --skip-engine-prepare
           npm run prepare:vscode-preview -- --skip-engine-prepare
+          npm run smoke:installed-plugin-chat-visual
+          npm run smoke:plugin-layout
+          npm run smoke:vscode-first-message
+          npm run smoke:jetbrains-first-message
           npm run smoke:vscode-installable
           npm run smoke:vscode-preview
           npm run smoke:vscode-wrapper-browser
-          npm run smoke:vscode-first-message
-          npm run prepare:jetbrains-preview -- --skip-engine-prepare
           npm run smoke:jetbrains-installable
           npm run smoke:jetbrains-bundled-runtime
           npm run smoke:jetbrains-preview
           npm run smoke:jetbrains-gui-browser
           npm run smoke:jetbrains-wrapper-browser
-          npm run smoke:jetbrains-first-message
           npm run artifact:manifest -- --require vscode,jetbrains
           npm run artifact:stage-github
           npm run smoke:github-ide-artifacts
