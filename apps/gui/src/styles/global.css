@@ -855,20 +855,81 @@ pre,
   grid-template-columns: auto minmax(0, 1fr) auto auto;
 }
 
+.compact-host-setup {
+  border: 1px solid #d8e1f6;
+  border-radius: 14px;
+  background: #fbfcff;
+  padding: 8px 10px;
+}
+
+.compact-host-setup summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.compact-host-setup-body {
+  margin-top: 8px;
+}
+
 .host-jetbrains {
   height: 100vh;
   min-height: 100vh;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .host-jetbrains > .chat-primary-card {
+  min-height: min(640px, calc(100vh - 24px));
   height: calc(100vh - 24px);
   max-height: calc(100vh - 24px);
   overflow: hidden;
   gap: 8px;
 }
 
-.host-jetbrains > .secondary-card {
+.host-jetbrains > .secondary-card.debug-card,
+.host-jetbrains > .secondary-card.agent-progress-card {
+  display: none;
+}
+
+.host-jetbrains > .secondary-card.runtime-card,
+.host-jetbrains > .secondary-card.provider-setup-card {
+  padding: 8px 10px;
+  border-radius: 14px;
+  box-shadow: 0 6px 18px rgba(28, 40, 72, 0.04);
+}
+
+.host-jetbrains > .secondary-card.runtime-card .debug-details,
+.host-jetbrains > .secondary-card.provider-setup-card .debug-details {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.host-jetbrains > .secondary-card.runtime-card .debug-details > summary,
+.host-jetbrains > .secondary-card.provider-setup-card .debug-details > summary {
+  padding: 2px 0;
+}
+
+.host-jetbrains > .secondary-card.runtime-card .debug-details > summary h2,
+.host-jetbrains > .secondary-card.provider-setup-card .debug-details > summary h2 {
+  font-size: 15px;
+}
+
+.host-jetbrains > .secondary-card.runtime-card .debug-details[open],
+.host-jetbrains > .secondary-card.provider-setup-card .debug-details[open] {
+  max-height: 70vh;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.host-jetbrains .compact-host-setup {
+  display: block;
+  flex: 0 0 auto;
+}
+
+.host-vscode .compact-host-setup {
   display: none;
 }
 

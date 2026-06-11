@@ -405,11 +405,28 @@ try {
   await frameLocator.getByText("Runtime connected", { exact: false }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("Runtime refresh did not reach connected/provider-required state after trusted host.ready."));
   await frameLocator.getByText("Provider setup", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("Provider setup panel was not mounted in the JetBrains first-use GUI path."));
 
-  const refreshButton = frameLocator.locator("section", { has: frameLocator.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
+  const compactSetup = frameLocator.locator("[data-testid='compact-host-setup']");
+  const compactRefreshButton = compactSetup.getByRole("button", { name: /Refresh runtime|Checking runtime…/ }).first();
+  let openedCompactSetupForRefresh = false;
+  if (await compactSetup.isVisible().catch(() => false) && !await compactRefreshButton.isVisible().catch(() => false)) {
+    await compactSetup.locator("summary").click();
+    openedCompactSetupForRefresh = true;
+  }
+  const runtimeRefreshButton = frameLocator.locator("section", { has: frameLocator.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: /Refresh runtime|Checking runtime…/ }).first();
+  const refreshButton = await compactRefreshButton.isVisible().catch(() => false) ? compactRefreshButton : runtimeRefreshButton;
   if (await refreshButton.isVisible().catch(() => false)) {
-    await openDetailsBySummary(frameLocator, "Local runtime connection", refreshButton);
+    if (refreshButton === runtimeRefreshButton) {
+      await openDetailsBySummary(frameLocator, "Local runtime connection", refreshButton);
+    }
+    await refreshButton.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
     await refreshButton.click();
-    await refreshButton.click();
+    await page.waitForTimeout(100);
+    if (!await refreshButton.isDisabled().catch(() => true)) {
+      await refreshButton.click();
+    }
+    if (openedCompactSetupForRefresh) {
+      await compactSetup.locator("summary").click();
+    }
     await page.waitForTimeout(500);
     const refreshFeedbackVisible = await frameLocator.getByText(/Runtime (connected|check failed)|Checking runtime…/).first().isVisible({ timeout: 5000 }).catch(() => false);
     if (!refreshFeedbackVisible) {
@@ -420,8 +437,9 @@ try {
       failures.push("Refresh runtime feedback did not include a visible attempt/timestamp marker.");
     }
   } else {
+    const compactSetupRefreshVisible = await frameLocator.locator("[data-testid='compact-host-setup']").locator("button").filter({ hasText: /Refresh runtime|Checking runtime…/ }).first().isVisible().catch(() => false);
     const runtimeDetailsVisible = await frameLocator.locator("[data-testid='runtime-connection-details']").isVisible().catch(() => false);
-    if (runtimeDetailsVisible) {
+    if (runtimeDetailsVisible && !compactSetupRefreshVisible) {
       failures.push("Runtime connection details are visible while Refresh runtime is hidden in compact hosted layout.");
     }
   }
@@ -1106,6 +1124,17 @@ async function collectJetBrainsIframeLayoutMetrics(frameLocator) {
     const inputArea = document.querySelector(".composer-input-area");
     const main = document.querySelector("main.app-shell");
     const conversationsRail = document.querySelector(".conversations-rail");
+    const compactSetup = document.querySelector("[data-testid='compact-host-setup']");
+    const runtimeDetails = document.querySelector("[data-testid='runtime-connection-details']");
+    const providerDetails = document.querySelector("[data-testid='provider-setup-details']");
+    const runtimeCard = document.querySelector(".runtime-card");
+    const providerCard = document.querySelector(".provider-setup-card");
+    const advancedDebugCard = document.querySelector(".debug-card");
+    const setupControlMatchers = [/Refresh runtime/i, /Provider setup/i, /API key/i, /OpenAI account/i, /Demo Mode/i, /Use OpenAI API key fallback/i];
+    const accessibleSetupControls = Array.from(document.querySelectorAll("summary, button, label, input, select, [role='button']"))
+      .filter((element) => element instanceof HTMLElement && visible(element))
+      .map((element) => (element.textContent || element.getAttribute("aria-label") || element.getAttribute("placeholder") || "").trim())
+      .filter((text) => setupControlMatchers.some((matcher) => matcher.test(text)));
     const sendRect = rectFor(send);
     const viewport = { width: window.innerWidth, height: window.innerHeight };
     const documentElement = document.documentElement;
@@ -1150,9 +1179,18 @@ async function collectJetBrainsIframeLayoutMetrics(frameLocator) {
       hostBrowserClass: main instanceof HTMLElement && main.classList.contains("host-browser"),
       advancedChatControlsVisible: textVisible("Advanced chat controls"),
       sseDebugDetailsVisible: textVisible("SSE debug details"),
+      bridgeDebugVisible: textVisible("Bridge debug"),
       conversationsRailVisible: visible(conversationsRail),
       chatReadinessCardVisible: visible(document.querySelector(".chat-primary-card > .readiness-card")),
       firstMessageWizardVisible: textVisible("Provider required for first message") || textVisible("Ready for first message"),
+      compactSetupVisible: visible(compactSetup),
+      runtimeDetailsAttached: runtimeDetails instanceof HTMLElement,
+      providerDetailsAttached: providerDetails instanceof HTMLElement,
+      runtimeCardVisible: visible(runtimeCard),
+      providerCardVisible: visible(providerCard),
+      advancedDebugCardVisible: visible(advancedDebugCard),
+      accessibleSetupControls,
+      setupControlCount: accessibleSetupControls.length,
       sendVisible: send instanceof HTMLElement && visible(send),
       sendEnabled: send instanceof HTMLButtonElement && !send.disabled,
       sendWithinViewport: Boolean(sendRect && sendRect.top >= 0 && sendRect.left >= 0 && sendRect.bottom <= viewport.height && sendRect.right <= viewport.width),
@@ -1180,9 +1218,14 @@ function assertJetBrainsHostedLayout(metrics, label) {
   if (metrics.hostBrowserClass) failures.push(`${label}: iframe shell still has host-browser class.`);
   if (metrics.advancedChatControlsVisible) failures.push(`${label}: Advanced chat controls are visible in hosted layout.`);
   if (metrics.sseDebugDetailsVisible) failures.push(`${label}: SSE debug details are visible in hosted layout.`);
+  if (metrics.bridgeDebugVisible || metrics.advancedDebugCardVisible) failures.push(`${label}: advanced bridge/debug internals are visible in hosted layout.`);
   if (metrics.conversationsRailVisible) failures.push(`${label}: left conversations rail is visible in compact hosted layout.`);
   if (metrics.chatReadinessCardVisible) failures.push(`${label}: full chat readiness card is visible in compact hosted layout.`);
   if (metrics.firstMessageWizardVisible) failures.push(`${label}: verbose first-message wizard is visible in compact hosted layout.`);
+  if (!metrics.compactSetupVisible) failures.push(`${label}: compact Setup strip is not visible in hosted layout.`);
+  if (!metrics.runtimeDetailsAttached || !metrics.runtimeCardVisible) failures.push(`${label}: runtime refresh/status setup card is not mounted and visible below compact chat.`);
+  if (!metrics.providerDetailsAttached || !metrics.providerCardVisible) failures.push(`${label}: provider/API-key/OpenAI account setup card is not mounted and visible below compact chat.`);
+  if (metrics.setupControlCount < 1) failures.push(`${label}: no visible/accesssible compact setup control for provider/API key/OpenAI account/Demo Mode/runtime was found.`);
   if (!metrics.sendVisible || !metrics.sendEnabled || !metrics.sendReachableAfterInnerScroll) failures.push(`${label}: Send is not visible/enabled/reachable after inner panel scroll (${JSON.stringify(metrics.sendRectAfterInnerScroll)} in ${JSON.stringify(metrics.viewport)}).`);
   if (!metrics.sendHitTestAfterInnerScroll?.ok) failures.push(`${label}: Send center is covered or not hit-testable after inner scroll (${JSON.stringify(metrics.sendHitTestAfterInnerScroll)}).`);
   if (metrics.outerOverflow && !metrics.hasUsablePanelScrollOwner) failures.push(`${label}: hosted iframe overflows without a usable panel scroll owner (document ${metrics.documentScrollHeight} > ${metrics.documentClientHeight}, outer moved: ${metrics.outerScrollMoves}, chat moved: ${metrics.chatScrollMoves}).`);
