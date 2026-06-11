@@ -855,14 +855,12 @@ pre,
   grid-template-columns: auto minmax(0, 1fr) auto auto;
 }
 
-.host-vscode,
 .host-jetbrains {
   height: 100vh;
   min-height: 100vh;
   overflow: hidden;
 }
 
-.host-vscode > .chat-primary-card,
 .host-jetbrains > .chat-primary-card {
   height: calc(100vh - 24px);
   max-height: calc(100vh - 24px);
@@ -870,13 +868,12 @@ pre,
   gap: 8px;
 }
 
-.host-vscode > .secondary-card,
-.host-jetbrains > .secondary-card,
-.host-vscode .chat-primary-card > .readiness-card,
+.host-jetbrains > .secondary-card {
+  display: none;
+}
+
 .host-jetbrains .chat-primary-card > .readiness-card,
-.host-vscode .conversations-rail,
 .host-jetbrains .conversations-rail,
-.host-vscode .first-message-wizard,
 .host-jetbrains .first-message-wizard {
   display: none;
 }
@@ -995,7 +992,6 @@ pre,
 
 .host-vscode .coding-actions-card .subtle,
 .host-jetbrains .coding-actions-card .subtle,
-.host-vscode .ide-actions-card .subtle,
 .host-jetbrains .ide-actions-card .subtle,
 .host-vscode .attached-context-preview,
 .host-jetbrains .attached-context-preview {
@@ -1272,7 +1268,6 @@ pre,
 
   .host-vscode .chat-hero-row,
   .host-jetbrains .chat-hero-row,
-  .host-vscode .chat-primary-card > .readiness-card,
   .host-jetbrains .chat-primary-card > .readiness-card {
     display: none;
   }
