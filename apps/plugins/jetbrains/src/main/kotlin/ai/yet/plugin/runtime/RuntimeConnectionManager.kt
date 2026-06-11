@@ -3,9 +3,11 @@ package ai.yet.plugin.runtime
 import ai.yet.plugin.identity.ProductIdentity
 import ai.yet.plugin.settings.YetSettingsState
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.util.messages.Topic
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
@@ -24,6 +26,7 @@ class RuntimeConnectionManager(
     private val engineBinaryFinder: (Path?) -> Path? = ::findEngineBinary,
     private val processStarter: (EngineLaunchCommand) -> Process = ::startEngineProcess,
     private val tokenGenerator: () -> String = ::generateSessionToken,
+    private val healthChecker: (RuntimeSettings) -> Unit = ::checkHealth,
 ) : Disposable {
     private val logger = Logger.getInstance(RuntimeConnectionManager::class.java)
     private var launchedProcess: Process? = null
@@ -45,7 +48,15 @@ class RuntimeConnectionManager(
                 lastConnectionError,
             )
         }
-        val connection = try {
+        return prepareResolvedSettings(settings)
+    }
+
+    @Synchronized
+    internal fun prepareForTest(settings: RuntimeSettings): RuntimeConnectionResult = prepareResolvedSettings(settings)
+
+    @Synchronized
+    private fun prepareResolvedSettings(settings: RuntimeSettings): RuntimeConnectionResult {
+        var connection = try {
             prepareConnectionSettings(settings)
         } catch (error: Exception) {
             val result = failedRuntimeConnection(settings, null, "Yet AI local runtime launch failed", error)
@@ -54,23 +65,58 @@ class RuntimeConnectionManager(
             return result
         }
         return try {
-            checkHealth(connection)
+            healthChecker(connection)
             lastHealthResult = "/v1/ping returned 2xx"
             lastConnectionError = null
             lastProcessExit = null
             RuntimeConnectionResult(connection, "Connected to Yet AI local runtime at ${connection.runtimeUrl}.", null)
         } catch (error: Exception) {
+            if (isHttp401(error) && shouldRetryPluginOwnedRuntime(settings, connection)) {
+                logger.info("Yet AI plugin-launched runtime returned HTTP 401 during health check; restarting once with a fresh session token")
+                stopLaunchedProcess()
+                connection = try {
+                    prepareConnectionSettings(settings)
+                } catch (launchError: Exception) {
+                    val result = failedRuntimeConnection(settings, null, "Yet AI local runtime launch failed after HTTP 401 recovery", launchError)
+                    lastHealthResult = "HTTP 401 from /v1/ping; plugin-owned restart failed"
+                    lastConnectionError = result.error
+                    return result
+                }
+                return try {
+                    healthChecker(connection)
+                    lastHealthResult = "/v1/ping returned 2xx after HTTP 401 recovery"
+                    lastConnectionError = null
+                    lastProcessExit = null
+                    RuntimeConnectionResult(connection, "Connected to Yet AI local runtime at ${connection.runtimeUrl} after refreshing the runtime session token.", null)
+                } catch (retryError: Exception) {
+                    val result = failedRuntimeConnection(settings, connection, "Yet AI local runtime connection failed after HTTP 401 recovery", retryError)
+                    stopLaunchedProcess()
+                    lastHealthResult = "HTTP 401 recovery attempted once for plugin-owned runtime"
+                    lastConnectionError = result.error
+                    return result
+                }
+            }
             val result = failedRuntimeConnection(settings, connection, "Yet AI local runtime connection failed", error)
-            lastHealthResult = null
+            lastHealthResult = if (isHttp401(error)) "HTTP 401 from /v1/ping" else null
             lastConnectionError = result.error
             result
         }
     }
 
     @Synchronized
+    private fun shouldRetryPluginOwnedRuntime(settings: RuntimeSettings, connection: RuntimeSettings): Boolean {
+        val process = launchedProcess
+        return process?.isAlive == true &&
+            launchedConnection == connection &&
+            (settings.launchMode == LaunchMode.LAUNCH || settings.launchMode == LaunchMode.AUTO)
+    }
+
+    @Synchronized
     fun restartRuntime(): RuntimeConnectionResult {
         stopLaunchedProcess()
-        return prepare()
+        val result = prepare()
+        ApplicationManager.getApplication().messageBus.syncPublisher(RuntimeConnectionListener.TOPIC).runtimeConnectionUpdated(result)
+        return result
     }
 
     @Synchronized
@@ -108,6 +154,20 @@ class RuntimeConnectionManager(
             ),
         )
     }
+
+    @Synchronized
+    internal fun runtimeDiagnosticsForTest(settings: RuntimeSettings): String = formatRuntimeDiagnostics(
+        RuntimeDiagnostics(
+            launchMode = settings.launchMode.name.lowercase(),
+            runtimeUrl = sanitizeRuntimeUrlForDiagnostics(settings.runtimeUrl),
+            engineBinaryConfigured = settings.engineBinaryPath != null,
+            binaryStatus = describeEngineBinaryStatus(settings),
+            launchedByPlugin = launchedProcess?.isAlive == true,
+            health = lastHealthResult,
+            error = lastConnectionError,
+            process = lastProcessExit,
+        ),
+    )
 
     @Synchronized
     fun prepareConnectionSettings(settings: RuntimeSettings): RuntimeSettings {
@@ -205,16 +265,38 @@ class RuntimeConnectionManager(
     }
 }
 
+interface RuntimeConnectionListener {
+    fun runtimeConnectionUpdated(result: RuntimeConnectionResult)
+
+    companion object {
+        val TOPIC: Topic<RuntimeConnectionListener> = Topic.create("Yet AI runtime connection updates", RuntimeConnectionListener::class.java)
+    }
+}
+
+class RuntimeHealthCheckException(message: String, val statusCode: Int? = null, cause: Throwable? = null) : IllegalStateException(message, cause)
+
+private fun isHttp401(error: Exception): Boolean = error is RuntimeHealthCheckException && error.statusCode == 401 ||
+    error.message?.contains("HTTP 401", ignoreCase = true) == true
+
 fun failedRuntimeConnection(
     settings: RuntimeSettings,
     attemptedSettings: RuntimeSettings?,
     prefix: String,
     error: Exception,
-): RuntimeConnectionResult = RuntimeConnectionResult(
-    attemptedSettings ?: settings,
-    null,
-    sanitizedRuntimeError(prefix, error, attemptedSettings?.sessionToken ?: settings.sessionToken),
-)
+): RuntimeConnectionResult {
+    val token = attemptedSettings?.sessionToken ?: settings.sessionToken
+    val sanitized = sanitizedRuntimeError(prefix, error, token)
+    val guidance = if (isHttp401(error)) {
+        " Stale external yet-lsp, loopback port reuse, or debug/session token mismatch can cause HTTP 401. Stop the existing process, change the Runtime URL port, or use connect mode with a matching local runtime token."
+    } else {
+        ""
+    }
+    return RuntimeConnectionResult(
+        attemptedSettings ?: settings,
+        null,
+        sanitized + guidance,
+    )
+}
 
 data class RuntimeConnectionResult(
     val settings: RuntimeSettings,
@@ -472,7 +554,8 @@ fun checkHealth(settings: RuntimeSettings) {
         }
         Thread.sleep(250)
     }
-    throw IllegalStateException("Yet AI local runtime health check failed at /v1/ping: $lastError")
+    val statusCode = Regex("HTTP\\s+(\\d{3})", RegexOption.IGNORE_CASE).find(lastError)?.groupValues?.get(1)?.toIntOrNull()
+    throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: $lastError", statusCode)
 }
 
 fun stopProcess(process: Process, waitMillis: Long = 1500): Boolean {

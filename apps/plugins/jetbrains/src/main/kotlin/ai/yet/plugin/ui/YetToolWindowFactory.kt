@@ -5,6 +5,7 @@ import ai.yet.plugin.bridge.ActiveEditorContext
 import ai.yet.plugin.bridge.ControlledIdeActions
 import ai.yet.plugin.identity.ProductIdentity
 import ai.yet.plugin.runtime.RuntimeConnectionManager
+import ai.yet.plugin.runtime.RuntimeConnectionListener
 import ai.yet.plugin.runtime.RuntimeConnectionResult
 import ai.yet.plugin.runtime.RuntimeSettings
 import ai.yet.plugin.runtime.loopbackOrigin
@@ -162,6 +163,8 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
     @Volatile
     private var latestConnection = RuntimeConnectionResult(RuntimeSettings.safeFallback(), "Connecting to Yet AI local runtime...", null)
     @Volatile
+    private var runtimePrepared = false
+    @Volatile
     private var guiReadyRequestId: String? = null
     @Volatile
     private var disposed = false
@@ -183,7 +186,14 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
             logger.info("Yet AI received gui.ready")
             val requestId = guiReady.requestId
             guiReadyRequestId = requestId
-            deliverReadyMessages(latestConnection.settings, requestId)
+            val latestError = latestConnection.error
+            if (latestError != null) {
+                sendDiagnostic(latestError)
+            } else if (runtimePrepared) {
+                deliverReadyMessages(latestConnection.settings, requestId)
+            } else {
+                logger.info("Yet AI deferred host.ready until runtime prepare completes")
+            }
             null
         }
         val initialSettings = initialSettings()
@@ -191,15 +201,35 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         val packagedGui = if (initialSettings.guiDevUrl == null) PackagedGuiServer.getInstance().start() else null
         val postIntellij = query.inject("JSON.stringify(message)", "function(error) { console.log('Yet AI bridge send failed'); }", "function(response) {}")
         browser.loadHTML(renderHtml(latestConnection, postIntellij, packagedGui))
+        ApplicationManager.getApplication().messageBus.connect(this).subscribe(
+            RuntimeConnectionListener.TOPIC,
+            object : RuntimeConnectionListener {
+                override fun runtimeConnectionUpdated(result: RuntimeConnectionResult) {
+                    ApplicationManager.getApplication().invokeLater {
+                        if (!disposed) {
+                            handleRuntimeConnection(result)
+                        }
+                    }
+                }
+            },
+        )
         ApplicationManager.getApplication().executeOnPooledThread {
             val connection = RuntimeConnectionManager.getInstance().prepare()
-            latestConnection = connection
             ApplicationManager.getApplication().invokeLater {
                 if (!disposed) {
-                    guiReadyRequestId?.let { requestId -> deliverReadyMessages(connection.settings, requestId) }
-                    connection.error?.let { error -> sendDiagnostic(error) }
+                    handleRuntimeConnection(connection)
                 }
             }
+        }
+    }
+
+    private fun handleRuntimeConnection(connection: RuntimeConnectionResult) {
+        latestConnection = connection
+        runtimePrepared = connection.error == null
+        if (connection.error == null) {
+            guiReadyRequestId?.let { requestId -> deliverReadyMessages(connection.settings, requestId) }
+        } else {
+            sendDiagnostic(connection.error)
         }
     }
 

@@ -532,6 +532,27 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
+    fun panelDefersHostReadyUntilPreparedRuntimeConnection() {
+        val source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/kotlin/ai/yet/plugin/ui/YetToolWindowFactory.kt"))
+
+        assertContains(source, "private var runtimePrepared = false")
+        assertContains(source, "val latestError = latestConnection.error")
+        assertContains(source, "if (latestError != null) {")
+        assertContains(source, "sendDiagnostic(latestError)")
+        assertContains(source, "} else if (runtimePrepared) {")
+        assertContains(source, "Yet AI deferred host.ready until runtime prepare completes")
+        assertContains(source, "runtimePrepared = connection.error == null")
+        assertContains(source, "RuntimeConnectionListener.TOPIC")
+        assertContains(source, "override fun runtimeConnectionUpdated(result: RuntimeConnectionResult)")
+        assertContains(source, "handleRuntimeConnection(result)")
+        assertContains(source, "if (connection.error == null) {")
+        assertContains(source, "guiReadyRequestId?.let { requestId -> deliverReadyMessages(connection.settings, requestId) }")
+        assertContains(source, "sendDiagnostic(connection.error)")
+        assertFalse(source.contains("deliverReadyMessages(latestConnection.settings, requestId)\n            null"))
+        assertFalse(source.contains("guiReadyRequestId?.let { requestId -> deliverReadyMessages(connection.settings, requestId) }\n                    connection.error?.let"))
+    }
+
+    @Test
     fun guiUnloadedBridgeMessageRequiresStrictShape() {
         assertTrue(isGuiUnloadedBridgeMessage("""{"version":"2026-05-15","type":"gui.unloaded","payload":{}}"""))
 

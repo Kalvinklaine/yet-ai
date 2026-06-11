@@ -219,11 +219,14 @@ class RuntimeActionsTest {
 
     @Test
     fun restartActionRunsRestartOffActionThreadAndShowsFailuresAsErrors() {
-        val source = projectFile("src/main/kotlin/ai/yet/plugin/actions/RestartRuntimeAction.kt").toFile().readText()
+        val source = projectFile("src/main/kotlin/ai/yet/plugin/actions/RestartRuntimeAction.kt").toFile().readText() +
+            projectFile("src/main/kotlin/ai/yet/plugin/runtime/RuntimeConnectionManager.kt").toFile().readText()
 
         assertContains(source, "DumbAwareAction")
         assertContains(source, "RuntimeRestartActionRunner().restart(event.project)")
         assertContains(source, "RuntimeConnectionManager.getInstance().restartRuntime()")
+        assertContains(source, "RuntimeConnectionListener.TOPIC")
+        assertContains(source, "runtimeConnectionUpdated(result)")
         assertContains(source, "project?.isDisposed == true")
         assertContains(source, "showErrorDialog")
         assertContains(source, "showInfoMessage")
