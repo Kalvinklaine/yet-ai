@@ -531,6 +531,7 @@ export function App() {
         : settingsRef.current.token;
     setRuntimeConnectionSource("host.ready");
     updateRuntimeSettings({ baseUrl: hostRuntimeUrl, token: nextToken });
+    runtimeRefreshQueuedRef.current = true;
     setTimeline((current) => ["Host runtime settings received", ...current].slice(0, 80));
   }, [updateRuntimeSettings]);
 

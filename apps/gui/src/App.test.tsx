@@ -251,6 +251,28 @@ describe("runtime refresh feedback", () => {
     expect(retargetedCalls.every(([, init]) => new Headers(init?.headers).get("Authorization") === `Bearer ${hostToken}`)).toBe(true);
   });
 
+  it("refreshes an already-ready hosted GUI when host.ready updates only the runtime token", async () => {
+    const initialToken = "initialHostLocalValue";
+    const updatedToken = "updatedHostLocalValue";
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: initialToken });
+    await flushAsync();
+    fetchMock.mockClear();
+
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: updatedToken });
+    await flushAsync();
+    await flushAsync();
+
+    const refreshedCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("http://127.0.0.1:8765/"));
+    expect(refreshedCalls.length).toBeGreaterThan(0);
+    expect(refreshedCalls.every(([, init]) => new Headers(init?.headers).get("Authorization") === `Bearer ${updatedToken}`)).toBe(true);
+    expect(browserStorageDump()).not.toContain(initialToken);
+    expect(browserStorageDump()).not.toContain(updatedToken);
+  });
+
   it("uses hosted runtime copy without exposing a host.ready token", async () => {
     const hostToken = "hostReadyLocalRuntimeValue";
     mockRuntimeResponses({ runtimeFailure: true });

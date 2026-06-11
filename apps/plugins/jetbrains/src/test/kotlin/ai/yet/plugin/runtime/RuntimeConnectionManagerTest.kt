@@ -10,6 +10,7 @@ import kotlin.io.path.createTempFile
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.setPosixFilePermissions
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
@@ -188,6 +189,83 @@ class RuntimeConnectionManagerTest {
 
         assertEquals("launch-session-token", prepared.sessionToken)
         assertEquals(bundledPath, assertNotNull(launched.singleOrNull()).binaryPath)
+    }
+
+    @Test
+    fun prepareRetriesPluginOwnedHttp401OnceWithFreshToken() {
+        val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
+        val launched = mutableListOf<EngineLaunchCommand>()
+        var healthCalls = 0
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(bundledPath),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { command -> launched += command; FakeAliveProcess() },
+            tokenGenerator = { if (launched.isEmpty()) "first-plugin-token" else "second-plugin-token" },
+            healthChecker = { settings ->
+                healthCalls += 1
+                if (healthCalls == 1) throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: HTTP 401", 401)
+                assertEquals("second-plugin-token", settings.sessionToken)
+            },
+        )
+
+        val result = manager.prepareForTest(RuntimeSettings("http://127.0.0.1:8125", null, "stale-initial-token", LaunchMode.LAUNCH, null))
+
+        assertEquals("second-plugin-token", result.settings.sessionToken)
+        assertEquals(null, result.error)
+        assertEquals(2, healthCalls)
+        assertEquals(listOf("first-plugin-token", "second-plugin-token"), launched.map { it.environment.getValue("YET_AI_AUTH_TOKEN") })
+        manager.dispose()
+    }
+
+    @Test
+    fun prepareDoesNotRestartConnectModeOnHttp401AndSurfacesGuidance() {
+        var launchCalls = 0
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")),
+            engineBinaryFinder = { error("connect mode must not resolve engine binaries") },
+            processStarter = { launchCalls += 1; FakeProcess(listOf(true)) },
+            tokenGenerator = { "unused-generated-token" },
+            healthChecker = { throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: HTTP 401 with token=connect-secret-token", 401) },
+        )
+
+        val result = manager.prepareForTest(RuntimeSettings("http://127.0.0.1:8126", null, "connect-secret-token", LaunchMode.CONNECT, null))
+        val diagnostics = manager.runtimeDiagnosticsForTest(RuntimeSettings("http://127.0.0.1:8126", null, "connect-secret-token", LaunchMode.CONNECT, null))
+
+        assertEquals(0, launchCalls)
+        assertEquals("connect-secret-token", result.settings.sessionToken)
+        assertTrue(result.error.orEmpty().contains("HTTP 401"), result.error)
+        assertFalse(result.error.orEmpty().contains("connect-secret-token"), result.error)
+        assertTrue(diagnostics.contains("HTTP 401 token mismatch"), diagnostics)
+        assertTrue(diagnostics.contains("make the IDE debug/session token match the external runtime"), diagnostics)
+        assertFalse(diagnostics.contains("connect-secret-token"), diagnostics)
+    }
+
+    @Test
+    fun retryFailureStopsPluginOwnedRuntimeAndSurfacesActionableRedactedGuidance() {
+        val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
+        val processes = mutableListOf<FakeAliveProcess>()
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(bundledPath),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { FakeAliveProcess().also { processes += it } },
+            tokenGenerator = { "retry-secret-token-${processes.size}-${"x".repeat(32)}" },
+            healthChecker = { settings ->
+                throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: HTTP 401 Authorization: Bearer ${settings.sessionToken} /Users/alice/private/yet-lsp", 401)
+            },
+        )
+
+        val result = manager.prepareForTest(RuntimeSettings("http://127.0.0.1:8127", null, "initial-secret-token", LaunchMode.LAUNCH, null))
+        val error = result.error.orEmpty()
+
+        assertEquals(2, processes.size)
+        assertTrue(processes.all { !it.isAlive }, "retry failure must not leave plugin-owned yet-lsp alive")
+        assertContains(error, "HTTP 401")
+        assertContains(error, "Stale external yet-lsp")
+        assertContains(error, "change the Runtime URL port")
+        assertContains(error, "connect mode with a matching local runtime token")
+        assertFalse(error.contains("retry-secret-token"), error)
+        assertFalse(error.contains("Authorization"), error)
+        assertFalse(error.contains("/Users/alice"), error)
     }
 
     @Test
@@ -774,6 +852,42 @@ private class FakeProcess(private val destroyWaitResults: List<Boolean>) : Proce
 
     override fun destroyForcibly(): Process {
         destroyForciblyCalls += 1
+        return this
+    }
+
+    override fun isAlive(): Boolean = alive
+}
+
+private class FakeAliveProcess : Process() {
+    private var alive = true
+
+    override fun getOutputStream(): OutputStream = ByteArrayOutputStream()
+    override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+    override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun waitFor(): Int {
+        while (alive) {
+            Thread.sleep(25)
+        }
+        return 0
+    }
+
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean {
+        alive = false
+        return true
+    }
+
+    override fun exitValue(): Int {
+        if (alive) throw IllegalThreadStateException("process is alive")
+        return 0
+    }
+
+    override fun destroy() {
+        alive = false
+    }
+
+    override fun destroyForcibly(): Process {
+        alive = false
         return this
     }
 
