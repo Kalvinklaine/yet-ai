@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { assertPackagedGuiFreshness } from "./gui-asset-freshness.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = path.join(root, "apps", "gui", "dist");
@@ -1525,96 +1526,20 @@ async function openDetailsBySummary(scope, summaryText, visibleLocator) {
 }
 
 async function requireFreshPackagedGui() {
-  await requireGuiIndex(indexPath, "built GUI", "Run `cd apps/gui && npm run build`, then `npm run prepare:jetbrains-preview -- --skip-engine-prepare` before `npm run smoke:jetbrains-wrapper-browser`.");
-  const packagedHtml = await requireGuiIndex(packagedGuiIndexPath, "JetBrains packaged generated GUI", "Run `npm run prepare:jetbrains-preview -- --skip-engine-prepare` before `npm run smoke:jetbrains-wrapper-browser` so the smoke serves the packaged GUI resources.");
-  await requireAssetReferences(packagedHtml, packagedGuiRoot, "JetBrains packaged generated GUI");
-  await assertPackagedGuiFresh();
-}
-
-async function requireGuiIndex(filePath, label, guidance) {
   try {
-    const fileStat = await stat(filePath);
-    if (!fileStat.isFile()) {
-      throw new Error("not a file");
-    }
-    const html = await readFile(filePath, "utf8");
-    if (!html.includes("/assets/") && !html.includes("./assets/")) {
-      failures.push(`${label} index.html does not reference Vite assets. ${guidance}`);
-    }
-    return html;
-  } catch {
-    console.error(`JetBrains wrapper browser smoke failed: ${label} is missing.`);
-    console.error(guidance);
-    console.error(`Expected file: ${path.relative(root, filePath)}`);
+    await assertPackagedGuiFreshness({
+      sourceRoot: distRoot,
+      packagedRoot: packagedGuiRoot,
+      label: "JetBrains packaged generated GUI",
+    });
+  } catch (error) {
+    console.error("JetBrains wrapper browser smoke failed: packaged generated GUI is missing or stale.");
+    console.error("Run `cd apps/gui && npm run build`, then `npm run prepare:jetbrains-preview -- --skip-engine-prepare` before `npm run smoke:jetbrains-wrapper-browser` so the smoke serves fresh packaged GUI resources.");
+    console.error(`Expected built GUI file: ${path.relative(root, indexPath)}`);
+    console.error(`Expected packaged GUI file: ${path.relative(root, packagedGuiIndexPath)}`);
+    console.error(`Reason: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
-}
-
-async function requireAssetReferences(html, guiRoot, label) {
-  for (const reference of collectLocalAssetReferences(html)) {
-    const assetPath = path.join(guiRoot, reference);
-    const assetStat = await stat(assetPath).catch(() => undefined);
-    if (!assetStat?.isFile()) {
-      failures.push(`${label}/index.html references missing asset ${reference}. Run \`npm run prepare:jetbrains-preview -- --skip-engine-prepare\`.`);
-    }
-  }
-}
-
-async function assertPackagedGuiFresh() {
-  const comparedFiles = await compareDirectories(distRoot, packagedGuiRoot);
-  if (comparedFiles === 0) {
-    failures.push("JetBrains packaged generated GUI has no comparable files. Run `npm run prepare:jetbrains-preview -- --skip-engine-prepare`.");
-  }
-}
-
-async function compareDirectories(sourceRoot, packagedRoot, relativeDir = "") {
-  const sourceDir = path.join(sourceRoot, relativeDir);
-  const entries = await readdir(sourceDir, { withFileTypes: true }).catch(() => undefined);
-  if (entries === undefined) {
-    return 0;
-  }
-  let comparedFiles = 0;
-  for (const entry of entries) {
-    const relativePath = path.join(relativeDir, entry.name);
-    const sourcePath = path.join(sourceRoot, relativePath);
-    const packagedPath = path.join(packagedRoot, relativePath);
-    if (entry.isDirectory()) {
-      comparedFiles += await compareDirectories(sourceRoot, packagedRoot, relativePath);
-      continue;
-    }
-    if (!entry.isFile()) {
-      continue;
-    }
-    comparedFiles += 1;
-    const [sourceBytes, packagedBytes] = await Promise.all([
-      readFile(sourcePath),
-      readFile(packagedPath).catch(() => undefined),
-    ]);
-    if (packagedBytes === undefined) {
-      failures.push(`JetBrains packaged generated GUI is missing ${relativePath}. Run \`npm run prepare:jetbrains-preview -- --skip-engine-prepare\`.`);
-      continue;
-    }
-    if (!sourceBytes.equals(packagedBytes)) {
-      failures.push(`JetBrains packaged generated GUI is stale for ${relativePath} compared with apps/gui/dist. Run \`npm run prepare:jetbrains-preview -- --skip-engine-prepare\`.`);
-    }
-  }
-  return comparedFiles;
-}
-
-function collectLocalAssetReferences(html) {
-  const references = new Set();
-  const assetPattern = /\b(?:src|href)=("|')([^"']+)\1/g;
-  for (const match of html.matchAll(assetPattern)) {
-    const value = match[2];
-    if (value.length === 0 || value.startsWith("#") || value.startsWith("data:") || value.startsWith("http://") || value.startsWith("https://")) {
-      continue;
-    }
-    const normalized = value.split(/[?#]/, 1)[0].replace(/^\.\//, "").replace(/^\//, "");
-    if (normalized.length > 0 && !normalized.includes("..")) {
-      references.add(normalized);
-    }
-  }
-  return references;
 }
 
 async function startWrapperServer(guiBaseUrl, runtimeBaseUrl) {

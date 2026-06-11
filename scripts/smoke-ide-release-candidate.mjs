@@ -7,8 +7,12 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const gitStatusLimit = 40;
 
 const steps = [
-  ["Prepare VS Code dev-preview artifact", "npm", ["run", "prepare:vscode-preview"], "."],
   ["Prepare JetBrains dev-preview artifact", "npm", ["run", "prepare:jetbrains-preview"], "."],
+  ["Prepare VS Code dev-preview artifact", "npm", ["run", "prepare:vscode-preview"], "."],
+  ["Smoke installed-plugin chat visual coverage", "npm", ["run", "smoke:installed-plugin-chat-visual"], "."],
+  ["Smoke packaged plugin layout", "npm", ["run", "smoke:plugin-layout"], "."],
+  ["Smoke VS Code first-message coverage", "npm", ["run", "smoke:vscode-first-message"], "."],
+  ["Smoke JetBrains first-message coverage", "npm", ["run", "smoke:jetbrains-first-message"], "."],
   ["Smoke JetBrains bundled runtime startup", "npm", ["run", "smoke:jetbrains-bundled-runtime"], "."],
   ["Write required IDE artifact manifest", "npm", ["run", "artifact:manifest", "--", "--require", "vscode,jetbrains"], "."],
   ["Stage split GitHub IDE artifacts", "npm", ["run", "artifact:stage-github"], "."],
@@ -27,7 +31,7 @@ for (const [label, command, args, cwd] of steps) {
 assertCleanTrackedGitStatus();
 
 console.log("\nIDE release-candidate artifact gate passed.");
-console.log("Verified local dev-preview artifact preparation, JetBrains bundled runtime startup, GitHub staging, manifest combination, workflow/report safety checks, expected public artifact summary, and clean tracked status.");
+console.log("Verified local dev-preview artifact preparation, installed-plugin visual and first-message coverage, packaged plugin layout, JetBrains bundled runtime startup, GitHub staging, manifest combination, workflow/report safety checks, expected public artifact summary, and clean tracked status.");
 console.log("This gate does NOT launch real IDEs, use real provider credentials, call OpenAI/ChatGPT, contact hosted Yet AI services, sign or publish artifacts, upload a marketplace package, or create a production release.");
 
 function runStep(label, command, args, cwd) {

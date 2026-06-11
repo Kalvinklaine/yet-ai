@@ -5,13 +5,13 @@ import http from "node:http";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { assertPackagedGuiFreshness } from "./gui-asset-freshness.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const guiDistRoot = path.join(root, "apps", "gui", "dist");
 const packagedGuiRoot = path.join(root, "apps", "plugins", "vscode", "media", "gui");
 const packagedGuiIndex = path.join(packagedGuiRoot, "index.html");
-const guiDistIndex = path.join(root, "apps", "gui", "dist", "index.html");
 const evidenceRoot = path.join(root, "dist", "visual-smoke", "vscode-wrapper-browser");
-const staleToleranceMs = 2000;
 const bridgeVersion = "2026-05-15";
 const headed = process.argv.includes("--headed");
 const runtimeToken = `vscode-wrapper-runtime-${randomUUID()}`;
@@ -412,29 +412,19 @@ try {
 }
 
 async function requirePackagedGui() {
-  let packagedGuiStat;
   try {
-    packagedGuiStat = await stat(packagedGuiIndex);
-    if (!packagedGuiStat.isFile()) throw new Error("not a file");
-  } catch {
-    console.error("VS Code wrapper browser smoke failed: packaged VS Code GUI assets are missing.");
-    console.error("Run `npm run prepare:vscode-preview` from the repository root.");
-    console.error(`Expected file: ${path.relative(root, packagedGuiIndex)}`);
+    await assertPackagedGuiFreshness({
+      sourceRoot: guiDistRoot,
+      packagedRoot: packagedGuiRoot,
+      label: "VS Code packaged GUI assets",
+    });
+  } catch (error) {
+    console.error("VS Code wrapper browser smoke failed: packaged VS Code GUI assets are missing or stale.");
+    console.error("Run `npm run prepare:vscode-preview` from the repository root to rebuild and copy GUI assets before running wrapper smoke.");
+    console.error(`Expected packaged file: ${path.relative(root, packagedGuiIndex)}`);
+    console.error(`Expected GUI dist file: ${path.relative(root, path.join(guiDistRoot, "index.html"))}`);
+    console.error(`Reason: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
-  }
-
-  try {
-    const guiDistStat = await stat(guiDistIndex);
-    if (guiDistStat.isFile() && packagedGuiStat.mtimeMs + staleToleranceMs < guiDistStat.mtimeMs) {
-      console.error("VS Code wrapper browser smoke failed: packaged VS Code GUI assets are stale.");
-      console.error("Run `npm run prepare:vscode-preview` from the repository root to rebuild and copy GUI assets before running wrapper smoke.");
-      console.error(`Packaged file: ${path.relative(root, packagedGuiIndex)}`);
-      console.error(`Newer GUI build file: ${path.relative(root, guiDistIndex)}`);
-      process.exit(1);
-    }
-  } catch {
-    // If apps/gui/dist/index.html does not exist, the packaged-GUI existence check above
-    // is still sufficient for this smoke. prepare:vscode-preview creates both when needed.
   }
 }
 

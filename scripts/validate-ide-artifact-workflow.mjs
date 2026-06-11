@@ -18,6 +18,12 @@ const staleRefs = [
   `yet-ai-plugin-manifest-${"${{ matrix.label }}"}`,
 ];
 const combinedManifestPath = "dist/combined-plugin-manifest/manifest.json";
+const requiredPreUploadSmokeCommands = [
+  "npm run smoke:installed-plugin-chat-visual",
+  "npm run smoke:plugin-layout",
+  "npm run smoke:vscode-first-message",
+  "npm run smoke:jetbrains-first-message",
+];
 
 const workflow = await readFile(workflowPath, "utf8");
 const failures = [];
@@ -52,13 +58,23 @@ assert(combineJob !== undefined, "Workflow must include combine-manifests job.")
 if (buildJob !== undefined) {
   const names = uploadArtifactNames(buildJob);
   assertSetEquals(names, githubIdeWorkflowMatrixUploadArtifactNames, "Matrix job upload artifact names must be only the VS Code unzip-first and JetBrains direct-install public families.");
+  for (const command of requiredPreUploadSmokeCommands) {
+    assert(buildJob.includes(command), `Build job must run ${command} before uploading artifacts.`);
+  }
   assert(buildJob.includes("npm run smoke:jetbrains-bundled-runtime"), "Build job must run npm run smoke:jetbrains-bundled-runtime before uploading artifacts.");
   assert(buildJob.includes("artifact:github-summary"), "Build job must write the expected public artifact summary with artifact:github-summary.");
   assertSetEquals(matrixLabels(buildJob), githubIdePlatforms.map((platform) => platform.label), "Workflow matrix labels must match the public IDE artifact platform labels.");
   const firstUploadIndex = buildJob.indexOf("uses: actions/upload-artifact@v4");
   const bundledSmokeIndex = buildJob.indexOf("npm run smoke:jetbrains-bundled-runtime");
   const summaryIndex = buildJob.indexOf("artifact:github-summary");
+  const jetbrainsPrepareIndex = buildJob.indexOf("npm run prepare:jetbrains-preview");
+  const vscodePrepareIndex = buildJob.indexOf("npm run prepare:vscode-preview");
+  assert(jetbrainsPrepareIndex !== -1 && vscodePrepareIndex !== -1 && jetbrainsPrepareIndex < vscodePrepareIndex, "Build job must prepare JetBrains artifacts before VS Code artifacts so packaged GUI freshness checks read current assets.");
   if (firstUploadIndex !== -1) {
+    for (const command of requiredPreUploadSmokeCommands) {
+      const smokeIndex = buildJob.indexOf(command);
+      assert(smokeIndex !== -1 && smokeIndex < firstUploadIndex, `${command} must run before matrix artifact uploads.`);
+    }
     assert(bundledSmokeIndex !== -1 && bundledSmokeIndex < firstUploadIndex, "JetBrains bundled runtime startup smoke must run before matrix artifact uploads.");
     assert(summaryIndex !== -1 && summaryIndex < firstUploadIndex, "Expected public artifact summary must be generated before matrix artifact uploads.");
   }
@@ -73,6 +89,13 @@ assertSetEquals(allUploadNames, [...githubIdeWorkflowMatrixUploadArtifactNames, 
 assert(workflow.includes(`path: ${combinedManifestPath}`), `Combined manifest upload path must be ${combinedManifestPath}.`);
 const staleManifestUploadPath = `path: dist/github-artifacts/${"manifest"}`;
 assert(!workflow.includes(staleManifestUploadPath), `Combined manifest upload must not point under ${staleManifestUploadPath.replace(/^path: /, "")}.`);
+const firstWorkflowUploadIndex = workflow.indexOf("uses: actions/upload-artifact@v4");
+if (firstWorkflowUploadIndex !== -1) {
+  for (const command of requiredPreUploadSmokeCommands) {
+    const smokeIndex = workflow.indexOf(command);
+    assert(smokeIndex !== -1 && smokeIndex < firstWorkflowUploadIndex, `${command} must appear before any actions/upload-artifact usage.`);
+  }
+}
 
 if (failures.length > 0) {
   console.error("IDE artifact workflow validation failed:");
