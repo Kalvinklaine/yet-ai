@@ -89,7 +89,8 @@ class YetToolWindowFactory : ToolWindowFactory {
                     add(JLabel("Yet AI requires JCEF support to host the GUI shell."), BorderLayout.CENTER)
                 }
             }
-            val content = contentFactory.createContent(component, ProductIdentity.pluginName, false)
+            val content = contentFactory.createContent(component, null, true)
+            content.isCloseable = false
             if (component is Disposable) {
                 Disposer.register(content, component)
             }

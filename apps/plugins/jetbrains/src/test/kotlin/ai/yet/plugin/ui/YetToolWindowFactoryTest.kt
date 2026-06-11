@@ -594,6 +594,15 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
+    fun mainToolWindowContentHasNoDuplicateTabTitleAndStaysNonCloseable() {
+        val source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/kotlin/ai/yet/plugin/ui/YetToolWindowFactory.kt"))
+
+        assertContains(source, "createContent(component, null, true)")
+        assertContains(source, "content.isCloseable = false")
+        assertFalse(source.contains("createContent(component, ProductIdentity.pluginName"))
+    }
+
+    @Test
     fun toolWindowRegistersLiveActiveEditorContextRefreshListeners() {
         val source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/kotlin/ai/yet/plugin/ui/YetToolWindowFactory.kt"))
 
