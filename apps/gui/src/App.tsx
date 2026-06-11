@@ -1768,6 +1768,24 @@ export function App() {
             onFocusPrompt={() => chatInputRef.current?.focus()}
           />
         </div>
+        {hostedWebview && (
+          <details className="compact-host-setup" data-testid="compact-host-setup">
+            <summary>
+              <span className="compact-summary-title">Provider setup</span>
+              <span className={`badge ${connectionStatus === "connected" ? "ok" : connectionStatus === "error" ? "warn" : ""}`}>runtime {connectionStatus}</span>
+              <span className={canSendChat ? "badge ok" : "badge warn"}>{canSendChat ? "send ready" : "provider/demo needed"}</span>
+            </summary>
+            <div className="compact-host-setup-body stack">
+              <span className="subtle">Chat stays primary in compact IDE layout. Runtime, provider API-key setup, experimental OpenAI account login, and Demo Mode controls remain available below.</span>
+              <div className="row">
+                <button type="button" onClick={() => { setRuntimeDetailsOpen(true); void connect(); }} disabled={runtimeRefreshInFlight}>{runtimeRefreshInFlight ? "Checking runtime…" : "Refresh runtime"}</button>
+                <button type="button" onClick={() => { setProviderDetailsOpen(true); applyOpenAiApiPreset(); }}>Use OpenAI API key fallback</button>
+                <button type="button" onClick={() => void toggleDemoMode(!demoModeEnabled)} disabled={demoModeWorking}>{demoModeWorking ? "Changing Demo Mode…" : demoModeToggleLabel}</button>
+                <button type="button" className="secondary-button" onClick={() => setProviderDetailsOpen(true)}>Open provider/login setup below</button>
+              </div>
+            </div>
+          </details>
+        )}
         {chatError && <ErrorBox error={chatError} />}
         {chatHistoryError && <ErrorBox error={chatHistoryError} />}
         <div className="chat-workbench">
