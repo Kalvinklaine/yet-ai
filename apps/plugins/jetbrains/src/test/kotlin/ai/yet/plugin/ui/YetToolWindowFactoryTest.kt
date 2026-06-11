@@ -418,6 +418,33 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
+    fun readyDeliveryCanSendFreshHostReadyForExistingGuiRequestAfterRuntimeRelaunch() {
+        val sent = mutableListOf<String>()
+        val requestId = "gui-ready-current"
+
+        JetBrainsReadyMessageDelivery.deliver(
+            settings = RuntimeSettings("http://127.0.0.1:8001", null, "old-plugin-token"),
+            requestId = requestId,
+            send = { sent.add(it) },
+            contextSupplier = { null },
+            logContextStatus = {},
+        )
+        JetBrainsReadyMessageDelivery.deliver(
+            settings = RuntimeSettings("http://127.0.0.1:8001", null, "fresh-plugin-token"),
+            requestId = requestId,
+            send = { sent.add(it) },
+            contextSupplier = { null },
+            logContextStatus = {},
+        )
+
+        val readyMessages = sent.filter { messageType(it) == "host.ready" }
+        assertEquals(2, readyMessages.size)
+        assertTrue(readyMessages.all { it.contains("\"requestId\":\"$requestId\"") }, readyMessages.joinToString("\n"))
+        assertContains(readyMessages[0], "\"sessionToken\":\"old-plugin-token\"")
+        assertContains(readyMessages[1], "\"sessionToken\":\"fresh-plugin-token\"")
+    }
+
+    @Test
     fun readyDeliverySkipsContextWhenSupplierReturnsNull() {
         val sent = mutableListOf<String>()
 
