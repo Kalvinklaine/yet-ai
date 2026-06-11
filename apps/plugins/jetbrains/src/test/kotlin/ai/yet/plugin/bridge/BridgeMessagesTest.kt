@@ -30,6 +30,23 @@ class BridgeMessagesTest {
     }
 
     @Test
+    fun validGuiRuntimeRefreshPassesWithSafeRequestIdAndEmptyPayload() {
+        val parsed = BridgeMessages.parseGuiRuntimeRefresh("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.runtimeRefresh","requestId":"gui-runtime-refresh-1","payload":{}}""")
+
+        assertNotNull(parsed)
+        assertEquals("gui-runtime-refresh-1", parsed.requestId)
+    }
+
+    @Test
+    fun guiRuntimeRefreshRejectsMissingRequestIdMissingPayloadNonEmptyPayloadAndSecretRequestId() {
+        assertNull(BridgeMessages.parseGuiRuntimeRefresh("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.runtimeRefresh","payload":{}}"""))
+        assertNull(BridgeMessages.parseGuiRuntimeRefresh("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.runtimeRefresh","requestId":"safe-request"}"""))
+        assertNull(BridgeMessages.parseGuiRuntimeRefresh("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.runtimeRefresh","requestId":"provider_key","payload":{}}"""))
+        assertNull(BridgeMessages.parseGuiRuntimeRefresh("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.runtimeRefresh","requestId":"safe-request","payload":{"runtimeUrl":"http://127.0.0.1:8001"}}"""))
+        assertNull(BridgeMessages.parseGuiRuntimeRefresh("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.ready","requestId":"safe-request","payload":{}}"""))
+    }
+
+    @Test
     fun privilegedGuiTypesRejected() {
         val disabledTypes = listOf(
             "gui.openFile",
@@ -39,6 +56,7 @@ class BridgeMessagesTest {
             "gui.copyText",
             "gui.showNotification",
             "gui.getHostContext",
+            "gui.runtimeRefresh",
         )
 
         disabledTypes.forEach { type ->
@@ -49,6 +67,8 @@ class BridgeMessagesTest {
     @Test
     fun extraFieldsRejected() {
         assertNull(BridgeMessages.parseGuiReady("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.ready","requestId":"abc","payload":{},"workspaceRelativePath":"src/example.kt"}"""))
+        assertNull(BridgeMessages.parseGuiReady("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.ready","requestId":"abc","payload":{},"bridgeVersion":"${ProductIdentity.bridgeVersion}"}"""))
+        assertNull(BridgeMessages.parseGuiRuntimeRefresh("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.runtimeRefresh","requestId":"gui-runtime-refresh-1","payload":{},"bridgeVersion":"${ProductIdentity.bridgeVersion}"}"""))
     }
 
     @Test

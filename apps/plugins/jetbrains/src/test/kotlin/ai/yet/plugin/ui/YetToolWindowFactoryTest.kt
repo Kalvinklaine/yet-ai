@@ -185,6 +185,26 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
+    fun wrapperSafelyForwardsRuntimeRefreshOnlyAfterReadyHandshake() {
+        val html = renderHtml(
+            RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
+            "console.log('bridge')",
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+        )
+
+        assertContains(html, "const isGuiRuntimeRefresh = (message) => {")
+        assertContains(html, "message.type !== \"gui.runtimeRefresh\"")
+        assertContains(html, "!requiredRequestId(message.requestId)")
+        assertContains(html, "isPlainObject(message.payload) && Object.keys(message.payload).length === 0")
+        assertContains(html, "} else if (isGuiRuntimeRefresh(event.data)) {")
+        assertContains(html, "if (!frameReady) {")
+        assertContains(html, "Yet AI rejected runtime refresh before current GUI ready handshake")
+        assertContains(html, "window.postIntellijMessage(event.data);")
+        assertContains(html, "event.source === currentFrameWindow && event.source === frame?.contentWindow")
+        assertContains(html, "event.origin !== frameTargetOrigin")
+    }
+
+    @Test
     fun wrapperReadyIdUsesRandomTokenAndKeepsStaleMessagesBoundToCurrentReady() {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
@@ -577,6 +597,27 @@ class YetToolWindowFactoryTest {
         assertContains(source, "sendDiagnostic(connection.error)")
         assertFalse(source.contains("deliverReadyMessages(latestConnection.settings, requestId)\n            null"))
         assertFalse(source.contains("guiReadyRequestId?.let { requestId -> deliverReadyMessages(connection.settings, requestId) }\n                    connection.error?.let"))
+    }
+
+    @Test
+    fun panelBridgesGuiRuntimeRefreshToRuntimePrepareOnPooledThread() {
+        val source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/kotlin/ai/yet/plugin/ui/YetToolWindowFactory.kt"))
+
+        assertContains(source, "BridgeMessages.parseGuiRuntimeRefresh(raw)")
+        assertContains(source, "refreshRuntimeFromGui()")
+        assertContains(source, "ApplicationManager.getApplication().executeOnPooledThread")
+        assertContains(source, "RuntimeConnectionManager.getInstance().prepare()")
+        assertContains(source, "handleRuntimeConnection(connection)")
+        assertFalse(source.contains("guiReadyRequestId = runtimeRefresh.requestId"))
+    }
+
+    @Test
+    fun runtimeManagerPublishesPrepareFailuresForOpenPanels() {
+        val source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/kotlin/ai/yet/plugin/runtime/RuntimeConnectionManager.kt"))
+
+        assertContains(source, "if (publishUpdates) publishRuntimeConnectionUpdate(result)")
+        assertContains(source, "publishUpdates && (result.error != null || result.settings != previousConnection)")
+        assertContains(source, "private fun publishRuntimeConnectionUpdate(result: RuntimeConnectionResult)")
     }
 
     @Test

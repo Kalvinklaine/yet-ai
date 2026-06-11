@@ -748,6 +748,16 @@ pre,
   grid-row: 1;
 }
 
+.host-vscode .chat-workbench,
+.host-jetbrains .chat-workbench {
+  order: -1;
+}
+
+.host-vscode > .chat-primary-card > .readiness-card {
+  max-height: 116px;
+  overflow-y: auto;
+}
+
 .host-vscode .chat-hero-row,
 .host-jetbrains .chat-hero-row,
 .host-vscode .chat-thread-pane > .debug-details:not(.chat-secondary-debug),

@@ -991,6 +991,15 @@ export function App() {
     setChatHistoryLoading(false);
   }, [abortActiveStream, chatSummaries, clearEditProposalState, clearIdeActionState, isCurrentRefresh]);
   const connect = useCallback(async () => {
+    if (bridgeHost === "jetbrains") {
+      bridgeAdapterRef.current?.post({
+        version: "2026-05-15",
+        type: "gui.runtimeRefresh",
+        requestId: `gui-runtime-refresh-${runtimeRefreshAttemptRef.current + 1}`,
+        payload: {},
+      });
+      addTimeline("Requested IDE-managed runtime refresh");
+    }
     if (runtimeRefreshInFlightRef.current) {
       runtimeRefreshQueuedRef.current = true;
       return;
@@ -1012,7 +1021,7 @@ export function App() {
       runtimeRefreshQueuedRef.current = false;
       setRuntimeRefreshInFlight(false);
     }
-  }, [refreshChats, refreshProviderAuthStatus, refreshProviders, refreshRuntime]);
+  }, [addTimeline, bridgeHost, refreshChats, refreshProviderAuthStatus, refreshProviders, refreshRuntime]);
 
   const refreshAgentProgress = useCallback(async () => {
     const targetSettings = settingsRef.current;

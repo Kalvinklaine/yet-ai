@@ -68,7 +68,7 @@ export type IdeActionResultPayload = {
 
 export type GuiMessage = {
   version: string;
-  type: "gui.ready" | "gui.unloaded" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest";
+  type: "gui.ready" | "gui.unloaded" | "gui.runtimeRefresh" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest";
   requestId?: string;
   payload?: Record<string, unknown> | IdeActionRequestPayload | ApplyWorkspaceEditPayload;
 };
@@ -146,6 +146,7 @@ const hostMessageTypes = new Set<HostMessage["type"]>([
 const guiMessageTypes = new Set<GuiMessage["type"]>([
   "gui.ready",
   "gui.unloaded",
+  "gui.runtimeRefresh",
   "gui.ideActionRequest",
   "gui.applyWorkspaceEditRequest",
 ]);
@@ -303,6 +304,9 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
   }
   if (value.type === "gui.unloaded") {
     return value.requestId === undefined && isEmptyPayload(value.payload);
+  }
+  if (value.type === "gui.runtimeRefresh") {
+    return isEmptyPayload(value.payload);
   }
   if (value.type === "gui.ideActionRequest") {
     return typeof value.requestId === "string" && isIdeActionRequestPayload(value.payload);
