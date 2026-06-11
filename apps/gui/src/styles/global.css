@@ -4,6 +4,13 @@
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+html,
+body,
+#root {
+  height: 100%;
+  min-height: 100%;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -716,17 +723,29 @@ pre,
 
 .host-vscode,
 .host-jetbrains {
+  height: auto;
   max-width: none;
   min-height: 100vh;
   gap: 10px;
+  overscroll-behavior: contain;
   padding: 12px;
 }
 
-.host-vscode .chat-primary-card,
-.host-jetbrains .chat-primary-card {
-  display: grid;
-  min-height: calc(100vh - 24px);
+.host-vscode > .chat-primary-card,
+.host-jetbrains > .chat-primary-card {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 24px);
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   padding: 14px;
+}
+
+.host-vscode > .chat-primary-card,
+.host-jetbrains > .chat-primary-card {
+  grid-row: 1;
 }
 
 .host-vscode .chat-hero-row,
@@ -740,14 +759,20 @@ pre,
 
 .host-vscode .chat-thread-pane,
 .host-jetbrains .chat-thread-pane {
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  overflow: visible;
 }
 
 .host-vscode .chat-workbench,
 .host-jetbrains .chat-workbench,
 .host-vscode .conversations-layout,
 .host-jetbrains .conversations-layout {
-  height: calc(100vh - 52px);
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  height: auto;
   min-height: 0;
   max-height: none;
 }
@@ -756,8 +781,10 @@ pre,
   display: grid;
   align-content: start;
   gap: 12px;
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
   padding-right: 4px;
   padding-bottom: 12px;
@@ -766,7 +793,8 @@ pre,
 }
 
 .chat-composer {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   flex: 0 0 auto;
   position: relative;
@@ -779,9 +807,20 @@ pre,
   padding: 14px;
 }
 
+.host-vscode .chat-composer,
+.host-jetbrains .chat-composer {
+  max-height: min(42vh, 340px);
+}
+
+.host-vscode .composer-tools,
+.host-jetbrains .composer-tools {
+  max-height: clamp(72px, calc(42vh - 170px), 170px);
+}
+
 .composer-tools {
   display: grid;
   gap: 8px;
+  flex: 1 1 auto;
   min-height: 0;
   max-height: 170px;
   overflow-y: auto;
@@ -792,6 +831,7 @@ pre,
 .composer-input-area {
   display: grid;
   gap: 10px;
+  flex: 0 0 auto;
   min-height: 0;
 }
 
@@ -1088,7 +1128,17 @@ pre,
     padding: 10px;
   }
 
-  .composer-tools {
+  .host-vscode .chat-composer,
+  .host-jetbrains .chat-composer {
+    max-height: min(42vh, 300px);
+  }
+
+  .host-vscode .composer-tools,
+  .host-jetbrains .composer-tools {
+    max-height: clamp(64px, calc(42vh - 158px), 120px);
+  }
+
+  .app-shell:not(.host-vscode):not(.host-jetbrains) .composer-tools {
     max-height: 78px;
   }
 

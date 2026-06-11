@@ -12,7 +12,7 @@ const indexPath = path.join(distRoot, "index.html");
 const evidenceRoot = path.join(root, "dist", "visual-smoke", "jetbrains-wrapper-browser");
 const requiredVisibleText = ["Chat readiness", "Conversations", "Coding Actions"];
 const bridgeVersion = "2026-05-15";
-const pluginLikeViewport = { width: 790, height: 900 };
+const pluginLikeViewport = { width: 800, height: 800 };
 const failures = [];
 const runtimeToken = `jb.wrapper.runtime.${randomUUID().replaceAll("-", "")}`;
 const oauthSentinels = {
@@ -64,6 +64,29 @@ let chatSubscriptionCount = 0;
 const chatSseSubscribers = new Map();
 const pendingAssistantResponsesByChat = new Map();
 const maxRuntimeRequestBodyBytes = 1024 * 1024;
+
+const scrollIntoViewIfNeeded = async (locator) => {
+  await locator.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
+};
+
+const centerInNearestScrollContainer = async (locator) => {
+  await locator.evaluate((element) => {
+    if (!(element instanceof HTMLElement)) return;
+    let parent = element.parentElement;
+    while (parent) {
+      const style = getComputedStyle(parent);
+      const canScroll = /(auto|scroll)/.test(style.overflowY) && parent.scrollHeight > parent.clientHeight + 1;
+      if (canScroll) {
+        const parentRect = parent.getBoundingClientRect();
+        const elementRect = element.getBoundingClientRect();
+        parent.scrollTop += elementRect.top - parentRect.top - Math.max(0, (parent.clientHeight - elementRect.height) / 2);
+        return;
+      }
+      parent = parent.parentElement;
+    }
+    element.scrollIntoView({ block: "center", inline: "nearest" });
+  }).catch(() => undefined);
+};
 
 class RequestBodyTooLargeError extends Error {}
 
@@ -482,9 +505,10 @@ try {
   if (!await includeContextToggle.isChecked({ timeout: 5000 }).catch(() => false)) {
     failures.push("JetBrains attached context include toggle was not enabled by default.");
   }
+  await scrollIntoViewIfNeeded(includeContextToggle);
   await includeContextToggle.uncheck();
   await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill("Send without JetBrains context.");
-  await frameLocator.getByRole("button", { name: "Send", exact: true }).click();
+  await clickSendButtonWithActionability(frameLocator, "first disabled-context send");
   await frameLocator.getByText("JetBrains login smoke", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not render the assistant response from mock SSE."));
   await assertAssistantAnswerCount(frameLocator, "JetBrains login smoke", 1, "first JetBrains mock SSE assistant response");
   if (chatCommandRequestCount !== 1) {
@@ -512,7 +536,7 @@ try {
     failures.push("JetBrains attached context include toggle was not re-enabled for the next context snapshot.");
   }
   await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill("Say hello through JetBrains login-shaped smoke.");
-  await frameLocator.getByRole("button", { name: "Send", exact: true }).click();
+  await clickSendButtonWithActionability(frameLocator, "second enabled-context send");
   await waitForAssistantAnswerCount(frameLocator, "JetBrains login smoke", 2, "JetBrains mock SSE assistant response after two sends");
   await assertAssistantAnswerCount(frameLocator, "JetBrains login smoke", 2, "JetBrains mock SSE assistant response after two sends");
   if (chatCommandRequestCount !== 2) {
@@ -585,6 +609,34 @@ async function assertAssistantAnswerCount(frameLocator, text, expected, descript
   );
   if (count !== expected) {
     failures.push(`Expected ${description} to appear exactly ${expected} time(s) in assistant bubbles, observed ${count}: ${text}`);
+  }
+}
+
+async function clickSendButtonWithActionability(frameLocator, label) {
+  const send = frameLocator.getByRole("button", { name: "Send", exact: true });
+  await centerInNearestScrollContainer(send);
+  await assertElementReceivesPointerAtCenter(send, label);
+  await send.click();
+}
+
+async function assertElementReceivesPointerAtCenter(locator, label) {
+  const hitTest = await locator.evaluate((element) => {
+    if (!(element instanceof HTMLElement)) return { ok: false, reason: "not an HTMLElement" };
+    const rect = element.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const top = document.elementFromPoint(x, y);
+    return {
+      ok: top === element || element.contains(top),
+      rect: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width, height: rect.height },
+      point: { x, y },
+      topTag: top?.tagName,
+      topText: top?.textContent?.trim().slice(0, 80),
+      topClass: top instanceof HTMLElement ? top.className : undefined,
+    };
+  }).catch((error) => ({ ok: false, reason: error instanceof Error ? error.message : String(error) }));
+  if (!hitTest.ok) {
+    failures.push(`${label}: elementFromPoint did not hit the intended control (${JSON.stringify(hitTest)}).`);
   }
 }
 
@@ -1050,11 +1102,49 @@ async function collectJetBrainsIframeLayoutMetrics(frameLocator) {
     const send = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Send");
     const scroll = document.querySelector(".chat-scroll-region");
     const composer = document.querySelector(".chat-composer");
+    const composerTools = document.querySelector(".composer-tools");
+    const inputArea = document.querySelector(".composer-input-area");
     const main = document.querySelector("main.app-shell");
     const sendRect = rectFor(send);
     const viewport = { width: window.innerWidth, height: window.innerHeight };
+    const documentElement = document.documentElement;
+    const scrollTopBefore = window.scrollY;
+    window.scrollTo(0, documentElement.scrollHeight);
+    const scrollTopAfter = window.scrollY;
+    const chatScrollTopBefore = scroll instanceof HTMLElement ? scroll.scrollTop : 0;
+    if (scroll instanceof HTMLElement) scroll.scrollTo(0, scroll.scrollHeight);
+    const chatScrollTopAfter = scroll instanceof HTMLElement ? scroll.scrollTop : 0;
+    const composerToolsTopBefore = composerTools instanceof HTMLElement ? composerTools.scrollTop : 0;
+    if (composerTools instanceof HTMLElement) composerTools.scrollTo(0, composerTools.scrollHeight);
+    const composerToolsTopAfter = composerTools instanceof HTMLElement ? composerTools.scrollTop : 0;
+    const sendRectAfterInnerScroll = rectFor(send);
+    const composerRectAfterInnerScroll = rectFor(composer);
+    const chatScrollRectAfterInnerScroll = rectFor(scroll);
+    const inputAreaRectAfterInnerScroll = rectFor(inputArea);
+    const composerToolsRectAfterInnerScroll = rectFor(composerTools);
+    const hitCenter = (element) => {
+      if (!(element instanceof HTMLElement)) return null;
+      const rect = element.getBoundingClientRect();
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      const top = document.elementFromPoint(x, y);
+      return {
+        ok: top === element || element.contains(top),
+        tag: top?.tagName,
+        text: top?.textContent?.trim().slice(0, 80),
+        className: top instanceof HTMLElement ? top.className : undefined,
+      };
+    };
     return {
       viewport,
+      documentScrollHeight: documentElement.scrollHeight,
+      documentClientHeight: documentElement.clientHeight,
+      outerScrollMoves: scrollTopAfter > scrollTopBefore,
+      outerOverflow: documentElement.scrollHeight > documentElement.clientHeight + 1,
+      hasUsablePanelScrollOwner: (scrollTopAfter > scrollTopBefore) || (chatScrollTopAfter > chatScrollTopBefore),
+      chatScrollMoves: chatScrollTopAfter > chatScrollTopBefore,
+      composerToolsScrollMoves: composerToolsTopAfter > composerToolsTopBefore,
+      composerToolsOverflow: composerTools instanceof HTMLElement && composerTools.scrollHeight > composerTools.clientHeight + 1,
       hostJetbrainsClass: main instanceof HTMLElement && main.classList.contains("host-jetbrains"),
       hostBrowserClass: main instanceof HTMLElement && main.classList.contains("host-browser"),
       advancedChatControlsVisible: textVisible("Advanced chat controls"),
@@ -1062,9 +1152,18 @@ async function collectJetBrainsIframeLayoutMetrics(frameLocator) {
       sendVisible: send instanceof HTMLElement && visible(send),
       sendEnabled: send instanceof HTMLButtonElement && !send.disabled,
       sendWithinViewport: Boolean(sendRect && sendRect.top >= 0 && sendRect.left >= 0 && sendRect.bottom <= viewport.height && sendRect.right <= viewport.width),
+      sendReachableAfterInnerScroll: Boolean(sendRectAfterInnerScroll && sendRectAfterInnerScroll.top >= 0 && sendRectAfterInnerScroll.left >= 0 && sendRectAfterInnerScroll.bottom <= viewport.height && sendRectAfterInnerScroll.right <= viewport.width),
+      sendHitTestAfterInnerScroll: hitCenter(send),
       sendRect,
+      sendRectAfterInnerScroll,
       chatScrollHeight: rectFor(scroll)?.height ?? 0,
       composerRect: rectFor(composer),
+      composerRectAfterInnerScroll,
+      chatScrollRectAfterInnerScroll,
+      inputAreaRectAfterInnerScroll,
+      composerToolsRectAfterInnerScroll,
+      chatScrollComposerOverlapAfterInnerScroll: Boolean(chatScrollRectAfterInnerScroll && composerRectAfterInnerScroll && chatScrollRectAfterInnerScroll.bottom > composerRectAfterInnerScroll.top + 1 && chatScrollRectAfterInnerScroll.top < composerRectAfterInnerScroll.bottom - 1),
+      composerToolsInputOverlapAfterInnerScroll: Boolean(composerToolsRectAfterInnerScroll && inputAreaRectAfterInnerScroll && composerToolsRectAfterInnerScroll.bottom > inputAreaRectAfterInnerScroll.top + 1 && composerToolsRectAfterInnerScroll.top < inputAreaRectAfterInnerScroll.bottom - 1),
       bodyText: document.body.innerText.replace(/\s+/g, " ").slice(0, 700),
     };
   });
@@ -1075,8 +1174,13 @@ function assertJetBrainsHostedLayout(metrics, label) {
   if (metrics.hostBrowserClass) failures.push(`${label}: iframe shell still has host-browser class.`);
   if (metrics.advancedChatControlsVisible) failures.push(`${label}: Advanced chat controls are visible in hosted layout.`);
   if (metrics.sseDebugDetailsVisible) failures.push(`${label}: SSE debug details are visible in hosted layout.`);
-  if (!metrics.sendVisible || !metrics.sendEnabled || !metrics.sendWithinViewport) failures.push(`${label}: Send is not visible/enabled within iframe viewport (${JSON.stringify(metrics.sendRect)} in ${JSON.stringify(metrics.viewport)}).`);
-  if (metrics.chatScrollHeight < 120) failures.push(`${label}: chat-scroll-region height is not sane (${metrics.chatScrollHeight}).`);
+  if (!metrics.sendVisible || !metrics.sendEnabled || !metrics.sendReachableAfterInnerScroll) failures.push(`${label}: Send is not visible/enabled/reachable after inner panel scroll (${JSON.stringify(metrics.sendRectAfterInnerScroll)} in ${JSON.stringify(metrics.viewport)}).`);
+  if (!metrics.sendHitTestAfterInnerScroll?.ok) failures.push(`${label}: Send center is covered or not hit-testable after inner scroll (${JSON.stringify(metrics.sendHitTestAfterInnerScroll)}).`);
+  if (metrics.outerOverflow && !metrics.hasUsablePanelScrollOwner) failures.push(`${label}: hosted iframe overflows without a usable panel scroll owner (document ${metrics.documentScrollHeight} > ${metrics.documentClientHeight}, outer moved: ${metrics.outerScrollMoves}, chat moved: ${metrics.chatScrollMoves}).`);
+  if (metrics.chatScrollHeight < 120) failures.push(`${label}: chat message region is too small to contribute useful hosted panel scrolling (${metrics.chatScrollHeight}).`);
+  if (metrics.composerToolsOverflow && !metrics.composerToolsScrollMoves) failures.push(`${label}: composer status/context cards overflow but their tool region did not scroll.`);
+  if (metrics.chatScrollComposerOverlapAfterInnerScroll) failures.push(`${label}: chat scroll region overlaps the composer after inner scrolling (${JSON.stringify(metrics.chatScrollRectAfterInnerScroll)} vs ${JSON.stringify(metrics.composerRectAfterInnerScroll)}).`);
+  if (metrics.composerToolsInputOverlapAfterInnerScroll) failures.push(`${label}: composer status/context cards overlap the input controls after inner scrolling (${JSON.stringify(metrics.composerToolsRectAfterInnerScroll)} vs ${JSON.stringify(metrics.inputAreaRectAfterInnerScroll)}).`);
 }
 
 async function saveJetBrainsWrapperEvidence(page, metrics) {
@@ -1246,7 +1350,9 @@ async function assertJetBrainsIdeActionRoundtrip(page, frameLocator) {
     failures.push(`Iframe GUI JetBrains IDE action panel did not include Get IDE context. Panel: ${ideActionText}`);
     return;
   }
-  await frameLocator.locator("section[aria-label='Agent activity IDE actions'] button").filter({ hasText: "Get IDE context" }).first().click();
+  const getContextButton = frameLocator.locator("section[aria-label='Agent activity IDE actions'] button").filter({ hasText: "Get IDE context" }).first();
+  await centerInNearestScrollContainer(getContextButton);
+  await getContextButton.click();
   await page.waitForFunction((count) => (window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.ideActionRequest").length ?? 0) === count + 1, before, { timeout: 5000 })
     .catch(() => failures.push("Wrapper did not collect exactly one gui.ideActionRequest after Get IDE context click."));
 
@@ -1336,11 +1442,8 @@ async function assertForbiddenIdeActionMessagesRejected(page, frameLocator) {
 async function openDetailsBySummary(scope, summaryText, visibleLocator) {
   if (await visibleLocator.isVisible().catch(() => false)) return;
   const summary = scope.locator("summary", { hasText: summaryText }).first();
-  await summary.click({ timeout: 5000 }).catch(async () => {
-    await scope.locator("details", { hasText: summaryText }).first().evaluate((element) => {
-      if (element instanceof HTMLDetailsElement) element.open = true;
-    });
-  });
+  await summary.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
+  await summary.click({ timeout: 5000 });
   await visibleLocator.waitFor({ state: "visible", timeout: 10_000 });
 }
 
