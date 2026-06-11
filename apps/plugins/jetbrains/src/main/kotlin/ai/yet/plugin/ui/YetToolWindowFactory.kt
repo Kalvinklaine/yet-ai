@@ -176,6 +176,11 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
                 guiReadyRequestId = null
                 return@addHandler null
             }
+            if (BridgeMessages.parseGuiRuntimeRefresh(raw) != null) {
+                logger.info("Yet AI received GUI runtime refresh request")
+                refreshRuntimeFromGui()
+                return@addHandler null
+            }
             val ideActionHandled = JetBrainsIdeActionBridge.handleReadOnlyIdeActionRequest(raw, ::sendToGui, JetBrainsIdeActionHost(project)) { logger.info(it) }
             if (ideActionHandled) return@addHandler null
             val guiReady = BridgeMessages.parseGuiReady(raw)
@@ -230,6 +235,17 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
             guiReadyRequestId?.let { requestId -> deliverReadyMessages(connection.settings, requestId) }
         } else {
             sendDiagnostic(connection.error)
+        }
+    }
+
+    private fun refreshRuntimeFromGui() {
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val connection = RuntimeConnectionManager.getInstance().prepare()
+            ApplicationManager.getApplication().invokeLater {
+                if (!disposed) {
+                    handleRuntimeConnection(connection)
+                }
+            }
         }
     }
 
@@ -609,6 +625,10 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           if (typeof serialized !== "string" || new Blob([serialized]).size > maxIdeActionRequestBytes) return false;
           return isGuiIdeActionPayload(message.payload);
         };
+        const isGuiRuntimeRefresh = (message) => {
+          if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.runtimeRefresh" || !requiredRequestId(message.requestId)) return false;
+          return isPlainObject(message.payload) && Object.keys(message.payload).length === 0;
+        };
         const isGuiMessage = (message) => {
           if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.ready" || !isRequestId(message.requestId)) return false;
           return isPlainObject(message.payload) && hasOnlyKeys(message.payload, ["supportedBridgeVersion", "frameNonce"]) && (message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion) && isFrameNonce(currentFrameNonce) && isFrameNonce(message.payload.frameNonce) && message.payload.frameNonce === currentFrameNonce;
@@ -691,6 +711,12 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
             }
             if (isGuiUnloadedMessage(event.data)) {
               invalidateFrameAuthority("gui.unloaded");
+              window.postIntellijMessage(event.data);
+            } else if (isGuiRuntimeRefresh(event.data)) {
+              if (!frameReady) {
+                console.log("Yet AI rejected runtime refresh before current GUI ready handshake");
+                return;
+              }
               window.postIntellijMessage(event.data);
             } else if (isGuiIdeActionRequest(event.data)) {
               if (!frameReady || !hostReadyAcceptedForCurrentFrame || acceptedHostReadyRequestId !== currentReadyRequestId()) {

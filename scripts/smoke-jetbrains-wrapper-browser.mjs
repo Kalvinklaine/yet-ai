@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import process from "node:process";
@@ -9,6 +9,8 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = path.join(root, "apps", "gui", "dist");
 const indexPath = path.join(distRoot, "index.html");
+const packagedGuiRoot = path.join(root, "apps", "plugins", "jetbrains", "build", "generated", "resources", "yet-ai-gui", "yet-ai-gui");
+const packagedGuiIndexPath = path.join(packagedGuiRoot, "index.html");
 const evidenceRoot = path.join(root, "dist", "visual-smoke", "jetbrains-wrapper-browser");
 const requiredVisibleText = ["Chat readiness", "Conversations", "Coding Actions"];
 const bridgeVersion = "2026-05-15";
@@ -91,7 +93,7 @@ const centerInNearestScrollContainer = async (locator) => {
 
 class RequestBodyTooLargeError extends Error {}
 
-await requireBuiltGui();
+await requireFreshPackagedGui();
 
 let chromium;
 try {
@@ -103,7 +105,7 @@ try {
   process.exit(1);
 }
 
-const guiServer = await startStaticServer(distRoot, { injectJetBrainsFrameBridge: true });
+const guiServer = await startStaticServer(packagedGuiRoot, { injectJetBrainsFrameBridge: true });
 const guiBaseUrl = `http://127.0.0.1:${guiServer.port}`;
 const runtimeServer = await startMockRuntimeServer();
 const runtimeBaseUrl = `http://127.0.0.1:${runtimeServer.port}`;
@@ -415,12 +417,18 @@ try {
   const runtimeRefreshButton = frameLocator.locator("section", { has: frameLocator.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: /Refresh runtime|Checking runtime…/ }).first();
   const refreshButton = await compactRefreshButton.isVisible().catch(() => false) ? compactRefreshButton : runtimeRefreshButton;
   if (await refreshButton.isVisible().catch(() => false)) {
+    const runtimeRefreshMessageCountBeforeClick = await page.evaluate(() => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.runtimeRefresh").length);
     if (refreshButton === runtimeRefreshButton) {
       await openDetailsBySummary(frameLocator, "Local runtime connection", refreshButton);
     }
     await refreshButton.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
     await refreshButton.click();
     await page.waitForTimeout(100);
+    const runtimeRefreshMessageCountAfterFirstClick = await page.evaluate(() => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.runtimeRefresh").length);
+    const runtimeRefreshMessagesPostedByFirstClick = runtimeRefreshMessageCountAfterFirstClick - runtimeRefreshMessageCountBeforeClick;
+    if (runtimeRefreshMessagesPostedByFirstClick !== 1) {
+      failures.push(`Refresh runtime click posted ${runtimeRefreshMessagesPostedByFirstClick} gui.runtimeRefresh bridge messages instead of exactly one.`);
+    }
     if (!await refreshButton.isDisabled().catch(() => true)) {
       await refreshButton.click();
     }
@@ -494,7 +502,19 @@ try {
   await frameLocator.getByText("File: src/main/kotlin/ContextSmoke.kt", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not show safe JetBrains context file label."));
   await frameLocator.getByText("Language: kotlin", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context language id."));
   await frameLocator.getByText(activeContextSelectionMarker, { exact: false }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context selected text preview."));
-  await page.evaluate(({ version, payload, requestId }) => {
+  await page.evaluate(({ version, runtimeUrl, token, payload, requestId }) => {
+    window.__yetAiSendHostMessageToFrame({
+      version,
+      type: "host.ready",
+      requestId,
+      payload: {
+        runtimeUrl,
+        sessionToken: token,
+        productId: "yet-ai",
+        displayName: "Yet AI",
+        cloudRequired: false,
+      },
+    });
     window.__yetAiSendHostMessageToFrame({
       version,
       type: "host.contextSnapshot",
@@ -568,7 +588,6 @@ try {
   }
   assertJetBrainsContext(chatCommandRequest?.payload?.context);
 
-  await page.waitForTimeout(250);
   const finalLayoutMetrics = await collectJetBrainsIframeLayoutMetrics(frameLocator);
   assertJetBrainsHostedLayout(finalLayoutMetrics, "post-chat JetBrains wrapper iframe");
   const evidence = await saveJetBrainsWrapperEvidence(page, finalLayoutMetrics);
@@ -600,7 +619,7 @@ try {
 
   console.log("JetBrains wrapper browser smoke passed.");
   console.log("Checked JetBrains-like wrapper iframe rendering, exact loopback target origin, real gui.ready to host.ready/contextSnapshot wrapper bridge delivery, attached-context preview/default include/disabled-toggle behavior, Refresh runtime click feedback, bridge collector, login-shaped first-message chat through mock runtime/SSE, JavaScript execution, and local JS/CSS asset responses.");
-  console.log(`Saved sanitized layout screenshot/metrics under ${path.relative(root, evidenceRoot)}/ (${path.basename(evidence.screenshotPath)}, ${path.basename(evidence.metricsPath)}).`);
+  console.log(`Saved sanitized layout screenshot/metrics/DOM under ${path.relative(root, evidenceRoot)}/ (${path.basename(evidence.screenshotPath)}, ${path.basename(evidence.metricsPath)}, ${path.basename(evidence.domPath)}).`);
   console.log("No engine, provider credentials, OpenAI/ChatGPT, hosted Yet AI services, JetBrains IDE, or JCEF automation were used.");
 } finally {
   await browser?.close().catch(() => undefined);
@@ -1243,10 +1262,14 @@ async function saveJetBrainsWrapperEvidence(page, metrics) {
   const metricsPath = path.join(evidenceRoot, "jetbrains-wrapper-layout.metrics.json");
   const domPath = path.join(evidenceRoot, "jetbrains-wrapper-layout.dom.txt");
   await page.screenshot({ path: screenshotPath, fullPage: true });
-  await writeFile(metricsPath, `${JSON.stringify(metrics, null, 2)}\n`, "utf8");
+  await writeFile(metricsPath, `${JSON.stringify(sanitizeEvidenceObject(metrics), null, 2)}\n`, "utf8");
   const dom = await page.frameLocator("iframe[title='Yet AI GUI']").locator("body").evaluate(() => document.body.innerText).then(sanitizeEvidenceText);
   await writeFile(domPath, dom, "utf8");
   return { screenshotPath, metricsPath, domPath };
+}
+
+function sanitizeEvidenceObject(value) {
+  return JSON.parse(sanitizeEvidenceText(JSON.stringify(value)));
 }
 
 async function forceFreshGuiReadyAfterReload(page, { version, origin, sequenceBeforeReload, requestId, previousFrameNonce }) {
@@ -1501,22 +1524,97 @@ async function openDetailsBySummary(scope, summaryText, visibleLocator) {
   await visibleLocator.waitFor({ state: "visible", timeout: 10_000 });
 }
 
-async function requireBuiltGui() {
+async function requireFreshPackagedGui() {
+  await requireGuiIndex(indexPath, "built GUI", "Run `cd apps/gui && npm run build`, then `npm run prepare:jetbrains-preview -- --skip-engine-prepare` before `npm run smoke:jetbrains-wrapper-browser`.");
+  const packagedHtml = await requireGuiIndex(packagedGuiIndexPath, "JetBrains packaged generated GUI", "Run `npm run prepare:jetbrains-preview -- --skip-engine-prepare` before `npm run smoke:jetbrains-wrapper-browser` so the smoke serves the packaged GUI resources.");
+  await requireAssetReferences(packagedHtml, packagedGuiRoot, "JetBrains packaged generated GUI");
+  await assertPackagedGuiFresh();
+}
+
+async function requireGuiIndex(filePath, label, guidance) {
   try {
-    const fileStat = await stat(indexPath);
+    const fileStat = await stat(filePath);
     if (!fileStat.isFile()) {
       throw new Error("not a file");
     }
-    const html = await readFile(indexPath, "utf8");
+    const html = await readFile(filePath, "utf8");
     if (!html.includes("/assets/") && !html.includes("./assets/")) {
-      failures.push("Built GUI index.html does not reference Vite assets. Run `cd apps/gui && npm run build` and retry.");
+      failures.push(`${label} index.html does not reference Vite assets. ${guidance}`);
     }
+    return html;
   } catch {
-    console.error("JetBrains wrapper browser smoke failed: built GUI is missing.");
-    console.error("Run `cd apps/gui && npm run build` before `npm run smoke:jetbrains-wrapper-browser`.");
-    console.error(`Expected file: ${path.relative(root, indexPath)}`);
+    console.error(`JetBrains wrapper browser smoke failed: ${label} is missing.`);
+    console.error(guidance);
+    console.error(`Expected file: ${path.relative(root, filePath)}`);
     process.exit(1);
   }
+}
+
+async function requireAssetReferences(html, guiRoot, label) {
+  for (const reference of collectLocalAssetReferences(html)) {
+    const assetPath = path.join(guiRoot, reference);
+    const assetStat = await stat(assetPath).catch(() => undefined);
+    if (!assetStat?.isFile()) {
+      failures.push(`${label}/index.html references missing asset ${reference}. Run \`npm run prepare:jetbrains-preview -- --skip-engine-prepare\`.`);
+    }
+  }
+}
+
+async function assertPackagedGuiFresh() {
+  const comparedFiles = await compareDirectories(distRoot, packagedGuiRoot);
+  if (comparedFiles === 0) {
+    failures.push("JetBrains packaged generated GUI has no comparable files. Run `npm run prepare:jetbrains-preview -- --skip-engine-prepare`.");
+  }
+}
+
+async function compareDirectories(sourceRoot, packagedRoot, relativeDir = "") {
+  const sourceDir = path.join(sourceRoot, relativeDir);
+  const entries = await readdir(sourceDir, { withFileTypes: true }).catch(() => undefined);
+  if (entries === undefined) {
+    return 0;
+  }
+  let comparedFiles = 0;
+  for (const entry of entries) {
+    const relativePath = path.join(relativeDir, entry.name);
+    const sourcePath = path.join(sourceRoot, relativePath);
+    const packagedPath = path.join(packagedRoot, relativePath);
+    if (entry.isDirectory()) {
+      comparedFiles += await compareDirectories(sourceRoot, packagedRoot, relativePath);
+      continue;
+    }
+    if (!entry.isFile()) {
+      continue;
+    }
+    comparedFiles += 1;
+    const [sourceBytes, packagedBytes] = await Promise.all([
+      readFile(sourcePath),
+      readFile(packagedPath).catch(() => undefined),
+    ]);
+    if (packagedBytes === undefined) {
+      failures.push(`JetBrains packaged generated GUI is missing ${relativePath}. Run \`npm run prepare:jetbrains-preview -- --skip-engine-prepare\`.`);
+      continue;
+    }
+    if (!sourceBytes.equals(packagedBytes)) {
+      failures.push(`JetBrains packaged generated GUI is stale for ${relativePath} compared with apps/gui/dist. Run \`npm run prepare:jetbrains-preview -- --skip-engine-prepare\`.`);
+    }
+  }
+  return comparedFiles;
+}
+
+function collectLocalAssetReferences(html) {
+  const references = new Set();
+  const assetPattern = /\b(?:src|href)=("|')([^"']+)\1/g;
+  for (const match of html.matchAll(assetPattern)) {
+    const value = match[2];
+    if (value.length === 0 || value.startsWith("#") || value.startsWith("data:") || value.startsWith("http://") || value.startsWith("https://")) {
+      continue;
+    }
+    const normalized = value.split(/[?#]/, 1)[0].replace(/^\.\//, "").replace(/^\//, "");
+    if (normalized.length > 0 && !normalized.includes("..")) {
+      references.add(normalized);
+    }
+  }
+  return references;
 }
 
 async function startWrapperServer(guiBaseUrl, runtimeBaseUrl) {
@@ -1770,6 +1868,10 @@ const isGuiIdeActionRequest = (message) => {
   if (typeof serialized !== "string" || new Blob([serialized]).size > maxIdeActionRequestBytes) return false;
   return isGuiIdeActionPayload(message.payload);
 };
+const isGuiRuntimeRefresh = (message) => {
+  if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.runtimeRefresh" || !requiredRequestId(message.requestId)) return false;
+  return isPlainObject(message.payload) && Object.keys(message.payload).length === 0;
+};
 const isGuiMessage = (message) => {
   if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.ready" || !isRequestId(message.requestId)) return false;
   return isPlainObject(message.payload) && hasOnlyKeys(message.payload, ["supportedBridgeVersion", "frameNonce"]) && (message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion) && isFrameNonce(currentFrameNonce) && isFrameNonce(message.payload.frameNonce) && message.payload.frameNonce === currentFrameNonce;
@@ -1788,6 +1890,12 @@ window.addEventListener("message", (event) => {
     }
     if (isGuiUnloadedMessage(event.data)) {
       invalidateFrameAuthority("gui.unloaded");
+      window.postIntellijMessage(event.data);
+    } else if (isGuiRuntimeRefresh(event.data)) {
+      if (!frameReady) {
+        console.log("Yet AI rejected runtime refresh before current GUI ready handshake");
+        return;
+      }
       window.postIntellijMessage(event.data);
     } else if (isGuiIdeActionRequest(event.data)) {
       if (!frameReady || !hostReadyAcceptedForCurrentFrame || acceptedHostReadyRequestId !== currentReadyRequestId()) {

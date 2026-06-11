@@ -75,9 +75,12 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
     failures.push(`${name} Coding Actions did not become ready: ${sanitizeEvidenceText(diagnostic).slice(0, 500)}`);
   });
 
+  await assertActionable(page.getByRole("button", { name: "Chats", exact: true }), `${name} Chats button`);
   await page.getByRole("button", { name: "Chats", exact: true }).click();
   assert(await page.locator(".conversations-drawer.open").isVisible().catch(() => false), `${name} Chats drawer did not open`);
-  await page.getByRole("button", { name: "Close", exact: true }).click();
+  const closeChatsButton = page.locator(".conversations-drawer.open").getByRole("button", { name: "Close", exact: true });
+  await assertActionable(closeChatsButton, `${name} Chats drawer Close button`);
+  await closeChatsButton.click();
 
   await page.getByRole("button", { name: "Explain selection", exact: true }).click();
   await expectComposerValue(page, "Explain the selected code", `${name} Coding Actions prompt`);
@@ -103,6 +106,25 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   assert(metrics.composerBottom > metrics.scrollBottom, `${name} composer is not below scroll region`);
 
   return saveEvidence(page, name, metrics);
+}
+
+async function assertActionable(locator, label) {
+  await locator.waitFor({ state: "visible", timeout: 5000 });
+  const actionable = await locator.evaluate((element) => {
+    if (!(element instanceof HTMLElement)) return { ok: false, reason: "not an HTMLElement" };
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const top = document.elementFromPoint(centerX, centerY);
+    return {
+      ok: rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.pointerEvents !== "none" && !element.hasAttribute("disabled") && (top === element || element.contains(top)),
+      rect: { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
+      topTag: top?.tagName,
+      topText: top?.textContent?.trim().slice(0, 80),
+    };
+  });
+  assert(actionable.ok, `${label} is not actionable/hit-testable: ${JSON.stringify(actionable)}`);
 }
 
 async function collectLayoutMetrics(page, scenario) {

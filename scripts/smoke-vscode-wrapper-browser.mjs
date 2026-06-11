@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { realpath, stat } from "node:fs/promises";
+import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import process from "node:process";
@@ -10,8 +10,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packagedGuiRoot = path.join(root, "apps", "plugins", "vscode", "media", "gui");
 const packagedGuiIndex = path.join(packagedGuiRoot, "index.html");
 const guiDistIndex = path.join(root, "apps", "gui", "dist", "index.html");
+const evidenceRoot = path.join(root, "dist", "visual-smoke", "vscode-wrapper-browser");
 const staleToleranceMs = 2000;
 const bridgeVersion = "2026-05-15";
+const headed = process.argv.includes("--headed");
 const runtimeToken = `vscode-wrapper-runtime-${randomUUID()}`;
 const providerKey = `sk-vscode-wrapper-${randomUUID()}`;
 const authorizationSentinel = `Authorization: Bearer ${runtimeToken}`;
@@ -42,6 +44,8 @@ const assistantIdeActionProposal = {
   workspaceRelativePath: proposalPath,
   range: proposalRange,
 };
+const mockChatMessages = [{ id: proposalAssistantMessageId, chatId: "chat-001", role: "assistant", content: JSON.stringify(assistantIdeActionProposal), createdAt: new Date(0).toISOString(), status: "complete" }];
+const mockChatSubscribers = new Set();
 const failures = [];
 const consoleMessages = [];
 let observedRuntimeAuthorization = false;
@@ -55,8 +59,8 @@ const runtimeBaseUrl = `http://127.0.0.1:${runtimeServer.port}`;
 let browser;
 
 try {
-  browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
+  browser = await chromium.launch({ headless: !headed });
+  const page = await browser.newPage({ viewport: { width: 800, height: 800 } });
 
   await page.route("**/*", async (route) => {
     const url = route.request().url();
@@ -102,8 +106,8 @@ try {
   await page.goto(`${guiBaseUrl}/index.html`, { waitUntil: "domcontentloaded" });
   await expectHiddenHeroTitle(page, "VS Code hosted packaged GUI hero title");
   await expectVisibleText(page, "Chat readiness", "hosted chat readiness card");
-  await expectVisibleText(page, "Conversations", "hosted conversations workbench");
-  await expectVisibleText(page, "Coding Actions", "hosted coding actions workbench");
+  await expectAttachedText(page, "Conversations", "hosted conversations workbench");
+  await expectAttachedText(page, "Coding Actions", "hosted coding actions workbench");
   const bodyText = (await page.locator("body").innerText()).trim();
   if (bodyText.length < 80) failures.push(`Packaged GUI body text is too short or blank (${bodyText.length} characters).`);
 
@@ -121,6 +125,9 @@ try {
   await expectAttachedText(page, "Host runtime settings received", "host.ready bridge log");
   await expectAttachedText(page, "bridge vscode", "VS Code bridge mode badge");
   await expectAttachedText(page, "VS Code controlled actions", "controlled action availability");
+  await expectAttachedText(page, "Provider setup", "VS Code provider setup surface");
+  await expectVisibleText(page, "Demo Mode", "VS Code demo-mode setup surface");
+  await expectAttachedText(page, "Runtime connected", "VS Code runtime readiness surface");
 
   const initialChatText = await page.locator("body").innerText();
   if (initialChatText.includes('"type":"assistant.ideActionProposal"') || initialChatText.includes('"type": "assistant.ideActionProposal"')) {
@@ -166,7 +173,7 @@ try {
   await clearPendingButton.click();
   const proposalPostClearIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
   if (proposalPostClearIdeRequestCount !== proposalPreClickIdeRequestCount + 1) failures.push("Clearing pending IDE action state posted a new gui.ideActionRequest or changed request count.");
-  await expectVisibleText(page, "Cleared pending IDE action state in the GUI only. No host-side cancellation was requested.", "local-only clear pending IDE action note");
+  await expectAttachedText(page, "Cleared pending IDE action state in the GUI only. No host-side cancellation was requested.", "local-only clear pending IDE action note");
   await runProposalButton.waitFor({ state: "visible", timeout: 10_000 });
   if (await runProposalButton.isDisabled()) failures.push("Run read-only IDE action button stayed disabled after clearing pending state.");
 
@@ -223,6 +230,12 @@ try {
   await expectVisibleText(page, "Range: 4:2-4:8", "proposal IDE action result range");
   await assertProposalSecretsOnlyInVisibleUi(page, "matched retry proposal result render");
 
+  const firstMessageTextarea = page.getByPlaceholder("Ask about the current file, selection, or project...");
+  await firstMessageTextarea.fill("VS Code packaged wrapper visual first message.");
+  await clickSendButtonWithActionability(page, "VS Code first-message visual smoke");
+  await expectVisibleText(page, "VS Code packaged wrapper visual first message.", "VS Code first-message user bubble");
+  await expectVisibleText(page, "VS Code wrapper canned chat response.", "VS Code first-message assistant bubble");
+
   await dispatchHostMessage(page, {
     version: bridgeVersion,
     type: "host.contextSnapshot",
@@ -239,8 +252,8 @@ try {
   await expectAttachedText(page, "Selection range: 7:1-7:12", "active context safe selection range");
   await expectAttachedText(page, activeContextSelection, "bounded active context preview text");
   await expectVisibleText(page, "Attach to next message", "safe active context default include policy");
-  await expectVisibleText(page, `Active safe path: ${activeContextPath}`, "IDE action safe active path");
-  await expectVisibleText(page, "Active safe range: 7:1-7:12", "IDE action safe active range");
+  await expectAttachedText(page, `Active safe path: ${activeContextPath}`, "IDE action safe active path");
+  await expectAttachedText(page, "Active safe range: 7:1-7:12", "IDE action safe active range");
   const openFileButton = page.getByRole("button", { name: "Open file", exact: true });
   const revealRangeButton = page.getByRole("button", { name: "Reveal range", exact: true });
   if (await openFileButton.isDisabled()) failures.push("Open file button stayed disabled after safe active context snapshot.");
@@ -381,12 +394,16 @@ try {
   await assertBrowserStorageDoesNotContain(page, [runtimeToken, providerKey, authorizationSentinel, activeContextPath, activeContextSelection, liveContextPath, liveContextSelection], "final storage no-secret/no-context persistence check");
 
   if (!observedRuntimeAuthorization) failures.push("Mock runtime did not observe Authorization from host.ready session token.");
+  const layoutMetrics = await collectVisualLayoutMetrics(page);
+  assertVsCodeVisualLayout(layoutMetrics);
+  const evidence = await saveVsCodeWrapperEvidence(page, layoutMetrics);
   const visibleState = await collectVisibleState(page);
   assertNoSecretLeak(visibleState, "DOM, browser storage, collected GUI messages, host messages, or console");
 
   if (failures.length > 0) reportFailures();
   console.log("VS Code wrapper browser smoke passed.");
-  console.log("Verified packaged VS Code GUI assets in a VS Code-like browser bridge, gui.ready, trusted loopback host.ready, active context preview and safe include policy, compact assistant read-only IDE action proposal rendering without auto-post, explicit proposal confirmation with GUI-owned strict request, duplicate pending suppression, GUI-only pending clear, stale progress/result ignore, retry with a fresh request id, matching getContextSnapshot/openWorkspaceFile/revealWorkspaceRange progress and result rendering, loopback-only networking, invalid and secret-like host-result rejection/non-rendering, and browser storage no-secret/no-context persistence checks.");
+  console.log("Verified packaged VS Code GUI assets in a VS Code-like browser bridge, gui.ready, trusted loopback host.ready, readiness/provider/Demo Mode setup surfaces, first-message Send click through mock runtime, active context preview and safe include policy, compact assistant read-only IDE action proposal rendering without auto-post, explicit proposal confirmation with GUI-owned strict request, duplicate pending suppression, GUI-only pending clear, stale progress/result ignore, retry with a fresh request id, matching getContextSnapshot/openWorkspaceFile/revealWorkspaceRange progress and result rendering, loopback-only networking, invalid and secret-like host-result rejection/non-rendering, and browser storage no-secret/no-context persistence checks.");
+  console.log(`Saved sanitized layout screenshot/DOM/metrics under ${path.relative(root, evidenceRoot)}/ (${path.basename(evidence.screenshotPath)}, ${path.basename(evidence.domPath)}, ${path.basename(evidence.metricsPath)}).`);
   console.log("No real VS Code launch, provider credentials, OpenAI/ChatGPT calls, hosted Yet AI service, or non-loopback provider call was used.");
 } finally {
   await browser?.close().catch(() => undefined);
@@ -446,6 +463,27 @@ async function getGuiMessageCount(page, type) {
   return await page.evaluate((messageType) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).length, type);
 }
 
+async function clickSendButtonWithActionability(page, label) {
+  const sendButton = page.getByRole("button", { name: "Send", exact: true }).last();
+  await sendButton.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
+  const state = await sendButton.evaluate((button) => {
+    if (!(button instanceof HTMLElement)) return { ok: false, reason: "send button is not an HTMLElement" };
+    const rect = button.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const top = document.elementFromPoint(x, y);
+    return {
+      ok: top === button || button.contains(top),
+      disabled: button instanceof HTMLButtonElement ? button.disabled : undefined,
+      rect: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width, height: rect.height },
+      topTag: top?.tagName,
+      topText: top?.textContent?.trim().slice(0, 80),
+    };
+  }).catch((error) => ({ ok: false, reason: messageOf(error) }));
+  if (!state.ok || state.disabled) failures.push(`${label}: Send is not hit-testable/enabled before click (${JSON.stringify(state)}).`);
+  await sendButton.click({ timeout: 5000 });
+}
+
 async function dispatchHostMessage(page, message) {
   await page.evaluate((hostMessage) => {
     window.__yetAiHostMessages.push(hostMessage);
@@ -474,15 +512,15 @@ async function startMockRuntimeServer() {
       return;
     }
     if ((request.method === "GET" || request.method === "POST") && requestUrl.pathname === "/v1/demo-mode") {
-      json(response, 200, demoModeDisabledResponse());
+      json(response, 200, demoModeEnabledResponse());
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/models") {
-      json(response, 200, { models: [] });
+      json(response, 200, { models: [demoModel()] });
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/providers") {
-      json(response, 200, { providers: [], cloudRequired: false, providerAccess: "direct" });
+      json(response, 200, { providers: [demoProvider()], cloudRequired: false, providerAccess: "direct" });
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/provider-auth/openai/status") {
@@ -497,13 +535,34 @@ async function startMockRuntimeServer() {
       json(response, 200, mockProposalChatThread());
       return;
     }
+    if (request.method === "GET" && requestUrl.pathname === "/v1/chats/subscribe") {
+      const chat = mockProposalChatThread();
+      response.writeHead(200, { ...corsHeaders(), "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache" });
+      response.write(`event: snapshot\ndata: ${JSON.stringify({ seq: 0, type: "snapshot", chatId: chat.chatId, payload: { thread: chat, messages: chat.messages, runtime: { streaming: false, waitingForResponse: false } } })}\n\n`);
+      mockChatSubscribers.add(response);
+      response.on("close", () => mockChatSubscribers.delete(response));
+      return;
+    }
+    const commandMatch = /^\/v1\/chats\/([^/]+)\/commands$/.exec(requestUrl.pathname);
+    if (request.method === "POST" && commandMatch) {
+      const chatId = decodeURIComponent(commandMatch[1]);
+      const body = JSON.parse(await readBody(request));
+      const createdAt = new Date(0).toISOString();
+      const userMessage = { id: `user-visual-chat-${mockChatMessages.length}`, chatId, role: "user", content: body.payload?.content ?? "", createdAt, status: "complete" };
+      const assistantMessage = { id: `assistant-visual-chat-${mockChatMessages.length}`, chatId, role: "assistant", content: "VS Code wrapper canned chat response.", createdAt, status: "complete" };
+      mockChatMessages.push(userMessage, assistantMessage);
+      pushMockChatEvent({ seq: mockChatMessages.length - 1, type: "message_added", chatId, payload: { message: userMessage } });
+      pushMockChatEvent({ seq: mockChatMessages.length, type: "message_added", chatId, payload: { message: assistantMessage } });
+      json(response, 200, { accepted: true, chatId, requestId: body.requestId ?? "vscode-wrapper-visual-chat", type: body.type });
+      return;
+    }
     json(response, 404, { error: "Not found" });
   });
   return listen(server);
 }
 
 function mockProposalChatSummary() {
-  return { chatId: "chat-001", title: "VS Code proposal smoke", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), messageCount: 1 };
+  return { chatId: "chat-001", title: "VS Code proposal smoke", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), messageCount: mockChatMessages.length };
 }
 
 function mockProposalChatThread() {
@@ -512,8 +571,20 @@ function mockProposalChatThread() {
     title: "VS Code proposal smoke",
     createdAt: new Date(0).toISOString(),
     updatedAt: new Date(0).toISOString(),
-    messages: [{ id: proposalAssistantMessageId, chatId: "chat-001", role: "assistant", content: JSON.stringify(assistantIdeActionProposal), createdAt: new Date(0).toISOString(), status: "complete" }],
+    messages: mockChatMessages,
   };
+}
+
+function pushMockChatEvent(event) {
+  for (const subscriber of mockChatSubscribers) {
+    subscriber.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+  }
+}
+
+async function readBody(request) {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  return Buffer.concat(chunks).toString("utf8") || "{}";
 }
 
 async function startStaticServer(staticRoot) {
@@ -616,13 +687,102 @@ async function collectVisibleState(page) {
   }))) + JSON.stringify(consoleMessages);
 }
 
+async function collectVisualLayoutMetrics(page) {
+  return page.evaluate(() => {
+    const rectFor = (selectorOrElement) => {
+      const element = typeof selectorOrElement === "string" ? document.querySelector(selectorOrElement) : selectorOrElement;
+      if (!(element instanceof HTMLElement)) return null;
+      const rect = element.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width, height: rect.height };
+    };
+    const visible = (element) => element instanceof HTMLElement && getComputedStyle(element).display !== "none" && getComputedStyle(element).visibility !== "hidden" && element.getBoundingClientRect().width > 0 && element.getBoundingClientRect().height > 0;
+    const textVisible = (needle) => Array.from(document.querySelectorAll("body *")).some((element) => element instanceof HTMLElement && visible(element) && (element.textContent ?? "").includes(needle));
+    const send = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Send");
+    const textarea = document.querySelector("textarea");
+    const scroll = document.querySelector(".chat-scroll-region");
+    const composer = document.querySelector(".chat-composer");
+    const sendRect = rectFor(send);
+    const textareaRect = rectFor(textarea);
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    const withinViewport = (box) => Boolean(box && box.top >= 0 && box.left >= 0 && box.bottom <= viewport.height && box.right <= viewport.width);
+    const hitCenter = (element) => {
+      if (!(element instanceof HTMLElement)) return null;
+      const rect = element.getBoundingClientRect();
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      const top = document.elementFromPoint(x, y);
+      return { ok: top === element || element.contains(top), tag: top?.tagName, text: top?.textContent?.trim().slice(0, 80), className: top instanceof HTMLElement ? top.className : undefined };
+    };
+    return {
+      viewport,
+      packagedHost: "vscode-wrapper-browser",
+      bodyText: document.body.innerText.replace(/\s+/g, " ").slice(0, 700),
+      heroHidden: document.querySelector(".hero") instanceof HTMLElement && getComputedStyle(document.querySelector(".hero")).display === "none",
+      hostVscodeClass: document.querySelector("main.app-shell.host-vscode") instanceof HTMLElement,
+      chatReadinessVisible: textVisible("Chat readiness"),
+      runtimeConnectedVisible: textVisible("Runtime connected"),
+      providerSetupVisible: textVisible("Provider setup"),
+      demoModeVisible: textVisible("Demo Mode"),
+      firstMessageVisible: textVisible("VS Code packaged wrapper visual first message."),
+      cannedAssistantVisible: textVisible("VS Code wrapper canned chat response."),
+      sendVisible: send instanceof HTMLElement && visible(send),
+      sendEnabled: send instanceof HTMLButtonElement && !send.disabled,
+      sendWithinViewport: withinViewport(sendRect),
+      sendHitTest: hitCenter(send),
+      sendRect,
+      textareaVisible: textarea instanceof HTMLElement && visible(textarea),
+      textareaWithinViewport: withinViewport(textareaRect),
+      textareaRect,
+      chatScrollHeight: rectFor(scroll)?.height ?? 0,
+      composerHeight: rectFor(composer)?.height ?? 0,
+      localStorageKeys: Object.keys(localStorage),
+      sessionStorageKeys: Object.keys(sessionStorage),
+    };
+  });
+}
+
+function assertVsCodeVisualLayout(metrics) {
+  if (!metrics.heroHidden) failures.push("VS Code visual evidence: hosted hero is visible.");
+  if (!metrics.hostVscodeClass) failures.push("VS Code visual evidence: main.app-shell.host-vscode is missing.");
+  if (!metrics.chatReadinessVisible || !metrics.runtimeConnectedVisible || !metrics.providerSetupVisible || !metrics.demoModeVisible) failures.push(`VS Code visual evidence: missing readiness/setup surfaces (${JSON.stringify({ chatReadinessVisible: metrics.chatReadinessVisible, runtimeConnectedVisible: metrics.runtimeConnectedVisible, providerSetupVisible: metrics.providerSetupVisible, demoModeVisible: metrics.demoModeVisible })}).`);
+  if (!metrics.firstMessageVisible || !metrics.cannedAssistantVisible) failures.push("VS Code visual evidence: first-message path did not render user/assistant bubbles.");
+  if (!metrics.sendVisible || !metrics.sendEnabled || !metrics.sendWithinViewport || !metrics.sendHitTest?.ok) failures.push(`VS Code visual evidence: Send is not visible/enabled/hit-testable (${JSON.stringify(metrics.sendRect)}, ${JSON.stringify(metrics.sendHitTest)}).`);
+  if (!metrics.textareaVisible || !metrics.textareaWithinViewport) failures.push(`VS Code visual evidence: composer textarea is not visible in viewport (${JSON.stringify(metrics.textareaRect)}).`);
+  if (metrics.chatScrollHeight < 240) failures.push(`VS Code visual evidence: chat area is too small (${metrics.chatScrollHeight}).`);
+  if (metrics.composerHeight > 260) failures.push(`VS Code visual evidence: composer is too tall (${metrics.composerHeight}).`);
+}
+
+async function saveVsCodeWrapperEvidence(page, metrics) {
+  await mkdir(evidenceRoot, { recursive: true });
+  const screenshotPath = path.join(evidenceRoot, "vscode-wrapper-layout.png");
+  const domPath = path.join(evidenceRoot, "vscode-wrapper-layout.dom.txt");
+  const metricsPath = path.join(evidenceRoot, "vscode-wrapper-layout.metrics.json");
+  await page.screenshot({ path: screenshotPath, fullPage: true });
+  const dom = await page.locator("body").evaluate((body) => body.innerText).then(sanitizeEvidenceText);
+  await writeFile(domPath, dom, "utf8");
+  await writeFile(metricsPath, `${JSON.stringify(sanitizeEvidenceObject(metrics), null, 2)}\n`, "utf8");
+  return { screenshotPath, domPath, metricsPath };
+}
+
+function sanitizeEvidenceObject(value) {
+  return JSON.parse(sanitizeEvidenceText(JSON.stringify(value)));
+}
+
 function json(response, status, body) {
   response.writeHead(status, { ...corsHeaders(), "content-type": "application/json; charset=utf-8" });
   response.end(JSON.stringify(body));
 }
 
-function demoModeDisabledResponse() {
-  return { enabled: false, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "Demo Mode uses local canned responses from the runtime. It requires no API key, makes no provider calls, and is not model quality. Configure a BYOK provider for real answers." };
+function demoModeEnabledResponse() {
+  return { enabled: true, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "VS Code wrapper smoke uses local canned responses only." };
+}
+
+function demoModel() {
+  return { id: "yet-demo-chat", displayName: "Yet AI Demo Chat", providerId: "yet-demo", capabilities: { chat: true, streaming: true, tools: false, reasoning: false }, readiness: { status: "ready" } };
+}
+
+function demoProvider() {
+  return { id: "yet-demo", kind: "demo-local", displayName: "Yet AI Demo Mode", enabled: true, baseUrl: "local-runtime-demo-mode", auth: { type: "none", configured: true }, models: [demoModel()], capabilities: { chat: true, completion: false, embeddings: false } };
 }
 
 function corsHeaders() {
@@ -677,6 +837,14 @@ function redactSecrets(text) {
   let redacted = String(text);
   for (const marker of [runtimeToken, providerKey, authorizationSentinel]) redacted = redacted.split(marker).join("[redacted]");
   return redacted.replace(/Bearer\s+\S+/gi, "Bearer [redacted]").replace(/sk-[A-Za-z0-9_-]{8,}/g, "[redacted]");
+}
+
+function sanitizeEvidenceText(text) {
+  return redactSecrets(text)
+    .replaceAll(activeContextSelection, "[redacted-active-selection]")
+    .replaceAll(liveContextSelection, "[redacted-live-selection]")
+    .replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]")
+    .replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]");
 }
 
 function redactUrl(value) {

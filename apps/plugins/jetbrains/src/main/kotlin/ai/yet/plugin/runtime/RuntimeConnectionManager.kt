@@ -47,17 +47,17 @@ class RuntimeConnectionManager(
         } catch (error: Exception) {
             lastHealthResult = null
             lastConnectionError = sanitizedRuntimeError("Yet AI runtime settings are invalid", error)
-            return RuntimeConnectionResult(
+            val result = RuntimeConnectionResult(
                 RuntimeSettings.safeFallback(),
                 null,
                 lastConnectionError,
             )
+            if (publishUpdates) publishRuntimeConnectionUpdate(result)
+            return result
         }
         val previousConnection = launchedConnection
         val result = prepareResolvedSettings(settings)
-        if (publishUpdates && result.error == null && result.settings != previousConnection) {
-            ApplicationManager.getApplication().messageBus.syncPublisher(RuntimeConnectionListener.TOPIC).runtimeConnectionUpdated(result)
-        }
+        if (publishUpdates && (result.error != null || result.settings != previousConnection)) publishRuntimeConnectionUpdate(result)
         return result
     }
 
@@ -124,7 +124,7 @@ class RuntimeConnectionManager(
     fun restartRuntime(): RuntimeConnectionResult {
         stopLaunchedProcess()
         val result = prepareCurrent(publishUpdates = false)
-        ApplicationManager.getApplication().messageBus.syncPublisher(RuntimeConnectionListener.TOPIC).runtimeConnectionUpdated(result)
+        publishRuntimeConnectionUpdate(result)
         return result
     }
 
@@ -286,6 +286,10 @@ class RuntimeConnectionManager(
 
     companion object {
         fun getInstance(): RuntimeConnectionManager = service()
+    }
+
+    private fun publishRuntimeConnectionUpdate(result: RuntimeConnectionResult) {
+        ApplicationManager.getApplication().messageBus.syncPublisher(RuntimeConnectionListener.TOPIC).runtimeConnectionUpdated(result)
     }
 }
 

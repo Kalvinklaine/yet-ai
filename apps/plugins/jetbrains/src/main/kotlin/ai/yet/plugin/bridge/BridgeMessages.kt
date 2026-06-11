@@ -9,33 +9,11 @@ object BridgeMessages {
     private const val MaxRequestIdLength = 128
 
     data class GuiReady(val requestId: String?)
+    data class GuiRuntimeRefresh(val requestId: String?)
 
     fun parseGuiReady(raw: String): GuiReady? {
-        val element = try {
-            JsonParser.parseString(raw)
-        } catch (_: RuntimeException) {
-            return null
-        }
-        if (!element.isJsonObject) {
-            return null
-        }
-        val record = element.asJsonObject
-        if (!record.keySet().all { it in setOf("version", "type", "requestId", "payload") }) {
-            return null
-        }
-        if (record.stringValue("version") != ProductIdentity.bridgeVersion) {
-            return null
-        }
-        if (record.stringValue("type") != "gui.ready") {
-            return null
-        }
-        val requestId = when {
-            !record.has("requestId") -> null
-            record.get("requestId").isJsonPrimitive && record.get("requestId").asJsonPrimitive.isString -> {
-                record.get("requestId").asString.takeIf(::isValidRequestId) ?: return null
-            }
-            else -> return null
-        }
+        val record = parseStrictGuiRecord(raw, "gui.ready") ?: return null
+        val requestId = (parseOptionalRequestId(record) ?: return null).value
         if (record.has("payload")) {
             val payload = record.get("payload")
             if (!payload.isJsonObject) {
@@ -51,6 +29,58 @@ object BridgeMessages {
         }
         return GuiReady(requestId)
     }
+
+    fun parseGuiRuntimeRefresh(raw: String): GuiRuntimeRefresh? {
+        val record = parseStrictGuiRecord(raw, "gui.runtimeRefresh") ?: return null
+        val requestId = (parseRequiredRequestId(record) ?: return null).value
+        val payload = record.get("payload") ?: return null
+        if (!payload.isJsonObject || payload.asJsonObject.keySet().isNotEmpty()) {
+            return null
+        }
+        return GuiRuntimeRefresh(requestId)
+    }
+
+    private fun parseStrictGuiRecord(raw: String, type: String): JsonObject? {
+        val element = try {
+            JsonParser.parseString(raw)
+        } catch (_: RuntimeException) {
+            return null
+        }
+        if (!element.isJsonObject) {
+            return null
+        }
+        val record = element.asJsonObject
+        if (!record.keySet().all { it in setOf("version", "type", "requestId", "payload") }) {
+            return null
+        }
+        if (record.stringValue("version") != ProductIdentity.bridgeVersion) {
+            return null
+        }
+        if (record.stringValue("type") != type) {
+            return null
+        }
+        return record
+    }
+
+    private fun parseOptionalRequestId(record: JsonObject): OptionalRequestId? {
+        return when {
+            !record.has("requestId") -> OptionalRequestId(null)
+            record.get("requestId").isJsonPrimitive && record.get("requestId").asJsonPrimitive.isString -> {
+                OptionalRequestId(record.get("requestId").asString.takeIf(::isValidRequestId) ?: return null)
+            }
+            else -> return null
+        }
+    }
+
+    private fun parseRequiredRequestId(record: JsonObject): OptionalRequestId? {
+        val parsed = parseOptionalRequestId(record) ?: return null
+        if (parsed.value == null) {
+            return null
+        }
+        return parsed
+    }
+
+    private data class OptionalRequestId(val value: String?)
 
     fun hostReady(settings: RuntimeSettings, requestId: String?): String {
         val message = JsonObject().apply {
