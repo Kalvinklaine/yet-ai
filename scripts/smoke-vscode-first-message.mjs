@@ -118,9 +118,9 @@ try {
   }, { version: bridgeVersion, runtimeUrl: runtimeBaseUrl, token: runtimeToken });
 
   await expectAttachedText(page, "Host runtime settings received", "host.ready runtime bootstrap");
-  await expectVisibleText(page, "Runtime connected", "runtime connected through host.ready", 20_000);
-  await expectVisibleText(page, "State: Provider required", "provider-required first-message state", 20_000);
-  await expectVisibleText(page, "Provider required for first message", "provider-required guidance", 20_000);
+  await expectVisibleBodyTextAny(page, ["RUNTIME CONNECTED", "Runtime connected — choose the first-message path"], "visible runtime connected state through host.ready", 20_000);
+  await expectVisibleBodyText(page, "State: Provider required", "provider-required first-message state", 20_000);
+  await expectVisibleBodyText(page, "Provider required for first message", "provider-required guidance", 20_000);
   if (!await sendButton(page).isDisabled()) {
     failures.push("Send was enabled before provider/model readiness.");
   }
@@ -395,6 +395,22 @@ async function readRequestBody(request) {
 async function expectVisibleText(page, text, description, timeout = 10_000) {
   try {
     await page.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout });
+  } catch (error) {
+    const body = await page.locator("body").innerText().catch(() => "");
+    throw new Error(`Timed out waiting for ${description}. ${messageOf(error)}\nVisible body excerpt: ${redactSecrets(body).slice(0, 4000)}`);
+  }
+}
+
+async function expectVisibleBodyText(page, text, description, timeout = 10_000) {
+  await expectVisibleBodyTextAny(page, [text], description, timeout);
+}
+
+async function expectVisibleBodyTextAny(page, texts, description, timeout = 10_000) {
+  try {
+    await page.waitForFunction((expectedTexts) => {
+      const bodyText = document.body?.innerText ?? "";
+      return expectedTexts.some((text) => bodyText.includes(text));
+    }, texts, { timeout });
   } catch (error) {
     const body = await page.locator("body").innerText().catch(() => "");
     throw new Error(`Timed out waiting for ${description}. ${messageOf(error)}\nVisible body excerpt: ${redactSecrets(body).slice(0, 4000)}`);
