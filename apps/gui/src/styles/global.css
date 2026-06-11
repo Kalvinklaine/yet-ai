@@ -731,9 +731,16 @@ pre,
 
 .host-vscode .chat-hero-row,
 .host-jetbrains .chat-hero-row,
+.host-vscode .chat-thread-pane > .debug-details:not(.chat-secondary-debug),
+.host-jetbrains .chat-thread-pane > .debug-details:not(.chat-secondary-debug),
 .host-vscode .chat-secondary-debug,
 .host-jetbrains .chat-secondary-debug {
   display: none;
+}
+
+.host-vscode .chat-thread-pane,
+.host-jetbrains .chat-thread-pane {
+  grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
 .host-vscode .chat-workbench,

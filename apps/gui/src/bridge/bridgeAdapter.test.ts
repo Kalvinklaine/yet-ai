@@ -115,8 +115,8 @@ describe("bridgeAdapter", () => {
     dispatchNonce("0123456789abcdef0123456789abcdef");
     dispatchNonce("fedcba9876543210fedcba9876543210");
 
-    expect(adapter.host).toBe("browser");
-    expect(logs).toContain("Bridge host browser");
+    expect(adapter.host).toBe("jetbrains");
+    expect(logs).toContain("Bridge host jetbrains");
     expect(logs).not.toContain("Browser mock sent gui.ready");
     expect(parent.postMessage).toHaveBeenCalledTimes(2);
     expect(parent.postMessage).toHaveBeenNthCalledWith(1, {
@@ -199,7 +199,7 @@ describe("bridgeAdapter", () => {
     dispatch({ ...base, payload: { frameNonce: "0123456789abcdef0123456789abcdef" } }, "https://wrapper.example", { postMessage: vi.fn() } as unknown as Window);
 
     expect(parent.postMessage).not.toHaveBeenCalled();
-    expect(logs).toContain("Bridge host browser");
+    expect(logs).toContain("Bridge host jetbrains");
     expect(logs).toContain("Rejected host bridge message from unexpected origin");
     expect(logs).toContain("Rejected host bridge message from unexpected source");
     expect(logs.filter((entry) => entry === "Rejected invalid host bridge message")).toHaveLength(7);

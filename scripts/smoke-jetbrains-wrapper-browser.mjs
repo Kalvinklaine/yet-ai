@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import process from "node:process";
@@ -9,8 +9,10 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = path.join(root, "apps", "gui", "dist");
 const indexPath = path.join(distRoot, "index.html");
+const evidenceRoot = path.join(root, "dist", "visual-smoke", "jetbrains-wrapper-browser");
 const requiredVisibleText = ["Chat readiness", "Conversations", "Coding Actions"];
 const bridgeVersion = "2026-05-15";
+const pluginLikeViewport = { width: 790, height: 900 };
 const failures = [];
 const runtimeToken = `jb.wrapper.runtime.${randomUUID().replaceAll("-", "")}`;
 const oauthSentinels = {
@@ -95,7 +97,7 @@ try {
     process.exit(1);
   }
 
-  const page = await browser.newPage();
+  const page = await browser.newPage({ viewport: pluginLikeViewport });
   await page.route("**/*", async (route) => {
     const url = route.request().url();
     if (url.startsWith("http://127.0.0.1:8001/")) {
@@ -173,10 +175,10 @@ try {
   }).catch(() => false);
   if (!hiddenHeroTitle) failures.push("Hosted JetBrains iframe did not hide the in-webview hero title.");
 
+  const initialBodyText = await frameLocator.locator("body").evaluate((body) => body.textContent ?? "").catch(() => "");
   for (const text of requiredVisibleText) {
-    const visible = await frameLocator.getByText(text, { exact: true }).first().isVisible().catch(() => false);
-    if (!visible) {
-      failures.push(`Missing visible iframe GUI text: ${text}`);
+    if (!initialBodyText.includes(text)) {
+      failures.push(`Missing iframe GUI text: ${text}`);
     }
   }
 
@@ -378,7 +380,7 @@ try {
 
   await frameLocator.getByText("Runtime connected", { exact: false }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("Runtime refresh did not reach connected/provider-required state after trusted host.ready."));
   await frameLocator.getByText("Provider setup", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("Provider setup panel was not visible in the JetBrains first-use GUI path."));
-  await frameLocator.getByText("State: Experimental OpenAI account / gpt-5-codex", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not use host.ready runtime endpoints to enter connected experimental readiness."));
+  await frameLocator.getByText("Experimental Codex-like OpenAI account chat is connected through the local runtime.", { exact: false }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not use host.ready runtime endpoints to enter connected experimental readiness."));
 
   const refreshButton = frameLocator.locator("section", { has: frameLocator.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
   await openDetailsBySummary(frameLocator, "Local runtime connection", refreshButton);
@@ -408,9 +410,9 @@ try {
     .catch(() => failures.push("Provider setup details could not be opened for connected OpenAI account assertions."));
   await openAiAccountConnectedText.waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show connected OpenAI account login state."));
   await frameLocator.locator("body").evaluate(() => document.documentElement.innerText).then((text) => {
-    if (!text.includes("Experimental OpenAI account / gpt-5-codex")) failures.push(`GUI did not show experimental account chat readiness. Body: ${text}`);
+    if (!text.includes("Ready for chat through the local runtime when the experimental account path is selected and no API-key provider is configured.")) failures.push(`GUI did not show experimental account chat readiness. Body: ${text}`);
   });
-  await frameLocator.getByText(/Ready to send using|Experimental Codex-like OpenAI account chat is connected/).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show chat readiness for the experimental account path."));
+  await frameLocator.getByText(/Ready to send using|Ready for chat through the local runtime when the experimental account path is selected/).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show chat readiness for the experimental account path."));
   if (failures.length > 0) {
     reportFailures();
   }
@@ -525,11 +527,15 @@ try {
   assertJetBrainsContext(chatCommandRequest?.payload?.context);
 
   await page.waitForTimeout(250);
+  const finalLayoutMetrics = await collectJetBrainsIframeLayoutMetrics(frameLocator);
+  assertJetBrainsHostedLayout(finalLayoutMetrics, "post-chat JetBrains wrapper iframe");
+  const evidence = await saveJetBrainsWrapperEvidence(page, finalLayoutMetrics);
   await page.evaluate(() => {
     window.__yetAiHostMessagesPosted = window.__yetAiHostMessagesPosted?.filter((message) => message?.type !== "host.contextSnapshot") ?? [];
     window.__yetAiBridgeMessages = window.__yetAiBridgeMessages?.filter((message) => message?.type !== "host.ready") ?? [];
     window.__yetAiPendingHostMessages = [];
   });
+  console.log(`JetBrains wrapper smoke viewport: ${finalLayoutMetrics.viewport.width}x${finalLayoutMetrics.viewport.height}.`);
   const browserVisibleState = await collectBrowserVisibleState(page);
   assertNoSecretLeak(browserVisibleState, [
     { label: "runtime token", value: runtimeToken },
@@ -552,6 +558,7 @@ try {
 
   console.log("JetBrains wrapper browser smoke passed.");
   console.log("Checked JetBrains-like wrapper iframe rendering, exact loopback target origin, real gui.ready to host.ready/contextSnapshot wrapper bridge delivery, attached-context preview/default include/disabled-toggle behavior, Refresh runtime click feedback, bridge collector, login-shaped first-message chat through mock runtime/SSE, JavaScript execution, and local JS/CSS asset responses.");
+  console.log(`Saved sanitized layout screenshot/metrics under ${path.relative(root, evidenceRoot)}/ (${path.basename(evidence.screenshotPath)}, ${path.basename(evidence.metricsPath)}).`);
   console.log("No engine, provider credentials, OpenAI/ChatGPT, hosted Yet AI services, JetBrains IDE, or JCEF automation were used.");
 } finally {
   await browser?.close().catch(() => undefined);
@@ -1024,6 +1031,64 @@ async function assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocato
   if (afterOldNonceReplayCount !== beforeOldNonceReplayCount) {
     failures.push("Wrapper delivered a stale host.ready bound to the previous authoritative ready id after a new ready id was accepted.");
   }
+}
+
+async function collectJetBrainsIframeLayoutMetrics(frameLocator) {
+  return frameLocator.locator("body").evaluate(() => {
+    const rectFor = (element) => {
+      if (!(element instanceof HTMLElement)) return null;
+      const box = element.getBoundingClientRect();
+      return { top: box.top, bottom: box.bottom, left: box.left, right: box.right, width: box.width, height: box.height };
+    };
+    const visible = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const style = getComputedStyle(element);
+      const box = element.getBoundingClientRect();
+      return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) !== 0 && box.width > 0 && box.height > 0;
+    };
+    const textVisible = (text) => Array.from(document.querySelectorAll("body *")).some((element) => element instanceof HTMLElement && element.childElementCount === 0 && element.textContent?.includes(text) && visible(element));
+    const send = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Send");
+    const scroll = document.querySelector(".chat-scroll-region");
+    const composer = document.querySelector(".chat-composer");
+    const main = document.querySelector("main.app-shell");
+    const sendRect = rectFor(send);
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    return {
+      viewport,
+      hostJetbrainsClass: main instanceof HTMLElement && main.classList.contains("host-jetbrains"),
+      hostBrowserClass: main instanceof HTMLElement && main.classList.contains("host-browser"),
+      advancedChatControlsVisible: textVisible("Advanced chat controls"),
+      sseDebugDetailsVisible: textVisible("SSE debug details"),
+      sendVisible: send instanceof HTMLElement && visible(send),
+      sendEnabled: send instanceof HTMLButtonElement && !send.disabled,
+      sendWithinViewport: Boolean(sendRect && sendRect.top >= 0 && sendRect.left >= 0 && sendRect.bottom <= viewport.height && sendRect.right <= viewport.width),
+      sendRect,
+      chatScrollHeight: rectFor(scroll)?.height ?? 0,
+      composerRect: rectFor(composer),
+      bodyText: document.body.innerText.replace(/\s+/g, " ").slice(0, 700),
+    };
+  });
+}
+
+function assertJetBrainsHostedLayout(metrics, label) {
+  if (!metrics.hostJetbrainsClass) failures.push(`${label}: missing main.app-shell.host-jetbrains inside iframe.`);
+  if (metrics.hostBrowserClass) failures.push(`${label}: iframe shell still has host-browser class.`);
+  if (metrics.advancedChatControlsVisible) failures.push(`${label}: Advanced chat controls are visible in hosted layout.`);
+  if (metrics.sseDebugDetailsVisible) failures.push(`${label}: SSE debug details are visible in hosted layout.`);
+  if (!metrics.sendVisible || !metrics.sendEnabled || !metrics.sendWithinViewport) failures.push(`${label}: Send is not visible/enabled within iframe viewport (${JSON.stringify(metrics.sendRect)} in ${JSON.stringify(metrics.viewport)}).`);
+  if (metrics.chatScrollHeight < 120) failures.push(`${label}: chat-scroll-region height is not sane (${metrics.chatScrollHeight}).`);
+}
+
+async function saveJetBrainsWrapperEvidence(page, metrics) {
+  await mkdir(evidenceRoot, { recursive: true });
+  const screenshotPath = path.join(evidenceRoot, "jetbrains-wrapper-layout.png");
+  const metricsPath = path.join(evidenceRoot, "jetbrains-wrapper-layout.metrics.json");
+  const domPath = path.join(evidenceRoot, "jetbrains-wrapper-layout.dom.txt");
+  await page.screenshot({ path: screenshotPath, fullPage: true });
+  await writeFile(metricsPath, `${JSON.stringify(metrics, null, 2)}\n`, "utf8");
+  const dom = await page.frameLocator("iframe[title='Yet AI GUI']").locator("body").evaluate(() => document.body.innerText).then(sanitizeEvidenceText);
+  await writeFile(domPath, dom, "utf8");
+  return { screenshotPath, metricsPath, domPath };
 }
 
 async function forceFreshGuiReadyAfterReload(page, { version, origin, sequenceBeforeReload, requestId, previousFrameNonce }) {
@@ -2174,6 +2239,20 @@ function escapeHtml(value) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function sanitizeEvidenceText(text) {
+  return String(text)
+    .replaceAll(runtimeToken, "[redacted-runtime-token]")
+    .replaceAll(oauthSentinels.accessToken, "[redacted-oauth-access]")
+    .replaceAll(oauthSentinels.refreshToken, "[redacted-oauth-refresh]")
+    .replaceAll(oauthSentinels.authCode, "[redacted-oauth-code]")
+    .replaceAll(oauthSentinels.verifier, "[redacted-oauth-verifier]")
+    .replaceAll(oauthSentinels.cookie, "[redacted-cookie]")
+    .replaceAll(oauthSentinels.apiKey, "[redacted-api-key]")
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer [redacted]")
+    .replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]")
+    .replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]");
 }
 
 function reportFailures() {

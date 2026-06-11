@@ -178,7 +178,7 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
   const postIntellijMessage = window.postIntellijMessage;
   const parentBridge = !vscode && !postIntellijMessage && window.parent !== window ? window.parent : undefined;
   const parentOrigin = parentBridge ? expectedParentOrigin() : undefined;
-  const host: BridgeHost = vscode ? "vscode" : postIntellijMessage ? "jetbrains" : "browser";
+  const host: BridgeHost = vscode ? "vscode" : (postIntellijMessage || parentBridge) ? "jetbrains" : "browser";
 
   const withFrameNonce = (message: GuiMessage): GuiMessage => {
     if (message.type !== "gui.ready" || !parentBridge || jetbrainsFrameNonce === undefined) {

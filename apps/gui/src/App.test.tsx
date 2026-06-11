@@ -30,6 +30,41 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const appParentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
+const appReferrerDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "referrer");
+
+describe("hosted iframe shell layout", () => {
+  afterEach(() => {
+    if (appParentDescriptor) {
+      Object.defineProperty(window, "parent", appParentDescriptor);
+    }
+    if (appReferrerDescriptor) {
+      Object.defineProperty(Document.prototype, "referrer", appReferrerDescriptor);
+    }
+  });
+
+  it("uses JetBrains host class for parent wrapper iframe bridge mode", async () => {
+    const parent = { postMessage: vi.fn() };
+    Object.defineProperty(Document.prototype, "referrer", {
+      configurable: true,
+      get: () => "https://wrapper.example/shell.html",
+    });
+    Object.defineProperty(window, "parent", {
+      configurable: true,
+      value: parent,
+    });
+
+    mockRuntimeResponses({ runtimeFailure: true });
+    renderApp();
+    await flushAsync();
+
+    expect(container?.querySelector("main.app-shell.host-jetbrains")).toBeDefined();
+    expect(container?.querySelector("main.app-shell.host-browser")).toBeNull();
+    expect(container?.textContent).toContain("bridge jetbrains");
+    expect(parent.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "gui.ready" }), "https://wrapper.example");
+  });
+});
+
 describe("runtime refresh feedback", () => {
   it("manual Refresh runtime click shows in-flight feedback before resolving and then success status", async () => {
     mockRuntimeResponses(readyRuntimeOptions());

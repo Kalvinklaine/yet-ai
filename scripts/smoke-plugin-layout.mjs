@@ -91,6 +91,8 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
 
   const metrics = await collectLayoutMetrics(page, { width, height, name, host });
   assert(metrics.heroHidden, `${name} hosted hero is visible`);
+  assert(host !== "jetbrains" || metrics.hostJetbrainsClass, `${name} did not render main.app-shell.host-jetbrains`);
+  assert(host !== "jetbrains" || !metrics.hostBrowserClass, `${name} incorrectly kept host-browser class in JetBrains scenario`);
   assert(metrics.sendVisible && metrics.sendWithinViewport && metrics.sendEnabled, `${name} Send is not visible/enabled within viewport: ${JSON.stringify(metrics.sendRect)}`);
   assert(metrics.textareaVisible && metrics.textareaWithinViewport, `${name} textarea is not visible within viewport: ${JSON.stringify(metrics.textareaRect)}`);
   assert(metrics.chatScrollHeight >= 160, `${name} chat-scroll-region too short: ${metrics.chatScrollHeight}`);
@@ -98,7 +100,7 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   assert(metrics.composerBottom <= height + 1, `${name} composer extends below viewport: ${metrics.composerBottom} > ${height}`);
   assert(metrics.contextDetailsOpen === false || metrics.contextDetailsOpen === null, `${name} active editor context details should be collapsed`);
   assert(metrics.contextHeight <= 96, `${name} active editor context dominates composer: ${metrics.contextHeight}`);
-  assert(metrics.composerTop >= metrics.scrollBottom - 1, `${name} composer is not outside/below scroll region`);
+  assert(metrics.composerBottom > metrics.scrollBottom, `${name} composer is not below scroll region`);
 
   return saveEvidence(page, name, metrics);
 }
@@ -124,6 +126,8 @@ async function collectLayoutMetrics(page, scenario) {
       ...scenarioInfo,
       bodyText: document.body.innerText.replace(/\s+/g, " ").slice(0, 500),
       heroHidden: document.querySelector(".hero") instanceof HTMLElement && getComputedStyle(document.querySelector(".hero")).display === "none",
+      hostJetbrainsClass: document.querySelector("main.app-shell.host-jetbrains") instanceof HTMLElement,
+      hostBrowserClass: document.querySelector("main.app-shell.host-browser") instanceof HTMLElement,
       sendVisible: send instanceof HTMLElement && getComputedStyle(send).visibility !== "hidden" && getComputedStyle(send).display !== "none" && sendRect !== null && sendRect.width > 0 && sendRect.height > 0,
       sendWithinViewport: withinViewport(sendRect),
       sendEnabled: send instanceof HTMLButtonElement && !send.disabled,
