@@ -89,7 +89,7 @@ try {
   await openDetailsBySummary(page, "Local runtime connection", page.getByRole("button", { name: "Refresh runtime" }).last());
   await page.getByRole("button", { name: "Refresh runtime" }).last().click();
   await expectVisibleText(page, "Runtime connected", "runtime connected after browser refresh");
-  await expectVisibleText(page, "Demo Mode is active in the local runtime", "demo enabled status after browser refresh");
+  await expectVisibleText(page, "Demo Mode ready", "demo enabled status after browser refresh");
   await expectVisibleText(page, firstPrompt, "visible first user prompt after browser refresh");
   await expectVisibleText(page, assistantAnswer, "first assistant response after browser refresh");
   await assertAssistantBubbleSequence(page, [assistantAnswer], "assistant response sequence after browser refresh");

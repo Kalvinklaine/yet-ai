@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = path.join(root, "apps", "gui", "dist");
 const indexPath = path.join(distRoot, "index.html");
-const requiredVisibleText = ["Yet AI", "Local runtime connection", "Provider setup", "Chat with Yet AI", "Bridge debug"];
+const requiredVisibleText = ["Local runtime connection", "Provider setup", "Bridge debug"];
 const bridgeVersion = "2026-05-15";
 const failures = [];
 const runtimeToken = `jb.wrapper.runtime.${randomUUID().replaceAll("-", "")}`;
@@ -148,7 +148,8 @@ try {
 
   const frameLocator = page.frameLocator("iframe[title='Yet AI GUI']");
   await frameLocator.locator("body").waitFor({ state: "visible", timeout: 5000 });
-  await frameLocator.getByText("Yet AI", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 });
+  const hiddenHeroTitle = await frameLocator.locator(".hero h1").evaluate((element) => getComputedStyle(element).display === "none" || element.closest(".hero") !== null && getComputedStyle(element.closest(".hero")).display === "none").catch(() => false);
+  if (!hiddenHeroTitle) failures.push("Hosted JetBrains iframe did not hide the in-webview hero title.");
 
   for (const text of requiredVisibleText) {
     const visible = await frameLocator.getByText(text, { exact: true }).first().isVisible().catch(() => false);

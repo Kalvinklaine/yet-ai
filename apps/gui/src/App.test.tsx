@@ -3029,6 +3029,11 @@ describe("active editor attached context", () => {
     });
 
     expect(container?.textContent).toContain("Active editor context");
+    expect(container?.textContent).toContain("src/main.ts · 10:2-12:8 · 38 chars");
+    expect(container?.textContent).toContain("Attach to next message");
+    const details = findDetails("attached-context-active-details");
+    expect(details.open).toBe(false);
+    details.open = true;
     expect(container?.textContent).toContain("Source host: vscode");
     expect(container?.textContent).toContain("File: src/main.ts");
     expect(container?.textContent).toContain("Language: typescript");
@@ -3036,7 +3041,6 @@ describe("active editor attached context", () => {
     expect(container?.textContent).toContain("Bounded previewfunction greet()");
     expect(container?.textContent).toContain("Selected characters: 38");
     expect(container?.textContent).toContain("one-shot and is attached only to the next accepted message while enabled");
-    expect(container?.textContent).toContain("Attach to next message");
     expect(attachedContextToggle().checked).toBe(true);
   });
 
@@ -3628,7 +3632,7 @@ describe("chat panel", () => {
       "chat-title-card chat-compact-header row",
       "debug-details",
       "chat-scroll-region",
-      "stack chat-composer",
+      "chat-composer",
       "debug-details chat-secondary-debug",
     ]);
     expect(threadPane?.classList.contains("chat-thread-pane")).toBe(true);
@@ -3641,6 +3645,9 @@ describe("chat panel", () => {
     expect(container?.querySelector("[aria-describedby='delete-current-conversation-help-rail']")).toBeTruthy();
     expect(composer?.textContent).toContain("Coding Actions");
     expect(composer?.textContent).toContain("Attached context");
+    expect(composer?.querySelector(".composer-tools")?.textContent).toContain("Coding Actions");
+    expect(composer?.querySelector(".composer-input-area textarea")).toBeTruthy();
+    expect(composer?.querySelector(".composer-input-area")?.textContent).toContain("Send");
     expect(localSetItem).not.toHaveBeenCalled();
   });
 

@@ -709,6 +709,42 @@ pre,
   overflow: hidden;
 }
 
+.host-vscode .hero,
+.host-jetbrains .hero {
+  display: none;
+}
+
+.host-vscode,
+.host-jetbrains {
+  max-width: none;
+  min-height: 100vh;
+  gap: 10px;
+  padding: 12px;
+}
+
+.host-vscode .chat-primary-card,
+.host-jetbrains .chat-primary-card {
+  display: grid;
+  min-height: calc(100vh - 24px);
+  padding: 14px;
+}
+
+.host-vscode .chat-hero-row,
+.host-jetbrains .chat-hero-row,
+.host-vscode .chat-secondary-debug,
+.host-jetbrains .chat-secondary-debug {
+  display: none;
+}
+
+.host-vscode .chat-workbench,
+.host-jetbrains .chat-workbench,
+.host-vscode .conversations-layout,
+.host-jetbrains .conversations-layout {
+  height: calc(100vh - 52px);
+  min-height: 0;
+  max-height: none;
+}
+
 .chat-scroll-region {
   display: grid;
   align-content: start;
@@ -723,6 +759,8 @@ pre,
 }
 
 .chat-composer {
+  display: grid;
+  gap: 10px;
   flex: 0 0 auto;
   position: relative;
   border: 1px solid #d8e1f6;
@@ -730,8 +768,29 @@ pre,
   background: rgba(255, 255, 255, 0.96);
   box-shadow: 0 -10px 30px rgba(28, 40, 72, 0.08);
   max-height: min(42vh, 360px);
-  overflow-y: auto;
+  overflow: hidden;
   padding: 14px;
+}
+
+.composer-tools {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  max-height: 170px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}
+
+.composer-input-area {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+}
+
+.composer-input-area textarea {
+  min-height: 76px;
+  max-height: 120px;
 }
 
 .ide-action-proposal-card,
@@ -985,6 +1044,64 @@ pre,
     height: min(90vh, 920px);
   }
 
+  .app-shell {
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .chat-primary-card {
+    padding: 14px;
+  }
+
+  .host-vscode .chat-hero-row,
+  .host-jetbrains .chat-hero-row,
+  .host-vscode .chat-primary-card > .readiness-card,
+  .host-jetbrains .chat-primary-card > .readiness-card {
+    display: none;
+  }
+
+  .chat-thread-pane {
+    gap: 8px;
+    grid-template-rows: auto minmax(160px, 1fr) auto;
+  }
+
+  .host-vscode .chat-thread-pane > .debug-details:not(.chat-secondary-debug),
+  .host-jetbrains .chat-thread-pane > .debug-details:not(.chat-secondary-debug),
+  .host-vscode .chat-secondary-debug,
+  .host-jetbrains .chat-secondary-debug {
+    display: none;
+  }
+
+  .chat-scroll-region {
+    min-height: 160px;
+  }
+
+  .chat-composer {
+    max-height: 220px;
+    padding: 10px;
+  }
+
+  .composer-tools {
+    max-height: 78px;
+  }
+
+  .composer-input-area textarea {
+    min-height: 62px;
+    max-height: 82px;
+  }
+
+  .host-vscode .coding-actions-card .subtle,
+  .host-jetbrains .coding-actions-card .subtle,
+  .host-vscode .ide-actions-card .subtle,
+  .host-jetbrains .ide-actions-card .subtle {
+    display: none;
+  }
+
+  .coding-actions-row button,
+  .chat-actions button {
+    padding: 7px 10px;
+  }
+
   .conversations-rail {
     display: none;
   }
@@ -1028,6 +1145,34 @@ pre,
 
   .conversation-list {
     max-height: none;
+  }
+}
+
+@media (max-width: 640px), (max-height: 560px) {
+  .app-shell {
+    padding: 8px;
+  }
+
+  .app-shell:not(.host-browser) .hero {
+    display: none;
+  }
+
+  .chat-primary-card {
+    padding: 10px;
+  }
+
+  .chat-workbench,
+  .conversations-layout {
+    height: calc(100vh - 20px);
+  }
+
+  .chat-title-card,
+  .chat-panel {
+    padding: 10px;
+  }
+
+  .chat-composer {
+    max-height: 210px;
   }
 }
 
