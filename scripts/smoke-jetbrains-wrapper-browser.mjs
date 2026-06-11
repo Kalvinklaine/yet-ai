@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = path.join(root, "apps", "gui", "dist");
 const indexPath = path.join(distRoot, "index.html");
-const requiredVisibleText = ["Local runtime connection", "Provider setup", "Bridge debug"];
+const requiredVisibleText = ["Chat readiness", "Conversations", "Coding Actions"];
 const bridgeVersion = "2026-05-15";
 const failures = [];
 const runtimeToken = `jb.wrapper.runtime.${randomUUID().replaceAll("-", "")}`;
@@ -148,7 +148,12 @@ try {
 
   const frameLocator = page.frameLocator("iframe[title='Yet AI GUI']");
   await frameLocator.locator("body").waitFor({ state: "visible", timeout: 5000 });
-  const hiddenHeroTitle = await frameLocator.locator(".hero h1").evaluate((element) => getComputedStyle(element).display === "none" || element.closest(".hero") !== null && getComputedStyle(element.closest(".hero")).display === "none").catch(() => false);
+  const hiddenHeroTitle = await frameLocator.locator(".hero h1").first().evaluate((element) => {
+    const hero = element.closest(".hero");
+    return getComputedStyle(element).display === "none"
+      || getComputedStyle(element).visibility === "hidden"
+      || (hero !== null && (getComputedStyle(hero).display === "none" || getComputedStyle(hero).visibility === "hidden"));
+  }).catch(() => false);
   if (!hiddenHeroTitle) failures.push("Hosted JetBrains iframe did not hide the in-webview hero title.");
 
   for (const text of requiredVisibleText) {
@@ -251,8 +256,8 @@ try {
   if (!deliveredHostReady) {
     failures.push("Wrapper did not deliver trusted host.ready runtime bootstrap to the GUI iframe.");
   }
-  const bridgeIdentityVisible = await frameLocator.getByText("bridge jetbrains", { exact: true }).first().isVisible({ timeout: 5000 }).catch(() => false);
-  if (!bridgeIdentityVisible) {
+  const bridgeIdentityAttached = await frameLocator.getByText("bridge jetbrains", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).then(() => true).catch(() => false);
+  if (!bridgeIdentityAttached) {
     failures.push("GUI did not expose JetBrains host identity / bridge mode after wrapper bootstrap.");
   }
   await assertSingleBackslashContextPathRejected(page, bridgeVersion, activeReadyRequestId);
@@ -354,7 +359,7 @@ try {
   await assertReloadRequiresFreshGuiReady(page, bridgeVersion, guiBaseUrl, runtimeBaseUrl, runtimeToken);
   await resendCurrentHostReadyAndWaitForRuntimeInput(page, frameLocator, bridgeVersion, runtimeBaseUrl, runtimeToken);
 
-  await frameLocator.getByText("Runtime connected", { exact: false }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("Runtime refresh did not reach connected/provider-required state after trusted host.ready."));
+  await frameLocator.getByText("Runtime connected", { exact: false }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("Runtime refresh did not reach connected/provider-required state after trusted host.ready."));
   await frameLocator.getByText("Provider setup", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("Provider setup panel was not visible in the JetBrains first-use GUI path."));
   await frameLocator.getByText("State: Experimental OpenAI account / gpt-5-codex", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not use host.ready runtime endpoints to enter connected experimental readiness."));
 
@@ -426,11 +431,12 @@ try {
   }, { version: bridgeVersion, runtimeUrl: runtimeBaseUrl, token: runtimeToken, payload: jetbrainsContextSnapshot });
   await frameLocator.getByText("Active editor context", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show attached context preview for JetBrains context."));
   await frameLocator.getByText("jetbrains", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context source label."));
-  await frameLocator.getByText("File: src/main/kotlin/ContextSmoke.kt", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show safe JetBrains context file label."));
-  await frameLocator.getByText("Language: kotlin", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context language id."));
-  await frameLocator.getByText(activeContextSelectionMarker, { exact: false }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context selected text preview."));
+  await frameLocator.getByText("File: src/main/kotlin/ContextSmoke.kt", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not show safe JetBrains context file label."));
+  await frameLocator.getByText("Language: kotlin", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context language id."));
+  await frameLocator.getByText(activeContextSelectionMarker, { exact: false }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context selected text preview."));
   await assertJetBrainsIdeActionRoundtrip(page, frameLocator);
-  const includeContextToggle = frameLocator.locator("label.attached-context-toggle", { hasText: "Attach to next message" }).getByRole("checkbox");
+  await frameLocator.locator("details.attached-context-card").evaluate((details) => { details.open = true; }).catch(() => failures.push("JetBrains attached context details could not be opened for include toggle."));
+  const includeContextToggle = frameLocator.locator("label.attached-context-toggle", { hasText: /Attach to next message|Do not attach/ }).getByRole("checkbox");
   if (!await includeContextToggle.isChecked({ timeout: 5000 }).catch(() => false)) {
     failures.push("JetBrains attached context include toggle was not enabled by default.");
   }

@@ -98,9 +98,10 @@ try {
   });
 
   await page.goto(`${guiBaseUrl}/index.html`, { waitUntil: "domcontentloaded" });
-  await expectVisibleText(page, "Yet AI", "packaged Yet AI title");
-  await expectVisibleText(page, "Chat with Yet AI", "packaged chat UI");
-  await expectVisibleText(page, "Bridge debug", "packaged bridge debug UI");
+  await expectHiddenHeroTitle(page, "VS Code hosted packaged GUI hero title");
+  await expectVisibleText(page, "Chat readiness", "hosted chat readiness card");
+  await expectVisibleText(page, "Conversations", "hosted conversations workbench");
+  await expectVisibleText(page, "Coding Actions", "hosted coding actions workbench");
   const bodyText = (await page.locator("body").innerText()).trim();
   if (bodyText.length < 80) failures.push(`Packaged GUI body text is too short or blank (${bodyText.length} characters).`);
 
@@ -116,7 +117,7 @@ try {
     payload: { runtimeUrl: runtimeBaseUrl, sessionToken: runtimeToken, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false },
   });
   await expectAttachedText(page, "Host runtime settings received", "host.ready bridge log");
-  await expectVisibleText(page, "bridge vscode", "VS Code bridge mode badge");
+  await expectAttachedText(page, "bridge vscode", "VS Code bridge mode badge");
   await expectAttachedText(page, "VS Code controlled actions", "controlled action availability");
 
   const initialChatText = await page.locator("body").innerText();
@@ -232,9 +233,9 @@ try {
     },
   });
   await expectVisibleText(page, "Active editor context", "active context preview card");
-  await expectVisibleText(page, `File: ${activeContextPath}`, "active context safe file label");
-  await expectVisibleText(page, "Selection range: 7:1-7:12", "active context safe selection range");
-  await expectVisibleText(page, activeContextSelection, "bounded active context preview text");
+  await expectAttachedText(page, `File: ${activeContextPath}`, "active context safe file label");
+  await expectAttachedText(page, "Selection range: 7:1-7:12", "active context safe selection range");
+  await expectAttachedText(page, activeContextSelection, "bounded active context preview text");
   await expectVisibleText(page, "Attach to next message", "safe active context default include policy");
   await expectVisibleText(page, `Active safe path: ${activeContextPath}`, "IDE action safe active path");
   await expectVisibleText(page, "Active safe range: 7:1-7:12", "IDE action safe active range");
@@ -536,6 +537,16 @@ async function expectVisibleText(page, text, description, timeout = 10_000) {
     const body = await page.locator("body").innerText().catch(() => "");
     throw new Error(`Timed out waiting for ${description}. ${messageOf(error)}\nVisible body excerpt: ${redactSecrets(body).slice(0, 2000)}`);
   }
+}
+
+async function expectHiddenHeroTitle(page, description) {
+  const hidden = await page.locator(".hero h1").first().evaluate((element) => {
+    const hero = element.closest(".hero");
+    return getComputedStyle(element).display === "none"
+      || getComputedStyle(element).visibility === "hidden"
+      || (hero !== null && (getComputedStyle(hero).display === "none" || getComputedStyle(hero).visibility === "hidden"));
+  }).catch(() => false);
+  if (!hidden) failures.push(`${description} was not hidden in hosted mode.`);
 }
 
 async function expectAttachedText(page, text, description, timeout = 10_000) {
