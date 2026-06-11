@@ -22,6 +22,7 @@ const oauthSentinels = {
   apiKey: `sk-jb-wrapper-${randomUUID()}`,
 };
 const activeContextSelectionMarker = `context marker ${randomUUID()}`;
+const liveContextSelectionMarker = `live context marker ${randomUUID()}`;
 const jetbrainsContextSnapshot = {
   kind: "active_editor",
   source: "jetbrains",
@@ -36,6 +37,21 @@ const jetbrainsContextSnapshot = {
     endLine: 12,
     endCharacter: 42,
     text: activeContextSelectionMarker,
+  },
+};
+const liveJetbrainsContextSnapshot = {
+  ...jetbrainsContextSnapshot,
+  file: {
+    displayPath: "src/main/kotlin/LiveContextSmoke.kt",
+    workspaceRelativePath: "src/main/kotlin/LiveContextSmoke.kt",
+    languageId: "kotlin",
+  },
+  selection: {
+    startLine: 16,
+    startCharacter: 2,
+    endLine: 16,
+    endCharacter: 34,
+    text: liveContextSelectionMarker,
   },
 };
 const consoleMessages = [];
@@ -126,6 +142,7 @@ try {
     { label: "cookie secret", value: oauthSentinels.cookie },
     { label: "API key", value: oauthSentinels.apiKey },
     { label: "active context selection marker", value: activeContextSelectionMarker },
+    { label: "live active context selection marker", value: liveContextSelectionMarker },
   ]);
   await page.waitForFunction(() => window.__yetAiWrapperInitialized === true, undefined, { timeout: 5000 }).catch(() => failures.push("Wrapper helper initialization marker was not set."));
   const adoptionState = await page.evaluate(() => ({
@@ -434,6 +451,29 @@ try {
   await frameLocator.getByText("File: src/main/kotlin/ContextSmoke.kt", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not show safe JetBrains context file label."));
   await frameLocator.getByText("Language: kotlin", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context language id."));
   await frameLocator.getByText(activeContextSelectionMarker, { exact: false }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context selected text preview."));
+  await page.evaluate(({ version, payload, requestId }) => {
+    window.__yetAiSendHostMessageToFrame({
+      version,
+      type: "host.contextSnapshot",
+      requestId,
+      payload,
+    });
+  }, { version: bridgeVersion, payload: liveJetbrainsContextSnapshot, requestId: contextRequestId });
+  await frameLocator.getByText("File: src/main/kotlin/LiveContextSmoke.kt", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not replace JetBrains context file label on live refresh."));
+  await frameLocator.getByText("Selection range: 16:2-16:34", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not replace JetBrains context selection range on live refresh."));
+  await frameLocator.getByText(liveContextSelectionMarker, { exact: false }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not show live JetBrains context selected text preview."));
+  if (await frameLocator.getByText(activeContextSelectionMarker, { exact: false }).first().isVisible().catch(() => false)) {
+    failures.push("GUI kept stale JetBrains selected text after live context refresh.");
+  }
+  await page.evaluate(({ version, payload, requestId }) => {
+    window.__yetAiSendHostMessageToFrame({
+      version,
+      type: "host.contextSnapshot",
+      requestId,
+      payload,
+    });
+  }, { version: bridgeVersion, payload: jetbrainsContextSnapshot, requestId: contextRequestId });
+  await frameLocator.getByText(activeContextSelectionMarker, { exact: false }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not restore JetBrains context after live refresh smoke."));
   await assertJetBrainsIdeActionRoundtrip(page, frameLocator);
   await frameLocator.locator("details.attached-context-card").evaluate((details) => { details.open = true; }).catch(() => failures.push("JetBrains attached context details could not be opened for include toggle."));
   const includeContextToggle = frameLocator.locator("label.attached-context-toggle", { hasText: /Attach to next message|Do not attach/ }).getByRole("checkbox");
@@ -500,6 +540,7 @@ try {
     { label: "cookie secret", value: oauthSentinels.cookie },
     { label: "API key", value: oauthSentinels.apiKey },
     { label: "active context selection marker", value: activeContextSelectionMarker },
+    { label: "live active context selection marker", value: liveContextSelectionMarker },
     { label: "authorization header marker", value: "authorization: bearer" },
     { label: "set-cookie marker", value: "set-cookie" },
     { label: "client secret marker", value: "client_secret" },

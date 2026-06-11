@@ -13,13 +13,21 @@ import com.google.gson.JsonPrimitive
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.editor.EditorFactory
+import com.intellij.openapi.editor.event.CaretEvent
+import com.intellij.openapi.editor.event.CaretListener
+import com.intellij.openapi.editor.event.SelectionEvent
+import com.intellij.openapi.editor.event.SelectionListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.FileEditorManagerEvent
+import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.openapi.wm.ex.ToolWindowManagerListener
+import com.intellij.util.Alarm
 import com.intellij.ui.content.Content
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.jcef.JBCefApp
@@ -87,6 +95,9 @@ class YetToolWindowFactory : ToolWindowFactory {
             }
             contentManager.addContent(content)
             registerActivationRefresh(project, content)
+            if (component is YetBrowserPanel) {
+                registerLiveContextRefresh(project, content, component)
+            }
             refreshActiveEditorContext(toolWindow)
         }
 
@@ -108,6 +119,34 @@ class YetToolWindowFactory : ToolWindowFactory {
                 },
             )
         }
+
+        private fun registerLiveContextRefresh(project: Project, content: Content, panel: YetBrowserPanel) {
+            project.messageBus.connect(content).subscribe(
+                FileEditorManagerListener.FILE_EDITOR_MANAGER,
+                object : FileEditorManagerListener {
+                    override fun selectionChanged(event: FileEditorManagerEvent) {
+                        panel.scheduleActiveEditorContextRefresh()
+                    }
+                },
+            )
+            val multicaster = EditorFactory.getInstance().eventMulticaster
+            multicaster.addSelectionListener(
+                object : SelectionListener {
+                    override fun selectionChanged(event: SelectionEvent) {
+                        panel.scheduleActiveEditorContextRefresh()
+                    }
+                },
+                content,
+            )
+            multicaster.addCaretListener(
+                object : CaretListener {
+                    override fun caretPositionChanged(event: CaretEvent) {
+                        panel.scheduleActiveEditorContextRefresh()
+                    }
+                },
+                content,
+            )
+        }
     }
 }
 
@@ -118,6 +157,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
     private val browser = JBCefBrowser()
     private val query = JBCefJSQuery.create(browser as JBCefBrowser)
     private val delivery = WrapperScriptDelivery()
+    private val contextRefreshAlarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     @Volatile
     private var latestConnection = RuntimeConnectionResult(RuntimeSettings.safeFallback(), "Connecting to Yet AI local runtime...", null)
     @Volatile
@@ -182,6 +222,12 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         )
     }
 
+    fun scheduleActiveEditorContextRefresh() {
+        if (guiReadyRequestId == null || disposed) return
+        contextRefreshAlarm.cancelAllRequests()
+        contextRefreshAlarm.addRequest({ refreshActiveEditorContext() }, 200)
+    }
+
     private fun sendToGui(message: String) {
         if (disposed) return
         browser.cefBrowser.executeJavaScript(delivery.hostMessage(message), browser.cefBrowser.url, 0)
@@ -194,6 +240,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
 
     override fun dispose() {
         disposed = true
+        contextRefreshAlarm.cancelAllRequests()
         query.dispose()
         browser.dispose()
     }

@@ -594,6 +594,25 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
+    fun toolWindowRegistersLiveActiveEditorContextRefreshListeners() {
+        val source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/kotlin/ai/yet/plugin/ui/YetToolWindowFactory.kt"))
+
+        assertContains(source, "registerLiveContextRefresh(project, content, component)")
+        assertContains(source, "FileEditorManagerListener.FILE_EDITOR_MANAGER")
+        assertContains(source, "override fun selectionChanged(event: FileEditorManagerEvent)")
+        assertContains(source, "addSelectionListener")
+        assertContains(source, "override fun selectionChanged(event: SelectionEvent)")
+        assertContains(source, "addCaretListener")
+        assertContains(source, "override fun caretPositionChanged(event: CaretEvent)")
+        assertContains(source, "Alarm(Alarm.ThreadToUse.SWING_THREAD, this)")
+        assertContains(source, "contextRefreshAlarm.cancelAllRequests()")
+        assertContains(source, "contextRefreshAlarm.addRequest({ refreshActiveEditorContext() }, 200)")
+        assertContains(source, "if (guiReadyRequestId == null || disposed) return")
+        assertContains(source, "project.messageBus.connect(content)")
+        assertContains(source, "content,")
+    }
+
+    @Test
     fun pluginPreventsClosingTheOnlyToolWindowContent() {
         val pluginXml = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/resources/META-INF/plugin.xml"))
 

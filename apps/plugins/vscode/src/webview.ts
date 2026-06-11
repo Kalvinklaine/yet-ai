@@ -104,6 +104,37 @@ export function openYetAiWebview(
   );
 
   panel.webview.html = renderWebviewHtml(panel.webview, context.extensionUri, identity, connection);
+  let guiReady = false;
+  let guiReadyRequestId: string | undefined;
+  let contextRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  const sendContextSnapshot = () => {
+    if (!guiReady) {
+      return;
+    }
+    void panel.webview.postMessage(createHostContextSnapshot(guiReadyRequestId));
+  };
+  const scheduleContextRefresh = () => {
+    if (!guiReady) {
+      return;
+    }
+    if (contextRefreshTimer !== undefined) {
+      clearTimeout(contextRefreshTimer);
+    }
+    contextRefreshTimer = setTimeout(() => {
+      contextRefreshTimer = undefined;
+      sendContextSnapshot();
+    }, 200);
+  };
+  const activeEditorListener = vscode.window.onDidChangeActiveTextEditor(() => scheduleContextRefresh());
+  const selectionListener = vscode.window.onDidChangeTextEditorSelection(() => scheduleContextRefresh());
+  panel.onDidDispose(() => {
+    activeEditorListener.dispose();
+    selectionListener.dispose();
+    if (contextRefreshTimer !== undefined) {
+      clearTimeout(contextRefreshTimer);
+      contextRefreshTimer = undefined;
+    }
+  });
   panel.webview.onDidReceiveMessage((message: unknown) => {
     if (!isGuiMessage(message)) {
       if (isInvalidIdeActionRequestMessage(message)) {
@@ -128,13 +159,15 @@ export function openYetAiWebview(
       void handleApplyWorkspaceEditRequest(panel.webview, message);
       return;
     }
+    guiReady = true;
+    guiReadyRequestId = message.requestId;
     void panel.webview.postMessage(createHostReady(identity, connection, message.requestId));
     void panel.webview.postMessage({
       version: bridgeVersion,
       type: "host.openedFromCommand",
       payload: {},
     } satisfies HostMessage);
-    void panel.webview.postMessage(createHostContextSnapshot(message.requestId));
+    sendContextSnapshot();
   });
 }
 

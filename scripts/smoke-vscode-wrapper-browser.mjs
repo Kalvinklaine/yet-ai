@@ -21,6 +21,8 @@ const resultMessage = "Context snapshot delivered.";
 const activeContextPath = "src/smoke-active.ts";
 const activeContextRange = { start: { line: 7, character: 1 }, end: { line: 7, character: 12 } };
 const activeContextSelection = "selectedReadOnlyContext";
+const liveContextPath = "src/smoke-live.ts";
+const liveContextSelection = "selectedLiveContextReplacement";
 const openResultMessage = "Workspace file opened.";
 const revealProgressSummary = "Reveal policy check started.";
 const revealResultMessage = "Workspace range revealed.";
@@ -245,6 +247,25 @@ try {
   if (await revealRangeButton.isDisabled()) failures.push("Reveal range button stayed disabled after safe active context snapshot.");
   await assertBrowserStorageDoesNotContain(page, [activeContextPath, activeContextSelection], "trusted active context preview");
 
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.contextSnapshot",
+    requestId: "host-active-context-smoke-002",
+    payload: {
+      kind: "active_editor",
+      source: "vscode",
+      file: { displayPath: liveContextPath, workspaceRelativePath: liveContextPath, languageId: "typescript" },
+      selection: { startLine: 9, startCharacter: 2, endLine: 9, endCharacter: 18, text: liveContextSelection },
+    },
+  });
+  await expectAttachedText(page, `File: ${liveContextPath}`, "live active context replacement file label");
+  await expectAttachedText(page, "Selection range: 9:2-9:18", "live active context replacement range");
+  await expectAttachedText(page, liveContextSelection, "live active context replacement text");
+  await expectNoVisibleText(page, activeContextSelection, "stale active context selection after live update");
+  if (await openFileButton.isDisabled()) failures.push("Open file button was disabled after live context refresh.");
+  if (await revealRangeButton.isDisabled()) failures.push("Reveal range button was disabled after live context refresh.");
+  await assertBrowserStorageDoesNotContain(page, [liveContextPath, liveContextSelection], "live trusted active context preview");
+
   const getContextButton = page.getByRole("button", { name: "Get IDE context", exact: true });
   await getContextButton.waitFor({ state: "visible", timeout: 10_000 });
   if (await getContextButton.isDisabled()) failures.push("Get IDE context button was disabled in VS Code host mode.");
@@ -306,7 +327,7 @@ try {
   if (!openIdeRequest) {
     failures.push("Clicking Open file did not send gui.ideActionRequest.");
   } else {
-    if (!deepEqual(openIdeRequest.payload, { action: "openWorkspaceFile", workspaceRelativePath: activeContextPath })) failures.push("Open file IDE action payload did not use the safe active workspace path only.");
+    if (!deepEqual(openIdeRequest.payload, { action: "openWorkspaceFile", workspaceRelativePath: liveContextPath })) failures.push("Open file IDE action payload did not use the live safe active workspace path only.");
     if (hasForbiddenPrivilegedKeys(openIdeRequest.payload)) failures.push("Open file IDE action request payload contained privileged fields.");
   }
   const openRequestId = openIdeRequest?.requestId ?? "gui-ide-action-open-missing";
@@ -314,11 +335,11 @@ try {
     version: bridgeVersion,
     type: "host.ideActionResult",
     requestId: openRequestId,
-    payload: { status: "succeeded", message: openResultMessage, cloudRequired: false, action: "openWorkspaceFile", workspaceRelativePath: activeContextPath },
+    payload: { status: "succeeded", message: openResultMessage, cloudRequired: false, action: "openWorkspaceFile", workspaceRelativePath: liveContextPath },
   });
   await expectVisibleText(page, "Open file: succeeded", "correlated open file IDE action result");
   await expectVisibleText(page, openResultMessage, "open file IDE action result message");
-  await expectVisibleText(page, `Result path: ${activeContextPath}`, "open file IDE action result path metadata");
+  await expectVisibleText(page, `Result path: ${liveContextPath}`, "open file IDE action result path metadata");
 
   const revealPreClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
   await revealRangeButton.click();
@@ -326,7 +347,7 @@ try {
   if (!revealIdeRequest) {
     failures.push("Clicking Reveal range did not send gui.ideActionRequest.");
   } else {
-    if (!deepEqual(revealIdeRequest.payload, { action: "revealWorkspaceRange", workspaceRelativePath: activeContextPath, range: activeContextRange })) failures.push("Reveal range IDE action payload did not use the safe active path/range only.");
+    if (!deepEqual(revealIdeRequest.payload, { action: "revealWorkspaceRange", workspaceRelativePath: liveContextPath, range: { start: { line: 9, character: 2 }, end: { line: 9, character: 18 } } })) failures.push("Reveal range IDE action payload did not use the live safe active path/range only.");
     if (hasForbiddenPrivilegedKeys(revealIdeRequest.payload)) failures.push("Reveal range IDE action request payload contained privileged fields.");
   }
   const revealRequestId = revealIdeRequest?.requestId ?? "gui-ide-action-reveal-missing";
@@ -334,7 +355,7 @@ try {
     version: bridgeVersion,
     type: "host.ideActionProgress",
     requestId: revealRequestId,
-    payload: { phase: "checkingPolicy", status: "inProgress", summary: revealProgressSummary, cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: activeContextPath, range: activeContextRange },
+    payload: { phase: "checkingPolicy", status: "inProgress", summary: revealProgressSummary, cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: liveContextPath, range: { start: { line: 9, character: 2 }, end: { line: 9, character: 18 } } },
   });
   await expectVisibleText(page, "Reveal range: inProgress", "correlated reveal range IDE action progress");
   await expectVisibleText(page, revealProgressSummary, "reveal range IDE action progress summary");
@@ -342,11 +363,11 @@ try {
     version: bridgeVersion,
     type: "host.ideActionResult",
     requestId: revealRequestId,
-    payload: { status: "succeeded", message: revealResultMessage, cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: activeContextPath, range: activeContextRange },
+    payload: { status: "succeeded", message: revealResultMessage, cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: liveContextPath, range: { start: { line: 9, character: 2 }, end: { line: 9, character: 18 } } },
   });
   await expectVisibleText(page, "Reveal range: succeeded", "correlated reveal range IDE action result");
   await expectVisibleText(page, revealResultMessage, "reveal range IDE action result message");
-  await expectVisibleText(page, `Result path: ${activeContextPath} · result range: 7:1-7:12`, "reveal range IDE action result path/range metadata");
+  await expectVisibleText(page, `Result path: ${liveContextPath} · result range: 9:2-9:18`, "reveal range IDE action result path/range metadata");
 
   await dispatchHostMessage(page, {
     version: bridgeVersion,
@@ -357,7 +378,7 @@ try {
   await page.waitForTimeout(150);
   await expectNoVisibleText(page, `Secret-like result must not render ${providerKey}`, "secret-like reveal host result");
   await expectVisibleText(page, "Reveal range: succeeded", "valid reveal result remains visible after rejected secret-like result");
-  await assertBrowserStorageDoesNotContain(page, [runtimeToken, providerKey, authorizationSentinel, activeContextPath, activeContextSelection], "final storage no-secret/no-context persistence check");
+  await assertBrowserStorageDoesNotContain(page, [runtimeToken, providerKey, authorizationSentinel, activeContextPath, activeContextSelection, liveContextPath, liveContextSelection], "final storage no-secret/no-context persistence check");
 
   if (!observedRuntimeAuthorization) failures.push("Mock runtime did not observe Authorization from host.ready session token.");
   const visibleState = await collectVisibleState(page);
