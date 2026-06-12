@@ -497,9 +497,36 @@ private val safeEngineLaunchEnvironmentNames = setOf(
     "LANG",
 )
 
+private val safeEngineLaunchEnvironmentNamesCanonical = safeEngineLaunchEnvironmentNames.map { it.uppercase() }.toSet()
+
+private val safeEngineLaunchLocaleNames = setOf(
+    "LC_ALL",
+    "LC_CTYPE",
+    "LC_COLLATE",
+    "LC_MESSAGES",
+    "LC_MONETARY",
+    "LC_NUMERIC",
+    "LC_TIME",
+    "LC_ADDRESS",
+    "LC_IDENTIFICATION",
+    "LC_MEASUREMENT",
+    "LC_NAME",
+    "LC_PAPER",
+    "LC_TELEPHONE",
+)
+
+private val unsafeEngineLaunchEnvironmentName = Regex(
+    "(?i)(^|[_-])(?:access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|token|api[_-]?key|authorization|bearer|cookie|client[_-]?secret|secret|provider)(?:$|[_-])",
+)
+
 fun sanitizedEngineLaunchEnvironment(baseEnvironment: Map<String, String>): Map<String, String> =
     baseEnvironment.filterKeys { name ->
-        name in safeEngineLaunchEnvironmentNames || name.startsWith("LC_")
+        if (unsafeEngineLaunchEnvironmentName.containsMatchIn(name)) {
+            false
+        } else {
+            val canonical = name.uppercase()
+            canonical in safeEngineLaunchEnvironmentNamesCanonical || canonical in safeEngineLaunchLocaleNames
+        }
     }
 
 fun parseRuntimePort(runtimeUrl: String): Int {
