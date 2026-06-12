@@ -6,6 +6,7 @@ import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermission
 import java.security.MessageDigest
@@ -68,11 +69,10 @@ object BundledEngineResources {
         val bytes = stream.use { it.readBytes() }
         val hash = sha256(bytes)
         val target = cacheFile(cacheDir, hash, osName)
-        if (!Files.exists(target)) {
+        val cacheValid = Files.exists(target) && runCatching { sha256(Files.readAllBytes(target)) == hash }.getOrDefault(false)
+        if (!cacheValid) {
             cacheDirCreator(cacheDir)
-            ByteArrayInputStream(bytes).use { input ->
-                Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING)
-            }
+            writeBundledBytesSafely(bytes, target)
             permissionApplier(target)
         } else if (!isLaunchableEngineFile(target, osName)) {
             // Existing cache file lost its executable bit (e.g. extracted on
@@ -118,6 +118,22 @@ object BundledEngineResources {
     private fun sha256(bytes: ByteArray): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
         return digest.joinToString(separator = "") { byte -> "%02x".format(byte) }
+    }
+
+    private fun writeBundledBytesSafely(bytes: ByteArray, target: Path) {
+        val temp = Files.createTempFile(target.parent, "${target.fileName}.", ".tmp")
+        try {
+            ByteArrayInputStream(bytes).use { input ->
+                Files.copy(input, temp, StandardCopyOption.REPLACE_EXISTING)
+            }
+            try {
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, ATOMIC_MOVE)
+            } catch (_: Exception) {
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            Files.deleteIfExists(temp)
+        }
     }
 
     internal fun applyExecutablePermissions(path: Path, osName: String) {

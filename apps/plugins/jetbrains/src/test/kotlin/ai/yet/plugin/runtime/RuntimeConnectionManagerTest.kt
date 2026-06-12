@@ -34,17 +34,46 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
-    fun launchCommandDoesNotIntroduceProviderApiKeyEnvironment() {
+    fun launchCommandFiltersSecretEnvironmentAndPreservesSafeBasics() {
         val command = buildEngineLaunchCommand(
             runtimeUrl = "http://127.0.0.1:8123",
             binaryPath = Path.of("/tmp/yet-lsp"),
             sessionToken = "session-secret",
-            baseEnvironment = emptyMap(),
+            baseEnvironment = mapOf(
+                "PATH" to "/bin:/usr/bin",
+                "HOME" to "/Users/alice",
+                "SystemRoot" to "C:\\Windows",
+                "LC_ALL" to "C.UTF-8",
+                "OPENAI_API_KEY" to "sk-openai-secret",
+                "ANTHROPIC_API_KEY" to "anthropic-secret",
+                "GITHUB_TOKEN" to "github-secret",
+                "COOKIE" to "session=cookie-secret",
+                "AUTHORIZATION" to "Bearer authorization-secret",
+                "PROVIDER_API_KEY" to "provider-secret",
+                "YET_AI_AUTH_TOKEN" to "inherited-token-must-not-survive",
+                "YET_AI_HTTP_PORT" to "9999",
+                "AWS_SECRET_ACCESS_KEY" to "aws-secret",
+                "NPM_TOKEN" to "npm-secret",
+            ),
         )
 
-        assertEquals(setOf("YET_AI_AUTH_TOKEN", "YET_AI_HTTP_PORT"), command.environment.keys)
-        listOf("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "PROVIDER_API_KEY").forEach { key ->
-            assertFalse(command.environment.containsKey(key), "launch command must not introduce provider/API-key env $key")
+        assertEquals("session-secret", command.environment["YET_AI_AUTH_TOKEN"])
+        assertEquals("8123", command.environment["YET_AI_HTTP_PORT"])
+        assertEquals("/bin:/usr/bin", command.environment["PATH"])
+        assertEquals("/Users/alice", command.environment["HOME"])
+        assertEquals("C:\\Windows", command.environment["SystemRoot"])
+        assertEquals("C.UTF-8", command.environment["LC_ALL"])
+        listOf(
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GITHUB_TOKEN",
+            "COOKIE",
+            "AUTHORIZATION",
+            "PROVIDER_API_KEY",
+            "AWS_SECRET_ACCESS_KEY",
+            "NPM_TOKEN",
+        ).forEach { key ->
+            assertFalse(command.environment.containsKey(key), "launch command must not pass provider/API/auth/cookie/token env $key")
         }
     }
 
