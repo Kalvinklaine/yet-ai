@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { GuiAssetFreshnessError, assertPackagedGuiFreshnessInArchive } from "./gui-asset-freshness.mjs";
+import { GuiAssetFreshnessError, assertPackagedGuiFreshnessInArchive, collectLocalAssetReferences, isSafeLocalAssetReference } from "./gui-asset-freshness.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const artifactsRoot = path.join(root, "dist", "github-artifacts");
@@ -599,13 +599,13 @@ function requireArchiveEntry(entries, expected, message) {
 }
 
 function requireReferencedGuiAssets(jarEntries, indexHtml, label) {
-  const references = collectLocalAssetReferences(indexHtml);
+  const references = new Set(collectLocalAssetReferences(indexHtml));
   const assetReferences = [...references].filter((reference) => /\.(?:js|css)$/i.test(reference));
   if (assetReferences.length === 0) {
     failures.push(`${label} packaged GUI index.html must reference at least one JavaScript or CSS asset.`);
   }
   for (const reference of references) {
-    if (!isSafeArchiveEntryPath(reference)) {
+    if (!isSafeLocalAssetReference(reference)) {
       failures.push(`${label} packaged GUI index.html references unsafe local asset ${JSON.stringify(reference)}.`);
       continue;
     }
@@ -614,39 +614,6 @@ function requireReferencedGuiAssets(jarEntries, indexHtml, label) {
       failures.push(`${label} plugin JAR must contain packaged GUI asset ${expected} referenced by yet-ai-gui/index.html.`);
     }
   }
-}
-
-function collectLocalAssetReferences(html) {
-  const references = new Set();
-  const assetPattern = /\b(?:src|href)=("|')([^"']+)\1/g;
-  for (const match of html.matchAll(assetPattern)) {
-    const value = match[2];
-    const localPath = toLocalAssetPath(value);
-    if (localPath !== undefined) {
-      references.add(localPath);
-    }
-  }
-  return references;
-}
-
-function toLocalAssetPath(value) {
-  if (
-    value.length === 0 ||
-    value.startsWith("#") ||
-    value.startsWith("data:") ||
-    value.startsWith("http://") ||
-    value.startsWith("https://") ||
-    value.startsWith("vscode-resource:") ||
-    value.startsWith("vscode-webview-resource:")
-  ) {
-    return undefined;
-  }
-  const withoutQuery = value.split(/[?#]/, 1)[0];
-  const normalized = withoutQuery.replace(/^\.\//, "").replace(/^\//, "");
-  if (normalized.length === 0 || normalized.includes("..")) {
-    return undefined;
-  }
-  return normalized;
 }
 
 function isBoundedResourcePath(value, prefix) {

@@ -52,6 +52,10 @@ export async function comparePackagedGuiFreshness(options) {
 
   for (const relativePath of assetReferences) {
     checkedFiles.add(relativePath);
+    if (!isSafeRelativeAssetPath(relativePath)) {
+      failures.push(`${label} index.html references unsafe local JS/CSS asset ${JSON.stringify(relativePath)}.`);
+      continue;
+    }
     const [sourceBytes, packagedBytes] = await Promise.all([
       readRequiredFile(path.join(sourceRoot, relativePath), `apps/gui/dist/index.html references missing dist asset ${relativePath}.`),
       readFileIfFile(path.join(packagedRoot, relativePath)),
@@ -183,6 +187,10 @@ export function formatGuiFreshnessFailure(result, guidance = "Rebuild and recopy
 }
 
 export function collectLocalJsCssAssetReferences(html) {
+  return collectLocalAssetReferences(html).filter((reference) => isJsOrCss(reference));
+}
+
+export function collectLocalAssetReferences(html) {
   const references = new Set();
   const assetPattern = /\b(?:src|href)=("|')([^"']+)\1/g;
   for (const match of html.matchAll(assetPattern)) {
@@ -190,12 +198,17 @@ export function collectLocalJsCssAssetReferences(html) {
     if (value.length === 0 || value.startsWith("#") || value.startsWith("data:") || /^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith("//")) {
       continue;
     }
-    const normalized = value.split(/[?#]/, 1)[0].replace(/^\.\//, "").replace(/^\//, "");
-    if (normalized.length > 0 && !normalized.includes("..") && isJsOrCss(normalized)) {
-      references.add(path.posix.normalize(normalized.replaceAll(path.sep, "/")));
+    const withoutQuery = value.split(/[?#]/, 1)[0];
+    const localPath = withoutQuery.replace(/^\.\//, "").replace(/^\/+/, "");
+    if (localPath.length > 0) {
+      references.add(isSafeRelativeAssetPath(localPath) ? path.posix.normalize(localPath) : localPath);
     }
   }
   return [...references].sort();
+}
+
+export function isSafeLocalAssetReference(relativePath) {
+  return isSafeRelativeAssetPath(relativePath);
 }
 
 async function readRequiredFile(filePath, message) {
@@ -240,6 +253,25 @@ function normalizeArchiveEntry(entry) {
 }
 
 function isSafeRelativeAssetPath(relativePath) {
-  const normalized = String(relativePath ?? "").replace(/\\/g, "/");
-  return normalized.length > 0 && !normalized.startsWith("/") && !/^[A-Za-z]:/.test(normalized) && normalized.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
+  const value = String(relativePath ?? "");
+  if (value.length === 0 || value.includes("\\") || value.startsWith("/") || /^[A-Za-z]:/.test(value)) {
+    return false;
+  }
+  if (!value.split("/").every(isSafePathSegment)) {
+    return false;
+  }
+  const decoded = safeDecodeURIComponent(value);
+  return decoded !== undefined && !decoded.includes("\\") && !decoded.startsWith("/") && !/^[A-Za-z]:/.test(decoded) && decoded.split("/").every(isSafePathSegment);
+}
+
+function isSafePathSegment(segment) {
+  return segment !== "" && segment !== "." && segment !== "..";
+}
+
+function safeDecodeURIComponent(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return undefined;
+  }
 }

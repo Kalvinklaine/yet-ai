@@ -7,7 +7,8 @@ const validators = [
   "scripts/validate-contracts.mjs",
   "scripts/validate-ide-artifact-contract.mjs",
   "scripts/validate-ide-artifact-workflow.mjs",
-  "scripts/validate-ide-surface-contract.mjs"
+  "scripts/validate-ide-surface-contract.mjs",
+  "scripts/check-gui-asset-freshness.mjs"
 ];
 
 for (const validator of validators) {
