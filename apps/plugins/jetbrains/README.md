@@ -67,7 +67,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 npm run smoke:ide-release-candidate
 ```
 
-It validates dev-preview artifact preparation, staging, manifest combination, workflow/report safety checks, and expected public artifact names only. It does not launch real IDEs, call providers, contact hosted services, sign, publish, or claim a production release.
+It validates dev-preview artifact preparation, installed-plugin visual coverage, installed-plugin Demo Mode first-message coverage, first-message coverage, staging, manifest combination, workflow/report safety checks, and expected public artifact names only. Demo Mode is runtime-owned no-key canned local chat UX coverage, not model-quality evidence or provider traffic. The gate does not launch real IDEs, run real JCEF automation, call providers, contact hosted services, sign, publish, or claim a production release.
 
 The combined `yet-ai-plugin-manifest-<sha>` is uploaded with a `platforms[]` array aggregating per-platform commit, checksum, platform, runtime, and artifact metadata.
 
