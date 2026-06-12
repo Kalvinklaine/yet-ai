@@ -3,6 +3,7 @@
   "type": "module",
   "scripts": {
     "check": "node scripts/check.mjs",
+    "check:gui-asset-freshness": "node scripts/check-gui-asset-freshness.mjs",
     "check:agent-progress": "node scripts/check-agent-progress.mjs",
     "planner:agent-progress:report": "node scripts/planner-agent-progress-report.mjs",
     "planner:agent-progress:run": "node scripts/planner-agent-progress-run.mjs",

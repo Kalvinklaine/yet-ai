@@ -23,6 +23,13 @@ const requiredPreUploadSmokeCommands = [
   "npm run smoke:plugin-layout",
   "npm run smoke:vscode-first-message",
   "npm run smoke:jetbrains-first-message",
+  "npm run smoke:github-ide-artifacts",
+];
+const browserSmokeCommands = [
+  "npm run smoke:installed-plugin-chat-visual",
+  "npm run smoke:vscode-wrapper-browser",
+  "npm run smoke:jetbrains-gui-browser",
+  "npm run smoke:jetbrains-wrapper-browser",
 ];
 
 const workflow = await readFile(workflowPath, "utf8");
@@ -56,27 +63,35 @@ assert(buildJob !== undefined, "Workflow must include build-ide-artifacts job.")
 assert(combineJob !== undefined, "Workflow must include combine-manifests job.");
 
 if (buildJob !== undefined) {
+  const buildSteps = workflowSteps(buildJob, workflow.indexOf(buildJob));
+  const buildRunCommands = runCommands(buildSteps);
   const names = uploadArtifactNames(buildJob);
   assertSetEquals(names, githubIdeWorkflowMatrixUploadArtifactNames, "Matrix job upload artifact names must be only the VS Code unzip-first and JetBrains direct-install public families.");
   for (const command of requiredPreUploadSmokeCommands) {
-    assert(buildJob.includes(command), `Build job must run ${command} before uploading artifacts.`);
+    assert(commandRunExists(buildRunCommands, command), `Build job must run ${command} from an actual run step before uploading artifacts.`);
   }
-  assert(buildJob.includes("npm run smoke:jetbrains-bundled-runtime"), "Build job must run npm run smoke:jetbrains-bundled-runtime before uploading artifacts.");
-  assert(buildJob.includes("artifact:github-summary"), "Build job must write the expected public artifact summary with artifact:github-summary.");
+  assert(commandRunExists(buildRunCommands, "npm run smoke:jetbrains-bundled-runtime"), "Build job must run npm run smoke:jetbrains-bundled-runtime from an actual run step before uploading artifacts.");
+  assert(commandRunExists(buildRunCommands, "npm run artifact:github-summary"), "Build job must write the expected public artifact summary with npm run artifact:github-summary from an actual run step.");
   assertSetEquals(matrixLabels(buildJob), githubIdePlatforms.map((platform) => platform.label), "Workflow matrix labels must match the public IDE artifact platform labels.");
-  const firstUploadIndex = buildJob.indexOf("uses: actions/upload-artifact@v4");
-  const bundledSmokeIndex = buildJob.indexOf("npm run smoke:jetbrains-bundled-runtime");
-  const summaryIndex = buildJob.indexOf("artifact:github-summary");
-  const jetbrainsPrepareIndex = buildJob.indexOf("npm run prepare:jetbrains-preview");
-  const vscodePrepareIndex = buildJob.indexOf("npm run prepare:vscode-preview");
+  const firstUploadIndex = firstUploadStepIndex(buildSteps);
+  const bundledSmokeIndex = commandRunIndex(buildRunCommands, "npm run smoke:jetbrains-bundled-runtime");
+  const summaryIndex = commandRunIndex(buildRunCommands, "npm run artifact:github-summary");
+  const jetbrainsPrepareIndex = commandRunIndex(buildRunCommands, "npm run prepare:jetbrains-preview");
+  const vscodePrepareIndex = commandRunIndex(buildRunCommands, "npm run prepare:vscode-preview");
   assert(jetbrainsPrepareIndex !== -1 && vscodePrepareIndex !== -1 && jetbrainsPrepareIndex < vscodePrepareIndex, "Build job must prepare JetBrains artifacts before VS Code artifacts so packaged GUI freshness checks read current assets.");
   if (firstUploadIndex !== -1) {
     for (const command of requiredPreUploadSmokeCommands) {
-      const smokeIndex = buildJob.indexOf(command);
+      const smokeIndex = commandRunIndex(buildRunCommands, command);
       assert(smokeIndex !== -1 && smokeIndex < firstUploadIndex, `${command} must run before matrix artifact uploads.`);
     }
     assert(bundledSmokeIndex !== -1 && bundledSmokeIndex < firstUploadIndex, "JetBrains bundled runtime startup smoke must run before matrix artifact uploads.");
     assert(summaryIndex !== -1 && summaryIndex < firstUploadIndex, "Expected public artifact summary must be generated before matrix artifact uploads.");
+  }
+  const lastChromiumInstallIndex = lastCommandRunIndex(buildRunCommands, /^npx playwright install(?: --with-deps)? chromium$/);
+  assert(lastChromiumInstallIndex !== -1, "Build job must install Playwright Chromium from an actual run step before browser smokes.");
+  for (const command of browserSmokeCommands) {
+    const smokeIndex = commandRunIndex(buildRunCommands, command);
+    assert(smokeIndex === -1 || lastChromiumInstallIndex < smokeIndex, `Playwright Chromium install step must appear before browser smoke ${command}.`);
   }
 }
 if (combineJob !== undefined) {
@@ -91,8 +106,9 @@ const staleManifestUploadPath = `path: dist/github-artifacts/${"manifest"}`;
 assert(!workflow.includes(staleManifestUploadPath), `Combined manifest upload must not point under ${staleManifestUploadPath.replace(/^path: /, "")}.`);
 const firstWorkflowUploadIndex = workflow.indexOf("uses: actions/upload-artifact@v4");
 if (firstWorkflowUploadIndex !== -1) {
+  const workflowCommands = runCommands(workflowSteps(workflow, 0));
   for (const command of requiredPreUploadSmokeCommands) {
-    const smokeIndex = workflow.indexOf(command);
+    const smokeIndex = commandRunIndex(workflowCommands, command);
     assert(smokeIndex !== -1 && smokeIndex < firstWorkflowUploadIndex, `${command} must appear before any actions/upload-artifact usage.`);
   }
 }
@@ -143,14 +159,65 @@ function jobBlock(text, jobName) {
 
 function uploadArtifactNames(text) {
   const names = [];
-  const uploadSteps = text.split(/\n(?=\s*- name: )/).filter((block) => /^\s*uses:\s*actions\/upload-artifact@v4\s*$/m.test(block));
+  const uploadSteps = workflowSteps(text, 0).filter((step) => /^\s*uses:\s*actions\/upload-artifact@v4\s*$/m.test(step.block));
   for (const block of uploadSteps) {
-    const name = block.match(/^\s*name:\s*(.+?)\s*$/m)?.[1];
+    const name = block.block.match(/^\s*name:\s*(.+?)\s*$/m)?.[1];
     if (name !== undefined) {
       names.push(name);
     }
   }
   return names;
+}
+
+function workflowSteps(text, baseIndex) {
+  const matches = [...text.matchAll(/^\s*- name:\s*(.+?)\s*$/gm)];
+  return matches.map((match, index) => {
+    const start = match.index;
+    const end = index + 1 < matches.length ? matches[index + 1].index : text.length;
+    return { name: match[1], index: baseIndex + start, block: text.slice(start, end) };
+  });
+}
+
+function runCommands(steps) {
+  const commands = [];
+  for (const step of steps) {
+    const run = step.block.match(/^\s*run:\s*\|\s*$(\n[\s\S]*?)(?=^\s*(?:working-directory:|uses:|with:|env:|if:|shell:|$))/m)?.[1]
+      ?? step.block.match(/^\s*run:\s*(.+?)\s*$/m)?.[1];
+    if (run === undefined) {
+      continue;
+    }
+    const runStart = step.block.indexOf(run);
+    for (const lineMatch of run.matchAll(/^\s*([^#\n].*?)\s*$/gm)) {
+      const command = lineMatch[1].replace(/\s+#.*$/, "").trim();
+      if (command !== "") {
+        commands.push({ command, index: step.index + runStart + lineMatch.index, stepName: step.name });
+      }
+    }
+  }
+  return commands;
+}
+
+function commandRunExists(commands, expected) {
+  return commandRunIndex(commands, expected) !== -1;
+}
+
+function commandRunIndex(commands, expected) {
+  const found = commands.find((entry) => commandMatches(entry.command, expected));
+  return found === undefined ? -1 : found.index;
+}
+
+function lastCommandRunIndex(commands, expectedPattern) {
+  const found = commands.filter((entry) => expectedPattern.test(entry.command)).at(-1);
+  return found === undefined ? -1 : found.index;
+}
+
+function commandMatches(actual, expected) {
+  return actual === expected || actual.startsWith(`${expected} `);
+}
+
+function firstUploadStepIndex(steps) {
+  const uploadStep = steps.find((step) => /^\s*uses:\s*actions\/upload-artifact@v4\s*$/m.test(step.block));
+  return uploadStep === undefined ? -1 : uploadStep.index;
 }
 
 function matrixLabels(text) {

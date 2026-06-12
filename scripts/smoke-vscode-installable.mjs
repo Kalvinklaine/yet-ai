@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { collectLocalAssetReferences, isSafeLocalAssetReference } from "./gui-asset-freshness.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const vscodeRoot = path.join(root, "apps", "plugins", "vscode");
@@ -180,7 +181,7 @@ function checkGuiAssetReferences(entries, html, relativeVsix) {
     failures.push(`${relativeVsix} packaged GUI index.html must reference at least one local JS or CSS asset.`);
   }
   for (const reference of references) {
-    if (!isSafeArchiveEntryPath(reference)) {
+    if (!isSafeLocalAssetReference(reference)) {
       failures.push(`${relativeVsix} packaged GUI index.html references unsafe local asset ${JSON.stringify(reference)}.`);
       continue;
     }
@@ -189,39 +190,6 @@ function checkGuiAssetReferences(entries, html, relativeVsix) {
       failures.push(`${relativeVsix} must contain packaged GUI asset ${expected} referenced by extension/media/gui/index.html.`);
     }
   }
-}
-
-function collectLocalAssetReferences(html) {
-  const references = new Set();
-  const assetPattern = /\b(?:src|href)=("|')([^"']+)\1/g;
-  for (const match of html.matchAll(assetPattern)) {
-    const value = match[2];
-    const localPath = toLocalAssetPath(value);
-    if (localPath !== undefined) {
-      references.add(localPath);
-    }
-  }
-  return references;
-}
-
-function toLocalAssetPath(value) {
-  if (
-    value.length === 0 ||
-    value.startsWith("#") ||
-    value.startsWith("data:") ||
-    value.startsWith("http://") ||
-    value.startsWith("https://") ||
-    value.startsWith("vscode-resource:") ||
-    value.startsWith("vscode-webview-resource:")
-  ) {
-    return undefined;
-  }
-  const withoutQuery = value.split(/[?#]/, 1)[0];
-  const normalized = withoutQuery.replace(/^\.\//, "").replace(/^\//, "");
-  if (normalized.length === 0 || normalized.includes("..")) {
-    return undefined;
-  }
-  return normalized;
 }
 
 async function extractJson(zipPath, entry, message) {

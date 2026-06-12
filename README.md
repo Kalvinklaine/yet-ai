@@ -165,7 +165,7 @@ Run repository validation from the root before publishing or handing off changes
 npm run check
 ```
 
-`npm run check` validates product identity, public repository hygiene, the documentation index, and contract schemas/examples, including required positive and negative contract fixture coverage.
+`npm run check` validates product identity, public repository hygiene, the documentation index, contract schemas/examples, and packaged GUI asset freshness fixtures, including required positive and negative coverage. Run `npm run check:gui-asset-freshness` directly when changing the shared packaged-GUI freshness parser or VS Code/JetBrains GUI asset copy/archive validation.
 
 Contract schemas and examples can be validated separately with:
 
@@ -243,16 +243,18 @@ npm run smoke:ide-preview
 `npm run smoke:ide-preview` runs these exact local commands in order:
 
 ```sh
-npm run prepare:vscode-preview
-npm run smoke:vscode-installable
-npm run smoke:vscode-preview
-npm run smoke:vscode-wrapper-browser
-npm run smoke:vscode-first-message
 npm run prepare:jetbrains-preview
 npm run smoke:jetbrains-installable
 npm run smoke:jetbrains-preview
 npm run smoke:jetbrains-gui-browser
+npm run smoke:jetbrains-wrapper-browser
 npm run smoke:jetbrains-first-message
+npm run prepare:vscode-preview
+npm run smoke:plugin-layout
+npm run smoke:vscode-first-message
+npm run smoke:vscode-installable
+npm run smoke:vscode-preview
+npm run smoke:vscode-wrapper-browser
 ```
 
 Run the individual packaged-GUI first-message smokes when you are changing only one IDE bridge path:
@@ -288,7 +290,7 @@ dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip.sha256
 
 All generated VSIX/ZIP files, `.sha256` files, packaged GUI assets, copied engine binaries, Gradle outputs, `apps/gui/dist`, and root `dist/` preview artifacts are ignored/untracked local build outputs and must not be committed.
 
-`npm run smoke:ide-preview` runs `npm run prepare:vscode-preview`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, `npm run smoke:vscode-wrapper-browser`, `npm run smoke:vscode-first-message`, `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, `npm run smoke:jetbrains-preview`, `npm run smoke:jetbrains-gui-browser`, and `npm run smoke:jetbrains-first-message` in order with fail-fast step labels. The `npm run smoke:vscode-wrapper-browser` step exercises packaged VS Code GUI assets in a VS Code-like browser harness with mock `acquireVsCodeApi`, proving assistant-authored strict JSON read-only IDE action proposal rendering, no auto-execution before the user clicks, explicit user confirmation, fresh GUI-owned `gui.ideActionRequest` ids, correlated host progress/result rendering, retained manual `getContextSnapshot` coverage, and secret redaction without launching real VS Code or using provider credentials. The underlying prepare commands build/prepare the local engine and `apps/gui`, then publish ignored root dev-preview artifacts under `dist/plugins/vscode/` and `dist/plugins/jetbrains/` with matching `.sha256` checksums. The generated VSIX, ZIP, checksums, GUI assets, extension/plugin output, engine binaries, and root `dist/` artifacts are ignored and must not be committed. This is a local dev-preview/install-from-file and first-message preview flow only: it is not marketplace publication, signing, notarization, a production installer, or a production release, and it requires no provider credentials, hosted Yet AI backend, real OpenAI/ChatGPT calls, or cloud workspace. The automated first-message/controlled-action smokes are loopback/mock-only and differ from manual dogfood; the T-547 manual VS Code dogfood was not run. Real OpenAI API-key fallback testing is manual-only and must produce sanitized evidence.
+`npm run smoke:ide-preview` runs `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, `npm run smoke:jetbrains-preview`, `npm run smoke:jetbrains-gui-browser`, `npm run smoke:jetbrains-wrapper-browser`, `npm run smoke:jetbrains-first-message`, `npm run prepare:vscode-preview`, `npm run smoke:plugin-layout`, `npm run smoke:vscode-first-message`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, and `npm run smoke:vscode-wrapper-browser` in order with fail-fast step labels. The IDE-specific wrapper-browser steps exercise packaged GUI assets in browser harnesses, including the VS Code-like `acquireVsCodeApi` path, proving assistant-authored strict JSON read-only IDE action proposal rendering, no auto-execution before the user clicks, explicit user confirmation, fresh GUI-owned `gui.ideActionRequest` ids, correlated host progress/result rendering, retained manual `getContextSnapshot` coverage, and secret redaction without launching real IDEs or using provider credentials. The underlying prepare commands build/prepare the local engine and `apps/gui`, then publish ignored root dev-preview artifacts under `dist/plugins/vscode/` and `dist/plugins/jetbrains/` with matching `.sha256` checksums. The generated VSIX, ZIP, checksums, GUI assets, extension/plugin output, engine binaries, and root `dist/` artifacts are ignored and must not be committed. This is a local dev-preview/install-from-file and first-message preview flow only: it is not marketplace publication, signing, notarization, a production installer, or a production release, and it requires no provider credentials, hosted Yet AI backend, real OpenAI/ChatGPT calls, or cloud workspace. The automated first-message/controlled-action smokes are loopback/mock-only and differ from manual dogfood; the T-547 manual VS Code dogfood was not run. Real OpenAI API-key fallback testing is manual-only and must produce sanitized evidence.
 
 ### GitHub Actions IDE artifact download and install
 

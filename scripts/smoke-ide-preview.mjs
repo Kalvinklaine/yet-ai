@@ -7,16 +7,18 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const steps = [
-  ["Prepare VS Code dev-preview", "npm", ["run", "prepare:vscode-preview"]],
-  ["Smoke VS Code installable artifact", "npm", ["run", "smoke:vscode-installable"]],
-  ["Smoke VS Code generated preview", "npm", ["run", "smoke:vscode-preview"]],
-  ["Smoke VS Code controlled action wrapper browser", "npm", ["run", "smoke:vscode-wrapper-browser"]],
-  ["Smoke VS Code first-message preview", "npm", ["run", "smoke:vscode-first-message"]],
   ["Prepare JetBrains dev-preview", "npm", ["run", "prepare:jetbrains-preview"]],
   ["Smoke JetBrains installable artifact", "npm", ["run", "smoke:jetbrains-installable"]],
   ["Smoke JetBrains generated preview", "npm", ["run", "smoke:jetbrains-preview"]],
   ["Smoke JetBrains packaged GUI browser", "npm", ["run", "smoke:jetbrains-gui-browser"]],
+  ["Smoke JetBrains controlled action wrapper browser", "npm", ["run", "smoke:jetbrains-wrapper-browser"]],
   ["Smoke JetBrains first-message preview", "npm", ["run", "smoke:jetbrains-first-message"]],
+  ["Prepare VS Code dev-preview", "npm", ["run", "prepare:vscode-preview"]],
+  ["Smoke packaged plugin layout", "npm", ["run", "smoke:plugin-layout"]],
+  ["Smoke VS Code first-message preview", "npm", ["run", "smoke:vscode-first-message"]],
+  ["Smoke VS Code installable artifact", "npm", ["run", "smoke:vscode-installable"]],
+  ["Smoke VS Code generated preview", "npm", ["run", "smoke:vscode-preview"]],
+  ["Smoke VS Code controlled action wrapper browser", "npm", ["run", "smoke:vscode-wrapper-browser"]],
 ];
 
 validateReferencedPackageScripts();
@@ -26,7 +28,7 @@ for (const [label, command, args] of steps) {
 }
 
 console.log("\nCross-IDE preview smoke passed.");
-console.log("Verified VS Code and JetBrains local installable/generated artifacts, VS Code controlled action wrapper browser path, and first-message preview paths without launching real IDEs, using provider credentials, calling OpenAI/ChatGPT, or contacting hosted Yet AI services.");
+console.log("Verified VS Code and JetBrains local dev-preview preparation, packaged plugin layout, local installable/generated artifacts, IDE-specific browser wrapper paths, and first-message preview paths without launching real IDEs, using provider credentials, calling OpenAI/ChatGPT, contacting hosted Yet AI services, signing or publishing artifacts, uploading a marketplace package, or creating a production release.");
 
 function validateReferencedPackageScripts() {
   const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));

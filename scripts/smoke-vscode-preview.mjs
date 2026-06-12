@@ -2,6 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { collectLocalAssetReferences, isSafeLocalAssetReference } from "./gui-asset-freshness.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const vscodeRoot = path.join(root, "apps", "plugins", "vscode");
@@ -201,6 +202,10 @@ async function checkGuiAssetReferences(html, guiRootPath) {
     failures.push("Packaged GUI index.html must reference at least one local JS or CSS asset. Re-run `npm run prepare:vscode-preview` to rebuild and copy GUI assets.");
   }
   for (const reference of references) {
+    if (!isSafeLocalAssetReference(reference)) {
+      failures.push(`Packaged GUI index.html references unsafe local asset ${JSON.stringify(reference)}. Re-run \`npm run prepare:vscode-preview\` to rebuild and copy GUI assets.`);
+      continue;
+    }
     const assetPath = path.join(guiRootPath, reference);
     try {
       const assetStat = await stat(assetPath);
@@ -211,39 +216,6 @@ async function checkGuiAssetReferences(html, guiRootPath) {
       failures.push(`Packaged GUI references missing asset ${reference}. Re-run \`npm run prepare:vscode-preview\` to rebuild and copy GUI assets.`);
     }
   }
-}
-
-function collectLocalAssetReferences(html) {
-  const references = new Set();
-  const assetPattern = /\b(?:src|href)=("|')([^"']+)\1/g;
-  for (const match of html.matchAll(assetPattern)) {
-    const value = match[2];
-    const localPath = toLocalAssetPath(value);
-    if (localPath) {
-      references.add(localPath);
-    }
-  }
-  return references;
-}
-
-function toLocalAssetPath(value) {
-  if (
-    value.length === 0 ||
-    value.startsWith("#") ||
-    value.startsWith("data:") ||
-    value.startsWith("http://") ||
-    value.startsWith("https://") ||
-    value.startsWith("vscode-resource:") ||
-    value.startsWith("vscode-webview-resource:")
-  ) {
-    return undefined;
-  }
-  const withoutQuery = value.split(/[?#]/, 1)[0];
-  const normalized = withoutQuery.replace(/^\.\//, "").replace(/^\//, "");
-  if (normalized.length === 0 || normalized.includes("..")) {
-    return undefined;
-  }
-  return normalized;
 }
 
 async function checkFreshness(generatedPath, sourcePaths, staleMessage) {

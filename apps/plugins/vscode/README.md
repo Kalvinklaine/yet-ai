@@ -89,7 +89,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 npm run smoke:ide-preview
 ```
 
-It runs `npm run prepare:vscode-preview`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, `npm run smoke:vscode-wrapper-browser`, `npm run smoke:vscode-first-message`, `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, `npm run smoke:jetbrains-preview`, `npm run smoke:jetbrains-gui-browser`, and `npm run smoke:jetbrains-first-message` in order. It is local-only, uses ignored preview artifacts, includes the VS Code controlled action wrapper browser smoke, uses loopback first-message mocks, and does not launch real IDEs or call real providers.
+It runs `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, `npm run smoke:jetbrains-preview`, `npm run smoke:jetbrains-gui-browser`, `npm run smoke:jetbrains-wrapper-browser`, `npm run smoke:jetbrains-first-message`, `npm run prepare:vscode-preview`, `npm run smoke:plugin-layout`, `npm run smoke:vscode-first-message`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, and `npm run smoke:vscode-wrapper-browser` in order. It is local-only, uses ignored preview artifacts, includes IDE-specific controlled action wrapper browser smokes, uses loopback first-message mocks, and does not launch real IDEs or call real providers.
 
 Use the broader closure gate before declaring the change ready for manual IDE dogfood or when running the manual CI workflow:
 
