@@ -14,6 +14,7 @@ const packagedGuiIndex = path.join(packagedGuiRoot, "index.html");
 const evidenceRoot = path.join(root, "dist", "visual-smoke", "vscode-wrapper-browser");
 const bridgeVersion = "2026-05-15";
 const headed = process.argv.includes("--headed");
+const demoModeFirstMessage = process.argv.includes("--demo-mode-first-message");
 const runtimeToken = `vscode-wrapper-runtime-${randomUUID()}`;
 const providerKey = `sk-vscode-wrapper-${randomUUID()}`;
 const authorizationSentinel = `Authorization: Bearer ${runtimeToken}`;
@@ -46,9 +47,11 @@ const assistantIdeActionProposal = {
 };
 const mockChatMessages = [{ id: proposalAssistantMessageId, chatId: "chat-001", role: "assistant", content: JSON.stringify(assistantIdeActionProposal), createdAt: new Date(0).toISOString(), status: "complete" }];
 const mockChatSubscribers = new Set();
+const runtimeRequestLog = [];
 const failures = [];
 const consoleMessages = [];
 let observedRuntimeAuthorization = false;
+let demoModeEnabled = !demoModeFirstMessage;
 
 await requirePackagedGui();
 const { chromium } = await requireChromium();
@@ -230,11 +233,15 @@ try {
   await expectVisibleText(page, "Range: 4:2-4:8", "proposal IDE action result range");
   await assertProposalSecretsOnlyInVisibleUi(page, "matched retry proposal result render");
 
-  const firstMessageTextarea = page.getByPlaceholder("Ask about the current file, selection, or project...");
-  await firstMessageTextarea.fill("VS Code packaged wrapper visual first message.");
-  await clickSendButtonWithActionability(page, "VS Code first-message visual smoke");
-  await expectVisibleText(page, "VS Code packaged wrapper visual first message.", "VS Code first-message user bubble");
-  await expectVisibleText(page, "VS Code wrapper canned chat response.", "VS Code first-message assistant bubble");
+  if (demoModeFirstMessage) {
+    await runDemoModeFirstMessageScenario(page);
+  } else {
+    const firstMessageTextarea = page.getByPlaceholder("Ask about the current file, selection, or project...");
+    await firstMessageTextarea.fill("VS Code packaged wrapper visual first message.");
+    await clickSendButtonWithActionability(page, "VS Code first-message visual smoke");
+    await expectVisibleText(page, "VS Code packaged wrapper visual first message.", "VS Code first-message user bubble");
+    await expectVisibleText(page, "VS Code wrapper canned chat response.", "VS Code first-message assistant bubble");
+  }
 
   await dispatchHostMessage(page, {
     version: bridgeVersion,
@@ -392,6 +399,7 @@ try {
   await expectNoVisibleText(page, `Secret-like result must not render ${providerKey}`, "secret-like reveal host result");
   await expectVisibleText(page, "Reveal range: succeeded", "valid reveal result remains visible after rejected secret-like result");
   await assertBrowserStorageDoesNotContain(page, [runtimeToken, providerKey, authorizationSentinel, activeContextPath, activeContextSelection, liveContextPath, liveContextSelection], "final storage no-secret/no-context persistence check");
+  assertNoForbiddenRuntimeRequests();
 
   if (!observedRuntimeAuthorization) failures.push("Mock runtime did not observe Authorization from host.ready session token.");
   const layoutMetrics = await collectVisualLayoutMetrics(page);
@@ -402,7 +410,7 @@ try {
 
   if (failures.length > 0) reportFailures();
   console.log("VS Code wrapper browser smoke passed.");
-  console.log("Verified packaged VS Code GUI assets in a VS Code-like browser bridge, gui.ready, trusted loopback host.ready, readiness/provider/Demo Mode setup surfaces, first-message Send click through mock runtime, active context preview and safe include policy, compact assistant read-only IDE action proposal rendering without auto-post, explicit proposal confirmation with GUI-owned strict request, duplicate pending suppression, GUI-only pending clear, stale progress/result ignore, retry with a fresh request id, matching getContextSnapshot/openWorkspaceFile/revealWorkspaceRange progress and result rendering, loopback-only networking, invalid and secret-like host-result rejection/non-rendering, and browser storage no-secret/no-context persistence checks.");
+  console.log(`Verified packaged VS Code GUI assets in a VS Code-like browser bridge, gui.ready, trusted loopback host.ready, readiness/provider/Demo Mode setup surfaces, ${demoModeFirstMessage ? "focused no-key Demo Mode enablement and first-message Send click through mock runtime" : "first-message Send click through mock runtime"}, active context preview and safe include policy, compact assistant read-only IDE action proposal rendering without auto-post, explicit proposal confirmation with GUI-owned strict request, duplicate pending suppression, GUI-only pending clear, stale progress/result ignore, retry with a fresh request id, matching getContextSnapshot/openWorkspaceFile/revealWorkspaceRange progress and result rendering, loopback-only networking, invalid and secret-like host-result rejection/non-rendering, and browser storage no-secret/no-context persistence checks.`);
   console.log(`Saved sanitized layout screenshot/DOM/metrics under ${path.relative(root, evidenceRoot)}/ (${path.basename(evidence.screenshotPath)}, ${path.basename(evidence.domPath)}, ${path.basename(evidence.metricsPath)}).`);
   console.log("No real VS Code launch, provider credentials, OpenAI/ChatGPT calls, hosted Yet AI service, or non-loopback provider call was used.");
 } finally {
@@ -453,6 +461,36 @@ async function getGuiMessageCount(page, type) {
   return await page.evaluate((messageType) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).length, type);
 }
 
+async function runDemoModeFirstMessageScenario(page) {
+  await expectVisibleText(page, "Try Demo Mode", "initial no-key Demo Mode action");
+  const initialSendButton = page.getByRole("button", { name: "Send", exact: true }).last();
+  if (!(await initialSendButton.isDisabled().catch(() => false))) failures.push("Demo Mode focused smoke: Send was enabled before enabling Demo Mode in no-key initial state.");
+
+  const initialDemoModePostCount = countRuntimeRequests("POST", "/v1/demo-mode");
+  const initialChatPostCount = countChatCommandPosts();
+  await page.getByRole("button", { name: "Try Demo Mode", exact: true }).first().click();
+  await expectVisibleText(page, "Demo Mode is ready", "Demo Mode ready first-message copy");
+  await expectVisibleText(page, "Demo Mode ready — local canned responses, no provider calls. Ready to send.", "Demo Mode ready lifecycle copy");
+
+  const demoModePostCount = countRuntimeRequests("POST", "/v1/demo-mode") - initialDemoModePostCount;
+  if (demoModePostCount !== 1) failures.push(`Demo Mode focused smoke expected exactly one POST /v1/demo-mode; observed ${demoModePostCount}.`);
+
+  const demoSendButton = page.getByRole("button", { name: "Send", exact: true }).last();
+  if (await demoSendButton.isDisabled()) failures.push("Demo Mode focused smoke: Send stayed disabled after enabling Demo Mode.");
+
+  const prompt = "VS Code packaged wrapper Demo Mode first message.";
+  const firstMessageTextarea = page.getByPlaceholder("Ask about the current file, selection, or project...");
+  await firstMessageTextarea.fill(prompt);
+  await clickSendButtonWithActionability(page, "VS Code Demo Mode first-message visual smoke");
+  await expectVisibleText(page, prompt, "VS Code Demo Mode first-message user bubble");
+  await expectVisibleText(page, "VS Code wrapper canned chat response.", "VS Code Demo Mode first-message assistant bubble");
+
+  const chatPostCount = countChatCommandPosts() - initialChatPostCount;
+  if (chatPostCount !== 1) failures.push(`Demo Mode focused smoke expected exactly one chat command POST; observed ${chatPostCount}.`);
+  await expectTextOccurrenceCount(page, prompt, 1, "Demo Mode first-message user prompt");
+  await expectTextOccurrenceCount(page, "VS Code wrapper canned chat response.", 1, "Demo Mode canned assistant response");
+}
+
 async function clickSendButtonWithActionability(page, label) {
   const sendButton = page.getByRole("button", { name: "Send", exact: true }).last();
   await sendButton.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
@@ -488,6 +526,7 @@ async function startMockRuntimeServer() {
       response.writeHead(204, corsHeaders()).end();
       return;
     }
+    runtimeRequestLog.push({ method: request.method ?? "GET", pathname: requestUrl.pathname });
     if (request.headers.authorization === `Bearer ${runtimeToken}`) observedRuntimeAuthorization = true;
     if (request.headers.authorization !== `Bearer ${runtimeToken}`) {
       json(response, 401, { error: "Unauthorized local runtime request." });
@@ -501,16 +540,22 @@ async function startMockRuntimeServer() {
       json(response, 200, { productId: "yet-ai", protocolVersion: bridgeVersion, runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: ["chat"], features: {}, providers: [], ide: { bridge: true, lsp: false, host: "vscode-wrapper-browser-smoke" } });
       return;
     }
-    if ((request.method === "GET" || request.method === "POST") && requestUrl.pathname === "/v1/demo-mode") {
-      json(response, 200, demoModeEnabledResponse());
+    if (request.method === "GET" && requestUrl.pathname === "/v1/demo-mode") {
+      json(response, 200, demoModeResponse());
+      return;
+    }
+    if (request.method === "POST" && requestUrl.pathname === "/v1/demo-mode") {
+      const body = JSON.parse(await readBody(request));
+      demoModeEnabled = body.enabled === true;
+      json(response, 200, demoModeResponse());
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/models") {
-      json(response, 200, { models: [demoModel()] });
+      json(response, 200, { models: demoModeEnabled ? [demoModel()] : [] });
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/providers") {
-      json(response, 200, { providers: [demoProvider()], cloudRequired: false, providerAccess: "direct" });
+      json(response, 200, { providers: demoModeEnabled ? [demoProvider()] : [], cloudRequired: false, providerAccess: "direct" });
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/provider-auth/openai/status") {
@@ -645,6 +690,11 @@ async function expectNoVisibleText(page, text, description) {
   if (visible) failures.push(`${description} rendered unexpectedly.`);
 }
 
+async function expectTextOccurrenceCount(page, text, expectedCount, description) {
+  const count = await page.locator("body").evaluate(({ innerText }, needle) => innerText.split(needle).length - 1, text);
+  if (count !== expectedCount) failures.push(`${description} expected ${expectedCount} rendered occurrence(s); found ${count}.`);
+}
+
 async function assertProposalSecretsOnlyInVisibleUi(page, description) {
   const nonUiState = JSON.stringify(await page.evaluate(() => ({
     localStorage: Object.fromEntries(Array.from({ length: localStorage.length }, (_, index) => [localStorage.key(index) ?? "", localStorage.getItem(localStorage.key(index) ?? "")])),
@@ -713,7 +763,7 @@ async function collectVisualLayoutMetrics(page) {
       runtimeConnectedVisible: textVisible("Runtime connected"),
       providerSetupVisible: textVisible("Provider setup"),
       demoModeVisible: textVisible("Demo Mode"),
-      firstMessageVisible: textVisible("VS Code packaged wrapper visual first message."),
+      firstMessageVisible: textVisible("VS Code packaged wrapper visual first message.") || textVisible("VS Code packaged wrapper Demo Mode first message."),
       cannedAssistantVisible: textVisible("VS Code wrapper canned chat response."),
       sendVisible: send instanceof HTMLElement && visible(send),
       sendEnabled: send instanceof HTMLButtonElement && !send.disabled,
@@ -763,8 +813,10 @@ function json(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
-function demoModeEnabledResponse() {
-  return { enabled: true, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "VS Code wrapper smoke uses local canned responses only." };
+function demoModeResponse() {
+  return demoModeEnabled
+    ? { enabled: true, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "VS Code wrapper smoke uses local canned responses only." }
+    : { enabled: false, cloudRequired: false, providerAccess: "direct", message: "Demo Mode is disabled for initial no-key wrapper smoke state." };
 }
 
 function demoModel() {
@@ -802,6 +854,19 @@ function contentType(filePath) {
 
 function assertNoSecretLeak(text, source) {
   if (containsSecret(text)) throw new Error(`Secret marker leaked through ${source}.`);
+}
+
+function countRuntimeRequests(method, pathname) {
+  return runtimeRequestLog.filter((entry) => entry.method === method && entry.pathname === pathname).length;
+}
+
+function countChatCommandPosts() {
+  return runtimeRequestLog.filter((entry) => entry.method === "POST" && /^\/v1\/chats\/[^/]+\/commands$/.test(entry.pathname)).length;
+}
+
+function assertNoForbiddenRuntimeRequests() {
+  const forbidden = runtimeRequestLog.filter((entry) => /^\/v1\/provider-auth\//.test(entry.pathname) && entry.method !== "GET");
+  if (forbidden.length > 0) failures.push(`Unexpected provider/auth mutation request(s): ${forbidden.map((entry) => `${entry.method} ${entry.pathname}`).join(", ")}.`);
 }
 
 function deepEqual(left, right) {

@@ -2085,8 +2085,9 @@ describe("host.ready runtime bootstrap", () => {
     await flushAsync();
     await flushAsync();
 
-    const setCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/demo-mode") && init?.method === "POST");
-    expect(setCall?.[1]?.body).toBe(JSON.stringify({ enabled: true }));
+    const demoModePostCalls = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/demo-mode") && init?.method === "POST");
+    expect(demoModePostCalls).toHaveLength(1);
+    expect(demoModePostCalls[0]?.[1]?.body).toBe(JSON.stringify({ enabled: true }));
     expect(container?.textContent).toContain("Demo Mode is active in the local runtime");
     expect(container?.textContent).toContain("no provider calls");
     expect(container?.textContent).toContain("not model quality");
@@ -2097,6 +2098,88 @@ describe("host.ready runtime bootstrap", () => {
     expect(findButton("Send").disabled).toBe(false);
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("yet-demo-chat");
+  });
+
+  it("installed host Demo Mode enables a no-key first message without browser storage persistence", async () => {
+    const postIntellijMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const runtimeToken = "installedHostDemoRuntimeToken";
+    const prompt = "Installed host Demo Mode first prompt";
+    const cannedResponse = "Installed host Demo Mode canned response.";
+    window.postIntellijMessage = postIntellijMessage;
+    mockRuntimeResponses();
+    renderApp();
+
+    await flushAsync();
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: runtimeToken });
+    await flushAsync();
+
+    expect(postIntellijMessage.mock.calls.some(([message]) => message?.type === "gui.ready" && message?.version === bridgeVersion)).toBe(true);
+    expect(container?.textContent).toContain("bridge jetbrains");
+    expect(container?.textContent).toContain("State: Provider required");
+    expect(findButton("Try Demo Mode")).toBeDefined();
+    expect(findButton("Send").disabled).toBe(true);
+    expect(browserStorageDump()).not.toContain(runtimeToken);
+
+    fetchMock.mockClear();
+    mockRuntimeResponses({
+      demoMode: demoModeResponse(true),
+      providers: [demoProvider()],
+      models: [readyModel({ id: "yet-demo-chat", displayName: "Yet AI Demo Chat", providerId: "yet-demo" })],
+      sseEvents: [
+        { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
+        { seq: 1, type: "stream_started", chatId: "chat-001", payload: {} },
+        { seq: 2, type: "message_added", chatId: "chat-001", payload: { message: chatMessage("chat-001", "assistant-demo-installed-1", "assistant", cannedResponse) } },
+        { seq: 3, type: "stream_finished", chatId: "chat-001", payload: { finishReason: "stop" } },
+      ],
+    });
+    await act(async () => {
+      findButton("Try Demo Mode").click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+    await flushAsync();
+
+    const demoModePostCalls = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/demo-mode") && init?.method === "POST");
+    expect(demoModePostCalls).toHaveLength(1);
+    expect(demoModePostCalls[0]?.[1]?.body).toBe(JSON.stringify({ enabled: true }));
+    expect(container?.textContent).toContain("Demo Mode is active in the local runtime");
+    expect(container?.textContent).toContain("Demo Mode is ready for a no-key first message.");
+    expect(container?.textContent).toContain("State: Yet AI Demo Chat (yet-demo)");
+    expect(chatLifecycleText()).toBe("Demo Mode ready — local canned responses, no provider calls. Ready to send.");
+    expect(findButton("Send").disabled).toBe(false);
+
+    await act(async () => {
+      setTextareaValue(chatInput(), prompt);
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    const commandCalls = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST");
+    expect(commandCalls).toHaveLength(1);
+    expect(new Headers(commandCalls[0]?.[1]?.headers).get("Authorization")).toBe(`Bearer ${runtimeToken}`);
+    const commandBody = JSON.parse(String(commandCalls[0]?.[1]?.body)) as { type?: string; payload?: { content?: unknown } };
+    expect(commandBody.type).toBe("user_message");
+    expect(commandBody.payload?.content).toBe(prompt);
+    const providerMutations = fetchMock.mock.calls.filter(([url, init]) => {
+      const pathname = new URL(String(url)).pathname;
+      return init?.method !== undefined && init.method !== "GET" && (/^\/v1\/providers(?:\/|$)/.test(pathname) || /^\/v1\/provider-auth\//.test(pathname));
+    });
+    expect(providerMutations).toHaveLength(0);
+
+    const bubbles = Array.from(container?.querySelectorAll(".chat-bubble") ?? []).map((bubble) => bubble.textContent ?? "");
+    expect(bubbles).toEqual(expect.arrayContaining([expect.stringContaining(prompt), expect.stringContaining(cannedResponse)]));
+    expect(bubbles.filter((text) => text.includes(cannedResponse))).toHaveLength(1);
+    expect(chatLifecycleText()).toBe("Demo Mode ready — local canned responses, no provider calls. Ready to send.");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(runtimeToken);
+    expect(browserStorageDump()).not.toContain("yet-demo");
+    expect(browserStorageDump()).not.toContain(prompt);
+    expect(browserStorageDump()).not.toContain(cannedResponse);
   });
 
   it("keeps the lifecycle ready label real-provider-specific when Demo Mode is enabled but a real provider/model is active", async () => {
@@ -2328,15 +2411,16 @@ describe("host.ready runtime bootstrap", () => {
     renderApp();
 
     await flushAsync();
-    expect(postIntellijMessage).toHaveBeenCalledTimes(1);
+    expect(postIntellijMessage.mock.calls.length).toBeGreaterThan(0);
     expect(container?.textContent).toContain("bridge jetbrains");
+    const initialReadyMessages = postIntellijMessage.mock.calls.filter(([message]) => message?.type === "gui.ready").length;
 
     await act(async () => {
       setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
     });
     await flushAsync();
 
-    expect(postIntellijMessage).toHaveBeenCalledTimes(1);
+    expect(postIntellijMessage.mock.calls.filter(([message]) => message?.type === "gui.ready")).toHaveLength(initialReadyMessages);
     const bridgeHostEntries = Array.from(container?.querySelectorAll(".timeline-entry") ?? []).filter((entry) => entry.textContent === "Bridge host jetbrains");
     expect(bridgeHostEntries).toHaveLength(1);
   });

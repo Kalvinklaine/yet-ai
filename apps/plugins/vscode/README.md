@@ -78,6 +78,7 @@ After preparing the preview, run the local smokes without launching VS Code or u
 npm run smoke:vscode-installable
 npm run smoke:vscode-preview
 npm run smoke:vscode-wrapper-browser
+npm run smoke:installed-plugin-demo-mode
 ```
 
 `npm run smoke:vscode-wrapper-browser` is the focused VS Code controlled IDE action wrapper smoke for this sprint. It verifies the packaged GUI bridge path for the current read-only/navigation/context actions and does not launch real VS Code, call providers, require a hosted backend, or mutate a workspace. JetBrains parity for the same three read-only actions is covered separately by `npm run smoke:jetbrains-wrapper-browser`. These are automated harness coverage, not manual IDE dogfood.
@@ -108,7 +109,7 @@ npm run smoke:vscode-first-message
 
 The first-message smoke uses a loopback mock runtime/provider with fake credentials and validates packaged GUI bootstrap, provider-required gating, active-context delivery, streamed assistant rendering, and no token/key leakage. It does not launch VS Code, use real provider credentials, call OpenAI/ChatGPT, or contact hosted Yet AI services.
 
-Installed-plugin dogfood can also start with GUI Demo Mode before configuring a real BYOK provider. Demo Mode is owned by the local runtime (`/v1/demo-mode` plus normal model/provider readiness), not the VS Code extension or browser storage. It returns canned local responses through the same command/SSE/history path, requires no API key, makes no OpenAI/ChatGPT or other provider call, and is not evidence of model quality. Disable Demo Mode and configure a local BYOK provider for real answers.
+Installed-plugin dogfood can also start with GUI Demo Mode before configuring a real BYOK provider. Demo Mode is owned by the local runtime (`/v1/demo-mode` plus normal model/provider readiness), not the VS Code extension or browser storage. It returns canned local responses through the same command/SSE/history path for chat UX only, requires no API key, makes no OpenAI/ChatGPT or other provider call, contacts no hosted Yet AI services, and is not evidence of model quality. `npm run smoke:installed-plugin-demo-mode` covers the VS Code and JetBrains installed-plugin wrapper first-message Demo Mode path locally with `--demo-mode-first-message`; it does not launch real IDEs, perform real JCEF automation, sign, publish, or create a release. Disable Demo Mode and configure a local BYOK provider for real answers.
 
 
 Run the confirmed edit-proposal smoke directly when changing the VS Code apply-edit bridge or GUI edit proposal preview:
@@ -152,7 +153,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 npm run smoke:ide-release-candidate
 ```
 
-It validates dev-preview artifact preparation, staging, manifest combination, workflow/report safety checks, and expected public artifact names only. It does not launch real IDEs, call providers, contact hosted services, sign, publish, or claim a production release.
+It validates dev-preview artifact preparation, installed-plugin visual coverage, installed-plugin Demo Mode first-message coverage, first-message coverage, staging, manifest combination, workflow/report safety checks, and expected public artifact names only. Demo Mode is runtime-owned no-key canned local chat UX coverage, not model-quality evidence or provider traffic. The gate does not launch real IDEs, run real JCEF automation, call providers, contact hosted services, sign, publish, or claim a production release.
 
 The combined `yet-ai-plugin-manifest-<sha>` is uploaded with a `platforms[]` array aggregating per-platform commit, checksum, platform, runtime, and artifact metadata. VS Code uses the unzip-first artifact; JetBrains uses the platform-specific direct-install artifact because native `yet-lsp` is bundled.
 

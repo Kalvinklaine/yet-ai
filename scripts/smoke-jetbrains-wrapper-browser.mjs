@@ -17,6 +17,7 @@ const requiredVisibleText = ["Chat readiness", "Conversations", "Coding Actions"
 const bridgeVersion = "2026-05-15";
 const pluginLikeViewport = { width: 800, height: 800 };
 const headed = process.argv.includes("--headed");
+const demoModeFirstMessage = process.argv.includes("--demo-mode-first-message");
 const failures = [];
 const runtimeToken = `jb.wrapper.runtime.${randomUUID().replaceAll("-", "")}`;
 const oauthSentinels = {
@@ -61,10 +62,12 @@ const liveJetbrainsContextSnapshot = {
   },
 };
 const consoleMessages = [];
+const runtimeRequestLog = [];
 let observedRuntimeAuthorization = false;
 let chatCommandRequest;
 let chatCommandRequestCount = 0;
 let chatSubscriptionCount = 0;
+let demoModeEnabled = false;
 const chatSseSubscribers = new Map();
 const pendingAssistantResponsesByChat = new Map();
 const maxRuntimeRequestBodyBytes = 1024 * 1024;
@@ -411,6 +414,12 @@ try {
   await frameLocator.getByText("Runtime connected", { exact: false }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("Runtime refresh did not reach connected/provider-required state after trusted host.ready."));
   await frameLocator.getByText("Provider setup", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("Provider setup panel was not mounted in the JetBrains first-use GUI path."));
 
+  if (demoModeFirstMessage) {
+    await runDemoModeFirstMessageScenario(page, frameLocator);
+    console.log("JetBrains wrapper Demo Mode first-message smoke passed.");
+    console.log("Checked packaged JetBrains wrapper bridge mode, no-key provider-required state, runtime-owned Demo Mode enablement, first-message post/SSE render exactly once, token secrecy, and loopback-only browser requests.");
+  } else {
+
   const compactSetup = frameLocator.locator("[data-testid='compact-host-setup']");
   const compactRefreshButton = compactSetup.getByRole("button", { name: /Refresh runtime|Checking runtime…/ }).first();
   let openedCompactSetupForRefresh = false;
@@ -625,6 +634,7 @@ try {
   console.log("Checked JetBrains-like wrapper iframe rendering, exact loopback target origin, real gui.ready to host.ready/contextSnapshot wrapper bridge delivery, attached-context preview/default include/disabled-toggle behavior, Refresh runtime click feedback, bridge collector, login-shaped first-message chat through mock runtime/SSE, JavaScript execution, and local JS/CSS asset responses.");
   console.log(`Saved sanitized layout screenshot/metrics/DOM under ${path.relative(root, evidenceRoot)}/ (${path.basename(evidence.screenshotPath)}, ${path.basename(evidence.metricsPath)}, ${path.basename(evidence.domPath)}).`);
   console.log("No engine, provider credentials, OpenAI/ChatGPT, hosted Yet AI services, JetBrains IDE, or JCEF automation were used.");
+  }
 } finally {
   await browser?.close().catch(() => undefined);
   await wrapperServer.close();
@@ -655,9 +665,101 @@ async function assertAssistantAnswerCount(frameLocator, text, expected, descript
 
 async function clickSendButtonWithActionability(frameLocator, label) {
   const send = frameLocator.getByRole("button", { name: "Send", exact: true });
-  await centerInNearestScrollContainer(send);
-  await assertElementReceivesPointerAtCenter(send, label);
-  await send.click();
+  await clickControlWithActionability(send, label);
+}
+
+async function clickControlWithActionability(locator, label, { assertHitTest = false } = {}) {
+  await locator.waitFor({ state: "visible", timeout: 5000 });
+  await centerInNearestScrollContainer(locator);
+  if (assertHitTest) {
+    await assertElementReceivesPointerAtCenter(locator, label);
+  }
+  await locator.click({ trial: true });
+  await locator.click();
+}
+
+async function runDemoModeFirstMessageScenario(page, frameLocator) {
+  const body = frameLocator.locator("body");
+  await frameLocator.getByText("bridge jetbrains", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 })
+    .catch(() => failures.push("Demo Mode first-message smoke did not observe active JetBrains bridge mode."));
+  await frameLocator.getByText("Provider required for first message", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 })
+    .catch(() => failures.push("Demo Mode first-message smoke did not show provider-required/no-key first-message state."));
+  await frameLocator.getByText("Provider or Demo Mode needed", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 })
+    .catch(() => failures.push("Demo Mode first-message smoke did not show no-key provider-or-demo readiness."));
+  const compactSetup = frameLocator.locator("[data-testid='compact-host-setup']");
+  if (await compactSetup.isVisible().catch(() => false)) {
+    await compactSetup.locator("summary").click().catch(() => undefined);
+  }
+  const tryDemoModeButton = frameLocator.getByRole("button", { name: "Try Demo Mode", exact: true }).first();
+  await tryDemoModeButton.waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Demo Mode first-message smoke did not show Try Demo Mode."));
+  if (failures.length > 0) {
+    reportFailures();
+  }
+  if (chatCommandRequestCount !== 0) {
+    failures.push(`Mock runtime received ${chatCommandRequestCount} chat command requests before Demo Mode first send.`);
+  }
+
+  const initialDemoModePostCount = countRuntimeRequests("POST", "/v1/demo-mode");
+  const initialChatCommandPostCount = countChatCommandPosts();
+  await clickControlWithActionability(tryDemoModeButton, "Try Demo Mode", { assertHitTest: true });
+  await frameLocator.getByText("Demo Mode is active in the local runtime", { exact: false }).first().waitFor({ state: "attached", timeout: 5000 })
+    .catch(() => failures.push("GUI did not render Demo Mode active no-provider-call copy after enabling."));
+  await frameLocator.getByText("no provider calls", { exact: false }).first().waitFor({ state: "attached", timeout: 5000 })
+    .catch(() => failures.push("GUI did not render no provider calls Demo Mode copy."));
+  await frameLocator.getByText("Demo Mode ready — local canned responses, no provider calls. Ready to send.", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("GUI did not show Demo Mode ready first-message lifecycle."));
+
+  const send = frameLocator.getByRole("button", { name: "Send", exact: true });
+  if (await send.isDisabled().catch(() => true)) {
+    failures.push("Send was not enabled after runtime-owned Demo Mode enablement.");
+  }
+  if (chatCommandRequestCount !== 0) {
+    failures.push(`Mock runtime received ${chatCommandRequestCount} chat command requests before Demo Mode Send click.`);
+  }
+  const demoModePostsAfterEnable = runtimeRequestLog.filter((entry) => entry.method === "POST" && entry.pathname === "/v1/demo-mode").slice(initialDemoModePostCount);
+  if (demoModePostsAfterEnable.length !== 1) {
+    failures.push(`Demo Mode first-message smoke expected exactly one POST /v1/demo-mode after clicking Try Demo Mode; observed ${demoModePostsAfterEnable.length}: ${formatRuntimeRequestLog(demoModePostsAfterEnable)}.`);
+  } else if (!deepEqual(demoModePostsAfterEnable[0].body, { enabled: true })) {
+    failures.push(`Demo Mode first-message smoke POST /v1/demo-mode body was not exactly {"enabled":true}: ${JSON.stringify(demoModePostsAfterEnable[0].body)}.`);
+  }
+
+  await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill("Try Demo Mode from JetBrains wrapper.");
+  await clickSendButtonWithActionability(frameLocator, "Demo Mode first-message send");
+  await frameLocator.getByText("JetBrains Demo Mode smoke", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("GUI did not render canned Demo Mode assistant response from mock runtime."));
+  await assertAssistantAnswerCount(frameLocator, "JetBrains Demo Mode smoke", 1, "Demo Mode canned assistant response");
+  if (chatCommandRequestCount !== 1) {
+    failures.push(`Mock runtime received ${chatCommandRequestCount} Demo Mode chat command requests instead of exactly one.`);
+  }
+  if (chatCommandRequest?.payload?.content !== "Try Demo Mode from JetBrains wrapper.") {
+    failures.push("Mock runtime did not receive the expected Demo Mode first-message content.");
+  }
+  const chatCommandPosts = runtimeRequestLog.filter((entry) => entry.method === "POST" && /^\/v1\/chats\/[^/]+\/commands$/.test(entry.pathname)).slice(initialChatCommandPostCount);
+  if (chatCommandPosts.length !== 1) {
+    failures.push(`Demo Mode first-message smoke expected exactly one chat command POST; observed ${chatCommandPosts.length}: ${formatRuntimeRequestLog(chatCommandPosts)}.`);
+  }
+  assertNoForbiddenRuntimeMutationRequests();
+  if (!observedRuntimeAuthorization) {
+    failures.push("Mock runtime did not observe the wrapper-supplied runtime token as Authorization.");
+  }
+
+  const finalLayoutMetrics = await collectJetBrainsIframeLayoutMetrics(frameLocator);
+  await saveJetBrainsWrapperEvidence(page, finalLayoutMetrics);
+  const bodyText = await body.innerText().catch(() => "");
+  if ((bodyText.match(/JetBrains Demo Mode smoke/g) ?? []).length !== 1) {
+    failures.push("Canned Demo Mode assistant response did not render exactly once in iframe body text.");
+  }
+  const browserVisibleState = await collectBrowserVisibleState(page);
+  assertNoSecretLeak(browserVisibleState, [
+    { label: "runtime token", value: runtimeToken },
+    { label: "authorization header marker", value: "authorization: bearer" },
+    { label: "set-cookie marker", value: "set-cookie" },
+    { label: "client secret marker", value: "client_secret" },
+  ]);
+  if (failures.length > 0) {
+    reportFailures();
+  }
 }
 
 async function assertElementReceivesPointerAtCenter(locator, label) {
@@ -1750,7 +1852,7 @@ const invalidateFrameAuthority = (reason) => {
   window.__yetAiCurrentFrameNonce = undefined;
   pendingHostMessages.length = 0;
 };
-const isGuiUnloadedMessage = (message) => isPlainObject(message) && hasOnlyKeys(message, ["version", "type", "payload"]) && message.version === bridgeVersion && message.type === "gui.unloaded" && (message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0));
+const isGuiUnloadedMessage = (message) => isPlainObject(message) && hasOnlyKeys(message, ["version", "type", "payload"]) && message.version === bridgeVersion && message.type === "gui.unloaded" && isPlainObject(message.payload) && Object.keys(message.payload).length === 0;
 const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
 const canDeliverHostMessage = (message) => {
   if (message.type === "host.ideActionProgress" || message.type === "host.ideActionResult") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
@@ -1927,6 +2029,8 @@ async function startMockRuntimeServer() {
     if (request.headers.authorization === `Bearer ${runtimeToken}`) {
       observedRuntimeAuthorization = true;
     }
+    const runtimeLogEntry = { method: request.method ?? "GET", pathname: requestUrl.pathname };
+    runtimeRequestLog.push(runtimeLogEntry);
     const allowedOrigin = request.headers.origin === undefined || request.headers.origin === runtimeBaseUrl || request.headers.origin === wrapperBaseUrl || request.headers.origin === guiBaseUrl;
     if (!allowedOrigin) {
       failures.push(`Mock runtime received request from unexpected origin ${String(request.headers.origin)}.`);
@@ -1965,20 +2069,44 @@ async function startMockRuntimeServer() {
       });
       return;
     }
-    if ((request.method === "GET" || request.method === "POST") && requestUrl.pathname === "/v1/demo-mode") {
-      json(response, 200, demoModeDisabledResponse());
+    if (request.method === "GET" && requestUrl.pathname === "/v1/demo-mode") {
+      json(response, 200, demoModeResponse(demoModeEnabled));
+      return;
+    }
+    if (request.method === "POST" && requestUrl.pathname === "/v1/demo-mode") {
+      let body;
+      try {
+        body = await readRequestBody(request);
+      } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+          json(response, 413, { error: "Request body too large" });
+          return;
+        }
+        json(response, 400, { error: "Invalid request body" });
+        return;
+      }
+      let parsedBody;
+      try {
+        parsedBody = JSON.parse(body);
+      } catch {
+        json(response, 400, { error: "Invalid Demo Mode JSON" });
+        return;
+      }
+      runtimeLogEntry.body = parsedBody;
+      demoModeEnabled = parsedBody?.enabled === true;
+      json(response, 200, demoModeResponse(demoModeEnabled));
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/models") {
-      json(response, 200, { models: [] });
+      json(response, 200, { models: demoModeEnabled ? [readyDemoModel()] : [] });
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/providers") {
-      json(response, 200, { providers: [], cloudRequired: false, providerAccess: "direct" });
+      json(response, 200, { providers: demoModeEnabled ? [readyDemoProvider()] : [], cloudRequired: false, providerAccess: "direct" });
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/provider-auth/openai/status") {
-      json(response, 200, connectedProviderAuthStatus());
+      json(response, 200, demoModeFirstMessage ? unavailableProviderAuthStatus() : connectedProviderAuthStatus());
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/chats") {
@@ -2005,6 +2133,7 @@ async function startMockRuntimeServer() {
         json(response, 400, { error: "Invalid chat command JSON" });
         return;
       }
+      runtimeLogEntry.body = parsedBody;
       chatCommandRequestCount += 1;
       chatCommandRequest = parsedBody;
       const chatId = decodeURIComponent(commandMatch[1]);
@@ -2094,10 +2223,11 @@ function emitAssistantResponse(chatId) {
 }
 
 function emitAssistantResponseToSubscriber(chatId, subscriber) {
+  const assistantChunks = demoModeFirstMessage ? ["JetBrains", " Demo Mode smoke"] : ["JetBrains", " login smoke"];
   const events = [
     { type: "stream_started", chatId, payload: { role: "assistant" } },
-    { type: "stream_delta", chatId, payload: { delta: { content: "JetBrains" } } },
-    { type: "stream_delta", chatId, payload: { delta: { content: " login smoke" } } },
+    { type: "stream_delta", chatId, payload: { delta: { content: assistantChunks[0] } } },
+    { type: "stream_delta", chatId, payload: { delta: { content: assistantChunks[1] } } },
     { type: "stream_finished", chatId, payload: { finishReason: "stop" } },
   ];
   try {
@@ -2143,8 +2273,44 @@ function connectedProviderAuthStatus() {
   };
 }
 
-function demoModeDisabledResponse() {
-  return { enabled: false, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "Demo Mode uses local canned responses from the runtime. It requires no API key, makes no provider calls, and is not model quality. Configure a BYOK provider for real answers." };
+function unavailableProviderAuthStatus() {
+  return {
+    provider: "openai",
+    configured: false,
+    status: "login_unavailable",
+    authSource: "none",
+    supportsLogin: false,
+    supportsApiKey: true,
+    cloudRequired: false,
+    message: "No OpenAI account or provider API key is configured in the local mock runtime.",
+  };
+}
+
+function demoModeResponse(enabled) {
+  return { enabled, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "Demo Mode uses local canned responses from the runtime. It requires no API key, makes no provider calls, and is not model quality. Configure a BYOK provider for real answers." };
+}
+
+function readyDemoProvider() {
+  return {
+    id: "yet-demo",
+    kind: "demo-local",
+    displayName: "Yet AI Demo Mode",
+    enabled: true,
+    baseUrl: "local-runtime-demo-mode",
+    auth: { type: "none", configured: true },
+    models: [readyDemoModel()],
+    capabilities: { chat: true, completion: false, embeddings: false },
+  };
+}
+
+function readyDemoModel() {
+  return {
+    id: "yet-demo-chat",
+    providerId: "yet-demo",
+    displayName: "Yet AI Demo Chat",
+    capabilities: { chat: true, streaming: true, tools: false, reasoning: false },
+    readiness: { status: "ready" },
+  };
 }
 
 function isAuthorizedRuntimeRequest(request) {
@@ -2444,6 +2610,29 @@ function sanitizeEvidenceText(text) {
     .replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer [redacted]")
     .replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]")
     .replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]");
+}
+
+function countRuntimeRequests(method, pathname) {
+  return runtimeRequestLog.filter((entry) => entry.method === method && entry.pathname === pathname).length;
+}
+
+function countChatCommandPosts() {
+  return runtimeRequestLog.filter((entry) => entry.method === "POST" && /^\/v1\/chats\/[^/]+\/commands$/.test(entry.pathname)).length;
+}
+
+function assertNoForbiddenRuntimeMutationRequests() {
+  const forbidden = runtimeRequestLog.filter((entry) => entry.method !== "GET" && (/^\/v1\/providers(?:\/|$)/.test(entry.pathname) || /^\/v1\/provider-auth\//.test(entry.pathname)));
+  if (forbidden.length > 0) {
+    failures.push(`Unexpected provider/provider-auth mutation request(s): ${formatRuntimeRequestLog(forbidden)}.`);
+  }
+}
+
+function formatRuntimeRequestLog(entries) {
+  return entries.map((entry) => `${entry.method} ${entry.pathname}${entry.body === undefined ? "" : ` body=${JSON.stringify(entry.body)}`}`).join(", ");
+}
+
+function deepEqual(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function reportFailures() {

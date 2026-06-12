@@ -593,7 +593,7 @@ async function resolveExtractedEntryPath(tempDir, entry) {
 }
 
 function requireArchiveEntry(entries, expected, message) {
-  if (!entries.some((entry) => entry.endsWith(expected))) {
+  if (!entries.includes(expected)) {
     failures.push(message);
   }
 }

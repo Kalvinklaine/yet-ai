@@ -32,6 +32,7 @@
     "smoke:vscode-preview": "node scripts/smoke-vscode-preview.mjs",
     "smoke:vscode-wrapper-browser": "node scripts/smoke-vscode-wrapper-browser.mjs",
     "smoke:installed-plugin-chat-visual": "node scripts/smoke-installed-plugin-chat-visual.mjs",
+    "smoke:installed-plugin-demo-mode": "node scripts/smoke-installed-plugin-demo-mode.mjs",
     "smoke:vscode-installable": "node scripts/smoke-vscode-installable.mjs",
     "smoke:vscode-first-message": "node scripts/smoke-vscode-first-message.mjs",
     "smoke:vscode-edit-proposal": "node scripts/smoke-vscode-edit-proposal.mjs",
