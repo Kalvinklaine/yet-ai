@@ -68,6 +68,8 @@ let chatSubscriptionCount = 0;
 const chatSseSubscribers = new Map();
 const pendingAssistantResponsesByChat = new Map();
 const maxRuntimeRequestBodyBytes = 1024 * 1024;
+const maxPendingHostMessages = 32;
+const maxPendingDiagnostics = 16;
 
 const scrollIntoViewIfNeeded = async (locator) => {
   await locator.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
@@ -106,7 +108,7 @@ try {
   process.exit(1);
 }
 
-const guiServer = await startStaticServer(packagedGuiRoot, { injectJetBrainsFrameBridge: true });
+const guiServer = await startStaticServer(packagedGuiRoot);
 const guiBaseUrl = `http://127.0.0.1:${guiServer.port}`;
 const runtimeServer = await startMockRuntimeServer();
 const runtimeBaseUrl = `http://127.0.0.1:${runtimeServer.port}`;
@@ -218,7 +220,7 @@ try {
     .then(() => page.evaluate(() => window.__yetAiBridgeMessages))
     .catch(() => []);
   if (!Array.isArray(collectedMessages) || !collectedMessages.some((message) => message?.type === "gui.ready" && message?.version === bridgeVersion)) {
-    failures.push("Wrapper fake postIntellijMessage bridge did not collect gui.ready from the iframe.");
+    failures.push("Wrapper bridge collector did not collect gui.ready from the iframe.");
   }
 
   const iframeGuiReady = await page.evaluate(() => window.__yetAiIframeGuiReady === true);
@@ -264,6 +266,7 @@ try {
   if (queueStateAfterReady.diagnosticQueue !== 0 || !queueStateAfterReady.flushedPreInitDiagnostic || !queueStateAfterReady.diagnosticText.includes("Queued diagnostic before wrapper init") || queueStateAfterReady.diagnosticDisplayedBeforeFlush) {
     failures.push("Wrapper did not prove queued diagnostic adoption and flush without pre-ready direct display.");
   }
+  await assertPendingQueuesAreBounded(page);
   await page.waitForFunction(() => typeof window.__yetAiSendHostMessageToFrame === "function", undefined, { timeout: 5000 }).catch(() => failures.push("Wrapper host-message sender helper was not installed."));
   const currentReadyRequestId = await page.evaluate(() => window.__yetAiCurrentReadyRequestId);
   assertRandomReadyRequestId(currentReadyRequestId, "initial gui.ready");
@@ -1507,6 +1510,9 @@ async function assertForbiddenIdeActionMessagesRejected(page, frameLocator) {
       { version, type: "gui.executeIdeTool", requestId: "forbidden-tool", payload: { tool: "anything" } },
       { version, type: "gui.ideActionRequest", requestId: "unsafe-path", payload: { action: "openWorkspaceFile", workspaceRelativePath: "../secret.txt" } },
       { version, type: "gui.ideActionRequest", requestId: "unknown-action", payload: { action: "runShellCommand" } },
+      { version, type: "gui.ideActionRequest", requestId: "forbidden-shell", payload: { action: "runShellCommand", command: "pwd" } },
+      { version, type: "gui.ideActionRequest", requestId: "forbidden-task", payload: { action: "runTask", task: "build" } },
+      { version, type: "gui.ideActionRequest", requestId: "forbidden-provider", payload: { action: "callProvider", providerId: "openai" } },
     ];
     for (const message of messages) window.parent.postMessage(message, target);
   }, bridgeVersion);
@@ -1523,6 +1529,20 @@ async function openDetailsBySummary(scope, summaryText, visibleLocator) {
   await summary.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
   await summary.click({ timeout: 5000 });
   await visibleLocator.waitFor({ state: "visible", timeout: 10_000 });
+}
+
+async function assertPendingQueuesAreBounded(page) {
+  const boundedState = await page.evaluate(() => window.__yetAiSmokeBoundPendingQueues?.());
+  if (!boundedState) {
+    failures.push("Wrapper bounded pending queue smoke helper was not installed.");
+    return;
+  }
+  if (boundedState.hostLength > maxPendingHostMessages || boundedState.diagnosticLength > maxPendingDiagnostics) {
+    failures.push(`Wrapper pending queues exceeded production bounds: host=${boundedState.hostLength}/${maxPendingHostMessages}, diagnostics=${boundedState.diagnosticLength}/${maxPendingDiagnostics}.`);
+  }
+  if (!boundedState.restoredHostContents || !boundedState.restoredDiagnosticContents) {
+    failures.push("Wrapper bounded pending queue smoke helper did not restore closure queue contents.");
+  }
 }
 
 async function requireFreshPackagedGui() {
@@ -1598,6 +1618,8 @@ window.__yetAiPendingDiagnostics = ["Queued diagnostic before wrapper init"];
 <script defer>
 const bridgeVersion = "${bridgeVersion}";
 const maxIdeActionRequestBytes = 8192;
+const maxPendingHostMessages = ${maxPendingHostMessages};
+const maxPendingDiagnostics = ${maxPendingDiagnostics};
 const frame = document.querySelector("iframe");
 const frameTargetOrigin = "${guiBaseUrl}";
 const shellStatus = document.getElementById("yet-ai-shell-status");
@@ -1620,8 +1642,13 @@ let hostReadyAcceptedForCurrentFrame = false;
 let currentFrameNonce;
 let frameNonceChallengeAttempts = 0;
 let flushingPending = false;
-const pendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : [];
-const pendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : [];
+const boundedArray = (value, maxSize) => Array.isArray(value) ? value.slice(-maxSize) : [];
+const pushBounded = (queue, message, maxSize) => {
+  queue.push(message);
+  while (queue.length > maxSize) queue.shift();
+};
+const pendingHostMessages = boundedArray(window.__yetAiPendingHostMessages, maxPendingHostMessages);
+const pendingDiagnostics = boundedArray(window.__yetAiPendingDiagnostics, maxPendingDiagnostics);
 window.__yetAiAdoptedPreInitHost = pendingHostMessages.some((message) => message?.requestId === "gui-ready");
 window.__yetAiAdoptedPreInitDiagnostic = pendingDiagnostics.includes("Queued diagnostic before wrapper init");
 window.__yetAiPendingHostMessages = pendingHostMessages;
@@ -1636,10 +1663,33 @@ const showDiagnostic = (message) => {
 };
 window.__yetAiSetRuntimeDiagnostic = (message) => {
   if (!frameReady) {
-    pendingDiagnostics.push(message);
+    pushBounded(pendingDiagnostics, message, maxPendingDiagnostics);
     return;
   }
   showDiagnostic(message);
+};
+window.__yetAiSmokeBoundPendingQueues = () => {
+  const initialHostMessages = pendingHostMessages.slice();
+  const initialDiagnostics = pendingDiagnostics.slice();
+  let hostLength = pendingHostMessages.length;
+  let diagnosticLength = pendingDiagnostics.length;
+  try {
+    for (let index = 0; index < maxPendingHostMessages + 8; index += 1) pushBounded(pendingHostMessages, { requestId: "pre-init-" + index }, maxPendingHostMessages);
+    for (let index = 0; index < maxPendingDiagnostics + 8; index += 1) pushBounded(pendingDiagnostics, "pre-init diagnostic " + index, maxPendingDiagnostics);
+    hostLength = pendingHostMessages.length;
+    diagnosticLength = pendingDiagnostics.length;
+  } finally {
+    pendingHostMessages.splice(0, pendingHostMessages.length, ...initialHostMessages);
+    pendingDiagnostics.splice(0, pendingDiagnostics.length, ...initialDiagnostics);
+  }
+  return {
+    initialHostLength: initialHostMessages.length,
+    initialDiagnosticLength: initialDiagnostics.length,
+    hostLength,
+    diagnosticLength,
+    restoredHostContents: pendingHostMessages.length === initialHostMessages.length && pendingHostMessages.every((message, index) => message === initialHostMessages[index]),
+    restoredDiagnosticContents: pendingDiagnostics.length === initialDiagnostics.length && pendingDiagnostics.every((message, index) => message === initialDiagnostics[index]),
+  };
 };
 const markLoaded = () => {
   frameLoaded = true;
@@ -1804,10 +1854,6 @@ const isGuiMessage = (message) => {
 window.__yetAiSendHostMessageToFrame = sendToFrame;
 window.__yetAiWrapperInitialized = true;
 window.addEventListener("message", (event) => {
-  if (event.source === currentFrameWindow && event.source === frame?.contentWindow && event.data?.__yetAiSmokeFrameNonceRequest === true && isFrameNonce(currentFrameNonce)) {
-    sendFrameNonceChallenge();
-    return;
-  }
   if (event.source === currentFrameWindow && event.source === frame?.contentWindow) {
     if (frameTargetOrigin && frameTargetOrigin !== "*" && event.origin !== frameTargetOrigin) {
       console.log("Yet AI rejected iframe message from unexpected origin");
@@ -2245,7 +2291,7 @@ function assertNoSecretLeak(text, markers) {
   }
 }
 
-async function startStaticServer(staticRoot, options = {}) {
+async function startStaticServer(staticRoot) {
   const realStaticRoot = await realpath(staticRoot);
   const server = http.createServer(async (request, response) => {
     if (request.method !== "GET" && request.method !== "HEAD") {
@@ -2289,11 +2335,6 @@ async function startStaticServer(staticRoot, options = {}) {
         response.end();
         return;
       }
-      if (options.injectJetBrainsFrameBridge && path.basename(realRequestedPath) === "index.html") {
-        const html = await readFile(realRequestedPath, "utf8");
-        response.end(injectJetBrainsFrameBridge(html));
-        return;
-      }
       const stream = createReadStream(realRequestedPath);
       stream.on("error", () => {
         if (!response.headersSent) {
@@ -2308,46 +2349,6 @@ async function startStaticServer(staticRoot, options = {}) {
     }
   });
   return listen(server);
-}
-
-function injectJetBrainsFrameBridge(html) {
-  const script = `<script>
-(() => {
-  let frameNonce;
-  let pendingReady;
-  const parentOrigin = () => {
-    try { return document.referrer ? new URL(document.referrer).origin : "*"; } catch (_) { return "*"; }
-  };
-  const send = (message) => window.parent.postMessage(message, parentOrigin());
-  const sendReady = (message) => send({ ...message, payload: { ...(message.payload || {}), frameNonce } });
-  window.addEventListener("message", (event) => {
-    const message = event.data;
-    if (message && message.version === "${bridgeVersion}" && message.type === "host.frameNonce" && message.payload && typeof message.payload.frameNonce === "string") {
-      frameNonce = message.payload.frameNonce;
-      if (pendingReady) {
-        sendReady(pendingReady);
-        pendingReady = undefined;
-      }
-    }
-  });
-  window.postIntellijMessage = (message) => {
-    if (message && message.type === "gui.ready") {
-      if (!frameNonce) {
-        const requestNonce = () => window.parent.postMessage({ __yetAiSmokeFrameNonceRequest: true }, parentOrigin());
-        pendingReady = message;
-        requestNonce();
-        window.setTimeout(() => { if (pendingReady && !frameNonce) requestNonce(); }, 25);
-        window.setTimeout(() => { if (pendingReady && !frameNonce) requestNonce(); }, 100);
-        return;
-      }
-      sendReady(message);
-      return;
-    }
-    send(message);
-  };
-})();
-</script>`;
-  return html.replace("<head>", `<head>${script}`);
 }
 
 function isPathInsideRoot(rootPath, requestedPath) {

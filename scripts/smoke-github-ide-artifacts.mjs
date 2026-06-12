@@ -610,7 +610,7 @@ function requireReferencedGuiAssets(jarEntries, indexHtml, label) {
       continue;
     }
     const expected = `yet-ai-gui/${reference}`;
-    if (!jarEntries.some((entry) => entry.endsWith(expected))) {
+    if (!jarEntries.includes(expected)) {
       failures.push(`${label} plugin JAR must contain packaged GUI asset ${expected} referenced by yet-ai-gui/index.html.`);
     }
   }
