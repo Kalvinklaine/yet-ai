@@ -344,7 +344,10 @@ data class EngineLaunchCommand(
 
 fun startEngineProcess(command: EngineLaunchCommand): Process = ProcessBuilder(command.binaryPath.toString())
     .redirectInput(ProcessBuilder.Redirect.PIPE)
-    .apply { environment().putAll(command.environment) }
+    .apply {
+        environment().clear()
+        environment().putAll(command.environment)
+    }
     .start()
 
 data class RuntimeDiagnostics(
@@ -472,11 +475,32 @@ fun buildEngineLaunchCommand(
     sessionToken: String,
     baseEnvironment: Map<String, String> = System.getenv(),
 ): EngineLaunchCommand {
-    val env = baseEnvironment.toMutableMap()
+    val env = sanitizedEngineLaunchEnvironment(baseEnvironment).toMutableMap()
     env["YET_AI_AUTH_TOKEN"] = sessionToken
     env["YET_AI_HTTP_PORT"] = parseExplicitRuntimePort(runtimeUrl).toString()
     return EngineLaunchCommand(binaryPath, env)
 }
+
+private val safeEngineLaunchEnvironmentNames = setOf(
+    "PATH",
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "SystemRoot",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "LANG",
+)
+
+fun sanitizedEngineLaunchEnvironment(baseEnvironment: Map<String, String>): Map<String, String> =
+    baseEnvironment.filterKeys { name ->
+        name in safeEngineLaunchEnvironmentNames || name.startsWith("LC_")
+    }
 
 fun parseRuntimePort(runtimeUrl: String): Int {
     val uri = URI(runtimeUrl)

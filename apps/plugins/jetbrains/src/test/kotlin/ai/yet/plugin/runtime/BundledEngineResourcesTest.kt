@@ -65,22 +65,23 @@ class BundledEngineResourcesTest {
                 "cache file name should be content-hash prefixed, got ${first.fileName}",
             )
 
-            // Second call: cache is warm. The helper must skip the dir-create
-            // and permission-apply side effects, and must not overwrite the
-            // existing on-disk file (we mutate it between calls to prove no
-            // re-write happens).
+            // Second call: cache is warm but the file has been tampered with.
+            // The helper must verify bytes, repair the cache, and re-apply
+            // launch permissions instead of trusting the hash-named path.
             val mutated = "mutated-contents".toByteArray()
             Files.write(first, mutated)
+            var permissionApplications = 0
             val second = BundledEngineResources.resolveOrExtract(
                 cacheDir = temp,
                 osName = "Linux",
                 resourceLoader = { ByteArrayInputStream(bytes) },
-                cacheDirCreator = { error("should not create dir on cache hit") },
-                permissionApplier = { error("should not re-apply perms on cache hit") },
+                cacheDirCreator = { Files.createDirectories(it) },
+                permissionApplier = { permissionApplications += 1; it.markLaunchable() },
             )
             assertEquals(first, second)
             assertNotNull(second)
-            assertEquals(mutated.toList(), second.readBytes().toList(), "cached file must not be re-written on hit")
+            assertEquals(bytes.toList(), second.readBytes().toList(), "tampered cached file must be repaired")
+            assertEquals(1, permissionApplications, "repaired cache must have launch permissions re-applied")
         } finally {
             temp.deleteRecursively()
         }
