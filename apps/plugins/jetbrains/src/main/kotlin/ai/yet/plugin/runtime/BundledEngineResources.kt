@@ -2,9 +2,9 @@ package ai.yet.plugin.runtime
 
 import ai.yet.plugin.identity.ProductIdentity
 import com.intellij.openapi.application.PathManager
-import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.nio.file.StandardCopyOption
@@ -66,18 +66,23 @@ object BundledEngineResources {
         val resourcePath = bundledResourcePath(osName)
         val resourceName = resourcePath.removePrefix("/")
         val stream = resourceLoader(resourceName) ?: return null
-        val bytes = stream.use { it.readBytes() }
-        val hash = sha256(bytes)
+        val (tempResource, hash, resourceSize) = copyResourceToTemporaryCacheFile(stream, cacheDir, cacheDirCreator)
         val target = cacheFile(cacheDir, hash, osName)
-        val cacheValid = Files.exists(target) && runCatching { sha256(Files.readAllBytes(target)) == hash }.getOrDefault(false)
-        if (!cacheValid) {
-            cacheDirCreator(cacheDir)
-            writeBundledBytesSafely(bytes, target)
-            permissionApplier(target)
-        } else if (!isLaunchableEngineFile(target, osName)) {
-            // Existing cache file lost its executable bit (e.g. extracted on
-            // Windows and copied to a non-FAT cache). Re-apply best effort.
-            permissionApplier(target)
+        try {
+            val cacheValid = isRegularCacheEntry(target) && runCatching {
+                Files.size(target) == resourceSize && sha256(target) == hash
+            }.getOrDefault(false)
+            if (!cacheValid) {
+                cacheDirCreator(cacheDir)
+                writeBundledFileSafely(tempResource, target)
+                permissionApplier(target)
+            } else if (!isLaunchableEngineFile(target, osName)) {
+                // Existing cache file lost its executable bit (e.g. extracted on
+                // Windows and copied to a non-FAT cache). Re-apply best effort.
+                permissionApplier(target)
+            }
+        } finally {
+            Files.deleteIfExists(tempResource)
         }
         if (!isLaunchableEngineFile(target, osName)) {
             throw IllegalStateException("Bundled Yet AI engine resource is not launchable after extraction")
@@ -115,17 +120,56 @@ object BundledEngineResources {
     private fun loadStream(classLoader: ClassLoader, resourcePath: String): InputStream? =
         classLoader.getResourceAsStream(resourcePath.removePrefix("/"))
 
-    private fun sha256(bytes: ByteArray): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
-        return digest.joinToString(separator = "") { byte -> "%02x".format(byte) }
+    private data class CachedResourceCopy(val path: Path, val sha256: String, val size: Long)
+
+    private fun copyResourceToTemporaryCacheFile(
+        stream: InputStream,
+        cacheDir: Path,
+        cacheDirCreator: (Path) -> Path,
+    ): CachedResourceCopy {
+        cacheDirCreator(cacheDir)
+        val temp = Files.createTempFile(cacheDir, "bundled-resource.", ".tmp")
+        val digest = MessageDigest.getInstance("SHA-256")
+        var size = 0L
+        stream.use { input ->
+            Files.newOutputStream(temp).use { output ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    output.write(buffer, 0, read)
+                    digest.update(buffer, 0, read)
+                    size += read
+                }
+            }
+        }
+        return CachedResourceCopy(temp, digest.digest().toHex(), size)
     }
 
-    private fun writeBundledBytesSafely(bytes: ByteArray, target: Path) {
+    private fun sha256(path: Path): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        Files.newInputStream(path).use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().toHex()
+    }
+
+    private fun ByteArray.toHex(): String = joinToString(separator = "") { byte -> "%02x".format(byte) }
+
+    private fun isRegularCacheEntry(path: Path): Boolean =
+        Files.exists(path, NOFOLLOW_LINKS) &&
+            !Files.isSymbolicLink(path) &&
+            Files.isRegularFile(path, NOFOLLOW_LINKS)
+
+    private fun writeBundledFileSafely(source: Path, target: Path) {
         val temp = Files.createTempFile(target.parent, "${target.fileName}.", ".tmp")
         try {
-            ByteArrayInputStream(bytes).use { input ->
-                Files.copy(input, temp, StandardCopyOption.REPLACE_EXISTING)
-            }
+            Files.copy(source, temp, StandardCopyOption.REPLACE_EXISTING)
             try {
                 Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, ATOMIC_MOVE)
             } catch (_: Exception) {

@@ -3,8 +3,10 @@ package ai.yet.plugin.runtime
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermission
+import java.security.MessageDigest
 import kotlin.io.path.ExperimentalPathApi
 import kotlin.io.path.createTempDirectory
 import kotlin.io.path.deleteRecursively
@@ -44,7 +46,7 @@ class BundledEngineResourcesTest {
     }
 
     @Test
-    fun extractionCachesByContentHashAndReusesExistingFile() {
+    fun extractionRepairsTamperedContentHashCacheFile() {
         val temp = createTempDirectory(prefix = "yet-bundled-cache-")
         try {
             val bytes = "deterministic-payload".toByteArray()
@@ -57,9 +59,7 @@ class BundledEngineResourcesTest {
             )
             assertNotNull(first)
             assertTrue(first.exists())
-            val hash = java.security.MessageDigest.getInstance("SHA-256")
-                .digest("deterministic-payload".toByteArray())
-                .joinToString("") { byte -> "%02x".format(byte) }
+            val hash = sha256(bytes)
             assertTrue(
                 first.fileName.toString().startsWith("$hash-"),
                 "cache file name should be content-hash prefixed, got ${first.fileName}",
@@ -82,6 +82,40 @@ class BundledEngineResourcesTest {
             assertNotNull(second)
             assertEquals(bytes.toList(), second.readBytes().toList(), "tampered cached file must be repaired")
             assertEquals(1, permissionApplications, "repaired cache must have launch permissions re-applied")
+        } finally {
+            temp.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun extractionRepairsSymlinkedContentHashCacheEntry() {
+        val temp = createTempDirectory(prefix = "yet-bundled-cache-symlink-")
+        try {
+            val bytes = "symlink-repair-payload".toByteArray()
+            val hash = sha256(bytes)
+            val target = temp.resolve("$hash-${BundledEngineResources.bundledResourceName("Linux")}")
+            val symlinkDestination = temp.resolve("attacker-controlled-engine")
+            Files.write(symlinkDestination, bytes)
+            try {
+                Files.createSymbolicLink(target, symlinkDestination.fileName)
+            } catch (_: Exception) {
+                return
+            }
+
+            val repaired = BundledEngineResources.resolveOrExtract(
+                cacheDir = temp,
+                osName = "Linux",
+                resourceLoader = { ByteArrayInputStream(bytes) },
+                cacheDirCreator = { Files.createDirectories(it) },
+                permissionApplier = { it.markLaunchable() },
+            )
+
+            assertEquals(target, repaired)
+            assertNotNull(repaired)
+            assertFalse(Files.isSymbolicLink(repaired), "hash-named cache entry must be repaired to a real file")
+            assertTrue(Files.isRegularFile(repaired, NOFOLLOW_LINKS), repaired.toString())
+            assertEquals(bytes.toList(), repaired.readBytes().toList())
+            assertTrue(isLaunchableEngineFile(repaired, "Linux"), "repaired cache entry must be launchable")
         } finally {
             temp.deleteRecursively()
         }
@@ -377,4 +411,8 @@ class BundledEngineResourcesTest {
             toFile().setReadable(true, false)
         }
     }
+
+    private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
+        .digest(bytes)
+        .joinToString("") { byte -> "%02x".format(byte) }
 }

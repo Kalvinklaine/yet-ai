@@ -42,9 +42,16 @@ class RuntimeConnectionManagerTest {
             baseEnvironment = mapOf(
                 "PATH" to "/bin:/usr/bin",
                 "HOME" to "/Users/alice",
+                "Path" to "C:\\Windows\\System32",
                 "SystemRoot" to "C:\\Windows",
+                "ComSpec" to "C:\\Windows\\System32\\cmd.exe",
                 "LC_ALL" to "C.UTF-8",
+                "lc_time" to "en_US.UTF-8",
+                "LC_TOKEN" to "locale-token-secret",
+                "LC_OPENAI_API_KEY" to "locale-openai-secret",
+                "LC_AUTHORIZATION" to "Bearer locale-auth-secret",
                 "OPENAI_API_KEY" to "sk-openai-secret",
+                "OpenAi_Api_Key" to "mixed-case-openai-secret",
                 "ANTHROPIC_API_KEY" to "anthropic-secret",
                 "GITHUB_TOKEN" to "github-secret",
                 "COOKIE" to "session=cookie-secret",
@@ -60,11 +67,18 @@ class RuntimeConnectionManagerTest {
         assertEquals("session-secret", command.environment["YET_AI_AUTH_TOKEN"])
         assertEquals("8123", command.environment["YET_AI_HTTP_PORT"])
         assertEquals("/bin:/usr/bin", command.environment["PATH"])
+        assertEquals("C:\\Windows\\System32", command.environment["Path"])
         assertEquals("/Users/alice", command.environment["HOME"])
         assertEquals("C:\\Windows", command.environment["SystemRoot"])
+        assertEquals("C:\\Windows\\System32\\cmd.exe", command.environment["ComSpec"])
         assertEquals("C.UTF-8", command.environment["LC_ALL"])
+        assertEquals("en_US.UTF-8", command.environment["lc_time"])
         listOf(
+            "LC_TOKEN",
+            "LC_OPENAI_API_KEY",
+            "LC_AUTHORIZATION",
             "OPENAI_API_KEY",
+            "OpenAi_Api_Key",
             "ANTHROPIC_API_KEY",
             "GITHUB_TOKEN",
             "COOKIE",
