@@ -30,8 +30,12 @@ class YetToolWindowFactoryTest {
         assertContains(html, "window.setTimeout")
         assertContains(html, "window.__yetAiSendHostMessageToFrame = sendToFrame")
         assertContains(html, "window.__yetAiSetRuntimeDiagnostic")
-        assertContains(html, "const pendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : []")
-        assertContains(html, "const pendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : []")
+        assertContains(html, "const maxPendingHostMessages = 32;")
+        assertContains(html, "const maxPendingDiagnostics = 16;")
+        assertContains(html, "const boundedArray = (value, maxSize) => Array.isArray(value) ? value.slice(-maxSize) : [];")
+        assertContains(html, "const pushBounded = (queue, message, maxSize) => {")
+        assertContains(html, "const pendingHostMessages = boundedArray(window.__yetAiPendingHostMessages, maxPendingHostMessages)")
+        assertContains(html, "const pendingDiagnostics = boundedArray(window.__yetAiPendingDiagnostics, maxPendingDiagnostics)")
         assertContains(html, "window.__yetAiPendingHostMessages = pendingHostMessages")
         assertContains(html, "window.__yetAiPendingDiagnostics = pendingDiagnostics")
         assertContains(html, "if (!frameReady) return;")
@@ -135,6 +139,12 @@ class YetToolWindowFactoryTest {
         assertContains(html, "hasOnlyKeys(message.payload, [\"supportedBridgeVersion\", \"frameNonce\"])")
         assertContains(html, "message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion")
         assertContains(html, "isFrameNonce(currentFrameNonce) && isFrameNonce(message.payload.frameNonce) && message.payload.frameNonce === currentFrameNonce")
+        assertContains(html, "currentFrameWindow.postMessage({ version: bridgeVersion, type: \"host.frameNonce\", payload: { frameNonce: currentFrameNonce } }, frameTargetOrigin);")
+        assertContains(html, "const readyMessage = { ...event.data, requestId: currentGuiReadyRequestId, payload: { supportedBridgeVersion: event.data.payload?.supportedBridgeVersion } };")
+        assertContains(html, "if (frameReady && event.data.payload.frameNonce === currentFrameNonce) return;")
+        assertFalse(html.contains("currentGuiReadyRequestId = message.requestId"))
+        assertFalse(html.contains("currentGuiReadyRequestId = event.data.requestId"))
+        assertFalse(html.contains("window.addEventListener(\"message\", (event) => {\n          if (isGuiMessage(event.data))"))
         assertFalse(html.contains("message.type === \"gui.openFile\""))
         assertFalse(html.contains("message.type === \"gui.revealRange\""))
         assertFalse(html.contains("message.type === \"gui.applyWorkspaceEditRequest\""))
@@ -144,6 +154,9 @@ class YetToolWindowFactoryTest {
         assertFalse(html.contains("message.type === \"gui.getHostContext\""))
         assertFalse(html.contains("clipboard"))
         assertFalse(html.contains("executeCommand"))
+        assertFalse(html.contains("runShellCommand"))
+        assertFalse(html.contains("writeWorkspaceFile"))
+        assertFalse(html.contains("applyWorkspaceEdit"))
     }
 
     @Test
@@ -236,6 +249,9 @@ class YetToolWindowFactoryTest {
         assertContains(html, "frame && currentFrameWindow && frame.contentWindow === currentFrameWindow")
         assertContains(html, "currentFrameWindow.postMessage(message, frameTargetOrigin);")
         assertContains(html, "currentFrameWindow = frame.contentWindow;")
+        assertContains(html, "if (frameTargetOrigin && frameTargetOrigin !== \"*\" && event.origin !== frameTargetOrigin)")
+        assertFalse(html.contains("postMessage(message, \"*\")"))
+        assertFalse(html.contains("postMessage(message, '*')"))
         assertFalse(html.contains("if (event.source === frame?.contentWindow)"))
         assertFalse(html.contains("frame.contentWindow.postMessage(message, frameTargetOrigin);"))
     }
@@ -286,6 +302,30 @@ class YetToolWindowFactoryTest {
         assertContains(html, "acceptedHostReadyRequestId = message.requestId;")
         assertContains(html, "hostReadyAcceptedForCurrentFrame = true;")
         assertFalse(html.contains("ideActionRequestTypesRejectedByPolicy"))
+    }
+
+    @Test
+    fun wrapperInvalidatesStaleFrameAuthorityAndBoundsPendingQueues() {
+        val html = renderHtml(
+            RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
+            "console.log('bridge')",
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+        )
+
+        assertContains(html, "const maxPendingHostMessages = 32;")
+        assertContains(html, "const maxPendingDiagnostics = 16;")
+        assertContains(html, "const boundedArray = (value, maxSize) => Array.isArray(value) ? value.slice(-maxSize) : [];")
+        assertContains(html, "while (queue.length > maxSize) queue.shift();")
+        assertContains(html, "pushBounded(pendingDiagnostics, message, maxPendingDiagnostics);")
+        assertContains(html, "const invalidateFrameAuthority = (reason) => {")
+        assertContains(html, "frameReady = false;")
+        assertContains(html, "acceptedHostReadyRequestId = undefined;")
+        assertContains(html, "hostReadyAcceptedForCurrentFrame = false;")
+        assertContains(html, "currentFrameNonce = undefined;")
+        assertContains(html, "pendingHostMessages.length = 0;")
+        assertContains(html, "invalidateFrameAuthority(\"gui.unloaded\")")
+        assertContains(html, "invalidateFrameAuthority(\"frame.load\")")
+        assertContains(html, "window.postIntellijMessage({ version: bridgeVersion, type: \"gui.unloaded\", payload: {} });")
     }
 
     @Test
@@ -564,10 +604,10 @@ class YetToolWindowFactoryTest {
         assertContains(source, "invokeLater {")
         assertContains(source, "if (!disposed) {")
         assertContains(source, "if (disposed) return")
-        assertContains(source, "window.__yetAiPendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : []")
-        assertContains(source, "window.__yetAiPendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : []")
+        assertContains(source, "window.__yetAiPendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages.slice(-maxPendingHostMessages) : []")
+        assertContains(source, "window.__yetAiPendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics.slice(-maxPendingDiagnostics) : []")
         assertContains(source, "if (!frameReady) return")
-        assertContains(source, "window.__yetAiPendingDiagnostics.push(message)")
+        assertContains(source, "pushBounded(pendingDiagnostics, message, maxPendingDiagnostics)")
         assertContains(source, "isGuiUnloadedBridgeMessage(raw)")
         assertContains(source, "guiReadyRequestId = null")
         assertContains(source, "fun refreshActiveEditorContext()")
@@ -643,13 +683,17 @@ class YetToolWindowFactoryTest {
 
         assertContains(hostScript, "if (typeof window.__yetAiSendHostMessageToFrame === \"function\")")
         assertContains(hostScript, "window.__yetAiSendHostMessageToFrame(message);")
-        assertContains(hostScript, "window.__yetAiPendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : []")
+        assertContains(hostScript, "const maxPendingHostMessages = 32;")
+        assertContains(hostScript, "window.__yetAiPendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages.slice(-maxPendingHostMessages) : []")
         assertContains(hostScript, "window.__yetAiPendingHostMessages.push(message)")
+        assertContains(hostScript, "while (window.__yetAiPendingHostMessages.length > maxPendingHostMessages) window.__yetAiPendingHostMessages.shift();")
         assertFalse(hostScript.contains("window.postMessage"))
         assertContains(diagnosticScript, "if (typeof window.__yetAiSetRuntimeDiagnostic === \"function\")")
         assertContains(diagnosticScript, "window.__yetAiSetRuntimeDiagnostic(message);")
-        assertContains(diagnosticScript, "window.__yetAiPendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : []")
+        assertContains(diagnosticScript, "const maxPendingDiagnostics = 16;")
+        assertContains(diagnosticScript, "window.__yetAiPendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics.slice(-maxPendingDiagnostics) : []")
         assertContains(diagnosticScript, "window.__yetAiPendingDiagnostics.push(message)")
+        assertContains(diagnosticScript, "while (window.__yetAiPendingDiagnostics.length > maxPendingDiagnostics) window.__yetAiPendingDiagnostics.shift();")
         assertContains(diagnosticScript, "runtime failed")
     }
 

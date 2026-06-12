@@ -43,6 +43,10 @@ async function runArchiveCases(fixtureRoot) {
   await expectArchiveFail(fixtureRoot, "archive missing unreferenced source CSS chunk fails", { removeEntries: ["pkg/gui/assets/chunk.css"] }, /missing JS\/CSS asset pkg\/gui\/assets\/chunk\.css/i);
   await expectArchiveFail(fixtureRoot, "archive stale extra archive JS fails", { entryOverrides: { "pkg/gui/assets/index-old.js": "old" } }, /stale extra JS\/CSS asset pkg\/gui\/assets\/index-old\.js/i);
   await expectArchiveFail(fixtureRoot, "archive stale extra archive CSS fails", { entryOverrides: { "pkg/gui/assets/index-old.css": "old" } }, /stale extra JS\/CSS asset pkg\/gui\/assets\/index-old\.css/i);
+  await expectArchiveFail(fixtureRoot, "archive unsafe backslash local reference in source index fails", { sourceOverrides: { "index.html": html("assets\\\\app.js", "assets/app.css") } }, /unsafe local JS\/CSS asset "assets\\\\\\\\app\.js"/i);
+  await expectArchiveFail(fixtureRoot, "archive unsafe encoded traversal local reference in source index fails", { sourceOverrides: { "index.html": html("assets/%2e%2e/secret.js", "assets/app.css") } }, /unsafe local JS\/CSS asset "assets\/%2e%2e\/secret\.js"/i);
+  await expectArchiveFail(fixtureRoot, "archive unsafe backslash local reference in packaged index fails", { packagedOverrides: { "index.html": html("assets\\\\app.js", "assets/app.css") } }, /unsafe local JS\/CSS asset "assets\\\\\\\\app\.js"/i);
+  await expectArchiveFail(fixtureRoot, "archive unsafe encoded traversal local reference in packaged index fails", { packagedOverrides: { "index.html": html("assets/%2e%2e/secret.js", "assets/app.css") } }, /unsafe local JS\/CSS asset "assets\/%2e%2e\/secret\.js"/i);
 }
 
 async function expectDirectoryPass(fixtureRoot, name, mutations) {

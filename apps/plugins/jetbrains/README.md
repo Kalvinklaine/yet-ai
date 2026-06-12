@@ -14,6 +14,17 @@ JetBrains now supports only the safe read-only/navigation/context controlled IDE
 
 The repository-level parity contract is `scripts/ide-surface-contract.mjs`; validate it with `npm run validate:ide-surface-contract` and run `npm run smoke:ide-parity` for local-only parity smoke coverage. Current parity is intentional, not identical: both IDEs support the packaged GUI, trusted `host.ready`, active editor context, provider setup, first-message smoke, and explicit read-only IDE action proposals. VS Code is the only host with confirmed edit proposal apply; JetBrains stays preview-only/no-apply for edit proposals by design. LSP is also bounded: VS Code has an off-by-default read-only MVP/status proof, while JetBrains native/client behavior is foundation/deferred only and not production enabled. Artifact installability is dev-preview only for both IDEs; JetBrains additionally has bundled runtime startup smoke. These checks do not launch real IDEs, call providers, require hosted services, sign, publish, or claim production release status.
 
+## Production wrapper parity contract
+
+The JetBrains tool window uses a production Kotlin-owned JCEF wrapper around the packaged GUI, not a browser-only bridge shim. The wrapper loads the generated GUI resources in a loopback iframe and enforces the same invariants covered by `npm run smoke:jetbrains-wrapper-browser` and the Kotlin unit tests:
+
+- The iframe source and target origin must be the exact generated packaged-GUI loopback origin. Parent-to-iframe delivery uses that origin only, and inbound iframe messages are accepted only from the current iframe window and exact origin.
+- `gui.ready` is nonce-backed: the wrapper sends a fresh frame nonce challenge for the current iframe document, accepts ready only with the matching nonce and bridge version, and mints the authoritative ready request id itself. GUI-supplied ready request ids are ignored, stale ids are not reused, and old-document/reload messages cannot authorize delivery.
+- The wrapper forwards only strict allowlisted GUI-to-host messages: `gui.ready`, strict `gui.unloaded` lifecycle notifications, `gui.runtimeRefresh`, and read-only `gui.ideActionRequest` for `getContextSnapshot`, `openWorkspaceFile`, or `revealWorkspaceRange`. Runtime refresh and read-only IDE action requests are accepted only after the current frame is ready and the current `host.ready` handshake is established.
+- Stale, unready, wrong-origin, wrong-source, wrong-version, wrong-nonce, malformed, oversized, secret-marker request id, or unsafe-path messages are dropped. Pending host/diagnostic queues are bounded and are cleared rather than replaying stale host messages across reloads.
+- JetBrains has no apply/edit mutation bridge: it must not accept `gui.applyWorkspaceEditRequest`, GUI open/reveal shortcuts outside the controlled read-only action contract, shell/git/task/tool execution, provider invocation, arbitrary file reads/indexing, file create/delete/rename/write, or silent workspace mutation.
+- Provider setup and credentials remain local-first/BYOK and engine-owned. The wrapper and GUI smoke must not leak runtime tokens, provider keys, OAuth material, cookies, raw bridge payloads, private paths, or browser storage/console secrets.
+
 ## Commands
 
 ```sh

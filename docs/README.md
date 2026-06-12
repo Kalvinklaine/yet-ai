@@ -34,7 +34,7 @@ Run the root validation command after documentation or identity changes:
 npm run check
 ```
 
-The command checks product identity, public hygiene, and whether every `docs/architecture/*.md` file is listed in this index.
+The command runs the repository's local validation bundle: product identity, public hygiene, docs index coverage, IDE surface contract parity, docs validation, and focused self-tests/validators that are safe for the current checkout. It does not run the browser or packaged IDE smoke gates, call providers, require hosted Yet AI services, publish marketplace artifacts, or claim production release status.
 
 ### Safe IDE dogfood reports
 

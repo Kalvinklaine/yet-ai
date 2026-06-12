@@ -48,8 +48,10 @@ class WrapperScriptDelivery {
             window.__yetAiSendHostMessageToFrame(message);
             return;
           }
-          window.__yetAiPendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : [];
+          const maxPendingHostMessages = 32;
+          window.__yetAiPendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages.slice(-maxPendingHostMessages) : [];
           window.__yetAiPendingHostMessages.push(message);
+          while (window.__yetAiPendingHostMessages.length > maxPendingHostMessages) window.__yetAiPendingHostMessages.shift();
         })();
     """.trimIndent()
 
@@ -62,8 +64,10 @@ class WrapperScriptDelivery {
                 window.__yetAiSetRuntimeDiagnostic(message);
                 return;
               }
-              window.__yetAiPendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : [];
+              const maxPendingDiagnostics = 16;
+              window.__yetAiPendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics.slice(-maxPendingDiagnostics) : [];
               window.__yetAiPendingDiagnostics.push(message);
+              while (window.__yetAiPendingDiagnostics.length > maxPendingDiagnostics) window.__yetAiPendingDiagnostics.shift();
             })();
         """.trimIndent()
     }
@@ -537,8 +541,15 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         let hostReadyAcceptedForCurrentFrame = false;
         let currentFrameNonce;
         let frameNonceChallengeAttempts = 0;
-        const pendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages : [];
-        const pendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics : [];
+        const maxPendingHostMessages = 32;
+        const maxPendingDiagnostics = 16;
+        const boundedArray = (value, maxSize) => Array.isArray(value) ? value.slice(-maxSize) : [];
+        const pushBounded = (queue, message, maxSize) => {
+          queue.push(message);
+          while (queue.length > maxSize) queue.shift();
+        };
+        const pendingHostMessages = boundedArray(window.__yetAiPendingHostMessages, maxPendingHostMessages);
+        const pendingDiagnostics = boundedArray(window.__yetAiPendingDiagnostics, maxPendingDiagnostics);
         window.__yetAiPendingHostMessages = pendingHostMessages;
         window.__yetAiPendingDiagnostics = pendingDiagnostics;
         const showDiagnostic = (message) => {
@@ -549,7 +560,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         };
         window.__yetAiSetRuntimeDiagnostic = (message) => {
           if (!frameReady) {
-            pendingDiagnostics.push(message);
+            pushBounded(pendingDiagnostics, message, maxPendingDiagnostics);
             return;
           }
           showDiagnostic(message);
