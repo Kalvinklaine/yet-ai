@@ -82,10 +82,30 @@ fn lsp_did_open_change_close_cache_lifecycle() {
 #[test]
 fn lsp_unsupported_and_oversized_documents_fail_safe() {
     let mut server = initialized_server();
+    let (unsupported_response, unsupported_control) = server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "id":99,
+        "method":"workspace/executeCommand",
+        "params":{"command":"yet-ai-secret-do-not-run"}
+    }));
+    assert_eq!(unsupported_control, LspControl::Continue);
+    let unsupported_response = unsupported_response.unwrap();
+    assert_eq!(unsupported_response["error"]["code"], -32601);
+    assert_eq!(unsupported_response["error"]["message"], "lsp method not supported");
+    assert!(!unsupported_response.to_string().contains("yet-ai-secret-do-not-run"));
+
     server.handle_message(json!({
         "jsonrpc":"2.0",
         "method":"textDocument/didOpen",
         "params":{"textDocument":{"uri":"https://example.test/private.rs","text":"secret body"}}
+    }));
+    assert_eq!(server.document_count(), 0);
+
+    let oversized_uri = format!("file:///workspace/{}.rs", "u".repeat(600));
+    server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":oversized_uri,"text":"secret body"}}
     }));
     assert_eq!(server.document_count(), 0);
 
@@ -100,11 +120,72 @@ fn lsp_unsupported_and_oversized_documents_fail_safe() {
     let oversized = "x".repeat(257 * 1024);
     server.handle_message(json!({
         "jsonrpc":"2.0",
+        "method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":"file:///workspace/src/open-too-large.rs","text":oversized}}
+    }));
+    assert_eq!(server.document_text("file:///workspace/src/open-too-large.rs"), None);
+
+    let oversized = "x".repeat(257 * 1024);
+    server.handle_message(json!({
+        "jsonrpc":"2.0",
         "method":"textDocument/didChange",
         "params":{"textDocument":{"uri":uri},"contentChanges":[{"text":oversized}]}
     }));
     assert_eq!(server.document_count(), 0);
     assert_eq!(server.document_text(uri), None);
+}
+
+#[tokio::test]
+async fn lsp_stdio_ignores_invalid_json_without_echoing_document_body() {
+    let secret = "YET_AI_SECRET_DOCUMENT_BODY";
+    let malformed = format!("{{\"secret\":\"{secret}");
+    let input = [
+        frame(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})),
+        format!("Content-Length: {}\r\n\r\n{}", malformed.len(), malformed).into_bytes(),
+        frame(json!({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})),
+        frame(json!({"jsonrpc":"2.0","method":"exit","params":{}})),
+    ]
+    .concat();
+    let (mut client, server) = tokio::io::duplex(16 * 1024);
+    let task = tokio::spawn(async move {
+        let (reader, writer) = tokio::io::split(server);
+        run_lsp(reader, writer).await.unwrap();
+    });
+
+    client.write_all(&input).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let mut output = Vec::new();
+    client.read_to_end(&mut output).await.unwrap();
+    task.await.unwrap();
+
+    let output_text = String::from_utf8_lossy(&output);
+    assert!(!output_text.contains(secret));
+    let responses = read_frames(&output);
+    assert_eq!(responses.len(), 2);
+    assert_eq!(responses[0]["id"], 1);
+    assert_eq!(responses[1], json!({"jsonrpc":"2.0","id":2,"result":null}));
+}
+
+#[tokio::test]
+async fn lsp_stdio_rejects_oversized_frames_without_body_leakage() {
+    let input = b"Content-Length: 524289\r\n\r\nYET_AI_SECRET_FRAME_BODY";
+    let (mut client, server) = tokio::io::duplex(16 * 1024);
+    let task = tokio::spawn(async move {
+        let (reader, writer) = tokio::io::split(server);
+        run_lsp(reader, writer).await
+    });
+
+    client.write_all(input).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let mut output = Vec::new();
+    client.read_to_end(&mut output).await.unwrap();
+    let error = task.await.unwrap().unwrap_err();
+
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(error.to_string(), "lsp message too large");
+    assert!(output.is_empty());
 }
 
 #[test]
