@@ -334,8 +334,8 @@ class BundledEngineResourcesTest {
         val privatePath = "/Users/alice/Library/Application Support/yet-ai/engine/abcdef-yet-lsp"
 
         val cases = mapOf(
-            "available" to "bundled plugin binary available",
-            "not bundled" to "no configured or discovered binary; connect-only fallback",
+            "available" to "bundled plugin runtime binary available (preferred installable path)",
+            "not bundled" to "no bundled, configured, or PATH binary; connect-only fallback",
         )
 
         for ((availability, expected) in cases) {
@@ -367,7 +367,7 @@ class BundledEngineResourcesTest {
             RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.LAUNCH, null),
             bundledAvailability = "available",
         )
-        assertEquals("bundled plugin binary available", bundled)
+        assertEquals("bundled plugin runtime binary available (preferred installable path)", bundled)
         assertFalse(bundled.contains("configured path missing"), bundled)
 
         val configured = createLaunchableTempFile(prefix = "yet-status-launch-")
@@ -376,7 +376,7 @@ class BundledEngineResourcesTest {
                 RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.LAUNCH, configured),
                 bundledAvailability = "not bundled",
             )
-            assertEquals("configured binary is executable", ok)
+            assertEquals("configured absolute binary is executable", ok)
         } finally {
             Files.deleteIfExists(configured)
         }
@@ -390,7 +390,7 @@ class BundledEngineResourcesTest {
                 RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.AUTO, configured),
                 bundledAvailability = "available",
             )
-            assertEquals("configured binary is executable", status)
+            assertEquals("configured absolute binary is executable", status)
         } finally {
             Files.deleteIfExists(configured)
         }

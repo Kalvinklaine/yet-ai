@@ -222,6 +222,54 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun autoModePrefersBundledRuntimeOverPathFallback() {
+        val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
+        var finderCalls = 0
+
+        val resolved = resolveEngineBinary(
+            configuredPath = null,
+            bundled = bundledPath,
+            finder = { finderCalls += 1; Path.of("/usr/local/bin/yet-lsp") },
+        )
+
+        assertEquals(bundledPath, resolved)
+        assertEquals(0, finderCalls)
+    }
+
+    @Test
+    fun autoModeUsesPathOnlyAsDevPreviewFallbackAfterMissingBundledRuntime() {
+        val pathFallback = Path.of("/usr/local/bin/yet-lsp")
+        val resolved = resolveEngineBinary(
+            configuredPath = null,
+            bundled = null,
+            finder = { configured ->
+                assertEquals(null, configured)
+                pathFallback
+            },
+        )
+        val diagnostics = formatRuntimeDiagnostics(
+            RuntimeDiagnostics("auto", "http://127.0.0.1:8123", false, "discovered yet-lsp on PATH (dev-preview fallback only)", false, null, null),
+        )
+
+        assertEquals(pathFallback, resolved)
+        assertTrue(diagnostics.contains("PATH discovery as a dev-preview fallback only"), diagnostics)
+        assertTrue(diagnostics.contains("dev-preview fallback only"), diagnostics)
+        assertFalse(diagnostics.contains("/usr/local/bin"), diagnostics)
+    }
+
+    @Test
+    fun configuredBinaryFallbackDiagnosticsAreActionableAndPathFree() {
+        val diagnostics = formatRuntimeDiagnostics(
+            RuntimeDiagnostics("auto", "http://127.0.0.1:8123", true, "configured absolute binary is missing or not executable", false, null, null),
+        )
+
+        assertTrue(diagnostics.contains("configured engine binary is missing or not executable"), diagnostics)
+        assertTrue(diagnostics.contains("configure an absolute executable yet-lsp path"), diagnostics)
+        assertTrue(diagnostics.contains("PATH discovery is dev-preview-only fallback"), diagnostics)
+        assertFalse(diagnostics.contains("/Users/"), diagnostics)
+    }
+
+    @Test
     fun launchModeWithoutConfiguredPathLaunchesBundledEngine() {
         val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
         val launched = mutableListOf<EngineLaunchCommand>()
@@ -581,7 +629,7 @@ class RuntimeConnectionManagerTest {
         )
 
         assertTrue(diagnostics.contains("Launch mode: auto"), diagnostics)
-        assertTrue(diagnostics.contains("Auto mode launches"), diagnostics)
+        assertTrue(diagnostics.contains("Auto mode prefers the bundled runtime"), diagnostics)
         listOf("alice", "Application Support", privatePath, "query-secret", "fragment-secret", "provider-secret", "health-secret", "fragment-refresh", "cookie-secret", "Cookie").forEach { secret ->
             assertFalse(diagnostics.contains(secret), diagnostics)
         }
@@ -597,14 +645,14 @@ class RuntimeConnectionManagerTest {
             RuntimeDiagnostics("launch", "http://127.0.0.1:8123", true, "configured binary is not executable", false, null, "spawn failed"),
         )
         val auto = formatRuntimeDiagnostics(
-            RuntimeDiagnostics("auto", "http://127.0.0.1:8123", false, "no configured or discovered binary; connect-only fallback", false, null, null),
+            RuntimeDiagnostics("auto", "http://127.0.0.1:8123", false, "no bundled, configured, or PATH binary; connect-only fallback", false, null, null),
         )
 
         assertTrue(connect.contains("Connect mode expects an already running loopback Yet AI runtime"), connect)
         assertTrue(connect.contains("Last health: HTTP 401"), connect)
-        assertTrue(launch.contains("Launch mode requires an executable"), launch)
+        assertTrue(launch.contains("Launch mode uses the bundled runtime"), launch)
         assertTrue(launch.contains("configured binary is not executable"), launch)
-        assertTrue(auto.contains("Auto mode launches"), auto)
+        assertTrue(auto.contains("Auto mode prefers the bundled runtime"), auto)
         assertTrue(auto.contains("connect-only fallback"), auto)
     }
 
@@ -632,7 +680,7 @@ class RuntimeConnectionManagerTest {
     @Test
     fun diagnosticsForMissingBinaryMentionAutoLaunchNextAction() {
         val diagnostics = formatRuntimeDiagnostics(
-            RuntimeDiagnostics("auto", "http://127.0.0.1:8123", false, "no configured or discovered binary; connect-only fallback", false, null, null),
+            RuntimeDiagnostics("auto", "http://127.0.0.1:8123", false, "no bundled, configured, or PATH binary; connect-only fallback", false, null, null),
         )
 
         assertTrue(diagnostics.contains("no launchable bundled, configured, or PATH engine binary was found"), diagnostics)
@@ -687,7 +735,7 @@ class RuntimeConnectionManagerTest {
                 launchMode = "launch",
                 runtimeUrl = "http://127.0.0.1:8123",
                 engineBinaryConfigured = true,
-                binaryStatus = "configured binary is executable",
+                binaryStatus = "configured absolute binary is executable",
                 launchedByPlugin = true,
                 health = "/v1/ping returned 2xx",
                 error = null,
@@ -695,11 +743,21 @@ class RuntimeConnectionManagerTest {
         )
 
         assertTrue(diagnostics.contains("Engine binary path configured: yes"), diagnostics)
-        assertTrue(diagnostics.contains("Binary status: configured binary is executable"), diagnostics)
+        assertTrue(diagnostics.contains("Binary status: configured absolute binary is executable"), diagnostics)
         assertTrue(diagnostics.contains("Plugin-launched process: running"), diagnostics)
         assertTrue(diagnostics.contains("Last health: /v1/ping returned 2xx"), diagnostics)
-        assertTrue(diagnostics.contains("Launch mode requires an executable"), diagnostics)
+        assertTrue(diagnostics.contains("Launch mode uses the bundled runtime"), diagnostics)
         assertTrue(diagnostics.contains("Restart:"), diagnostics)
+    }
+
+    @Test
+    fun engineBinaryStatusDistinguishesBundledConfiguredPathAndMissing() {
+        val launchBundled = RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.LAUNCH, null)
+        val autoMissing = RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.AUTO, null)
+
+        assertEquals("bundled plugin runtime binary available (preferred installable path)", describeEngineBinaryStatus(launchBundled, bundledAvailability = "available"))
+        assertEquals("no configured path and no bundled plugin binary available", describeEngineBinaryStatus(launchBundled, bundledAvailability = "missing"))
+        assertEquals("no bundled, configured, or PATH binary; connect-only fallback", describeEngineBinaryStatus(autoMissing, bundledAvailability = "missing"))
     }
 
     @Test
