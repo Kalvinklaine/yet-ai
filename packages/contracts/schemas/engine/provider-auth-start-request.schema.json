@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/provider-auth-start-request.schema.json",
+  "title": "Engine Provider Auth Start Request",
+  "description": "Strict GUI-to-engine provider login start body. Production/default login remains blocked; only explicit mock or experimental Codex-like starts are represented, with loopback-only endpoint overrides.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "mock": {
+      "type": "boolean",
+      "description": "Explicit local mock login start for automated/dev-preview coverage only."
+    },
+    "experimentalCodexLike": {
+      "type": "boolean",
+      "description": "Explicit high-risk experimental OpenAI-account-shaped path; not official/provider-supported production login."
+    },
+    "ttlSeconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3600
+    },
+    "tokenEndpointUrl": {
+      "$ref": "#/$defs/loopbackEndpointUrl"
+    },
+    "chatEndpointUrl": {
+      "$ref": "#/$defs/loopbackEndpointUrl"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "tokenEndpointUrl": true,
+          "chatEndpointUrl": true
+        },
+        "required": [],
+        "anyOf": [
+          {
+            "properties": { "tokenEndpointUrl": true },
+            "required": ["tokenEndpointUrl"]
+          },
+          {
+            "properties": { "chatEndpointUrl": true },
+            "required": ["chatEndpointUrl"]
+          }
+        ]
+      },
+      "then": {
+        "required": ["experimentalCodexLike"],
+        "properties": {
+          "experimentalCodexLike": { "const": true }
+        }
+      }
+    },
+    {
+      "not": {
+        "required": ["mock", "experimentalCodexLike"],
+        "properties": {
+          "mock": { "const": true },
+          "experimentalCodexLike": { "const": true }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "ttlSeconds": true },
+        "required": ["ttlSeconds"]
+      },
+      "then": {
+        "anyOf": [
+          {
+            "required": ["mock"],
+            "properties": { "mock": { "const": true } }
+          },
+          {
+            "required": ["experimentalCodexLike"],
+            "properties": { "experimentalCodexLike": { "const": true } }
+          }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "loopbackEndpointUrl": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "format": "uri",
+      "pattern": "^https?://(?:127\\.0\\.0\\.1|localhost|\\[::1\\])(?::[0-9]{1,5})?(?:/[^?#]*)?$",
+      "not": {
+        "pattern": "[\\u0000-\\u001F\\u007F]|@|[?#]"
+      }
+    }
+  }
+}

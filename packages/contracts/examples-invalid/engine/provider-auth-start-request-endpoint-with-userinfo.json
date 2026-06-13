@@ -1,0 +1,4 @@
+{
+  "experimentalCodexLike": true,
+  "tokenEndpointUrl": "http://user:pass@127.0.0.1:48765/mock-token"
+}

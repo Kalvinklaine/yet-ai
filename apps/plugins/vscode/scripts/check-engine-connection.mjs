@@ -181,6 +181,7 @@ try {
   const {
     collectRuntimeDiagnostics,
     createEngineLogRedactor,
+    createEngineLaunchEnvironment,
     findEngineBinary,
     prepareEngineConnection,
     formatRuntimeDiagnostics,
@@ -689,6 +690,64 @@ try {
     assert.equal(Object.hasOwn(lspSecretEnv, "YET_AI_AUTH_TOKEN"), false);
     assert.equal(Object.hasOwn(lspSecretEnv, "OPENAI_API_KEY"), false);
     assert.equal(Object.hasOwn(lspSecretEnv, "Authorization"), false);
+
+    const engineLaunchEnv = createEngineLaunchEnvironment({
+      PATH: "/usr/bin",
+      Path: "C:\\Windows\\System32",
+      HOME: "/home/safe-user",
+      USERPROFILE: "C:\\Users\\safe-user",
+      HOMEDRIVE: "C:",
+      HOMEPATH: "\\Users\\safe-user",
+      SystemRoot: "C:\\Windows",
+      WINDIR: "C:\\Windows",
+      ComSpec: "C:\\Windows\\System32\\cmd.exe",
+      PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      TMP: "/tmp",
+      TEMP: "/var/tmp",
+      TMPDIR: "/private/tmp",
+      LANG: "en_US.UTF-8",
+      LC_ALL: "C.UTF-8",
+      LC_CTYPE: "en_US.UTF-8",
+      LC_SECRET: "must-strip-locale-secret-name",
+      SHELL: "/bin/zsh",
+      NODE_OPTIONS: "--inspect",
+      YET_AI_AUTH_TOKEN: "old-runtime-token-must-strip",
+      YET_AI_HTTP_PORT: "1111",
+      OPENAI_API_KEY: "sk-engine-openai-sentinel",
+      ANTHROPIC_API_KEY: "engine-anthropic-sentinel",
+      GITHUB_TOKEN: "engine-github-sentinel",
+      AWS_SECRET_ACCESS_KEY: "engine-aws-sentinel",
+      AZURE_OPENAI_API_KEY: "engine-azure-sentinel",
+      GOOGLE_APPLICATION_CREDENTIALS: "engine-google-sentinel",
+      ProviderToken: "engine-provider-sentinel",
+      Authorization: "Bearer engine-authorization-sentinel",
+      COOKIE_JAR: "engine-cookie-sentinel",
+    }, "fresh-runtime-token", "8765");
+    for (const [key, value] of Object.entries({
+      PATH: "/usr/bin",
+      Path: "C:\\Windows\\System32",
+      HOME: "/home/safe-user",
+      USERPROFILE: "C:\\Users\\safe-user",
+      HOMEDRIVE: "C:",
+      HOMEPATH: "\\Users\\safe-user",
+      SystemRoot: "C:\\Windows",
+      WINDIR: "C:\\Windows",
+      ComSpec: "C:\\Windows\\System32\\cmd.exe",
+      PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      TMP: "/tmp",
+      TEMP: "/var/tmp",
+      TMPDIR: "/private/tmp",
+      LANG: "en_US.UTF-8",
+      LC_ALL: "C.UTF-8",
+      LC_CTYPE: "en_US.UTF-8",
+    })) {
+      assert.equal(engineLaunchEnv[key], value, `engine launch env did not preserve ${key}`);
+    }
+    assert.equal(engineLaunchEnv.YET_AI_AUTH_TOKEN, "fresh-runtime-token");
+    assert.equal(engineLaunchEnv.YET_AI_HTTP_PORT, "8765");
+    for (const key of ["LC_SECRET", "SHELL", "NODE_OPTIONS", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "AZURE_OPENAI_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS", "ProviderToken", "Authorization", "COOKIE_JAR"]) {
+      assert.equal(Object.hasOwn(engineLaunchEnv, key), false, `engine launch env leaked ${key}`);
+    }
 
     const lspDiagnosticSecret = "lsp-diagnostic-secret-sentinel";
     const lspDiagnosticPath = path.join(os.homedir(), "Library", "Application Support", "yet-ai", "lsp.log");
@@ -1734,6 +1793,12 @@ try {
     assert.equal(typeof spawnedProcesses[0].options.env.YET_AI_AUTH_TOKEN, "string");
     assert.ok(spawnedProcesses[0].options.env.YET_AI_AUTH_TOKEN.length >= 32);
     assert.notEqual(spawnedProcesses[0].options.env.YET_AI_AUTH_TOKEN, "legacy-token-must-not-be-used-for-launched-runtime");
+    assert.equal(spawnedProcesses[0].options.env.PATH, process.env.PATH);
+    assert.equal(Object.hasOwn(spawnedProcesses[0].options.env, "OPENAI_API_KEY"), false);
+    assert.equal(Object.hasOwn(spawnedProcesses[0].options.env, "ANTHROPIC_API_KEY"), false);
+    assert.equal(Object.hasOwn(spawnedProcesses[0].options.env, "GITHUB_TOKEN"), false);
+    assert.equal(Object.hasOwn(spawnedProcesses[0].options.env, "AWS_SECRET_ACCESS_KEY"), false);
+    assert.equal(Object.hasOwn(spawnedProcesses[0].options.env, "Authorization"), false);
     assert.equal(autoLaunch.connection.runtimeUrl, "http://127.0.0.1:8765");
     assert.equal(autoLaunch.connection.sessionToken, spawnedProcesses[0].options.env.YET_AI_AUTH_TOKEN);
     assert.deepEqual(autoLaunch.pingAuthorizations, [`Bearer ${autoLaunch.connection.sessionToken}`]);

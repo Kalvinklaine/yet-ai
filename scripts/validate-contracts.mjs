@@ -14,7 +14,12 @@ const mappings = [
   ["packages/contracts/examples/engine/providers-response.json", "packages/contracts/schemas/engine/providers.schema.json"],
   ["packages/contracts/examples/engine/provider-test-success-response.json", "packages/contracts/schemas/engine/provider-test-response.schema.json"],
   ["packages/contracts/examples/engine/provider-test-failure-response.json", "packages/contracts/schemas/engine/provider-test-response.schema.json"],
+  ["packages/contracts/examples/engine/provider-auth-start-request-empty.json", "packages/contracts/schemas/engine/provider-auth-start-request.schema.json"],
+  ["packages/contracts/examples/engine/provider-auth-start-request-mock.json", "packages/contracts/schemas/engine/provider-auth-start-request.schema.json"],
+  ["packages/contracts/examples/engine/provider-auth-start-request-experimental-loopback.json", "packages/contracts/schemas/engine/provider-auth-start-request.schema.json"],
   ["packages/contracts/examples/engine/provider-auth-start-pending.json", "packages/contracts/schemas/engine/provider-auth-start-response.schema.json"],
+  ["packages/contracts/examples/engine/provider-auth-exchange-request-empty.json", "packages/contracts/schemas/engine/provider-auth-exchange-request.schema.json"],
+  ["packages/contracts/examples/engine/provider-auth-exchange-request-mock-code.json", "packages/contracts/schemas/engine/provider-auth-exchange-request.schema.json"],
   ["packages/contracts/examples/engine/provider-auth-status-api-key-configured.json", "packages/contracts/schemas/engine/provider-auth-status-response.schema.json"],
   ["packages/contracts/examples/engine/provider-auth-status-pending.json", "packages/contracts/schemas/engine/provider-auth-status-response.schema.json"],
   ["packages/contracts/examples/engine/provider-auth-status-connected.json", "packages/contracts/schemas/engine/provider-auth-status-response.schema.json"],
@@ -22,6 +27,7 @@ const mappings = [
   ["packages/contracts/examples/engine/provider-auth-status-login-unavailable.json", "packages/contracts/schemas/engine/provider-auth-status-response.schema.json"],
   ["packages/contracts/examples/engine/provider-auth-exchange-connected.json", "packages/contracts/schemas/engine/provider-auth-exchange-response.schema.json"],
   ["packages/contracts/examples/engine/provider-auth-exchange-sanitized-error.json", "packages/contracts/schemas/engine/provider-auth-exchange-response.schema.json"],
+  ["packages/contracts/examples/engine/provider-auth-disconnect-request-empty.json", "packages/contracts/schemas/engine/provider-auth-disconnect-request.schema.json"],
   ["packages/contracts/examples/engine/provider-auth-disconnect-success.json", "packages/contracts/schemas/engine/provider-auth-disconnect-response.schema.json"],
   ["packages/contracts/examples/engine/provider-auth-disconnect-api-key-fallback.json", "packages/contracts/schemas/engine/provider-auth-disconnect-response.schema.json"],
   ["packages/contracts/examples/engine/planner-agent-done-waiting-merge.json", "packages/contracts/schemas/engine/planner-agent-run-status.schema.json"],
@@ -389,6 +395,35 @@ const invalidMappings = [
   [
     "packages/contracts/examples-invalid/engine/provider-test-long-provider-id.json",
     "packages/contracts/schemas/engine/provider-test-response.schema.json"
+  ],
+  ...[
+    "provider-auth-start-request-secret-smuggling.json",
+    "provider-auth-start-request-unsafe-token-url.json",
+    "provider-auth-start-request-endpoint-with-query.json",
+    "provider-auth-start-request-endpoint-with-userinfo.json",
+    "provider-auth-start-request-endpoint-without-experimental.json",
+    "provider-auth-start-request-ttl-without-mode.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/provider-auth-start-request.schema.json"
+  ]),
+  ...[
+    "provider-auth-exchange-request-unknown-field.json",
+    "provider-auth-exchange-request-control-code.json",
+    "provider-auth-exchange-request-oversized-session.json",
+    "provider-auth-exchange-request-whitespace-session.json",
+    "provider-auth-exchange-request-whitespace-state.json",
+    "provider-auth-exchange-request-whitespace-code.json",
+    "provider-auth-exchange-request-only-session.json",
+    "provider-auth-exchange-request-only-code.json",
+    "provider-auth-exchange-request-missing-code.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/provider-auth-exchange-request.schema.json"
+  ]),
+  [
+    "packages/contracts/examples-invalid/engine/provider-auth-disconnect-request-token.json",
+    "packages/contracts/schemas/engine/provider-auth-disconnect-request.schema.json"
   ],
   [
     "packages/contracts/examples-invalid/engine/provider-auth-status-raw-token-field.json",

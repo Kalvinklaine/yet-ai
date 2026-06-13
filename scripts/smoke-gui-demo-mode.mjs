@@ -20,6 +20,7 @@ let demoEnabled = false;
 let providerHits = 0;
 let chatCommandCount = 0;
 let secondResponseHadActiveSse = false;
+const runtimeApiRequests = [];
 const chats = new Map([["chat-001", thread("chat-001", "Demo smoke chat", [])]]);
 const chatEvents = new Map();
 const chatEventSeq = new Map();
@@ -35,11 +36,22 @@ try {
   runtimeServer = await startRuntimeServer();
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
-  page.on("pageerror", (error) => failures.push(`Page JavaScript error: ${error.message}`));
+  page.on("pageerror", (error) => recordFailure(`Page JavaScript error: ${error.message}`));
+  page.on("console", (message) => {
+    if (message.text().startsWith("Failed to load resource:")) return;
+    if (message.type() === "error") recordFailure(`Console error: ${message.text()}`);
+  });
+  page.on("requestfailed", (request) => {
+    const failureText = request.failure()?.errorText ?? "unknown error";
+    const requestUrl = request.url();
+    if (requestUrl.startsWith("http://127.0.0.1:") && failureText === "net::ERR_ABORTED") return;
+    if (requestUrl.startsWith("http://127.0.0.1:8001/v1/") && failureText === "net::ERR_CONNECTION_REFUSED") return;
+    recordFailure(`Request failed: ${requestUrl} ${failureText}`);
+  });
   page.on("request", (request) => {
     const url = request.url();
     if (!url.startsWith("http://127.0.0.1:")) {
-      failures.push(`Non-loopback request attempted: ${url}`);
+      recordFailure(`Non-loopback request attempted: ${url}`);
     }
   });
 
@@ -48,8 +60,9 @@ try {
   await openDetailsBySummary(page, "Local runtime connection", page.getByRole("textbox", { name: "Session token", exact: true }));
   await page.getByRole("textbox", { name: "Session token", exact: true }).fill(runtimeToken);
   await page.getByLabel("Runtime base URL").fill(`http://127.0.0.1:${runtimeServer.port}`);
-  await openDetailsBySummary(page, "Local runtime connection", page.getByRole("button", { name: "Refresh runtime" }).last());
-  await page.getByRole("button", { name: "Refresh runtime" }).last().click();
+  const refreshButton = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
+  await openDetailsBySummary(page, "Local runtime connection", refreshButton);
+  await refreshButton.click();
 
   await expectVisibleText(page, "Runtime connected", "runtime connected");
   await expectVisibleText(page, "Try Demo Mode", "demo-mode offer");
@@ -86,8 +99,9 @@ try {
   await openDetailsBySummary(page, "Local runtime connection", page.getByRole("textbox", { name: "Session token", exact: true }));
   await page.getByRole("textbox", { name: "Session token", exact: true }).fill(runtimeToken);
   await page.getByLabel("Runtime base URL").fill(`http://127.0.0.1:${runtimeServer.port}`);
-  await openDetailsBySummary(page, "Local runtime connection", page.getByRole("button", { name: "Refresh runtime" }).last());
-  await page.getByRole("button", { name: "Refresh runtime" }).last().click();
+  const refreshButtonAfterReload = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
+  await openDetailsBySummary(page, "Local runtime connection", refreshButtonAfterReload);
+  await refreshButtonAfterReload.click();
   await expectVisibleText(page, "Runtime connected", "runtime connected after browser refresh");
   await expectVisibleText(page, "Demo Mode ready", "demo enabled status after browser refresh");
   await expectVisibleText(page, firstPrompt, "visible first user prompt after browser refresh");
@@ -156,6 +170,8 @@ try {
   assert(providerHits === 0, `demo smoke unexpectedly hit provider ${providerHits} time(s)`);
   assert(chatCommandCount === 4, `demo smoke expected exactly four chat sends including Coding Actions, observed ${chatCommandCount}`);
   assert(secondResponseHadActiveSse, "demo smoke expected the second response to be delivered while a browser SSE subscriber was active");
+  assert(runtimeApiRequests.length > 0, "expected runtime API requests to be observed");
+  assert(runtimeApiRequests.every((item) => item.authorized), "runtime API route missing Authorization: Bearer session token");
 
   const evidence = await saveVisualEvidence(page);
 
@@ -213,8 +229,14 @@ function sanitizeEvidenceText(text) {
     .replaceAll(providerSecret, "[redacted-provider-secret]")
     .replace(/sk-[A-Za-z0-9._-]+/g, "[redacted-api-key]")
     .replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer [redacted]")
+    .replace(/(access[_-]?token|refresh[_-]?token|session[_-]?token|api[_-]?key|secret|password|cookie)=([^\s&?#)]+)/gi, "$1=[redacted]")
     .replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]")
+    .replace(/\/(?:private|var\/folders|tmp)\/[^\s)]+/g, "[redacted-private-path]")
     .replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]");
+}
+
+function recordFailure(message) {
+  failures.push(sanitizeEvidenceText(String(message)));
 }
 
 async function openDetailsBySummary(page, summaryText, visibleLocator) {
@@ -256,11 +278,17 @@ async function startRuntimeServer() {
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (request.method === "OPTIONS") return empty(response, 204);
+    if (url.pathname.startsWith("/v1/")) {
+      const authorized = request.headers.authorization === `Bearer ${runtimeToken}`;
+      runtimeApiRequests.push({ method: request.method, path: url.pathname, authorized });
+      if (!authorized) return json(response, 401, { error: "missing runtime Authorization bearer token" });
+    }
     if (request.method === "GET" && url.pathname === "/v1/ping") return json(response, 200, { productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: new Date().toISOString() });
     if (request.method === "GET" && url.pathname === "/v1/caps") return json(response, 200, { productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } });
     if (request.method === "GET" && url.pathname === "/v1/demo-mode") return json(response, 200, demoModeResponse());
     if (request.method === "POST" && url.pathname === "/v1/demo-mode") {
-      const body = JSON.parse(await readBody(request));
+      const body = await readJsonBody(request, response);
+      if (body === undefined) return;
       demoEnabled = body.enabled === true;
       return json(response, 200, demoModeResponse());
     }
@@ -289,7 +317,8 @@ async function startRuntimeServer() {
     const commandMatch = /^\/v1\/chats\/([^/]+)\/commands$/.exec(url.pathname);
     if (commandMatch && request.method === "POST") {
       const chatId = decodeURIComponent(commandMatch[1]);
-      const body = JSON.parse(await readBody(request));
+      const body = await readJsonBody(request, response);
+      if (body === undefined) return;
       const item = chats.get(chatId) ?? thread(chatId, chatId, []);
       if (body.type === "user_message") {
         chatCommandCount += 1;
@@ -307,8 +336,25 @@ async function startRuntimeServer() {
 async function readBody(request) {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
-  return Buffer.concat(chunks).toString("utf8") || "{}";
+  return Buffer.concat(chunks).toString("utf8");
 }
+
+async function readJsonBody(request, response) {
+  let value;
+  try {
+    value = JSON.parse((await readBody(request)) || "{}");
+  } catch {
+    json(response, 400, { error: "malformed JSON request body" });
+    return undefined;
+  }
+  if (!isPlainObject(value)) {
+    json(response, 400, { error: "request body must be a JSON object" });
+    return undefined;
+  }
+  return value;
+}
+
+function isPlainObject(value) { return value !== null && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype; }
 
 function demoModeResponse() {
   return { enabled: demoEnabled, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "Demo Mode uses local canned responses from the runtime. It requires no API key, makes no provider calls, and is not model quality." };
@@ -471,4 +517,4 @@ function empty(response, status) { response.writeHead(status, corsHeaders()); re
 function json(response, status, payload) { response.writeHead(status, corsHeaders({ "content-type": "application/json" })); response.end(JSON.stringify(payload)); }
 function corsHeaders(extra = {}) { return { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, content-type", "access-control-allow-methods": "GET, POST, DELETE, OPTIONS", ...extra }; }
 function contentType(filePath) { if (filePath.endsWith(".html")) return "text/html; charset=utf-8"; if (filePath.endsWith(".js")) return "text/javascript; charset=utf-8"; if (filePath.endsWith(".css")) return "text/css; charset=utf-8"; if (filePath.endsWith(".svg")) return "image/svg+xml"; return "application/octet-stream"; }
-function assert(condition, message) { if (!condition) failures.push(message); }
+function assert(condition, message) { if (!condition) recordFailure(message); }

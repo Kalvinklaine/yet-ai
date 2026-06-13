@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/provider-auth-disconnect-request.schema.json",
+  "title": "Engine Provider Auth Disconnect Request",
+  "description": "Strict provider login disconnect body. Disconnect accepts an empty object only; provider id is path-owned and no token, account, endpoint, or credential material is accepted.",
+  "type": "object",
+  "additionalProperties": false,
+  "maxProperties": 0
+}

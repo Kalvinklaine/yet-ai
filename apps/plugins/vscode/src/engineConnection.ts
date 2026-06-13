@@ -443,11 +443,7 @@ async function launchOrReuseEngine(runtimeUrl: string, binaryPath: string, outpu
   let child: childProcess.ChildProcess;
   try {
     child = childProcess.spawn(binaryPath, [], {
-      env: {
-        ...process.env,
-        YET_AI_AUTH_TOKEN: token,
-        YET_AI_HTTP_PORT: port.toString(),
-      },
+      env: createEngineLaunchEnvironment(process.env, token, port.toString()),
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -612,6 +608,45 @@ export function safeRuntimeUrl(runtimeUrl: string): string {
     return "invalid runtime URL";
   }
 }
+
+export function createEngineLaunchEnvironment(source: NodeJS.ProcessEnv, authToken: string, httpPort: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value === undefined || isSecretLikeEnvironmentName(key) || !isAllowedEngineLaunchEnvironmentName(key)) {
+      continue;
+    }
+    env[key] = value;
+  }
+  env.YET_AI_AUTH_TOKEN = authToken;
+  env.YET_AI_HTTP_PORT = httpPort;
+  return env;
+}
+
+function isSecretLikeEnvironmentName(key: string): boolean {
+  const normalized = key.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
+  return /(?:token|apikey|keyid|authorization|bearer|cookie|secret|provider|openai|anthropic|github|aws|azure|google|gcp|gemini|vertex|credential|password|passwd|oauth|jwt|session)/.test(normalized);
+}
+
+function isAllowedEngineLaunchEnvironmentName(key: string): boolean {
+  return engineLaunchEnvironmentAllowlist.has(key) || /^LC_(?:ALL|COLLATE|CTYPE|MESSAGES|MONETARY|NUMERIC|TIME|ADDRESS|IDENTIFICATION|MEASUREMENT|NAME|PAPER|TELEPHONE)$/.test(key);
+}
+
+const engineLaunchEnvironmentAllowlist = new Set([
+  "PATH",
+  "Path",
+  "HOME",
+  "USERPROFILE",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "SystemRoot",
+  "WINDIR",
+  "ComSpec",
+  "PATHEXT",
+  "TMP",
+  "TEMP",
+  "TMPDIR",
+  "LANG",
+]);
 
 const runtimePingTimeoutMs = 1500;
 

@@ -732,6 +732,136 @@ describe("provider secret boundary", () => {
     expect(browserStorageDump()).not.toContain("oauth");
   });
 
+  it("keeps API-key provider and model readiness ahead of connected experimental account login", async () => {
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      authResponse: {
+        ...connectedExperimentalAuthResponse(),
+        sessionId: "provider-login-session-precedence",
+        redacted: "oauth-...precedence",
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("OpenAI account connected");
+    expect(container?.textContent).toContain("Experimental account login is connected/available only as an explicit high-risk path; API-key providers remain the safe default when configured.");
+    expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
+    expect(container?.textContent).toContain("Why: Send is enabled for GPT-4o mini through openai-api.");
+    expect(container?.textContent).toContain("Next safest action: Type a prompt and click Send through the local runtime.");
+    expect(container?.textContent).not.toContain("State: Experimental OpenAI account / gpt-5-codex");
+    expect(container?.textContent).not.toContain("Experimental account login can send");
+    expect(container?.textContent).not.toContain("Prefer configuring an API-key provider; otherwise type a prompt only if you accept the experimental risk.");
+    expect(findButton("Send").disabled).toBe(false);
+    expect(browserStorageDump()).not.toContain("provider-login-session-precedence");
+    expect(browserStorageDump()).not.toContain("oauth");
+  });
+
+  it("keeps connected experimental account login sanitized with API-key fallback visible", async () => {
+    const rawSession = "provider-login-session-raw-visible-guard";
+    const rawAccessToken = "access_token=" + "t".repeat(64);
+    mockRuntimeResponses({
+      authResponse: {
+        ...providerAuthResponse("connected"),
+        sessionId: rawSession,
+        accountLabel: `user@example.test ${rawAccessToken}`,
+        scopes: ["openid", rawAccessToken],
+        redacted: "oauth-...test",
+        message: `Connected ${rawAccessToken}`,
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("OpenAI account connected");
+    expect(container?.textContent).toContain("Use OpenAI API key fallback");
+    expect(container?.textContent).toContain("Raw provider tokens, cookies, auth codes, provider API keys, and runtime Session token values are not shown here.");
+    expect(container?.textContent).not.toContain(rawSession);
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("t".repeat(64));
+    expect(browserStorageDump()).not.toContain(rawSession);
+    expect(browserStorageDump()).not.toContain("access_token");
+    expect(browserStorageDump()).not.toContain("oauth");
+  });
+
+  it("keeps Send disabled while disconnecting connected experimental login when no API-key model is ready", async () => {
+    const disconnect = deferred<Response>();
+    mockRuntimeResponses({ authResponse: providerAuthResponse("connected") });
+    renderApp();
+
+    await flushAsync();
+    expect(container?.textContent).toContain("State: Experimental OpenAI account / gpt-5-codex");
+    expect(findButton("Send").disabled).toBe(false);
+
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url === "http://127.0.0.1:8001/v1/provider-auth/openai/disconnect") {
+        return disconnect.promise;
+      }
+      return mockRuntimeResponse(input, init, { authResponse: providerAuthResponse("connected") });
+    });
+
+    await act(async () => {
+      findButton("Disconnect login").click();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("State: OpenAI account login changing");
+    expect(container?.textContent).toContain("Send is disabled while the local runtime updates account-login state and no API-key provider is ready.");
+    expect(findButton("Send").disabled).toBe(true);
+
+    disconnect.resolve(jsonResponse({ ...providerAuthResponse("not_configured"), success: true }));
+    await flushAsync();
+  });
+
+  it("does not persist raw provider auth, authorization code, session, or runtime token markers in browser storage", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const rawSession = "provider-login-session-storage-guard";
+    const rawCode = "manual-code-storage-guard";
+    const rawRuntimeToken = "runtime-session-storage-guard";
+    const rawProviderToken = "access_token=" + "s".repeat(64);
+    mockRuntimeResponses({
+      authResponse: {
+        ...pendingExperimentalAuthResponse(),
+        sessionId: rawSession,
+        message: `Pending ${rawProviderToken}`,
+      },
+      exchangeResponse: {
+        ...connectedExperimentalAuthResponse(),
+        message: `Connected ${rawProviderToken}`,
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setInputValue(sessionTokenInput(), rawRuntimeToken);
+    });
+    await act(async () => {
+      setInputValue(authCodeInput(), rawCode);
+    });
+
+    expect(browserStorageDump()).not.toContain(rawSession);
+    expect(browserStorageDump()).not.toContain(rawCode);
+    expect(browserStorageDump()).not.toContain(rawRuntimeToken);
+    expect(browserStorageDump()).not.toContain("access_token");
+
+    await act(async () => {
+      findButton("Exchange authorization code").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(authCodeInputOptional()?.value ?? "").toBe("");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(rawSession);
+    expect(browserStorageDump()).not.toContain(rawCode);
+    expect(browserStorageDump()).not.toContain(rawRuntimeToken);
+    expect(browserStorageDump()).not.toContain("access_token");
+  });
+
   it("renders sanitized manual exchange failures and clears code", async () => {
     const code = "manual-code-fail";
     const rawToken = "access_token=" + "a".repeat(64);

@@ -617,9 +617,7 @@ fn valid_context_path(value: &str, max_chars: usize) -> bool {
         && value.chars().count() <= max_chars
         && !value.starts_with('/')
         && !value.starts_with('~')
-        && !value
-            .chars()
-            .any(|value| !is_safe_context_path_char(value))
+        && !value.chars().any(|value| !is_safe_context_path_char(value))
         && value
             .split('/')
             .all(|part| !matches!(part, "" | "." | "..") && !is_secret_like_path_segment(part))
@@ -632,7 +630,9 @@ fn is_safe_context_path_char(value: char) -> bool {
 fn is_secret_like_path_segment(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
     if lower.starts_with("sk-") {
-        let suffix = lower.strip_prefix("sk-proj-").or_else(|| lower.strip_prefix("sk-"));
+        let suffix = lower
+            .strip_prefix("sk-proj-")
+            .or_else(|| lower.strip_prefix("sk-"));
         if suffix.is_some_and(|suffix| {
             suffix
                 .chars()
@@ -666,9 +666,7 @@ fn is_secret_like_path_segment(value: &str) -> bool {
             || lower
                 .strip_prefix(marker)
                 .is_some_and(|rest| rest.starts_with(separators))
-            || lower
-                .split(separators)
-                .any(|part| part == marker)
+            || lower.split(separators).any(|part| part == marker)
         {
             return true;
         }
@@ -757,17 +755,17 @@ async fn select_chat_provider(config_dir: &std::path::Path) -> Result<ChatProvid
             }
         }
     }
-    match provider_auth::refresh_experimental_codex_chat_auth_if_needed(config_dir).await {
-        Ok(Some(auth)) => return Ok(ChatProvider::ExperimentalCodex(auth)),
-        Ok(None) | Err(provider_auth::ProviderAuthError::InvalidRequest) => {}
-        Err(_) => return Err(ChatError::ProviderConfig),
-    }
     if demo_mode::get(config_dir)
         .await
         .map_err(|_| ChatError::ProviderConfig)?
         .enabled
     {
         return Ok(ChatProvider::DemoLocal);
+    }
+    match provider_auth::refresh_experimental_codex_chat_auth_if_needed(config_dir).await {
+        Ok(Some(auth)) => return Ok(ChatProvider::ExperimentalCodex(auth)),
+        Ok(None) | Err(provider_auth::ProviderAuthError::InvalidRequest) => {}
+        Err(_) => return Err(ChatError::ProviderConfig),
     }
     if saw_missing_credentials_capable_model {
         Err(ChatError::Unauthorized)
@@ -1534,10 +1532,22 @@ fn chat_completions_url(base_url: &str) -> Result<String, ChatError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        chat_completions_url, demo_response, sequence_subscription_event, ChatContext,
-        ChatContextFile, ChatContextSelection, ChatEvent, OpenAiSseParser, SubscriptionEvent,
-        PROVIDER_STREAM_EVENT_DATA_LIMIT, PROVIDER_STREAM_LINE_BUFFER_LIMIT,
+        chat_completions_url, demo_response, select_chat_provider, sequence_subscription_event,
+        ChatContext, ChatContextFile, ChatContextSelection, ChatEvent, OpenAiSseParser,
+        SubscriptionEvent, PROVIDER_STREAM_EVENT_DATA_LIMIT, PROVIDER_STREAM_LINE_BUFFER_LIMIT,
     };
+
+    static TEST_DIR_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    fn temp_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "yet-ai-chat-test-{}-{}",
+            std::process::id(),
+            TEST_DIR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
 
     fn representative_gui_coding_action_prompts() -> [String; 5] {
         let context = "Use only the attached one-shot editor context for src/example.ts (typescript), selection range 10:2-12:4.";
@@ -1558,6 +1568,201 @@ mod tests {
                 "{context}\nCoding action: propose_safe_edit\n\nPropose a safe edit for the selected code. Nothing is applied automatically: provide a reviewable proposal only, explain why it is safe, list risks, and wait for explicit review/approval before any workspace edit is requested. If you output machine-readable edit JSON, use only the bounded safe edit proposal payload shape with requiresUserConfirmation true and no requestId; the GUI hides raw JSON until I explicitly inspect it."
             ),
         ]
+    }
+
+    #[tokio::test]
+    async fn chat_selection_prefers_ready_api_key_provider_over_experimental_account_auth() {
+        let dir = temp_dir();
+        crate::providers::create_provider_config(
+            &dir,
+            crate::providers::ProviderWriteRequest {
+                id: Some("openai".to_string()),
+                kind: Some(crate::providers::ProviderKind::OpenAiCompatible),
+                display_name: Some("OpenAI API".to_string()),
+                enabled: Some(true),
+                base_url: Some("https://api.openai.com/v1".to_string()),
+                auth: Some(crate::providers::AuthWriteRequest {
+                    auth_type: crate::providers::AuthType::ApiKey,
+                    api_key: Some("sk-test-chat-selection-secret".to_string()),
+                }),
+                models: Some(vec![crate::providers::ModelSummary {
+                    id: "gpt-test".to_string(),
+                    display_name: "GPT Test".to_string(),
+                    provider_id: None,
+                    capabilities: crate::providers::ModelCapabilities::default(),
+                    readiness: crate::providers::ModelReadiness::default(),
+                }]),
+                capabilities: Some(crate::providers::ProviderCapabilities::default()),
+            },
+        )
+        .await
+        .unwrap();
+        use crate::secret_store::{provider_secret_store, ProviderSecretStore, SecretKind};
+        let store = provider_secret_store(&dir);
+        store
+            .put_secret(
+                "openai",
+                SecretKind::OAuthAccessToken,
+                "fake-codex-access-token",
+            )
+            .await
+            .unwrap();
+        store
+            .put_secret(
+                "openai",
+                SecretKind::OAuthRefreshToken,
+                "fake-codex-refresh-token",
+            )
+            .await
+            .unwrap();
+        let metadata = serde_json::json!({
+            "provider": "openai",
+            "accountLabel": "Test Account",
+            "scopes": ["openid", "profile", "email", "offline_access"],
+            "expiresAt": (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+            "redacted": "fake-...token",
+            "chatBaseUrl": "http://127.0.0.1:3456/chat",
+            "chatModel": "codex-test",
+            "tokenEndpointUrl": "http://127.0.0.1:3456/token"
+        });
+        store
+            .put_secret("openai", SecretKind::AuthMetadata, &metadata.to_string())
+            .await
+            .unwrap();
+
+        match select_chat_provider(&dir).await.unwrap() {
+            super::ChatProvider::OpenAiCompatible { provider_id, model } => {
+                assert_eq!(provider_id, "openai");
+                assert_eq!(model, "gpt-test");
+            }
+            _ => panic!("chat selected experimental account auth over API-key provider"),
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_selection_prefers_demo_mode_over_experimental_account_auth() {
+        let dir = temp_dir();
+        crate::demo_mode::set(&dir, true).await.unwrap();
+        use crate::secret_store::{provider_secret_store, ProviderSecretStore, SecretKind};
+        let store = provider_secret_store(&dir);
+        store
+            .put_secret(
+                "openai",
+                SecretKind::OAuthAccessToken,
+                "fake-codex-access-token",
+            )
+            .await
+            .unwrap();
+        store
+            .put_secret(
+                "openai",
+                SecretKind::OAuthRefreshToken,
+                "fake-codex-refresh-token",
+            )
+            .await
+            .unwrap();
+        let metadata = serde_json::json!({
+            "provider": "openai",
+            "accountLabel": "Test Account",
+            "scopes": ["openid", "profile", "email", "offline_access"],
+            "expiresAt": (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+            "redacted": "fake-...token",
+            "chatBaseUrl": "http://127.0.0.1:3456/chat",
+            "chatModel": "codex-test",
+            "tokenEndpointUrl": "http://127.0.0.1:3456/token"
+        });
+        store
+            .put_secret("openai", SecretKind::AuthMetadata, &metadata.to_string())
+            .await
+            .unwrap();
+
+        match select_chat_provider(&dir).await.unwrap() {
+            super::ChatProvider::DemoLocal => {}
+            _ => panic!("chat selected experimental account auth over Demo Mode"),
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_selection_does_not_route_to_codex_secrets_while_codex_login_is_pending() {
+        let dir = temp_dir();
+        let pending = crate::provider_auth::start(
+            &dir,
+            "openai",
+            crate::provider_auth::ProviderAuthStartRequest {
+                experimental_codex_like: true,
+                token_endpoint_url: Some("http://127.0.0.1:3456/token".to_string()),
+                chat_endpoint_url: Some("http://127.0.0.1:3456/chat".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(pending.status, "pending");
+
+        use crate::secret_store::{provider_secret_store, ProviderSecretStore, SecretKind};
+        let store = provider_secret_store(&dir);
+        store
+            .put_secret(
+                "openai",
+                SecretKind::OAuthAccessToken,
+                "fake-codex-access-token",
+            )
+            .await
+            .unwrap();
+        store
+            .put_secret(
+                "openai",
+                SecretKind::OAuthRefreshToken,
+                "fake-codex-refresh-token",
+            )
+            .await
+            .unwrap();
+        let metadata = serde_json::json!({
+            "provider": "openai",
+            "accountLabel": "Test Account",
+            "scopes": ["openid", "profile", "email", "offline_access"],
+            "expiresAt": (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+            "redacted": "fake-...token",
+            "chatBaseUrl": "http://127.0.0.1:3456/chat",
+            "chatModel": "codex-test",
+            "tokenEndpointUrl": "http://127.0.0.1:3456/token"
+        });
+        store
+            .put_secret("openai", SecretKind::AuthMetadata, &metadata.to_string())
+            .await
+            .unwrap();
+
+        let status = crate::provider_auth::status(&dir, "openai").await.unwrap();
+        assert_eq!(status.status, "pending");
+        assert_eq!(status.session_id, pending.session_id);
+
+        match select_chat_provider(&dir).await {
+            Err(super::ChatError::NoProvider) => {}
+            Ok(super::ChatProvider::ExperimentalCodex(_)) => {
+                panic!("chat selected experimental account auth during pending Codex login")
+            }
+            Ok(_) => panic!("chat selected unexpected provider during pending Codex login"),
+            Err(error) => {
+                panic!("chat returned unexpected error during pending Codex login: {error}")
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn chat_selection_demo_mode_ignores_codex_secret_store_read_errors() {
+        let dir = temp_dir();
+        crate::demo_mode::set(&dir, true).await.unwrap();
+        let secret_dir = dir.join("provider-secrets").join("openai");
+        std::fs::create_dir_all(&secret_dir).unwrap();
+        let outside = temp_dir();
+        std::fs::write(&outside, "inaccessible").unwrap();
+        std::os::unix::fs::symlink(&outside, secret_dir.join("oauth-access-token.json")).unwrap();
+
+        match select_chat_provider(&dir).await.unwrap() {
+            super::ChatProvider::DemoLocal => {}
+            _ => panic!("chat attempted experimental account auth before Demo Mode"),
+        }
     }
 
     #[test]

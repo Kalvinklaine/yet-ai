@@ -68,7 +68,11 @@ async fn sse_text_from(app: axum::Router, uri: &str) -> String {
     sse_text_from_with_timeout(app, uri, std::time::Duration::from_secs(2)).await
 }
 
-async fn sse_text_from_with_timeout(app: axum::Router, uri: &str, duration: std::time::Duration) -> String {
+async fn sse_text_from_with_timeout(
+    app: axum::Router,
+    uri: &str,
+    duration: std::time::Duration,
+) -> String {
     if duration <= std::time::Duration::from_secs(3) {
         return sse_text_prefix_from(app, uri, duration).await;
     }
@@ -125,7 +129,11 @@ async fn sse_text_prefix_from_response(
     String::from_utf8(bytes).unwrap()
 }
 
-async fn sse_text_prefix_from(app: axum::Router, uri: &str, duration: std::time::Duration) -> String {
+async fn sse_text_prefix_from(
+    app: axum::Router,
+    uri: &str,
+    duration: std::time::Duration,
+) -> String {
     let response = app
         .oneshot(authed_request(Method::GET, uri, Body::empty()))
         .await
@@ -258,7 +266,11 @@ async fn demo_mode_api_models_and_chat_stream_local_history() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|message| message["role"] == "assistant" && message["content"].as_str().unwrap().contains("no provider call was made")));
+        .any(|message| message["role"] == "assistant"
+            && message["content"]
+                .as_str()
+                .unwrap()
+                .contains("no provider call was made")));
 }
 
 #[tokio::test]
@@ -1298,10 +1310,13 @@ fn assert_sse_connection_sequences_are_rebased(events: &[Value]) {
 }
 
 fn assert_no_replayed_stream_events(events: &[Value]) {
-    assert!(!events.iter().skip(1).any(|event| matches!(
-        event["type"].as_str(),
-        Some("stream_started" | "stream_delta" | "message_added" | "stream_finished" | "error")
-    )), "unexpected replayed stream event: {events:?}");
+    assert!(
+        !events.iter().skip(1).any(|event| matches!(
+            event["type"].as_str(),
+            Some("stream_started" | "stream_delta" | "message_added" | "stream_finished" | "error")
+        )),
+        "unexpected replayed stream event: {events:?}"
+    );
 }
 
 async fn send_user_message(app: axum::Router, chat_id: &str) {
@@ -1424,15 +1439,24 @@ fn find_error_event(events: &[Value]) -> Value {
     let message = events
         .first()
         .and_then(|event| event["payload"]["messages"].as_array())
-        .and_then(|messages| messages.iter().rev().find(|message| message["role"] == "error"))
+        .and_then(|messages| {
+            messages
+                .iter()
+                .rev()
+                .find(|message| message["role"] == "error")
+        })
         .and_then(|message| message["content"].as_str())
-        .unwrap_or("Provider request failed. Check the local provider configuration and try again.");
+        .unwrap_or(
+            "Provider request failed. Check the local provider configuration and try again.",
+        );
     let code = match message {
         "No enabled OpenAI-compatible provider is configured." => "provider_not_configured",
         "The configured provider has no chat model." => "model_not_configured",
         "Provider credentials were rejected." => "provider_unauthorized",
         "Provider rate limit or quota reached." => "provider_rate_limited",
-        "The request is too large for the selected model context window." => "provider_context_too_large",
+        "The request is too large for the selected model context window." => {
+            "provider_context_too_large"
+        }
         "Provider rejected the request." => "provider_invalid_request",
         "Provider service returned an error." => "provider_upstream_error",
         "Provider request timed out." => "provider_timeout",
@@ -1812,6 +1836,95 @@ async fn provider_auth_openai_default_start_still_returns_login_unavailable() {
 }
 
 #[tokio::test]
+async fn provider_auth_start_rejects_explicit_null_fields_without_state_mutation() {
+    for request in [
+        json!({ "ttlSeconds": null }),
+        json!({ "experimentalCodexLike": true, "ttlSeconds": null }),
+        json!({ "experimentalCodexLike": true, "tokenEndpointUrl": null }),
+        json!({ "experimentalCodexLike": true, "chatEndpointUrl": null }),
+    ] {
+        let app = test_app();
+        let (status, body) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::POST,
+                "/v1/provider-auth/openai/start",
+                Body::from(request.to_string()),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "invalid request body");
+        assert_provider_auth_response_has_no_codex_secrets(&body);
+
+        let (status, body) = json_response_from(
+            app,
+            authed_request(
+                Method::GET,
+                "/v1/provider-auth/openai/status",
+                Body::empty(),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "login_unavailable");
+        assert!(body.get("sessionId").is_none());
+        assert!(body.get("authorizationUrl").is_none());
+    }
+}
+
+#[tokio::test]
+async fn provider_auth_exchange_rejects_explicit_null_fields_without_state_mutation() {
+    for request in [
+        json!({ "sessionId": null }),
+        json!({ "state": null }),
+        json!({ "code": null }),
+        json!({ "sessionId": null, "state": null, "code": null }),
+    ] {
+        let app = test_app();
+        let (status, pending) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::POST,
+                "/v1/provider-auth/openai/start",
+                Body::from(json!({ "mock": true }).to_string()),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(pending["status"], "pending");
+        let session_id = pending["sessionId"].clone();
+
+        let (status, body) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::POST,
+                "/v1/provider-auth/openai/exchange",
+                Body::from(request.to_string()),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "invalid request body");
+        assert_provider_auth_response_has_no_codex_secrets(&body);
+
+        let (status, body) = json_response_from(
+            app,
+            authed_request(
+                Method::GET,
+                "/v1/provider-auth/openai/status",
+                Body::empty(),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "pending");
+        assert_eq!(body["sessionId"], session_id);
+        assert_provider_auth_response_has_no_codex_secrets(&body);
+    }
+}
+
+#[tokio::test]
 async fn provider_auth_openai_experimental_codex_like_start_returns_pending_pkce() {
     let app = test_app();
     let (status, body) = json_response_from(
@@ -2040,6 +2153,17 @@ async fn provider_auth_openai_experimental_loopback_overrides_are_accepted() {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["status"], "pending");
         assert_provider_auth_response_has_no_codex_secrets(&body);
+
+        let (status, _) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::POST,
+                "/v1/provider-auth/openai/disconnect",
+                Body::from("{}"),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
     }
 }
 
@@ -2535,10 +2659,6 @@ async fn provider_auth_openai_experimental_access_write_failure_leaves_no_oauth_
         paths.clone(),
     ));
     let store = FileSecretStore::new(&paths.config_dir);
-    let access_path = store
-        .secret_path("openai", SecretKind::OAuthAccessToken)
-        .unwrap();
-    std::fs::create_dir_all(&access_path).unwrap();
     let (token_endpoint_url, token_body_receiver) = start_mock_codex_token_endpoint().await;
     let (status, start) = json_response_from(
         app.clone(),
@@ -2553,6 +2673,10 @@ async fn provider_auth_openai_experimental_access_write_failure_leaves_no_oauth_
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    let access_path = store
+        .secret_path("openai", SecretKind::OAuthAccessToken)
+        .unwrap();
+    std::fs::create_dir_all(&access_path).unwrap();
     let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap());
     let exchange = json!({
         "sessionId": start["sessionId"],
@@ -2604,10 +2728,6 @@ async fn provider_auth_openai_experimental_refresh_write_failure_removes_access_
         paths.clone(),
     ));
     let store = FileSecretStore::new(&paths.config_dir);
-    let refresh_path = store
-        .secret_path("openai", SecretKind::OAuthRefreshToken)
-        .unwrap();
-    std::fs::create_dir_all(&refresh_path).unwrap();
     let (token_endpoint_url, token_body_receiver) = start_mock_codex_token_endpoint().await;
     let (status, start) = json_response_from(
         app.clone(),
@@ -2622,6 +2742,10 @@ async fn provider_auth_openai_experimental_refresh_write_failure_removes_access_
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    let refresh_path = store
+        .secret_path("openai", SecretKind::OAuthRefreshToken)
+        .unwrap();
+    std::fs::create_dir_all(&refresh_path).unwrap();
     let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap());
     let exchange = json!({
         "sessionId": start["sessionId"],
@@ -2673,10 +2797,6 @@ async fn provider_auth_openai_experimental_secret_write_failure_rolls_back_parti
         paths.clone(),
     ));
     let store = FileSecretStore::new(&paths.config_dir);
-    let metadata_path = store
-        .secret_path("openai", SecretKind::AuthMetadata)
-        .unwrap();
-    std::fs::create_dir_all(&metadata_path).unwrap();
     let (token_endpoint_url, token_body_receiver) = start_mock_codex_token_endpoint().await;
     let (status, start) = json_response_from(
         app.clone(),
@@ -2691,6 +2811,10 @@ async fn provider_auth_openai_experimental_secret_write_failure_rolls_back_parti
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    let metadata_path = store
+        .secret_path("openai", SecretKind::AuthMetadata)
+        .unwrap();
+    std::fs::create_dir_all(&metadata_path).unwrap();
     let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap());
     let exchange = json!({
         "sessionId": start["sessionId"],
@@ -3263,6 +3387,17 @@ async fn provider_auth_openai_experimental_exchange_mismatch_expired_and_duplica
     assert_eq!(body["error"], "provider auth session mismatch");
     assert_provider_auth_response_has_no_codex_secrets(&body);
 
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/disconnect",
+            Body::from("{}"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
     let (token_endpoint_url, _) = start_mock_codex_token_endpoint().await;
     let (status, expired) = json_response_from(
         app.clone(),
@@ -3296,6 +3431,17 @@ async fn provider_auth_openai_experimental_exchange_mismatch_expired_and_duplica
     assert_eq!(status, StatusCode::GONE);
     assert_eq!(body["error"], "provider auth session expired");
     assert_provider_auth_response_has_no_codex_secrets(&body);
+
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/disconnect",
+            Body::from("{}"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
 
     let (token_endpoint_url, _) = start_mock_codex_token_endpoint().await;
     let (status, start) = json_response_from(
@@ -4440,7 +4586,10 @@ async fn agent_progress_event_rejects_invalid_ide_action_metadata() {
     for mut event in [
         {
             let mut event = valid_agent_progress_event();
-            event["ideAction"].as_object_mut().unwrap().remove("requestId");
+            event["ideAction"]
+                .as_object_mut()
+                .unwrap()
+                .remove("requestId");
             event
         },
         {
@@ -4471,13 +4620,19 @@ async fn agent_progress_event_rejects_invalid_ide_action_metadata() {
         {
             let mut event = valid_agent_progress_event();
             event["ideAction"]["action"] = json!("openWorkspaceFile");
-            event["ideAction"].as_object_mut().unwrap().remove("workspaceRelativePath");
+            event["ideAction"]
+                .as_object_mut()
+                .unwrap()
+                .remove("workspaceRelativePath");
             event["ideAction"].as_object_mut().unwrap().remove("range");
             event
         },
         {
             let mut event = valid_agent_progress_event();
-            event["ideAction"].as_object_mut().unwrap().remove("workspaceRelativePath");
+            event["ideAction"]
+                .as_object_mut()
+                .unwrap()
+                .remove("workspaceRelativePath");
             event
         },
         {
@@ -4508,7 +4663,10 @@ async fn agent_progress_event_rejects_invalid_ide_action_metadata() {
             event
         },
     ] {
-        event["eventId"] = json!(format!("ide-action-invalid-{}", event["ideAction"].to_string().len()));
+        event["eventId"] = json!(format!(
+            "ide-action-invalid-{}",
+            event["ideAction"].to_string().len()
+        ));
         let (status, body) = json_response(authed_request(
             Method::POST,
             "/v1/agent-progress/events",
@@ -4517,7 +4675,10 @@ async fn agent_progress_event_rejects_invalid_ide_action_metadata() {
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         let error = body["error"].as_str().unwrap_or_default();
-        assert!(matches!(error, "agent progress unavailable" | "invalid request body"));
+        assert!(matches!(
+            error,
+            "agent progress unavailable" | "invalid request body"
+        ));
     }
 }
 
@@ -8909,7 +9070,10 @@ async fn chat_terminal_append_failure_emits_storage_error_without_success_stop_o
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["accepted"], true);
 
-    let history_path = paths.config_dir.join("chat-history").join(format!("{chat_id}.json"));
+    let history_path = paths
+        .config_dir
+        .join("chat-history")
+        .join(format!("{chat_id}.json"));
     for _ in 0..40 {
         if history_path.is_file() {
             break;
@@ -8925,10 +9089,17 @@ async fn chat_terminal_append_failure_emits_storage_error_without_success_stop_o
     std::os::unix::fs::symlink(&target, &history_path).unwrap();
 
     for subscriber_index in 0..2 {
-        let text = sse_text_from(app.clone(), &format!("/v1/chats/subscribe?chat_id={chat_id}")).await;
+        let text = sse_text_from(
+            app.clone(),
+            &format!("/v1/chats/subscribe?chat_id={chat_id}"),
+        )
+        .await;
         let events = sse_json_events(&text);
         let error = find_error_event(&events);
-        assert_eq!(error["payload"]["code"], "chat_history_storage_error", "late subscriber {subscriber_index} did not receive storage error evidence");
+        assert_eq!(
+            error["payload"]["code"], "chat_history_storage_error",
+            "late subscriber {subscriber_index} did not receive storage error evidence"
+        );
         assert_eq!(
             error["payload"]["message"],
             "Chat response could not be saved to local storage."
@@ -8965,51 +9136,104 @@ async fn chat_new_message_supersedes_failed_terminal_replay_for_late_subscribers
     configure_openai_provider(app.clone(), base_url, api_key).await;
 
     let chat_id = "chat-terminal-supersede-failure";
-    assert_eq!(send_user_message_with_content(app.clone(), chat_id, "first prompt").await, StatusCode::OK);
-    let history_path = paths.config_dir.join("chat-history").join(format!("{chat_id}.json"));
+    assert_eq!(
+        send_user_message_with_content(app.clone(), chat_id, "first prompt").await,
+        StatusCode::OK
+    );
+    let history_path = paths
+        .config_dir
+        .join("chat-history")
+        .join(format!("{chat_id}.json"));
     for _ in 0..40 {
         if history_path.is_file() {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
-    let target = std::env::temp_dir().join(format!("yet-ai-terminal-supersede-failure-{}", std::process::id()));
+    let target = std::env::temp_dir().join(format!(
+        "yet-ai-terminal-supersede-failure-{}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_file(&target);
     std::fs::rename(&history_path, &target).unwrap();
     std::os::unix::fs::symlink(&target, &history_path).unwrap();
 
-    let late_text = sse_text_from(app.clone(), &format!("/v1/chats/subscribe?chat_id={chat_id}")).await;
+    let late_text = sse_text_from(
+        app.clone(),
+        &format!("/v1/chats/subscribe?chat_id={chat_id}"),
+    )
+    .await;
     let late_events = sse_json_events(&late_text);
     assert_eq!(late_events[0]["type"], "snapshot");
     let error = find_error_event(&late_events);
     assert_eq!(error["payload"]["code"], "chat_history_storage_error");
-    assert!(late_events.iter().any(|event| event["type"] == "stream_delta" && event["payload"]["delta"]["content"] == "old"));
+    assert!(late_events
+        .iter()
+        .any(|event| event["type"] == "stream_delta"
+            && event["payload"]["delta"]["content"] == "old"));
 
-    assert_eq!(send_user_message_with_content(app.clone(), chat_id, "second prompt").await, StatusCode::OK);
+    assert_eq!(
+        send_user_message_with_content(app.clone(), chat_id, "second prompt").await,
+        StatusCode::OK
+    );
     tokio::time::timeout(std::time::Duration::from_secs(2), second_delta_receiver)
         .await
         .expect("second stream should emit a delta")
         .expect("second stream delta signal should be sent");
-    let during_text = sse_text_from(app.clone(), &format!("/v1/chats/subscribe?chat_id={chat_id}")).await;
+    let during_text = sse_text_from(
+        app.clone(),
+        &format!("/v1/chats/subscribe?chat_id={chat_id}"),
+    )
+    .await;
     let during_events = sse_json_events(&during_text);
     assert_eq!(during_events[0]["type"], "snapshot");
-    assert!(!during_events.iter().any(|event| event["type"] == "error" && event["payload"]["code"] == "chat_history_storage_error"), "subscriber during new stream saw old terminal storage error: {during_events:?}");
-    assert!(!during_events.iter().any(|event| event["type"] == "stream_delta" && event["payload"]["delta"]["content"] == "old"), "subscriber during new stream saw old stream delta: {during_events:?}");
-    assert!(during_events.iter().any(|event| event["type"] == "stream_delta" && event["payload"]["delta"]["content"] == "new"));
+    assert!(
+        !during_events.iter().any(|event| event["type"] == "error"
+            && event["payload"]["code"] == "chat_history_storage_error"),
+        "subscriber during new stream saw old terminal storage error: {during_events:?}"
+    );
+    assert!(
+        !during_events
+            .iter()
+            .any(|event| event["type"] == "stream_delta"
+                && event["payload"]["delta"]["content"] == "old"),
+        "subscriber during new stream saw old stream delta: {during_events:?}"
+    );
+    assert!(during_events
+        .iter()
+        .any(|event| event["type"] == "stream_delta"
+            && event["payload"]["delta"]["content"] == "new"));
     assert!(!during_text.contains(api_key));
 
     std::fs::remove_file(&history_path).unwrap();
     std::fs::rename(&target, &history_path).unwrap();
     let _ = release_second_sender.send(());
-    let after_text = sse_text_from(app.clone(), &format!("/v1/chats/subscribe?chat_id={chat_id}")).await;
+    let after_text = sse_text_from(
+        app.clone(),
+        &format!("/v1/chats/subscribe?chat_id={chat_id}"),
+    )
+    .await;
     let after_events = sse_json_events(&after_text);
     assert_eq!(after_events[0]["type"], "snapshot");
-    assert!(!after_events.iter().any(|event| event["type"] == "error" && event["payload"]["code"] == "chat_history_storage_error"), "subscriber after new stream saw old terminal storage error: {after_events:?}");
-    assert!(!after_events.iter().any(|event| event["type"] == "stream_delta" && event["payload"]["delta"]["content"] == "old"), "subscriber after new stream saw old stream delta: {after_events:?}");
+    assert!(
+        !after_events.iter().any(|event| event["type"] == "error"
+            && event["payload"]["code"] == "chat_history_storage_error"),
+        "subscriber after new stream saw old terminal storage error: {after_events:?}"
+    );
+    assert!(
+        !after_events
+            .iter()
+            .any(|event| event["type"] == "stream_delta"
+                && event["payload"]["delta"]["content"] == "old"),
+        "subscriber after new stream saw old stream delta: {after_events:?}"
+    );
     assert!(!after_text.contains(api_key));
 
     let mut auth_receiver = auth_receiver;
-    for scenario in ["first terminal supersede stream", "second terminal supersede stream"] {
+    for scenario in [
+        "first terminal supersede stream",
+        "second terminal supersede stream",
+    ] {
         let auth = tokio::time::timeout(std::time::Duration::from_secs(2), auth_receiver.recv())
             .await
             .unwrap_or_else(|_| panic!("{scenario}: expected auth observation"))
@@ -9051,7 +9275,10 @@ async fn chat_provider_error_persists_sanitized_error_history_and_snapshot() {
     .await;
     let events = sse_json_events(&text);
     assert_eq!(events[0]["type"], "snapshot");
-    assert_eq!(events[0]["payload"]["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        events[0]["payload"]["messages"].as_array().unwrap().len(),
+        2
+    );
     assert_sse_connection_sequences_are_rebased(&events);
     assert_no_replayed_stream_events(&events);
     let clean_text = sse_text_from(
@@ -9091,7 +9318,11 @@ async fn abort_does_not_leave_assistant_or_streaming_history_state() {
     assert_eq!(loaded["messages"][0]["role"], "user");
     assert_eq!(loaded["messages"][0]["status"], "complete");
     assert_ne!(loaded["messages"][0]["status"], "streaming");
-    let text = sse_text_from(app.clone(), "/v1/chats/subscribe?chat_id=chat-history-abort").await;
+    let text = sse_text_from(
+        app.clone(),
+        "/v1/chats/subscribe?chat_id=chat-history-abort",
+    )
+    .await;
     let events = sse_json_events(&text);
     assert_eq!(
         events[0]["payload"]["messages"].as_array().unwrap().len(),
@@ -9201,7 +9432,10 @@ async fn openai_compatible_streaming_maps_chunks_to_sse_events() {
     assert_eq!(later_events[0]["type"], "snapshot");
     assert_sse_connection_sequences_are_rebased(&later_events);
     assert_eq!(
-        later_events[0]["payload"]["messages"].as_array().unwrap().len(),
+        later_events[0]["payload"]["messages"]
+            .as_array()
+            .unwrap()
+            .len(),
         2
     );
     assert_no_replayed_stream_events(&later_events);
@@ -9455,8 +9689,12 @@ async fn chat_late_subscriber_after_terminal_then_new_message_has_valid_sequence
     let app = test_app();
     configure_openai_provider(app.clone(), base_url, api_key).await;
 
-    send_user_message_with_content(app.clone(), "chat-late-terminal-new-message", "first prompt")
-        .await;
+    send_user_message_with_content(
+        app.clone(),
+        "chat-late-terminal-new-message",
+        "first prompt",
+    )
+    .await;
     let loaded = wait_for_chat_messages(app.clone(), "chat-late-terminal-new-message", 2).await;
     assert_eq!(loaded["messages"][1]["content"], "old");
 
@@ -9467,7 +9705,13 @@ async fn chat_late_subscriber_after_terminal_then_new_message_has_valid_sequence
     .await;
     let late_events = sse_json_events(&late_text);
     assert_eq!(late_events[0]["type"], "snapshot");
-    assert_eq!(late_events[0]["payload"]["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        late_events[0]["payload"]["messages"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
     assert_sse_connection_sequences_are_rebased(&late_events);
     assert_no_replayed_stream_events(&late_events);
 
@@ -9481,8 +9725,12 @@ async fn chat_late_subscriber_after_terminal_then_new_message_has_valid_sequence
         .await
     });
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    send_user_message_with_content(app.clone(), "chat-late-terminal-new-message", "second prompt")
-        .await;
+    send_user_message_with_content(
+        app.clone(),
+        "chat-late-terminal-new-message",
+        "second prompt",
+    )
+    .await;
     let loaded = wait_for_chat_messages(app.clone(), "chat-late-terminal-new-message", 4).await;
     assert_eq!(loaded["messages"][3]["content"], "new");
 
@@ -9490,7 +9738,9 @@ async fn chat_late_subscriber_after_terminal_then_new_message_has_valid_sequence
     let live_events = sse_json_events(&live_text);
     assert_eq!(live_events[0]["type"], "snapshot");
     assert_sse_connection_sequences_are_rebased(&live_events);
-    assert!(live_events.iter().any(|event| event["type"] == "stream_started"));
+    assert!(live_events
+        .iter()
+        .any(|event| event["type"] == "stream_started"));
     assert!(live_events.iter().any(|event| {
         event["type"] == "stream_delta" && event["payload"]["delta"]["content"] == "new"
     }));

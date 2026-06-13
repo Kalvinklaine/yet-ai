@@ -372,7 +372,12 @@ async fn provider_auth_disconnect(
     _auth: Authenticated,
     State(state): State<AppState>,
     Path(provider): Path<String>,
+    request: Result<Json<provider_auth::ProviderAuthDisconnectRequest>, JsonRejection>,
 ) -> Response {
+    let Json(_request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return invalid_json_body(rejection),
+    };
     provider_auth_response(
         provider_auth::disconnect(&state.storage_paths.config_dir, &provider).await,
     )
@@ -633,4 +638,72 @@ async fn chats_subscribe(
                 .text("keep-alive"),
         )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+    use axum::http::{header, Request, StatusCode};
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    use crate::identity::ProductIdentity;
+    use crate::security::AuthToken;
+    use crate::storage::{resolve_storage_paths, StoragePaths};
+    use crate::AppState;
+
+    static TEST_DIR_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    fn temp_storage_paths() -> StoragePaths {
+        let root = std::env::temp_dir().join(format!(
+            "yet-ai-http-provider-auth-test-{}-{}",
+            std::process::id(),
+            TEST_DIR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let identity = ProductIdentity::load().unwrap();
+        resolve_storage_paths(&identity, &root, &root, &root)
+    }
+
+    async fn post_provider_auth(path: &str, body: &'static str) -> StatusCode {
+        let identity = ProductIdentity::load().unwrap();
+        let state = AppState::with_storage_paths(
+            identity,
+            AuthToken::new("test-token").unwrap(),
+            temp_storage_paths(),
+        );
+        let response = super::router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .header(header::AUTHORIZATION, "Bearer test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let _ = response.into_body().collect().await.unwrap();
+        status
+    }
+
+    #[tokio::test]
+    async fn provider_auth_disconnect_rejects_non_empty_json_body() {
+        let status = post_provider_auth(
+            "/v1/provider-auth/openai/disconnect",
+            r#"{"token":"secret"}"#,
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn provider_auth_disconnect_accepts_empty_object_body() {
+        let status = post_provider_auth("/v1/provider-auth/openai/disconnect", r#"{}"#).await;
+
+        assert_eq!(status, StatusCode::OK);
+    }
 }
