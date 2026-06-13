@@ -29,6 +29,9 @@ let sessionId;
 let authState;
 let chatCommandCount = 0;
 let internalProviderSecrets;
+let apiKeyFallbackReady = false;
+let demoModeEnabled = false;
+let providerTestHits = 0;
 const chats = new Map([[chatId, thread(chatId, "Login-shaped mock smoke chat", [])]]);
 const subscribers = new Map();
 const chatEventSeq = new Map();
@@ -66,23 +69,22 @@ try {
   await page.goto(`http://127.0.0.1:${guiServer.port}/index.html`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
 
-  await openDetailsBySummary(page, "Local runtime connection", page.getByRole("textbox", { name: "Session token", exact: true }));
-  await page.getByRole("textbox", { name: "Session token", exact: true }).fill(runtimeToken);
-  await page.getByLabel("Runtime base URL").fill(`http://127.0.0.1:${runtimeServer.port}`);
-  const refreshButton = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
-  await openDetailsBySummary(page, "Local runtime connection", refreshButton);
-  await refreshButton.click();
-
+  await configureRuntimeConnection(page);
   await expectVisibleText(page, "Runtime connected", "runtime connected");
+
   await expectVisibleText(page, "Account login available", "login available state");
   await expectVisibleText(page, "experimental/non-default", "non-default login copy");
   await expectVisibleText(page, "Use OpenAI API key fallback", "API-key fallback button");
+  await expectVisibleText(page, "Provider required for first message", "no-provider readiness");
+  await expectSendDisabled(page, "no provider before login");
 
   await page.getByRole("button", { name: "Experimental high-risk account login" }).click();
   await expectVisibleText(page, "Finish browser verification", "pending provider-auth state");
   await expectVisibleText(page, "high-risk and private-endpoint-style", "high-risk warning");
   await expectVisibleText(page, "Session is tracked locally by the runtime and hidden here", "hidden session copy");
   await expectVisibleText(page, "Manual authorization-code exchange", "manual code exchange");
+  await expectSendDisabled(page, "pending provider-auth without provider");
+  assert(chatCommandCount === 0, `pending state sent an unexpected command, observed ${chatCommandCount}`);
   assertNoSecretLeak(await page.locator("body").innerText(), "DOM after provider-auth start");
   assertNoSecretLeak(requests.join("\n"), "browser request list after provider-auth start");
   await assertNoVisibleText(page, sessionId ?? "provider-login-session", "raw provider-auth session id");
@@ -103,6 +105,7 @@ try {
   await expectVisibleText(page, "not official public OAuth support, and not production-ready", "non-default connected copy");
   await expectVisibleText(page, "Use OpenAI API key fallback", "API-key fallback preserved after login");
   await expectVisibleText(page, "OpenAI API-key fallback remains the safe/default setup", "API-key fallback safe/default copy");
+  await expectSendEnabled(page, "experimental connected without API-key or Demo Mode");
   assertNoSecretLeak(await page.locator("body").innerText(), "DOM after provider-auth exchange");
   assertNoSecretLeak(requests.join("\n"), "browser request list after provider-auth exchange");
 
@@ -113,6 +116,33 @@ try {
   await expectVisibleText(page, firstPrompt, "first user message");
   await expectVisibleText(page, assistantAnswer, "assistant first response");
   await assertAssistantAnswerCount(page, assistantAnswer, 1, "login-shaped assistant response");
+  assert(chatCommandCount === 1, `expected one connected first-message command, observed ${chatCommandCount}`);
+
+  await openDetailsBySummary(page, "Provider setup", page.getByRole("button", { name: "Disconnect login" }));
+  await page.getByRole("button", { name: "Disconnect login" }).click();
+  await expectVisibleText(page, "Provider required for first message", "post-disconnect no-provider readiness");
+  await expectSendDisabled(page, "disconnect without API-key or Demo Mode");
+  assert(chatCommandCount === 1, `disconnect state sent an unexpected command, observed ${chatCommandCount}`);
+
+  await page.getByRole("button", { name: "Experimental high-risk account login" }).click();
+  await expectVisibleText(page, "Manual authorization-code exchange", "manual code exchange after reconnect");
+  await page.getByLabel("Authorization code").fill(fakeAuthCode);
+  await page.getByRole("button", { name: "Exchange authorization code" }).click();
+  await expectVisibleText(page, "Experimental Codex-like OpenAI account chat is connected through the local runtime", "reconnected login-ready chat copy");
+  await expectSendEnabled(page, "experimental reconnected before precedence checks");
+
+  apiKeyFallbackReady = true;
+  await refreshRuntimeFromUi(page);
+  await expectVisibleText(page, "Ready for your first message", "API-key precedence readiness title");
+  await expectVisibleText(page, "Mock API-key fallback model", "API-key precedence model");
+  await expectVisibleText(page, "Ready to send using Mock API-key fallback model", "API-key precedence ready copy");
+  await expectSendEnabled(page, "API-key fallback precedence over experimental connected");
+
+  demoModeEnabled = true;
+  await refreshRuntimeFromUi(page);
+  await expectVisibleText(page, "Demo Mode is ready", "Demo Mode precedence readiness title");
+  await expectVisibleText(page, "Demo Mode ready — local canned responses, no provider calls. Ready to send.", "Demo Mode precedence lifecycle");
+  await expectSendEnabled(page, "Demo Mode precedence over experimental connected");
 
   const pageState = await page.evaluate(() => JSON.stringify({
     body: document.body.innerText,
@@ -122,7 +152,8 @@ try {
   assertNoSecretLeak(pageState, "DOM or browser storage");
   assertNoSecretLeak(JSON.stringify(browserVisible), "browser console/page errors");
   assertNoSecretLeak(requests.join("\n"), "browser request list");
-  assert(chatCommandCount === 1, `expected one first-message command, observed ${chatCommandCount}`);
+  assert(chatCommandCount === 1, `expected only one first-message command across transitions, observed ${chatCommandCount}`);
+  assert(providerTestHits === 0, `mock login smoke unexpectedly tested a provider ${providerTestHits} time(s)`);
   assert(runtimeApiRequests.length > 0, "expected runtime API requests to be observed");
   assert(runtimeApiRequests.every((item) => item.authorized), "runtime API route missing Authorization: Bearer session token");
   assert(internalProviderSecrets?.accessToken === fakeAccessToken, "fake access token sentinel was not stored server-side after exchange");
@@ -133,7 +164,7 @@ try {
   const evidence = await saveVisualEvidence(page);
   if (failures.length > 0) throw new Error(`Login first-message smoke failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
   console.log("Login first-message smoke passed.");
-  console.log("Verified built GUI against a loopback mock runtime: runtime connected, experimental/non-default provider-auth moved login_available -> pending -> connected via fake local authorization-code exchange, API-key fallback stayed visible, one first message rendered a mock assistant response, and no real provider/hosted service/IDE/JCEF/signing/publishing path was used.");
+  console.log("Verified built GUI against a loopback mock runtime: runtime connected; no-provider and pending states kept Send disabled; experimental/non-default provider-auth moved login_available -> pending -> connected via fake local authorization-code exchange; connected sent exactly one first message and rendered one mock assistant response; disconnect returned to disabled/no-provider state; API-key fallback and Demo Mode each took precedence over experimental connected; and no real provider/hosted service/IDE/JCEF/signing/publishing path was used.");
   console.log("Limit: this is bounded mock-only login-shaped coverage; it does not prove official production OpenAI/ChatGPT account login or model quality.");
   console.log(`Saved sanitized visual evidence under ${path.relative(root, evidence.dir)}/ (${path.basename(evidence.screenshotPath)}, ${path.basename(evidence.domPath)}).`);
 } finally {
@@ -182,10 +213,16 @@ async function startRuntimeServer() {
       if (!authorized) return json(response, 401, { error: "missing runtime Authorization bearer token" });
     }
     if (request.method === "GET" && url.pathname === "/v1/ping") return json(response, 200, { productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: new Date().toISOString() });
-    if (request.method === "GET" && url.pathname === "/v1/caps") return json(response, 200, { productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: { providerAuthMock: true }, providers: [], ide: { bridge: true, lsp: false } });
-    if (request.method === "GET" && url.pathname === "/v1/demo-mode") return json(response, 200, demoModeDisabledResponse());
-    if (request.method === "GET" && url.pathname === "/v1/models") return json(response, 200, { models: [] });
-    if (request.method === "GET" && url.pathname === "/v1/providers") return json(response, 200, { providers: [], cloudRequired: false, providerAccess: "direct" });
+    if (request.method === "GET" && url.pathname === "/v1/caps") return json(response, 200, { productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: { providerAuthMock: true }, providers: providerSummaries(), ide: { bridge: true, lsp: false } });
+    if (request.method === "GET" && url.pathname === "/v1/demo-mode") return json(response, 200, demoModeResponse());
+    if (request.method === "GET" && url.pathname === "/v1/models") return json(response, 200, { models: modelSummaries() });
+    if (request.method === "GET" && url.pathname === "/v1/providers") return json(response, 200, { providers: providerSummaries(), cloudRequired: false, providerAccess: "direct" });
+    if (request.method === "POST" && url.pathname === "/v1/demo-mode") {
+      const body = await readJsonBody(request, response);
+      if (body === undefined) return;
+      demoModeEnabled = body.enabled === true;
+      return json(response, 200, demoModeResponse());
+    }
     if (request.method === "GET" && url.pathname === "/v1/provider-auth/openai/status") return json(response, 200, providerAuthResponse());
     if (request.method === "POST" && url.pathname === "/v1/provider-auth/openai/start") {
       const body = await readJsonBody(request, response);
@@ -194,6 +231,7 @@ async function startRuntimeServer() {
       loginStatus = "pending";
       sessionId = `mock-session-${randomUUID()}`;
       authState = `mock-state-${randomUUID()}`;
+      internalProviderSecrets = undefined;
       return json(response, 200, providerAuthResponse());
     }
     if (request.method === "POST" && url.pathname === "/v1/provider-auth/openai/exchange") {
@@ -232,6 +270,10 @@ async function startRuntimeServer() {
         setTimeout(() => addAssistantResponse(targetChatId), 25);
       }
       return json(response, 200, { accepted: true, chatId: targetChatId, requestId: body.requestId ?? "request-001", type: body.type });
+    }
+    if (request.method === "POST" && /^\/v1\/providers\/.+\/test$/.test(url.pathname)) {
+      providerTestHits += 1;
+      return json(response, 200, { ok: true, providerId: decodeURIComponent(url.pathname.split("/")[3] ?? "openai-api"), status: "reachable", message: "Mock provider readiness only; no upstream provider call was made.", modelId: demoModeEnabled ? "yet-demo-chat" : "gpt-4o-mini", cloudRequired: false });
     }
     if (/^\/v1\/providers\//.test(url.pathname)) return json(response, 500, { error: "provider endpoints are disabled in mock login smoke" });
     response.writeHead(404, { "content-type": "application/json" }).end(JSON.stringify({ error: "not found" }));
@@ -279,7 +321,21 @@ async function startStaticServer(staticRoot) {
   return listen(server);
 }
 async function readBody(request) { const chunks = []; for await (const chunk of request) chunks.push(chunk); return Buffer.concat(chunks).toString("utf8"); }
-function demoModeDisabledResponse() { return { enabled: false, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "Demo Mode disabled for login-shaped smoke; this smoke uses mock provider-auth and canned local chat." }; }
+function demoModeResponse() { return { enabled: demoModeEnabled, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: demoModeEnabled ? "Demo Mode uses local canned responses from the runtime. It requires no API key, makes no provider calls, and is not model quality." : "Demo Mode disabled for login-shaped smoke; this smoke uses mock provider-auth and canned local chat." }; }
+function modelSummaries() {
+  if (demoModeEnabled) return [demoModel()];
+  if (apiKeyFallbackReady) return [apiKeyFallbackModel()];
+  return [];
+}
+function providerSummaries() {
+  if (demoModeEnabled) return [demoProvider()];
+  if (apiKeyFallbackReady) return [apiKeyFallbackProvider()];
+  return [];
+}
+function apiKeyFallbackModel() { return { id: "gpt-4o-mini", displayName: "Mock API-key fallback model", providerId: "openai-api", capabilities: { chat: true, streaming: true, tools: false, reasoning: false }, readiness: { status: "ready" } }; }
+function apiKeyFallbackProvider() { return { id: "openai-api", kind: "openai-compatible", displayName: "Mock OpenAI API-key fallback", enabled: true, baseUrl: "http://127.0.0.1/mock-openai/v1", auth: { type: "api_key", configured: true, redacted: "provider-key-redacted" }, models: [apiKeyFallbackModel()], capabilities: { chat: true, completion: false, embeddings: false } }; }
+function demoModel() { return { id: "yet-demo-chat", displayName: "Yet AI Demo Chat", providerId: "yet-demo", capabilities: { chat: true, streaming: true, tools: false, reasoning: false }, readiness: { status: "ready" } }; }
+function demoProvider() { return { id: "yet-demo", kind: "demo-local", displayName: "Yet AI Demo Mode", enabled: true, baseUrl: "local-runtime-demo-mode", auth: { type: "none", configured: true }, models: [demoModel()], capabilities: { chat: true, completion: false, embeddings: false } }; }
 function thread(id, title, messages) { return { chatId: id, title, createdAt: "2026-05-29T07:16:30Z", updatedAt: "2026-05-29T07:16:30Z", messages }; }
 function message(id, messageId, role, content) { return { chatId: id, id: messageId, role, content, createdAt: "2026-05-29T07:16:30Z", status: "complete" }; }
 function toSummary(item) { return { chatId: item.chatId, title: item.title, createdAt: item.createdAt, updatedAt: item.updatedAt, messageCount: item.messages.length }; }
@@ -299,6 +355,28 @@ async function readJsonBody(request, response) {
   return value;
 }
 function isPlainObject(value) { return value !== null && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype; }
+async function configureRuntimeConnection(page) {
+  await openDetailsBySummary(page, "Local runtime connection", page.getByRole("textbox", { name: "Session token", exact: true }));
+  await page.getByRole("textbox", { name: "Session token", exact: true }).fill(runtimeToken);
+  await page.getByLabel("Runtime base URL").fill(`http://127.0.0.1:${runtimeServer.port}`);
+  await refreshRuntimeFromUi(page);
+}
+async function refreshRuntimeFromUi(page) {
+  const refreshButton = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
+  await openDetailsBySummary(page, "Local runtime connection", refreshButton);
+  await refreshButton.click();
+  await expectVisibleText(page, "Runtime connected", "runtime connected after refresh");
+}
+async function expectSendDisabled(page, label) {
+  const disabled = await page.getByRole("button", { name: "Send", exact: true }).isDisabled().catch(() => false);
+  assert(disabled, `Expected Send to be disabled for ${label}.`);
+  await expectVisibleText(page, "Send disabled", `${label} send-disabled badge`);
+}
+async function expectSendEnabled(page, label) {
+  const enabled = await page.getByRole("button", { name: "Send", exact: true }).isEnabled().catch(() => false);
+  assert(enabled, `Expected Send to be enabled for ${label}.`);
+  await expectVisibleText(page, "Send available", `${label} send-available badge`);
+}
 async function openDetailsBySummary(page, summaryText, visibleLocator) { if (await visibleLocator.isVisible().catch(() => false)) return; const summary = page.locator("summary", { hasText: summaryText }).first(); await summary.click({ timeout: 5000 }).catch(async () => { await page.locator("details", { hasText: summaryText }).first().evaluate((element) => { if (element instanceof HTMLDetailsElement) element.open = true; }); }); await visibleLocator.waitFor({ state: "visible", timeout: 10_000 }); }
 async function expectVisibleText(page, text, label, timeout = 20_000) { await page.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout }).catch(async (error) => { const body = await page.locator("body").innerText().catch(() => ""); throw new Error(`Missing visible ${label}: ${text}\n${error.message}\nBody: ${redactSecrets(body).slice(0, 4000)}`); }); }
 async function assertNoVisibleText(page, text, label) { const visible = await page.getByText(text, { exact: false }).first().isVisible().catch(() => false); assert(!visible, `Unexpected visible ${label}: ${text}`); }
