@@ -1,0 +1,6 @@
+{
+  "experimentalCodexLike": true,
+  "ttlSeconds": 600,
+  "tokenEndpointUrl": "http://127.0.0.1:48765/mock-token",
+  "chatEndpointUrl": "http://localhost:48766/mock-chat"
+}

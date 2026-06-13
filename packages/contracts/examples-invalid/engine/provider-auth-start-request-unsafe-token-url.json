@@ -1,0 +1,4 @@
+{
+  "experimentalCodexLike": true,
+  "tokenEndpointUrl": "https://auth.openai.example/oauth/token"
+}

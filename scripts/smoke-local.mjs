@@ -249,8 +249,9 @@ try {
   assert(codexEvents[1]?.type === "stream_started" && codexEvents[1]?.payload?.role === "assistant", "experimental Codex-like SSE stream_started event was not received");
   assert(codexEvents[2]?.type === "stream_delta" && codexEvents[2]?.payload?.delta?.content === "OAuth", "experimental Codex-like SSE OAuth delta was not received");
   assert(codexEvents[3]?.type === "stream_delta" && codexEvents[3]?.payload?.delta?.content === " smoke", "experimental Codex-like SSE smoke delta was not received");
-  assert(codexEvents[4]?.type === "stream_finished" && codexEvents[4]?.payload?.finishReason === "stop", "experimental Codex-like SSE stream_finished event was not received");
-  assert(codexEvents.length === 5, "experimental Codex-like SSE produced unexpected extra events");
+  assert(codexEvents[4]?.type === "message_added" && codexEvents[4]?.payload?.message?.role === "assistant" && codexEvents[4]?.payload?.message?.content === "OAuth smoke", "experimental Codex-like SSE assistant message_added event was not received");
+  assert(codexEvents[5]?.type === "stream_finished" && codexEvents[5]?.payload?.finishReason === "stop", "experimental Codex-like SSE stream_finished event was not received");
+  assert(codexEvents.length === 6, "experimental Codex-like SSE produced unexpected extra events");
   assertMonotonicSequence(codexEvents);
 
   assert(codexChatRequestCount === 1, "experimental Codex-like mock chat endpoint was not called exactly once");

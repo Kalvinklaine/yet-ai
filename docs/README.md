@@ -25,6 +25,7 @@ docs/
 - `architecture/004-implementation-strategy.md` — implementation strategy and staged local-first delivery guidance.
 - `architecture/005-publication-hygiene.md` — rules for keeping public tracked files clean before publication.
 - `architecture/006-login-based-gpt-first-message.md` — future mandatory login-based GPT first-message milestone, official/experimental path split, and required gates.
+- `architecture/007-provider-auth-feasibility.md` — provider-auth feasibility decision for OpenAI account-login evaluation, blocking production/default login until an official provider-supported local-app flow is approved.
 
 ## Verification
 
@@ -37,6 +38,8 @@ npm run check
 The command runs the repository's local validation bundle: product identity, public hygiene, docs index coverage, IDE surface contract parity, docs validation, and focused self-tests/validators that are safe for the current checkout. It does not run the browser or packaged IDE smoke gates, call providers, require hosted Yet AI services, publish marketplace artifacts, or claim production release status.
 
 For installed-plugin Demo Mode first-message coverage, run `npm run smoke:installed-plugin-demo-mode` from the root after preparing current packaged GUI assets. It orchestrates the VS Code and JetBrains wrapper-browser smokes with `--demo-mode-first-message` and is included in `npm run smoke:ide-release-candidate` after installed-plugin visual coverage. Demo Mode is runtime-owned no-key canned local response coverage for chat UX only, not model quality; it is local/mock-only, uses no provider credentials, makes no OpenAI/ChatGPT or other provider calls, contacts no hosted Yet AI services, performs no real IDE/JCEF automation, and does not sign, publish, or create a release.
+
+For the login-based GPT first-message milestone foundation, run `cd apps/gui && npm run build` and then `npm run smoke:login-first-message` from the root. This is a bounded mock-only GUI/browser smoke against a loopback runtime stub: it exercises the experimental/non-default provider-auth lifecycle (`login_available` → `pending` → `connected`), preserves the API-key fallback copy, sends one first message through a canned local chat path, and writes sanitized visual evidence. It does not use real provider credentials, OpenAI/ChatGPT calls, hosted Yet AI services, real IDE/JCEF automation, signing, publishing, release flows, or production/default account-login enablement.
 
 ### Safe IDE dogfood reports
 

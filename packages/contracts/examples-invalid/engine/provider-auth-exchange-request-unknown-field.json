@@ -1,0 +1,6 @@
+{
+  "sessionId": "provider-login-session-001",
+  "state": "mock-state-001",
+  "code": "mock-code-001",
+  "accessToken": "fake-access-token-sentinel"
+}

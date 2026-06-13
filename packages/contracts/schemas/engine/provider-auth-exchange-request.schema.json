@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/provider-auth-exchange-request.schema.json",
+  "title": "Engine Provider Auth Exchange Request",
+  "description": "Strict GUI-to-engine provider login exchange body. Values are bounded inbound correlation/code strings only; raw tokens, cookies, endpoints, and provider secrets are never accepted here.",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 0
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sessionId", "state", "code"],
+      "properties": {
+        "sessionId": {
+          "$ref": "#/$defs/safeString256"
+        },
+        "state": {
+          "$ref": "#/$defs/safeString512"
+        },
+        "code": {
+          "$ref": "#/$defs/safeString4096"
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "safeString256": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^(?=\\S)(?!.*\\s$)[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+    },
+    "safeString512": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?=\\S)(?!.*\\s$)[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+    },
+    "safeString4096": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?=\\S)(?!.*\\s$)[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+    }
+  }
+}

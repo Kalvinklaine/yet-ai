@@ -7,8 +7,8 @@ use base64::Engine;
 use chrono::{Duration, Utc};
 use futures_util::StreamExt;
 use http::StatusCode;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::de::{DeserializeOwned, Error as DeError};
+use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
@@ -48,6 +48,11 @@ const PROVIDER_AUTH_SESSION_ID_MAX_CHARS: usize = 256;
 const PROVIDER_AUTH_STATE_MAX_CHARS: usize = 512;
 const PROVIDER_AUTH_CODE_MAX_CHARS: usize = 4096;
 const PROVIDER_AUTH_URL_MAX_CHARS: usize = 2048;
+const CODEX_SCOPE_MAX_TOKENS: usize = 32;
+const CODEX_SCOPE_MAX_TOKEN_CHARS: usize = 128;
+const CODEX_SCOPE_MAX_LIST_CHARS: usize = 1024;
+const CODEX_CHAT_MODEL_MAX_CHARS: usize = 128;
+const CODEX_ALLOWED_SCOPES: [&str; 4] = ["openid", "profile", "email", "offline_access"];
 static MOCK_COUNTER: AtomicU64 = AtomicU64::new(1);
 static PROVIDER_AUTH_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 static CODEX_EXCHANGE_IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> =
@@ -68,24 +73,51 @@ impl Drop for CodexExchangeGuard {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProviderAuthStartRequest {
     #[serde(default)]
     pub mock: bool,
     #[serde(default)]
     pub experimental_codex_like: bool,
+    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
     pub ttl_seconds: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
     pub token_endpoint_url: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
     pub chat_endpoint_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProviderAuthExchangeRequest {
+    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
     pub session_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
     pub state: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
     pub code: Option<String>,
 }
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum NonNullField<T> {
+    Value(T),
+}
+
+fn deserialize_optional_non_null<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    match Option::<NonNullField<T>>::deserialize(deserializer)? {
+        Some(NonNullField::Value(value)) => Ok(Some(value)),
+        None => Err(D::Error::custom("null is not allowed")),
+    }
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProviderAuthDisconnectRequest {}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -265,7 +297,23 @@ pub async fn status(
     provider: &str,
 ) -> Result<ProviderAuthResponse, ProviderAuthError> {
     let provider = normalize_supported_provider(provider)?;
+    if provider == "openai" {
+        let codex = read_codex_state(config_dir, provider).await?;
+        if let Some(session) = codex.pending {
+            if parse_time(&session.expires_at)? > Utc::now() {
+                return Ok(codex_pending_response(provider, &session, None));
+            }
+        }
+        if let Some(response) = codex_connected_status(config_dir, provider).await? {
+            return Ok(response);
+        }
+    }
     let mock = read_mock_state(config_dir, provider).await?;
+    if let Some(session) = mock.pending {
+        if parse_time(&session.expires_at)? > Utc::now() {
+            return Ok(mock_pending_response(provider, &session, None));
+        }
+    }
     if let Some(connection) = mock.connected {
         if parse_time(&connection.expires_at)? > Utc::now() {
             return Ok(mock_connected_response(
@@ -273,22 +321,6 @@ pub async fn status(
                 connection.scopes,
                 Some(true),
             ));
-        }
-    }
-    if let Some(session) = mock.pending {
-        if parse_time(&session.expires_at)? > Utc::now() {
-            return Ok(mock_pending_response(provider, &session, None));
-        }
-    }
-    if provider == "openai" {
-        if let Some(response) = codex_connected_status(config_dir, provider).await? {
-            return Ok(response);
-        }
-        let codex = read_codex_state(config_dir, provider).await?;
-        if let Some(session) = codex.pending {
-            if parse_time(&session.expires_at)? > Utc::now() {
-                return Ok(codex_pending_response(provider, &session, None));
-            }
         }
     }
     Ok(status_response(
@@ -304,15 +336,21 @@ pub async fn start(
     request: ProviderAuthStartRequest,
 ) -> Result<ProviderAuthResponse, ProviderAuthError> {
     let provider = normalize_supported_provider(provider)?;
+    validate_start_request(provider, &request)?;
     if request.mock {
+        reject_mock_codex_coexistence(config_dir, provider).await?;
         let ttl_seconds = validate_ttl_seconds(request.ttl_seconds.unwrap_or(MOCK_TTL_SECONDS))?;
         let session = new_mock_session(provider, ttl_seconds);
-        let mut state = read_mock_state(config_dir, provider).await?;
-        state.pending = Some(session.clone());
+        let state = MockOAuthState {
+            pending: Some(session.clone()),
+            connected: None,
+        };
         write_mock_state(config_dir, provider, &state).await?;
         return Ok(mock_pending_response(provider, &session, Some(true)));
     }
     if request.experimental_codex_like && provider == "openai" {
+        reject_codex_mock_coexistence(config_dir, provider).await?;
+        reject_existing_codex_auth_state(config_dir, provider).await?;
         let session = new_codex_session(
             request.ttl_seconds.unwrap_or(CODEX_TTL_SECONDS),
             request.token_endpoint_url.as_deref(),
@@ -335,6 +373,33 @@ pub async fn start(
     ))
 }
 
+fn validate_start_request(
+    provider: &str,
+    request: &ProviderAuthStartRequest,
+) -> Result<(), ProviderAuthError> {
+    if request.mock && request.experimental_codex_like {
+        return Err(ProviderAuthError::InvalidRequest);
+    }
+    if request.experimental_codex_like && provider != "openai" {
+        return Err(ProviderAuthError::InvalidRequest);
+    }
+    if request.ttl_seconds.is_some() && !request.mock && !request.experimental_codex_like {
+        return Err(ProviderAuthError::InvalidRequest);
+    }
+    if request.token_endpoint_url.is_some() || request.chat_endpoint_url.is_some() {
+        if request.mock || !request.experimental_codex_like || provider != "openai" {
+            return Err(ProviderAuthError::InvalidRequest);
+        }
+        if let Some(value) = request.token_endpoint_url.as_deref() {
+            validate_experimental_endpoint_url(value, true)?;
+        }
+        if let Some(value) = request.chat_endpoint_url.as_deref() {
+            validate_experimental_endpoint_url(value, true)?;
+        }
+    }
+    Ok(())
+}
+
 pub async fn exchange(
     config_dir: &Path,
     provider: &str,
@@ -342,11 +407,9 @@ pub async fn exchange(
 ) -> Result<ProviderAuthResponse, ProviderAuthError> {
     let provider = normalize_supported_provider(provider)?;
     if request.session_id.is_none() && request.state.is_none() && request.code.is_none() {
-        return Ok(status_response(
-            provider,
-            configured_api_key(config_dir, provider).await?,
-            Some(false),
-        ));
+        let mut response = status(config_dir, provider).await?;
+        response.success = Some(false);
+        return Ok(response);
     }
     let session_id = required_value(request.session_id, PROVIDER_AUTH_SESSION_ID_MAX_CHARS)?;
     let state_value = required_value(request.state, PROVIDER_AUTH_STATE_MAX_CHARS)?;
@@ -374,6 +437,10 @@ pub async fn exchange(
         write_mock_state(config_dir, provider, &mock).await?;
         return Err(ProviderAuthError::SessionExpired);
     }
+    if provider == "openai" && codex_auth_state_exists(config_dir, provider).await? {
+        write_mock_state(config_dir, provider, &MockOAuthState::default()).await?;
+        return Err(ProviderAuthError::InvalidRequest);
+    }
 
     let scopes = vec!["mock:chat".to_string(), "mock:profile".to_string()];
     let connection = MockOAuthConnection {
@@ -395,33 +462,33 @@ pub async fn disconnect(
 ) -> Result<ProviderAuthResponse, ProviderAuthError> {
     let provider = normalize_supported_provider(provider)?;
     let mock = read_mock_state(config_dir, provider).await?;
-    if mock.pending.is_some() || mock.connected.is_some() {
+    let had_mock = mock.pending.is_some() || mock.connected.is_some();
+    if had_mock {
         write_mock_state(config_dir, provider, &MockOAuthState::default()).await?;
-        let mut response = status_response(provider, None, Some(true));
-        response.status = "revoked";
-        response.message = MOCK_DISCONNECTED_MESSAGE.to_string();
-        return Ok(response);
     }
+
+    let mut had_codex = false;
     if provider == "openai" {
         let codex = read_codex_state(config_dir, provider).await?;
-        let had_codex = codex.pending.is_some() || codex_has_secrets(config_dir, provider).await?;
+        had_codex = codex.pending.is_some() || codex_has_secrets(config_dir, provider).await?;
         if had_codex {
             write_codex_state(config_dir, provider, &CodexOAuthState::default()).await?;
             delete_codex_secrets(config_dir, provider).await?;
-            let configured = configured_api_key(config_dir, provider).await?;
-            let mut response = status_response(provider, configured, Some(true));
-            if response.configured {
-                response.message = DISCONNECT_MESSAGE.to_string();
-            } else {
-                response.status = "revoked";
-                response.message = DISCONNECT_MESSAGE.to_string();
-            }
-            return Ok(response);
         }
     }
+
     let configured = configured_api_key(config_dir, provider).await?;
     let mut response = status_response(provider, configured, Some(true));
-    if response.configured {
+    if had_mock || had_codex {
+        if !response.configured {
+            response.status = "revoked";
+        }
+        response.message = if had_codex {
+            DISCONNECT_MESSAGE.to_string()
+        } else {
+            MOCK_DISCONNECTED_MESSAGE.to_string()
+        };
+    } else if response.configured {
         response.message = DISCONNECT_MESSAGE.to_string();
     } else {
         response.status = "revoked";
@@ -777,11 +844,7 @@ async fn codex_exchange(
         write_codex_state(config_dir, provider, &codex).await?;
         return Err(ProviderAuthError::TokenExchange);
     }
-    let scopes = token
-        .scope
-        .as_deref()
-        .map(|value| value.split_whitespace().map(str::to_string).collect())
-        .unwrap_or_else(|| session.scopes.clone());
+    let scopes = codex_token_scopes(token.scope.as_deref(), &session.scopes)?;
     let expires_in = validate_codex_token_expires_in(token.expires_in)?;
     let expires_at = (Utc::now() + Duration::seconds(expires_in)).to_rfc3339();
     let metadata = CodexAuthMetadata {
@@ -795,7 +858,13 @@ async fn codex_exchange(
         token_endpoint_url: session.token_endpoint_url,
     };
     store_codex_connection(config_dir, provider, &token, &metadata).await?;
-    write_codex_state(config_dir, provider, &CodexOAuthState::default()).await?;
+    if write_codex_state(config_dir, provider, &CodexOAuthState::default())
+        .await
+        .is_err()
+    {
+        delete_codex_secrets(config_dir, provider).await?;
+        return Err(ProviderAuthError::Storage);
+    }
     Ok(codex_connected_response(provider, metadata, Some(true)))
 }
 
@@ -908,6 +977,92 @@ fn validate_codex_token_expires_in(value: Option<i64>) -> Result<i64, ProviderAu
         return Err(ProviderAuthError::TokenExchange);
     }
     Ok(value)
+}
+
+fn codex_token_scopes(
+    token_scope: Option<&str>,
+    default_scopes: &[String],
+) -> Result<Vec<String>, ProviderAuthError> {
+    let defaults = validate_codex_scope_allowlist(default_scopes.to_vec())
+        .map_err(|_| ProviderAuthError::TokenExchange)?;
+    match token_scope {
+        Some(value) => validate_codex_scope_subset(
+            value.split_whitespace().map(str::to_string).collect(),
+            &defaults,
+        ),
+        None => Ok(defaults),
+    }
+    .map_err(|_| ProviderAuthError::TokenExchange)
+}
+
+fn validate_codex_scopes(scopes: Vec<String>) -> Result<Vec<String>, ProviderAuthError> {
+    if scopes.is_empty() || scopes.len() > CODEX_SCOPE_MAX_TOKENS {
+        return Err(ProviderAuthError::Storage);
+    }
+    let mut total_chars = 0usize;
+    let mut sanitized = Vec::with_capacity(scopes.len());
+    for scope in scopes {
+        let scope = scope.trim();
+        let lower = scope.to_ascii_lowercase();
+        total_chars = total_chars.saturating_add(scope.chars().count());
+        if scope.is_empty()
+            || scope.chars().count() > CODEX_SCOPE_MAX_TOKEN_CHARS
+            || total_chars > CODEX_SCOPE_MAX_LIST_CHARS
+            || !scope.chars().all(is_safe_codex_scope_char)
+            || scope.contains("..")
+            || scope.starts_with('/')
+            || scope.starts_with('-')
+            || scope.starts_with('.')
+            || lower.contains("secret")
+            || lower.contains("token")
+            || lower.contains("cookie")
+            || lower.contains("bearer")
+            || lower.contains("auth.json")
+        {
+            return Err(ProviderAuthError::Storage);
+        }
+        sanitized.push(scope.to_string());
+    }
+    Ok(sanitized)
+}
+
+fn validate_codex_scope_allowlist(scopes: Vec<String>) -> Result<Vec<String>, ProviderAuthError> {
+    let scopes = validate_codex_scopes(scopes)?;
+    let requested: HashSet<&str> = scopes.iter().map(String::as_str).collect();
+    let mut ordered = Vec::new();
+    for allowed in CODEX_ALLOWED_SCOPES {
+        if requested.contains(allowed) {
+            ordered.push(allowed.to_string());
+        }
+    }
+    if ordered.len() != requested.len() || ordered.is_empty() {
+        return Err(ProviderAuthError::Storage);
+    }
+    Ok(ordered)
+}
+
+fn validate_codex_scope_subset(
+    scopes: Vec<String>,
+    requested_scopes: &[String],
+) -> Result<Vec<String>, ProviderAuthError> {
+    let scopes = validate_codex_scopes(scopes)?;
+    let returned: HashSet<&str> = scopes.iter().map(String::as_str).collect();
+    if returned.is_empty() {
+        return Err(ProviderAuthError::Storage);
+    }
+    let requested: HashSet<&str> = requested_scopes.iter().map(String::as_str).collect();
+    if returned.iter().any(|scope| !requested.contains(*scope)) {
+        return Err(ProviderAuthError::Storage);
+    }
+    Ok(requested_scopes
+        .iter()
+        .filter(|scope| returned.contains(scope.as_str()))
+        .cloned()
+        .collect())
+}
+
+fn is_safe_codex_scope_char(value: char) -> bool {
+    value.is_ascii_alphanumeric() || matches!(value, ':' | '.' | '_' | '-' | '/')
 }
 
 fn sanitized_account_label(value: Option<&str>) -> String {
@@ -1039,9 +1194,21 @@ async fn codex_connected_status(
     let metadata: CodexAuthMetadata =
         serde_json::from_str(&metadata).map_err(|_| ProviderAuthError::Storage)?;
     validate_codex_metadata(provider, &metadata)?;
-    if !codex_has_complete_secrets(&store, provider).await? {
+    let Some(access_token) = store
+        .get_secret(provider, SecretKind::OAuthAccessToken)
+        .await?
+        .filter(|value| !value.trim().is_empty())
+    else {
         return Ok(None);
-    }
+    };
+    let Some(_) = store
+        .get_secret(provider, SecretKind::OAuthRefreshToken)
+        .await?
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(None);
+    };
+    let metadata = sanitize_codex_response_metadata(metadata, Some(&access_token));
     if parse_time(&metadata.expires_at)? <= Utc::now() {
         return Ok(Some(codex_expired_response(provider, metadata)));
     }
@@ -1095,6 +1262,9 @@ pub async fn refresh_experimental_codex_chat_auth_if_needed(
     config_dir: &Path,
 ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
     let provider = "openai";
+    if codex_pending_session_is_unexpired(config_dir, provider).await? {
+        return Ok(None);
+    }
     let Some(snapshot) = read_codex_chat_auth_snapshot(config_dir, provider).await? else {
         return Ok(None);
     };
@@ -1110,9 +1280,15 @@ async fn refresh_experimental_codex_chat_auth(
     rejected_access_token: Option<&str>,
 ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
     let provider = "openai";
+    if codex_pending_session_is_unexpired(config_dir, provider).await? {
+        return Ok(None);
+    }
     let lock = codex_refresh_lock(config_dir, provider)?;
     let _guard = lock.lock().await;
     let _file_guard = acquire_codex_refresh_file_lock(config_dir, provider).await?;
+    if codex_pending_session_is_unexpired(config_dir, provider).await? {
+        return Ok(None);
+    }
     let Some(current) = read_codex_chat_auth_snapshot(config_dir, provider).await? else {
         return Ok(None);
     };
@@ -1133,6 +1309,7 @@ async fn refresh_experimental_codex_chat_auth(
                 {
                     return Ok(Some(newer));
                 }
+                clear_codex_auth_after_refresh_token_reuse(config_dir, provider).await?;
                 return Err(ProviderAuthError::TokenExchange);
             }
             Err(CodexTokenEndpointError::Failed) => return Err(ProviderAuthError::TokenExchange),
@@ -1140,11 +1317,7 @@ async fn refresh_experimental_codex_chat_auth(
     if token.access_token.trim().is_empty() || token.refresh_token.trim().is_empty() {
         return Err(ProviderAuthError::TokenExchange);
     }
-    let scopes = token
-        .scope
-        .as_deref()
-        .map(|value| value.split_whitespace().map(str::to_string).collect())
-        .unwrap_or_else(|| current.metadata.scopes.clone());
+    let scopes = codex_token_scopes(token.scope.as_deref(), &current.metadata.scopes)?;
     let expires_in = validate_codex_token_expires_in(token.expires_in)?;
     let metadata = CodexAuthMetadata {
         provider: provider.to_string(),
@@ -1152,7 +1325,7 @@ async fn refresh_experimental_codex_chat_auth(
             .account_label
             .as_deref()
             .map(|value| sanitized_account_label(Some(value)))
-            .unwrap_or(current.metadata.account_label),
+            .unwrap_or_else(|| sanitized_account_label(Some(&current.metadata.account_label))),
         scopes,
         expires_at: (Utc::now() + Duration::seconds(expires_in)).to_rfc3339(),
         redacted: crate::secret_store::redact_secret(&token.access_token),
@@ -1166,6 +1339,25 @@ async fn refresh_experimental_codex_chat_auth(
         base_url: metadata.chat_base_url,
         model: metadata.chat_model,
     }))
+}
+
+async fn clear_codex_auth_after_refresh_token_reuse(
+    config_dir: &Path,
+    provider: &str,
+) -> Result<(), ProviderAuthError> {
+    write_codex_state(config_dir, provider, &CodexOAuthState::default()).await?;
+    delete_codex_secrets(config_dir, provider).await
+}
+
+async fn codex_pending_session_is_unexpired(
+    config_dir: &Path,
+    provider: &str,
+) -> Result<bool, ProviderAuthError> {
+    let codex = read_codex_state(config_dir, provider).await?;
+    let Some(session) = codex.pending else {
+        return Ok(false);
+    };
+    Ok(parse_time(&session.expires_at)? > Utc::now())
 }
 
 struct CodexChatAuthSnapshot {
@@ -1337,21 +1529,6 @@ impl Drop for CodexRefreshFileLock {
 #[cfg(not(unix))]
 struct CodexRefreshFileLock {}
 
-async fn codex_has_complete_secrets(
-    store: &impl ProviderSecretStore,
-    provider: &str,
-) -> Result<bool, ProviderAuthError> {
-    let has_access = store
-        .get_secret(provider, SecretKind::OAuthAccessToken)
-        .await?
-        .is_some_and(|value| !value.trim().is_empty());
-    let has_refresh = store
-        .get_secret(provider, SecretKind::OAuthRefreshToken)
-        .await?
-        .is_some_and(|value| !value.trim().is_empty());
-    Ok(has_access && has_refresh)
-}
-
 fn validate_codex_metadata(
     provider: &str,
     metadata: &CodexAuthMetadata,
@@ -1359,13 +1536,70 @@ fn validate_codex_metadata(
     if metadata.provider != provider {
         return Err(ProviderAuthError::Storage);
     }
+    let scopes = validate_codex_scope_subset(metadata.scopes.clone(), &codex_scopes())?;
+    if scopes.len() != metadata.scopes.len() {
+        return Err(ProviderAuthError::Storage);
+    }
     if metadata.token_endpoint_url.trim() != CODEX_TOKEN_URL {
         validate_experimental_endpoint_url(&metadata.token_endpoint_url, true)?;
     }
     if metadata.chat_base_url.trim_end_matches('/') == CODEX_CHAT_BASE_URL {
+        if metadata.chat_model == CODEX_CHAT_MODEL {
+            return Ok(());
+        }
+        return Err(ProviderAuthError::Storage);
+    }
+    validate_experimental_endpoint_url(&metadata.chat_base_url, true)?;
+    validate_codex_chat_model(&metadata.chat_model)
+}
+
+fn validate_codex_chat_model(value: &str) -> Result<(), ProviderAuthError> {
+    if value == CODEX_CHAT_MODEL {
         return Ok(());
     }
-    validate_experimental_endpoint_url(&metadata.chat_base_url, true).map(|_| ())
+    let trimmed = value.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if trimmed != value
+        || trimmed.is_empty()
+        || trimmed.chars().count() > CODEX_CHAT_MODEL_MAX_CHARS
+        || trimmed.chars().any(|value| value.is_control() || value.is_whitespace())
+        || !trimmed
+            .chars()
+            .all(|value| value.is_ascii_alphanumeric() || matches!(value, '.' | '_' | '-' | ':'))
+        || trimmed.starts_with('/')
+        || trimmed.starts_with('.')
+        || trimmed.starts_with('-')
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains('@')
+        || trimmed.contains('?')
+        || trimmed.contains('#')
+        || trimmed.contains('=')
+        || trimmed.contains("..")
+        || lower.starts_with("sk-")
+        || lower.contains("secret")
+        || lower.contains("token")
+        || lower.contains("bearer")
+        || lower.contains("cookie")
+        || lower.contains("auth.json")
+        || lower.contains(".codex")
+        || looks_like_jwt(trimmed)
+        || looks_like_path(trimmed)
+    {
+        return Err(ProviderAuthError::Storage);
+    }
+    Ok(())
+}
+
+fn sanitize_codex_response_metadata(
+    mut metadata: CodexAuthMetadata,
+    access_token: Option<&str>,
+) -> CodexAuthMetadata {
+    metadata.account_label = sanitized_account_label(Some(&metadata.account_label));
+    metadata.redacted = access_token
+        .map(crate::secret_store::redact_secret)
+        .unwrap_or_else(|| "oauth-token-...redacted".to_string());
+    metadata
 }
 
 fn default_codex_chat_base_url() -> String {
@@ -1394,6 +1628,66 @@ async fn codex_has_secrets(config_dir: &Path, provider: &str) -> Result<bool, Pr
             .get_secret(provider, SecretKind::AuthMetadata)
             .await?
             .is_some())
+}
+
+async fn reject_mock_codex_coexistence(
+    config_dir: &Path,
+    provider: &str,
+) -> Result<(), ProviderAuthError> {
+    if provider != "openai" {
+        return Ok(());
+    }
+    if codex_auth_state_exists(config_dir, provider).await? {
+        return Err(ProviderAuthError::InvalidRequest);
+    }
+    Ok(())
+}
+
+async fn codex_auth_state_exists(
+    config_dir: &Path,
+    provider: &str,
+) -> Result<bool, ProviderAuthError> {
+    let codex = read_codex_state(config_dir, provider).await?;
+    Ok(codex.pending.is_some() || codex_has_secrets(config_dir, provider).await?)
+}
+
+async fn reject_codex_mock_coexistence(
+    config_dir: &Path,
+    provider: &str,
+) -> Result<(), ProviderAuthError> {
+    let mock = read_mock_state(config_dir, provider).await?;
+    if mock.pending.is_some() || mock.connected.is_some() {
+        return Err(ProviderAuthError::InvalidRequest);
+    }
+    Ok(())
+}
+
+async fn reject_existing_codex_auth_state(
+    config_dir: &Path,
+    provider: &str,
+) -> Result<(), ProviderAuthError> {
+    let codex = read_codex_state(config_dir, provider).await?;
+    if codex.pending.is_some() || codex_has_readable_secrets(config_dir, provider).await? {
+        return Err(ProviderAuthError::InvalidRequest);
+    }
+    Ok(())
+}
+
+async fn codex_has_readable_secrets(
+    config_dir: &Path,
+    provider: &str,
+) -> Result<bool, ProviderAuthError> {
+    let store = provider_secret_store(config_dir);
+    for kind in [
+        SecretKind::OAuthAccessToken,
+        SecretKind::OAuthRefreshToken,
+        SecretKind::AuthMetadata,
+    ] {
+        if store.get_secret(provider, kind).await?.is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 async fn delete_codex_secrets(config_dir: &Path, provider: &str) -> Result<(), ProviderAuthError> {
@@ -1446,6 +1740,9 @@ fn url_encode(bytes: &[u8]) -> String {
 
 fn required_value(value: Option<String>, max_chars: usize) -> Result<String, ProviderAuthError> {
     let value = value.ok_or(ProviderAuthError::InvalidRequest)?;
+    if value.trim() != value {
+        return Err(ProviderAuthError::InvalidRequest);
+    }
     validate_required_string(&value, max_chars)
 }
 
@@ -1553,14 +1850,17 @@ fn provider_auth_state_path(
 async fn ensure_provider_auth_directory(path: &Path) -> Result<(), ProviderAuthError> {
     let root = path.parent().ok_or(ProviderAuthError::Storage)?;
     let parent = root.parent().ok_or(ProviderAuthError::Storage)?;
+    reject_existing_provider_auth_ancestor_symlinks(parent).await?;
     tokio::fs::create_dir_all(parent)
         .await
         .map_err(|_| ProviderAuthError::Storage)?;
+    reject_existing_provider_auth_ancestor_symlinks(root).await?;
     ensure_provider_auth_root(root, true).await.map(|_| ())
 }
 
 async fn ensure_existing_provider_auth_directory(path: &Path) -> Result<(), ProviderAuthError> {
     let root = path.parent().ok_or(ProviderAuthError::Storage)?;
+    reject_existing_provider_auth_ancestor_symlinks(root).await?;
     ensure_provider_auth_root(root, false).await.map(|_| ())
 }
 
@@ -1578,10 +1878,59 @@ async fn ensure_provider_auth_root(root: &Path, create: bool) -> Result<bool, Pr
             tokio::fs::create_dir(root)
                 .await
                 .map_err(|_| ProviderAuthError::Storage)?;
+            let metadata = tokio::fs::symlink_metadata(root)
+                .await
+                .map_err(|_| ProviderAuthError::Storage)?;
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(ProviderAuthError::Storage);
+            }
+            reject_existing_provider_auth_ancestor_symlinks(root).await?;
             set_private_directory_permissions(root).await?;
             Ok(true)
         }
         Err(_) => Err(ProviderAuthError::Storage),
+    }
+}
+
+async fn reject_existing_provider_auth_ancestor_symlinks(
+    path: &Path,
+) -> Result<(), ProviderAuthError> {
+    let mut current = PathBuf::new();
+    let components = path.components();
+    for component in components {
+        current.push(component.as_os_str());
+        if matches!(component, std::path::Component::RootDir) {
+            let canonical_root =
+                std::fs::canonicalize(&current).map_err(|_| ProviderAuthError::Storage)?;
+            if canonical_root != current {
+                current = canonical_root;
+            }
+            continue;
+        }
+        match tokio::fs::symlink_metadata(&current).await {
+            Ok(metadata)
+                if metadata.file_type().is_symlink()
+                    && !is_provider_auth_platform_root_alias(&current) =>
+            {
+                return Err(ProviderAuthError::Storage);
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(_) => return Err(ProviderAuthError::Storage),
+        }
+    }
+    Ok(())
+}
+
+fn is_provider_auth_platform_root_alias(path: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        path == Path::new("/var")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        false
     }
 }
 
@@ -1866,6 +2215,332 @@ mod tests {
         dir
     }
 
+    fn response_json(response: &super::ProviderAuthResponse) -> String {
+        serde_json::to_string(response).unwrap()
+    }
+
+    fn assert_response_sanitized(response: &super::ProviderAuthResponse, forbidden: &[&str]) {
+        let json = response_json(response);
+        for value in forbidden {
+            assert!(!json.contains(value), "response leaked {value:?}: {json}");
+        }
+        assert!(
+            !json.contains("access_token"),
+            "response leaked access_token key: {json}"
+        );
+        assert!(
+            !json.contains("refresh_token"),
+            "response leaked refresh_token key: {json}"
+        );
+        assert!(
+            !json.contains("verifier"),
+            "response leaked verifier key: {json}"
+        );
+        assert!(
+            !json.contains("cookie"),
+            "response leaked cookie key: {json}"
+        );
+        assert!(
+            !json.contains("/Users/"),
+            "response leaked private path: {json}"
+        );
+    }
+
+    fn parse_start_request(
+        json: &str,
+    ) -> Result<super::ProviderAuthStartRequest, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+
+    fn parse_exchange_request(
+        json: &str,
+    ) -> Result<super::ProviderAuthExchangeRequest, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+
+    async fn create_openai_api_key_provider(dir: &std::path::Path) {
+        crate::providers::create_provider_config(
+            dir,
+            crate::providers::ProviderWriteRequest {
+                id: Some("openai".to_string()),
+                kind: Some(crate::providers::ProviderKind::OpenAiCompatible),
+                display_name: Some("OpenAI API".to_string()),
+                enabled: Some(true),
+                base_url: Some("https://api.openai.com/v1".to_string()),
+                auth: Some(crate::providers::AuthWriteRequest {
+                    auth_type: crate::providers::AuthType::ApiKey,
+                    api_key: Some("sk-test-api-key-secret".to_string()),
+                }),
+                models: Some(vec![crate::providers::ModelSummary {
+                    id: "gpt-test".to_string(),
+                    display_name: "GPT Test".to_string(),
+                    provider_id: None,
+                    capabilities: crate::providers::ModelCapabilities::default(),
+                    readiness: crate::providers::ModelReadiness::default(),
+                }]),
+                capabilities: Some(crate::providers::ProviderCapabilities::default()),
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn create_codex_oauth_connection(dir: &std::path::Path) {
+        create_codex_oauth_connection_with_expiry(
+            dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+        )
+        .await;
+    }
+
+    async fn create_expired_codex_oauth_connection(dir: &std::path::Path) {
+        create_codex_oauth_connection_with_expiry(
+            dir,
+            chrono::Utc::now() - chrono::Duration::hours(1),
+        )
+        .await;
+    }
+
+    async fn create_codex_oauth_connection_with_expiry(
+        dir: &std::path::Path,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) {
+        create_codex_oauth_connection_with_expiry_and_metadata(dir, expires_at, |_, _| {}).await;
+    }
+
+    async fn create_codex_oauth_connection_with_expiry_and_metadata(
+        dir: &std::path::Path,
+        expires_at: chrono::DateTime<chrono::Utc>,
+        mutate: impl FnOnce(&mut super::CodexTokenResponse, &mut super::CodexAuthMetadata),
+    ) {
+        let token = super::CodexTokenResponse {
+            access_token: "codex-access-token-secret".to_string(),
+            refresh_token: "codex-refresh-token-secret".to_string(),
+            expires_in: Some(3600),
+            scope: Some("openid profile email offline_access".to_string()),
+            account_label: Some("Codex Test Account".to_string()),
+        };
+        let metadata = super::CodexAuthMetadata {
+            provider: "openai".to_string(),
+            account_label: "Codex Test Account".to_string(),
+            scopes: super::codex_scopes(),
+            expires_at: expires_at.to_rfc3339(),
+            redacted: crate::secret_store::redact_secret(&token.access_token),
+            chat_base_url: super::CODEX_CHAT_BASE_URL.to_string(),
+            chat_model: super::CODEX_CHAT_MODEL.to_string(),
+            token_endpoint_url: super::CODEX_TOKEN_URL.to_string(),
+        };
+        let mut token = token;
+        let mut metadata = metadata;
+        mutate(&mut token, &mut metadata);
+
+        super::store_codex_connection(dir, "openai", &token, &metadata)
+            .await
+            .unwrap();
+    }
+
+    async fn create_codex_oauth_connection_with_chat_model(
+        dir: &std::path::Path,
+        chat_model: &str,
+    ) {
+        create_codex_oauth_connection_with_expiry_and_metadata(
+            dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            |_, metadata| metadata.chat_model = chat_model.to_string(),
+        )
+        .await;
+    }
+
+    async fn create_near_expired_codex_oauth_connection_with_token_endpoint(
+        dir: &std::path::Path,
+        token_endpoint_url: &str,
+    ) {
+        create_codex_oauth_connection_with_expiry_and_metadata(
+            dir,
+            chrono::Utc::now() + chrono::Duration::seconds(5),
+            |_, metadata| metadata.token_endpoint_url = token_endpoint_url.to_string(),
+        )
+        .await;
+    }
+
+    async fn refresh_token_reused_loopback_endpoint() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/token", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buffer = [0_u8; 2048];
+                let _ = stream.read(&mut buffer).await;
+                let body = r#"{"error":"refresh_token_reused"}"#;
+                let response = format!(
+                    "HTTP/1.1 401 Unauthorized\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+        url
+    }
+
+    async fn successful_codex_token_endpoint_with_hook(
+        hook: impl FnOnce() + Send + 'static,
+    ) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/token", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buffer = [0_u8; 2048];
+                let _ = stream.read(&mut buffer).await;
+                hook();
+                let body = r#"{"access_token":"codex-exchange-access-token-secret","refresh_token":"codex-exchange-refresh-token-secret","expires_in":3600,"scope":"openid profile email offline_access","account_label":"Codex Exchange Account"}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+        url
+    }
+
+    async fn create_mock_connected_state(dir: &std::path::Path) {
+        super::write_mock_state(
+            dir,
+            "openai",
+            &super::MockOAuthState {
+                pending: None,
+                connected: Some(super::MockOAuthConnection {
+                    provider: "openai".to_string(),
+                    account_label: "Mock OAuth Account".to_string(),
+                    scopes: vec!["mock:chat".to_string()],
+                    expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+                    access_token: "fake-access-token".to_string(),
+                    refresh_token: "fake-refresh-token".to_string(),
+                }),
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn create_codex_pending_state(dir: &std::path::Path) -> super::CodexOAuthSession {
+        let session = super::new_codex_session(600, None, None).unwrap();
+        super::write_codex_state(
+            dir,
+            "openai",
+            &super::CodexOAuthState {
+                pending: Some(session.clone()),
+            },
+        )
+        .await
+        .unwrap();
+        session
+    }
+
+    async fn create_codex_pending_state_with_token_endpoint(
+        dir: &std::path::Path,
+        token_endpoint_url: &str,
+    ) -> super::CodexOAuthSession {
+        let session = super::new_codex_session(600, Some(token_endpoint_url), None).unwrap();
+        super::write_codex_state(
+            dir,
+            "openai",
+            &super::CodexOAuthState {
+                pending: Some(session.clone()),
+            },
+        )
+        .await
+        .unwrap();
+        session
+    }
+
+    async fn create_expired_codex_pending_state(dir: &std::path::Path) -> super::CodexOAuthSession {
+        let mut session = super::new_codex_session(600, None, None).unwrap();
+        session.expires_at = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+        super::write_codex_state(
+            dir,
+            "openai",
+            &super::CodexOAuthState {
+                pending: Some(session.clone()),
+            },
+        )
+        .await
+        .unwrap();
+        session
+    }
+
+    async fn create_malicious_codex_metadata_scope(dir: &std::path::Path, scope: &str) {
+        let token = super::CodexTokenResponse {
+            access_token: "codex-access-token-secret".to_string(),
+            refresh_token: "codex-refresh-token-secret".to_string(),
+            expires_in: Some(3600),
+            scope: None,
+            account_label: Some("Codex Test Account".to_string()),
+        };
+        let metadata = super::CodexAuthMetadata {
+            provider: "openai".to_string(),
+            account_label: "Codex Test Account".to_string(),
+            scopes: vec!["openid".to_string(), scope.to_string()],
+            expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+            redacted: crate::secret_store::redact_secret(&token.access_token),
+            chat_base_url: super::CODEX_CHAT_BASE_URL.to_string(),
+            chat_model: super::CODEX_CHAT_MODEL.to_string(),
+            token_endpoint_url: super::CODEX_TOKEN_URL.to_string(),
+        };
+        super::store_codex_connection(dir, "openai", &token, &metadata)
+            .await
+            .unwrap();
+    }
+
+    async fn create_malicious_codex_metadata_gui_fields(
+        dir: &std::path::Path,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) {
+        let token = super::CodexTokenResponse {
+            access_token: "codex-access-token-secret-gui-safe".to_string(),
+            refresh_token: "codex-refresh-token-secret-gui-safe".to_string(),
+            expires_in: Some(3600),
+            scope: None,
+            account_label: Some("Codex Test Account".to_string()),
+        };
+        let metadata = super::CodexAuthMetadata {
+            provider: "openai".to_string(),
+            account_label: "Bearer sk-raw-account-label-secret /Users/alice/.codex/auth.json cookie=session".to_string(),
+            scopes: super::codex_scopes(),
+            expires_at: expires_at.to_rfc3339(),
+            redacted: "sk-raw-redacted-token-secret /Users/alice/.codex/auth.json cookie=session".to_string(),
+            chat_base_url: super::CODEX_CHAT_BASE_URL.to_string(),
+            chat_model: super::CODEX_CHAT_MODEL.to_string(),
+            token_endpoint_url: super::CODEX_TOKEN_URL.to_string(),
+        };
+        super::store_codex_connection(dir, "openai", &token, &metadata)
+            .await
+            .unwrap();
+    }
+
+    async fn codex_secret_values(
+        dir: &std::path::Path,
+    ) -> (Option<String>, Option<String>, Option<String>) {
+        let store = crate::secret_store::provider_secret_store(dir);
+        (
+            store
+                .get_secret("openai", SecretKind::OAuthAccessToken)
+                .await
+                .unwrap(),
+            store
+                .get_secret("openai", SecretKind::OAuthRefreshToken)
+                .await
+                .unwrap(),
+            store
+                .get_secret("openai", SecretKind::AuthMetadata)
+                .await
+                .unwrap(),
+        )
+    }
+
     #[cfg(unix)]
     fn file_mode(path: &std::path::Path) -> u32 {
         use std::os::unix::fs::PermissionsExt;
@@ -1905,6 +2580,1147 @@ mod tests {
                 SecretKind::OAuthRefreshToken,
                 SecretKind::AuthMetadata,
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn default_start_without_test_flags_returns_login_unavailable_without_pending_state() {
+        let dir = temp_dir();
+
+        let response = super::start(&dir, "openai", super::ProviderAuthStartRequest::default())
+            .await
+            .unwrap();
+
+        assert!(!response.configured);
+        assert_eq!(response.status, "login_unavailable");
+        assert_eq!(response.success, Some(false));
+        assert!(!response.supports_login);
+        assert!(super::read_mock_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .is_none());
+        assert!(super::read_codex_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn start_rejects_unknown_secret_smuggling_fields_before_state_mutation() {
+        let dir = temp_dir();
+
+        for body in [
+            r#"{"mock":true,"apiKey":"sk-secret"}"#,
+            r#"{"mock":true,"provider":"openai"}"#,
+            r#"{"mock":true,"model":"gpt-secret"}"#,
+        ] {
+            assert!(parse_start_request(body).is_err(), "accepted body: {body}");
+        }
+
+        assert!(super::read_mock_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .is_none());
+        assert!(super::read_codex_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .is_none());
+    }
+
+    #[test]
+    fn start_rejects_explicit_null_meaningful_fields() {
+        for body in [
+            r#"{"ttlSeconds":null}"#,
+            r#"{"tokenEndpointUrl":null}"#,
+            r#"{"chatEndpointUrl":null}"#,
+            r#"{"experimentalCodexLike":true,"ttlSeconds":null}"#,
+            r#"{"experimentalCodexLike":true,"tokenEndpointUrl":null}"#,
+            r#"{"experimentalCodexLike":true,"chatEndpointUrl":null}"#,
+        ] {
+            assert!(parse_start_request(body).is_err(), "accepted body: {body}");
+        }
+
+        assert!(parse_start_request(r#"{}"#).is_ok());
+        assert!(parse_start_request(r#"{"experimentalCodexLike":true}"#).is_ok());
+    }
+
+    #[tokio::test]
+    async fn start_rejects_ttl_without_mock_or_experimental_before_state_mutation() {
+        let dir = temp_dir();
+
+        let error = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                ttl_seconds: Some(60),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, ProviderAuthError::InvalidRequest));
+        assert!(super::read_mock_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .is_none());
+        assert!(super::read_codex_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .is_none());
+    }
+
+    #[test]
+    fn exchange_rejects_unknown_fields() {
+        assert!(parse_exchange_request(
+            r#"{"sessionId":"mock-session","state":"mock-state","code":"mock-code","apiKey":"sk-secret"}"#,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn exchange_rejects_explicit_null_fields_but_allows_omitted_fallback() {
+        for body in [
+            r#"{"sessionId":null}"#,
+            r#"{"state":null}"#,
+            r#"{"code":null}"#,
+            r#"{"sessionId":null,"state":null,"code":null}"#,
+            r#"{"sessionId":"mock-session","state":"mock-state","code":null}"#,
+        ] {
+            assert!(parse_exchange_request(body).is_err(), "accepted body: {body}");
+        }
+
+        assert!(parse_exchange_request(r#"{}"#).is_ok());
+        assert!(parse_exchange_request(
+            r#"{"sessionId":"mock-session","state":"mock-state","code":"mock-code"}"#,
+        )
+        .is_ok());
+    }
+
+    #[tokio::test]
+    async fn mock_lifecycle_serialized_responses_are_sanitized() {
+        let dir = temp_dir();
+        let start = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                mock: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let pending = super::read_mock_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .unwrap();
+        let exchange = super::exchange(
+            &dir,
+            "openai",
+            super::ProviderAuthExchangeRequest {
+                session_id: Some(pending.session_id.clone()),
+                state: Some(pending.state.clone()),
+                code: Some(format!("mock-code-{}", pending.session_id)),
+            },
+        )
+        .await
+        .unwrap();
+        let status = super::status(&dir, "openai").await.unwrap();
+        let disconnect = super::disconnect(&dir, "openai").await.unwrap();
+
+        let forbidden = [
+            pending.verifier.as_str(),
+            "fake-access-token",
+            "fake-refresh-token",
+            "mock-code-",
+            "sk-test",
+            "/Users/example/private/auth.json",
+        ];
+        for response in [&start, &exchange, &status, &disconnect] {
+            assert_response_sanitized(response, &forbidden);
+        }
+    }
+
+    #[tokio::test]
+    async fn mock_exchange_session_mismatch_preserves_pending_for_retry() {
+        let dir = temp_dir();
+        let start = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                mock: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let error = super::exchange(
+            &dir,
+            "openai",
+            super::ProviderAuthExchangeRequest {
+                session_id: start.session_id.clone(),
+                state: Some("wrong-state".to_string()),
+                code: Some("mock-code-retry".to_string()),
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, ProviderAuthError::SessionMismatch));
+        let status = super::status(&dir, "openai").await.unwrap();
+        assert_eq!(status.status, "pending");
+        assert_eq!(status.session_id, start.session_id);
+    }
+
+    #[tokio::test]
+    async fn mock_exchange_expired_session_clears_pending_and_does_not_connect() {
+        let dir = temp_dir();
+        let start = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                mock: true,
+                ttl_seconds: Some(1),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let pending = super::read_mock_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+
+        let error = super::exchange(
+            &dir,
+            "openai",
+            super::ProviderAuthExchangeRequest {
+                session_id: start.session_id,
+                state: Some(pending.state),
+                code: Some("mock-code-expired".to_string()),
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, ProviderAuthError::SessionExpired));
+        let state = super::read_mock_state(&dir, "openai").await.unwrap();
+        assert!(state.pending.is_none());
+        assert!(state.connected.is_none());
+        assert_eq!(
+            super::status(&dir, "openai").await.unwrap().status,
+            "login_unavailable"
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_exchange_returns_mock_pending_status_with_success_false() {
+        let dir = temp_dir();
+        let start = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                mock: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let response = super::exchange(
+            &dir,
+            "openai",
+            super::ProviderAuthExchangeRequest::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.status, "pending");
+        assert_eq!(response.session_id, start.session_id);
+        assert_eq!(response.success, Some(false));
+    }
+
+    #[tokio::test]
+    async fn empty_exchange_returns_mock_connected_status_with_success_false() {
+        let dir = temp_dir();
+        create_mock_connected_state(&dir).await;
+
+        let response = super::exchange(
+            &dir,
+            "openai",
+            super::ProviderAuthExchangeRequest::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.status, "connected");
+        assert_eq!(response.auth_source, "oauth");
+        assert_eq!(response.success, Some(false));
+    }
+
+    #[tokio::test]
+    async fn empty_exchange_preserves_api_key_and_no_state_shape_with_success_false() {
+        let dir = temp_dir();
+        let none = super::exchange(
+            &dir,
+            "openai",
+            super::ProviderAuthExchangeRequest::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(none.status, "login_unavailable");
+        assert_eq!(none.auth_source, "none");
+        assert_eq!(none.success, Some(false));
+
+        let api_dir = temp_dir();
+        create_openai_api_key_provider(&api_dir).await;
+        let api_key = super::exchange(
+            &api_dir,
+            "openai",
+            super::ProviderAuthExchangeRequest::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(api_key.status, "api_key_configured");
+        assert_eq!(api_key.auth_source, "api_key");
+        assert_eq!(api_key.success, Some(false));
+        assert_response_sanitized(&api_key, &["sk-test-api-key-secret"]);
+    }
+
+    #[tokio::test]
+    async fn empty_exchange_returns_codex_pending_status_with_success_false() {
+        let dir = temp_dir();
+        let pending = create_codex_pending_state(&dir).await;
+
+        let response = super::exchange(
+            &dir,
+            "openai",
+            super::ProviderAuthExchangeRequest::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.status, "pending");
+        assert_eq!(
+            response.session_id.as_deref(),
+            Some(pending.session_id.as_str())
+        );
+        assert_eq!(response.success, Some(false));
+    }
+
+    #[tokio::test]
+    async fn mock_start_replaces_stale_connected_with_new_pending() {
+        let dir = temp_dir();
+        create_mock_connected_state(&dir).await;
+
+        let response = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                mock: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let state = super::read_mock_state(&dir, "openai").await.unwrap();
+        assert_eq!(response.status, "pending");
+        assert!(state.pending.is_some());
+        assert!(state.connected.is_none());
+        assert_eq!(
+            super::status(&dir, "openai").await.unwrap().status,
+            "pending"
+        );
+    }
+
+    #[tokio::test]
+    async fn mock_start_replaces_existing_pending_with_new_pending() {
+        let dir = temp_dir();
+        let first = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                mock: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let second = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                mock: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(second.status, "pending");
+        assert_ne!(second.session_id, first.session_id);
+        let state = super::read_mock_state(&dir, "openai").await.unwrap();
+        assert_eq!(
+            state.pending.unwrap().session_id,
+            second.session_id.unwrap()
+        );
+        assert!(state.connected.is_none());
+    }
+
+    #[tokio::test]
+    async fn experimental_endpoint_overrides_require_explicit_loopback_path() {
+        let dir = temp_dir();
+        let unsafe_without_experimental = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                token_endpoint_url: Some("https://example.com/token".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            unsafe_without_experimental,
+            ProviderAuthError::InvalidRequest
+        ));
+
+        let unsafe_with_experimental = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                experimental_codex_like: true,
+                token_endpoint_url: Some("https://example.com/token".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            unsafe_with_experimental,
+            ProviderAuthError::InvalidRequest
+        ));
+
+        let allowed = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                experimental_codex_like: true,
+                token_endpoint_url: Some("http://127.0.0.1:3456/token".to_string()),
+                chat_endpoint_url: Some("http://localhost:3456/chat".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(allowed.status, "pending");
+        assert_eq!(allowed.success, Some(true));
+    }
+
+    #[tokio::test]
+    async fn mock_start_rejects_endpoint_overrides_before_state_mutation() {
+        let dir = temp_dir();
+
+        let token_override = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                mock: true,
+                token_endpoint_url: Some("http://127.0.0.1:3456/token".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        let chat_override = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                mock: true,
+                chat_endpoint_url: Some("http://127.0.0.1:3456/chat".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(token_override, ProviderAuthError::InvalidRequest));
+        assert!(matches!(chat_override, ProviderAuthError::InvalidRequest));
+        assert!(super::read_mock_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn mock_start_rejects_experimental_codex_like_before_state_mutation() {
+        let dir = temp_dir();
+
+        let error = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                mock: true,
+                experimental_codex_like: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, ProviderAuthError::InvalidRequest));
+        assert!(super::read_mock_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .is_none());
+        assert!(super::read_codex_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn mock_start_rejects_existing_codex_oauth_secrets_without_mutation() {
+        let dir = temp_dir();
+        create_codex_oauth_connection(&dir).await;
+        let before = codex_secret_values(&dir).await;
+
+        let error = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                mock: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, ProviderAuthError::InvalidRequest));
+        let mock = super::read_mock_state(&dir, "openai").await.unwrap();
+        assert!(mock.pending.is_none());
+        assert!(mock.connected.is_none());
+        assert_eq!(codex_secret_values(&dir).await, before);
+        let status = super::status(&dir, "openai").await.unwrap();
+        assert_eq!(status.status, "connected");
+        assert_ne!(status.redacted.as_deref(), Some("mock-oauth-...connected"));
+    }
+
+    #[tokio::test]
+    async fn codex_start_rejects_existing_connected_secrets_without_mutation() {
+        let dir = temp_dir();
+        create_codex_oauth_connection(&dir).await;
+        let before = codex_secret_values(&dir).await;
+
+        let error = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                experimental_codex_like: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, ProviderAuthError::InvalidRequest));
+        assert!(super::read_codex_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .is_none());
+        assert_eq!(codex_secret_values(&dir).await, before);
+        let status = super::status(&dir, "openai").await.unwrap();
+        assert_eq!(status.status, "connected");
+        assert_eq!(status.account_label.as_deref(), Some("Codex Test Account"));
+    }
+
+    #[tokio::test]
+    async fn codex_start_rejects_existing_expired_secrets_without_mutation() {
+        let dir = temp_dir();
+        create_expired_codex_oauth_connection(&dir).await;
+        let before = codex_secret_values(&dir).await;
+
+        let error = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                experimental_codex_like: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, ProviderAuthError::InvalidRequest));
+        assert!(super::read_codex_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .is_none());
+        assert_eq!(codex_secret_values(&dir).await, before);
+        let status = super::status(&dir, "openai").await.unwrap();
+        assert_eq!(status.status, "expired");
+        assert_eq!(status.account_label.as_deref(), Some("Codex Test Account"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn codex_start_fails_closed_on_secret_read_failure_without_pending_state() {
+        let dir = temp_dir();
+        let secret_dir = dir.join("provider-secrets").join("openai");
+        std::fs::create_dir_all(&secret_dir).unwrap();
+        let outside = temp_dir();
+        std::fs::write(&outside, "codex-access-token-secret-must-not-leak").unwrap();
+        std::os::unix::fs::symlink(&outside, secret_dir.join("oauth-access-token.json")).unwrap();
+
+        let error = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                experimental_codex_like: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, ProviderAuthError::Storage));
+        let message = error.to_string();
+        assert_eq!(message, "provider auth storage error");
+        assert!(!message.contains("codex-access-token-secret-must-not-leak"));
+        assert!(super::read_codex_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn codex_start_rejects_existing_pending_even_with_secrets_and_status_is_pending() {
+        let dir = temp_dir();
+        let codex = create_codex_pending_state(&dir).await;
+        create_codex_oauth_connection(&dir).await;
+        let before = codex_secret_values(&dir).await;
+
+        let status = super::status(&dir, "openai").await.unwrap();
+        assert_eq!(status.status, "pending");
+        assert_eq!(
+            status.session_id.as_deref(),
+            Some(codex.session_id.as_str())
+        );
+
+        let error = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                experimental_codex_like: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, ProviderAuthError::InvalidRequest));
+        let pending = super::read_codex_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .unwrap();
+        assert_eq!(pending.session_id, codex.session_id);
+        assert_eq!(codex_secret_values(&dir).await, before);
+        let status = super::status(&dir, "openai").await.unwrap();
+        assert_eq!(status.status, "pending");
+        assert_eq!(
+            status.session_id.as_deref(),
+            Some(codex.session_id.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn mock_start_rejects_existing_codex_pending_without_mutation() {
+        let dir = temp_dir();
+        let codex = create_codex_pending_state(&dir).await;
+
+        let error = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                mock: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, ProviderAuthError::InvalidRequest));
+        let mock = super::read_mock_state(&dir, "openai").await.unwrap();
+        assert!(mock.pending.is_none());
+        assert!(mock.connected.is_none());
+        let pending = super::read_codex_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .unwrap();
+        assert_eq!(pending.session_id, codex.session_id);
+    }
+
+    #[tokio::test]
+    async fn mock_exchange_rejects_codex_secrets_race_and_does_not_mask_status() {
+        let dir = temp_dir();
+        super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                mock: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let pending = super::read_mock_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .unwrap();
+        create_codex_oauth_connection(&dir).await;
+        let before = codex_secret_values(&dir).await;
+
+        let error = super::exchange(
+            &dir,
+            "openai",
+            super::ProviderAuthExchangeRequest {
+                session_id: Some(pending.session_id.clone()),
+                state: Some(pending.state.clone()),
+                code: Some(format!("mock-code-{}", pending.session_id)),
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, ProviderAuthError::InvalidRequest));
+        let mock = super::read_mock_state(&dir, "openai").await.unwrap();
+        assert!(mock.pending.is_none());
+        assert!(mock.connected.is_none());
+        assert_eq!(codex_secret_values(&dir).await, before);
+        let status = super::status(&dir, "openai").await.unwrap();
+        assert_eq!(status.status, "connected");
+        assert_ne!(status.redacted.as_deref(), Some("mock-oauth-...connected"));
+    }
+
+    #[tokio::test]
+    async fn openai_status_prioritizes_codex_over_stale_mock_connected_state() {
+        let dir = temp_dir();
+        super::write_mock_state(
+            &dir,
+            "openai",
+            &super::MockOAuthState {
+                pending: None,
+                connected: Some(super::MockOAuthConnection {
+                    provider: "openai".to_string(),
+                    account_label: "Mock OAuth Account".to_string(),
+                    scopes: vec!["mock:chat".to_string()],
+                    expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+                    access_token: "fake-access-token".to_string(),
+                    refresh_token: "fake-refresh-token".to_string(),
+                }),
+            },
+        )
+        .await
+        .unwrap();
+        create_codex_oauth_connection(&dir).await;
+
+        let status = super::status(&dir, "openai").await.unwrap();
+
+        assert_eq!(status.status, "connected");
+        assert_eq!(status.account_label.as_deref(), Some("Codex Test Account"));
+        assert_ne!(status.redacted.as_deref(), Some("mock-oauth-...connected"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn codex_exchange_rolls_back_secrets_when_pending_clear_fails() {
+        let dir = temp_dir();
+        let state_path = super::provider_auth_state_path(&dir, "provider-auth-openai", "openai")
+            .unwrap();
+        let outside = temp_dir();
+        std::fs::create_dir_all(&outside).unwrap();
+        let target = outside.join("outside.json");
+        std::fs::write(&target, "{}").unwrap();
+        let token_endpoint_url = successful_codex_token_endpoint_with_hook({
+            let state_path = state_path.clone();
+            let target = target.clone();
+            move || {
+                std::fs::remove_file(&state_path).unwrap();
+                std::os::unix::fs::symlink(&target, &state_path).unwrap();
+            }
+        })
+        .await;
+        let pending = create_codex_pending_state_with_token_endpoint(&dir, &token_endpoint_url).await;
+
+        let error = super::exchange(
+            &dir,
+            "openai",
+            super::ProviderAuthExchangeRequest {
+                session_id: Some(pending.session_id),
+                state: Some(pending.state),
+                code: Some("codex-auth-code".to_string()),
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, ProviderAuthError::Storage));
+        let message = error.to_string();
+        assert_eq!(message, "provider auth storage error");
+        assert!(!message.contains("codex-exchange-access-token-secret"));
+        assert!(!message.contains("codex-exchange-refresh-token-secret"));
+        assert_eq!(codex_secret_values(&dir).await, (None, None, None));
+        assert!(std::fs::symlink_metadata(&state_path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read_to_string(target).unwrap(), "{}");
+    }
+
+    #[tokio::test]
+    async fn codex_token_endpoint_malicious_scope_fails_closed_without_leak() {
+        for malicious_scope in [
+            "openid sk-raw-token-secret-abcd",
+            "openid eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhY2NvdW50In0.signature1",
+            "openid account_opaque_12345",
+            "openid secret/codex-access-token-secret-abcd",
+        ] {
+            let token = super::CodexTokenResponse {
+                access_token: "codex-access-token-secret-abcd".to_string(),
+                refresh_token: "codex-refresh-token-secret-wxyz".to_string(),
+                expires_in: Some(3600),
+                scope: Some(malicious_scope.to_string()),
+                account_label: Some("Codex Test Account".to_string()),
+            };
+
+            let error = super::codex_token_scopes(token.scope.as_deref(), &super::codex_scopes())
+                .unwrap_err();
+
+            assert!(matches!(error, ProviderAuthError::TokenExchange));
+            let message = error.to_string();
+            assert_eq!(message, "provider auth token exchange failed");
+            assert!(!message.contains("codex-access-token-secret-abcd"));
+            assert!(!message.contains(malicious_scope));
+            let serialized = serde_json::to_string(&serde_json::json!({ "error": message })).unwrap();
+            assert!(!serialized.contains(malicious_scope));
+            assert!(!serialized.contains("sk-raw-token-secret-abcd"));
+            assert!(!serialized.contains("eyJhbGciOiJIUzI1NiJ9"));
+            assert!(!serialized.contains("account_opaque_12345"));
+        }
+    }
+
+    #[test]
+    fn codex_token_scope_subset_is_deduped_in_requested_order() {
+        let scopes = super::codex_token_scopes(
+            Some("email openid email offline_access"),
+            &super::codex_scopes(),
+        )
+        .unwrap();
+
+        assert_eq!(scopes, vec!["openid", "email", "offline_access"]);
+        assert_eq!(
+            super::codex_token_scopes(None, &super::codex_scopes()).unwrap(),
+            super::codex_scopes()
+        );
+    }
+
+    #[tokio::test]
+    async fn malicious_stored_codex_metadata_scope_is_not_gui_facing() {
+        let dir = temp_dir();
+        let malicious_scope = "secret/codex-refresh-token-secret";
+        create_malicious_codex_metadata_scope(&dir, malicious_scope).await;
+
+        let error = super::status(&dir, "openai").await.unwrap_err();
+
+        assert!(matches!(error, ProviderAuthError::Storage));
+        let message = error.to_string();
+        assert_eq!(message, "provider auth storage error");
+        assert!(!message.contains(malicious_scope));
+        assert!(!message.contains("codex-refresh-token-secret"));
+    }
+
+    #[tokio::test]
+    async fn malicious_stored_codex_metadata_gui_fields_are_resanitized_for_connected_status() {
+        let dir = temp_dir();
+        create_malicious_codex_metadata_gui_fields(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+        )
+        .await;
+
+        let status = super::status(&dir, "openai").await.unwrap();
+
+        assert_eq!(status.status, "connected");
+        assert_eq!(status.account_label.as_deref(), Some("OpenAI account"));
+        assert_eq!(
+            status.redacted.as_deref(),
+            Some(crate::secret_store::redact_secret("codex-access-token-secret-gui-safe").as_str())
+        );
+        assert_response_sanitized(
+            &status,
+            &[
+                "sk-raw-account-label-secret",
+                "sk-raw-redacted-token-secret",
+                "/Users/alice/.codex/auth.json",
+                "cookie=session",
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn malicious_stored_codex_metadata_gui_fields_are_resanitized_for_expired_status() {
+        let dir = temp_dir();
+        create_malicious_codex_metadata_gui_fields(
+            &dir,
+            chrono::Utc::now() - chrono::Duration::hours(1),
+        )
+        .await;
+
+        let status = super::status(&dir, "openai").await.unwrap();
+
+        assert_eq!(status.status, "expired");
+        assert_eq!(status.account_label.as_deref(), Some("OpenAI account"));
+        assert_eq!(
+            status.redacted.as_deref(),
+            Some(crate::secret_store::redact_secret("codex-access-token-secret-gui-safe").as_str())
+        );
+        assert_response_sanitized(
+            &status,
+            &[
+                "sk-raw-account-label-secret",
+                "sk-raw-redacted-token-secret",
+                "/Users/alice/.codex/auth.json",
+                "cookie=session",
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_token_reused_clears_codex_secrets_and_pending_without_leak() {
+        let dir = temp_dir();
+        let token_endpoint_url = refresh_token_reused_loopback_endpoint().await;
+        create_expired_codex_pending_state(&dir).await;
+        create_near_expired_codex_oauth_connection_with_token_endpoint(&dir, &token_endpoint_url)
+            .await;
+
+        let error = super::refresh_experimental_codex_chat_auth_if_needed(&dir)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, ProviderAuthError::TokenExchange));
+        let message = error.to_string();
+        assert_eq!(message, "provider auth token exchange failed");
+        assert!(!message.contains("codex-access-token-secret"));
+        assert!(!message.contains("codex-refresh-token-secret"));
+        assert_eq!(codex_secret_values(&dir).await, (None, None, None));
+        assert!(super::read_codex_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .is_none());
+        let status = super::status(&dir, "openai").await.unwrap();
+        assert_eq!(status.status, "login_unavailable");
+        assert!(!status.configured);
+        assert_response_sanitized(
+            &status,
+            &[
+                "codex-access-token-secret",
+                "codex-refresh-token-secret",
+                "refresh_token_reused",
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn stored_codex_chat_model_secret_like_values_fail_closed() {
+        for chat_model in [
+            "sk-raw-chat-model-secret",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhY2NvdW50In0.signature1",
+            "access_token=codex-access-token-secret",
+            "/Users/example/auth.json",
+        ] {
+            let dir = temp_dir();
+            create_codex_oauth_connection_with_chat_model(&dir, chat_model).await;
+
+            let auth = super::experimental_codex_chat_auth(&dir).await.unwrap();
+            assert!(auth.is_none(), "accepted chat model: {chat_model}");
+
+            let error = super::refresh_experimental_codex_chat_auth_if_needed(&dir)
+                .await
+                .unwrap_err();
+            assert!(matches!(error, ProviderAuthError::Storage));
+            let message = error.to_string();
+            assert_eq!(message, "provider auth storage error");
+            assert!(!message.contains(chat_model));
+            assert!(!message.contains("codex-access-token-secret"));
+        }
+    }
+
+    #[tokio::test]
+    async fn stored_codex_default_chat_endpoint_requires_exact_default_model() {
+        let dir = temp_dir();
+        create_codex_oauth_connection_with_expiry_and_metadata(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            |_, metadata| metadata.chat_model = "gpt-5-codex-safe-alt".to_string(),
+        )
+        .await;
+
+        let auth = super::experimental_codex_chat_auth(&dir).await.unwrap();
+        assert!(auth.is_none());
+
+        let error = super::refresh_experimental_codex_chat_auth_if_needed(&dir)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ProviderAuthError::Storage));
+    }
+
+    #[tokio::test]
+    async fn stored_codex_loopback_chat_endpoint_allows_safe_alt_model() {
+        let dir = temp_dir();
+        create_codex_oauth_connection_with_expiry_and_metadata(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            |_, metadata| {
+                metadata.chat_base_url = "http://127.0.0.1:3456/codex".to_string();
+                metadata.chat_model = "gpt-5-codex-safe-alt".to_string();
+            },
+        )
+        .await;
+
+        let auth = super::experimental_codex_chat_auth(&dir)
+            .await
+            .unwrap()
+            .expect("loopback safe alt model should be accepted");
+        assert_eq!(auth.base_url, "http://127.0.0.1:3456/codex");
+        assert_eq!(auth.model, "gpt-5-codex-safe-alt");
+    }
+
+    #[tokio::test]
+    async fn experimental_codex_like_is_rejected_for_non_openai_provider() {
+        let dir = temp_dir();
+
+        let error = super::start(
+            &dir,
+            "openai-compatible",
+            super::ProviderAuthStartRequest {
+                experimental_codex_like: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, ProviderAuthError::InvalidRequest));
+        assert!(super::read_codex_state(&dir, "openai-compatible")
+            .await
+            .unwrap()
+            .pending
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn disconnect_preserves_api_key_fallback_after_mock_state() {
+        let dir = temp_dir();
+        create_openai_api_key_provider(&dir).await;
+        super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                mock: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let response = super::disconnect(&dir, "openai").await.unwrap();
+
+        assert!(response.configured);
+        assert_eq!(response.status, "api_key_configured");
+        assert_eq!(response.auth_source, "api_key");
+        assert_eq!(response.success, Some(true));
+        assert_response_sanitized(&response, &["sk-test-api-key-secret"]);
+    }
+
+    #[tokio::test]
+    async fn disconnect_clears_directly_mixed_mock_and_codex_state_without_api_key() {
+        let dir = temp_dir();
+        create_mock_connected_state(&dir).await;
+        create_codex_pending_state(&dir).await;
+        create_codex_oauth_connection(&dir).await;
+
+        let response = super::disconnect(&dir, "openai").await.unwrap();
+
+        assert!(!response.configured);
+        assert_eq!(response.status, "revoked");
+        assert_eq!(response.auth_source, "none");
+        assert_eq!(response.success, Some(true));
+        assert!(super::read_mock_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .is_none());
+        assert!(super::read_mock_state(&dir, "openai")
+            .await
+            .unwrap()
+            .connected
+            .is_none());
+        assert!(super::read_codex_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .is_none());
+        assert!(!super::codex_has_secrets(&dir, "openai").await.unwrap());
+        assert_eq!(
+            super::status(&dir, "openai").await.unwrap().status,
+            "login_unavailable"
+        );
+    }
+
+    #[tokio::test]
+    async fn disconnect_clears_directly_mixed_mock_and_codex_state_with_api_key_fallback() {
+        let dir = temp_dir();
+        create_openai_api_key_provider(&dir).await;
+        create_mock_connected_state(&dir).await;
+        create_codex_pending_state(&dir).await;
+        create_codex_oauth_connection(&dir).await;
+
+        let response = super::disconnect(&dir, "openai").await.unwrap();
+
+        assert!(response.configured);
+        assert_eq!(response.status, "api_key_configured");
+        assert_eq!(response.auth_source, "api_key");
+        assert_eq!(response.success, Some(true));
+        assert!(!super::codex_has_secrets(&dir, "openai").await.unwrap());
+        assert_eq!(
+            super::status(&dir, "openai").await.unwrap().status,
+            "api_key_configured"
+        );
+        assert_response_sanitized(
+            &response,
+            &["sk-test-api-key-secret", "codex-access-token-secret"],
         );
     }
 
@@ -2047,6 +3863,46 @@ mod tests {
             Err(ProviderAuthError::Storage)
         ));
         assert!(!outside.join("openai.json").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn provider_auth_state_rejects_config_dir_symlink_escape_for_read_and_write() {
+        let dir = temp_dir();
+        let outside = temp_dir();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, &dir).unwrap();
+
+        assert!(matches!(
+            super::read_codex_state(&dir, "openai").await,
+            Err(ProviderAuthError::Storage)
+        ));
+        assert!(matches!(
+            super::write_codex_state(&dir, "openai", &CodexOAuthState::default()).await,
+            Err(ProviderAuthError::Storage)
+        ));
+        assert!(std::fs::read_dir(outside).unwrap().next().is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn provider_auth_state_rejects_intermediate_ancestor_symlink_escape_for_read_and_write() {
+        let root = temp_dir();
+        let outside = temp_dir();
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+        let config_dir = root.join("link").join("config");
+
+        assert!(matches!(
+            super::read_codex_state(&config_dir, "openai").await,
+            Err(ProviderAuthError::Storage)
+        ));
+        assert!(matches!(
+            super::write_codex_state(&config_dir, "openai", &CodexOAuthState::default()).await,
+            Err(ProviderAuthError::Storage)
+        ));
+        assert!(std::fs::read_dir(outside).unwrap().next().is_none());
     }
 
     #[cfg(unix)]
