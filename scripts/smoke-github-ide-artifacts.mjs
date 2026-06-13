@@ -17,6 +17,13 @@ const expectedArtifactStageDirs = new Set(["vscode-unzip-first", "jetbrains-inst
 const allowedManifestKinds = new Set(["vscode", "jetbrains"]);
 const allowedManifestOs = new Set(["linux", "macos", "windows"]);
 const allowedManifestArch = new Set(["x64", "arm64", "x86", "arm"]);
+const requiredDevPreviewStatus = Object.freeze({
+  kind: "dev-preview",
+  productionRelease: false,
+  publishable: false,
+  signing: "none",
+  marketplaceUpload: false,
+});
 const identity = JSON.parse(await readFile(path.join(root, "product", "identity.json"), "utf8"));
 const guiDistRoot = path.join(root, "apps", "gui", "dist");
 const binaryFileName = process.platform === "win32" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
@@ -185,6 +192,19 @@ async function checkLocalCombineDownloadSimulation() {
 
 function validateArtifactManifest(manifest, manifestPath) {
   const artifacts = Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
+  if (!/^[a-f0-9]{40}$/i.test(manifest.commit ?? "")) {
+    failures.push(`${relative(manifestPath)} must include the exact 40-character commit SHA that produced these dev-preview artifacts.`);
+  }
+  const status = manifest.devPreviewStatus;
+  for (const [field, expected] of Object.entries(requiredDevPreviewStatus)) {
+    if (status?.[field] !== expected) {
+      failures.push(`${relative(manifestPath)} devPreviewStatus.${field} must be ${JSON.stringify(expected)} so manual dogfood cannot start from production/release-claimed artifacts.`);
+    }
+  }
+  if (typeof status?.manualDogfoodGate !== "string" || !/artifact|smoke|gate/i.test(status.manualDogfoodGate)) {
+    failures.push(`${relative(manifestPath)} devPreviewStatus.manualDogfoodGate must describe the artifact/smoke gate required before manual dogfood.`);
+  }
+
   const kinds = new Set(artifacts.map((artifact) => artifact?.kind).filter((kind) => typeof kind === "string"));
   if (artifacts.length !== 2) {
     failures.push(`${relative(manifestPath)} must contain exactly two artifact entries: one vscode and one jetbrains.`);

@@ -42,6 +42,7 @@ try {
     },
     commit: gitCommit(),
     createdAt: new Date().toISOString(),
+    devPreviewStatus: devPreviewStatus(),
     platform,
     runtime,
     artifacts,
@@ -199,6 +200,18 @@ function bundledEngineResourceFor(kind) {
   }
   const binaryFileName = runnerOsLabel() === "windows" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
   return `yet-ai-engine/${binaryFileName}`;
+}
+
+function devPreviewStatus() {
+  return {
+    kind: "dev-preview",
+    productionRelease: false,
+    publishable: false,
+    signing: "none",
+    marketplaceUpload: false,
+    manualDogfoodGate: "artifact-manifest-and-smokes-required",
+    notes: "Install-from-file dev-preview evidence only. Do not publish, sign, upload to marketplaces, or treat as a production release.",
+  };
 }
 
 function resolvePlatform() {

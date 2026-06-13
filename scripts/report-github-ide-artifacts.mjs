@@ -19,6 +19,7 @@ try {
   }
 
   console.log(`Expected public Yet AI IDE artifacts for ${sha}:`);
+  console.log("Dev-preview status: install-from-file evidence only; unsigned, unpublished, not a production release.");
   for (const artifactName of expectedPublicGithubIdeArtifactNames(sha)) {
     console.log(`- ${artifactName}`);
   }
