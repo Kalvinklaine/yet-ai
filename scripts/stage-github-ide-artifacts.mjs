@@ -12,6 +12,8 @@ const githubArtifactsRoot = path.join(root, "dist", "github-artifacts");
 const vscodeStageDir = path.join(githubArtifactsRoot, "vscode-unzip-first");
 const jetbrainsInstallDirectDir = path.join(githubArtifactsRoot, "jetbrains-install-direct");
 const platform = platformSuffixFor();
+const allowedManifestKinds = new Set(["vscode", "jetbrains"]);
+
 
 try {
   const vscodeArtifact = await findSingleArtifact("vscode", ".vsix");
@@ -19,6 +21,7 @@ try {
   const manifestPath = path.join(distPluginsRoot, "manifest.json");
 
   await requireFile(manifestPath, "plugin artifact manifest");
+  await validateManifest(manifestPath, vscodeArtifact, jetbrainsArtifact);
   await validateArtifactChecksum(vscodeArtifact);
   await validateArtifactChecksum(jetbrainsArtifact);
 
@@ -41,6 +44,55 @@ try {
 } catch (error) {
   console.error(`GitHub IDE artifact staging failed: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
+}
+
+async function validateManifest(manifestPath, vscodeArtifact, jetbrainsArtifact) {
+  let manifest;
+  try {
+    manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  } catch (error) {
+    throw new Error(`${relative(manifestPath)} must contain valid artifact manifest JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  if (!/^[a-f0-9]{40}$/i.test(manifest?.commit ?? "")) {
+    throw new Error(`${relative(manifestPath)} must include the exact 40-character commit SHA before staging GitHub artifacts.`);
+  }
+  const status = manifest?.devPreviewStatus;
+  if (status?.kind !== "dev-preview" || status?.productionRelease !== false || status?.publishable !== false || status?.marketplaceUpload !== false || status?.signing !== "none") {
+    throw new Error(`${relative(manifestPath)} must declare devPreviewStatus as unsigned, unpublished, install-from-file dev-preview metadata before manual dogfood.`);
+  }
+  if (manifest?.platform?.os !== platform.os || manifest?.platform?.arch !== platform.arch) {
+    throw new Error(`${relative(manifestPath)} platform ${manifest?.platform?.os}/${manifest?.platform?.arch} does not match staging platform ${platform.os}/${platform.arch}.`);
+  }
+  if (!isBoundedArchivePath(manifest?.runtime?.bundledEngineResource, "yet-ai-engine/")) {
+    throw new Error(`${relative(manifestPath)} must include bounded runtime.bundledEngineResource under yet-ai-engine/.`);
+  }
+
+  const artifacts = Array.isArray(manifest?.artifacts) ? manifest.artifacts : [];
+  if (artifacts.length !== 2) {
+    throw new Error(`${relative(manifestPath)} must contain exactly two artifact entries before staging: vscode and jetbrains.`);
+  }
+  const byKind = new Map(artifacts.map((artifact) => [artifact?.kind, artifact]));
+  for (const kind of allowedManifestKinds) {
+    const artifact = byKind.get(kind);
+    if (artifact === undefined) {
+      throw new Error(`${relative(manifestPath)} must contain a ${kind} artifact entry before staging.`);
+    }
+    const expectedPath = relative(kind === "vscode" ? vscodeArtifact.path : jetbrainsArtifact.path);
+    if (artifact.path !== expectedPath || artifact.sha256Path !== `${expectedPath}.sha256`) {
+      throw new Error(`${relative(manifestPath)} ${kind} artifact metadata must match the exact staged source artifact and checksum paths.`);
+    }
+    if (artifact.os !== platform.os || artifact.arch !== platform.arch) {
+      throw new Error(`${relative(manifestPath)} ${kind} artifact platform metadata must match ${platform.os}/${platform.arch}.`);
+    }
+    if (!/^[a-f0-9]{64}$/i.test(artifact.sha256 ?? "")) {
+      throw new Error(`${relative(manifestPath)} ${kind} artifact entry must include a SHA-256 digest.`);
+    }
+    const expectedSha256 = await readChecksum(kind === "vscode" ? vscodeArtifact.checksumPath : jetbrainsArtifact.checksumPath, kind === "vscode" ? vscodeArtifact.path : jetbrainsArtifact.path);
+    if (artifact.sha256.toLowerCase() !== expectedSha256) {
+      throw new Error(`${relative(manifestPath)} ${kind} artifact SHA-256 metadata must match the source checksum before staging.`);
+    }
+  }
 }
 
 async function findSingleArtifact(kind, extension) {
@@ -245,6 +297,10 @@ async function extractArchive(archivePath, targetDir) {
   }
 
   throw new Error(`Could not extract ${relative(archivePath)} with unzip or JDK jar. unzip stderr: ${unzipResult.stderr.trim() || "<empty>"}; jar stderr: ${jarResult.stderr.trim() || "<empty>"}`);
+}
+
+function isBoundedArchivePath(value, prefix) {
+  return typeof value === "string" && value.startsWith(prefix) && isSafeArchiveEntryPath(value);
 }
 
 function isSafeArchiveEntryPath(entry) {

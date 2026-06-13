@@ -8,6 +8,13 @@ const args = parseArgs(process.argv.slice(2));
 const allowedKinds = new Set(["vscode", "jetbrains"]);
 const allowedOs = new Set(["linux", "macos", "windows"]);
 const allowedArch = new Set(["x64", "arm64", "x86", "arm"]);
+const requiredDevPreviewStatus = Object.freeze({
+  kind: "dev-preview",
+  productionRelease: false,
+  publishable: false,
+  signing: "none",
+  marketplaceUpload: false,
+});
 
 if (args.input === undefined || args.output === undefined) {
   console.error("Usage: combine-plugin-artifact-manifests.mjs --input <per-platform-dir> --output <combined-manifest.json>");
@@ -40,6 +47,15 @@ try {
     if (typeof parsed?.createdAt === "string") {
       if (createdAtLatest === undefined || parsed.createdAt > createdAtLatest) {
         createdAtLatest = parsed.createdAt;
+      }
+    }
+    if (!/^[a-f0-9]{40}$/i.test(parsed?.commit ?? "")) {
+      throw new Error(`${path.relative(root, filePath)} must include an exact 40-character commit SHA.`);
+    }
+    const status = parsed?.devPreviewStatus;
+    for (const [field, expected] of Object.entries(requiredDevPreviewStatus)) {
+      if (status?.[field] !== expected) {
+        throw new Error(`${path.relative(root, filePath)} must declare devPreviewStatus.${field} as ${JSON.stringify(expected)} before combining public artifact metadata.`);
       }
     }
     const platform = parsed?.platform;

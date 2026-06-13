@@ -14,6 +14,8 @@ Local-only sanitized evidence template. Keep every untested field as \`not run\`
 - Commit hash: <git-commit-sha>
 - Artifact family: <local-dev-preview | github-vscode-unzip-first | github-jetbrains-direct-install | other-sanitized-family>
 - Checksum status: <matched | mismatch | missing | not run>
+- Commands run: <artifact/report gate commands completed | sanitized command summary | not run>
+- Sanitized failure status: <none | sanitized summary only | not run>
 
 ## VS Code installed first-message dogfood
 
@@ -23,7 +25,7 @@ Local-only sanitized evidence template. Keep every untested field as \`not run\`
 - Runtime launch mode: <auto | launch | connect | not run>
 - Runtime status: <connected | sanitized runtime error | not run>
 - Packaged GUI status: <loaded | placeholder | blank | failed with sanitized summary | not run>
-- Provider path: <api-key fallback | official login (future/not implemented) | experimental login | local mock | unavailable | not run>
+- Provider path: <Demo Mode/local mock | real BYOK api-key provider | official login (future/not implemented) | experimental login | unavailable | not run>
 - Provider setup status: <configured and redacted | local mock | unavailable | failed with sanitized summary | not run>
 - Active context status: <not shown | shown and omitted | shown and attached safe selection | not run>
 - Read-only IDE action status: <explicitly confirmed and succeeded | explicitly confirmed and failed with sanitized summary | not run>
@@ -36,7 +38,7 @@ Local-only sanitized evidence template. Keep every untested field as \`not run\`
 - Runtime launch mode: <auto | launch | connect | not run>
 - Packaged GUI status: <loaded | placeholder | blank | failed with sanitized summary | not run>
 - Runtime status: <connected | sanitized runtime error | not run>
-- Provider path: <api-key fallback | official login (future/not implemented) | experimental login | local mock | unavailable | not run>
+- Provider path: <Demo Mode/local mock | real BYOK api-key provider | official login (future/not implemented) | experimental login | unavailable | not run>
 - Provider setup status: <configured and redacted | local mock | unavailable | failed with sanitized summary | not run>
 - Active context status: <not shown | shown and omitted | shown and attached safe selection | not run>
 - Read-only IDE action status: <explicitly confirmed and succeeded | explicitly confirmed and failed with sanitized summary | not run>
@@ -59,6 +61,8 @@ const requiredPatterns = [
   ["commit hash field", /- Commit hash:/],
   ["artifact family field", /- Artifact family:/],
   ["checksum status field", /- Checksum status:/],
+  ["commands run field", /- Commands run:/],
+  ["sanitized failure status field", /- Sanitized failure status:/],
   ["VS Code artifact field", /^## VS Code installed first-message dogfood[\s\S]*- VS Code artifact:/m],
   ["VS Code checksum field", /^## VS Code installed first-message dogfood[\s\S]*- VS Code checksum:/m],
   ["VS Code install result field", /^## VS Code installed first-message dogfood[\s\S]*- Install result:/m],
@@ -67,6 +71,8 @@ const requiredPatterns = [
   ["packaged GUI status field", /- Packaged GUI status:/],
   ["runtime status field", /- Runtime status:/],
   ["provider path field", /- Provider path:/],
+  ["Demo Mode provider option", /Demo Mode\/local mock/],
+  ["real BYOK provider option", /real BYOK api-key provider/],
   ["provider setup status field", /- Provider setup status:/],
   ["active context status field", /- Active context status:/],
   ["read-only IDE action status field", /- Read-only IDE action status:/],
@@ -77,13 +83,14 @@ const requiredPatterns = [
 
 const unsafeChecks = [
   ["bearer/authorization headers", /\b(?:Bearer\s+[A-Za-z0-9._~+/=-]{8,}|Authorization\s*:\s*\S+)/i],
-  ["provider API keys", /\bsk-[A-Za-z0-9_\-]{12,}\b|\b(?:api[_-]?key|apikey|provider[_-]?key|openai[_-]?key|secret[_-]?key|key)\b\s*[:=]\s*[^\s<][^\r\n]*/i],
+  ["provider API keys", /\bsk-(?:proj-)?[A-Za-z0-9_\-]{8,}\b|\b(?:api[_-]?key|apikey|provider[_-]?key|openai[_-]?key|secret[_-]?key|key)\b\s*[:=]\s*[^\s<][^\r\n]*/i],
   ["runtime session tokens", /\b(?:YET_AI_AUTH_TOKEN|session[_ -]?token|runtime[_ -]?token)\b\s*[:=]\s*[^\s<][^\r\n]*|\blocal-dev-token\b/i],
   ["OAuth auth codes/tokens/PKCE verifiers", /\b(?:auth[_-]?code|authorization[_-]?code|access[_-]?token|refresh[_-]?token|id[_-]?token|pkce[_-]?verifier|code[_-]?verifier)\b\s*[:=]\s*[^\s<][^\r\n]*/i],
   ["cookies", /\b(?:Cookie|Set-Cookie)\s*:\s*\S+|\bcookie\b\s*[:=]\s*[^\s<][^\r\n]*/i],
   ["private absolute paths", /(?:\/Users\/[A-Za-z0-9._-]+\/|\/home\/[A-Za-z0-9._-]+\/|\/Volumes\/[A-Za-z0-9._ -]+\/|\/(?:var|tmp|private|opt|mnt|srv)\/[A-Za-z0-9._ -]+\/|\b[A-Za-z]:\\[^\s"'<>]+|\\\\[^\s"'<>\\]+\\[^\s"'<>\\]+)/],
   ["query/fragment secrets", /[?#&](?:access_token|refresh_token|id_token|api_key|apikey|key|token|code|secret|auth_code|authorization_code|code_verifier|cookie)=/i],
   ["raw bridge payloads/request bodies/browser storage dumps", /\b(?:raw\s+bridge\s+payload|bridge\s+payload|request\s+body|raw\s+request|localStorage|sessionStorage|browser\s+storage\s+dump|storage\s+dump)\b/i],
+  ["unsafe screenshot or dump references", /\b(?:screenshot|screen\s*capture|recording|har|heap\s*dump|database\s*dump|sqlite|workspace\s*storage|extension\s*storage)\b.*\b(?:secret|token|cookie|key|auth|credential|dump|raw|path)\b/i],
   ["provider responses/raw prompts/file contents", /\b(?:raw\s+provider\s+response|provider\s+response\s+body|raw\s+prompt|prompt\s+dump|file\s+contents?|source\s+contents?|terminal\s+scrollback)\b/i],
 ];
 
@@ -185,6 +192,8 @@ function runSelfTest() {
     ["private absolute paths", "/Users/example/project/report.md"],
     ["private absolute paths", "C:\\Users\\example\\report.md"],
     ["query/fragment secrets", "http://127.0.0.1/callback?code=redacted"],
+    ["unsafe screenshot or dump references", "screenshot with token path attached"],
+    ["unsafe screenshot or dump references", "workspace storage dump contains cookie"],
     ["raw bridge payloads/request bodies/browser storage dumps", "raw bridge payload: {}"],
     ["provider responses/raw prompts/file contents", "raw provider response: {}"],
   ];
