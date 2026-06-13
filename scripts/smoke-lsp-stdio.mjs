@@ -15,6 +15,8 @@ const maxMessageBytes = 512 * 1024;
 const completionLabel = "Yet AI LSP connected";
 const documentUri = "file:///yet-ai-lsp-smoke/src/main.rs";
 const documentText = "fn main() {}\n";
+const unsafeDocumentUri = "file:///yet-ai-lsp-smoke/src/unsafe.rs";
+const secretSentinel = "YET_AI_SECRET_LSP_SMOKE_BODY";
 
 let child;
 
@@ -112,9 +114,81 @@ try {
   await send({ jsonrpc: "2.0", id: 6, method: "workspace/symbol", params: { query: "smoke" } });
   const unsupported = await unsupportedResponse;
   assert(unsupported.error?.code === -32601, "unsupported probe did not return method-not-supported error");
+  assert(!JSON.stringify(unsupported).includes("smoke"), "unsupported response echoed probe query");
 
-  const shutdownResponse = response(7);
-  await send({ jsonrpc: "2.0", id: 7, method: "shutdown", params: {} });
+  await send({
+    jsonrpc: "2.0",
+    method: "textDocument/didOpen",
+    params: {
+      textDocument: {
+        uri: unsafeDocumentUri,
+        languageId: "rust",
+        version: 1,
+        text: `fn unsafe_doc() {}\n${secretSentinel}\u0000`
+      }
+    }
+  });
+
+  const unsafeCompletionResponse = response(7);
+  await send({
+    jsonrpc: "2.0",
+    id: 7,
+    method: "textDocument/completion",
+    params: {
+      textDocument: { uri: unsafeDocumentUri },
+      position: { line: 0, character: 3 }
+    }
+  });
+  const unsafeCompletion = await unsafeCompletionResponse;
+  assert(Array.isArray(unsafeCompletion.result?.items), "unsafe-document completion did not return items");
+  assert(unsafeCompletion.result.items.length === 0, "unsafe-document completion did not return an empty result");
+  assert(!JSON.stringify(unsafeCompletion).includes(secretSentinel), "unsafe-document completion leaked raw body");
+
+  const unknownHoverResponse = response(8);
+  await send({
+    jsonrpc: "2.0",
+    id: 8,
+    method: "textDocument/hover",
+    params: {
+      textDocument: { uri: "file:///yet-ai-lsp-smoke/src/missing.rs" },
+      position: { line: 0, character: 0 }
+    }
+  });
+  const unknownHover = await unknownHoverResponse;
+  assert(unknownHover.result === null, "unknown-document hover did not return null");
+
+  const closedSymbolsResponse = response(9);
+  await send({
+    jsonrpc: "2.0",
+    id: 9,
+    method: "textDocument/documentSymbol",
+    params: {
+      textDocument: { uri: documentUri }
+    }
+  });
+  const closedSymbols = await closedSymbolsResponse;
+  assert(Array.isArray(closedSymbols.result), "closed-document documentSymbol result was not an array");
+  assert(closedSymbols.result.length === 0, "closed-document documentSymbol did not return an empty result");
+
+  const unsafeUriCompletionResponse = response(10);
+  await send({
+    jsonrpc: "2.0",
+    id: 10,
+    method: "textDocument/completion",
+    params: {
+      textDocument: { uri: "https://example.test/private.rs" },
+      position: { line: 0, character: 0 }
+    }
+  });
+  const unsafeUriCompletion = await unsafeUriCompletionResponse;
+  assert(Array.isArray(unsafeUriCompletion.result?.items), "unsafe-URI completion did not return items");
+  assert(unsafeUriCompletion.result.items.length === 0, "unsafe-URI completion did not return an empty result");
+
+  assert(!boundedDiagnostic(`${root} ${secretSentinel} Bearer token-abc sk-test@example.com`).includes(root), "failure diagnostics did not sanitize root path");
+  assert(!boundedDiagnostic(`${root} ${secretSentinel} Bearer token-abc sk-test@example.com`).includes(secretSentinel), "failure diagnostics did not redact sentinel body");
+
+  const shutdownResponse = response(11);
+  await send({ jsonrpc: "2.0", id: 11, method: "shutdown", params: {} });
   const shutdown = await shutdownResponse;
   assert(shutdown.result === null, "shutdown did not return null result");
   await send({ jsonrpc: "2.0", method: "exit", params: {} });
@@ -438,6 +512,7 @@ function sanitizeText(text) {
   }
   sanitized = sanitized.replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer <redacted>");
   sanitized = sanitized.replace(/sk-[A-Za-z0-9._-]+/g, "sk-<redacted>");
+  sanitized = sanitized.split(secretSentinel).join("<redacted-document>");
   sanitized = sanitized.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/g, "<redacted-email>");
   return sanitized;
 }
