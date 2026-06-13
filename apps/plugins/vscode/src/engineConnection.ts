@@ -612,7 +612,7 @@ export function safeRuntimeUrl(runtimeUrl: string): string {
 export function createEngineLaunchEnvironment(source: NodeJS.ProcessEnv, authToken: string, httpPort: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(source)) {
-    if (value === undefined || isSecretLikeEnvironmentName(key) || !isAllowedEngineLaunchEnvironmentName(key)) {
+    if (value === undefined || !isAllowedEngineLaunchEnvironmentName(key) || (isSecretLikeEnvironmentName(key) && !isSafeSecretNamedEngineLaunchEnvironmentName(key))) {
       continue;
     }
     env[key] = value;
@@ -631,6 +631,10 @@ function isAllowedEngineLaunchEnvironmentName(key: string): boolean {
   return engineLaunchEnvironmentAllowlist.has(key) || /^LC_(?:ALL|COLLATE|CTYPE|MESSAGES|MONETARY|NUMERIC|TIME|ADDRESS|IDENTIFICATION|MEASUREMENT|NAME|PAPER|TELEPHONE)$/.test(key);
 }
 
+function isSafeSecretNamedEngineLaunchEnvironmentName(key: string): boolean {
+  return safeSecretNamedEngineLaunchEnvironmentAllowlist.has(key);
+}
+
 const engineLaunchEnvironmentAllowlist = new Set([
   "PATH",
   "Path",
@@ -644,8 +648,15 @@ const engineLaunchEnvironmentAllowlist = new Set([
   "PATHEXT",
   "TMP",
   "TEMP",
+  "DBUS_SESSION_BUS_ADDRESS",
+  "XDG_RUNTIME_DIR",
   "TMPDIR",
   "LANG",
+]);
+
+const safeSecretNamedEngineLaunchEnvironmentAllowlist = new Set([
+  "DBUS_SESSION_BUS_ADDRESS",
+  "XDG_RUNTIME_DIR",
 ]);
 
 const runtimePingTimeoutMs = 1500;

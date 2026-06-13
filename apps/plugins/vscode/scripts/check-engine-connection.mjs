@@ -709,6 +709,8 @@ try {
       LC_ALL: "C.UTF-8",
       LC_CTYPE: "en_US.UTF-8",
       LC_SECRET: "must-strip-locale-secret-name",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+      XDG_RUNTIME_DIR: "/run/user/1000",
       SHELL: "/bin/zsh",
       NODE_OPTIONS: "--inspect",
       YET_AI_AUTH_TOKEN: "old-runtime-token-must-strip",
@@ -740,6 +742,8 @@ try {
       LANG: "en_US.UTF-8",
       LC_ALL: "C.UTF-8",
       LC_CTYPE: "en_US.UTF-8",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+      XDG_RUNTIME_DIR: "/run/user/1000",
     })) {
       assert.equal(engineLaunchEnv[key], value, `engine launch env did not preserve ${key}`);
     }

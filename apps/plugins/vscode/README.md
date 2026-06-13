@@ -440,7 +440,9 @@ The extension supports two runtime workflows:
 - Debug connect mode: set `yetai.launchMode` to `connect`, set `yetai.runtimeUrl` to an already running loopback engine, and run `Yet AI: Set Local Runtime Session Token` with that engine's local bearer token when required. The extension validates the URL and checks `GET /v1/ping` before opening the webview. SecretStorage tokens take priority over the deprecated `yetai.sessionToken` fallback setting.
 - Local launch mode: set `yetai.launchMode` to `launch` and configure `yetai.engineBinaryPath` with an absolute path to `yet-lsp`. The extension starts the process, generates a per-session token, passes it in `YET_AI_AUTH_TOKEN`, passes the port from `yetai.runtimeUrl` in `YET_AI_HTTP_PORT`, checks `GET /v1/ping`, and stops the launched process on extension deactivate.
 
-The default `auto` mode launches a configured or discoverable `yet-lsp` binary when available; otherwise it behaves like debug connect mode. Discovery checks packaged `bin/` locations, repository `target/debug` and `target/release`, then `PATH`.
+The default `auto` mode launches a configured or packaged/repository `yet-lsp` binary when available; otherwise it behaves like debug connect mode. Discovery checks packaged `bin/` locations first, then repository `target/debug` and `target/release`, and finally `PATH` as a dev-preview fallback. Installable/release-style validation should prefer the packaged binary or explicit `yetai.engineBinaryPath`; do not rely on `PATH` to select an unreviewed `yet-lsp`.
+
+The plugin-launched runtime receives a minimal allowlisted environment only. Secret-like environment names are stripped before launch; safe local basics such as `PATH`, home/temp directories, locale variables, and non-secret desktop/session variables needed by OS credential storage such as `DBUS_SESSION_BUS_ADDRESS` and `XDG_RUNTIME_DIR` are preserved when present.
 
 Basic engine stdout/stderr lines are captured in the `Yet AI Runtime` output channel. Session tokens, bearer and authorization headers, cookies, secret query parameters, JSON secret fields, OAuth/code-verifier values, known dev tokens, JWT-like values, and long opaque token-like values are redacted before logging. `Yet AI: Show Runtime Status` uses only local settings, binary discovery, and `/v1/ping`; it reports binary basenames instead of private paths and does not call model providers or provider-auth endpoints. Provider configuration and provider secrets remain engine-owned and are not stored or logged by the extension.
 
@@ -485,7 +487,9 @@ Include root `npm run smoke:vscode-wrapper-browser` after `npm run prepare:vscod
 - Packaged GUI assets and the root VSIX are supported through the documented `npm run prepare:vscode-preview` flow, but generated assets are not committed and this is not a final release packaging flow.
 - The LSP client is an opt-in read-only MVP only. Production AI completions, code actions, diagnostics, code lens, tools, privileged workspace edits, IDE tools, file mutation, shell actions, provider calls, and background agent actions are not implemented.
 - Current chat support is limited to the local provider/chat MVP exposed by the engine and GUI.
+- Runtime binary `PATH` discovery is retained only as a dev-preview fallback after packaged/configured discovery; installable artifacts should use the packaged runtime copy or an explicit absolute engine path.
 - Legacy `yetai.sessionToken` remains only as a deprecated dev-preview fallback for existing local setups.
+
 
 ## Safety rules
 
