@@ -17,6 +17,7 @@ const documentUri = "file:///yet-ai-lsp-smoke/src/main.rs";
 const documentText = "fn main() {}\n";
 const unsafeDocumentUri = "file:///yet-ai-lsp-smoke/src/unsafe.rs";
 const secretSentinel = "YET_AI_SECRET_LSP_SMOKE_BODY";
+const uriSecretSentinel = "YET_AI_SECRET_LSP_SMOKE_URI";
 
 let child;
 
@@ -184,11 +185,31 @@ try {
   assert(Array.isArray(unsafeUriCompletion.result?.items), "unsafe-URI completion did not return items");
   assert(unsafeUriCompletion.result.items.length === 0, "unsafe-URI completion did not return an empty result");
 
+  await assertRejectedUriBehaviors({
+    uri: `file:///yet-ai-lsp-smoke/src/main.rs?access_token=${uriSecretSentinel}`,
+    completionId: 12,
+    hoverId: 13,
+    symbolsId: 14
+  });
+  await assertRejectedUriBehaviors({
+    uri: `file:///yet-ai-lsp-smoke/src/main.rs#${uriSecretSentinel}`,
+    completionId: 15,
+    hoverId: 16,
+    symbolsId: 17
+  });
+  await assertRejectedUriBehaviors({
+    uri: "file://remote-host/yet-ai-lsp-smoke/src/main.rs",
+    completionId: 18,
+    hoverId: 19,
+    symbolsId: 20
+  });
+
   assert(!boundedDiagnostic(`${root} ${secretSentinel} Bearer token-abc sk-test@example.com`).includes(root), "failure diagnostics did not sanitize root path");
   assert(!boundedDiagnostic(`${root} ${secretSentinel} Bearer token-abc sk-test@example.com`).includes(secretSentinel), "failure diagnostics did not redact sentinel body");
+  assert(!boundedDiagnostic(`${uriSecretSentinel} access_token=secret`).includes(uriSecretSentinel), "failure diagnostics did not redact URI sentinel");
 
-  const shutdownResponse = response(11);
-  await send({ jsonrpc: "2.0", id: 11, method: "shutdown", params: {} });
+  const shutdownResponse = response(21);
+  await send({ jsonrpc: "2.0", id: 21, method: "shutdown", params: {} });
   const shutdown = await shutdownResponse;
   assert(shutdown.result === null, "shutdown did not return null result");
   await send({ jsonrpc: "2.0", method: "exit", params: {} });
@@ -285,6 +306,71 @@ async function send(message) {
       }
     });
   });
+}
+
+async function assertRejectedUriBehaviors({ uri, completionId, hoverId, symbolsId }) {
+  await send({
+    jsonrpc: "2.0",
+    method: "textDocument/didOpen",
+    params: {
+      textDocument: {
+        uri,
+        languageId: "rust",
+        version: 1,
+        text: `fn rejected_uri_doc() {}\n${secretSentinel}`
+      }
+    }
+  });
+
+  const completionResponse = response(completionId);
+  await send({
+    jsonrpc: "2.0",
+    id: completionId,
+    method: "textDocument/completion",
+    params: {
+      textDocument: { uri },
+      position: { line: 0, character: 3 }
+    }
+  });
+  const completion = await completionResponse;
+  assert(Array.isArray(completion.result?.items), "rejected-URI completion did not return items");
+  assert(completion.result.items.length === 0, "rejected-URI completion did not return an empty result");
+  assertSafeRejectedUriResponse(completion);
+
+  const hoverResponse = response(hoverId);
+  await send({
+    jsonrpc: "2.0",
+    id: hoverId,
+    method: "textDocument/hover",
+    params: {
+      textDocument: { uri },
+      position: { line: 0, character: 3 }
+    }
+  });
+  const hover = await hoverResponse;
+  assert(hover.result === null, "rejected-URI hover did not return null");
+  assertSafeRejectedUriResponse(hover);
+
+  const symbolsResponse = response(symbolsId);
+  await send({
+    jsonrpc: "2.0",
+    id: symbolsId,
+    method: "textDocument/documentSymbol",
+    params: {
+      textDocument: { uri }
+    }
+  });
+  const symbols = await symbolsResponse;
+  assert(Array.isArray(symbols.result), "rejected-URI documentSymbol result was not an array");
+  assert(symbols.result.length === 0, "rejected-URI documentSymbol did not return an empty result");
+  assertSafeRejectedUriResponse(symbols);
+}
+
+function assertSafeRejectedUriResponse(message) {
+  const text = JSON.stringify(message);
+  assert(!text.includes(secretSentinel), "rejected-URI response leaked raw body");
+  assert(!text.includes(uriSecretSentinel), "rejected-URI response leaked URI sentinel");
+  assert(!text.includes("access_token"), "rejected-URI response leaked query key");
 }
 
 function response(id) {
@@ -513,6 +599,8 @@ function sanitizeText(text) {
   sanitized = sanitized.replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer <redacted>");
   sanitized = sanitized.replace(/sk-[A-Za-z0-9._-]+/g, "sk-<redacted>");
   sanitized = sanitized.split(secretSentinel).join("<redacted-document>");
+  sanitized = sanitized.split(uriSecretSentinel).join("<redacted-uri>");
+  sanitized = sanitized.replace(/access_token=[^\s&"']+/gi, "access_token=<redacted>");
   sanitized = sanitized.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/g, "<redacted-email>");
   return sanitized;
 }
