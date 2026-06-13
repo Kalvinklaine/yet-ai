@@ -40,6 +40,12 @@ The current milestone is local-first and conservative:
 
 Known limitations: real-provider use still requires user-supplied local credentials; account-login feasibility remains blocked until an official provider-supported local-app flow is documented and approved; the Codex-like path must not use real accounts in CI or smoke automation.
 
+## Dev-preview packaging boundary
+
+Current IDE artifacts are install-from-file dev-preview evidence only. Local `dist/plugins/vscode/*.vsix`, local `dist/plugins/jetbrains/*.zip`, CI downloadable artifacts, checksums, and manifests are unsigned and unpublished validation outputs. They prove local package layout, packaged GUI freshness, identity metadata, safe archive paths, and loopback/mock startup checks; they do not prove marketplace publication, signing, notarization, a production installer, an update channel, or production release readiness.
+
+The bundled `yet-lsp` in those artifacts is a local Cargo build staged from the checkout or CI runner for dev-preview testing. It is not a signed or notarized production engine. Future production packaging decisions still need durable records for marketplace publisher/vendor IDs, signing and notarization, installer or archive format, platform matrix, update channel, release provenance/SBOM expectations, and manual release approval gates.
+
 ## Verification
 
 Run the root validation command after documentation or identity changes:

@@ -65,6 +65,8 @@ The helper orchestrates the existing safe local steps:
 3. `cd apps/plugins/vscode && npm run prepare:preview` copies GUI `dist` into `media/gui/`, copies `product/identity.json` into `out/product/identity.json` for local package routes, and compiles the extension.
 4. It publishes the stable ignored root dev-preview VSIX `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix` with a matching `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix.sha256` checksum.
 
+The copied `yet-lsp` is the local Cargo build output for dev-preview validation, not a signed or notarized production engine. The VSIX and checksum are install-from-file evidence only: no marketplace publication, signing, notarization, production installer, automatic update channel, or production release flow is implemented by this helper.
+
 Pass engine-preparation flags after `--` when needed:
 
 ```sh
@@ -251,6 +253,8 @@ Then set `yetai.runtimeUrl` to `http://127.0.0.1:8001` and run `Yet AI: Set Loca
 ## Optional local installable VSIX route
 
 The primary path is Extension Development Host. If you want a local install-from-file `.vsix` dev-preview package, use the root preparation command and install the generated ignored artifact:
+
+This route is for local dogfood and archive inspection only. It must not be described as a Marketplace release, a signed package, a notarized runtime, an updater channel, or a production installer.
 
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"
