@@ -1,5 +1,7 @@
 package ai.yet.plugin.lsp
 
+import ai.yet.plugin.settings.YetSettingsState
+import java.io.ByteArrayInputStream
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
@@ -8,6 +10,11 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class JetBrainsLspLifecycleServiceTest {
+    @Test
+    fun lspSettingDefaultsToDisabled() {
+        assertFalse(YetSettingsState.State().lspEnabled)
+    }
+
     @Test
     fun disabledSettingDoesNotSpawn() {
         val starts = AtomicInteger(0)
@@ -58,6 +65,27 @@ class JetBrainsLspLifecycleServiceTest {
     }
 
     @Test
+    fun missingBinaryDiagnosticIsSanitizedAndDoesNotSpawn() {
+        var starts = 0
+        var diagnostic = ""
+        val service = JetBrainsLspLifecycleService(
+            processFactory = JetBrainsLspProcessFactory { _, _ -> starts += 1; error("should not start") },
+            binaryResolver = { null },
+            settingsProvider = { true },
+            environmentProvider = { error("unused") },
+            diagnosticsSink = { diagnostic = it },
+            stopProcessFn = { error("unused") },
+        )
+
+        assertFalse(service.startIfEnabled())
+        assertEquals(0, starts)
+        assertTrue(diagnostic.contains("JetBrains LSP unavailable"), diagnostic)
+        assertFalse(diagnostic.contains("YET_AI_AUTH_TOKEN"), diagnostic)
+        assertFalse(diagnostic.contains("OPENAI_API_KEY"), diagnostic)
+        assertTrue(diagnostic.length <= 501, diagnostic)
+    }
+
+    @Test
     fun startFailureIsSanitizedAndBounded() {
         var diagnostic = ""
         val service = JetBrainsLspLifecycleService(
@@ -74,6 +102,36 @@ class JetBrainsLspLifecycleServiceTest {
         assertFalse(diagnostic.contains("/Users/alice"), diagnostic)
         assertFalse(diagnostic.contains("bridge payload"), diagnostic)
         assertTrue(diagnostic.length <= 501, "${diagnostic.length}: $diagnostic")
+    }
+
+    @Test
+    fun processOutputDiagnosticsAreSanitizedAndBounded() {
+        val diagnostics = mutableListOf<String>()
+        val process = RecordingProcess(
+            stdout = "stdout Authorization: Bearer session-secret /Users/alice/private/stdout.log\n",
+            stderr = "stderr OPENAI_API_KEY=provider-secret raw document body secret-body ${"x".repeat(1000)}\n",
+        )
+        val service = JetBrainsLspLifecycleService(
+            processFactory = JetBrainsLspProcessFactory { _, _ -> process },
+            binaryResolver = { Path.of("/tmp/yet-lsp") },
+            settingsProvider = { true },
+            environmentProvider = { emptyMap() },
+            diagnosticsSink = { diagnostics += it },
+            stopProcessFn = { it.destroy(); true },
+        )
+
+        assertTrue(service.startIfEnabled())
+        val deadline = System.currentTimeMillis() + 1_000
+        while (diagnostics.size < 2 && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10)
+        }
+        service.dispose()
+        assertEquals(2, diagnostics.size, diagnostics.toString())
+        val joined = diagnostics.joinToString("\n")
+        listOf("session-secret", "/Users/alice", "provider-secret", "secret-body").forEach {
+            assertFalse(joined.contains(it), joined)
+        }
+        assertTrue(diagnostics.all { it.length <= 501 }, joined)
     }
 
     @Test
@@ -96,8 +154,13 @@ class JetBrainsLspLifecycleServiceTest {
         assertTrue(process.destroyed)
     }
 
-    private class RecordingProcess : Process() {
+    private class RecordingProcess(
+        stdout: String = "",
+        stderr: String = "",
+    ) : Process() {
         var destroyed = false
+        private val stdoutBytes = ByteArrayInputStream(stdout.toByteArray())
+        private val stderrBytes = ByteArrayInputStream(stderr.toByteArray())
         override fun destroy() { destroyed = true }
         override fun destroyForcibly(): Process { destroyed = true; return this }
         override fun exitValue(): Int {
@@ -110,8 +173,8 @@ class JetBrainsLspLifecycleServiceTest {
             return 0
         }
         override fun waitFor(timeout: Long, unit: java.util.concurrent.TimeUnit): Boolean = destroyed
-        override fun getInputStream() = java.io.ByteArrayInputStream(ByteArray(0))
-        override fun getErrorStream() = java.io.ByteArrayInputStream(ByteArray(0))
+        override fun getInputStream() = stdoutBytes
+        override fun getErrorStream() = stderrBytes
         override fun getOutputStream() = java.io.ByteArrayOutputStream()
     }
 }
