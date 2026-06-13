@@ -67,7 +67,7 @@ Next cards may:
 Next cards must not:
 
 - enable production/default account login;
-- claim official OpenAI OAuth support;
+- claim official OpenAI OAuth support as available before approval;
 - store raw provider secrets in GUI/browser/IDE state;
 - use cookies, browser profiles, other-tool credentials, private web-session state, or hidden/private provider headers as the default path;
 - add CI or smoke coverage that depends on real OpenAI/ChatGPT accounts or credentials.
