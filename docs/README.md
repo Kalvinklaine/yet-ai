@@ -27,6 +27,19 @@ docs/
 - `architecture/006-login-based-gpt-first-message.md` — future mandatory login-based GPT first-message milestone, official/experimental path split, and required gates.
 - `architecture/007-provider-auth-feasibility.md` — provider-auth feasibility decision for OpenAI account-login evaluation, blocking production/default login until an official provider-supported local-app flow is approved.
 
+## Current login-first milestone status
+
+The current milestone is local-first and conservative:
+
+- API-key or project-key provider setup through the local runtime is the safe/default real-provider path.
+- Demo Mode is a no-key local trial for chat UX with canned local responses only.
+- The experimental Codex-like provider-auth path is high-risk, non-default, and mock-only in automation.
+- Official production OpenAI/ChatGPT account login is not implemented, not approved, and not claimed as supported.
+- Core chat, provider setup, IDE GUI workflows, and local storage must not require a hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, or cloud workspace.
+- Current IDE/plugin artifacts and smokes are dev-preview verification surfaces only; they do not imply marketplace publication, signing, notarization, installer readiness, or production release status.
+
+Known limitations: real-provider use still requires user-supplied local credentials; account-login feasibility remains blocked until an official provider-supported local-app flow is documented and approved; the Codex-like path must not use real accounts in CI or smoke automation.
+
 ## Verification
 
 Run the root validation command after documentation or identity changes:
@@ -36,6 +49,27 @@ npm run check
 ```
 
 The command runs the repository's local validation bundle: product identity, public hygiene, docs index coverage, IDE surface contract parity, docs validation, and focused self-tests/validators that are safe for the current checkout. It does not run the browser or packaged IDE smoke gates, call providers, require hosted Yet AI services, publish marketplace artifacts, or claim production release status.
+
+### Sprint 8/9 verification matrix
+
+| Area | Command | What it proves | Boundary |
+| --- | --- | --- | --- |
+| Repository docs, identity, hygiene, IDE surface validators | `npm run check` | Docs index validity, product identity, public hygiene, focused local validators | Local only; no provider calls, hosted Yet AI backend, publishing, signing, or release claim |
+| Shared protocol contracts | `npm run validate:contracts` | Strict schemas and positive/invalid fixtures for engine, provider-auth, bridge, planner, and agent-progress boundaries | Contract validation only; no runtime provider login |
+| Rust provider-auth and chat regressions | `export PATH="$HOME/.cargo/bin:$PATH"; cargo test -p yet-lsp provider_auth && cargo test -p yet-lsp chat` | Engine-owned provider-auth state, sanitized responses, and chat behavior | Local tests; fake/mock credentials only |
+| GUI app tests and build | `cd apps/gui && npm test -- App && npm run build` | Login-first/Demo/API-key fallback rendering and production web assets compile | GUI must not persist raw provider secrets or require hosted services |
+| Login-first mock smoke | `npm run smoke:login-first-message` | API-key fallback precedence, mock provider-auth lifecycle, first canned message, sanitized evidence | Loopback/mock-only; no real OpenAI/ChatGPT account or provider call |
+| Demo Mode smoke | `npm run smoke:gui-demo-mode` | No-key local trial path and canned assistant response flow | Local canned responses only, not model quality or provider access |
+| Local runtime smoke | `npm run smoke:local` | Local chat/history/SSE loopback behavior and no-secret client-visible output | Loopback mocks only |
+| IDE first-message smokes | `npm run smoke:vscode-first-message` and `npm run smoke:jetbrains-first-message` | Packaged GUI/IDE wrapper first-message behavior through local runtime paths | Dev-preview local smokes; no marketplace, signing, or production release claim |
+| Release-candidate smoke | `npm run smoke:ide-release-candidate` | Aggregated installed-plugin/IDE visual and Demo coverage without publishing | Verification surface only; does not publish, sign, notarize, or create a release |
+| Diff hygiene | `git diff --check` | No whitespace errors in tracked changes | Local git check |
+
+For documentation-only login-first changes, run the focused acceptance gate:
+
+```sh
+npm run check && npm run validate:contracts && git diff --check
+```
 
 For the local IDE release-candidate smoke gate, run this root command:
 

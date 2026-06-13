@@ -12,6 +12,8 @@ Contract areas include engine HTTP requests and responses, SSE chat events, IDE 
 
 This package is schema and example scaffold only. It contains no runtime application code, generated types, package manifests, or protocol implementation.
 
+Current login-first milestone status for these contracts is deliberately bounded: API-key/project-key setup through the local runtime is the safe/default real-provider path; Demo Mode is a no-key local trial outside provider-auth contracts; the Codex-like provider-auth lifecycle is experimental, high-risk, non-default, and mock-only in automation; official production OpenAI/ChatGPT account login is not implemented or approved. Contract examples and validators must not imply a hosted Yet AI backend requirement, marketplace release, signing/notarization, or production account-login support.
+
 Current schemas:
 
 - `schemas/engine/ping.schema.json` for `GET /v1/ping` responses.
@@ -169,6 +171,23 @@ npm run smoke:provider-errors
 ```
 
 `npm run smoke:provider-errors` is loopback-only and validates stable sanitized SSE codes/messages, sanitized persisted chat history, and absence of raw fake secrets, provider bodies, request-body markers, cookies, bearer strings, auth codes, or private paths in client-visible smoke output.
+
+## Login-first verification matrix
+
+Use the focused command for the boundary changed and keep provider-auth automation fake/loopback-only:
+
+| Area | Command | Contract expectation |
+| --- | --- | --- |
+| Contracts | `npm run validate:contracts` | Provider-auth request/response fixtures stay strict and sanitized |
+| Rust provider-auth/chat | `export PATH="$HOME/.cargo/bin:$PATH"; cargo test -p yet-lsp provider_auth && cargo test -p yet-lsp chat` | Runtime behavior preserves engine-owned auth state and no-secret chat surfaces |
+| GUI app | `cd apps/gui && npm test -- App && npm run build` | GUI consumes sanitized statuses and preserves API-key fallback/Demo copy |
+| Login-first smoke | `npm run smoke:login-first-message` | Mock-only lifecycle and canned first-message flow stay wired |
+| Demo/local smokes | `npm run smoke:gui-demo-mode` and `npm run smoke:local` | No-key local trial and loopback runtime behavior remain available |
+| IDE smokes | `npm run smoke:vscode-first-message` and `npm run smoke:jetbrains-first-message` | IDE wrappers preserve local runtime first-message paths without storing provider secrets |
+| Release-candidate smoke | `npm run smoke:ide-release-candidate` | Aggregated dev-preview smoke only, not publishing or signing |
+| Repository check | `npm run check` | Docs, identity, hygiene, and focused validators remain aligned |
+
+Docs-only contract publication changes should finish with `npm run check && npm run validate:contracts && git diff --check`.
 
 ## Future commands
 
