@@ -484,6 +484,42 @@ pre,
   font-weight: 700;
 }
 
+.first-run-checklist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.first-run-step {
+  display: grid;
+  gap: 2px;
+  min-width: 132px;
+  border: 1px solid #dfe6f3;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 8px 10px;
+  color: #34405a;
+}
+
+.first-run-step.ok {
+  border-color: #bce8cc;
+  background: #f4fbf7;
+}
+
+.first-run-step.warn {
+  border-color: #ffd0aa;
+  background: #fff7ef;
+}
+
+.first-run-step.todo {
+  border-color: #dfe6f3;
+  background: #fbfcff;
+}
+
+.first-run-step span {
+  font-size: 12px;
+}
+
 .first-message-wizard {
   display: grid;
   gap: 12px;

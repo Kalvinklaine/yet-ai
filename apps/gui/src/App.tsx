@@ -1763,6 +1763,7 @@ export function App() {
             {experimentalOauthChatReady && <span className="subtle">OpenAI API-key fallback remains the safe/default setup and will be preferred when configured.</span>}
             {!canSendChat && <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>}
           </div>
+          <FirstRunChecklist runtimeConnected={runtimeConnected} demoModeReady={activeSelectedDemoMode} apiKeyReady={apiKeyChatReady} experimentalAccountReady={experimentalOauthChatReady} canSendChat={canSendChat} />
           <FirstMessageReadinessWizard
             readiness={firstMessageReadiness}
             canSendChat={canSendChat}
@@ -2219,6 +2220,29 @@ function ChatBubble({ message, activeEditProposal, activeIdeActionProposal }: { 
       ) : (
         <span>{message.content || (message.status === "streaming" ? "…" : "")}</span>
       )}
+    </div>
+  );
+}
+
+function FirstRunChecklist({ runtimeConnected, demoModeReady, apiKeyReady, experimentalAccountReady, canSendChat }: { runtimeConnected: boolean; demoModeReady: boolean; apiKeyReady: boolean; experimentalAccountReady: boolean; canSendChat: boolean }) {
+  const steps = [
+    { label: "Runtime", detail: runtimeConnected ? "connected" : "refresh local runtime", ok: runtimeConnected },
+    { label: "Demo Mode", detail: demoModeReady ? "local canned trial ready" : "no-key local canned trial", ok: demoModeReady },
+    { label: "Real provider", detail: apiKeyReady ? "BYOK API-key ready" : "safe/default API-key fallback", ok: apiKeyReady },
+    { label: "First message", detail: canSendChat ? "Send available" : "choose Demo Mode or BYOK provider", ok: canSendChat },
+  ];
+  return (
+    <div className="first-run-checklist" role="list" aria-label="First-run setup checklist">
+      {steps.map((step) => (
+        <span className={`first-run-step ${step.ok ? "ok" : "todo"}`} role="listitem" key={step.label}>
+          <strong>{step.label}</strong>
+          <span>{step.detail}</span>
+        </span>
+      ))}
+      <span className={`first-run-step ${experimentalAccountReady ? "warn" : "todo"}`} role="listitem">
+        <strong>Account login</strong>
+        <span>{experimentalAccountReady ? "experimental high-risk connected" : "experimental non-default"}</span>
+      </span>
     </div>
   );
 }
