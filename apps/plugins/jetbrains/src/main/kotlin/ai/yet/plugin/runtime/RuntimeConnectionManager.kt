@@ -491,10 +491,17 @@ private val safeEngineLaunchEnvironmentNames = setOf(
     "WINDIR",
     "COMSPEC",
     "PATHEXT",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "XDG_RUNTIME_DIR",
     "TMPDIR",
     "TMP",
     "TEMP",
     "LANG",
+)
+
+private val safeSecretNamedEngineLaunchEnvironmentNames = setOf(
+    "DBUS_SESSION_BUS_ADDRESS",
+    "XDG_RUNTIME_DIR",
 )
 
 private val safeEngineLaunchEnvironmentNamesCanonical = safeEngineLaunchEnvironmentNames.map { it.uppercase() }.toSet()
@@ -521,10 +528,10 @@ private val unsafeEngineLaunchEnvironmentName = Regex(
 
 fun sanitizedEngineLaunchEnvironment(baseEnvironment: Map<String, String>): Map<String, String> =
     baseEnvironment.filterKeys { name ->
-        if (unsafeEngineLaunchEnvironmentName.containsMatchIn(name)) {
+        val canonical = name.uppercase()
+        if (unsafeEngineLaunchEnvironmentName.containsMatchIn(name) && canonical !in safeSecretNamedEngineLaunchEnvironmentNames) {
             false
         } else {
-            val canonical = name.uppercase()
             canonical in safeEngineLaunchEnvironmentNamesCanonical || canonical in safeEngineLaunchLocaleNames
         }
     }

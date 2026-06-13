@@ -47,6 +47,8 @@ class RuntimeConnectionManagerTest {
                 "ComSpec" to "C:\\Windows\\System32\\cmd.exe",
                 "LC_ALL" to "C.UTF-8",
                 "lc_time" to "en_US.UTF-8",
+                "DBUS_SESSION_BUS_ADDRESS" to "unix:path=/run/user/1000/bus",
+                "XDG_RUNTIME_DIR" to "/run/user/1000",
                 "LC_TOKEN" to "locale-token-secret",
                 "LC_OPENAI_API_KEY" to "locale-openai-secret",
                 "LC_AUTHORIZATION" to "Bearer locale-auth-secret",
@@ -73,6 +75,8 @@ class RuntimeConnectionManagerTest {
         assertEquals("C:\\Windows\\System32\\cmd.exe", command.environment["ComSpec"])
         assertEquals("C.UTF-8", command.environment["LC_ALL"])
         assertEquals("en_US.UTF-8", command.environment["lc_time"])
+        assertEquals("unix:path=/run/user/1000/bus", command.environment["DBUS_SESSION_BUS_ADDRESS"])
+        assertEquals("/run/user/1000", command.environment["XDG_RUNTIME_DIR"])
         listOf(
             "LC_TOKEN",
             "LC_OPENAI_API_KEY",
