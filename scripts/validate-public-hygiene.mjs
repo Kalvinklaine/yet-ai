@@ -51,7 +51,9 @@ const packagingSelfTestDenyExamples = [
   "The production installer is complete.",
   "Yet AI includes a signed production engine.",
   "The automatic update channel is supported.",
-  "Yet AI ships a production-grade bundled engine."
+  "Yet AI ships a production-grade bundled engine.",
+  "Current artifacts are dev-preview.\nMarketplace publication is ready for Yet AI.",
+  "Artifacts are unsigned validation outputs.\nThe production installer is complete."
 ];
 
 const selfTestAllowExamples = [
@@ -99,10 +101,6 @@ const productionLoginAllowPatterns = [
 ];
 
 const productionPackagingAllowPatterns = [
-  /dev-preview/i,
-  /install-from-file/i,
-  /unsigned/i,
-  /unpublished/i,
   /not\s+(?:a\s+)?(?:marketplace|production|signed|notarized|published|release)/i,
   /not\s+(?:implemented|complete|available|ready|supported)/i,
   /no\s+(?:marketplace|signing|notarization|production|automatic\s+update|installer|publication|release)/i,
@@ -113,8 +111,8 @@ const productionPackagingAllowPatterns = [
   /future\s+(?:decision|decisions|work|workflow)/i,
   /decision\s+record/i,
   /planned\s+but\s+not\s+complete/i,
+  /(?:no|not)\s+(?:[^.]*\s+)?(?:complete|ready|available|supported)/i,
   /remains?\s+(?:a\s+)?(?:decision|future|follow-up|unimplemented)/i,
-  /local\s+cargo\s+build/i,
   /current\s+artifacts\s+do\s+not/i
 ];
 
@@ -150,13 +148,27 @@ function findProductionPackagingOverclaims(content) {
     if (!matchedPattern) {
       continue;
     }
-    const context = [lines[index - 2] ?? "", lines[index - 1] ?? "", line, lines[index + 1] ?? "", lines[index + 2] ?? ""].join(" ");
-    if (productionPackagingAllowPatterns.some((pattern) => pattern.test(context))) {
+    const claimContext = sentenceForMatch(line, matchedPattern);
+    if (productionPackagingAllowPatterns.some((pattern) => pattern.test(claimContext))) {
       continue;
     }
     failures.push({ line: index + 1, text: summarizeLine(line) });
   }
   return failures;
+}
+
+function sentenceForMatch(line, matchedPattern) {
+  const match = matchedPattern.exec(line);
+  if (!match) {
+    return line;
+  }
+  const before = line.slice(0, match.index);
+  const after = line.slice(match.index + match[0].length);
+  const previousBoundary = Math.max(before.lastIndexOf("."), before.lastIndexOf("!"), before.lastIndexOf("?"));
+  const nextBoundaries = [after.indexOf("."), after.indexOf("!"), after.indexOf("?")].filter((index) => index >= 0);
+  const start = previousBoundary >= 0 ? previousBoundary + 1 : 0;
+  const end = nextBoundaries.length > 0 ? match.index + match[0].length + Math.min(...nextBoundaries) + 1 : line.length;
+  return line.slice(start, end).trim();
 }
 
 function summarizeLine(line) {
@@ -221,6 +233,7 @@ for (const file of files) {
     }
     for (const example of packagingSelfTestDenyExamples) {
       content = content.replace(example, "");
+      content = content.replace(example.replaceAll("\n", "\\n"), "");
     }
     for (const example of packagingSelfTestAllowExamples) {
       content = content.replace(example, "");
