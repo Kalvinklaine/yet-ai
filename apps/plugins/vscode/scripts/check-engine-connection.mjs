@@ -1045,11 +1045,9 @@ try {
     });
     const sanitizedCompletions = await sanitizedCompletionPromise;
     assert.equal(sanitizedCompletions.isIncomplete, true);
-    assert.equal(sanitizedCompletions.items.length, 2);
-    assert.equal(sanitizedCompletions.items[0].label, "Yet AI LSP connected", "unsafe completion label did not use fallback");
-    assert.equal(sanitizedCompletions.items[0].detail, undefined, "unsafe completion detail was not dropped");
-    assert.equal(sanitizedCompletions.items[1].label, "Yet AI LSP connected", "overlong completion label did not use fallback");
-    assert.equal(sanitizedCompletions.items[1].detail, undefined, "overlong completion detail was not dropped");
+    assert.equal(sanitizedCompletions.items.length, 0, "unsafe completion items were not dropped");
+    assert.equal(lspOutputLines.join("\n").includes("unsafe\u0000label"), false, "unsafe completion label leaked to output");
+    assert.equal(lspOutputLines.join("\n").includes("unsafe\u0000detail"), false, "unsafe completion detail leaked to output");
     const invalidHoverPromise = registeredHoverProviders[0].provider.provideHover(fileDocument, { line: 0, character: 3 });
     lspMessages = takeLspClientMessages(lspSpawns[0].child);
     emitLspResponse(lspSpawns[0].child, lspMessages[0].id, null);

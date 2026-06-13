@@ -57,7 +57,6 @@ const lspTerminateGraceMs = 1_000;
 const lspHardKillGraceMs = 1_500;
 const lspFinalFallbackGraceMs = 2_000;
 const maxLspDiagnosticLineBuffer = 8 * 1024;
-const completionLabel = "Yet AI LSP connected";
 const maxCompletionItems = 64;
 const maxCompletionLabelLength = 80;
 const maxCompletionDetailLength = 200;
@@ -455,16 +454,24 @@ function toCompletionList(result: unknown): vscode.CompletionList | undefined {
   }
   const items = result.items
     .filter(isObject)
+    .filter(isSafeCompletionItem)
     .map((item) => {
-      const label = toSafeCompletionText(item.label, maxCompletionLabelLength) ?? completionLabel;
+      const label = item.label;
       const completionItem = new vscode.CompletionItem(label, vscode.CompletionItemKind.Text);
-      const detail = toSafeCompletionText(item.detail, maxCompletionDetailLength);
+      const detail = typeof item.detail === "string" ? item.detail : undefined;
       if (detail) {
         completionItem.detail = detail;
       }
       return completionItem;
     });
   return new vscode.CompletionList(items, Boolean(result.isIncomplete));
+}
+
+function isSafeCompletionItem(item: Record<string, unknown>): item is { label: string; detail?: string } {
+  if (!toSafeCompletionText(item.label, maxCompletionLabelLength)) {
+    return false;
+  }
+  return item.detail === undefined || Boolean(toSafeCompletionText(item.detail, maxCompletionDetailLength));
 }
 
 function toSafeCompletionText(value: unknown, maxLength: number): string | undefined {
