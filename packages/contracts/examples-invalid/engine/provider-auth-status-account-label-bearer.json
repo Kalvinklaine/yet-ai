@@ -1,0 +1,10 @@
+{
+  "provider": "openai",
+  "configured": true,
+  "status": "connected",
+  "authSource": "oauth",
+  "supportsLogin": true,
+  "supportsApiKey": true,
+  "accountLabel": "Bearer mocktoken1234567890",
+  "cloudRequired": false
+}

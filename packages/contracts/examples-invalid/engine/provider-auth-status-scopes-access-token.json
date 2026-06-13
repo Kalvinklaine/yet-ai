@@ -1,0 +1,10 @@
+{
+  "provider": "openai",
+  "configured": true,
+  "status": "connected",
+  "authSource": "oauth",
+  "supportsLogin": true,
+  "supportsApiKey": true,
+  "scopes": ["model.read", "access_token"],
+  "cloudRequired": false
+}

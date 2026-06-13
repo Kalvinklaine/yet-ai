@@ -47,7 +47,7 @@ The existing experimental Codex-like path for `openai` remains high-risk, privat
 - documentation and UI copy must not describe it as official OpenAI OAuth, public provider-supported login, production-ready login, or an OpenAI partnership;
 - it must not become the default production login UX or CI path.
 
-Hardening this path can reduce accidental leakage and improve contract coverage, but it does not convert the path into an approved official provider-auth mechanism.
+Hardening this path can reduce accidental leakage and improve contract coverage, but it does not convert the path into an approved official provider-auth mechanism. Provider-auth response contracts are therefore a sanitized GUI boundary, not a credential transport: user-facing strings, labels, redacted hints, session identifiers, authorization/verification URLs, and scope names are bounded and must reject obvious token, cookie, API-key, JWT-like, credential-file, and private-path leaks before reaching GUI or IDE surfaces.
 
 ## Decision outcome
 

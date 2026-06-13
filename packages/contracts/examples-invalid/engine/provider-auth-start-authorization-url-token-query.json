@@ -1,0 +1,13 @@
+{
+  "provider": "openai",
+  "configured": false,
+  "status": "pending",
+  "authSource": "oauth",
+  "supportsLogin": true,
+  "supportsApiKey": true,
+  "authorizationUrl": "https://auth.example.test/authorize?access_token=mocksecret",
+  "sessionId": "provider-login-session-001",
+  "expiresAt": "2026-05-15T12:30:00Z",
+  "cloudRequired": false,
+  "success": true
+}
