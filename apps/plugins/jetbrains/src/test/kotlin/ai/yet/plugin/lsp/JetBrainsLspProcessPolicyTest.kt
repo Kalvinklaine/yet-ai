@@ -36,6 +36,15 @@ class JetBrainsLspProcessPolicyTest {
             mapOf(
                 "PATH" to "/bin",
                 "MY_TOKEN" to "token",
+                "GITHUB_TOKEN" to "github-token",
+                "YET_AI_HTTP_PORT" to "8001",
+                "YET_AI_AUTH_TOKEN" to "runtime-token",
+                "OPENAI_API_KEY" to "provider-key",
+                "ANTHROPIC_API_KEY" to "provider-key",
+                "PROVIDER_REFRESH_TOKEN" to "refresh-token",
+                "LOCAL_RUNTIME_SESSION_TOKEN" to "session-token",
+                "GUI_BOOTSTRAP_PAYLOAD" to "payload",
+                "HOST_READY_AUTHORIZATION" to "Bearer token",
                 "service-secret" to "secret",
                 "api-key" to "api-key",
                 "cookie" to "cookie",
@@ -68,5 +77,17 @@ class JetBrainsLspProcessPolicyTest {
         assertTrue(text.contains("engine.log"), text)
         assertFalse(text.contains("/Users/alice"), text)
         assertTrue(text.length <= 501, text.length.toString())
+    }
+
+    @Test
+    fun diagnosticsRedactUrlAndJsonStyleSecretValues() {
+        val text = sanitizeJetBrainsLspDiagnosticText(
+            "failed url=http://127.0.0.1:8001/?access_token=url-secret&code_verifier=verifier-secret json {\"session_token\":\"json-secret\",\"apiKey\":\"camel-secret\"} C:\\Users\\alice\\AppData\\Local\\auth.json",
+        )
+
+        listOf("url-secret", "verifier-secret", "json-secret", "camel-secret", "C:\\Users\\alice").forEach {
+            assertFalse(text.contains(it), text)
+        }
+        assertTrue(text.contains("auth.json") || text.contains("[redacted]"), text)
     }
 }
