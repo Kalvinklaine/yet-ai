@@ -22,6 +22,7 @@ const assistantText = "VS Code packaged smoke response.";
 const failures = [];
 const consoleMessages = [];
 let runtimeReady = false;
+const runtimeApiRequests = [];
 let observedRuntimeAuthorization = false;
 let chatCommandRequest;
 let chatCommandRequestCount = 0;
@@ -59,6 +60,7 @@ try {
       if (authorization !== `Bearer ${runtimeToken}`) {
         failures.push("SSE subscription did not use the VS Code host.ready runtime session token.");
       }
+      runtimeApiRequests.push({ method: route.request().method(), pathname: "/v1/chats/subscribe", authorized: authorization === `Bearer ${runtimeToken}` });
       await route.fulfill({
         status: 200,
         headers: { "content-type": "text/event-stream", "cache-control": "no-cache", "access-control-allow-origin": "*" },
@@ -177,6 +179,7 @@ try {
   if (chatCommandRequest?.payload?.context?.source !== "vscode" || chatCommandRequest?.payload?.context?.selection?.text !== contextText) {
     failures.push("Mock runtime did not receive the VS Code active context on the first message.");
   }
+  assertAllRuntimeApiRequestsAuthorized();
 
   const visibleState = await collectVisibleState(page);
   assertNoSecretLeak(visibleState, "DOM, console, localStorage, or sessionStorage");
@@ -245,6 +248,10 @@ async function startMockRuntimeServer() {
     if (request.method === "OPTIONS") {
       response.writeHead(204, corsHeaders()).end();
       return;
+    }
+    const authorized = request.headers.authorization === `Bearer ${runtimeToken}`;
+    if (requestUrl.pathname.startsWith("/v1/")) {
+      runtimeApiRequests.push({ method: request.method ?? "GET", pathname: requestUrl.pathname, authorized });
     }
     if (request.headers.authorization === `Bearer ${runtimeToken}`) {
       observedRuntimeAuthorization = true;
@@ -480,6 +487,17 @@ function contentType(filePath) {
   return "application/octet-stream";
 }
 
+function assertAllRuntimeApiRequestsAuthorized() {
+  if (runtimeApiRequests.length === 0) {
+    failures.push("Mock runtime did not observe any /v1/* requests.");
+    return;
+  }
+  const unauthorized = runtimeApiRequests.filter((entry) => !entry.authorized);
+  if (unauthorized.length > 0) {
+    failures.push(`Runtime /v1/* request(s) missed the VS Code host.ready bearer token: ${unauthorized.map((entry) => `${entry.method} ${entry.pathname}`).join(", ")}.`);
+  }
+}
+
 function assertNoSecretLeak(text, source) {
   const lower = String(text).toLowerCase();
   for (const marker of [runtimeToken, providerKey, contextSentinel, `Bearer ${runtimeToken}`, `Bearer ${providerKey}`, "authorization: bearer", "provider secret"]) {
@@ -515,7 +533,7 @@ function messageOf(error) {
 function reportFailures() {
   console.error("VS Code first-message preview smoke failed:");
   for (const failure of failures) {
-    console.error(`- ${failure}`);
+    console.error(`- ${redactSecrets(failure)}`);
   }
   process.exit(1);
 }
