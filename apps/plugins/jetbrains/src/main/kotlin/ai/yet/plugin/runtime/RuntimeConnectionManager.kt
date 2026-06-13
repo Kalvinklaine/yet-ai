@@ -365,8 +365,8 @@ fun formatRuntimeDiagnostics(diagnostics: RuntimeDiagnostics): String {
     val mode = diagnostics.launchMode.lowercase()
     val guidance = when (mode) {
         "connect" -> "Connect mode expects an already running loopback Yet AI runtime. Verify the URL, port, and debug token match the runtime process."
-        "launch" -> "Launch mode requires an executable ${ProductIdentity.engineBinaryName} path and an http runtime URL with an explicit nonzero port."
-        else -> "Auto mode launches ${ProductIdentity.engineBinaryName} when a binary is configured or discoverable on PATH; otherwise it connects to the configured loopback URL."
+        "launch" -> "Launch mode uses the bundled runtime when Engine binary path is empty, or an executable absolute ${ProductIdentity.engineBinaryName} path when configured, plus an http runtime URL with an explicit nonzero port."
+        else -> "Auto mode prefers the bundled runtime for installable/dev-preview artifacts, uses a configured absolute ${ProductIdentity.engineBinaryName} path when set, and treats PATH discovery as a dev-preview fallback only; otherwise it connects to the configured loopback URL."
     }
     val diagnosis = runtimeDiagnosis(diagnostics)
     val nextAction = runtimeNextAction(diagnostics, diagnosis)
@@ -395,7 +395,7 @@ private fun runtimeDiagnosis(diagnostics: RuntimeDiagnostics): String {
             "connect mode is waiting for an externally managed local runtime"
         diagnostics.binaryStatus.contains("not executable", ignoreCase = true) ->
             "configured engine binary is missing or not executable"
-        diagnostics.binaryStatus.contains("no configured path", ignoreCase = true) || diagnostics.binaryStatus.contains("no configured or discovered binary", ignoreCase = true) ->
+        diagnostics.binaryStatus.contains("no configured path", ignoreCase = true) || diagnostics.binaryStatus.contains("no configured or discovered binary", ignoreCase = true) || diagnostics.binaryStatus.contains("no bundled, configured, or PATH binary", ignoreCase = true) ->
             "no launchable bundled, configured, or PATH engine binary was found"
         url.startsWith("https://") || combined.contains("requires runtime url to use http") || combined.contains("explicit nonzero port") || Regex("^http://[^:]+$").containsMatchIn(url) ->
             "launch URL is invalid for plugin-managed runtime launch"
@@ -417,7 +417,7 @@ private fun runtimeNextAction(diagnostics: RuntimeDiagnostics, diagnosis: String
     diagnosis.contains("token mismatch") ->
         "Click Refresh runtime, then use Yet AI: Restart Runtime. In connect mode, make the IDE debug/session token match the external runtime; this is not a provider API key."
     diagnosis.contains("engine binary") ->
-        "Keep Launch mode auto/launch and leave Engine binary path empty when the bundled runtime is available; otherwise reinstall the matching artifact or configure an absolute executable ${ProductIdentity.engineBinaryName} path."
+        "Keep Launch mode auto/launch and leave Engine binary path empty when the bundled runtime is available; otherwise reinstall the matching artifact or configure an absolute executable ${ProductIdentity.engineBinaryName} path. PATH discovery is dev-preview-only fallback, not the installable expectation."
     diagnosis.contains("launch URL") ->
         "Set Runtime URL to an http loopback URL with an explicit nonzero port, for example http://127.0.0.1:8001; https is not supported for plugin launch mode."
     diagnosis.contains("port") ->
@@ -450,21 +450,21 @@ fun describeEngineBinaryStatus(
         val path = settings.engineBinaryPath
         val bundled = (bundledAvailability ?: BundledEngineResources.describeAvailability()) == "available"
         when {
-            path == null && bundled -> "bundled plugin binary available"
+            path == null && bundled -> "bundled plugin runtime binary available (preferred installable path)"
             path == null -> "no configured path and no bundled plugin binary available"
-            isLaunchableEngineFile(path) -> "configured binary is executable"
-            else -> "configured binary is not executable"
+            isLaunchableEngineFile(path) -> "configured absolute binary is executable"
+            else -> "configured absolute binary is missing or not executable"
         }
     }
     LaunchMode.AUTO -> {
         val path = settings.engineBinaryPath
         val bundled = (bundledAvailability ?: BundledEngineResources.describeAvailability()) == "available"
         when {
-            path != null && isLaunchableEngineFile(path) -> "configured binary is executable"
-            path != null -> "configured binary is not executable"
-            bundled -> "bundled plugin binary available"
-            findEngineBinary(null) != null -> "discovered ${ProductIdentity.engineBinaryName} on PATH"
-            else -> "no configured or discovered binary; connect-only fallback"
+            path != null && isLaunchableEngineFile(path) -> "configured absolute binary is executable"
+            path != null -> "configured absolute binary is missing or not executable"
+            bundled -> "bundled plugin runtime binary available (preferred installable path)"
+            findEngineBinary(null) != null -> "discovered ${ProductIdentity.engineBinaryName} on PATH (dev-preview fallback only)"
+            else -> "no bundled, configured, or PATH binary; connect-only fallback"
         }
     }
 }
