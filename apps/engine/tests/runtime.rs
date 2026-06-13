@@ -1244,6 +1244,24 @@ async fn seed_experimental_openai_oauth_with_ttl(
         .unwrap();
 }
 
+async fn mutate_experimental_openai_oauth_metadata(
+    paths: &StoragePaths,
+    mutate: impl FnOnce(&mut Value),
+) {
+    let store = FileSecretStore::new(&paths.config_dir);
+    let metadata = store
+        .get_secret("openai", SecretKind::AuthMetadata)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut metadata: Value = serde_json::from_str(&metadata).unwrap();
+    mutate(&mut metadata);
+    store
+        .put_secret("openai", SecretKind::AuthMetadata, &metadata.to_string())
+        .await
+        .unwrap();
+}
+
 async fn connect_experimental_openai_oauth(
     app: axum::Router,
     token_endpoint_url: String,
@@ -9972,18 +9990,11 @@ async fn tampered_experimental_openai_oauth_metadata_does_not_route_to_unsafe_ur
     let (token_endpoint_url, _) = start_mock_codex_token_endpoint().await;
     connect_experimental_openai_oauth(app.clone(), token_endpoint_url, safe_chat_base_url).await;
 
-    let store = FileSecretStore::new(&paths.config_dir);
-    let metadata = store
-        .get_secret("openai", SecretKind::AuthMetadata)
-        .await
-        .unwrap()
-        .unwrap();
-    let mut metadata: Value = serde_json::from_str(&metadata).unwrap();
-    metadata["chatBaseUrl"] = json!(format!("{unsafe_chat_base_url}?access_token=secret-query"));
-    store
-        .put_secret("openai", SecretKind::AuthMetadata, &metadata.to_string())
-        .await
-        .unwrap();
+    mutate_experimental_openai_oauth_metadata(&paths, |metadata| {
+        metadata["chatBaseUrl"] =
+            json!(format!("{unsafe_chat_base_url}?access_token=secret-query"));
+    })
+    .await;
 
     let (status, body) = json_response_from(
         app.clone(),
@@ -10010,6 +10021,157 @@ async fn tampered_experimental_openai_oauth_metadata_does_not_route_to_unsafe_ur
     assert_sanitized_sse_error(&text);
     assert_no_observed_auth(safe_auth_receiver).await;
     assert_no_observed_auth(unsafe_auth_receiver).await;
+}
+
+#[tokio::test]
+async fn malformed_stored_oauth_routing_metadata_fails_closed_before_chat_request() {
+    for (field, value, forbidden) in [
+        (
+            "scopes",
+            json!(["openid", "secret/codex-refresh-token-secret"]),
+            "codex-refresh-token-secret",
+        ),
+        (
+            "chatModel",
+            json!("sk-raw-chat-model-secret"),
+            "sk-raw-chat-model-secret",
+        ),
+        (
+            "tokenEndpointUrl",
+            json!("http://127.0.0.1:1455/token?access_token=secret-query"),
+            "secret-query",
+        ),
+    ] {
+        let paths = test_storage_paths();
+        let app = app(AppState::with_storage_paths(
+            ProductIdentity::load().unwrap(),
+            AuthToken::new(TEST_TOKEN).unwrap(),
+            paths.clone(),
+        ));
+        let (chat_base_url, auth_receiver) = start_mock_provider(
+            StatusCode::OK,
+            "data: {\"choices\":[{\"delta\":{\"content\":\"unsafe\"}}]}\n\ndata: [DONE]\n\n",
+        )
+        .await;
+        seed_experimental_openai_oauth(
+            &paths,
+            chat_base_url,
+            "http://127.0.0.1:1455/token".to_string(),
+            "codex-access-token-secret-abcd",
+            "codex-refresh-token-secret-wxyz",
+        )
+        .await;
+        mutate_experimental_openai_oauth_metadata(&paths, |metadata| {
+            metadata[field] = value;
+        })
+        .await;
+
+        let (status, body) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::GET,
+                "/v1/provider-auth/openai/status",
+                Body::empty(),
+            ),
+        )
+        .await;
+        assert!(
+            matches!(
+                status,
+                StatusCode::BAD_REQUEST | StatusCode::INTERNAL_SERVER_ERROR
+            ),
+            "{field}: {status} {body}"
+        );
+        assert_provider_auth_response_has_no_codex_secrets(&body);
+        assert!(!body.to_string().contains(forbidden));
+        assert!(!body
+            .to_string()
+            .contains(&paths.config_dir.to_string_lossy().to_string()));
+
+        send_user_message(app.clone(), &format!("chat-malformed-oauth-{field}")).await;
+        let text = sse_text_from(
+            app,
+            &format!("/v1/chats/subscribe?chat_id=chat-malformed-oauth-{field}"),
+        )
+        .await;
+        let events = sse_json_events(&text);
+        let error = find_error_event(&events);
+        let expected_code = if status == StatusCode::BAD_REQUEST {
+            "provider_not_configured"
+        } else {
+            "provider_config_error"
+        };
+        assert_eq!(error["payload"]["code"], expected_code);
+        assert_sanitized_sse_error(&text);
+        assert!(!text.contains(forbidden));
+        assert_no_observed_auth(auth_receiver).await;
+    }
+}
+
+#[tokio::test]
+async fn unsafe_stored_oauth_gui_metadata_is_sanitized_and_not_used_for_chat_routing() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let (chat_base_url, auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"safe\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    seed_experimental_openai_oauth(
+        &paths,
+        chat_base_url,
+        "http://127.0.0.1:1455/token".to_string(),
+        "codex-access-token-secret-abcd",
+        "codex-refresh-token-secret-wxyz",
+    )
+    .await;
+    mutate_experimental_openai_oauth_metadata(&paths, |metadata| {
+        metadata["accountLabel"] =
+            json!("Bearer sk-account-label-secret /Users/alice/.codex/auth.json cookie=session");
+        metadata["redacted"] = json!("sk-redacted-token-secret /Users/alice/.codex/auth.json");
+    })
+    .await;
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::GET,
+            "/v1/provider-auth/openai/status",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "connected");
+    assert_eq!(body["accountLabel"], "OpenAI account");
+    assert_eq!(body["redacted"], "co...cd");
+    assert_provider_auth_response_has_no_codex_secrets(&body);
+    let body_text = body.to_string().to_lowercase();
+    assert!(!body_text.contains("account-label-secret"));
+    assert!(!body_text.contains("redacted-token-secret"));
+    assert!(!body_text.contains("/users/alice"));
+    assert!(!body_text.contains("cookie=session"));
+
+    send_user_message(app.clone(), "chat-sanitized-oauth-gui-metadata").await;
+    let text = sse_text_from(
+        app,
+        "/v1/chats/subscribe?chat_id=chat-sanitized-oauth-gui-metadata",
+    )
+    .await;
+    assert!(text.contains("safe"));
+    assert_sanitized_sse_error(&text);
+    assert!(!text.contains("account-label-secret"));
+    assert!(!text.contains("redacted-token-secret"));
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer codex-access-token-secret-abcd",
+        "sanitized oauth gui metadata",
+    )
+    .await;
 }
 
 #[tokio::test]
