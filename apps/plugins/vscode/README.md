@@ -49,6 +49,8 @@ Root spawned-engine coverage is available with:
 npm run smoke:lsp-stdio
 ```
 
+That smoke is also part of `npm run smoke:ide-release-candidate`. It verifies the engine stdio contract directly and does not turn the VS Code opt-in client into production LSP support or an AI/provider-backed completion path.
+
 From the repository root, run the single dev-preview preparation command:
 
 ```sh
@@ -153,7 +155,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 npm run smoke:ide-release-candidate
 ```
 
-It validates dev-preview artifact preparation, installed-plugin visual coverage, installed-plugin Demo Mode first-message coverage, first-message coverage, staging, manifest combination, workflow/report safety checks, and expected public artifact names only. Demo Mode is runtime-owned no-key canned local chat UX coverage, not model-quality evidence or provider traffic. The gate does not launch real IDEs, run real JCEF automation, call providers, contact hosted services, sign, publish, or claim a production release.
+It validates dev-preview artifact preparation, the engine LSP stdio smoke, installed-plugin visual coverage, installed-plugin Demo Mode first-message coverage, first-message coverage, staging, manifest combination, workflow/report safety checks, and expected public artifact names only. The LSP portion is direct `yet-lsp --lsp-stdio` verification; VS Code LSP remains an off-by-default read-only MVP/status proof, and JetBrains native/client LSP remains deferred. Demo Mode is runtime-owned no-key canned local chat UX coverage, not model-quality evidence or provider traffic. The gate does not launch real IDEs, run real JCEF automation, call providers, contact hosted services, sign, publish, or claim a production release.
 
 The combined `yet-ai-plugin-manifest-<sha>` is uploaded with a `platforms[]` array aggregating per-platform commit, checksum, platform, runtime, and artifact metadata. VS Code uses the unzip-first artifact; JetBrains uses the platform-specific direct-install artifact because native `yet-lsp` is bundled.
 

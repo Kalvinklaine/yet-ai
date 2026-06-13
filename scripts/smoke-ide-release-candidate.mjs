@@ -9,6 +9,7 @@ const maxCommandOutputBytes = 96 * 1024 * 1024;
 
 const steps = [
   ["Repository contracts/check bundle", "npm", ["run", "check"], "."],
+  ["Smoke engine LSP stdio boundary", "npm", ["run", "smoke:lsp-stdio"], "."],
   ["Build GUI assets for packaged/browser smokes", "npm", ["run", "build"], "apps/gui"],
   ["Check packaged GUI asset freshness fixtures", "npm", ["run", "check:gui-asset-freshness"], "."],
   ["Prepare VS Code dev-preview artifact", "npm", ["run", "prepare:vscode-preview"], "."],
@@ -40,7 +41,7 @@ for (const [label, command, args, cwd] of steps) {
 assertCleanTrackedGitStatus();
 
 console.log("\nIDE release-candidate smoke gate passed.");
-console.log("Verified repository contracts/checks, GUI build/freshness, dev-preview artifact preparation, packaged plugin layout, VS Code and JetBrains installable artifacts, VS Code and JetBrains first-message coverage, installed-plugin visual coverage, installed-plugin Demo Mode first-message coverage, login-first mock provider-auth first-message coverage, local runtime smoke, JetBrains bundled runtime startup, GitHub staging, manifest combination, workflow/report safety checks, expected public artifact summary, and clean tracked status.");
+console.log("Verified repository contracts/checks, engine LSP stdio smoke, GUI build/freshness, dev-preview artifact preparation, packaged plugin layout, VS Code and JetBrains installable artifacts, VS Code and JetBrains first-message coverage, installed-plugin visual coverage, installed-plugin Demo Mode first-message coverage, login-first mock provider-auth first-message coverage, local runtime smoke, JetBrains bundled runtime startup, GitHub staging, manifest combination, workflow/report safety checks, expected public artifact summary, and clean tracked status.");
 console.log("This gate is local/mock-only. It does NOT launch real IDEs or JCEF automation, use real provider credentials, call OpenAI/ChatGPT, contact hosted Yet AI services, require a Yet AI account/cloud workspace/managed model gateway/product credits, sign or publish artifacts, upload a marketplace package, or create a production release.");
 
 function runStep(label, command, args, cwd) {
