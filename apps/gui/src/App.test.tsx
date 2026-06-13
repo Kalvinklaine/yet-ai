@@ -2181,6 +2181,10 @@ describe("host.ready runtime bootstrap", () => {
     expect(text).toContain("Runtime is not connected yet. Refresh runtime or start the IDE-managed local runtime, then return here to send.");
     expect(text).toContain("Start here: connect the local runtime.");
     expect(text).toContain("Runtime needs refresh");
+    expect(text).toContain("Runtimerefresh local runtime");
+    expect(text).toContain("Demo Modeno-key local canned trial");
+    expect(text).toContain("Real providersafe/default API-key fallback");
+    expect(text).toContain("Account loginexperimental non-default");
     expect(text).toContain("Next safest action: Use Refresh runtime from this chat page; the IDE host will re-deliver trusted runtime settings automatically. If it still fails, use the IDE runtime status/restart command instead of copying a token. In JetBrains installed mode, also use Tools → Yet AI: Show Runtime Status or Restart Runtime if Refresh runtime keeps failing.");
     expect(findButton("Refresh runtime")).toBeDefined();
     expect(findButton("Send").disabled).toBe(true);
@@ -2201,6 +2205,11 @@ describe("host.ready runtime bootstrap", () => {
     expect(text).toContain("Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK OpenAI-compatible provider/model for real answers.");
     expect(text).toContain("Choose how this first chat should answer.");
     expect(text).toContain("Provider or Demo Mode needed");
+    expect(text).toContain("Runtimeconnected");
+    expect(text).toContain("Demo Modeno-key local canned trial");
+    expect(text).toContain("Real providersafe/default API-key fallback");
+    expect(text).toContain("First messagechoose Demo Mode or BYOK provider");
+    expect(text).toContain("Account loginexperimental non-default");
     expect(text).toContain("Next safest action: For real answers, use the OpenAI API-key fallback (safe/default), paste a provider API key, save, test provider, refresh runtime/model readiness, then send. Choose Demo Mode only to try the chat flow without provider calls.");
     expect(findButton("Use OpenAI API key fallback")).toBeDefined();
     expect(findButton("Send").disabled).toBe(true);
@@ -2260,6 +2269,8 @@ describe("host.ready runtime bootstrap", () => {
     expect(container?.textContent).toContain("State: Yet AI Demo Chat (yet-demo)");
     expect(chatLifecycleText()).toBe("Demo Mode ready — local canned responses, no provider calls. Ready to send.");
     expect(findButton("Send").disabled).toBe(false);
+    expect(container?.textContent).toContain("Demo Modelocal canned trial ready");
+    expect(container?.textContent).toContain("First messageSend available");
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("yet-demo-chat");
   });
@@ -2312,6 +2323,8 @@ describe("host.ready runtime bootstrap", () => {
     expect(container?.textContent).toContain("State: Yet AI Demo Chat (yet-demo)");
     expect(chatLifecycleText()).toBe("Demo Mode ready — local canned responses, no provider calls. Ready to send.");
     expect(findButton("Send").disabled).toBe(false);
+    expect(container?.textContent).toContain("Demo Modelocal canned trial ready");
+    expect(container?.textContent).toContain("First messageSend available");
 
     await act(async () => {
       setTextareaValue(chatInput(), prompt);
@@ -4515,6 +4528,8 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("private-endpoint path is high-risk");
     expect(container?.textContent).toContain("OpenAI API-key fallback remains the safe/default setup");
     expect(findButton("Send").disabled).toBe(false);
+    expect(container?.textContent).toContain("Account loginexperimental high-risk connected");
+    expect(container?.textContent).toContain("First messageSend available");
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("oauth");
   });
@@ -4817,6 +4832,8 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("Ready for your first message");
     expect(container?.textContent).toContain("Next safest action: Type a prompt and click Send through the local runtime.");
     expect(container?.textContent).toContain("Send available");
+    expect(container?.textContent).toContain("Real providerBYOK API-key ready");
+    expect(container?.textContent).toContain("First messageSend available");
     expect(findButton("Send").disabled).toBe(false);
   });
 
