@@ -21,6 +21,7 @@ export type RuntimeDiagnostics = {
   engineBinaryStatus: string;
   pluginLaunchedProcessStatus: string;
   pingStatus: string;
+  packagedGuiStatus: string;
   guidance: string;
 };
 
@@ -77,6 +78,7 @@ export async function collectRuntimeDiagnostics(
     engineBinaryStatus: "not checked",
     pluginLaunchedProcessStatus: launchedEngine && !launchedEngine.process.killed ? "running" : "not running",
     pingStatus: "not checked",
+    packagedGuiStatus: describePackagedGuiStatus(context.extensionPath),
     guidance: runtimeDiagnosticsGuidance(settings.launchMode),
   };
 
@@ -409,6 +411,69 @@ export function hostReadyRuntimeDeliveryStatus(settings: Pick<EngineConnectionSe
   return `${source}; delivered to the webview by trusted host.ready and not printed in diagnostics.`;
 }
 
+function describePackagedGuiStatus(extensionPath: string): string {
+  const indexPath = path.join(extensionPath, "media", "gui", "index.html");
+  const packagePath = path.join(extensionPath, "package.json");
+  const extensionSourcesPath = path.join(extensionPath, "src");
+  try {
+    const indexStat = fs.statSync(indexPath);
+    if (!indexStat.isFile()) {
+      return "missing; packaged GUI index.html is not a file. Run npm run prepare:vscode-preview, or cd apps/plugins/vscode && npm run prepare:preview after building apps/gui.";
+    }
+    const staleReason = packagedGuiStaleReason(indexStat.mtimeMs, packagePath, extensionSourcesPath);
+    if (staleReason) {
+      return `${staleReason}. Run npm run prepare:vscode-preview to refresh generated packaged GUI artifacts.`;
+    }
+    return "present; packaged GUI index.html is available.";
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return "missing; run npm run prepare:vscode-preview from the repository root to copy packaged GUI assets before install-from-file or Extension Development Host testing.";
+    }
+    return `not checked: ${redactRuntimeDiagnosticText(error instanceof Error ? error.message : "could not inspect packaged GUI")}`;
+  }
+}
+
+function packagedGuiStaleReason(indexMtimeMs: number, packagePath: string, extensionSourcesPath: string): string | undefined {
+  const packageMtimeMs = fileMtimeMs(packagePath);
+  if (packageMtimeMs !== undefined && packageMtimeMs > indexMtimeMs) {
+    return "possibly stale; package metadata is newer than media/gui/index.html";
+  }
+  const newestSourceMtimeMs = newestFileMtimeMs(extensionSourcesPath);
+  if (newestSourceMtimeMs !== undefined && newestSourceMtimeMs > indexMtimeMs) {
+    return "possibly stale; VS Code extension sources are newer than media/gui/index.html";
+  }
+  return undefined;
+}
+
+function fileMtimeMs(filePath: string): number | undefined {
+  try {
+    const stat = fs.statSync(filePath);
+    return stat.isFile() ? stat.mtimeMs : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ENOENT";
+}
+
+function newestFileMtimeMs(directoryPath: string): number | undefined {
+  let newest: number | undefined;
+  try {
+    for (const entry of fs.readdirSync(directoryPath, { withFileTypes: true })) {
+      const entryPath = path.join(directoryPath, entry.name);
+      const entryNewest = entry.isDirectory() ? newestFileMtimeMs(entryPath) : fileMtimeMs(entryPath);
+      if (entryNewest !== undefined && (newest === undefined || entryNewest > newest)) {
+        newest = entryNewest;
+      }
+    }
+  } catch {
+    return newest;
+  }
+  return newest;
+}
+
 export function formatRuntimeDiagnostics(diagnostics: RuntimeDiagnostics): string {
   return [
     "Yet AI Runtime Status",
@@ -419,6 +484,7 @@ export function formatRuntimeDiagnostics(diagnostics: RuntimeDiagnostics): strin
     `Engine binary path configured: ${diagnostics.configuredEngineBinaryPath ? "yes" : "no"}`,
     `Binary status: ${redactRuntimeDiagnosticText(diagnostics.engineBinaryStatus)}`,
     `Plugin-launched process: ${redactRuntimeDiagnosticText(diagnostics.pluginLaunchedProcessStatus)}`,
+    `Packaged GUI: ${redactRuntimeDiagnosticText(diagnostics.packagedGuiStatus)}`,
     `Last/ping health: ${redactRuntimeDiagnosticText(diagnostics.pingStatus)}`,
     `Guidance: ${redactRuntimeDiagnosticText(diagnostics.guidance)}`,
   ].join("\n");
@@ -672,7 +738,13 @@ export async function pingEngineOnce(connection: EngineConnection, timeoutMs = r
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(pingUrl, { headers, signal: controller.signal });
-    return response.ok ? "passed" : `failed: HTTP ${response.status}`;
+    if (response.ok) {
+      return "passed";
+    }
+    if (response.status === 401) {
+      return "failed: HTTP 401 unauthorized local runtime session token mismatch. In auto/launch mode reopen the chat to let the IDE refresh the runtime token; in connect mode update the SecretStorage token to match the running engine.";
+    }
+    return `failed: HTTP ${response.status}`;
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown ping error";
     return `failed: ${redactRuntimeDiagnosticText(message, connection.sessionToken)}`;

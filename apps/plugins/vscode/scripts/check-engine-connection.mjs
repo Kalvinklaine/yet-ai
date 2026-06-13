@@ -515,6 +515,7 @@ try {
     hostReadyRuntimeDelivery: "runtime URL plus SecretStorage token; delivered to the webview by trusted host.ready and not printed in diagnostics. Authorization: Bearer formatted-delivery-token",
     engineBinaryStatus: `configured binary failed at ${fakePrivatePath} with OPENAI_API_KEY=provider-secret`,
     pluginLaunchedProcessStatus: "not running",
+    packagedGuiStatus: `missing at ${fakePrivatePath}; run npm run prepare:vscode-preview`,
     pingStatus: "skipped: Authorization: Bearer formatted-secret-token /Users/private/runtime.sock",
     guidance: "Launch mode requires an executable engine binary and a loopback http runtime URL with an explicit nonzero port.",
   });
@@ -524,6 +525,7 @@ try {
   assert.match(formattedDiagnostics, /host\.ready delivery: runtime URL plus SecretStorage token/);
   assert.match(formattedDiagnostics, /Engine binary path configured: yes/);
   assert.match(formattedDiagnostics, /Plugin-launched process: not running/);
+  assert.match(formattedDiagnostics, /Packaged GUI: missing at .*run npm run prepare:vscode-preview/);
   assert.match(formattedDiagnostics, /Last\/ping health: skipped:/);
   assert.match(formattedDiagnostics, /Guidance: Launch mode requires/);
   for (const forbidden of [fakePrivatePath, os.homedir(), "provider-secret", "formatted-secret-token", "formatted-delivery-token", "/Users/private/runtime.sock"]) {
@@ -617,6 +619,15 @@ try {
     "failed: HTTP 503",
   );
 
+  globalThis.fetch = async () => ({ ok: false, status: 401 });
+  const unauthorizedPingStatus = await pingEngineOnce(
+    { runtimeUrl: "http://127.0.0.1:8001", sessionToken: "unauthorized-session-token-sentinel" },
+    20,
+  );
+  assert.match(unauthorizedPingStatus, /HTTP 401 unauthorized local runtime session token mismatch/);
+  assert.match(unauthorizedPingStatus, /SecretStorage token/);
+  assert.equal(unauthorizedPingStatus.includes("unauthorized-session-token-sentinel"), false, "HTTP 401 guidance leaked token");
+
   async function withPingStub(callback) {
     let pinged = false;
     globalThis.fetch = async () => {
@@ -658,6 +669,9 @@ try {
     fs.mkdirSync(privateDirectory);
     const bundledBinDirectory = path.join(tempRoot, "bin");
     fs.mkdirSync(bundledBinDirectory);
+    const packagedGuiDirectory = path.join(tempRoot, "media", "gui");
+    fs.mkdirSync(packagedGuiDirectory, { recursive: true });
+    fs.writeFileSync(path.join(packagedGuiDirectory, "index.html"), "<main>packaged gui</main>");
     const nonExecutable = path.join(privateDirectory, "yet-lsp-non-executable");
     const executable = path.join(privateDirectory, "yet-lsp-executable");
     const bundledExecutable = path.join(bundledBinDirectory, "yet-lsp");
@@ -1573,6 +1587,18 @@ try {
     assert.match(diagnostics.engineBinaryStatus, /found configured binary: yet-lsp-executable/);
     assert.equal(diagnostics.engineBinaryStatus.includes(tempRoot), false, "diagnostics exposed a private temp path");
     assert.equal(diagnostics.engineBinaryStatus.includes(privateDirectory), false, "diagnostics exposed a private directory path");
+
+    assert.match(diagnostics.packagedGuiStatus, /present; packaged GUI index.html is available/);
+    assert.match(formatRuntimeDiagnostics(diagnostics), /Packaged GUI: present; packaged GUI index.html is available/);
+
+    fs.rmSync(path.join(packagedGuiDirectory, "index.html"), { force: true });
+    const missingGuiDiagnostics = await collectRuntimeDiagnostics(
+      { ...fakeContext, extensionPath: tempRoot },
+      { engine: { binaryName: "yet-lsp" } },
+    );
+    assert.match(missingGuiDiagnostics.packagedGuiStatus, /missing; run npm run prepare:vscode-preview/);
+    assert.equal(missingGuiDiagnostics.packagedGuiStatus.includes(tempRoot), false, "missing packaged GUI diagnostic exposed temp path");
+    fs.writeFileSync(path.join(packagedGuiDirectory, "index.html"), "<main>packaged gui</main>");
 
     configValues = {
       runtimeUrl: "http://127.0.0.1:8001",
