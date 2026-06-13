@@ -58,6 +58,9 @@ const lspHardKillGraceMs = 1_500;
 const lspFinalFallbackGraceMs = 2_000;
 const maxLspDiagnosticLineBuffer = 8 * 1024;
 const completionLabel = "Yet AI LSP connected";
+const maxCompletionItems = 64;
+const maxCompletionLabelLength = 80;
+const maxCompletionDetailLength = 200;
 const maxHoverContentLength = 1000;
 const maxDocumentSymbols = 64;
 const maxDocumentSymbolNameLength = 80;
@@ -425,7 +428,8 @@ function isSupportedDocument(document: vscode.TextDocument): boolean {
 }
 
 function isSafeDocumentUri(document: vscode.TextDocument): boolean {
-  return Buffer.byteLength(document.uri.toString(), "utf8") <= maxUriBytes;
+  const uri = document.uri.toString();
+  return Buffer.byteLength(uri, "utf8") <= maxUriBytes && !hasBinaryLikeContent(uri);
 }
 
 function isSafeDocumentText(text: string): boolean {
@@ -446,17 +450,28 @@ function toCompletionList(result: unknown): vscode.CompletionList | undefined {
   if (!isObject(result) || !Array.isArray(result.items)) {
     return undefined;
   }
+  if (result.items.length > maxCompletionItems) {
+    return undefined;
+  }
   const items = result.items
     .filter(isObject)
     .map((item) => {
-      const label = typeof item.label === "string" ? item.label : completionLabel;
+      const label = toSafeCompletionText(item.label, maxCompletionLabelLength) ?? completionLabel;
       const completionItem = new vscode.CompletionItem(label, vscode.CompletionItemKind.Text);
-      if (typeof item.detail === "string") {
-        completionItem.detail = item.detail;
+      const detail = toSafeCompletionText(item.detail, maxCompletionDetailLength);
+      if (detail) {
+        completionItem.detail = detail;
       }
       return completionItem;
     });
   return new vscode.CompletionList(items, Boolean(result.isIncomplete));
+}
+
+function toSafeCompletionText(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string" || value.length === 0 || value.length > maxLength || hasBinaryLikeContent(value)) {
+    return undefined;
+  }
+  return value;
 }
 
 function toHover(result: unknown): vscode.Hover | undefined {
