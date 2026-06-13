@@ -5,15 +5,23 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const gitStatusLimit = 40;
+const maxCommandOutputBytes = 96 * 1024 * 1024;
 
 const steps = [
-  ["Prepare JetBrains dev-preview artifact", "npm", ["run", "prepare:jetbrains-preview"], "."],
+  ["Repository contracts/check bundle", "npm", ["run", "check"], "."],
+  ["Build GUI assets for packaged/browser smokes", "npm", ["run", "build"], "apps/gui"],
+  ["Check packaged GUI asset freshness fixtures", "npm", ["run", "check:gui-asset-freshness"], "."],
   ["Prepare VS Code dev-preview artifact", "npm", ["run", "prepare:vscode-preview"], "."],
+  ["Prepare JetBrains dev-preview artifact", "npm", ["run", "prepare:jetbrains-preview"], "."],
+  ["Smoke packaged plugin layout", "npm", ["run", "smoke:plugin-layout"], "."],
+  ["Smoke VS Code installable artifact", "npm", ["run", "smoke:vscode-installable"], "."],
+  ["Smoke VS Code first-message coverage", "npm", ["run", "smoke:vscode-first-message"], "."],
+  ["Smoke JetBrains installable artifact", "npm", ["run", "smoke:jetbrains-installable"], "."],
+  ["Smoke JetBrains first-message coverage", "npm", ["run", "smoke:jetbrains-first-message"], "."],
   ["Smoke installed-plugin chat visual coverage", "npm", ["run", "smoke:installed-plugin-chat-visual"], "."],
   ["Smoke installed-plugin Demo Mode first-message coverage", "npm", ["run", "smoke:installed-plugin-demo-mode"], "."],
-  ["Smoke packaged plugin layout", "npm", ["run", "smoke:plugin-layout"], "."],
-  ["Smoke VS Code first-message coverage", "npm", ["run", "smoke:vscode-first-message"], "."],
-  ["Smoke JetBrains first-message coverage", "npm", ["run", "smoke:jetbrains-first-message"], "."],
+  ["Smoke login-first mock provider-auth first message", "npm", ["run", "smoke:login-first-message"], "."],
+  ["Smoke local runtime/chat/provider path", "npm", ["run", "smoke:local"], "."],
   ["Smoke JetBrains bundled runtime startup", "npm", ["run", "smoke:jetbrains-bundled-runtime"], "."],
   ["Write required IDE artifact manifest", "npm", ["run", "artifact:manifest", "--", "--require", "vscode,jetbrains"], "."],
   ["Stage split GitHub IDE artifacts", "npm", ["run", "artifact:stage-github"], "."],
@@ -31,9 +39,9 @@ for (const [label, command, args, cwd] of steps) {
 
 assertCleanTrackedGitStatus();
 
-console.log("\nIDE release-candidate artifact gate passed.");
-console.log("Verified local dev-preview artifact preparation, installed-plugin visual coverage, installed-plugin Demo Mode first-message coverage, packaged plugin layout, first-message coverage, JetBrains bundled runtime startup, GitHub staging, manifest combination, workflow/report safety checks, expected public artifact summary, and clean tracked status.");
-console.log("This gate does NOT launch real IDEs, use real provider credentials, call OpenAI/ChatGPT, contact hosted Yet AI services, sign or publish artifacts, upload a marketplace package, or create a production release.");
+console.log("\nIDE release-candidate smoke gate passed.");
+console.log("Verified repository contracts/checks, GUI build/freshness, dev-preview artifact preparation, packaged plugin layout, VS Code and JetBrains installable artifacts, VS Code and JetBrains first-message coverage, installed-plugin visual coverage, installed-plugin Demo Mode first-message coverage, login-first mock provider-auth first-message coverage, local runtime smoke, JetBrains bundled runtime startup, GitHub staging, manifest combination, workflow/report safety checks, expected public artifact summary, and clean tracked status.");
+console.log("This gate is local/mock-only. It does NOT launch real IDEs or JCEF automation, use real provider credentials, call OpenAI/ChatGPT, contact hosted Yet AI services, require a Yet AI account/cloud workspace/managed model gateway/product credits, sign or publish artifacts, upload a marketplace package, or create a production release.");
 
 function runStep(label, command, args, cwd) {
   const printable = [command, ...args].join(" ");
@@ -44,9 +52,13 @@ function runStep(label, command, args, cwd) {
   const result = spawnSync(platformCommand(command), args, {
     cwd: stepCwd,
     encoding: "utf8",
-    stdio: "inherit",
+    stdio: ["ignore", "pipe", "pipe"],
     env: safeEnv(),
+    maxBuffer: maxCommandOutputBytes,
   });
+
+  writeSanitizedOutput(result.stdout, process.stdout);
+  writeSanitizedOutput(result.stderr, process.stderr);
 
   if (result.error?.code === "ENOENT") {
     console.error(`\nIDE release-candidate artifact gate failed at step: ${label}`);
@@ -127,7 +139,69 @@ function assertCleanTrackedGitStatus() {
 }
 
 function safeEnv() {
-  return { ...process.env, PATH: process.env.PATH ?? "" };
+  const safeNames = new Set([
+    "PATH",
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "SYSTEMROOT",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LC_COLLATE",
+    "LC_MESSAGES",
+    "LC_MONETARY",
+    "LC_NUMERIC",
+    "LC_TIME",
+    "LC_ADDRESS",
+    "LC_IDENTIFICATION",
+    "LC_MEASUREMENT",
+    "LC_NAME",
+    "LC_PAPER",
+    "LC_TELEPHONE",
+    "NPM_CONFIG_CACHE",
+    "PLAYWRIGHT_BROWSERS_PATH",
+    "CARGO_HOME",
+    "RUSTUP_HOME",
+    "RUST_BACKTRACE",
+    "NO_COLOR",
+    "FORCE_COLOR",
+    "CI",
+  ]);
+  const unsafeName = /(^|[_-])(?:access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|token|api[_-]?key|authorization|bearer|cookie|client[_-]?secret|secret|provider|openai|anthropic|github|aws|azure|google)(?:$|[_-])/i;
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => safeNames.has(name.toUpperCase()) && !unsafeName.test(name)),
+  );
+  env.PATH = process.env.PATH ?? "";
+  return env;
+}
+
+function writeSanitizedOutput(value, stream) {
+  if (typeof value !== "string" || value.length === 0) {
+    return;
+  }
+  stream.write(sanitizeDiagnostic(value));
+}
+
+function sanitizeDiagnostic(value) {
+  return String(value)
+    .replace(/Bearer\s+[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/gi, "Bearer [redacted]")
+    .replace(/sk-(?:proj-)?[A-Za-z0-9._-]{8,}/gi, "[redacted-api-key]")
+    .replace(/((?:access|refresh|session|auth)[_-]?token)[\"'`\s:=]+[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/gi, "=[redacted]")
+    .replace(/(authorization|cookie|set-cookie|client_secret|auth_code|code|verifier)[\"'`\s:=]+[^\s,;)]+/gi, "=[redacted]")
+    .replace(/mock-(auth-code|access-token|refresh-token|cookie|session|state)-[A-Za-z0-9-]+/gi, "mock-$1-[redacted]")
+    .replace(/(?:codex|provider-login)-(session|state)-[A-Za-z0-9-]+/gi, "$1-[redacted]")
+    .replace(/(?:vscode-runtime-token|login-smoke-runtime-token)-[A-Za-z0-9-]+/gi, "$1-[redacted]")
+    .replace(/jb\.wrapper\.runtime\.[A-Za-z0-9._-]+/gi, "jb.wrapper.runtime.[redacted]")
+    .replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]")
+    .replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]");
 }
 
 function platformCommand(command) {
