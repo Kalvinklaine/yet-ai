@@ -682,14 +682,26 @@ try {
 
     const lspSecretEnv = createLspProcessEnvironment({
       PATH: "/usr/bin",
+      Path: "C:\\Windows\\System32",
+      SystemRoot: "C:\\Windows",
+      WINDIR: "C:\\Windows",
       YET_AI_AUTH_TOKEN: "lsp-env-session-token-sentinel",
+      YET_AI_HTTP_PORT: "8765",
       OPENAI_API_KEY: "sk-lsp-env-provider-secret-sentinel",
+      ANTHROPIC_API_KEY: "lsp-env-anthropic-secret-sentinel",
+      ProviderConfig: "lsp-env-provider-config-sentinel",
       Authorization: "Bearer lsp-env-bearer-sentinel",
+      Cookie: "lsp-env-cookie-sentinel",
     });
-    assert.equal(lspSecretEnv.PATH, "/usr/bin");
-    assert.equal(Object.hasOwn(lspSecretEnv, "YET_AI_AUTH_TOKEN"), false);
-    assert.equal(Object.hasOwn(lspSecretEnv, "OPENAI_API_KEY"), false);
-    assert.equal(Object.hasOwn(lspSecretEnv, "Authorization"), false);
+    assert.deepEqual(lspSecretEnv, {
+      PATH: "/usr/bin",
+      Path: "C:\\Windows\\System32",
+      SystemRoot: "C:\\Windows",
+      WINDIR: "C:\\Windows",
+    });
+    for (const key of ["YET_AI_AUTH_TOKEN", "YET_AI_HTTP_PORT", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ProviderConfig", "Authorization", "Cookie"]) {
+      assert.equal(Object.hasOwn(lspSecretEnv, key), false, `LSP env leaked ${key}`);
+    }
 
     const engineLaunchEnv = createEngineLaunchEnvironment({
       PATH: "/usr/bin",
@@ -1018,6 +1030,26 @@ try {
     assert.equal(symbols[0].range.start.character, 0);
     assert.equal(symbols[0].selectionRange.end.line, 0);
     assert.equal(symbols[0].selectionRange.end.character, 10);
+    const invalidCompletionPromise = registeredCompletionProviders[0].provider.provideCompletionItems(fileDocument, { line: 0, character: 3 });
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    emitLspResponse(lspSpawns[0].child, lspMessages[0].id, { items: Array.from({ length: 65 }, () => ({ label: "safe" })) });
+    assert.equal(await invalidCompletionPromise, undefined, "oversized completion response did not fail safe");
+    const sanitizedCompletionPromise = registeredCompletionProviders[0].provider.provideCompletionItems(fileDocument, { line: 0, character: 3 });
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    emitLspResponse(lspSpawns[0].child, lspMessages[0].id, {
+      isIncomplete: true,
+      items: [
+        { label: "unsafe\u0000label", detail: "unsafe\u0000detail" },
+        { label: "a".repeat(81), detail: "b".repeat(201) },
+      ],
+    });
+    const sanitizedCompletions = await sanitizedCompletionPromise;
+    assert.equal(sanitizedCompletions.isIncomplete, true);
+    assert.equal(sanitizedCompletions.items.length, 2);
+    assert.equal(sanitizedCompletions.items[0].label, "Yet AI LSP connected", "unsafe completion label did not use fallback");
+    assert.equal(sanitizedCompletions.items[0].detail, undefined, "unsafe completion detail was not dropped");
+    assert.equal(sanitizedCompletions.items[1].label, "Yet AI LSP connected", "overlong completion label did not use fallback");
+    assert.equal(sanitizedCompletions.items[1].detail, undefined, "overlong completion detail was not dropped");
     const invalidHoverPromise = registeredHoverProviders[0].provider.provideHover(fileDocument, { line: 0, character: 3 });
     lspMessages = takeLspClientMessages(lspSpawns[0].child);
     emitLspResponse(lspSpawns[0].child, lspMessages[0].id, null);
@@ -1139,6 +1171,19 @@ try {
     assert.equal(lspSpawns[0].child.stdin.chunks.join("").includes("fn safe_body() {}"), false, "oversized outbound LSP message was written to stdin");
     lspMessages = takeLspClientMessages(lspSpawns[0].child);
     assert.equal(lspMessages.length, 0, "oversized outbound LSP message produced framed traffic");
+    assert.equal(await registeredCompletionProviders[0].provider.provideCompletionItems(hugeUriDocument, { line: 0, character: 0 }), undefined);
+    assert.equal(await registeredHoverProviders[0].provider.provideHover(hugeUriDocument, { line: 0, character: 0 }), undefined);
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 0, "oversized URI providers sent LSP traffic");
+    const controlUriDocument = createTextDocument({ scheme: "file", toString: () => "file:///workspace/control-\u0001-uri.rs" }, "fn safe_body() {}", 1);
+    workspaceOpenDocumentListeners.at(-1)(controlUriDocument);
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 0, "control-character URI open sent LSP traffic");
+    assert.equal(await registeredCompletionProviders[0].provider.provideCompletionItems(controlUriDocument, { line: 0, character: 0 }), undefined);
+    assert.equal(await registeredHoverProviders[0].provider.provideHover(controlUriDocument, { line: 0, character: 0 }), undefined);
+    assert.equal(await registeredDocumentSymbolProviders[0].provider.provideDocumentSymbols(controlUriDocument), undefined);
+    lspMessages = takeLspClientMessages(lspSpawns[0].child);
+    assert.equal(lspMessages.length, 0, "control-character URI providers sent LSP traffic");
 
     fileDocument.version = 4;
     fileDocument.text = "fn enabled_again() {}";
