@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const maxFailureText = 6000;
+const maxCommandOutputBytes = 8 * 1024 * 1024;
 const runEngineSmoke = true;
 
 const checks = [
@@ -29,12 +30,20 @@ for (const check of checks) {
 }
 
 if (runEngineSmoke) {
-  const result = spawnSync('npm', ['run', 'smoke:lsp-stdio'], {
+  const result = spawnSync(platformCommand('npm'), ['run', 'smoke:lsp-stdio'], {
     cwd: root,
     encoding: 'utf8',
-    maxBuffer: 1024 * 1024,
+    maxBuffer: maxCommandOutputBytes,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: safeEnv(),
   });
-  if (result.status !== 0) {
+  if (result.error?.code === 'ENOENT') {
+    failures.push('smoke:lsp-stdio could not start because npm was not found on PATH.');
+  } else if (result.error !== undefined) {
+    failures.push(boundedDiagnostic(`smoke:lsp-stdio could not start: ${result.error.message}`));
+  } else if (result.signal !== null) {
+    failures.push(`smoke:lsp-stdio was interrupted by ${result.signal}.`);
+  } else if (result.status !== 0) {
     failures.push(boundedDiagnostic(`smoke:lsp-stdio failed with exit code ${result.status ?? 'unknown'}\n${result.stderr || ''}${result.stdout || ''}`));
   }
 }
@@ -122,12 +131,69 @@ async function readSource(relativePath) {
 }
 
 function boundedDiagnostic(text) {
-  const sanitized = String(text)
-    .replaceAll(root, '<root>')
-    .replace(/\/Users\/[^\s'"`]+/g, '<path>')
-    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer <redacted>')
-    .replace(/YET_AI_AUTH_TOKEN/g, '<redacted-token>');
+  const sanitized = sanitizeDiagnostic(text);
   return sanitized.length > maxFailureText ? `${sanitized.slice(0, maxFailureText)}…` : sanitized;
+}
+
+function sanitizeDiagnostic(text) {
+  return String(text)
+    .replaceAll(root, '<root>')
+    .replace(/Bearer\s+[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/gi, 'Bearer <redacted>')
+    .replace(/sk-(?:proj-)?[A-Za-z0-9._-]{8,}/gi, '<redacted-api-key>')
+    .replace(/((?:access|refresh|session|auth)[_-]?token)([\"'`\s:=]+)[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/gi, '$1$2<redacted>')
+    .replace(/(authorization|cookie|set-cookie|client_secret|auth_code|verifier)([\"'`\s:=]+)[^\s,;)]+/gi, '$1$2<redacted>')
+    .replace(/mock-(auth-code|access-token|refresh-token|cookie|session|state)-[A-Za-z0-9-]+/gi, 'mock-$1-<redacted>')
+    .replace(/(?:codex|provider-login)-(session|state)-[A-Za-z0-9-]+/gi, '$1-<redacted>')
+    .replace(/(vscode-runtime-token|login-smoke-runtime-token)-[A-Za-z0-9-]+/gi, '$1-<redacted>')
+    .replace(/jb\.wrapper\.runtime\.[A-Za-z0-9._-]+/gi, 'jb.wrapper.runtime.<redacted>')
+    .replace(/YET_AI_AUTH_TOKEN/g, '<redacted-token>')
+    .replace(/\/Users\/[^\s'"`)]+/g, '<path>')
+    .replace(/file:\/\/[^\s'"`)]+/g, '<file-url>');
+}
+
+function safeEnv() {
+  const safeNames = new Set([
+    'PATH',
+    'HOME',
+    'USERPROFILE',
+    'HOMEDRIVE',
+    'HOMEPATH',
+    'SYSTEMROOT',
+    'WINDIR',
+    'COMSPEC',
+    'PATHEXT',
+    'TMPDIR',
+    'TMP',
+    'TEMP',
+    'LANG',
+    'LC_ALL',
+    'LC_CTYPE',
+    'LC_COLLATE',
+    'LC_MESSAGES',
+    'LC_MONETARY',
+    'LC_NUMERIC',
+    'LC_TIME',
+    'NPM_CONFIG_CACHE',
+    'CARGO_HOME',
+    'RUSTUP_HOME',
+    'RUST_BACKTRACE',
+    'NO_COLOR',
+    'FORCE_COLOR',
+    'CI',
+  ]);
+  const unsafeName = /(^|[_-])(?:access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|token|api[_-]?key|authorization|bearer|cookie|client[_-]?secret|secret|provider|openai|anthropic|github|aws|azure|google)(?:$|[_-])/i;
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => safeNames.has(name.toUpperCase()) && !unsafeName.test(name)),
+  );
+  env.PATH = process.env.PATH ?? '';
+  return env;
+}
+
+function platformCommand(command) {
+  if (process.platform !== 'win32') {
+    return command;
+  }
+  return { npm: 'npm.cmd' }[command] ?? command;
 }
 
 function assert(condition, message) {

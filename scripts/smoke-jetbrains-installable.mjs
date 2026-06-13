@@ -52,7 +52,7 @@ for (const zipPath of zipPaths) {
 if (rootDistZipPath !== undefined) {
   console.log(`Checked ${path.relative(root, rootDistZipPath)} and checksum.`);
 }
-console.log("Verified installable ZIP structure and manual install docs without launching an IDE, using provider credentials, calling OpenAI, or contacting hosted Yet AI services.");
+console.log("Verified installable ZIP structure and manual install docs without launching an IDE. No provider credentials are required or used; the smoke does not call OpenAI or contact hosted Yet AI services.");
 
 async function readGradleProjectVersion() {
   const buildFile = await readFile(path.join(jetbrainsRoot, "build.gradle.kts"), "utf8");
@@ -135,7 +135,7 @@ async function collectRootArtifactInputs() {
   }
   await collectFiles(path.join(jetbrainsRoot, "src", "main", "kotlin"), inputs, [".kt", ".java"]);
   await collectFiles(path.join(jetbrainsRoot, "build", "generated", "resources", "yet-ai-gui"), inputs, [".html", ".js", ".css"]);
-  await collectFiles(path.join(jetbrainsRoot, "build", "generated", "resources", "yet-ai-engine"), inputs, [".exe"]);
+  await collectFiles(path.join(jetbrainsRoot, "build", "generated", "resources", "yet-ai-engine"), inputs, [binaryFileName]);
   if (!inputs.some((filePath) => filePath.endsWith(path.join("yet-ai-engine", binaryFileName)))) {
     const fallbackPath = path.join(root, "target", "debug", binaryFileName);
     try {
