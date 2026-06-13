@@ -371,7 +371,7 @@ export function App() {
     : apiKeyChatReady
       ? activeSelectedDemoMode
         ? "Demo Mode is ready: send a prompt to try the chat flow with local canned responses. No provider call or API key is used."
-        : `Ready to send using ${selectedModelDisplayName ?? "the default model"}. Ready to send using ${selectedModelDisplayName ?? "the default model"} through the local runtime.`
+        : `Ready to send using ${selectedModelDisplayName ?? "the default model"} through the local runtime.`
       : apiKeyReadiness.message
         ? apiKeyReadiness.message
         : providerAuthMutationInFlight && activeProviderAuthStatus?.authSource === "oauth" && !apiKeyChatReady
