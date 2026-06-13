@@ -786,6 +786,40 @@ describe("provider secret boundary", () => {
     expect(browserStorageDump()).not.toContain("oauth");
   });
 
+  it("redacts raw provider-auth private paths and token markers from visible login status and browser storage", async () => {
+    const rawSession = "provider-login-session-private-path-guard";
+    const rawAccessToken = "access_token=" + "v".repeat(64);
+    const rawPrivatePath = "/Users/alice/private/.codex/auth.json";
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses({
+      authResponse: {
+        ...providerAuthResponse("connected"),
+        sessionId: rawSession,
+        accountLabel: `user@example.test ${rawPrivatePath}`,
+        scopes: ["openid", rawPrivatePath, rawAccessToken],
+        redacted: `oauth-...test ${rawPrivatePath}`,
+        message: `Connected ${rawPrivatePath} ${rawAccessToken}`,
+        lastError: `last error Cookie: login-cookie ${rawPrivatePath}`,
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("OpenAI account connected");
+    expect(container?.textContent).toContain("[redacted]");
+    expect(container?.textContent).not.toContain(rawSession);
+    expect(container?.textContent).not.toContain(rawPrivatePath);
+    expect(container?.textContent).not.toContain("/Users/alice");
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("login-cookie");
+    expect(container?.textContent).not.toContain("v".repeat(64));
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(rawSession);
+    expect(browserStorageDump()).not.toContain(rawPrivatePath);
+    expect(browserStorageDump()).not.toContain("access_token");
+  });
+
   it("keeps Send disabled while disconnecting connected experimental login when no API-key model is ready", async () => {
     const disconnect = deferred<Response>();
     mockRuntimeResponses({ authResponse: providerAuthResponse("connected") });
