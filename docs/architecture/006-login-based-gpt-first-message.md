@@ -2,6 +2,16 @@
 
 This document tracks the login-based GPT first-message milestone. The GUI now has a more productized account-login card for the experimental Codex-like path, but production login is not implemented, not officially supported, and not enabled as the default real-provider path. The milestone remains separate from the current VS Code no-manual-runtime path and from the API-key fallback baseline.
 
+## Current milestone status
+
+- API-key or project-key setup through the local runtime is the safe/default real-provider path for real GPT responses.
+- Demo Mode is a no-key local trial for chat UX and uses canned local responses only.
+- The Codex-like provider-auth path is experimental, high-risk, non-default, and mock-only in automation.
+- Official production OpenAI/ChatGPT account login is not implemented, not approved, and not claimed.
+- No core first-message flow may require a hosted Yet AI backend, Yet AI account, managed gateway, product credit balance, or cloud workspace.
+
+Known limitations: account-login feasibility is still blocked by the absence of an approved provider-supported local-app flow; smoke/CI coverage must use fake credentials and loopback mocks; IDE artifacts remain dev-preview verification assets rather than marketplace or signed production releases.
+
 ## User goal
 
 The target user flow is:
@@ -153,6 +163,24 @@ A release candidate for default login must pass a documented privacy/security re
 - disconnect/revoke semantics;
 - account labels and scopes as non-secret GUI-facing fields;
 - no required Yet AI hosted backend for core local chat/provider setup.
+
+## Current verification matrix
+
+Use this matrix when publishing or reviewing the current login-first milestone. Choose the focused command for the boundary changed, and keep the documentation acceptance gate at the end of docs-only cards.
+
+| Area | Command | Expected scope |
+| --- | --- | --- |
+| Contracts | `npm run validate:contracts` | Provider-auth/chat/bridge fixtures remain strict, sanitized, and local-first |
+| Rust provider-auth/chat | `export PATH="$HOME/.cargo/bin:$PATH"; cargo test -p yet-lsp provider_auth && cargo test -p yet-lsp chat` | Engine-owned provider-auth state and chat behavior with fake/mock credentials only |
+| GUI app | `cd apps/gui && npm test -- App && npm run build` | Login-first, Demo Mode, and API-key fallback UI behavior/build assets |
+| Login-first smoke | `npm run smoke:login-first-message` | Mock-only provider-auth lifecycle, API-key fallback precedence, and first canned message |
+| Demo/local smokes | `npm run smoke:gui-demo-mode` and `npm run smoke:local` | No-key Demo Mode and local loopback chat/history/SSE behavior |
+| IDE smokes | `npm run smoke:vscode-first-message` and `npm run smoke:jetbrains-first-message` | Dev-preview IDE first-message flows through local runtime paths |
+| Release-candidate smoke | `npm run smoke:ide-release-candidate` | Aggregated installed-plugin/IDE visual and Demo coverage without publishing |
+| Repository check | `npm run check` | Docs, identity, hygiene, and focused validators |
+| Docs diff hygiene | `git diff --check` | No whitespace errors |
+
+All listed commands are verification commands, not release or account-login enablement. They must not use real OpenAI/ChatGPT credentials in automation, publish marketplace artifacts, sign/notarize installers, or depend on hosted Yet AI services.
 
 ## Future card pool
 
