@@ -91,8 +91,13 @@ fn lsp_unsupported_and_oversized_documents_fail_safe() {
     assert_eq!(unsupported_control, LspControl::Continue);
     let unsupported_response = unsupported_response.unwrap();
     assert_eq!(unsupported_response["error"]["code"], -32601);
-    assert_eq!(unsupported_response["error"]["message"], "lsp method not supported");
-    assert!(!unsupported_response.to_string().contains("yet-ai-secret-do-not-run"));
+    assert_eq!(
+        unsupported_response["error"]["message"],
+        "lsp method not supported"
+    );
+    assert!(!unsupported_response
+        .to_string()
+        .contains("yet-ai-secret-do-not-run"));
 
     server.handle_message(json!({
         "jsonrpc":"2.0",
@@ -123,7 +128,10 @@ fn lsp_unsupported_and_oversized_documents_fail_safe() {
         "method":"textDocument/didOpen",
         "params":{"textDocument":{"uri":"file:///workspace/src/open-too-large.rs","text":oversized}}
     }));
-    assert_eq!(server.document_text("file:///workspace/src/open-too-large.rs"), None);
+    assert_eq!(
+        server.document_text("file:///workspace/src/open-too-large.rs"),
+        None
+    );
 
     let oversized = "x".repeat(257 * 1024);
     server.handle_message(json!({
@@ -133,6 +141,47 @@ fn lsp_unsupported_and_oversized_documents_fail_safe() {
     }));
     assert_eq!(server.document_count(), 0);
     assert_eq!(server.document_text(uri), None);
+}
+
+#[test]
+fn lsp_rejects_non_local_or_secret_bearing_file_uris_without_leakage() {
+    let invalid_uris = [
+        "file://host/workspace/src/main.rs",
+        "file://user:token@host/workspace/src/main.rs",
+        "file:///workspace/src/main.rs?access_token=YET_AI_SECRET_QUERY",
+        "file:///workspace/src/main.rs#YET_AI_SECRET_FRAGMENT",
+        "file:///workspace/src/main.rs%3faccess_token=YET_AI_SECRET_QUERY",
+        "file:///workspace/src/main.rs%23YET_AI_SECRET_FRAGMENT",
+        "file:///workspace/src/main.rs%40userinfo",
+        "file:///workspace/src/main.rs%5csecret",
+        "file:///workspace/src/main.rs%0asecret",
+        "file:///workspace/src/main.rs%7fsecret",
+        "file:///workspace/src/main.rs%zzsecret",
+        "file:////workspace/src/main.rs",
+        "file:///C:\\workspace\\src\\main.rs",
+        "file:///workspace/src/main.rs\nsecret",
+        "file:///workspace/src/main.rssecret",
+        "https://example.test/private.rs",
+    ];
+
+    for uri in invalid_uris {
+        assert_rejected_uri_without_leakage(uri);
+    }
+}
+
+#[test]
+fn lsp_accepts_strict_local_absolute_file_uri() {
+    let mut server = initialized_server();
+    let uri = "file:///workspace/src/space%20ok.rs";
+    server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":uri,"text":"fn local() {}"}}
+    }));
+
+    assert_eq!(server.document_text(uri), Some("fn local() {}"));
+    assert_status_completion(&mut server, uri, 0, 3);
+    assert_eq!(document_symbols(&mut server, uri).len(), 1);
 }
 
 #[tokio::test]
@@ -686,6 +735,64 @@ fn document_symbols(server: &mut LspServer, uri: &str) -> Vec<Value> {
     }));
     assert_eq!(control, LspControl::Continue);
     response.unwrap()["result"].as_array().unwrap().clone()
+}
+
+fn assert_rejected_uri_without_leakage(uri: &str) {
+    let mut server = initialized_server();
+    let secret_body = "YET_AI_SECRET_REJECTED_BODY";
+    server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "method":"textDocument/didOpen",
+        "params":{"textDocument":{"uri":uri,"text":secret_body}}
+    }));
+
+    assert_eq!(server.document_count(), 0);
+
+    let (completion_response, _) = server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "id":20,
+        "method":"textDocument/completion",
+        "params":{"textDocument":{"uri":uri},"position":{"line":0,"character":0}}
+    }));
+    let completion_response = completion_response.unwrap();
+    assert_eq!(
+        completion_response["result"],
+        json!({"isIncomplete":false,"items":[]})
+    );
+    assert_safe_rejection_response(&completion_response);
+
+    let (hover_response, _) = server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "id":21,
+        "method":"textDocument/hover",
+        "params":{"textDocument":{"uri":uri},"position":{"line":0,"character":0}}
+    }));
+    let hover_response = hover_response.unwrap();
+    assert_eq!(hover_response["result"], Value::Null);
+    assert_safe_rejection_response(&hover_response);
+
+    let (symbols_response, _) = server.handle_message(json!({
+        "jsonrpc":"2.0",
+        "id":22,
+        "method":"textDocument/documentSymbol",
+        "params":{"textDocument":{"uri":uri}}
+    }));
+    let symbols_response = symbols_response.unwrap();
+    assert_eq!(symbols_response["result"], json!([]));
+    assert_safe_rejection_response(&symbols_response);
+}
+
+fn assert_safe_rejection_response(response: &Value) {
+    let text = response.to_string();
+    for sentinel in [
+        "YET_AI_SECRET_QUERY",
+        "YET_AI_SECRET_FRAGMENT",
+        "YET_AI_SECRET_REJECTED_BODY",
+        "access_token",
+        "userinfo",
+    ] {
+        assert!(!text.contains(sentinel));
+    }
 }
 
 fn initialized_server() -> LspServer {

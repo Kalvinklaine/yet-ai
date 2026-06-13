@@ -298,10 +298,58 @@ where
 
 fn valid_file_uri(value: Option<&Value>) -> Option<&str> {
     let uri = value.and_then(Value::as_str)?;
-    if uri.len() > MAX_URI_BYTES || !uri.starts_with("file://") || uri.contains('@') {
+    let path = uri.strip_prefix("file:///")?;
+    if uri.is_empty()
+        || uri.len() > MAX_URI_BYTES
+        || path.is_empty()
+        || path.starts_with('/')
+        || uri.as_bytes().iter().any(|byte| is_uri_unsafe_byte(*byte))
+        || uri.contains(['?', '#', '@', '\\'])
+        || has_unsafe_percent_encoding(uri)
+    {
         return None;
     }
     Some(uri)
+}
+
+fn is_uri_unsafe_byte(byte: u8) -> bool {
+    byte <= 0x20 || byte == 0x7f
+}
+
+fn has_unsafe_percent_encoding(uri: &str) -> bool {
+    let bytes = uri.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            index += 1;
+            continue;
+        }
+        let Some(high) = bytes.get(index + 1).and_then(|byte| hex_value(*byte)) else {
+            return true;
+        };
+        let Some(low) = bytes.get(index + 2).and_then(|byte| hex_value(*byte)) else {
+            return true;
+        };
+        let decoded = (high << 4) | low;
+        if is_percent_decoded_unsafe_byte(decoded) || matches!(decoded, b'?' | b'#' | b'@' | b'\\') {
+            return true;
+        }
+        index += 3;
+    }
+    false
+}
+
+fn is_percent_decoded_unsafe_byte(byte: u8) -> bool {
+    byte < 0x20 || byte == 0x7f
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn valid_position(value: Option<&Value>, text: &str) -> bool {
