@@ -10,6 +10,7 @@ const maxCommandOutputBytes = 96 * 1024 * 1024;
 const steps = [
   ["Repository contracts/check bundle", "npm", ["run", "check"], "."],
   ["Smoke engine LSP stdio boundary", "npm", ["run", "smoke:lsp-stdio"], "."],
+  ["Smoke JetBrains LSP lifecycle foundation", "npm", ["run", "smoke:jetbrains-lsp-foundation"], "."],
   ["Build GUI assets for packaged/browser smokes", "npm", ["run", "build"], "apps/gui"],
   ["Check packaged GUI asset freshness fixtures", "npm", ["run", "check:gui-asset-freshness"], "."],
   ["Prepare VS Code dev-preview artifact", "npm", ["run", "prepare:vscode-preview"], "."],
@@ -41,7 +42,7 @@ for (const [label, command, args, cwd] of steps) {
 assertCleanTrackedGitStatus();
 
 console.log("\nIDE release-candidate smoke gate passed.");
-console.log("Verified repository contracts/checks, engine LSP stdio smoke, GUI build/freshness, dev-preview artifact preparation, packaged plugin layout, VS Code and JetBrains installable artifacts, VS Code and JetBrains first-message coverage, installed-plugin visual coverage, installed-plugin Demo Mode first-message coverage, login-first mock provider-auth first-message coverage, local runtime smoke, JetBrains bundled runtime startup, GitHub staging, manifest combination, workflow/report safety checks, expected public artifact summary, and clean tracked status.");
+console.log("Verified repository contracts/checks, engine LSP stdio smoke, JetBrains LSP lifecycle foundation smoke, GUI build/freshness, dev-preview artifact preparation, packaged plugin layout, VS Code and JetBrains installable artifacts, VS Code and JetBrains first-message coverage, installed-plugin visual coverage, installed-plugin Demo Mode first-message coverage, login-first mock provider-auth first-message coverage, local runtime smoke, JetBrains bundled runtime startup, GitHub staging, manifest combination, workflow/report safety checks, expected public artifact summary, and clean tracked status.");
 console.log("This gate is local/mock-only. It does NOT launch real IDEs or JCEF automation, use real provider credentials, call OpenAI/ChatGPT, contact hosted Yet AI services, require a Yet AI account/cloud workspace/managed model gateway/product credits, sign or publish artifacts, upload a marketplace package, or create a production release.");
 
 function runStep(label, command, args, cwd) {
@@ -68,7 +69,7 @@ function runStep(label, command, args, cwd) {
   }
   if (result.error !== undefined) {
     console.error(`\nIDE release-candidate artifact gate failed at step: ${label}`);
-    console.error(`Could not run \`${printable}\`: ${result.error.message}`);
+    console.error(`Could not run \`${printable}\`: ${sanitizeDiagnostic(result.error.message)}`);
     process.exit(1);
   }
   if (result.signal !== null) {
@@ -105,7 +106,7 @@ function assertCleanTrackedGitStatus() {
   }
   if (result.error !== undefined) {
     console.error(`\nIDE release-candidate artifact gate failed at step: ${label}`);
-    console.error(`Could not run \`${printable}\`: ${result.error.message}`);
+    console.error(`Could not run \`${printable}\`: ${sanitizeDiagnostic(result.error.message)}`);
     process.exit(1);
   }
   if (result.signal !== null) {
@@ -116,9 +117,7 @@ function assertCleanTrackedGitStatus() {
   if (result.status !== 0) {
     console.error(`\nIDE release-candidate artifact gate failed at step: ${label}`);
     console.error(`Command failed: ${printable}`);
-    if (result.stderr.trim() !== "") {
-      console.error(result.stderr.trim());
-    }
+    writeSanitizedOutput(result.stderr, process.stderr);
     process.exit(result.status ?? 1);
   }
 
@@ -195,11 +194,11 @@ function sanitizeDiagnostic(value) {
   return String(value)
     .replace(/Bearer\s+[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/gi, "Bearer [redacted]")
     .replace(/sk-(?:proj-)?[A-Za-z0-9._-]{8,}/gi, "[redacted-api-key]")
-    .replace(/((?:access|refresh|session|auth)[_-]?token)[\"'`\s:=]+[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/gi, "=[redacted]")
-    .replace(/(authorization|cookie|set-cookie|client_secret|auth_code|code|verifier)[\"'`\s:=]+[^\s,;)]+/gi, "=[redacted]")
+    .replace(/((?:access|refresh|session|auth)[_-]?token)([\"'`\s:=]+)[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/gi, "$1$2[redacted]")
+    .replace(/(authorization|cookie|set-cookie|client_secret|auth_code|verifier)([\"'`\s:=]+)[^\s,;)]+/gi, "$1$2[redacted]")
     .replace(/mock-(auth-code|access-token|refresh-token|cookie|session|state)-[A-Za-z0-9-]+/gi, "mock-$1-[redacted]")
     .replace(/(?:codex|provider-login)-(session|state)-[A-Za-z0-9-]+/gi, "$1-[redacted]")
-    .replace(/(?:vscode-runtime-token|login-smoke-runtime-token)-[A-Za-z0-9-]+/gi, "$1-[redacted]")
+    .replace(/(vscode-runtime-token|login-smoke-runtime-token)-[A-Za-z0-9-]+/gi, "$1-[redacted]")
     .replace(/jb\.wrapper\.runtime\.[A-Za-z0-9._-]+/gi, "jb.wrapper.runtime.[redacted]")
     .replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]")
     .replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]");
