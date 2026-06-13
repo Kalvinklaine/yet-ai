@@ -4,99 +4,404 @@
   "title": "Engine Provider Auth Start Response",
   "type": "object",
   "additionalProperties": false,
-  "required": ["provider", "configured", "status", "authSource", "supportsLogin", "supportsApiKey", "cloudRequired", "success"],
+  "required": [
+    "provider",
+    "configured",
+    "status",
+    "authSource",
+    "supportsLogin",
+    "supportsApiKey",
+    "cloudRequired",
+    "success"
+  ],
   "allOf": [
-    { "$ref": "#/$defs/stateConsistency" }
+    {
+      "$ref": "#/$defs/stateConsistency"
+    }
   ],
   "properties": {
-    "provider": { "$ref": "#/$defs/providerId" },
-    "configured": { "type": "boolean" },
-    "status": { "$ref": "#/$defs/authStatus" },
-    "authSource": { "$ref": "#/$defs/authSource" },
-    "supportsLogin": { "type": "boolean" },
-    "supportsApiKey": { "type": "boolean" },
-    "authorizationUrl": { "$ref": "#/$defs/authUrl" },
-    "verificationUrl": { "$ref": "#/$defs/authUrl" },
-    "sessionId": { "type": "string", "minLength": 1 },
-    "accountLabel": { "type": "string", "minLength": 1 },
-    "expiresAt": { "type": "string", "format": "date-time" },
-    "scopes": { "$ref": "#/$defs/scopes" },
-    "redacted": { "type": "string", "minLength": 1 },
-    "lastError": { "type": "string", "minLength": 1 },
-    "cloudRequired": { "type": "boolean", "const": false },
-    "message": { "type": "string", "minLength": 1 },
-    "success": { "type": "boolean" },
-    "pollIntervalSeconds": { "type": "integer", "minimum": 1, "maximum": 3600 }
+    "provider": {
+      "$ref": "#/$defs/providerId"
+    },
+    "configured": {
+      "type": "boolean"
+    },
+    "status": {
+      "$ref": "#/$defs/authStatus"
+    },
+    "authSource": {
+      "$ref": "#/$defs/authSource"
+    },
+    "supportsLogin": {
+      "type": "boolean"
+    },
+    "supportsApiKey": {
+      "type": "boolean"
+    },
+    "authorizationUrl": {
+      "$ref": "#/$defs/authUrl"
+    },
+    "verificationUrl": {
+      "$ref": "#/$defs/authUrl"
+    },
+    "sessionId": {
+      "$ref": "#/$defs/sessionId"
+    },
+    "accountLabel": {
+      "$ref": "#/$defs/safeDisplayText"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "scopes": {
+      "$ref": "#/$defs/scopes"
+    },
+    "redacted": {
+      "$ref": "#/$defs/redactedHint"
+    },
+    "lastError": {
+      "$ref": "#/$defs/safeDisplayText"
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "message": {
+      "$ref": "#/$defs/safeDisplayText"
+    },
+    "success": {
+      "type": "boolean"
+    },
+    "pollIntervalSeconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3600
+    }
   },
   "$defs": {
-    "providerId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" },
+    "providerId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+    },
     "authStatus": {
       "type": "string",
-      "enum": ["not_configured", "api_key_configured", "login_available", "login_unavailable", "pending", "connected", "expired", "revoked", "error"]
+      "enum": [
+        "not_configured",
+        "api_key_configured",
+        "login_available",
+        "login_unavailable",
+        "pending",
+        "connected",
+        "expired",
+        "revoked",
+        "error"
+      ]
     },
-    "authSource": { "type": "string", "enum": ["none", "api_key", "oauth", "device", "browser"] },
-    "authFlowSource": { "type": "string", "enum": ["oauth", "device", "browser"] },
+    "authSource": {
+      "type": "string",
+      "enum": [
+        "none",
+        "api_key",
+        "oauth",
+        "device",
+        "browser"
+      ]
+    },
+    "authFlowSource": {
+      "type": "string",
+      "enum": [
+        "oauth",
+        "device",
+        "browser"
+      ]
+    },
     "authUrl": {
       "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
       "format": "uri",
       "anyOf": [
-        { "pattern": "^https://" },
-        { "pattern": "^http://(127\\.0\\.0\\.1|localhost|\\[::1\\])(?::[0-9]{1,5})?(?:/|$)" }
-      ]
+        {
+          "pattern": "^https://"
+        },
+        {
+          "pattern": "^http://(127\\.0\\.0\\.1|localhost|\\[::1\\])(?::[0-9]{1,5})?(?:/|$)"
+        }
+      ],
+      "not": {
+        "$ref": "#/$defs/forbiddenLeakText"
+      }
     },
     "scopes": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/scope"
+      },
       "uniqueItems": true
     },
     "stateConsistency": {
       "allOf": [
         {
-          "if": { "type": "object", "properties": { "status": { "const": "api_key_configured" } }, "required": ["status"] },
+          "if": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "api_key_configured"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
           "then": {
             "type": "object",
-            "required": ["redacted"],
-            "properties": { "configured": { "const": true }, "authSource": { "const": "api_key" }, "redacted": { "type": "string", "minLength": 1 } }
+            "required": [
+              "redacted"
+            ],
+            "properties": {
+              "configured": {
+                "const": true
+              },
+              "authSource": {
+                "const": "api_key"
+              },
+              "redacted": {
+                "$ref": "#/$defs/redactedHint"
+              }
+            }
           }
         },
         {
-          "if": { "type": "object", "properties": { "status": { "const": "pending" } }, "required": ["status"] },
+          "if": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "pending"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
           "then": {
             "type": "object",
-            "required": ["sessionId", "expiresAt"],
-            "properties": { "configured": { "const": false }, "authSource": { "$ref": "#/$defs/authFlowSource" }, "sessionId": { "type": "string", "minLength": 1 }, "expiresAt": { "type": "string", "format": "date-time" } }
+            "required": [
+              "sessionId",
+              "expiresAt"
+            ],
+            "properties": {
+              "configured": {
+                "const": false
+              },
+              "authSource": {
+                "$ref": "#/$defs/authFlowSource"
+              },
+              "sessionId": {
+                "$ref": "#/$defs/sessionId"
+              },
+              "expiresAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
           }
         },
         {
-          "if": { "type": "object", "properties": { "status": { "const": "connected" } }, "required": ["status"] },
+          "if": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "connected"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
           "then": {
             "type": "object",
-            "properties": { "configured": { "const": true }, "authSource": { "$ref": "#/$defs/authFlowSource" } }
+            "properties": {
+              "configured": {
+                "const": true
+              },
+              "authSource": {
+                "$ref": "#/$defs/authFlowSource"
+              }
+            }
           }
         },
         {
-          "if": { "type": "object", "properties": { "status": { "const": "expired" } }, "required": ["status"] },
+          "if": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "expired"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
           "then": {
             "type": "object",
-            "properties": { "configured": { "const": false }, "authSource": { "$ref": "#/$defs/authFlowSource" } }
+            "properties": {
+              "configured": {
+                "const": false
+              },
+              "authSource": {
+                "$ref": "#/$defs/authFlowSource"
+              }
+            }
           }
         },
         {
-          "if": { "type": "object", "properties": { "status": { "const": "revoked" } }, "required": ["status"] },
+          "if": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "revoked"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
           "then": {
             "type": "object",
-            "not": { "type": "object", "required": ["redacted"] },
-            "properties": { "configured": { "const": false }, "authSource": { "const": "none" } }
+            "not": {
+              "type": "object",
+              "required": [
+                "redacted"
+              ]
+            },
+            "properties": {
+              "configured": {
+                "const": false
+              },
+              "authSource": {
+                "const": "none"
+              }
+            }
           }
         },
         {
-          "if": { "type": "object", "properties": { "status": { "const": "login_unavailable" } }, "required": ["status"] },
+          "if": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "login_unavailable"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
           "then": {
             "type": "object",
-            "properties": { "configured": { "const": false }, "authSource": { "const": "none" }, "supportsLogin": { "const": false } }
+            "properties": {
+              "configured": {
+                "const": false
+              },
+              "authSource": {
+                "const": "none"
+              },
+              "supportsLogin": {
+                "const": false
+              }
+            }
           }
         }
       ]
+    },
+    "forbiddenLeakText": {
+      "anyOf": [
+        {
+          "pattern": "[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]\\s*:",
+          "type": "string"
+        },
+        {
+          "pattern": "[Bb][Ee][Aa][Rr][Ee][Rr]\\s+[A-Za-z0-9._~+/=-]+",
+          "type": "string"
+        },
+        {
+          "pattern": "[Aa][Cc][Cc][Ee][Ss][Ss][_-]?[Tt][Oo][Kk][Ee][Nn]",
+          "type": "string"
+        },
+        {
+          "pattern": "[Rr][Ee][Ff][Rr][Ee][Ss][Hh][_-]?[Tt][Oo][Kk][Ee][Nn]",
+          "type": "string"
+        },
+        {
+          "pattern": "[Aa][Pp][Ii]_[Kk][Ee][Yy]",
+          "type": "string"
+        },
+        {
+          "pattern": "[Cc][Oo][Oo][Kk][Ii][Ee]\\s*[:=]",
+          "type": "string"
+        },
+        {
+          "pattern": "[Ss][Ee][Tt]-[Cc][Oo][Oo][Kk][Ii][Ee]",
+          "type": "string"
+        },
+        {
+          "pattern": "[Cc][Ll][Ii][Ee][Nn][Tt]_[Ss][Ee][Cc][Rr][Ee][Tt]",
+          "type": "string"
+        },
+        {
+          "pattern": "[Aa][Uu][Tt][Hh]\\.[Jj][Ss][Oo][Nn]",
+          "type": "string"
+        },
+        {
+          "pattern": "(?:^|[\\s\"'(:=])(?:/(?:[Uu][Ss][Ee][Rr][Ss]|[Hh][Oo][Mm][Ee]|[Vv][Aa][Rr]|[Tt][Mm][Pp]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]|[Ee][Tt][Cc]|[Oo][Pp][Tt]|[Mm][Nn][Tt]|[Vv][Oo][Ll][Uu][Mm][Ee][Ss])(?:/|$)|[A-Za-z]:[\\\\/]|~[\\\\/])",
+          "type": "string"
+        },
+        {
+          "pattern": "[Ss][Kk]-(?:[A-Za-z0-9]{8,}|[Pp][Rr][Oo][Jj]-[A-Za-z0-9_-]{8,})",
+          "type": "string"
+        },
+        {
+          "pattern": "[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{20,}",
+          "type": "string"
+        }
+      ]
+    },
+    "safeDisplayText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?=\\S)(?!.*\\s$)[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+      "not": {
+        "$ref": "#/$defs/forbiddenLeakText"
+      }
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^(?=\\S)(?!.*\\s$)[^\\s\\u0000-\\u001F\\u007F-\\u009F]+$",
+      "not": {
+        "$ref": "#/$defs/forbiddenLeakText"
+      }
+    },
+    "redactedHint": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^(?=\\S)(?!.*\\s$)[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+      "not": {
+        "$ref": "#/$defs/forbiddenLeakText"
+      }
+    },
+    "scope": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^(?=\\S)(?!.*\\s$)[A-Za-z0-9._:/-]+$",
+      "not": {
+        "$ref": "#/$defs/forbiddenLeakText"
+      }
     }
   }
 }

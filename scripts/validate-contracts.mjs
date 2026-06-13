@@ -457,6 +457,19 @@ const invalidMappings = [
     "packages/contracts/examples-invalid/engine/provider-auth-exchange-cloud-required.json",
     "packages/contracts/schemas/engine/provider-auth-exchange-response.schema.json"
   ],
+  ...[
+    ["provider-auth-status-account-label-bearer.json", "provider-auth-status-response.schema.json"],
+    ["provider-auth-status-redacted-sk-key.json", "provider-auth-status-response.schema.json"],
+    ["provider-auth-status-scopes-access-token.json", "provider-auth-status-response.schema.json"],
+    ["provider-auth-status-session-jwt.json", "provider-auth-status-response.schema.json"],
+    ["provider-auth-exchange-message-cookie.json", "provider-auth-exchange-response.schema.json"],
+    ["provider-auth-exchange-last-error-client-secret.json", "provider-auth-exchange-response.schema.json"],
+    ["provider-auth-start-authorization-url-token-query.json", "provider-auth-start-response.schema.json"],
+    ["provider-auth-disconnect-message-private-path.json", "provider-auth-disconnect-response.schema.json"]
+  ].map(([fileName, schemaName]) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    `packages/contracts/schemas/engine/${schemaName}`
+  ]),
   [
     "packages/contracts/examples-invalid/engine/planner-scheduler-idle-missing-reason.json",
     "packages/contracts/schemas/engine/planner-scheduler-tick.schema.json"

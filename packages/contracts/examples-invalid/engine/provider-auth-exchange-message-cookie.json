@@ -1,0 +1,11 @@
+{
+  "provider": "openai",
+  "configured": false,
+  "status": "error",
+  "authSource": "none",
+  "supportsLogin": true,
+  "supportsApiKey": true,
+  "cloudRequired": false,
+  "success": false,
+  "message": "Set-Cookie: session=mocksecret"
+}

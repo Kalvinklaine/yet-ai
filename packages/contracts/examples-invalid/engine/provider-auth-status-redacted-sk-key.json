@@ -1,0 +1,10 @@
+{
+  "provider": "openai",
+  "configured": true,
+  "status": "api_key_configured",
+  "authSource": "api_key",
+  "supportsLogin": false,
+  "supportsApiKey": true,
+  "redacted": "sk-proj-abcdefghijklmnopqrstuvwxyz123456",
+  "cloudRequired": false
+}
