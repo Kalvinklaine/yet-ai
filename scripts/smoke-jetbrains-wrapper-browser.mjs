@@ -743,6 +743,7 @@ async function runDemoModeFirstMessageScenario(page, frameLocator) {
   if (!observedRuntimeAuthorization) {
     failures.push("Mock runtime did not observe the wrapper-supplied runtime token as Authorization.");
   }
+  assertAllRuntimeApiRequestsAuthorized();
 
   const finalLayoutMetrics = await collectJetBrainsIframeLayoutMetrics(frameLocator);
   await saveJetBrainsWrapperEvidence(page, finalLayoutMetrics);
@@ -2026,10 +2027,11 @@ async function startMockRuntimeServer() {
       response.end();
       return;
     }
-    if (request.headers.authorization === `Bearer ${runtimeToken}`) {
+    const authorized = request.headers.authorization === `Bearer ${runtimeToken}`;
+    if (authorized) {
       observedRuntimeAuthorization = true;
     }
-    const runtimeLogEntry = { method: request.method ?? "GET", pathname: requestUrl.pathname };
+    const runtimeLogEntry = { method: request.method ?? "GET", pathname: requestUrl.pathname, authorized };
     runtimeRequestLog.push(runtimeLogEntry);
     const allowedOrigin = request.headers.origin === undefined || request.headers.origin === runtimeBaseUrl || request.headers.origin === wrapperBaseUrl || request.headers.origin === guiBaseUrl;
     if (!allowedOrigin) {
@@ -2584,9 +2586,9 @@ function redactUrl(value) {
     url.password = "";
     url.search = "";
     url.hash = "";
-    return url.toString();
+    return sanitizeEvidenceText(url.toString());
   } catch {
-    return String(value);
+    return sanitizeEvidenceText(value);
   }
 }
 
@@ -2627,6 +2629,18 @@ function assertNoForbiddenRuntimeMutationRequests() {
   }
 }
 
+function assertAllRuntimeApiRequestsAuthorized() {
+  const runtimeApiRequests = runtimeRequestLog.filter((entry) => entry.pathname.startsWith("/v1/"));
+  if (runtimeApiRequests.length === 0) {
+    failures.push("Mock runtime did not observe any /v1/* requests.");
+    return;
+  }
+  const unauthorized = runtimeApiRequests.filter((entry) => !entry.authorized);
+  if (unauthorized.length > 0) {
+    failures.push(`Runtime /v1/* request(s) missed the JetBrains wrapper host.ready bearer token: ${formatRuntimeRequestLog(unauthorized)}.`);
+  }
+}
+
 function formatRuntimeRequestLog(entries) {
   return entries.map((entry) => `${entry.method} ${entry.pathname}${entry.body === undefined ? "" : ` body=${JSON.stringify(entry.body)}`}`).join(", ");
 }
@@ -2638,7 +2652,7 @@ function deepEqual(left, right) {
 function reportFailures() {
   console.error("JetBrains wrapper browser smoke failed:");
   for (const failure of failures) {
-    console.error(`- ${failure}`);
+    console.error(`- ${sanitizeEvidenceText(failure)}`);
   }
   process.exit(1);
 }
