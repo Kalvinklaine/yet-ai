@@ -6348,6 +6348,65 @@ describe("edit proposal preview", () => {
     expect(applyCalls[0][0].requestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
   });
 
+  it("renders exact Demo Mode edit envelope as actionable JetBrains apply panel only after click", async () => {
+    const postIntellijMessage = vi.fn();
+    window.postIntellijMessage = postIntellijMessage;
+    const proposal = demoModeSafeEditProposalPayload();
+    const assistantRequestId = "assistant-demo-request-id-ignored";
+    const envelope = demoModeSafeEditProposalEnvelope(proposal, assistantRequestId);
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "JetBrains Demo Mode edit proposal", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "JetBrains Demo Mode edit proposal", [chatMessage("chat-001", "assistant-demo-edit-1", "assistant", JSON.stringify(envelope, null, 2))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Proposed a safe edit. Review the proposal card below. It will not apply automatically.");
+    expect(text).toContain("Propose safe edit");
+    expect(text).toContain("Demo Mode safe edit no-op preview.");
+    expect(text).toContain("src/example.ts");
+    expect(text).toContain("replacement characters 0");
+    expect(text).toContain("Empty replacement text.");
+    expect(text).toContain("Apply in JetBrains after review");
+    expect(text).not.toContain(assistantRequestId);
+    expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+
+    await act(async () => {
+      findButton("Apply in JetBrains after review").click();
+    });
+
+    const applyCalls = postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
+    expect(applyCalls).toHaveLength(1);
+    expect(applyCalls[0][0]).toMatchObject({ version: bridgeVersion, type: "gui.applyWorkspaceEditRequest", payload: proposal });
+    expect(applyCalls[0][0].requestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
+    expect(applyCalls[0][0].requestId).not.toBe(assistantRequestId);
+  });
+
+  it("keeps exact Demo Mode edit envelope preview-only in browser mode", async () => {
+    const proposal = demoModeSafeEditProposalPayload();
+    const envelope = demoModeSafeEditProposalEnvelope(proposal);
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Browser Demo Mode edit proposal", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Browser Demo Mode edit proposal", [chatMessage("chat-001", "assistant-demo-edit-1", "assistant", JSON.stringify(envelope, null, 2))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Proposed a safe edit. Review the proposal card below. It will not apply automatically.");
+    expect(text).toContain("Propose safe edit");
+    expect(text).toContain("Demo Mode safe edit no-op preview.");
+    expect(text).toContain("Preview only in this host. Browser cannot apply proposed edits");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Apply in JetBrains after review" || button.textContent === "Apply in VS Code after review")).toBe(false);
+  });
+
   it("emits an apply request only after explicit user click in a privileged host", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
@@ -7629,6 +7688,34 @@ function safeEditProposalPayload() {
         ],
       },
     ],
+  };
+}
+
+function demoModeSafeEditProposalPayload() {
+  return {
+    requiresUserConfirmation: true,
+    summary: "Demo Mode safe edit no-op preview. No provider call was made; this is a local canned response, not model quality. This proposal preserves the current selection only when the same context includes a valid workspace-relative path; otherwise it uses an empty zero-length preview fallback.",
+    cloudRequired: false,
+    edits: [
+      {
+        workspaceRelativePath: "src/example.ts",
+        textReplacements: [
+          {
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+            replacementText: "",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function demoModeSafeEditProposalEnvelope(proposal = demoModeSafeEditProposalPayload(), requestId?: string) {
+  return {
+    type: "gui.applyWorkspaceEditRequest",
+    version: bridgeVersion,
+    ...(requestId ? { requestId } : {}),
+    payload: proposal,
   };
 }
 
