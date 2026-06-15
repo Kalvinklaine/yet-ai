@@ -58,7 +58,8 @@
     "validate:contracts": "node scripts/validate-contracts.mjs",
     "validate:ide-artifact-contract": "node scripts/validate-ide-artifact-contract.mjs",
     "validate:ide-artifact-workflow": "node scripts/validate-ide-artifact-workflow.mjs",
-    "validate:ide-surface-contract": "node scripts/validate-ide-surface-contract.mjs"
+    "validate:ide-surface-contract": "node scripts/validate-ide-surface-contract.mjs",
+    "validate:npm-spawn": "node scripts/validate-npm-spawn.mjs"
   },
   "devDependencies": {
     "ajv": "^8.20.0",

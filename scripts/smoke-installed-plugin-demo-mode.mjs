@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { npmRunInvocation } from "./lib/npm-spawn.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const forwardedArgs = process.argv.slice(2);
@@ -30,10 +31,10 @@ try {
 function runSmoke(label, scriptName) {
   return new Promise((resolve, reject) => {
     console.log(`\n==> ${label}`);
-    const args = ["run", scriptName, "--", "--demo-mode-first-message"];
-    if (headed) args.push("--headed");
-    const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-    const child = spawn(npmCommand, args, { cwd: root, stdio: "inherit", env: smokeEnv });
+    const forwardedArgs = ["--demo-mode-first-message"];
+    if (headed) forwardedArgs.push("--headed");
+    const { command, args } = npmRunInvocation(scriptName, forwardedArgs, { env: smokeEnv });
+    const child = spawn(command, args, { cwd: root, stdio: "inherit", env: smokeEnv });
     child.on("error", reject);
     child.on("exit", (code, signal) => {
       if (code === 0) {

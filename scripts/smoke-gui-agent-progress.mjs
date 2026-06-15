@@ -5,6 +5,7 @@ import http from "node:http";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { npmRunInvocation } from "./lib/npm-spawn.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const guiRoot = path.join(root, "apps", "gui");
@@ -277,7 +278,9 @@ try {
 }
 
 async function buildGui() {
-  const result = spawnSync("npm", ["run", "build"], { cwd: guiRoot, stdio: "inherit", env: { ...process.env, NO_PROXY: "127.0.0.1,localhost,::1", no_proxy: "127.0.0.1,localhost,::1" } });
+  const env = { ...process.env, NO_PROXY: "127.0.0.1,localhost,::1", no_proxy: "127.0.0.1,localhost,::1" };
+  const { command, args } = npmRunInvocation("build", [], { env });
+  const result = spawnSync(command, args, { cwd: guiRoot, stdio: "inherit", env });
   if (result.status !== 0) {
     failActionable("GUI build failed.", ["Run `cd apps/gui && npm install` if dependencies are missing, then retry `npm run smoke:gui-agent-progress`."]);
   }
