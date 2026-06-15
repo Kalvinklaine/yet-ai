@@ -174,8 +174,166 @@ class ControlledIdeActionsTest {
         assertFalse(ControlledIdeActions.supportsApplyWorkspaceEditResult)
     }
 
+    @Test
+    fun validApplyWorkspaceEditRequestParseDefinesConfirmedBoundary() {
+        val request = ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload()))
+
+        assertNotNull(request)
+        assertEquals("req-apply-1", request.requestId)
+        assertEquals("Replace reviewed range.", request.summary)
+        assertEquals(1, request.edits.size)
+        val fileEdit = request.edits.single()
+        assertEquals("src/main.kt", fileEdit.workspaceRelativePath)
+        assertEquals(1, fileEdit.textReplacements.size)
+        assertEquals(
+            ControlledIdeActions.Range(ControlledIdeActions.Position(1, 2), ControlledIdeActions.Position(1, 6)),
+            fileEdit.textReplacements.single().range,
+        )
+        assertEquals("updated", fileEdit.textReplacements.single().replacementText)
+    }
+
+    @Test
+    fun rejectsApplyWorkspaceEditWithoutExplicitLocalUserConfirmationContract() {
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(requiresUserConfirmation = "false"))))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(requiresUserConfirmation = "null"))))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(cloudRequired = "true"))))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(cloudRequired = "null"))))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(summary = "secret token /Users/person/private.kt"))))
+    }
+
+    @Test
+    fun rejectsApplyWorkspaceEditMalformedEnvelopeAndPrivilegedFields() {
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit("not-json"))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit("[]"))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit("""{"version":"old","type":"gui.applyWorkspaceEditRequest","requestId":"req-apply-1","payload":${validApplyPayload()}}"""))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.ideActionRequest","requestId":"req-apply-1","payload":${validApplyPayload()}}"""))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit("""{"version":"${ProductIdentity.bridgeVersion}","type":"gui.applyWorkspaceEditRequest","payload":${validApplyPayload()}}"""))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("token-abc", validApplyPayload())))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(), extra = """, "tool": "shell""")))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(payloadExtra = """, "action": "runShellCommand"""))))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(payloadExtra = """, "shell": "rm -rf ."""))))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(payloadExtra = """, "git": {"commit": true}"""))))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(fileExtra = """, "targetUri": "file:///Users/person/project/src/main.kt"""))))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(replacementExtra = """, "command": "execute"""))))
+    }
+
+    @Test
+    fun rejectsApplyWorkspaceEditUnsafePathsDuplicateFilesInvalidRangesAndOversize() {
+        listOf(
+            "",
+            "/src/main.kt",
+            "~/src/main.kt",
+            "../src/main.kt",
+            "src/../main.kt",
+            "src//main.kt",
+            "src\\main.kt",
+            "C:/src/main.kt",
+            "src/main.kt?raw=1",
+            "src/main.kt#frag",
+            "src/%2e%2e/main.kt",
+            "src/token/main.kt",
+            "src/api_key.txt",
+            "src/sk-proj-12345678/main.kt",
+            "a".repeat(513),
+        ).forEach { path ->
+            assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(path = path))), path)
+        }
+
+        val duplicateFiles = validApplyPayload(edits = """
+            [
+              ${fileEditJson("src/main.kt")},
+              ${fileEditJson("src/main.kt")}
+            ]
+        """.trimIndent())
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", duplicateFiles)))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(range = rangeJson(2, 0, 1, 0)))))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(range = rangeJson(1, 5, 1, 4)))))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(range = """{"start":{"line":1.5,"character":0},"end":{"line":1,"character":1}}"""))))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(range = rangeJson(-1, 0, 1, 0)))))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(range = rangeJson(1000001, 0, 1000001, 1)))))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(replacementText = "a".repeat(8193)))))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(replacementText = "bad\u0000text"))))
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(applyMessage("req-apply-1", validApplyPayload(summary = "x".repeat(65000)))))
+    }
+
+    @Test
+    fun applyWorkspaceEditResultIsSanitizedAndBounded() {
+        val result = JsonParser.parseString(
+            ControlledIdeActions.applyWorkspaceEditResult(
+                requestId = "req-apply-result-1",
+                status = ControlledIdeActions.ApplyWorkspaceEditStatus.Applied,
+                message = "Edit request applied.",
+                appliedEditCount = 999,
+                affectedFiles = listOf("src/main.kt", "../secret.kt", "src/second.kt", "src/token/file.kt", "src/third.kt", "src/fourth.kt", "src/fifth.kt"),
+            ),
+        ).asJsonObject
+
+        assertEquals("host.applyWorkspaceEditResult", result.get("type").asString)
+        assertEquals("req-apply-result-1", result.get("requestId").asString)
+        val payload = result.getAsJsonObject("payload")
+        assertEquals(setOf("status", "message", "cloudRequired", "appliedEditCount", "affectedFiles"), payload.keySet())
+        assertEquals("applied", payload.get("status").asString)
+        assertEquals("Edit request applied.", payload.get("message").asString)
+        assertEquals(64, payload.get("appliedEditCount").asInt)
+        assertEquals(listOf("src/main.kt", "src/second.kt", "src/third.kt", "src/fourth.kt"), payload.getAsJsonArray("affectedFiles").map { it.asString })
+        assertFalse(payload.get("cloudRequired").asBoolean)
+
+        val sanitized = JsonParser.parseString(
+            ControlledIdeActions.applyWorkspaceEditResult("bad token", ControlledIdeActions.ApplyWorkspaceEditStatus.Failed, "raw provider response sk-proj-12345678 /Users/person/file.kt", -1, listOf("/Users/person/file.kt", "secret/token.txt")),
+        ).asJsonObject
+        val sanitizedPayload = sanitized.getAsJsonObject("payload")
+        assertEquals("jetbrains-request", sanitized.get("requestId").asString)
+        assertEquals("Edit request status changed.", sanitizedPayload.get("message").asString)
+        assertEquals(0, sanitizedPayload.get("appliedEditCount").asInt)
+        assertFalse(sanitizedPayload.has("affectedFiles"))
+        assertFalse(sanitized.toString().contains("sk-proj-12345678"))
+        assertFalse(sanitized.toString().contains("/Users/person"))
+    }
+
+    @Test
+    fun safeApplyWorkspaceEditRequestIdFromRawRequiresApplyEnvelopeOnly() {
+        assertEquals("req-apply-1", ControlledIdeActions.safeApplyWorkspaceEditRequestIdFromRaw(applyMessage("req-apply-1", validApplyPayload(payloadExtra = """, "shell": true"""))))
+        assertNull(ControlledIdeActions.safeApplyWorkspaceEditRequestIdFromRaw(message("req-apply-1", """{"action":"getContextSnapshot"}""")))
+        assertNull(ControlledIdeActions.safeApplyWorkspaceEditRequestIdFromRaw(applyMessage("token-abc", validApplyPayload())))
+        assertNull(ControlledIdeActions.safeApplyWorkspaceEditRequestIdFromRaw(applyMessage("req-apply-1", validApplyPayload(), extra = """, "extra": true""")))
+    }
+
     private fun message(requestId: String, payload: String, extra: String = ""): String =
         """{"version":"${ProductIdentity.bridgeVersion}","type":"gui.ideActionRequest","requestId":"$requestId","payload":$payload$extra}"""
 
-    private fun jsonString(value: String): String = JsonParser.parseString("""{"value":"${value.replace("\\", "\\\\").replace("\n", "\\n").replace("\"", "\\\"")}"}""").asJsonObject.get("value").toString()
+    private fun applyMessage(requestId: String, payload: String, extra: String = ""): String =
+        """{"version":"${ProductIdentity.bridgeVersion}","type":"gui.applyWorkspaceEditRequest","requestId":"$requestId","payload":$payload$extra}"""
+
+    private fun validApplyPayload(
+        requiresUserConfirmation: String = "true",
+        cloudRequired: String = "false",
+        summary: String = "Replace reviewed range.",
+        path: String = "src/main.kt",
+        range: String = rangeJson(1, 2, 1, 6),
+        replacementText: String = "updated",
+        payloadExtra: String = "",
+        fileExtra: String = "",
+        replacementExtra: String = "",
+        edits: String? = null,
+    ): String = """
+        {
+          "requiresUserConfirmation": $requiresUserConfirmation,
+          "summary": ${jsonString(summary)},
+          "cloudRequired": $cloudRequired,
+          "edits": ${edits ?: "[${fileEditJson(path, range, replacementText, fileExtra, replacementExtra)}]"}$payloadExtra
+        }
+    """.trimIndent()
+
+    private fun fileEditJson(
+        path: String,
+        range: String = rangeJson(1, 2, 1, 6),
+        replacementText: String = "updated",
+        fileExtra: String = "",
+        replacementExtra: String = "",
+    ): String = """{"workspaceRelativePath":${jsonString(path)},"textReplacements":[{"range":$range,"replacementText":${jsonString(replacementText)}$replacementExtra}]$fileExtra}"""
+
+    private fun rangeJson(startLine: Int, startCharacter: Int, endLine: Int, endCharacter: Int): String =
+        """{"start":{"line":$startLine,"character":$startCharacter},"end":{"line":$endLine,"character":$endCharacter}}"""
+
+    private fun jsonString(value: String): String = com.google.gson.JsonPrimitive(value).toString()
 }

@@ -10,6 +10,11 @@ object ControlledIdeActions {
     private const val MaxWorkspaceRelativePathLength = 512
     private const val MaxMessageLength = 1000
     private const val MaxPositionValue = 1_000_000
+    private const val MaxApplyWorkspaceEditRequestBytes = 65_536
+    private const val MaxApplyWorkspaceFileGroups = 4
+    private const val MaxApplyWorkspaceTextReplacementsPerFile = 16
+    private const val MaxApplyWorkspaceReplacementTextLength = 8_192
+    private const val MaxApplyWorkspaceTotalReplacementTextLength = 32_768
 
     val supportedActions: Set<String> = setOf("getContextSnapshot", "openWorkspaceFile", "revealWorkspaceRange")
     const val supportsApplyWorkspaceEditResult: Boolean = false
@@ -33,6 +38,17 @@ object ControlledIdeActions {
 
     data class Position(val line: Int, val character: Int)
     data class Range(val start: Position, val end: Position)
+    data class ApplyWorkspaceEditRequest(val requestId: String, val summary: String, val edits: List<ApplyWorkspaceFileEdit>)
+    data class ApplyWorkspaceFileEdit(val workspaceRelativePath: String, val textReplacements: List<ApplyWorkspaceTextReplacement>)
+    data class ApplyWorkspaceTextReplacement(val range: Range, val replacementText: String)
+
+    enum class ApplyWorkspaceEditStatus(val wireValue: String) {
+        Applied("applied"),
+        Denied("denied"),
+        Rejected("rejected"),
+        Failed("failed"),
+    }
+
 
     enum class ResultStatus(val wireValue: String) {
         Succeeded("succeeded"),
@@ -98,6 +114,69 @@ object ControlledIdeActions {
         return record.stringValue("requestId")?.takeIf(::isRequiredRequestId)
     }
 
+    fun parseApplyWorkspaceEdit(raw: String): ApplyWorkspaceEditRequest? {
+        if (raw.toByteArray(Charsets.UTF_8).size > MaxApplyWorkspaceEditRequestBytes) return null
+        val element = try {
+            JsonParser.parseString(raw)
+        } catch (_: RuntimeException) {
+            return null
+        }
+        if (!element.isJsonObject) return null
+        val record = element.asJsonObject
+        if (!record.keySet().all { it in setOf("version", "type", "requestId", "payload") }) return null
+        if (record.stringValue("version") != ProductIdentity.bridgeVersion) return null
+        if (record.stringValue("type") != "gui.applyWorkspaceEditRequest") return null
+        val requestId = record.stringValue("requestId")?.takeIf(::isRequiredRequestId) ?: return null
+        val payload = record.get("payload")?.takeIf { it.isJsonObject }?.asJsonObject ?: return null
+        if (!payload.keySet().all { it in setOf("requiresUserConfirmation", "summary", "cloudRequired", "edits") }) return null
+        if (payload.booleanValue("requiresUserConfirmation") != true) return null
+        if (payload.has("cloudRequired") && payload.booleanValue("cloudRequired") != false) return null
+        val summary = payload.stringValue("summary")?.takeIf(::isSafeStatusMessage) ?: return null
+        val editsArray = payload.get("edits")?.takeIf { it.isJsonArray }?.asJsonArray ?: return null
+        if (editsArray.size() !in 1..MaxApplyWorkspaceFileGroups) return null
+
+        val edits = mutableListOf<ApplyWorkspaceFileEdit>()
+        val seenPaths = mutableSetOf<String>()
+        var totalReplacementText = 0
+        for (fileEditElement in editsArray) {
+            if (!fileEditElement.isJsonObject) return null
+            val fileEdit = fileEditElement.asJsonObject
+            if (!fileEdit.keySet().all { it in setOf("workspaceRelativePath", "textReplacements") }) return null
+            val path = fileEdit.stringValue("workspaceRelativePath")?.takeIf(::isStrictSafeWorkspaceRelativePath) ?: return null
+            if (!seenPaths.add(path)) return null
+            val replacementsArray = fileEdit.get("textReplacements")?.takeIf { it.isJsonArray }?.asJsonArray ?: return null
+            if (replacementsArray.size() !in 1..MaxApplyWorkspaceTextReplacementsPerFile) return null
+            val replacements = mutableListOf<ApplyWorkspaceTextReplacement>()
+            for (replacementElement in replacementsArray) {
+                if (!replacementElement.isJsonObject) return null
+                val replacement = replacementElement.asJsonObject
+                if (!replacement.keySet().all { it in setOf("range", "replacementText") }) return null
+                val range = parseRange(replacement.get("range")) ?: return null
+                val replacementText = replacement.stringValue("replacementText") ?: return null
+                if (replacementText.length > MaxApplyWorkspaceReplacementTextLength || replacementText.any { it.isISOControl() && it != '\n' && it != '\r' && it != '\t' }) return null
+                totalReplacementText += replacementText.length
+                if (totalReplacementText > MaxApplyWorkspaceTotalReplacementTextLength) return null
+                replacements.add(ApplyWorkspaceTextReplacement(range, replacementText))
+            }
+            edits.add(ApplyWorkspaceFileEdit(path, replacements))
+        }
+        return ApplyWorkspaceEditRequest(requestId, summary, edits)
+    }
+
+    fun safeApplyWorkspaceEditRequestIdFromRaw(raw: String): String? {
+        val element = try {
+            JsonParser.parseString(raw)
+        } catch (_: RuntimeException) {
+            return null
+        }
+        if (!element.isJsonObject) return null
+        val record = element.asJsonObject
+        if (!record.keySet().all { it in setOf("version", "type", "requestId", "payload") }) return null
+        if (record.stringValue("version") != ProductIdentity.bridgeVersion) return null
+        if (record.stringValue("type") != "gui.applyWorkspaceEditRequest") return null
+        return record.stringValue("requestId")?.takeIf(::isRequiredRequestId)
+    }
+
     fun ideActionProgress(
         requestId: String,
         phase: String,
@@ -150,6 +229,30 @@ object ControlledIdeActions {
                     addProperty("source", "jetbrains")
                     addProperty("hasActiveEditor", hasActiveEditor)
                     addProperty("workspaceFolderCount", workspaceFolderCount.coerceAtLeast(0))
+                })
+            }
+        })
+    }.toString()
+
+    fun applyWorkspaceEditResult(
+        requestId: String,
+        status: ApplyWorkspaceEditStatus,
+        message: String,
+        appliedEditCount: Int? = null,
+        affectedFiles: List<String> = emptyList(),
+    ): String = JsonObject().apply {
+        addProperty("version", ProductIdentity.bridgeVersion)
+        addProperty("type", "host.applyWorkspaceEditResult")
+        addProperty("requestId", sanitizeRequestIdForHost(requestId))
+        add("payload", JsonObject().apply {
+            addProperty("status", status.wireValue)
+            addProperty("message", sanitizeApplyWorkspaceEditStatusMessage(message))
+            addProperty("cloudRequired", false)
+            appliedEditCount?.let { addProperty("appliedEditCount", it.coerceIn(0, 64)) }
+            val safeFiles = affectedFiles.filter(::isStrictSafeWorkspaceRelativePath).take(4)
+            if (safeFiles.isNotEmpty()) {
+                add("affectedFiles", com.google.gson.JsonArray().apply {
+                    safeFiles.forEach { add(it) }
                 })
             }
         })
@@ -212,6 +315,20 @@ object ControlledIdeActions {
             value
         }
 
+    private fun sanitizeApplyWorkspaceEditStatusMessage(value: String): String =
+        if (!isSafeStatusMessage(value)) {
+            "Edit request status changed."
+        } else {
+            value
+        }
+
+    private fun isSafeStatusMessage(value: String): Boolean =
+        value.isNotEmpty() &&
+            value.length <= MaxMessageLength &&
+            value.none { it.isISOControl() } &&
+            !SecretTextRegex.containsMatchIn(value) &&
+            !PrivatePathRegex.containsMatchIn(value)
+
     private fun isSecretLikePathSegment(value: String): Boolean =
         SecretPathSegmentPrefixRegex.containsMatchIn(value) ||
             SecretPathSegmentMarkerRegex.containsMatchIn(value) ||
@@ -221,6 +338,12 @@ object ControlledIdeActions {
         val element = get(name) ?: return null
         if (!element.isJsonPrimitive || !element.asJsonPrimitive.isString) return null
         return element.asString
+    }
+
+    private fun JsonObject.booleanValue(name: String): Boolean? {
+        val element = get(name) ?: return null
+        if (!element.isJsonPrimitive || !element.asJsonPrimitive.isBoolean) return null
+        return element.asBoolean
     }
 
     private fun JsonObject.intValue(name: String): Int? {
