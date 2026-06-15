@@ -298,6 +298,17 @@ class ControlledIdeActionsTest {
         assertNull(ControlledIdeActions.safeApplyWorkspaceEditRequestIdFromRaw(applyMessage("req-apply-1", validApplyPayload(), extra = """, "extra": true""")))
     }
 
+    @Test
+    fun safeApplyWorkspaceEditRequestIdFromRawRejectsOversizedRawWithoutCorrelation() {
+        val oversized = applyMessage(
+            "req-oversized",
+            validApplyPayload(summary = "Replace reviewed range." + "x".repeat(66000)),
+        )
+
+        assertNull(ControlledIdeActions.parseApplyWorkspaceEdit(oversized))
+        assertNull(ControlledIdeActions.safeApplyWorkspaceEditRequestIdFromRaw(oversized))
+    }
+
     private fun message(requestId: String, payload: String, extra: String = ""): String =
         """{"version":"${ProductIdentity.bridgeVersion}","type":"gui.ideActionRequest","requestId":"$requestId","payload":$payload$extra}"""
 

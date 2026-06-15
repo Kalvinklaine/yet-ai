@@ -159,6 +159,11 @@ class YetToolWindowFactory : ToolWindowFactory {
 
 internal fun shouldCreateYetToolWindowContent(contentCount: Int): Boolean = contentCount == 0
 
+internal fun canHandleApplyWorkspaceEdit(disposed: Boolean, runtimePrepared: Boolean, guiReadyRequestId: String?, acceptedHostReadyRequestId: String?): Boolean {
+    val requestId = guiReadyRequestId ?: return false
+    return !disposed && runtimePrepared && acceptedHostReadyRequestId == requestId
+}
+
 class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
     private val logger = Logger.getInstance(YetBrowserPanel::class.java)
     private val browser = JBCefBrowser()
@@ -172,6 +177,8 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
     @Volatile
     private var guiReadyRequestId: String? = null
     @Volatile
+    private var acceptedHostReadyRequestId: String? = null
+    @Volatile
     private var disposed = false
 
     init {
@@ -179,6 +186,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         query.addHandler { raw ->
             if (isGuiUnloadedBridgeMessage(raw)) {
                 guiReadyRequestId = null
+                acceptedHostReadyRequestId = null
                 return@addHandler null
             }
             if (BridgeMessages.parseGuiRuntimeRefresh(raw) != null) {
@@ -188,7 +196,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
             }
             val ideActionHandled = JetBrainsIdeActionBridge.handleReadOnlyIdeActionRequest(raw, ::sendToGui, JetBrainsIdeActionHost(project)) { logger.info(it) }
             if (ideActionHandled) return@addHandler null
-            val applyEditHandled = JetBrainsApplyWorkspaceEditBridge.handleApplyWorkspaceEditRequest(raw, ::sendToGui, JetBrainsIdeActionHost(project), DialogApplyWorkspaceEditConfirmer(project)) { logger.info(it) }
+            val applyEditHandled = handleApplyWorkspaceEditRequest(raw)
             if (applyEditHandled) return@addHandler null
             val guiReady = BridgeMessages.parseGuiReady(raw)
             if (guiReady == null) {
@@ -198,6 +206,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
             logger.info("Yet AI received gui.ready")
             val requestId = guiReady.requestId
             guiReadyRequestId = requestId
+            acceptedHostReadyRequestId = null
             val latestError = latestConnection.error
             if (latestError != null) {
                 sendDiagnostic(latestError)
@@ -235,6 +244,25 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         }
     }
 
+    private fun handleApplyWorkspaceEditRequest(raw: String): Boolean {
+        if (!ControlledIdeActions.isApplyWorkspaceEditRequestType(raw)) return false
+        if (!canHandleApplyWorkspaceEdit()) {
+            val safeRequestId = ControlledIdeActions.safeApplyWorkspaceEditRequestIdFromRaw(raw)
+            if (safeRequestId != null) {
+                logger.info("Yet AI rejected apply workspace edit request before GUI bridge readiness")
+            }
+            return safeRequestId != null
+        }
+        return JetBrainsApplyWorkspaceEditBridge.handleApplyWorkspaceEditRequest(raw, ::sendToGui, JetBrainsIdeActionHost(project), DialogApplyWorkspaceEditConfirmer(project)) { logger.info(it) }
+    }
+
+    private fun canHandleApplyWorkspaceEdit(): Boolean = canHandleApplyWorkspaceEdit(
+        disposed = disposed,
+        runtimePrepared = runtimePrepared,
+        guiReadyRequestId = guiReadyRequestId,
+        acceptedHostReadyRequestId = acceptedHostReadyRequestId,
+    )
+
     private fun handleRuntimeConnection(connection: RuntimeConnectionResult) {
         latestConnection = connection
         runtimePrepared = connection.error == null
@@ -257,13 +285,14 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
     }
 
     private fun deliverReadyMessages(settings: RuntimeSettings, requestId: String?) {
-        JetBrainsReadyMessageDelivery.deliver(
+        val delivered = JetBrainsReadyMessageDelivery.deliver(
             settings = settings,
             requestId = requestId,
             send = ::sendToGui,
             contextSupplier = { ActiveEditorContextCollector.snapshot(project) },
             logContextStatus = { logger.info(it) },
         )
+        acceptedHostReadyRequestId = requestId.takeIf { delivered && !disposed }
     }
 
     fun refreshActiveEditorContext() {
@@ -448,10 +477,10 @@ object JetBrainsReadyMessageDelivery {
         send: (String) -> Unit,
         contextSupplier: () -> ActiveEditorContext.Snapshot?,
         logContextStatus: (String) -> Unit,
-    ) {
+    ): Boolean {
         if (!isValidRuntimeUrl(settings.runtimeUrl)) {
             logContextStatus("Yet AI rejected invalid runtime URL for GUI bridge ready batch")
-            return
+            return false
         }
         send(BridgeMessages.hostReady(settings, requestId))
         send(BridgeMessages.openedFromCommand())
@@ -464,6 +493,7 @@ object JetBrainsReadyMessageDelivery {
         if (snapshot != null) {
             send(BridgeMessages.contextSnapshot(snapshot, requestId))
         }
+        return true
     }
 
     private fun isValidRuntimeUrl(value: String): Boolean {

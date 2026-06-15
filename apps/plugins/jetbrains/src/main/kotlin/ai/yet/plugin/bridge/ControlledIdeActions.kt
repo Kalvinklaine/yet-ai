@@ -163,7 +163,10 @@ object ControlledIdeActions {
         return ApplyWorkspaceEditRequest(requestId, summary, edits)
     }
 
+    fun isApplyWorkspaceEditRequestType(raw: String): Boolean = raw.contains("\"gui.applyWorkspaceEditRequest\"")
+
     fun safeApplyWorkspaceEditRequestIdFromRaw(raw: String): String? {
+        if (raw.toByteArray(Charsets.UTF_8).size > MaxApplyWorkspaceEditRequestBytes) return null
         val element = try {
             JsonParser.parseString(raw)
         } catch (_: RuntimeException) {

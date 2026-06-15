@@ -10,6 +10,7 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class YetToolWindowFactoryTest {
@@ -477,6 +478,31 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
+    fun applyWorkspaceEditReadinessGateRequiresAcceptedHostReadyForCurrentFrame() {
+        assertFalse(canHandleApplyWorkspaceEdit(disposed = false, runtimePrepared = false, guiReadyRequestId = null, acceptedHostReadyRequestId = null))
+        assertFalse(canHandleApplyWorkspaceEdit(disposed = false, runtimePrepared = true, guiReadyRequestId = "ready-1", acceptedHostReadyRequestId = null))
+        assertFalse(canHandleApplyWorkspaceEdit(disposed = false, runtimePrepared = true, guiReadyRequestId = "ready-2", acceptedHostReadyRequestId = "ready-1"))
+        assertFalse(canHandleApplyWorkspaceEdit(disposed = true, runtimePrepared = true, guiReadyRequestId = "ready-1", acceptedHostReadyRequestId = "ready-1"))
+        assertTrue(canHandleApplyWorkspaceEdit(disposed = false, runtimePrepared = true, guiReadyRequestId = "ready-1", acceptedHostReadyRequestId = "ready-1"))
+    }
+
+    @Test
+    fun applyWorkspaceEditBridgeDoesNotCorrelateOversizedInvalidRequestOrLeakRawValues() {
+        val raw = """{"version":"2026-05-15","type":"gui.applyWorkspaceEditRequest","requestId":"req-oversized","payload":{"requiresUserConfirmation":true,"summary":"${"x".repeat(66000)} raw token sk-proj-12345678 /Users/person/private.kt","cloudRequired":false,"edits":[]}}"""
+        val sent = mutableListOf<String>()
+        val handled = JetBrainsApplyWorkspaceEditBridge.handleApplyWorkspaceEditRequest(
+            raw,
+            send = { sent.add(it) },
+            host = FakeApplyWorkspaceEditHost(ApplyWorkspaceEditHostResult(ControlledIdeActions.ApplyWorkspaceEditStatus.Applied, "unused")),
+            confirmer = FakeApplyWorkspaceEditConfirmer(true),
+        )
+
+        assertFalse(handled)
+        assertEquals(emptyList(), sent)
+        assertNull(ControlledIdeActions.safeApplyWorkspaceEditRequestIdFromRaw(raw))
+    }
+
+    @Test
     fun deliveryGateSkipsJavaScriptAfterDispose() {
         val executed = mutableListOf<String>()
         val gate = TestDeliveryGate { executed.add(it) }
@@ -717,6 +743,11 @@ class YetToolWindowFactoryTest {
         val source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/kotlin/ai/yet/plugin/ui/YetToolWindowFactory.kt"))
 
         assertContains(source, "private var runtimePrepared = false")
+        assertContains(source, "private var acceptedHostReadyRequestId: String? = null")
+        assertContains(source, "val applyEditHandled = handleApplyWorkspaceEditRequest(raw)")
+        assertContains(source, "if (!canHandleApplyWorkspaceEdit())")
+        assertContains(source, "ControlledIdeActions.safeApplyWorkspaceEditRequestIdFromRaw(raw)")
+        assertContains(source, "acceptedHostReadyRequestId = requestId.takeIf { delivered && !disposed }")
         assertContains(source, "val latestError = latestConnection.error")
         assertContains(source, "if (latestError != null) {")
         assertContains(source, "sendDiagnostic(latestError)")
