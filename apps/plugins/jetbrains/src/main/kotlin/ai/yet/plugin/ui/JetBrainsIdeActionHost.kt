@@ -10,6 +10,7 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VirtualFile
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
@@ -119,14 +120,20 @@ class JetBrainsApplyWorkspaceEditHost(private val project: Project) : ApplyWorks
         val future = CompletableFuture<ApplyWorkspaceEditHostResult>()
         ApplicationManager.getApplication().executeOnPooledThread {
             try {
-                val resolved = mutableListOf<ResolvedApplyWorkspaceFile>()
-                for (fileEdit in request.edits) {
-                    val file = resolveWorkspaceFile(project.basePath, fileEdit.workspaceRelativePath)
-                    if (file == null) {
-                        future.complete(rejected("Workspace edit target is unavailable."))
+                val resolved = when (val resolution = resolveApplyWorkspaceEditTargets(project.basePath, request.edits)) {
+                    is ApplyWorkspaceEditTargetResolution.Accepted -> resolution.files
+                    is ApplyWorkspaceEditTargetResolution.Rejected -> {
+                        future.complete(rejected(resolution.message))
                         return@executeOnPooledThread
                     }
-                    resolved.add(ResolvedApplyWorkspaceFile(file, fileEdit.textReplacements))
+                    is ApplyWorkspaceEditTargetResolution.Failed -> {
+                        future.complete(failed())
+                        return@executeOnPooledThread
+                    }
+                }
+                if (resolved.size != 1) {
+                    future.complete(rejected("Workspace edit request must target a single file."))
+                    return@executeOnPooledThread
                 }
                 ApplicationManager.getApplication().invokeLater {
                     try {
@@ -134,35 +141,31 @@ class JetBrainsApplyWorkspaceEditHost(private val project: Project) : ApplyWorks
                             future.complete(failed())
                             return@invokeLater
                         }
-                        val prepared = mutableListOf<PreparedApplyWorkspaceFile>()
-                        for (item in resolved) {
-                            val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(item.file.path)
-                            if (virtualFile == null) {
-                                future.complete(rejected("Workspace edit target is unavailable."))
-                                return@invokeLater
-                            }
-                            val document = FileDocumentManager.getInstance().getDocument(virtualFile)
-                            if (document == null) {
-                                future.complete(rejected("Workspace edit target is not text."))
-                                return@invokeLater
-                            }
-                            val replacements = prepareReplacements(document, item.replacements)
-                            if (replacements == null) {
-                                future.complete(rejected("Workspace edit range is outside the file."))
-                                return@invokeLater
-                            }
-                            prepared.add(PreparedApplyWorkspaceFile(document, item.file.safePath, replacements))
+                        val item = resolved.single()
+                        val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(item.file.path)
+                        if (virtualFile == null) {
+                            future.complete(rejected("Workspace edit target is unavailable."))
+                            return@invokeLater
                         }
+                        val document = FileDocumentManager.getInstance().getDocument(virtualFile)
+                        if (document == null) {
+                            future.complete(rejected("Workspace edit target is not text."))
+                            return@invokeLater
+                        }
+                        if (!canWriteDocument(virtualFile, document)) {
+                            future.complete(rejected("Workspace edit target is not writable."))
+                            return@invokeLater
+                        }
+                        val replacements = prepareReplacements(document, item.replacements)
+                        if (replacements == null) {
+                            future.complete(rejected("Workspace edit range is outside the file."))
+                            return@invokeLater
+                        }
+                        val replacementText = applyPreparedReplacementsToText(document.text, replacements)
                         WriteCommandAction.runWriteCommandAction(project, "Apply Yet AI Workspace Edit", null, Runnable {
-                            prepared.forEach { file ->
-                                file.replacements.asReversed().forEach { replacement ->
-                                    file.document.replaceString(replacement.startOffset, replacement.endOffset, replacement.replacementText)
-                                }
-                            }
+                            document.setText(replacementText)
                         })
-                        val count = prepared.sumOf { it.replacements.size }
-                        val files = prepared.map { it.safePath }
-                        future.complete(ApplyWorkspaceEditHostResult(ControlledIdeActions.ApplyWorkspaceEditStatus.Applied, "Edit request applied.", count, files))
+                        future.complete(ApplyWorkspaceEditHostResult(ControlledIdeActions.ApplyWorkspaceEditStatus.Applied, "Edit request applied.", replacements.size, listOf(item.file.safePath)))
                     } catch (_: Exception) {
                         future.complete(failed())
                     }
@@ -180,8 +183,37 @@ class JetBrainsApplyWorkspaceEditHost(private val project: Project) : ApplyWorks
 }
 
 data class ResolvedApplyWorkspaceFile(val file: ResolvedWorkspaceFile, val replacements: List<ControlledIdeActions.ApplyWorkspaceTextReplacement>)
-data class PreparedApplyWorkspaceFile(val document: Document, val safePath: String, val replacements: List<PreparedTextReplacement>)
 data class PreparedTextReplacement(val startOffset: Int, val endOffset: Int, val replacementText: String)
+
+sealed class ApplyWorkspaceEditTargetResolution {
+    data class Accepted(val files: List<ResolvedApplyWorkspaceFile>) : ApplyWorkspaceEditTargetResolution()
+    data class Rejected(val message: String) : ApplyWorkspaceEditTargetResolution()
+    data object Failed : ApplyWorkspaceEditTargetResolution()
+}
+
+fun resolveApplyWorkspaceEditTargets(
+    basePath: String?,
+    edits: List<ControlledIdeActions.ApplyWorkspaceFileEdit>,
+): ApplyWorkspaceEditTargetResolution {
+    val resolved = mutableListOf<ResolvedApplyWorkspaceFile>()
+    val seenResolvedTargets = mutableSetOf<Path>()
+    return try {
+        for (fileEdit in edits) {
+            val file = resolveWorkspaceFile(basePath, fileEdit.workspaceRelativePath)
+                ?: return ApplyWorkspaceEditTargetResolution.Rejected("Workspace edit target is unavailable.")
+            if (!seenResolvedTargets.add(file.path)) {
+                return ApplyWorkspaceEditTargetResolution.Rejected("Workspace edit target is duplicated.")
+            }
+            resolved.add(ResolvedApplyWorkspaceFile(file, fileEdit.textReplacements))
+        }
+        ApplyWorkspaceEditTargetResolution.Accepted(resolved)
+    } catch (_: Exception) {
+        ApplyWorkspaceEditTargetResolution.Failed
+    }
+}
+
+private fun canWriteDocument(virtualFile: VirtualFile, document: Document): Boolean =
+    virtualFile.isWritable && FileDocumentManager.getInstance().requestWriting(document, null)
 
 fun prepareReplacements(document: Document, replacements: List<ControlledIdeActions.ApplyWorkspaceTextReplacement>): List<PreparedTextReplacement>? {
     val prepared = replacements.map { replacement ->
@@ -191,9 +223,18 @@ fun prepareReplacements(document: Document, replacements: List<ControlledIdeActi
         PreparedTextReplacement(start, end, replacement.replacementText)
     }.sortedBy { it.startOffset }
     for (index in 1 until prepared.size) {
+        if (prepared[index].startOffset == prepared[index - 1].startOffset) return null
         if (prepared[index].startOffset < prepared[index - 1].endOffset) return null
     }
     return prepared
+}
+
+fun applyPreparedReplacementsToText(text: String, replacements: List<PreparedTextReplacement>): String {
+    val builder = StringBuilder(text)
+    replacements.asReversed().forEach { replacement ->
+        builder.replace(replacement.startOffset, replacement.endOffset, replacement.replacementText)
+    }
+    return builder.toString()
 }
 
 data class ResolvedWorkspaceFile(val path: Path, val safePath: String)

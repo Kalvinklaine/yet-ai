@@ -9,6 +9,7 @@ import kotlin.io.path.writeBytes
 import kotlin.io.path.writeText
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
@@ -85,6 +86,84 @@ class JetBrainsIdeActionHostTest {
     }
 
     @Test
+    fun rejectsMultipleZeroLengthInsertionsAtSameOffset() {
+        val document = DocumentImpl("alpha beta\n")
+
+        assertNull(
+            prepareReplacements(
+                document,
+                listOf(
+                    replacement(0, 5, 0, 5, " one"),
+                    replacement(0, 5, 0, 5, " two"),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun computesReplacementTextWithoutMutatingDocumentBeforeWrite() {
+        val originalText = "alpha beta gamma\n"
+        val replacements = prepareReplacements(
+            DocumentImpl(originalText),
+            listOf(
+                replacement(0, 0, 0, 5, "ALPHA"),
+                replacement(0, 11, 0, 16, "GAMMA"),
+            ),
+        )
+
+        assertNotNull(replacements)
+        val replaced = applyPreparedReplacementsToText(originalText, replacements)
+
+        assertEquals("ALPHA beta GAMMA\n", replaced)
+        assertEquals("alpha beta gamma\n", originalText)
+    }
+
+    @Test
+    fun rejectsDuplicateResolvedTargetsThroughSymlinkBeforeApply() {
+        val root = createTempDirectory()
+        root.resolve("src").createDirectory()
+        val target = root.resolve("src/Main.kt")
+        target.writeText("fun main() {}\n")
+        val link = root.resolve("Alias.kt")
+        try {
+            link.createSymbolicLinkPointingTo(target)
+        } catch (_: Exception) {
+            return
+        }
+
+        val resolution = resolveApplyWorkspaceEditTargets(
+            root.toString(),
+            listOf(
+                fileEdit("src/Main.kt", replacement(0, 0, 0, 3, "val")),
+                fileEdit("Alias.kt", replacement(0, 4, 0, 8, "alias")),
+            ),
+        )
+
+        assertIs<ApplyWorkspaceEditTargetResolution.Rejected>(resolution)
+        assertEquals("Workspace edit target is duplicated.", resolution.message)
+        assertEquals("fun main() {}\n", target.toFile().readText())
+    }
+
+    @Test
+    fun acceptsDistinctResolvedTargetsForLaterSingleFileMvpRejection() {
+        val root = createTempDirectory()
+        root.resolve("src").createDirectory()
+        root.resolve("src/Main.kt").writeText("fun main() {}\n")
+        root.resolve("src/Second.kt").writeText("fun second() {}\n")
+
+        val resolution = resolveApplyWorkspaceEditTargets(
+            root.toString(),
+            listOf(
+                fileEdit("src/Main.kt", replacement(0, 0, 0, 3, "val")),
+                fileEdit("src/Second.kt", replacement(0, 0, 0, 3, "val")),
+            ),
+        )
+
+        val accepted = assertIs<ApplyWorkspaceEditTargetResolution.Accepted>(resolution)
+        assertEquals(listOf("src/Main.kt", "src/Second.kt"), accepted.files.map { it.file.safePath })
+    }
+
+    @Test
     fun rejectsTraversalAndUnsafeInputs() {
         val root = createTempDirectory()
         root.resolve("safe.txt").writeText("safe")
@@ -94,6 +173,9 @@ class JetBrainsIdeActionHostTest {
         assertNull(resolveWorkspaceFile(null, "safe.txt"))
     }
 }
+
+private fun fileEdit(path: String, vararg replacements: ControlledIdeActions.ApplyWorkspaceTextReplacement): ControlledIdeActions.ApplyWorkspaceFileEdit =
+    ControlledIdeActions.ApplyWorkspaceFileEdit(path, replacements.toList())
 
 private fun replacement(startLine: Int, startCharacter: Int, endLine: Int, endCharacter: Int, text: String): ControlledIdeActions.ApplyWorkspaceTextReplacement =
     ControlledIdeActions.ApplyWorkspaceTextReplacement(
