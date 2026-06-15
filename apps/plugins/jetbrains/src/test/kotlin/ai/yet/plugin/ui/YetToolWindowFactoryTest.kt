@@ -147,7 +147,7 @@ class YetToolWindowFactoryTest {
         assertFalse(html.contains("window.addEventListener(\"message\", (event) => {\n          if (isGuiMessage(event.data))"))
         assertFalse(html.contains("message.type === \"gui.openFile\""))
         assertFalse(html.contains("message.type === \"gui.revealRange\""))
-        assertFalse(html.contains("message.type === \"gui.applyWorkspaceEditRequest\""))
+        assertContains(html, "gui.applyWorkspaceEditRequest")
         assertFalse(html.contains("message.type === \"gui.executeIdeTool\""))
         assertFalse(html.contains("message.type === \"gui.copyText\""))
         assertFalse(html.contains("message.type === \"gui.showNotification\""))
@@ -156,7 +156,6 @@ class YetToolWindowFactoryTest {
         assertFalse(html.contains("executeCommand"))
         assertFalse(html.contains("runShellCommand"))
         assertFalse(html.contains("writeWorkspaceFile"))
-        assertFalse(html.contains("applyWorkspaceEdit"))
     }
 
     @Test
@@ -189,12 +188,40 @@ class YetToolWindowFactoryTest {
         assertContains(html, "isHostIdeActionProgressPayload(message.payload)")
         assertContains(html, "isHostIdeActionResultPayload(message.payload)")
 
-        listOf("writeWorkspaceFile", "applyWorkspaceEdit", "runShellCommand", "gitStatus", "runTask", "executeIdeTool", "callProvider", "readWorkspaceFile", "indexWorkspace").forEach { action ->
+        listOf("writeWorkspaceFile", "runShellCommand", "gitStatus", "runTask", "executeIdeTool", "callProvider", "readWorkspaceFile", "indexWorkspace").forEach { action ->
             assertFalse(html.contains("\"$action\""), action)
         }
         assertFalse(html.contains("hasOnlyKeys(payload.context, [\"source\", \"kind\"])") )
         assertFalse(html.contains("payload.context.kind === \"active_editor\""))
         assertFalse(html.contains("window.postMessage(message"))
+    }
+
+    @Test
+    fun wrapperSafelyForwardsStrictApplyWorkspaceEditRequestsAfterReadyHandshake() {
+        val html = renderHtml(
+            RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
+            "console.log('bridge')",
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+        )
+
+        assertContains(html, "const maxApplyWorkspaceEditRequestBytes = 65536;")
+        assertContains(html, "message.type !== \"gui.applyWorkspaceEditRequest\"")
+        assertContains(html, "const isGuiApplyWorkspaceEditRequest = (message) => {")
+        assertContains(html, "payload.requiresUserConfirmation !== true")
+        assertContains(html, "payload.cloudRequired !== false")
+        assertContains(html, "payload.edits.length > 4")
+        assertContains(html, "edit.textReplacements.length <= 16")
+        assertContains(html, "replacementTextLength <= 32768")
+        assertContains(html, "} else if (isGuiApplyWorkspaceEditRequest(event.data)) {")
+        assertContains(html, "Yet AI rejected apply workspace edit request before GUI bridge readiness")
+        assertContains(html, "window.postIntellijMessage(event.data);")
+        assertContains(html, "message.type === \"host.applyWorkspaceEditResult\"")
+        assertContains(html, "isHostApplyWorkspaceEditResultPayload(message.payload)")
+        assertContains(html, "[\"applied\", \"denied\", \"rejected\", \"failed\"].includes(payload.status)")
+        assertContains(html, "payload.affectedFiles.every((path) => safeRequiredWorkspacePath(path))")
+        assertContains(html, "acceptedHostReadyRequestId === currentReadyRequestId()")
+        assertFalse(html.contains("runShellCommand"))
+        assertFalse(html.contains("writeWorkspaceFile"))
     }
 
     @Test
@@ -380,6 +407,73 @@ class YetToolWindowFactoryTest {
 
         val ignored = JetBrainsIdeActionBridge.handleReadOnlyIdeActionRequest("not-json", send = { sent.add(it) }, host = FakeIdeActionHost(IdeActionHostResult(ControlledIdeActions.ResultStatus.Succeeded, "unused")))
         assertFalse(ignored)
+    }
+
+    @Test
+    fun applyWorkspaceEditBridgeRequiresConfirmationBeforeApplying() {
+        val sent = mutableListOf<String>()
+        val host = FakeApplyWorkspaceEditHost(ApplyWorkspaceEditHostResult(ControlledIdeActions.ApplyWorkspaceEditStatus.Applied, "Edit request applied.", 1, listOf("src/Main.kt")))
+        val handled = JetBrainsApplyWorkspaceEditBridge.handleApplyWorkspaceEditRequest(
+            applyMessage(),
+            send = { sent.add(it) },
+            host = host,
+            confirmer = FakeApplyWorkspaceEditConfirmer(true),
+        )
+
+        assertTrue(handled)
+        assertEquals(1, host.appliedCount)
+        val message = JsonParser.parseString(sent.single()).asJsonObject
+        assertEquals("host.applyWorkspaceEditResult", message.get("type").asString)
+        assertEquals("req-apply-1", message.get("requestId").asString)
+        val payload = message.getAsJsonObject("payload")
+        assertEquals("applied", payload.get("status").asString)
+        assertEquals(1, payload.get("appliedEditCount").asInt)
+        assertEquals(listOf("src/Main.kt"), payload.getAsJsonArray("affectedFiles").map { it.asString })
+    }
+
+    @Test
+    fun applyWorkspaceEditBridgeReturnsDeniedWithoutMutation() {
+        val sent = mutableListOf<String>()
+        val host = FakeApplyWorkspaceEditHost(ApplyWorkspaceEditHostResult(ControlledIdeActions.ApplyWorkspaceEditStatus.Applied, "unused"))
+        val handled = JetBrainsApplyWorkspaceEditBridge.handleApplyWorkspaceEditRequest(
+            applyMessage(),
+            send = { sent.add(it) },
+            host = host,
+            confirmer = FakeApplyWorkspaceEditConfirmer(false),
+        )
+
+        assertTrue(handled)
+        assertEquals(0, host.appliedCount)
+        val payload = JsonParser.parseString(sent.single()).asJsonObject.getAsJsonObject("payload")
+        assertEquals("denied", payload.get("status").asString)
+        assertEquals(0, payload.get("appliedEditCount").asInt)
+    }
+
+    @Test
+    fun applyWorkspaceEditBridgeRejectsInvalidAndSanitizesFailures() {
+        val rejected = mutableListOf<String>()
+        val rejectedHandled = JetBrainsApplyWorkspaceEditBridge.handleApplyWorkspaceEditRequest(
+            """{"version":"2026-05-15","type":"gui.applyWorkspaceEditRequest","requestId":"req-apply-2","payload":{"shell":true}}""",
+            send = { rejected.add(it) },
+            host = FakeApplyWorkspaceEditHost(ApplyWorkspaceEditHostResult(ControlledIdeActions.ApplyWorkspaceEditStatus.Applied, "unused")),
+            confirmer = FakeApplyWorkspaceEditConfirmer(true),
+        )
+        assertTrue(rejectedHandled)
+        assertEquals("rejected", JsonParser.parseString(rejected.single()).asJsonObject.getAsJsonObject("payload").get("status").asString)
+
+        val failed = mutableListOf<String>()
+        JetBrainsApplyWorkspaceEditBridge.handleApplyWorkspaceEditRequest(
+            applyMessage(),
+            send = { failed.add(it) },
+            host = FakeApplyWorkspaceEditHost(ApplyWorkspaceEditHostResult(ControlledIdeActions.ApplyWorkspaceEditStatus.Failed, "raw provider response sk-proj-12345678 /Users/person/file.kt", -1, listOf("/Users/person/file.kt"))),
+            confirmer = FakeApplyWorkspaceEditConfirmer(true),
+        )
+        val failedText = failed.single()
+        val failedPayload = JsonParser.parseString(failedText).asJsonObject.getAsJsonObject("payload")
+        assertEquals("failed", failedPayload.get("status").asString)
+        assertEquals("Edit request status changed.", failedPayload.get("message").asString)
+        assertFalse(failedText.contains("sk-proj-12345678"))
+        assertFalse(failedText.contains("/Users/person"))
     }
 
     @Test
@@ -763,10 +857,25 @@ class YetToolWindowFactoryTest {
     }
 }
 
+private fun applyMessage(): String = """{"version":"2026-05-15","type":"gui.applyWorkspaceEditRequest","requestId":"req-apply-1","payload":{"requiresUserConfirmation":true,"summary":"Replace reviewed range.","cloudRequired":false,"edits":[{"workspaceRelativePath":"src/Main.kt","textReplacements":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":4}},"replacementText":"updated"}]}]}}"""
+
 private fun messageType(message: String): String = JsonParser.parseString(message).asJsonObject.get("type").asString
 
 private class FakeIdeActionHost(private val result: IdeActionHostResult) : IdeActionHost {
     override fun execute(request: ControlledIdeActions.Request): CompletableFuture<IdeActionHostResult> = CompletableFuture.completedFuture(result)
+}
+
+private class FakeApplyWorkspaceEditHost(private val result: ApplyWorkspaceEditHostResult) : ApplyWorkspaceEditHost {
+    var appliedCount = 0
+
+    override fun apply(request: ControlledIdeActions.ApplyWorkspaceEditRequest): CompletableFuture<ApplyWorkspaceEditHostResult> {
+        appliedCount += 1
+        return CompletableFuture.completedFuture(result)
+    }
+}
+
+private class FakeApplyWorkspaceEditConfirmer(private val confirmed: Boolean) : ApplyWorkspaceEditConfirmer {
+    override fun confirm(summary: String, affectedFiles: List<String>): Boolean = confirmed
 }
 
 private class TestDeliveryGate(private val execute: (String) -> Unit) {

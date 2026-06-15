@@ -1,5 +1,7 @@
 package ai.yet.plugin.ui
 
+import ai.yet.plugin.bridge.ControlledIdeActions
+import com.intellij.openapi.editor.impl.DocumentImpl
 import kotlin.io.path.createDirectory
 import kotlin.io.path.createSymbolicLinkPointingTo
 import kotlin.io.path.createTempDirectory
@@ -49,6 +51,39 @@ class JetBrainsIdeActionHostTest {
 
         assertNull(resolveWorkspaceFile(root.toString(), "linked.txt"))
     }
+
+    @Test
+    fun preparesNonOverlappingReplacementsInDocumentOrder() {
+        val document = DocumentImpl("alpha beta gamma\nsecond line\n")
+        val replacements = prepareReplacements(
+            document,
+            listOf(
+                replacement(0, 11, 0, 16, "delta"),
+                replacement(0, 0, 0, 5, "ALPHA"),
+            ),
+        )
+
+        assertNotNull(replacements)
+        assertEquals(listOf(0, 11), replacements.map { it.startOffset })
+        assertEquals(listOf("ALPHA", "delta"), replacements.map { it.replacementText })
+    }
+
+    @Test
+    fun rejectsOutOfBoundsAndOverlappingReplacements() {
+        val document = DocumentImpl("alpha beta\n")
+
+        assertNull(prepareReplacements(document, listOf(replacement(2, 0, 2, 1, "bad"))))
+        assertNull(
+            prepareReplacements(
+                document,
+                listOf(
+                    replacement(0, 0, 0, 6, "one"),
+                    replacement(0, 5, 0, 10, "two"),
+                ),
+            ),
+        )
+    }
+
     @Test
     fun rejectsTraversalAndUnsafeInputs() {
         val root = createTempDirectory()
@@ -59,3 +94,12 @@ class JetBrainsIdeActionHostTest {
         assertNull(resolveWorkspaceFile(null, "safe.txt"))
     }
 }
+
+private fun replacement(startLine: Int, startCharacter: Int, endLine: Int, endCharacter: Int, text: String): ControlledIdeActions.ApplyWorkspaceTextReplacement =
+    ControlledIdeActions.ApplyWorkspaceTextReplacement(
+        ControlledIdeActions.Range(
+            ControlledIdeActions.Position(startLine, startCharacter),
+            ControlledIdeActions.Position(endLine, endCharacter),
+        ),
+        text,
+    )

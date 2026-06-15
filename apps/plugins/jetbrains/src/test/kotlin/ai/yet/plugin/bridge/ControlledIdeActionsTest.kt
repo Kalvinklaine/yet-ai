@@ -159,7 +159,7 @@ class ControlledIdeActionsTest {
     }
 
     @Test
-    fun contextResultMetadataUsesJetBrainsAndApplyEditResultUnsupported() {
+    fun contextResultMetadataUsesJetBrainsAndApplyEditResultSupportedSeparately() {
         val result = JsonParser.parseString(
             ControlledIdeActions.ideActionResult("req-1", ControlledIdeActions.ResultStatus.Succeeded, "IDE context snapshot captured.", action = "getContextSnapshot"),
         ).asJsonObject
@@ -171,7 +171,7 @@ class ControlledIdeActionsTest {
         assertFalse(context.has("kind"))
         assertFalse(payload.has("workspaceRelativePath"))
         assertTrue("host.applyWorkspaceEditResult" !in result.toString())
-        assertFalse(ControlledIdeActions.supportsApplyWorkspaceEditResult)
+        assertTrue(ControlledIdeActions.supportsApplyWorkspaceEditResult)
     }
 
     @Test

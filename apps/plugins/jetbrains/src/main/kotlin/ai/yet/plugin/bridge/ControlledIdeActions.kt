@@ -17,7 +17,7 @@ object ControlledIdeActions {
     private const val MaxApplyWorkspaceTotalReplacementTextLength = 32_768
 
     val supportedActions: Set<String> = setOf("getContextSnapshot", "openWorkspaceFile", "revealWorkspaceRange")
-    const val supportsApplyWorkspaceEditResult: Boolean = false
+    const val supportsApplyWorkspaceEditResult: Boolean = true
 
     sealed class Request {
         abstract val requestId: String
