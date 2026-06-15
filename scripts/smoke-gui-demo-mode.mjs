@@ -129,7 +129,7 @@ try {
   await expectVisibleText(page, "Propose safe edit", "safe edit proposal card");
   await expectVisibleText(page, editProposalSummary, "safe edit proposal summary");
   await expectVisibleText(page, codingActionsContext.selection.text, "safe edit no-op replacement preserves selected text");
-  await expectVisibleText(page, "Preview only in this host. Browser and JetBrains cannot apply proposed edits", "browser preview-only safe edit copy");
+  await expectVisibleText(page, "Preview only in this host. Browser cannot apply proposed edits", "browser preview-only safe edit copy");
   await assertNoVisibleText(page, "Apply in VS Code after review", "VS Code apply button in browser Demo Mode smoke");
   await assertAssistantBubbleSequence(page, [assistantAnswer, explainAnswer, "Proposed a safe edit"], "assistant response sequence after coding safe edit");
 

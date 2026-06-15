@@ -58,6 +58,7 @@ assert(browserPreview?.jetbrains?.status === "supported", "JetBrains confirmed e
 const editApply = surfaces.find((surface) => surface.id === "confirmed-edit-apply");
 assert(editApply?.jetbrains?.status === "dev-preview", "JetBrains confirmed edit apply must be marked dev-preview, not supported or production-ready.");
 assert(editApply?.jetbrains?.smoke?.includes("npm run smoke:jetbrains-edit-proposal"), "JetBrains confirmed edit apply dev-preview must have focused smoke coverage.");
+assert(editApply?.jetbrains?.smoke?.includes("npm run smoke:jetbrains-wrapper-browser"), "JetBrains confirmed edit apply dev-preview must include deterministic wrapper-browser lifecycle smoke coverage.");
 const jetbrainsApplyReason = editApply?.jetbrains?.reason ?? "";
 for (const [pattern, message] of [
   [/existing gui\.applyWorkspaceEditRequest \/ host\.applyWorkspaceEditResult only/i, "JetBrains apply reason must use only existing apply/result bridge messages."],

@@ -101,8 +101,8 @@ export function EditProposalPreview({ proposal, host, pending, onApply, onCancel
           </article>
         ))}
       </div>
-      {host !== "vscode" ? (
-        <div className="readiness-card warn" role="status">Preview only in this host. Browser and JetBrains cannot apply proposed edits; only VS Code can receive an apply request after you review and click.</div>
+      {host !== "vscode" && host !== "jetbrains" ? (
+        <div className="readiness-card warn" role="status">Preview only in this host. Browser cannot apply proposed edits; VS Code and JetBrains can receive an apply request after you review and click.</div>
       ) : (
         <div className="row">
           <button
@@ -111,14 +111,18 @@ export function EditProposalPreview({ proposal, host, pending, onApply, onCancel
             disabled={applyDisabled}
             data-testid="edit-proposal-apply-button"
           >
-            {pending ? "VS Code apply request pending…" : "Apply in VS Code after review"}
+            {pending ? `${applyHostLabel(host)} apply request pending…` : `Apply in ${applyHostLabel(host)} after review`}
           </button>
           {pending && <button type="button" onClick={onCancelPending}>Clear pending apply state</button>}
         </div>
       )}
-      <span className="subtle">Nothing is applied automatically. The GUI never edits files directly; VS Code must confirm and apply any workspace mutation. Clearing pending state only lets the GUI ignore an old host result; it does not close an already-open VS Code confirmation dialog.</span>
+      <span className="subtle">Nothing is applied automatically. The GUI never edits files directly; the IDE host must confirm and apply any workspace mutation. Clearing pending state only lets the GUI ignore an old host result; it does not close an already-open IDE confirmation dialog.</span>
     </div>
   );
+}
+
+function applyHostLabel(host: BridgeHost): string {
+  return host === "jetbrains" ? "JetBrains" : "VS Code";
 }
 
 export type ApplyResultPreviewProps = {

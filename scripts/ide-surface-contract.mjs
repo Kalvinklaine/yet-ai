@@ -59,7 +59,7 @@ export const ideSurfaceContract = Object.freeze({
     }),
     surface("confirmed-edit-apply", "Confirmed edit proposal apply", "supported", "dev-preview", {
       vscode: ["npm run smoke:vscode-edit-proposal"],
-      jetbrains: ["npm run smoke:jetbrains-edit-proposal"],
+      jetbrains: ["npm run smoke:jetbrains-edit-proposal", "npm run smoke:jetbrains-wrapper-browser"],
     }, {
       jetbrains: "Dev-preview JetBrains apply MVP: existing gui.applyWorkspaceEditRequest / host.applyWorkspaceEditResult only, after explicit GUI apply plus IDE/user confirmation, bounded to sanitized text replacements in existing workspace-relative files; no new write-capable bridge messages, shell, git, tools, tasks, provider calls, create/delete/rename, apply-patch, arbitrary reads/indexing, autonomous edits, or silent mutation.",
     }),

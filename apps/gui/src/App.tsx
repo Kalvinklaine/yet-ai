@@ -1401,7 +1401,7 @@ export function App() {
   }, [addTimeline]);
 
   const submitEditProposal = useCallback(() => {
-    if (!editProposal || bridgeHost !== "vscode" || pendingApplyRequestIdRef.current) {
+    if (!editProposal || (bridgeHost !== "vscode" && bridgeHost !== "jetbrains") || pendingApplyRequestIdRef.current) {
       return;
     }
     if (!editProposalCandidateIdentityMatches(editProposal, latestEditProposalCandidateFromMessages(chatViewMessagesRef.current))) {

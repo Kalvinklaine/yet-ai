@@ -14,6 +14,7 @@ assert(/user confirmation/i.test(reason), "JetBrains apply must require IDE/user
 assert(/bounded/i.test(reason), "JetBrains apply must be bounded.");
 assert(/existing workspace-relative files/i.test(reason), "JetBrains apply must stay limited to existing workspace-relative files.");
 assert(/sanitized/i.test(reason), "JetBrains apply must return sanitized results.");
+assert(apply?.jetbrains?.smoke?.includes("npm run smoke:jetbrains-wrapper-browser"), "JetBrains apply dev-preview must include deterministic wrapper-browser lifecycle smoke coverage.");
 assert(/no new write-capable bridge messages/i.test(reason), "JetBrains apply must not add write-capable bridge messages.");
 for (const phrase of [
   "shell",

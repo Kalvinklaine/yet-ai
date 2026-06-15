@@ -5911,7 +5911,7 @@ describe("edit proposal preview", () => {
     expect(text).toContain("Files: 1");
     expect(text).toContain("Text edits: 1");
     expect(text).toContain("const label = \"Yet AI\";");
-    expect(text).toContain("Preview only in this host. Browser and JetBrains cannot apply proposed edits");
+    expect(text).toContain("Preview only in this host. Browser cannot apply proposed edits");
     expect(Array.from(container?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Apply in VS Code after review")).toBe(false);
     expect(browserStorageDump()).toContain("sentinel");
     expect(browserStorageDump()).not.toContain("Replace one visible editor line");
@@ -6294,7 +6294,7 @@ describe("edit proposal preview", () => {
   });
 
 
-  it("renders JetBrains proposal preview without apply emission", async () => {
+  it("renders JetBrains proposal preview with explicit apply emission", async () => {
     const postIntellijMessage = vi.fn();
     window.postIntellijMessage = postIntellijMessage;
     const proposal = safeEditProposalPayload();
@@ -6312,9 +6312,17 @@ describe("edit proposal preview", () => {
     expect(text).toContain("Propose safe edit");
     expect(text).toContain("Replace one visible editor line after user review.");
     expect(text).toContain("src/example.ts");
-    expect(text).toContain("Preview only in this host. Browser and JetBrains cannot apply proposed edits");
-    expect(Array.from(container?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Apply in VS Code after review")).toBe(false);
+    expect(text).toContain("Apply in JetBrains after review");
     expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+
+    await act(async () => {
+      findButton("Apply in JetBrains after review").click();
+    });
+
+    const applyCalls = postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
+    expect(applyCalls).toHaveLength(1);
+    expect(applyCalls[0][0]).toMatchObject({ version: bridgeVersion, type: "gui.applyWorkspaceEditRequest", payload: proposal });
+    expect(applyCalls[0][0].requestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
   });
 
   it("emits an apply request only after explicit user click in a privileged host", async () => {

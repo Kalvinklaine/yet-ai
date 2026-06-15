@@ -61,15 +61,56 @@ const liveJetbrainsContextSnapshot = {
     text: liveContextSelectionMarker,
   },
 };
+const jetbrainsEditProposal = {
+  requiresUserConfirmation: true,
+  summary: "JetBrains confirmed edit smoke proposal.",
+  cloudRequired: false,
+  edits: [{
+    workspaceRelativePath: "src/main/kotlin/ApplySmoke.kt",
+    textReplacements: [{
+      range: {
+        start: { line: 0, character: 12 },
+        end: { line: 0, character: 20 },
+      },
+      replacementText: "\"After\"",
+    }],
+  }],
+};
+const jetbrainsDeniedEditProposal = {
+  ...jetbrainsEditProposal,
+  summary: "JetBrains denied edit smoke proposal.",
+};
+const jetbrainsRejectedEditProposal = {
+  ...jetbrainsEditProposal,
+  summary: "JetBrains rejected edit smoke proposal.",
+  edits: [{
+    workspaceRelativePath: "src/main/kotlin/ApplySmoke.kt",
+    textReplacements: [{
+      ...jetbrainsEditProposal.edits[0].textReplacements[0],
+      replacementText: "\"Rejected\"",
+    }],
+  }],
+};
+const jetbrainsUnsafeEditProposal = {
+  ...jetbrainsEditProposal,
+  summary: "Unsafe JetBrains edit smoke proposal.",
+  edits: [{
+    workspaceRelativePath: "../private/secret.kt",
+    textReplacements: jetbrainsEditProposal.edits[0].textReplacements,
+  }],
+};
+
 const consoleMessages = [];
 const runtimeRequestLog = [];
 let observedRuntimeAuthorization = false;
 let chatCommandRequest;
 let chatCommandRequestCount = 0;
 let chatSubscriptionCount = 0;
+let chatCommandRequestCountBeforeEditSmoke = 0;
 let demoModeEnabled = false;
 const chatSseSubscribers = new Map();
 const pendingAssistantResponsesByChat = new Map();
+let nextAssistantResponseContent;
 const maxRuntimeRequestBodyBytes = 1024 * 1024;
 const maxPendingHostMessages = 32;
 const maxPendingDiagnostics = 16;
@@ -590,6 +631,7 @@ try {
   await clickSendButtonWithActionability(frameLocator, "second enabled-context send");
   await waitForAssistantAnswerCount(frameLocator, "JetBrains login smoke", 2, "JetBrains mock SSE assistant response after two sends");
   await assertAssistantAnswerCount(frameLocator, "JetBrains login smoke", 2, "JetBrains mock SSE assistant response after two sends");
+  chatCommandRequestCountBeforeEditSmoke = chatCommandRequestCount;
   if (chatCommandRequestCount !== 2) {
     failures.push(`Mock runtime received ${chatCommandRequestCount} chat command requests instead of exactly two.`);
   }
@@ -600,6 +642,8 @@ try {
     failures.push("Mock runtime did not receive the expected GUI chat message content.");
   }
   assertJetBrainsContext(chatCommandRequest?.payload?.context);
+
+  await assertJetBrainsConfirmedEditLifecycle(page, frameLocator);
 
   const finalLayoutMetrics = await collectJetBrainsIframeLayoutMetrics(frameLocator);
   assertJetBrainsHostedLayout(finalLayoutMetrics, "post-chat JetBrains wrapper iframe");
@@ -1602,8 +1646,142 @@ async function assertJetBrainsIdeActionRoundtrip(page, frameLocator) {
   await assertForbiddenIdeActionMessagesRejected(page, frameLocator);
 }
 
+async function assertJetBrainsConfirmedEditLifecycle(page, frameLocator) {
+  const baselineChatCommandCount = chatCommandRequestCountBeforeEditSmoke;
+  await injectJetBrainsAssistantProposal(page, frameLocator, jetbrainsEditProposal);
+  await frameLocator.getByText("JetBrains confirmed edit smoke proposal.", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Iframe GUI did not render the JetBrains confirmed edit proposal."));
+  await frameLocator.getByText("Apply in JetBrains after review", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Iframe GUI did not show JetBrains explicit apply action."));
+  const beforeClickMessages = await page.evaluate(() => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.applyWorkspaceEditRequest").length ?? 0);
+  if (beforeClickMessages !== 0) {
+    failures.push("JetBrains confirmed edit apply request was emitted before explicit user action.");
+  }
+
+  const applyButton = frameLocator.getByRole("button", { name: "Apply in JetBrains after review", exact: true }).first();
+  await centerInNearestScrollContainer(applyButton);
+  await applyButton.click();
+  const acceptedRequest = await waitForJetBrainsApplyRequest(page, 1);
+  assertJetBrainsApplyRequestShape(acceptedRequest, "accepted JetBrains apply request");
+  await frameLocator.getByRole("button", { name: "JetBrains apply request pending…", exact: true }).first().click({ force: true }).catch(() => undefined);
+  const pendingDoubleClickCount = await page.evaluate(() => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.applyWorkspaceEditRequest").length ?? 0);
+  if (pendingDoubleClickCount !== 1) {
+    failures.push(`JetBrains duplicate pending apply emitted ${pendingDoubleClickCount} requests instead of one.`);
+  }
+  await dispatchJetBrainsApplyResult(page, acceptedRequest.requestId, { status: "applied", message: "Applied 1 JetBrains edit to 1 file.", appliedEditCount: 1, affectedFiles: ["src/main/kotlin/ApplySmoke.kt"] });
+  await frameLocator.getByText("Host apply result: applied", { exact: false }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Iframe GUI did not render JetBrains accepted apply result."));
+  await frameLocator.getByText("Applied 1 JetBrains edit to 1 file.", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Iframe GUI did not render sanitized JetBrains applied message."));
+
+  await injectJetBrainsAssistantProposal(page, frameLocator, jetbrainsDeniedEditProposal);
+  await centerInNearestScrollContainer(frameLocator.getByRole("button", { name: "Apply in JetBrains after review", exact: true }).first());
+  await frameLocator.getByRole("button", { name: "Apply in JetBrains after review", exact: true }).first().click();
+  const deniedRequest = await waitForJetBrainsApplyRequest(page, 2);
+  assertJetBrainsApplyRequestShape(deniedRequest, "denied JetBrains apply request");
+  await dispatchJetBrainsApplyResult(page, deniedRequest.requestId, { status: "denied", message: "Host confirmation denied the JetBrains edit request.", appliedEditCount: 0, affectedFiles: [] });
+  await frameLocator.getByText("Host apply result: denied", { exact: false }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Iframe GUI did not render JetBrains denied apply result."));
+  await frameLocator.getByText("Host confirmation denied the JetBrains edit request.", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Iframe GUI did not render sanitized JetBrains denial message."));
+
+  await injectJetBrainsAssistantProposal(page, frameLocator, jetbrainsEditProposal);
+  await centerInNearestScrollContainer(frameLocator.getByRole("button", { name: "Apply in JetBrains after review", exact: true }).first());
+  await frameLocator.getByRole("button", { name: "Apply in JetBrains after review", exact: true }).first().click();
+  const rejectedRequest = await waitForJetBrainsApplyRequest(page, 3);
+  if (!rejectedRequest || rejectedRequest.requestId === deniedRequest.requestId) {
+    failures.push("JetBrains rejected apply did not emit a fresh request after denial.");
+    return;
+  }
+  const rawRejectedMessage = `Rejected unsafe JetBrains request with ${oauthSentinels.apiKey} and /Users/alice/private/secret.kt`;
+  await dispatchJetBrainsApplyResult(page, rejectedRequest.requestId, { status: "rejected", message: rawRejectedMessage, appliedEditCount: 0, affectedFiles: [] });
+  await page.waitForTimeout(100);
+  const rejectedVisibleState = await frameLocator.locator("body").innerText({ timeout: 5000 }).catch(() => "");
+  if (rejectedVisibleState.includes(oauthSentinels.apiKey) || rejectedVisibleState.includes("/Users/alice/private/secret.kt") || rejectedVisibleState.includes("../private/secret.kt")) {
+    failures.push("JetBrains rejected apply result leaked a raw secret or unsafe path in GUI-visible text.");
+  }
+
+  const beforeUnsafe = await page.evaluate(() => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.applyWorkspaceEditRequest").length ?? 0);
+  await injectJetBrainsAssistantProposal(page, frameLocator, jetbrainsUnsafeEditProposal);
+  await page.waitForTimeout(100);
+  const unsafeText = await frameLocator.locator("body").innerText({ timeout: 5000 }).catch(() => "");
+  if (unsafeText.includes("Apply in JetBrains after review")) {
+    failures.push("Iframe GUI exposed a JetBrains apply action for an unsafe traversal proposal.");
+  }
+  const afterUnsafe = await page.evaluate(() => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.applyWorkspaceEditRequest").length ?? 0);
+  if (afterUnsafe > beforeUnsafe) {
+    failures.push("Unsafe JetBrains edit proposal emitted an apply request.");
+  }
+  chatCommandRequestCount = baselineChatCommandCount;
+}
+
+async function injectJetBrainsAssistantProposal(page, frameLocator, proposal) {
+  await page.evaluate((content) => window.__yetAiSetNextAssistantResponseForSmoke?.(content), JSON.stringify(proposal));
+  await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill("Render JetBrains confirmed edit smoke proposal.");
+  await clickSendButtonWithActionability(frameLocator, "JetBrains edit proposal injection send");
+  await page.waitForFunction((text) => document.querySelector("iframe[title='Yet AI GUI']")?.contentDocument?.body?.innerText.includes(text), proposal.summary, { timeout: 5000 }).catch(() => undefined);
+}
+
+async function waitForJetBrainsApplyRequest(page, expectedCount) {
+  await page.waitForFunction((count) => (window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.applyWorkspaceEditRequest").length ?? 0) >= count, expectedCount, { timeout: 5000 })
+    .catch(() => failures.push(`Wrapper did not collect JetBrains apply request #${expectedCount}.`));
+  const requests = await page.evaluate((count) => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.applyWorkspaceEditRequest").slice(0, count) ?? [], expectedCount);
+  return requests[expectedCount - 1];
+}
+
+function assertJetBrainsApplyRequestShape(request, label) {
+  if (!request || request.version !== bridgeVersion || request.type !== "gui.applyWorkspaceEditRequest") {
+    failures.push(`${label} had the wrong bridge envelope: ${JSON.stringify(request)}`);
+    return;
+  }
+  if (typeof request.requestId !== "string" || !/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]{0,127}-\d+$/.test(request.requestId)) {
+    failures.push(`${label} had an invalid GUI-owned request id: ${String(request.requestId)}.`);
+  }
+  if (request.payload?.requiresUserConfirmation !== true || request.payload?.cloudRequired !== false) {
+    failures.push(`${label} did not require user confirmation and cloudRequired false.`);
+  }
+  if (request.payload?.summary !== jetbrainsEditProposal.summary && request.payload?.summary !== jetbrainsDeniedEditProposal.summary && request.payload?.summary !== jetbrainsRejectedEditProposal.summary) {
+    failures.push(`${label} did not carry the expected sanitized proposal summary.`);
+  }
+  if (request.payload?.edits?.[0]?.workspaceRelativePath !== "src/main/kotlin/ApplySmoke.kt") {
+    failures.push(`${label} did not carry the expected workspace-relative file.`);
+  }
+}
+
+async function dispatchJetBrainsApplyResult(page, requestId, payload) {
+  await page.evaluate(({ version, requestId, payload }) => {
+    window.__yetAiSendHostMessageToFrame({
+      version,
+      type: "host.applyWorkspaceEditResult",
+      requestId,
+      payload: {
+        cloudRequired: false,
+        ...payload,
+      },
+    });
+  }, { version: bridgeVersion, requestId, payload: sanitizeApplyResultForSmoke(payload) });
+}
+
+function sanitizeApplyResultForSmoke(payload) {
+  const message = sanitizeEvidenceText(String(payload.message ?? "JetBrains apply result.")).slice(0, 1000) || "JetBrains apply result.";
+  const affectedFiles = Array.isArray(payload.affectedFiles)
+    ? payload.affectedFiles.filter((file) => typeof file === "string" && safeSmokeWorkspacePath(file)).slice(0, 16)
+    : [];
+  return {
+    status: payload.status,
+    message,
+    appliedEditCount: payload.appliedEditCount,
+    affectedFiles,
+  };
+}
+
+function safeSmokeWorkspacePath(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= 512 && !value.startsWith("/") && !value.startsWith("~") && !value.includes("\\") && !value.includes(":") && !value.includes("?") && !value.includes("#") && !value.split("/").some((part) => part.length === 0 || part === "." || part === ".." || /(?:^|[._-])(?:auth|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:[._-]|$)|^sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(part));
+}
+
 async function assertForbiddenIdeActionMessagesRejected(page, frameLocator) {
   const before = await page.evaluate(() => window.__yetAiBridgeMessages?.length ?? 0);
+  const beforeApply = await page.evaluate(() => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.applyWorkspaceEditRequest").length ?? 0);
   await frameLocator.locator("body").evaluate((body, version) => {
     const target = document.referrer ? new URL(document.referrer).origin : "*";
     const messages = [
@@ -1623,6 +1801,10 @@ async function assertForbiddenIdeActionMessagesRejected(page, frameLocator) {
   const after = await page.evaluate(() => window.__yetAiBridgeMessages?.length ?? 0);
   if (after !== before) {
     failures.push("Wrapper forwarded a forbidden or malformed iframe-origin GUI-to-host message.");
+  }
+  const afterApply = await page.evaluate(() => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.applyWorkspaceEditRequest").length ?? 0);
+  if (afterApply !== beforeApply) {
+    failures.push("Wrapper forwarded a malformed iframe-origin apply workspace edit request.");
   }
 }
 
@@ -1721,6 +1903,7 @@ window.__yetAiPendingDiagnostics = ["Queued diagnostic before wrapper init"];
 <script defer>
 const bridgeVersion = "${bridgeVersion}";
 const maxIdeActionRequestBytes = 8192;
+const maxApplyWorkspaceEditRequestBytes = 16384;
 const maxPendingHostMessages = ${maxPendingHostMessages};
 const maxPendingDiagnostics = ${maxPendingDiagnostics};
 const frame = document.querySelector("iframe");
@@ -1807,6 +1990,15 @@ if (shellFallback && frame) {
 window.postIntellijMessage = (message) => {
   window.__yetAiBridgeMessages.push(message);
 };
+window.__yetAiSetNextAssistantResponseForSmoke = (content) => {
+  if (typeof content === "string" && content.length > 0 && content.length <= 50000) {
+    fetch("${runtimeBaseUrl}/__smoke/next-assistant-response", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content }),
+    }).catch(() => undefined);
+  }
+};
 const currentReadyRequestId = () => currentGuiReadyRequestId;
 const randomToken = () => {
   if (!globalThis.crypto || typeof globalThis.crypto.getRandomValues !== "function") return undefined;
@@ -1857,6 +2049,7 @@ const isGuiUnloadedMessage = (message) => isPlainObject(message) && hasOnlyKeys(
 const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
 const canDeliverHostMessage = (message) => {
   if (message.type === "host.ideActionProgress" || message.type === "host.ideActionResult") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
+  if (message.type === "host.applyWorkspaceEditResult") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
   if (message.type === "host.openedFromCommand") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId() && message.requestId === undefined;
   if (!messageMatchesCurrentReady(message)) return false;
   if (message.type === "host.ready") return true;
@@ -1920,6 +2113,7 @@ const isIdeActionRange = (range) => isPlainObject(range) && hasOnlyKeys(range, [
 const isHostIdeActionProgressPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["phase", "status", "summary", "cloudRequired", "action", "workspaceRelativePath"]) && ["queued", "checkingPolicy", "running", "completed"].includes(payload.phase) && ["pending", "inProgress", "succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.summary === "string" && payload.summary.length > 0 && payload.summary.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512);
 const isHostIdeActionResultContext = (context) => isPlainObject(context) && hasOnlyKeys(context, ["source", "hasActiveEditor", "workspaceFolderCount"]) && context.source === "jetbrains" && typeof context.hasActiveEditor === "boolean" && Number.isInteger(context.workspaceFolderCount) && context.workspaceFolderCount >= 0 && context.workspaceFolderCount <= 100;
 const isHostIdeActionResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "action", "workspaceRelativePath", "range", "context"]) && ["succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512) && (payload.range === undefined || isIdeActionRange(payload.range)) && (payload.context === undefined || isHostIdeActionResultContext(payload.context));
+const isHostApplyWorkspaceEditResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "appliedEditCount", "affectedFiles"]) && ["applied", "denied", "rejected", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && payload.cloudRequired === false && (payload.appliedEditCount === undefined || (Number.isInteger(payload.appliedEditCount) && payload.appliedEditCount >= 0 && payload.appliedEditCount <= 64)) && (payload.affectedFiles === undefined || (Array.isArray(payload.affectedFiles) && payload.affectedFiles.length <= 16 && payload.affectedFiles.every((file) => safePath(file, 512))));
 const isHostMessage = (message) => {
   if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion) return false;
   if (message.type === "host.openedFromCommand") return message.requestId === undefined && (message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0));
@@ -1928,6 +2122,7 @@ const isHostMessage = (message) => {
   if (message.type === "host.contextSnapshot") return isContextSnapshotPayload(message.payload);
   if (message.type === "host.ideActionProgress") return isHostIdeActionProgressPayload(message.payload);
   if (message.type === "host.ideActionResult") return isHostIdeActionResultPayload(message.payload);
+  if (message.type === "host.applyWorkspaceEditResult") return isHostApplyWorkspaceEditResultPayload(message.payload);
   return false;
 };
 const requiredRequestId = (value) => typeof value === "string" && value.length > 0 && value.length <= 128 && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value) && !/(authorization|bearer|api[_-]?key|token|secret|access[_-]?token|provider[_-]?key|openai[_-]?api[_-]?key|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value);
@@ -1945,6 +2140,33 @@ const isGuiIdeActionRequest = (message) => {
   try { serialized = JSON.stringify(message); } catch (_) { return false; }
   if (typeof serialized !== "string" || new Blob([serialized]).size > maxIdeActionRequestBytes) return false;
   return isGuiIdeActionPayload(message.payload);
+};
+const isApplyPosition = (position) => isPlainObject(position) && hasOnlyKeys(position, ["line", "character"]) && Number.isInteger(position.line) && position.line >= 0 && position.line <= 1000000 && Number.isInteger(position.character) && position.character >= 0 && position.character <= 1000000;
+const isApplyRange = (range) => isPlainObject(range) && hasOnlyKeys(range, ["start", "end"]) && isApplyPosition(range.start) && isApplyPosition(range.end) && (range.end.line > range.start.line || (range.end.line === range.start.line && range.end.character >= range.start.character));
+const isApplyReplacement = (replacement) => isPlainObject(replacement) && hasOnlyKeys(replacement, ["range", "replacementText"]) && isApplyRange(replacement.range) && typeof replacement.replacementText === "string" && replacement.replacementText.length <= 8192;
+const isApplyFileEdit = (fileEdit) => isPlainObject(fileEdit) && hasOnlyKeys(fileEdit, ["workspaceRelativePath", "textReplacements"]) && safeRequiredWorkspacePath(fileEdit.workspaceRelativePath) && Array.isArray(fileEdit.textReplacements) && fileEdit.textReplacements.length >= 1 && fileEdit.textReplacements.length <= 8 && fileEdit.textReplacements.every(isApplyReplacement);
+const isGuiApplyWorkspaceEditPayload = (payload) => {
+  if (!isPlainObject(payload) || !hasOnlyKeys(payload, ["requiresUserConfirmation", "summary", "cloudRequired", "edits"])) return false;
+  if (payload.requiresUserConfirmation !== true || typeof payload.summary !== "string" || payload.summary.length < 1 || payload.summary.length > 1000 || (payload.cloudRequired !== undefined && payload.cloudRequired !== false)) return false;
+  if (!Array.isArray(payload.edits) || payload.edits.length < 1 || payload.edits.length > 4) return false;
+  const seen = new Set();
+  let totalReplacementText = 0;
+  for (const fileEdit of payload.edits) {
+    if (!isApplyFileEdit(fileEdit) || seen.has(fileEdit.workspaceRelativePath)) return false;
+    seen.add(fileEdit.workspaceRelativePath);
+    for (const replacement of fileEdit.textReplacements) {
+      totalReplacementText += replacement.replacementText.length;
+      if (totalReplacementText > 32768) return false;
+    }
+  }
+  return true;
+};
+const isGuiApplyWorkspaceEditRequest = (message) => {
+  if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.applyWorkspaceEditRequest" || !requiredRequestId(message.requestId)) return false;
+  let serialized;
+  try { serialized = JSON.stringify(message); } catch (_) { return false; }
+  if (typeof serialized !== "string" || new Blob([serialized]).size > maxApplyWorkspaceEditRequestBytes) return false;
+  return isGuiApplyWorkspaceEditPayload(message.payload);
 };
 const isGuiRuntimeRefresh = (message) => {
   if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.runtimeRefresh" || !requiredRequestId(message.requestId)) return false;
@@ -1974,6 +2196,12 @@ window.addEventListener("message", (event) => {
     } else if (isGuiIdeActionRequest(event.data)) {
       if (!frameReady || !hostReadyAcceptedForCurrentFrame || acceptedHostReadyRequestId !== currentReadyRequestId()) {
         console.log("Yet AI rejected IDE action request before GUI bridge readiness");
+        return;
+      }
+      window.postIntellijMessage(event.data);
+    } else if (isGuiApplyWorkspaceEditRequest(event.data)) {
+      if (!frameReady || !hostReadyAcceptedForCurrentFrame || acceptedHostReadyRequestId !== currentReadyRequestId()) {
+        console.log("Yet AI rejected apply workspace edit request before GUI bridge readiness");
         return;
       }
       window.postIntellijMessage(event.data);
@@ -2022,6 +2250,29 @@ if (frame) {
 async function startMockRuntimeServer() {
   const server = http.createServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (request.method === "POST" && requestUrl.pathname === "/__smoke/next-assistant-response") {
+      let body;
+      try {
+        body = await readRequestBody(request);
+      } catch {
+        json(response, 400, { error: "Invalid smoke body" });
+        return;
+      }
+      let parsedBody;
+      try {
+        parsedBody = JSON.parse(body);
+      } catch {
+        json(response, 400, { error: "Invalid smoke JSON" });
+        return;
+      }
+      if (typeof parsedBody?.content !== "string" || parsedBody.content.length === 0 || parsedBody.content.length > 50000) {
+        json(response, 400, { error: "Invalid smoke content" });
+        return;
+      }
+      nextAssistantResponseContent = parsedBody.content;
+      json(response, 200, { ok: true });
+      return;
+    }
     if (request.method === "OPTIONS") {
       response.writeHead(204, corsHeaders());
       response.end();
@@ -2225,11 +2476,15 @@ function emitAssistantResponse(chatId) {
 }
 
 function emitAssistantResponseToSubscriber(chatId, subscriber) {
-  const assistantChunks = demoModeFirstMessage ? ["JetBrains", " Demo Mode smoke"] : ["JetBrains", " login smoke"];
+  const customAssistantContent = nextAssistantResponseContent;
+  nextAssistantResponseContent = undefined;
+  const assistantChunks = customAssistantContent === undefined
+    ? (demoModeFirstMessage ? ["JetBrains", " Demo Mode smoke"] : ["JetBrains", " login smoke"])
+    : [customAssistantContent];
   const events = [
     { type: "stream_started", chatId, payload: { role: "assistant" } },
     { type: "stream_delta", chatId, payload: { delta: { content: assistantChunks[0] } } },
-    { type: "stream_delta", chatId, payload: { delta: { content: assistantChunks[1] } } },
+    ...(assistantChunks[1] ? [{ type: "stream_delta", chatId, payload: { delta: { content: assistantChunks[1] } } }] : []),
     { type: "stream_finished", chatId, payload: { finishReason: "stop" } },
   ];
   try {
