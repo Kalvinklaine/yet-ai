@@ -713,6 +713,53 @@ describe("bridgeAdapter", () => {
     adapter.dispose();
   });
 
+  it("delivers JetBrains host apply results through the same sanitized host contract", () => {
+    const logs: string[] = [];
+    const messages: unknown[] = [];
+    const postIntellijMessage = vi.fn();
+    window.postIntellijMessage = postIntellijMessage;
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    adapter.subscribe((message) => messages.push(message));
+
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version: bridgeVersion,
+        type: "host.applyWorkspaceEditResult",
+        requestId: "gui-edit-proposal-apply-sabcdef123456-1",
+        payload: {
+          status: "applied",
+          message: "Applied after user confirmation.",
+          cloudRequired: false,
+          appliedEditCount: 1,
+          affectedFiles: ["src/example.ts"],
+        },
+      },
+    }));
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version: bridgeVersion,
+        type: "host.applyWorkspaceEditResult",
+        requestId: "gui-edit-proposal-apply-sabcdef123456-2",
+        payload: {
+          status: "failed",
+          message: "Failed with Bearer unsafe-secret-token.",
+          cloudRequired: false,
+          appliedEditCount: 0,
+          affectedFiles: ["src/example.ts"],
+        },
+      },
+    }));
+
+    expect(adapter.host).toBe("jetbrains");
+    expect(messages).toEqual([{ version: bridgeVersion, type: "host.applyWorkspaceEditResult", requestId: "gui-edit-proposal-apply-sabcdef123456-1", payload: { status: "applied", message: "Applied after user confirmation.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] } }]);
+    expect(logs).toContain("Host message host.applyWorkspaceEditResult");
+    expect(logs).toContain("Rejected invalid host bridge message");
+    expect(logs.join("\n")).not.toContain("unsafe-secret-token");
+    expect(JSON.stringify(localStorage)).not.toContain("unsafe-secret-token");
+    expect(JSON.stringify(sessionStorage)).not.toContain("unsafe-secret-token");
+    adapter.dispose();
+  });
+
   it("delivers synchronous JetBrains host.ready replies after subscribe", () => {
     const logs: string[] = [];
     window.postIntellijMessage = () => window.dispatchEvent(new MessageEvent("message", { data: hostReady({ sessionToken: "syncJetbrainsLocalValue" }) }));

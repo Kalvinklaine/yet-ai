@@ -6788,6 +6788,83 @@ describe("edit proposal preview", () => {
     expect(container?.textContent ?? "").not.toContain("Stale result after chat switch.");
   });
 
+  it("clears pending apply on runtime settings change and ignores the old host result", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Settings stale apply chat", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Settings stale apply chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Apply in VS Code after review").click();
+    });
+    const requestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
+    expect(findButton("VS Code apply request pending…").disabled).toBe(true);
+
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: "newSettingsLocalValue" });
+    await flushAsync();
+
+    expect(container?.textContent ?? "").toContain("Propose safe edit");
+    expect(container?.textContent ?? "").not.toContain("VS Code apply request pending…");
+    expect(findButton("Apply in VS Code after review").disabled).toBe(false);
+
+    await dispatchHostApplyResult(requestId, {
+      status: "applied",
+      message: "Old runtime apply result should not render.",
+      cloudRequired: false,
+      appliedEditCount: 1,
+      affectedFiles: ["src/example.ts"],
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).not.toContain("Old runtime apply result should not render.");
+    expect(text).not.toContain("Host apply result");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("newSettingsLocalValue");
+  });
+
+  it("rejects host apply results carrying assistant proposal correlation metadata", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Mismatched proposal result chat", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Mismatched proposal result chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Apply in VS Code after review").click();
+    });
+    const requestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
+
+    await dispatchHostApplyResult(requestId, {
+      status: "applied",
+      message: "Result with mismatched proposalRequestId should not render.",
+      cloudRequired: false,
+      appliedEditCount: 1,
+      affectedFiles: ["src/example.ts"],
+      proposalRequestId: "assistant-supplied-proposal-id",
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Rejected invalid host bridge message");
+    expect(text).toContain("VS Code apply request pending…");
+    expect(text).not.toContain("Result with mismatched proposalRequestId should not render.");
+    expect(text).not.toContain("Host apply result: applied");
+    expect(browserStorageDump()).not.toContain("assistant-supplied-proposal-id");
+  });
+
   it("bounds completed host apply request tracking to a fixed small limit", () => {
     const completed = new Map<string, string>();
     for (let index = 0; index < completedApplyRequestChatsLimit + 5; index += 1) {
