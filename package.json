@@ -44,6 +44,7 @@
     "smoke:jetbrains-gui-browser": "node scripts/smoke-jetbrains-gui-browser.mjs",
     "smoke:jetbrains-wrapper-browser": "node scripts/smoke-jetbrains-wrapper-browser.mjs",
     "smoke:jetbrains-first-message": "node scripts/smoke-jetbrains-first-message.mjs",
+    "smoke:jetbrains-edit-proposal": "node scripts/smoke-jetbrains-edit-proposal.mjs",
     "smoke:github-ide-artifacts": "node scripts/smoke-github-ide-artifacts.mjs",
     "prepare:ide-engine": "node scripts/prepare-ide-engine.mjs",
     "prepare:vscode-preview": "node scripts/prepare-vscode-preview.mjs",

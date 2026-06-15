@@ -2,7 +2,7 @@ import process from "node:process";
 import { ideSurfaceContract, ideSurfaceStatuses } from "./ide-surface-contract.mjs";
 
 const allowedStatuses = new Set(ideSurfaceStatuses);
-const reasonRequired = new Set(["unsupported", "intentional-gap", "deferred", "preview-only"]);
+const reasonRequired = new Set(["unsupported", "intentional-gap", "deferred", "preview-only", "dev-preview"]);
 const forbiddenClaimPattern = /\b(shell|tools?|tasks?|git|provider-backed|provider calls?|autonomous mutation|autonomous edits?|workspace edit apply|apply patch)\b/i;
 const failures = [];
 
@@ -34,6 +34,9 @@ for (const surface of surfaces) {
     if (entry?.status === "supported") {
       assert(entry.smoke.length > 0, `Supported surface ${surface.id} ${ide} must have at least one smoke/test command.`);
     }
+    if (entry?.status === "dev-preview") {
+      assert(entry.smoke.length > 0, `Dev-preview surface ${surface.id} ${ide} must have at least one smoke/test command.`);
+    }
     if (reasonRequired.has(entry?.status)) {
       assert(typeof entry.reason === "string" && entry.reason.trim().length > 0, `Surface ${surface.id} ${ide} status ${entry.status} must include a reason.`);
     }
@@ -43,14 +46,43 @@ for (const surface of surfaces) {
   }
 
   const searchable = JSON.stringify(surface);
-  if (surface.id !== "lsp-status") {
+  if (!["lsp-status", "confirmed-edit-apply"].includes(surface.id)) {
     assert(!forbiddenClaimPattern.test(searchable), `Surface ${surface.id} must not claim shell/tools/tasks/git/provider-backed IDE actions or autonomous mutation.`);
   }
 }
 
+const browserPreview = surfaces.find((surface) => surface.id === "confirmed-edit-preview");
+assert(browserPreview?.vscode?.status === "supported", "VS Code confirmed edit preview must remain supported.");
+assert(browserPreview?.jetbrains?.status === "supported", "JetBrains confirmed edit preview must be supported when apply is dev-preview.");
+
 const editApply = surfaces.find((surface) => surface.id === "confirmed-edit-apply");
-assert(editApply?.jetbrains?.status !== "supported", "JetBrains confirmed edit apply must not be marked supported.");
-assert(["intentional-gap", "preview-only"].includes(editApply?.jetbrains?.status), "JetBrains confirmed edit apply must remain an intentional gap / preview-only status.");
+assert(editApply?.jetbrains?.status === "dev-preview", "JetBrains confirmed edit apply must be marked dev-preview, not supported or production-ready.");
+assert(editApply?.jetbrains?.smoke?.includes("npm run smoke:jetbrains-edit-proposal"), "JetBrains confirmed edit apply dev-preview must have focused smoke coverage.");
+const jetbrainsApplyReason = editApply?.jetbrains?.reason ?? "";
+for (const [pattern, message] of [
+  [/existing gui\.applyWorkspaceEditRequest \/ host\.applyWorkspaceEditResult only/i, "JetBrains apply reason must use only existing apply/result bridge messages."],
+  [/explicit GUI apply/i, "JetBrains apply reason must require explicit GUI apply."],
+  [/(IDE|host)\/user confirmation|user confirmation/i, "JetBrains apply reason must require IDE/user confirmation."],
+  [/bounded/i, "JetBrains apply reason must state bounded edits."],
+  [/existing workspace-relative files/i, "JetBrains apply reason must restrict edits to existing workspace-relative files."],
+  [/sanitized/i, "JetBrains apply reason must require sanitized requests/results."],
+  [/no new write-capable bridge messages/i, "JetBrains apply reason must forbid new write-capable bridge messages."],
+  [/no .*shell/i, "JetBrains apply reason must forbid shell authority."],
+  [/git/i, "JetBrains apply reason must forbid git authority."],
+  [/tools/i, "JetBrains apply reason must forbid tool authority."],
+  [/tasks/i, "JetBrains apply reason must forbid task authority."],
+  [/provider calls/i, "JetBrains apply reason must forbid provider calls."],
+  [/create\/delete\/rename/i, "JetBrains apply reason must forbid create/delete/rename."],
+  [/apply-patch/i, "JetBrains apply reason must forbid apply-patch."],
+  [/arbitrary reads\/indexing/i, "JetBrains apply reason must forbid arbitrary reads/indexing."],
+  [/autonomous edits/i, "JetBrains apply reason must forbid autonomous edits."],
+  [/silent mutation/i, "JetBrains apply reason must forbid silent mutation."],
+]) {
+  assert(pattern.test(jetbrainsApplyReason), message);
+}
+
+const readOnlyActions = surfaces.find((surface) => surface.id === "read-only-ide-actions");
+assert(readOnlyActions?.vscode?.status === "supported" && readOnlyActions?.jetbrains?.status === "supported", "Read-only IDE actions must remain supported in VS Code and JetBrains.");
 
 const lsp = surfaces.find((surface) => surface.id === "lsp-status");
 assert(lsp?.vscode?.status === "preview-only", "VS Code LSP must remain off-by-default preview-only MVP status.");

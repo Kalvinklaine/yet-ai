@@ -14,6 +14,7 @@ const steps = [
   ["Prepare JetBrains dev-preview artifacts", "npm", ["run", "prepare:jetbrains-preview"]],
   ["Smoke JetBrains first-message surface", "npm", ["run", "smoke:jetbrains-first-message"]],
   ["Smoke JetBrains read-only wrapper surface", "npm", ["run", "smoke:jetbrains-wrapper-browser"]],
+  ["Smoke JetBrains confirmed edit dev-preview contract", "npm", ["run", "smoke:jetbrains-edit-proposal"]],
   ["Validate cross-IDE surface contract", "npm", ["run", "validate:ide-surface-contract"]],
 ];
 
@@ -21,7 +22,7 @@ validateReferencedPackageScripts();
 
 console.log("Cross-IDE parity smoke is local-only and fail-fast.");
 console.log("It prepares ignored dev-preview artifacts and does not launch real IDEs, call providers, require a hosted backend, sign, publish, or claim a production release.");
-console.log("JetBrains confirmed edit apply is intentionally not included because it is an explicit parity gap.");
+console.log("JetBrains confirmed edit apply is included only as a bounded dev-preview contract smoke over existing apply/result bridge messages.");
 
 for (const [label, command, args] of steps) {
   runStep(label, command, args);

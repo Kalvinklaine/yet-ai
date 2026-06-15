@@ -4,6 +4,7 @@ export const ideSurfaceStatuses = Object.freeze([
   "intentional-gap",
   "deferred",
   "preview-only",
+  "dev-preview",
 ]);
 
 export const ideSurfaceContract = Object.freeze({
@@ -50,17 +51,17 @@ export const ideSurfaceContract = Object.freeze({
       vscode: ["npm run smoke:vscode-wrapper-browser"],
       jetbrains: ["npm run smoke:jetbrains-wrapper-browser"],
     }),
-    surface("confirmed-edit-preview", "Confirmed edit proposal preview", "supported", "preview-only", {
+    surface("confirmed-edit-preview", "Confirmed edit proposal preview", "supported", "supported", {
       vscode: ["npm run smoke:vscode-edit-proposal"],
-      jetbrains: [],
+      jetbrains: ["npm run smoke:jetbrains-edit-proposal"],
     }, {
-      jetbrains: "JetBrains renders/reviews proposals only; no host apply request is implemented.",
+      jetbrains: "JetBrains renders/reviews proposals and may forward apply only through the confirmed edit apply dev-preview boundary.",
     }),
-    surface("confirmed-edit-apply", "Confirmed edit proposal apply", "supported", "intentional-gap", {
+    surface("confirmed-edit-apply", "Confirmed edit proposal apply", "supported", "dev-preview", {
       vscode: ["npm run smoke:vscode-edit-proposal"],
-      jetbrains: [],
+      jetbrains: ["npm run smoke:jetbrains-edit-proposal"],
     }, {
-      jetbrains: "Intentional JetBrains gap: VS Code is the only host apply MVP, still requiring explicit GUI apply plus host user confirmation for bounded replacements in existing workspace-relative files.",
+      jetbrains: "Dev-preview JetBrains apply MVP: existing gui.applyWorkspaceEditRequest / host.applyWorkspaceEditResult only, after explicit GUI apply plus IDE/user confirmation, bounded to sanitized text replacements in existing workspace-relative files; no new write-capable bridge messages, shell, git, tools, tasks, provider calls, create/delete/rename, apply-patch, arbitrary reads/indexing, autonomous edits, or silent mutation.",
     }),
     surface("lsp-status", "LSP status", "preview-only", "deferred", {
       vscode: ["npm run smoke:lsp-stdio"],
