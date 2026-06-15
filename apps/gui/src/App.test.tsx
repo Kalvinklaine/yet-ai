@@ -4982,6 +4982,29 @@ describe("chat panel", () => {
     expect(chatInput().value).toBe("");
   });
 
+  it("sends multiline coding action prompts unchanged without browser storage", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const prompt = "Coding action: propose_safe_edit\n\nPropose a safe edit for the selected code. Nothing is applied automatically.";
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      setTextareaValue(chatInput(), prompt);
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    expect(lastUserMessageBody().payload).toEqual({ content: prompt });
+    expect(container?.textContent).toContain("Coding action: propose_safe_edit");
+    expect(chatInput().value).toBe("");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(prompt);
+  });
+
   it("ignores stale chat command success after runtime settings change", async () => {
     const oldCommand = deferred<Response>();
     mockRuntimeResponses(readyRuntimeOptions());

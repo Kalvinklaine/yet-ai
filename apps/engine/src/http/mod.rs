@@ -571,6 +571,14 @@ fn valid_bounded_string(value: &str, max_length: usize) -> bool {
     !value.is_empty() && value.chars().count() <= max_length && !value.chars().any(is_c0_c1_control)
 }
 
+fn valid_chat_message_content(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().count() <= CHAT_COMMAND_CONTENT_MAX_LENGTH
+        && !value
+            .chars()
+            .any(|value| is_c0_c1_control(value) && !matches!(value, '\n' | '\r' | '\t'))
+}
+
 fn is_c0_c1_control(value: char) -> bool {
     matches!(value as u32, 0x00..=0x1f | 0x7f..=0x9f)
 }
@@ -596,7 +604,7 @@ fn user_message_payload(
         return None;
     }
     let content = object.get("content")?.as_str()?;
-    if !valid_bounded_string(content, CHAT_COMMAND_CONTENT_MAX_LENGTH) {
+    if !valid_chat_message_content(content) {
         return None;
     }
     let context = match object.get("context") {

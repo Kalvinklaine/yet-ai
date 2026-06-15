@@ -8812,6 +8812,66 @@ async fn user_message_command_rejects_empty_content() {
 }
 
 #[tokio::test]
+async fn chat_command_accepts_multiline_content_whitespace() {
+    let app = test_app();
+    let content = "Coding action: propose_safe_edit\n\nPropose a safe edit for the selected code.\r\n\tKeep it bounded.";
+    let command = json!({
+        "requestId": "req-multiline-content",
+        "type": "user_message",
+        "payload": { "content": content }
+    });
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-multiline-content/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accepted"], true);
+    assert_eq!(body["type"], "user_message");
+
+    let thread = wait_for_chat_messages(app, "chat-multiline-content", 1).await;
+    assert!(thread["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| {
+            message["role"] == "user" && message["content"].as_str() == Some(content)
+        }));
+}
+
+#[tokio::test]
+async fn chat_command_rejects_nul_and_other_control_content() {
+    for content in [
+        "hello\u{0000}secret",
+        "hello\u{001f}secret",
+        "hello\u{0085}secret",
+    ] {
+        let command = json!({
+            "requestId": "req-control-content",
+            "type": "user_message",
+            "payload": { "content": content }
+        });
+        let (status, text) = text_response_from(
+            test_app(),
+            authed_request(
+                Method::POST,
+                "/v1/chats/chat-control-content/commands",
+                Body::from(command.to_string()),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(!text.contains("secret"));
+    }
+}
+
+#[tokio::test]
 async fn chat_command_rejects_too_long_request_id() {
     let command = json!({
         "requestId": "r".repeat(129),
