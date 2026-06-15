@@ -126,8 +126,8 @@ jobs:
         run: |
           set -euxo pipefail
           export PATH="$HOME/.cargo/bin:$PATH"
-          npm run prepare:jetbrains-preview -- --skip-engine-prepare
           npm run prepare:vscode-preview -- --skip-engine-prepare
+          npm run prepare:jetbrains-preview -- --skip-engine-prepare
           npm run smoke:installed-plugin-chat-visual
           npm run smoke:plugin-layout
           npm run smoke:vscode-first-message

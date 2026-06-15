@@ -78,7 +78,7 @@ if (buildJob !== undefined) {
   const summaryIndex = commandRunIndex(buildRunCommands, "npm run artifact:github-summary");
   const jetbrainsPrepareIndex = commandRunIndex(buildRunCommands, "npm run prepare:jetbrains-preview");
   const vscodePrepareIndex = commandRunIndex(buildRunCommands, "npm run prepare:vscode-preview");
-  assert(jetbrainsPrepareIndex !== -1 && vscodePrepareIndex !== -1 && jetbrainsPrepareIndex < vscodePrepareIndex, "Build job must prepare JetBrains artifacts before VS Code artifacts so packaged GUI freshness checks read current assets.");
+  assert(vscodePrepareIndex !== -1 && jetbrainsPrepareIndex !== -1 && vscodePrepareIndex < jetbrainsPrepareIndex, "Build job must prepare VS Code artifacts before JetBrains artifacts so the final GUI rebuild happens before the JetBrains ZIP freshness gate.");
   if (firstUploadIndex !== -1) {
     for (const command of requiredPreUploadSmokeCommands) {
       const smokeIndex = commandRunIndex(buildRunCommands, command);
