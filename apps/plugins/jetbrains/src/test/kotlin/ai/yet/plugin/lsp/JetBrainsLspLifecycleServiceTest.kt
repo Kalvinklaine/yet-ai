@@ -3,6 +3,7 @@ package ai.yet.plugin.lsp
 import ai.yet.plugin.settings.YetSettingsState
 import java.io.ByteArrayInputStream
 import java.nio.file.Path
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -106,7 +107,7 @@ class JetBrainsLspLifecycleServiceTest {
 
     @Test
     fun processOutputDiagnosticsAreSanitizedAndBounded() {
-        val diagnostics = mutableListOf<String>()
+        val diagnostics = CopyOnWriteArrayList<String>()
         val process = RecordingProcess(
             stdout = "stdout Authorization: Bearer session-secret /Users/alice/private/stdout.log\n",
             stderr = "stderr OPENAI_API_KEY=provider-secret raw document body secret-body ${"x".repeat(1000)}\n",
