@@ -185,21 +185,33 @@ describe("latestEditProposalCandidateFromMessages", () => {
     expect(candidate?.proposal).toEqual(proposal);
   });
 
-  it("clears active proposal when the latest complete assistant message is normal text", () => {
+  it("keeps the latest valid proposal when later complete assistant messages are normal text", () => {
     const proposal = safeEditProposalPayload();
     const candidate = latestEditProposalCandidateFromMessages([
       assistantMessage("a1", JSON.stringify(proposal)),
       assistantMessage("a2", "Normal assistant response."),
     ]);
 
-    expect(candidate).toBeNull();
+    expect(candidate?.sourceMessageId).toBe("a1");
+    expect(candidate?.proposal).toEqual(proposal);
   });
 
-  it("clears active proposal when the latest complete assistant message is invalid JSON", () => {
+  it("keeps the latest valid proposal when later complete assistant messages are non-json text", () => {
     const proposal = safeEditProposalPayload();
     const candidate = latestEditProposalCandidateFromMessages([
       assistantMessage("a1", JSON.stringify(proposal)),
       assistantMessage("a2", "not json"),
+    ]);
+
+    expect(candidate?.sourceMessageId).toBe("a1");
+    expect(candidate?.proposal).toEqual(proposal);
+  });
+
+  it("clears active proposal when the latest complete assistant message looks like an invalid edit proposal", () => {
+    const proposal = safeEditProposalPayload();
+    const candidate = latestEditProposalCandidateFromMessages([
+      assistantMessage("a1", JSON.stringify(proposal)),
+      assistantMessage("a2", JSON.stringify({ ...proposal, requiresUserConfirmation: false })),
     ]);
 
     expect(candidate).toBeNull();

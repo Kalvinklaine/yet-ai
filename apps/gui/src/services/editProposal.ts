@@ -96,8 +96,11 @@ export function latestEditProposalCandidateFromMessages(messages: EditProposalSo
       continue;
     }
     const proposal = parseEditProposalContent(message.content);
-    if (!proposal) {
+    if (!proposal && isEditProposalLikeContent(message.content)) {
       return null;
+    }
+    if (!proposal) {
+      continue;
     }
     return {
       proposal,
@@ -127,6 +130,29 @@ export function editProposalCandidateMatchesIdentity(
   identity: EditProposalIdentity | null | undefined,
 ): candidate is EditProposalCandidate {
   return editProposalCandidateIdentityMatches(candidate, identity);
+}
+
+function isEditProposalLikeContent(content: string): boolean {
+  if (typeof content !== "string") {
+    return false;
+  }
+  const trimmed = content.trim();
+  if (trimmed.length === 0 || trimmed.length > maxContentLength || !isStrictFullJsonObject(trimmed)) {
+    return false;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return false;
+  }
+  if (!isPlainObject(parsed)) {
+    return false;
+  }
+  if (parsed.type === applyEditRequestType) {
+    return true;
+  }
+  return "requiresUserConfirmation" in parsed || "edits" in parsed || "summary" in parsed || "cloudRequired" in parsed;
 }
 
 function isStrictFullJsonObject(text: string): boolean {

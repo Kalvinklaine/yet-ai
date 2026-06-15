@@ -1716,7 +1716,12 @@ async function assertJetBrainsConfirmedEditLifecycle(page, frameLocator) {
 }
 
 async function injectJetBrainsAssistantProposal(page, frameLocator, proposal) {
-  await page.evaluate((content) => window.__yetAiSetNextAssistantResponseForSmoke?.(content), JSON.stringify(proposal));
+  await page.evaluate(({ version, payload }) => window.__yetAiSetNextAssistantResponseForSmoke?.(JSON.stringify({
+    type: "gui.applyWorkspaceEditRequest",
+    version,
+    requestId: "assistant-smoke-request-id-must-be-ignored",
+    payload,
+  })), { version: bridgeVersion, payload: proposal });
   await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill("Render JetBrains confirmed edit smoke proposal.");
   await clickSendButtonWithActionability(frameLocator, "JetBrains edit proposal injection send");
   await page.waitForFunction((text) => document.querySelector("iframe[title='Yet AI GUI']")?.contentDocument?.body?.innerText.includes(text), proposal.summary, { timeout: 5000 }).catch(() => undefined);

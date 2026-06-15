@@ -6386,6 +6386,48 @@ describe("edit proposal preview", () => {
     expect(applyCalls[0][0].requestId).not.toBe(assistantRequestId);
   });
 
+  it("renders actionable JetBrains apply panel for persisted Demo Mode edit envelope followed by status text", async () => {
+    const postIntellijMessage = vi.fn();
+    window.postIntellijMessage = postIntellijMessage;
+    const proposal = demoModeSafeEditProposalPayload();
+    const assistantRequestId = "assistant-demo-status-request-id-ignored";
+    const envelope = demoModeSafeEditProposalEnvelope(proposal, assistantRequestId);
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      demoMode: demoModeResponse(true),
+      chats: [chatSummary("chat-001", "Installed Demo Mode edit proposal", 2)],
+      chatThreads: {
+        "chat-001": chatThread("chat-001", "Installed Demo Mode edit proposal", [
+          chatMessage("chat-001", "assistant-demo-edit-1", "assistant", JSON.stringify(envelope, null, 2)),
+          chatMessage("chat-001", "assistant-demo-status-1", "assistant", "Demo Mode is ready for your next local prompt."),
+        ]),
+      },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Proposed a safe edit. Review the proposal card below. It will not apply automatically.");
+    expect(text).toContain("Demo Mode is ready for your next local prompt.");
+    expect(text).toContain("Propose safe edit");
+    expect(text).toContain("Demo Mode safe edit no-op preview.");
+    expect(text).toContain("Apply in JetBrains after review");
+    expect(text).not.toContain(assistantRequestId);
+    expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+
+    await act(async () => {
+      findButton("Apply in JetBrains after review").click();
+    });
+
+    const applyCalls = postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
+    expect(applyCalls).toHaveLength(1);
+    expect(applyCalls[0][0]).toMatchObject({ version: bridgeVersion, type: "gui.applyWorkspaceEditRequest", payload: proposal });
+    expect(applyCalls[0][0].requestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
+    expect(applyCalls[0][0].requestId).not.toBe(assistantRequestId);
+  });
+
   it("keeps exact Demo Mode edit envelope preview-only in browser mode", async () => {
     const proposal = demoModeSafeEditProposalPayload();
     const envelope = demoModeSafeEditProposalEnvelope(proposal);
@@ -7189,7 +7231,7 @@ describe("edit proposal preview", () => {
     expect(browserStorageDump()).not.toContain("Replace one visible editor line");
   });
 
-  it("renders historical confirmed edit proposal copy and shows no active card when latest is normal", async () => {
+  it("keeps latest valid confirmed edit proposal actionable when followed by normal assistant text", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
     const valid = safeEditProposalPayload();
@@ -7208,12 +7250,11 @@ describe("edit proposal preview", () => {
     await flushAsync();
 
     const text = container?.textContent ?? "";
-    expect(text).toContain("Earlier safe edit proposal. Only the latest valid proposal can be requested from the proposal card.");
+    expect(text).toContain("Proposed a safe edit. Review the proposal card below. It will not apply automatically.");
     expect(text).toContain("Normal assistant response.");
-    expect(text).not.toContain("Propose safe edit");
-    expect(text).not.toContain("Replace one visible editor line after user review.");
-    expect(container?.querySelector(".edit-proposal-card")).toBeNull();
-    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Apply in VS Code after review");
+    expect(text).toContain("Propose safe edit");
+    expect(text).toContain("Replace one visible editor line after user review.");
+    expect(findButton("Apply in VS Code after review").disabled).toBe(false);
     expect(container?.querySelectorAll("pre[aria-label=\"Assistant edit proposal JSON\"]")).toHaveLength(0);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
