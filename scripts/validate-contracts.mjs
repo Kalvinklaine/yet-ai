@@ -65,6 +65,10 @@ const mappings = [
     "packages/contracts/examples/engine/user-message-command-with-explicit-context-bundle.json",
     "packages/contracts/schemas/engine/chat-command.schema.json"
   ],
+  [
+    "packages/contracts/examples/engine/user-message-command-with-verification-output-context.json",
+    "packages/contracts/schemas/engine/chat-command.schema.json"
+  ],
   ["packages/contracts/examples/engine/abort-command.json", "packages/contracts/schemas/engine/chat-command.schema.json"],
   ["packages/contracts/examples/engine/snapshot-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
   ["packages/contracts/examples/engine/stream-started-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
@@ -209,7 +213,15 @@ const invalidMappings = [
     "chat-command-context-bundle-tool-smuggling.json",
     "chat-command-context-bundle-index-smuggling.json",
     "chat-command-context-bundle-full-file-smuggling.json",
-    "chat-command-context-bundle-non-active-item.json"
+    "chat-command-context-bundle-non-active-item.json",
+    "chat-command-context-bundle-verification-output-command_field.json",
+    "chat-command-context-bundle-verification-output-cwd_field.json",
+    "chat-command-context-bundle-verification-output-env_field.json",
+    "chat-command-context-bundle-verification-output-shell_script_field.json",
+    "chat-command-context-bundle-verification-output-provider_model_api_key_fields.json",
+    "chat-command-context-bundle-verification-output-private_path_output.json",
+    "chat-command-context-bundle-verification-output-secret_output.json",
+    "chat-command-context-bundle-verification-output-oversized_output.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/chat-command.schema.json"

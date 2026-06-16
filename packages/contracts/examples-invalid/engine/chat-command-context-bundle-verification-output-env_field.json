@@ -1,0 +1,23 @@
+{
+  "requestId": "req-invalid-verification-context-env-field",
+  "type": "user_message",
+  "payload": {
+    "content": "Use the verification result to explain the next step.",
+    "context": {
+      "kind": "explicit_context_bundle",
+      "items": [
+        {
+          "kind": "verification_output",
+          "commandId": "repository-check",
+          "exitCode": 1,
+          "status": "failed",
+          "outputTail": "Repository validation failed. Typecheck reported one contract mismatch in chat command handling.",
+          "truncated": false,
+          "env": {
+            "NODE_ENV": "test"
+          }
+        }
+      ]
+    }
+  }
+}
