@@ -17,7 +17,7 @@ describe("chatLifecycle", () => {
   it("returns actionable recovery copy for runtime, command, SSE, provider, and Stop cases", () => {
     expect(chatRecoveryCopyForCode("provider_unauthorized")).toContain("Provider API key");
     expect(chatRecoveryCopyForCode("provider_unauthorized")).toContain("Session token");
-    expect(chatRecoveryCopyForCode("provider_context_too_large")).toContain("reduce the prompt or attached editor context");
+    expect(chatRecoveryCopyForCode("provider_context_too_large")).toContain("reduce the prompt or attached active-file excerpt");
     expect(chatRecoveryCopyForCode("user_stop")).toContain("stream stopped locally");
     expect(chatRecoveryCopyForCode("unknown_code")).toContain("No automatic retry");
   });

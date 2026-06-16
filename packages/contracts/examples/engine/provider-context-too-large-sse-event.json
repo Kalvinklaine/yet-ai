@@ -4,6 +4,6 @@
   "chatId": "chat-001",
   "payload": {
     "code": "provider_context_too_large",
-    "message": "The request is too large for the selected model context window."
+    "message": "The prompt or attached editor context is too large for this model. Reduce the prompt or active-file excerpt, then retry."
   }
 }

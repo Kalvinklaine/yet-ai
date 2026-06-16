@@ -866,23 +866,23 @@ impl ChatError {
 
     fn client_message(&self) -> &'static str {
         match self {
-            Self::NoProvider => "No enabled OpenAI-compatible provider is configured.",
-            Self::NoModel => "The configured provider has no chat model.",
+            Self::NoProvider => "Configure and enable a BYOK provider before chatting.",
+            Self::NoModel => "Configure a chat-ready model for the enabled provider.",
             Self::Unauthorized | Self::PreStreamUnauthorized => {
-                "Provider credentials were rejected."
+                "Provider credentials were rejected. Update the provider API key or account login, then retry."
             }
-            Self::RateLimited => "Provider rate limit or quota reached.",
+            Self::RateLimited => "Provider rate limit or quota reached. Wait, check quota/billing, or switch models.",
             Self::ContextTooLarge => {
-                "The request is too large for the selected model context window."
+                "The prompt or attached editor context is too large for this model. Reduce the prompt or active-file excerpt, then retry."
             }
-            Self::InvalidRequest => "Provider rejected the request.",
-            Self::UpstreamError => "Provider service returned an error.",
+            Self::InvalidRequest => "Provider rejected the request. Check model id, endpoint, and provider settings.",
+            Self::UpstreamError => "Provider service returned an error. Check provider status or local server, then retry.",
             Self::Request => {
-                "Provider request failed. Check the local provider configuration and try again."
+                "Provider request failed. Check local provider configuration/network and try again."
             }
-            Self::Timeout => "Provider request timed out.",
-            Self::MalformedStream => "Provider stream ended unexpectedly.",
-            Self::ProviderConfig => "Provider configuration is invalid.",
+            Self::Timeout => "Provider request timed out. Check connectivity or local provider server, then retry.",
+            Self::MalformedStream => "Provider stream ended unexpectedly. Check provider compatibility or local server, then retry.",
+            Self::ProviderConfig => "Provider configuration is invalid. Review endpoint, credentials, and model readiness.",
         }
     }
 }

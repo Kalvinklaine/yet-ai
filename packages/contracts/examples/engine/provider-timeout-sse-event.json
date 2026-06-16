@@ -4,6 +4,6 @@
   "chatId": "chat-001",
   "payload": {
     "code": "provider_timeout",
-    "message": "Provider request timed out."
+    "message": "Provider request timed out. Check connectivity or local provider server, then retry."
   }
 }

@@ -5358,7 +5358,7 @@ describe("chat panel", () => {
     });
 
     expect(container?.textContent).toContain("Chat is not ready for the current runtime settings. Refresh runtime and configure a provider/model before sending.");
-    expect(container?.textContent).toContain("Recovery: configure and test a local BYOK provider/model, refresh runtime, then send again.");
+    expect(container?.textContent).toContain("Recovery: configure and test a local BYOK provider/model, refresh runtime readiness, then send again.");
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/v1/chats/subscribe"))).toBe(false);
     expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes("/v1/chats/") && String(url).endsWith("/commands") && init?.method === "POST")).toBe(false);
     expect(chatInput().value).toBe("Blocked message");
@@ -5759,7 +5759,7 @@ describe("chat panel", () => {
 
     const text = container?.textContent ?? "";
     expect(text).toContain("The request is too large [redacted]");
-    expect(text).toContain("Recovery: reduce the prompt or attached editor context, then send again.");
+    expect(text).toContain("Recovery: reduce the prompt or attached active-file excerpt, then send again.");
     expect(text).not.toContain("access_token");
     expect(text).not.toContain("chat-cookie");
     expect(text).not.toContain("g".repeat(64));

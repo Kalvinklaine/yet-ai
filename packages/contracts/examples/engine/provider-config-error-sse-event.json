@@ -4,6 +4,6 @@
   "chatId": "chat-001",
   "payload": {
     "code": "provider_config_error",
-    "message": "Provider configuration is invalid."
+    "message": "Provider configuration is invalid. Review endpoint, credentials, and model readiness."
   }
 }

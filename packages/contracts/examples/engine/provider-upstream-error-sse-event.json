@@ -4,6 +4,6 @@
   "chatId": "chat-001",
   "payload": {
     "code": "provider_upstream_error",
-    "message": "Provider service returned an error."
+    "message": "Provider service returned an error. Check provider status or local server, then retry."
   }
 }

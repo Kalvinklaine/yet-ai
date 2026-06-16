@@ -239,15 +239,15 @@ describe("chatViewState", () => {
   it.each([
     ["provider_unauthorized", "fix the Provider API key or account login in Provider setup"],
     ["provider_rate_limited", "check provider quota or billing"],
-    ["provider_context_too_large", "reduce the prompt or attached editor context"],
+    ["provider_context_too_large", "reduce the prompt or attached active-file excerpt"],
     ["provider_invalid_request", "check the model id, provider endpoint, and saved provider settings"],
-    ["provider_timeout", "checking network connectivity or the local provider server"],
+    ["provider_timeout", "check network connectivity or the local provider server"],
     ["provider_upstream_error", "the provider or local server failed"],
-    ["provider_malformed_stream", "invalid streaming data"],
+    ["provider_malformed_stream", "provider streaming compatibility"],
     ["provider_config_error", "review provider setup"],
     ["provider_not_configured", "configure and enable a provider"],
     ["model_not_configured", "configure a chat-ready model"],
-    ["provider_request_failed", "check local provider configuration and readiness"],
+    ["provider_request_failed", "check local provider configuration, network access, and readiness"],
   ])("adds recovery guidance for %s", (code, guidance) => {
     const state = applyChatViewEvent(
       createInitialChatViewState("chat-1"),
@@ -298,7 +298,7 @@ describe("chatViewState", () => {
     );
 
     expect(state.messages[0].content.length).toBeLessThanOrEqual(501);
-    expect(state.messages[0].content).toContain("Recovery: reduce the prompt or attached editor context, then send again.");
+    expect(state.messages[0].content).toContain("Recovery: reduce the prompt or attached active-file excerpt, then send again.");
     expect(state.messages[0].content).not.toContain("long-provider-secret");
     expect(state.messages[0].content).not.toContain("access_token");
     expect(state.messages[0].content).not.toContain("x".repeat(64));

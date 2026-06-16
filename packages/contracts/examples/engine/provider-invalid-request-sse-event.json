@@ -4,6 +4,6 @@
   "chatId": "chat-001",
   "payload": {
     "code": "provider_invalid_request",
-    "message": "Provider rejected the request."
+    "message": "Provider rejected the request. Check model id, endpoint, and provider settings."
   }
 }

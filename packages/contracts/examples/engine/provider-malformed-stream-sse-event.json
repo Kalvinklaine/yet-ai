@@ -4,6 +4,6 @@
   "chatId": "chat-001",
   "payload": {
     "code": "provider_malformed_stream",
-    "message": "Provider stream ended unexpectedly."
+    "message": "Provider stream ended unexpectedly. Check provider compatibility or local server, then retry."
   }
 }

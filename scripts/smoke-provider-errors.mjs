@@ -13,12 +13,12 @@ const providerId = `provider-errors-${Date.now()}`;
 const timeoutMs = 120_000;
 
 const expectedMessages = {
-  provider_unauthorized: "Provider credentials were rejected.",
-  provider_rate_limited: "Provider rate limit or quota reached.",
-  provider_context_too_large: "The request is too large for the selected model context window.",
-  provider_invalid_request: "Provider rejected the request.",
-  provider_upstream_error: "Provider service returned an error.",
-  provider_malformed_stream: "Provider stream ended unexpectedly."
+  provider_unauthorized: "Provider credentials were rejected. Update the provider API key or account login, then retry.",
+  provider_rate_limited: "Provider rate limit or quota reached. Wait, check quota/billing, or switch models.",
+  provider_context_too_large: "The prompt or attached editor context is too large for this model. Reduce the prompt or active-file excerpt, then retry.",
+  provider_invalid_request: "Provider rejected the request. Check model id, endpoint, and provider settings.",
+  provider_upstream_error: "Provider service returned an error. Check provider status or local server, then retry.",
+  provider_malformed_stream: "Provider stream ended unexpectedly. Check provider compatibility or local server, then retry."
 };
 
 const scenarios = [

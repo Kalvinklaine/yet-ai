@@ -4,6 +4,6 @@
   "chatId": "chat-001",
   "payload": {
     "code": "provider_rate_limited",
-    "message": "Provider rate limit or quota reached."
+    "message": "Provider rate limit or quota reached. Wait, check quota/billing, or switch models."
   }
 }

@@ -44,7 +44,7 @@ export const chatLifecycleLabels: Record<ChatLifecycleState, string> = {
 const chatRecoveryCopy: Record<ChatRecoveryCode, string> = {
   runtime_unavailable: "Recovery: Refresh runtime, verify the local runtime is running, then send again.",
   runtime_unauthorized: "Recovery: fix the local runtime Session token mismatch; this is not a Provider API key problem.",
-  provider_or_model_not_ready: "Recovery: configure and test a local BYOK provider/model, refresh runtime, then send again.",
+  provider_or_model_not_ready: "Recovery: configure and test a local BYOK provider/model, refresh runtime readiness, then send again.",
   command_http_failure: "Recovery: Refresh runtime and resend after the local command endpoint is healthy. No automatic retry was started.",
   command_network_failure: "Recovery: Refresh runtime and verify the loopback runtime URL before sending again.",
   sse_network_failure: "Recovery: Refresh runtime and reopen the local stream by sending again. No automatic retry was started.",
@@ -52,15 +52,15 @@ const chatRecoveryCopy: Record<ChatRecoveryCode, string> = {
   user_stop: "Recovery: stream stopped locally; send a new message when ready.",
   provider_unauthorized: "Recovery: fix the Provider API key or account login in Provider setup; do not replace it with the local Session token.",
   provider_rate_limited: "Recovery: wait before retrying, check provider quota or billing, or try another configured model/provider.",
-  provider_context_too_large: "Recovery: reduce the prompt or attached editor context, then send again.",
-  provider_invalid_request: "Recovery: check the model id, provider endpoint, and saved provider settings.",
-  provider_timeout: "Recovery: retry after checking network connectivity or the local provider server.",
+  provider_context_too_large: "Recovery: reduce the prompt or attached active-file excerpt, then send again.",
+  provider_invalid_request: "Recovery: check the model id, provider endpoint, and saved provider settings, then send again.",
+  provider_timeout: "Recovery: check network connectivity or the local provider server, then send again.",
   provider_upstream_error: "Recovery: the provider or local server failed. Check provider/server status, then send again.",
-  provider_malformed_stream: "Recovery: the provider returned invalid streaming data. Check the provider/local server, then send again.",
-  provider_config_error: "Recovery: review provider setup, saved endpoint, credentials, and model readiness.",
+  provider_malformed_stream: "Recovery: check provider streaming compatibility or the local server, then send again.",
+  provider_config_error: "Recovery: review provider setup, saved endpoint, credentials, and model readiness, then send again.",
   provider_not_configured: "Recovery: configure and enable a provider with local credentials before chatting.",
   model_not_configured: "Recovery: configure a chat-ready model for an enabled provider before chatting.",
-  provider_request_failed: "Recovery: check local provider configuration and readiness, then send again.",
+  provider_request_failed: "Recovery: check local provider configuration, network access, and readiness, then send again.",
 };
 
 export function chatRecoveryCopyForCode(code: string | undefined): string {

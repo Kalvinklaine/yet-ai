@@ -1465,21 +1465,21 @@ fn find_error_event(events: &[Value]) -> Value {
         })
         .and_then(|message| message["content"].as_str())
         .unwrap_or(
-            "Provider request failed. Check the local provider configuration and try again.",
+            "Provider request failed. Check local provider configuration/network and try again.",
         );
     let code = match message {
-        "No enabled OpenAI-compatible provider is configured." => "provider_not_configured",
-        "The configured provider has no chat model." => "model_not_configured",
-        "Provider credentials were rejected." => "provider_unauthorized",
-        "Provider rate limit or quota reached." => "provider_rate_limited",
-        "The request is too large for the selected model context window." => {
+        "Configure and enable a BYOK provider before chatting." => "provider_not_configured",
+        "Configure a chat-ready model for the enabled provider." => "model_not_configured",
+        "Provider credentials were rejected. Update the provider API key or account login, then retry." => "provider_unauthorized",
+        "Provider rate limit or quota reached. Wait, check quota/billing, or switch models." => "provider_rate_limited",
+        "The prompt or attached editor context is too large for this model. Reduce the prompt or active-file excerpt, then retry." => {
             "provider_context_too_large"
         }
-        "Provider rejected the request." => "provider_invalid_request",
-        "Provider service returned an error." => "provider_upstream_error",
-        "Provider request timed out." => "provider_timeout",
-        "Provider stream ended unexpectedly." => "provider_malformed_stream",
-        "Provider configuration is invalid." => "provider_config_error",
+        "Provider rejected the request. Check model id, endpoint, and provider settings." => "provider_invalid_request",
+        "Provider service returned an error. Check provider status or local server, then retry." => "provider_upstream_error",
+        "Provider request timed out. Check connectivity or local provider server, then retry." => "provider_timeout",
+        "Provider stream ended unexpectedly. Check provider compatibility or local server, then retry." => "provider_malformed_stream",
+        "Provider configuration is invalid. Review endpoint, credentials, and model readiness." => "provider_config_error",
         _ => "provider_request_failed",
     };
     json!({
@@ -7507,7 +7507,7 @@ async fn provider_secret_chat_blank_stored_key_fails_closed_before_request(
     assert_eq!(loaded["messages"][1]["role"], "error");
     assert_eq!(
         loaded["messages"][1]["content"],
-        "Provider credentials were rejected."
+        "Provider credentials were rejected. Update the provider API key or account login, then retry."
     );
     assert_sanitized_sse_error(&loaded.to_string());
     assert!(!loaded.to_string().contains(api_key));
@@ -7518,7 +7518,7 @@ async fn provider_secret_chat_blank_stored_key_fails_closed_before_request(
     assert_eq!(error["payload"]["code"], "provider_unauthorized");
     assert_eq!(
         error["payload"]["message"],
-        "Provider credentials were rejected."
+        "Provider credentials were rejected. Update the provider API key or account login, then retry."
     );
     assert_sanitized_sse_error(&text);
     assert!(!text.contains(api_key));
@@ -7562,7 +7562,7 @@ async fn provider_secret_chat_deleted_key_does_not_call_provider() {
     assert_eq!(loaded["messages"][1]["status"], "error");
     assert_eq!(
         loaded["messages"][1]["content"],
-        "Provider credentials were rejected."
+        "Provider credentials were rejected. Update the provider API key or account login, then retry."
     );
     let loaded_text = loaded.to_string();
     assert_sanitized_sse_error(&loaded_text);
@@ -7580,7 +7580,7 @@ async fn provider_secret_chat_deleted_key_does_not_call_provider() {
     assert_eq!(error["payload"]["code"], "provider_unauthorized");
     assert_eq!(
         error["payload"]["message"],
-        "Provider credentials were rejected."
+        "Provider credentials were rejected. Update the provider API key or account login, then retry."
     );
     assert_sanitized_sse_error(&text);
     assert!(!text.contains(api_key));
@@ -9339,7 +9339,7 @@ async fn chat_provider_error_persists_sanitized_error_history_and_snapshot() {
     assert_eq!(loaded["messages"][1]["status"], "error");
     assert_eq!(
         loaded["messages"][1]["content"],
-        "Provider credentials were rejected."
+        "Provider credentials were rejected. Update the provider API key or account login, then retry."
     );
     assert!(loaded
         .to_string()
@@ -10775,7 +10775,7 @@ async fn chat_experimental_oauth_403_does_not_refresh_or_retry() {
     assert_eq!(error["payload"]["code"], "provider_unauthorized");
     assert_eq!(
         loaded["messages"][1]["content"],
-        "Provider credentials were rejected."
+        "Provider credentials were rejected. Update the provider API key or account login, then retry."
     );
     assert_sanitized_sse_error(&text);
     assert!(!text.contains("access-1"));
@@ -10841,7 +10841,7 @@ async fn chat_experimental_oauth_stream_auth_error_after_delta_does_not_refresh_
     assert_eq!(error["payload"]["code"], "provider_unauthorized");
     assert_eq!(
         loaded["messages"][1]["content"],
-        "Provider credentials were rejected."
+        "Provider credentials were rejected. Update the provider API key or account login, then retry."
     );
     assert_sanitized_sse_error(&text);
     assert!(!text.contains("access-1"));
@@ -11134,7 +11134,7 @@ async fn chat_experimental_oauth_refresh_token_reused_error_is_sanitized() {
     assert!(!text.contains("already been used"));
     assert_eq!(
         loaded["messages"][1]["content"],
-        "Provider configuration is invalid."
+        "Provider configuration is invalid. Review endpoint, credentials, and model readiness."
     );
     assert_sanitized_sse_error(&loaded.to_string());
     assert!(!loaded.to_string().contains("refresh_token_reused"));
@@ -11573,7 +11573,7 @@ async fn chat_provider_http_failures_produce_stable_sanitized_error_events_and_h
             StatusCode::REQUEST_TIMEOUT,
             r#"raw-provider-body sk-timeout-secret access_token=secret"#,
             "provider_timeout",
-            "Provider request timed out.",
+            "Provider request timed out. Check connectivity or local provider server, then retry.",
             "chat-http-408-timeout-classified",
             ["sk-timeout-secret", "raw-provider-body", "access_token"].as_slice(),
         ),
@@ -11581,7 +11581,7 @@ async fn chat_provider_http_failures_produce_stable_sanitized_error_events_and_h
             StatusCode::GATEWAY_TIMEOUT,
             r#"raw-provider-body sk-gateway-timeout-secret Cookie: secret"#,
             "provider_timeout",
-            "Provider request timed out.",
+            "Provider request timed out. Check connectivity or local provider server, then retry.",
             "chat-http-504-timeout-classified",
             ["sk-gateway-timeout-secret", "raw-provider-body", "Cookie"].as_slice(),
         ),
@@ -11589,7 +11589,7 @@ async fn chat_provider_http_failures_produce_stable_sanitized_error_events_and_h
             StatusCode::UNAUTHORIZED,
             r#"{"error":{"message":"raw-provider-body sk-http-secret access_token=secret Bearer token","type":"invalid_api_key"}}"#,
             "provider_unauthorized",
-            "Provider credentials were rejected.",
+            "Provider credentials were rejected. Update the provider API key or account login, then retry.",
             "chat-http-unauthorized-classified",
             ["sk-http-secret", "secret", "invalid_api_key"].as_slice(),
         ),
@@ -11597,7 +11597,7 @@ async fn chat_provider_http_failures_produce_stable_sanitized_error_events_and_h
             StatusCode::TOO_MANY_REQUESTS,
             r#"{"error":{"message":"quota exhausted raw-provider-body sk-rate-secret","type":"rate_limit_exceeded"}}"#,
             "provider_rate_limited",
-            "Provider rate limit or quota reached.",
+            "Provider rate limit or quota reached. Wait, check quota/billing, or switch models.",
             "chat-http-rate-classified",
             ["sk-rate-secret", "quota exhausted", "rate_limit_exceeded"].as_slice(),
         ),
@@ -11605,7 +11605,7 @@ async fn chat_provider_http_failures_produce_stable_sanitized_error_events_and_h
             StatusCode::BAD_REQUEST,
             r#"{"error":{"code":"context_length_exceeded","message":"maximum context length sk-context-secret raw-provider-body"}}"#,
             "provider_context_too_large",
-            "The request is too large for the selected model context window.",
+            "The prompt or attached editor context is too large for this model. Reduce the prompt or active-file excerpt, then retry.",
             "chat-http-context-classified",
             [
                 "sk-context-secret",
@@ -11618,7 +11618,7 @@ async fn chat_provider_http_failures_produce_stable_sanitized_error_events_and_h
             StatusCode::NOT_FOUND,
             r#"<html>raw-provider-body /Users/example/private sk-invalid-secret api_key=secret</html>"#,
             "provider_invalid_request",
-            "Provider rejected the request.",
+            "Provider rejected the request. Check model id, endpoint, and provider settings.",
             "chat-http-invalid-classified",
             ["sk-invalid-secret", "/Users/example", "api_key"].as_slice(),
         ),
@@ -11626,7 +11626,7 @@ async fn chat_provider_http_failures_produce_stable_sanitized_error_events_and_h
             StatusCode::INTERNAL_SERVER_ERROR,
             r#"upstream exploded raw-provider-body sk-upstream-secret Cookie: secret"#,
             "provider_upstream_error",
-            "Provider service returned an error.",
+            "Provider service returned an error. Check provider status or local server, then retry.",
             "chat-http-upstream-classified",
             ["sk-upstream-secret", "upstream exploded", "Cookie"].as_slice(),
         ),
@@ -11674,7 +11674,7 @@ async fn chat_provider_stream_error_frame_is_classified_without_raw_body_leakage
     assert_eq!(loaded["messages"][1]["role"], "error");
     assert_eq!(
         loaded["messages"][1]["content"],
-        "The request is too large for the selected model context window."
+        "The prompt or attached editor context is too large for this model. Reduce the prompt or active-file excerpt, then retry."
     );
     assert_provider_error_text_is_sanitized(
         &loaded.to_string(),
@@ -11691,7 +11691,7 @@ async fn chat_provider_stream_error_frame_is_classified_without_raw_body_leakage
     assert_eq!(error["payload"]["code"], "provider_context_too_large");
     assert_eq!(
         error["payload"]["message"],
-        "The request is too large for the selected model context window."
+        "The prompt or attached editor context is too large for this model. Reduce the prompt or active-file excerpt, then retry."
     );
     assert_provider_error_text_is_sanitized(
         &text,
@@ -11727,7 +11727,7 @@ async fn chat_provider_oversized_stream_error_frame_is_bounded_and_sanitized() {
     assert_eq!(loaded["messages"][1]["role"], "error");
     assert_eq!(
         loaded["messages"][1]["content"],
-        "Provider stream ended unexpectedly."
+        "Provider stream ended unexpectedly. Check provider compatibility or local server, then retry."
     );
     assert_provider_error_text_is_sanitized(
         &loaded.to_string(),
@@ -11751,7 +11751,7 @@ async fn chat_provider_oversized_stream_error_frame_is_bounded_and_sanitized() {
     assert_eq!(error["payload"]["code"], "provider_malformed_stream");
     assert_eq!(
         error["payload"]["message"],
-        "Provider stream ended unexpectedly."
+        "Provider stream ended unexpectedly. Check provider compatibility or local server, then retry."
     );
     assert_provider_error_text_is_sanitized(
         &text,

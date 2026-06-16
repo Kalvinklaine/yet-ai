@@ -4,6 +4,6 @@
   "chatId": "chat-001",
   "payload": {
     "code": "provider_unauthorized",
-    "message": "Provider credentials were rejected."
+    "message": "Provider credentials were rejected. Update the provider API key or account login, then retry."
   }
 }
