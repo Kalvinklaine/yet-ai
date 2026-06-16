@@ -9725,6 +9725,74 @@ async fn chat_context_bundle_is_included_before_user_request_in_provider_prompt(
 }
 
 #[tokio::test]
+async fn chat_verification_output_context_is_included_in_provider_prompt() {
+    let api_key = "sk-verification-output-stream-secret-abcd";
+    let (base_url, mut body_receiver) = start_mock_provider_with_request_body(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"verification-ok\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    let command = json!({
+        "requestId": "req-verification-output-context",
+        "type": "user_message",
+        "payload": {
+            "content": "Fix the failure using the attached verification output.",
+            "context": {
+                "kind": "explicit_context_bundle",
+                "items": [{
+                    "kind": "verification_output",
+                    "commandId": "engine-chat-tests",
+                    "status": "failed",
+                    "exitCode": 101,
+                    "truncated": true,
+                    "outputTail": "running 1 test\ntest chat::tests::example ... FAILED\nassertion failed: expected prompt marker"
+                }]
+            }
+        }
+    });
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-verification-output-prompt/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accepted"], true);
+
+    let text = sse_text_from(
+        app,
+        "/v1/chats/subscribe?chat_id=chat-verification-output-prompt",
+    )
+    .await;
+    assert!(text.contains("verification-ok"));
+    assert!(!text.contains(api_key));
+    let provider_body =
+        tokio::time::timeout(std::time::Duration::from_secs(2), body_receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+    let prompt = provider_body["messages"][0]["content"].as_str().unwrap();
+    assert_text_contains_in_order(
+        prompt,
+        &[
+            "IDE context bundle",
+            "Item 1: verification output commandId=engine-chat-tests status=failed exitCode=101 truncated=true",
+            "Output tail:",
+            "test chat::tests::example ... FAILED",
+            "User request",
+            "Fix the failure using the attached verification output.",
+        ],
+    );
+    assert!(!prompt.contains(api_key));
+}
+
+#[tokio::test]
 async fn chat_command_context_bundle_bounds_and_smuggling_are_enforced() {
     let valid_text = "x".repeat(8_000);
     let valid_command = json!({
@@ -9775,6 +9843,14 @@ async fn chat_command_context_bundle_bounds_and_smuggling_are_enforced() {
         "file": { "displayPath": "src/e.ts", "workspaceRelativePath": "src/e.ts", "languageId": "typescript" },
         "selection": { "text": "z".repeat(8_000) }
     });
+    let verification_item = json!({
+        "kind": "verification_output",
+        "commandId": "repository-check",
+        "status": "succeeded",
+        "exitCode": 0,
+        "truncated": false,
+        "outputTail": "Repository validation passed."
+    });
     for context in [
         json!({ "kind": "explicit_context_bundle", "items": [] }),
         json!({
@@ -9786,6 +9862,21 @@ async fn chat_command_context_bundle_bounds_and_smuggling_are_enforced() {
             "items": [aggregate_item.clone(), aggregate_item.clone(), { "kind": "active_editor", "source": "vscode", "selection": { "text": "overflow" } }]
         }),
         json!({ "kind": "explicit_context_bundle", "items": [oversized_item] }),
+        json!({
+            "kind": "explicit_context_bundle",
+            "items": [verification_item.clone(), verification_item.clone(), verification_item.clone(), verification_item.clone(), verification_item.clone()]
+        }),
+        json!({
+            "kind": "explicit_context_bundle",
+            "items": [{
+                "kind": "verification_output",
+                "commandId": "engine-chat-tests",
+                "status": "failed",
+                "exitCode": 1,
+                "truncated": false,
+                "outputTail": "x".repeat(4_001)
+            }]
+        }),
         json!({
             "kind": "explicit_context_bundle",
             "items": [{
@@ -9824,6 +9915,51 @@ async fn chat_command_context_bundle_bounds_and_smuggling_are_enforced() {
                 "selection": { "text": "safe text" }
             }]
         }),
+        json!({
+            "kind": "explicit_context_bundle",
+            "items": [{
+                "kind": "verification_output",
+                "commandId": "workspace-shell",
+                "status": "failed",
+                "exitCode": 1,
+                "truncated": false,
+                "outputTail": "safe failure"
+            }]
+        }),
+        json!({
+            "kind": "explicit_context_bundle",
+            "items": [{
+                "kind": "verification_output",
+                "commandId": "engine-chat-tests",
+                "status": "running",
+                "exitCode": 1,
+                "truncated": false,
+                "outputTail": "safe failure"
+            }]
+        }),
+        json!({
+            "kind": "explicit_context_bundle",
+            "items": [{
+                "kind": "verification_output",
+                "commandId": "engine-chat-tests",
+                "status": "failed",
+                "exitCode": 1,
+                "truncated": false,
+                "outputTail": "failed with Bearer sk-verification-context-secret /Users/example/.codex/auth.json"
+            }]
+        }),
+        json!({
+            "kind": "explicit_context_bundle",
+            "items": [{
+                "kind": "verification_output",
+                "commandId": "engine-chat-tests",
+                "status": "failed",
+                "exitCode": 1,
+                "truncated": false,
+                "outputTail": "safe failure",
+                "command": "cargo test"
+            }]
+        }),
     ] {
         let command = json!({
             "requestId": "req-context-bundle-reject",
@@ -9846,7 +9982,11 @@ async fn chat_command_context_bundle_bounds_and_smuggling_are_enforced() {
         assert!(!response_text.contains("sk-context-bundle-secret"));
         assert!(!response_text.contains("workspace.read"));
         assert!(!response_text.contains("src/token.txt"));
+        assert!(!response_text.contains("workspace-shell"));
+        assert!(!response_text.contains("sk-verification-context-secret"));
+        assert!(!response_text.contains("cargo test"));
         assert!(!response_text.contains(&"z".repeat(64)));
+        assert!(!response_text.contains(&"x".repeat(64)));
     }
 }
 

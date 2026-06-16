@@ -81,7 +81,26 @@ pub struct ChatActiveEditorContext {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ChatExplicitContextBundle {
     kind: String,
-    items: Vec<ChatActiveEditorContext>,
+    items: Vec<ChatContextBundleItem>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(untagged)]
+pub enum ChatContextBundleItem {
+    ActiveEditor(ChatActiveEditorContext),
+    VerificationOutput(ChatVerificationOutputContext),
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChatVerificationOutputContext {
+    kind: String,
+    command_id: String,
+    exit_code: u8,
+    status: String,
+    output_tail: String,
+    truncated: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -110,6 +129,7 @@ const CHAT_CONTEXT_DISPLAY_PATH_MAX_CHARS: usize = 256;
 const CHAT_CONTEXT_WORKSPACE_PATH_MAX_CHARS: usize = 512;
 const CHAT_CONTEXT_LANGUAGE_MAX_CHARS: usize = 64;
 const CHAT_CONTEXT_MAX_POSITION: u64 = 1_000_000;
+const CHAT_CONTEXT_VERIFICATION_OUTPUT_MAX_CHARS: usize = 4_000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ChatError {
@@ -545,15 +565,32 @@ impl ChatContext {
         }
     }
 
-    fn active_items(&self) -> &[ChatActiveEditorContext] {
+    fn first_active_item(&self) -> Option<&ChatActiveEditorContext> {
         match self {
-            Self::ActiveEditor(context) => std::slice::from_ref(context),
-            Self::ExplicitContextBundle(bundle) => &bundle.items,
+            Self::ActiveEditor(context) => Some(context),
+            Self::ExplicitContextBundle(bundle) => {
+                bundle.items.iter().find_map(|item| match item {
+                    ChatContextBundleItem::ActiveEditor(context) => Some(context),
+                    ChatContextBundleItem::VerificationOutput(_) => None,
+                })
+            }
+        }
+    }
+}
+
+impl ChatContextBundleItem {
+    fn is_valid(&self) -> bool {
+        match self {
+            Self::ActiveEditor(context) => context.is_valid(),
+            Self::VerificationOutput(context) => context.is_valid(),
         }
     }
 
-    fn first_active_item(&self) -> Option<&ChatActiveEditorContext> {
-        self.active_items().first()
+    fn selection_text_chars(&self) -> usize {
+        match self {
+            Self::ActiveEditor(context) => context.selection_text_chars(),
+            Self::VerificationOutput(_) => 0,
+        }
     }
 }
 
@@ -595,13 +632,26 @@ impl ChatExplicitContextBundle {
         self.kind == "explicit_context_bundle"
             && !self.items.is_empty()
             && self.items.len() <= CHAT_CONTEXT_BUNDLE_MAX_ITEMS
-            && self.items.iter().all(ChatActiveEditorContext::is_valid)
+            && self.items.iter().all(ChatContextBundleItem::is_valid)
             && self
                 .items
                 .iter()
-                .map(ChatActiveEditorContext::selection_text_chars)
+                .map(ChatContextBundleItem::selection_text_chars)
                 .sum::<usize>()
                 <= CHAT_CONTEXT_BUNDLE_SELECTION_TEXT_MAX_CHARS
+    }
+}
+
+impl ChatVerificationOutputContext {
+    fn is_valid(&self) -> bool {
+        self.kind == "verification_output"
+            && matches!(
+                self.command_id.as_str(),
+                "repository-check" | "gui-app-tests" | "engine-chat-tests"
+            )
+            && matches!(self.status.as_str(), "succeeded" | "failed")
+            && self.output_tail.chars().count() <= CHAT_CONTEXT_VERIFICATION_OUTPUT_MAX_CHARS
+            && valid_verification_output_tail(&self.output_tail)
     }
 }
 
@@ -740,6 +790,76 @@ fn valid_context_language(value: &str) -> bool {
             .all(|value| value.is_ascii_alphanumeric() || matches!(value, '_' | '.' | '+' | '-'))
 }
 
+fn valid_verification_output_tail(value: &str) -> bool {
+    !value.chars().any(is_c0_c1_control_except_common_whitespace)
+        && !contains_secret_like_text(value)
+}
+
+fn is_c0_c1_control_except_common_whitespace(value: char) -> bool {
+    matches!(value as u32, 0x00..=0x1f | 0x7f..=0x9f) && !matches!(value, '\n' | '\r' | '\t')
+}
+
+fn contains_secret_like_text(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    let markers = [
+        "authorization",
+        "bearer",
+        "cookie",
+        "api_key",
+        "api-key",
+        "apikey",
+        "token",
+        "secret",
+        "password",
+        "private_path",
+        "private-path",
+        "provider_response",
+        "provider-response",
+        "raw_prompt",
+        "raw-prompt",
+        "file_content",
+        "file-content",
+    ];
+    markers.iter().any(|marker| lower.contains(marker))
+        || [
+            "/users", "/home", "/tmp", "/var", "/etc", "/opt", "/mnt", "/volumes", "/private",
+        ]
+        .iter()
+        .any(|marker| has_path_marker(&lower, marker))
+        || lower.contains("~/")
+        || has_windows_drive_path(value)
+        || has_sk_secret(value)
+}
+
+fn has_path_marker(value: &str, marker: &str) -> bool {
+    value.match_indices(marker).any(|(index, _)| {
+        value[index + marker.len()..]
+            .chars()
+            .next()
+            .is_none_or(|character| !matches!(character, 'a'..='z' | '0'..='9' | '_' | '-'))
+    })
+}
+
+fn has_windows_drive_path(value: &str) -> bool {
+    value.as_bytes().windows(3).any(|window| {
+        window[0].is_ascii_alphabetic() && window[1] == b':' && matches!(window[2], b'/' | b'\\')
+    })
+}
+
+fn has_sk_secret(value: &str) -> bool {
+    value
+        .split(|character: char| {
+            !(character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+        })
+        .any(|part| {
+            let lower = part.to_ascii_lowercase();
+            let suffix = lower
+                .strip_prefix("sk-proj-")
+                .or_else(|| lower.strip_prefix("sk-"));
+            suffix.is_some_and(|suffix| suffix.chars().count() >= 8)
+        })
+}
+
 fn assemble_provider_prompt(content: &str, context: Option<&ChatContext>) -> String {
     let Some(context) = context else {
         return content.to_string();
@@ -752,7 +872,7 @@ fn assemble_provider_prompt(content: &str, context: Option<&ChatContext>) -> Str
         ChatContext::ExplicitContextBundle(bundle) => {
             lines.push("IDE context bundle".to_string());
             for (index, item) in bundle.items.iter().enumerate() {
-                push_active_editor_prompt_lines(&mut lines, item, Some(index + 1));
+                push_bundle_item_prompt_lines(&mut lines, item, index + 1);
             }
         }
     }
@@ -760,6 +880,34 @@ fn assemble_provider_prompt(content: &str, context: Option<&ChatContext>) -> Str
     lines.push("User request".to_string());
     lines.push(content.to_string());
     lines.join("\n")
+}
+
+fn push_bundle_item_prompt_lines(
+    lines: &mut Vec<String>,
+    item: &ChatContextBundleItem,
+    item_index: usize,
+) {
+    match item {
+        ChatContextBundleItem::ActiveEditor(context) => {
+            push_active_editor_prompt_lines(lines, context, Some(item_index));
+        }
+        ChatContextBundleItem::VerificationOutput(context) => {
+            push_verification_output_prompt_lines(lines, context, item_index);
+        }
+    }
+}
+
+fn push_verification_output_prompt_lines(
+    lines: &mut Vec<String>,
+    context: &ChatVerificationOutputContext,
+    item_index: usize,
+) {
+    lines.push(format!(
+        "Item {item_index}: verification output commandId={} status={} exitCode={} truncated={}",
+        context.command_id, context.status, context.exit_code, context.truncated
+    ));
+    lines.push("Output tail:".to_string());
+    lines.push(context.output_tail.clone());
 }
 
 fn push_active_editor_prompt_lines(
