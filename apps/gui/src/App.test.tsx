@@ -2046,7 +2046,7 @@ describe("agent progress panel", () => {
     expect(text).toContain("6 more summaries hidden.");
     expect(text).not.toContain("T-BOUND-20 / run-20");
     expect(text).not.toContain("safe recent summary 17");
-    expect(text.length).toBeLessThan(34000);
+    expect(text.length).toBeLessThan(35000);
   });
 
   it("endpoint unavailable or corrupt runtime error is sanitized and non-fatal", async () => {
@@ -3208,6 +3208,114 @@ describe("active editor attached context", () => {
     expect(text).not.toContain("Read-only IDE action proposal");
     expect(buttonsNamed("Run read-only IDE action")).toHaveLength(0);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
+  });
+
+  it("renders browser verification commands as preview-only without posting", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Verification commands");
+    expect(container?.textContent).toContain("browser preview only");
+    expect(container?.textContent).toContain("Browser preview only. Open Yet AI in VS Code or JetBrains to request allowlisted verification commands.");
+    expect(findButton("Repository check").disabled).toBe(true);
+    expect(findButton("GUI app tests").disabled).toBe(true);
+    expect(findButton("Engine chat tests").disabled).toBe(true);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("verification output");
+  });
+
+  it("requests a VS Code verification command only after explicit click and blocks pending duplicates", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")).toHaveLength(0);
+    await act(async () => {
+      findButton("Repository check").click();
+    });
+    await act(async () => {
+      findButton("Repository check").click();
+    });
+
+    const messages = postMessage.mock.calls.map(([message]) => message).filter((message) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand");
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toEqual({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "gui-verification-command-1", payload: { action: "runVerificationCommand", commandId: "repository-check" } });
+    expect(container?.textContent).toContain("Run verification command: pending");
+  });
+
+  it("renders sanitized verification command results and ignores stale duplicate results", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("GUI app tests").click();
+    });
+    await dispatchHostIdeActionProgress("gui-verification-command-1", { phase: "running", status: "inProgress", summary: "Running GUI tests.", cloudRequired: false, action: "runVerificationCommand", commandId: "gui-app-tests" });
+    await dispatchHostIdeActionResult("stale-verification", { status: "failed", message: "Stale verification should not render.", cloudRequired: false, action: "runVerificationCommand", commandId: "gui-app-tests", exitCode: 1, durationMs: 1, outputTail: "stale output", truncated: false });
+    expect(container?.textContent).toContain("Ignored stale IDE action result.");
+    await dispatchHostIdeActionResult("gui-verification-command-1", { status: "succeeded", message: "GUI tests passed.", cloudRequired: false, action: "runVerificationCommand", commandId: "gui-app-tests", exitCode: 0, durationMs: 1234, outputTail: "vitest passed\nall cozy", truncated: false });
+    await dispatchHostIdeActionResult("gui-verification-command-1", { status: "failed", message: "Duplicate verification should not render.", cloudRequired: false, action: "runVerificationCommand", commandId: "gui-app-tests", exitCode: 1, durationMs: 2, outputTail: "duplicate output", truncated: false });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Run verification command: succeeded");
+    expect(text).toContain("GUI tests passed.");
+    expect(text).toContain("Command id: gui-app-tests");
+    expect(text).toContain("Exit code: 0");
+    expect(text).toContain("Duration: 1234 ms");
+    expect(text).toContain("vitest passed");
+    expect(text).toContain("Output truncated: no");
+    expect(text).toContain("Ignored duplicate IDE action result.");
+    expect(text).not.toContain("Stale verification should not render.");
+    expect(text).not.toContain("Duplicate verification should not render.");
+    expect(text).not.toContain("duplicate output");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("vitest passed");
+  });
+
+  it("rejects unsafe verification output before rendering or storing it", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const rawSecret = "access_token=" + "v".repeat(64);
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Engine chat tests").click();
+    });
+    await dispatchHostIdeActionResult("gui-verification-command-1", { status: "failed", message: "Engine tests failed.", cloudRequired: false, action: "runVerificationCommand", commandId: "engine-chat-tests", exitCode: 1, durationMs: 10, outputTail: `failed ${rawSecret}`, truncated: false });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Run verification command: pending");
+    expect(text).toContain("Rejected invalid host bridge message");
+    expect(text).not.toContain("access_token");
+    expect(text).not.toContain("v".repeat(64));
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(rawSecret);
+  });
+
+  it("rejects assistant verification command proposals as not runnable and posts no request", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = ideActionProposal({ action: "runVerificationCommand", commandId: "repository-check", summary: "Run checks." });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Unsafe verification proposal", 1)], chatThreads: { "chat-001": chatThread("chat-001", "Unsafe verification proposal", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).not.toContain("Read-only IDE action proposal");
+    expect(buttonsNamed("Run read-only IDE action")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")).toHaveLength(0);
   });
 
   it("lets users clear a stuck VS Code proposal IDE action locally and ignores stale first host updates", async () => {

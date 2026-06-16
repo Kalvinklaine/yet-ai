@@ -1,6 +1,6 @@
 import type { IdeActionRequestPayload, WorkspaceEditRange } from "../bridge/bridgeAdapter";
 
-type AssistantIdeActionRequestPayload = Exclude<IdeActionRequestPayload, { action: "getActiveFileExcerpt" }>;
+type AssistantIdeActionRequestPayload = Exclude<IdeActionRequestPayload, { action: "getActiveFileExcerpt" } | { action: "runVerificationCommand" }>;
 
 export type AssistantIdeActionProposal = {
   type: "assistant.ideActionProposal";

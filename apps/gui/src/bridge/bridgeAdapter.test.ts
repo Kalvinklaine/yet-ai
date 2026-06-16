@@ -937,6 +937,17 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-12", payload: { status: "succeeded", message: "Opened.", cloudRequired: false, action: "openWorkspaceFile", workspaceRelativePath: "config/secret.env" } })).toBe(false);
   });
 
+  it("validates verification command requests progress and sanitized results", () => {
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "req-verification-1", payload: { action: "runVerificationCommand", commandId: "repository-check" } })).toBe(true);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "req-verification-2", payload: { action: "runVerificationCommand", commandId: "npm-test" } })).toBe(false);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "req-verification-3", payload: { action: "runVerificationCommand", commandId: "gui-app-tests", command: "npm test" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-verification-4", payload: { phase: "running", status: "inProgress", summary: "Running GUI tests.", cloudRequired: false, action: "runVerificationCommand", commandId: "gui-app-tests" } })).toBe(true);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-verification-5", payload: { phase: "running", status: "inProgress", summary: "Running GUI tests.", cloudRequired: false, action: "runVerificationCommand" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-verification-6", payload: { status: "succeeded", message: "GUI tests passed.", cloudRequired: false, action: "runVerificationCommand", commandId: "gui-app-tests", exitCode: 0, durationMs: 1200, outputTail: "passed safely", truncated: false } })).toBe(true);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-verification-7", payload: { status: "succeeded", message: "GUI tests passed.", cloudRequired: false, action: "runVerificationCommand", commandId: "gui-app-tests", exitCode: 0, durationMs: 1200, outputTail: "Authorization: Bearer secret", truncated: false } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-verification-8", payload: { status: "succeeded", message: "GUI tests passed.", cloudRequired: false, action: "runVerificationCommand", commandId: "gui-app-tests", exitCode: 0, durationMs: 1200, outputTail: "passed", truncated: false, workspaceRelativePath: "src/App.tsx" } })).toBe(false);
+  });
+
   it("accepts only minimal VS Code or JetBrains IDE action result context", () => {
     const basePayload = { status: "succeeded", message: "Context snapshot ready.", cloudRequired: false, action: "getContextSnapshot" };
     const validJetBrainsContext = { source: "jetbrains", hasActiveEditor: true, workspaceFolderCount: 1 };

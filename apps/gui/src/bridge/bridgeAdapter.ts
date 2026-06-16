@@ -35,13 +35,16 @@ export type ApplyWorkspaceEditResultPayload = {
   affectedFiles?: string[];
 };
 
-export type IdeActionType = "getContextSnapshot" | "getActiveFileExcerpt" | "openWorkspaceFile" | "revealWorkspaceRange";
+export type IdeActionType = "getContextSnapshot" | "getActiveFileExcerpt" | "openWorkspaceFile" | "revealWorkspaceRange" | "runVerificationCommand";
+
+export type VerificationCommandId = "repository-check" | "gui-app-tests" | "engine-chat-tests";
 
 export type IdeActionRequestPayload =
   | { action: "getContextSnapshot" }
   | { action: "getActiveFileExcerpt" }
   | { action: "openWorkspaceFile"; workspaceRelativePath: string }
-  | { action: "revealWorkspaceRange"; workspaceRelativePath: string; range: WorkspaceEditRange };
+  | { action: "revealWorkspaceRange"; workspaceRelativePath: string; range: WorkspaceEditRange }
+  | { action: "runVerificationCommand"; commandId: VerificationCommandId };
 
 export type IdeActionProgressPayload = {
   phase: "queued" | "checkingPolicy" | "running" | "completed";
@@ -51,6 +54,7 @@ export type IdeActionProgressPayload = {
   action?: IdeActionType;
   workspaceRelativePath?: string;
   range?: WorkspaceEditRange;
+  commandId?: VerificationCommandId;
 };
 
 export type ActiveFileExcerptAttachment = {
@@ -79,6 +83,11 @@ export type IdeActionResultPayload = {
     workspaceFolderCount: number;
   };
   contextAttachment?: ActiveFileExcerptAttachment;
+  commandId?: VerificationCommandId;
+  exitCode?: number;
+  durationMs?: number;
+  outputTail?: string;
+  truncated?: boolean;
 };
 
 export type GuiMessage = {
@@ -446,7 +455,7 @@ export function isApplyWorkspaceEditResultPayload(value: unknown): value is Appl
 }
 
 export function isIdeActionRequestPayload(value: unknown): value is IdeActionRequestPayload {
-  if (!isPlainObject(value) || !hasOnlyKeys(value, ["action", "workspaceRelativePath", "range"])) {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["action", "workspaceRelativePath", "range", "commandId"])) {
     return false;
   }
   if (value.action === "getContextSnapshot" || value.action === "getActiveFileExcerpt") {
@@ -458,11 +467,15 @@ export function isIdeActionRequestPayload(value: unknown): value is IdeActionReq
   if (value.action === "revealWorkspaceRange") {
     return hasOnlyKeys(value, ["action", "workspaceRelativePath", "range"]) && requiredSafeRelativePath(value.workspaceRelativePath) && isEditRange(value.range);
   }
+  if (value.action === "runVerificationCommand") {
+    return hasOnlyKeys(value, ["action", "commandId"]) && isVerificationCommandId(value.commandId);
+  }
   return false;
 }
 
+
 export function isIdeActionProgressPayload(value: unknown): value is IdeActionProgressPayload {
-  if (!isPlainObject(value) || !hasOnlyKeys(value, ["phase", "status", "summary", "cloudRequired", "action", "workspaceRelativePath", "range"])) {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["phase", "status", "summary", "cloudRequired", "action", "workspaceRelativePath", "range", "commandId"])) {
     return false;
   }
   return (
@@ -474,6 +487,8 @@ export function isIdeActionProgressPayload(value: unknown): value is IdeActionPr
     optionalIdeActionType(value.action) &&
     safeRelativePath(value.workspaceRelativePath) &&
     (value.range === undefined || isEditRange(value.range)) &&
+    (value.commandId === undefined || isVerificationCommandId(value.commandId)) &&
+    hasAllowedProgressMetadata(value) &&
     hasRequiredSuccessfulActionMetadata(value)
   );
 }
@@ -488,8 +503,9 @@ function isIdeActionProgressPhaseStatus(phase: unknown, status: unknown): boolea
   return phase === "completed" && (status === "succeeded" || status === "rejected" || status === "unavailable" || status === "failed");
 }
 
+
 export function isIdeActionResultPayload(value: unknown): value is IdeActionResultPayload {
-  if (!isPlainObject(value) || !hasOnlyKeys(value, ["status", "message", "cloudRequired", "action", "workspaceRelativePath", "range", "context", "contextAttachment"])) {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["status", "message", "cloudRequired", "action", "workspaceRelativePath", "range", "context", "contextAttachment", "commandId", "exitCode", "durationMs", "outputTail", "truncated"])) {
     return false;
   }
   return (
@@ -501,10 +517,25 @@ export function isIdeActionResultPayload(value: unknown): value is IdeActionResu
     (value.range === undefined || isEditRange(value.range)) &&
     isOptionalIdeActionContext(value.context) &&
     isOptionalActiveFileExcerptAttachment(value.contextAttachment) &&
+    (value.commandId === undefined || isVerificationCommandId(value.commandId)) &&
+    optionalBoundedInteger(value.exitCode, 0, 255) &&
+    optionalBoundedInteger(value.durationMs, 0, 3600000) &&
+    (value.outputTail === undefined || safeVerificationOutputTail(value.outputTail)) &&
+    (value.truncated === undefined || typeof value.truncated === "boolean") &&
     hasAllowedResultMetadata(value) &&
     hasRequiredSuccessfulActionMetadata(value) &&
     hasRequiredSuccessfulResultMetadata(value)
   );
+}
+
+function hasAllowedProgressMetadata(value: Record<string, unknown>): boolean {
+  if (value.action !== "runVerificationCommand" && value.commandId !== undefined) {
+    return false;
+  }
+  if (value.action === "runVerificationCommand") {
+    return value.workspaceRelativePath === undefined && value.range === undefined && isVerificationCommandId(value.commandId);
+  }
+  return true;
 }
 
 function hasAllowedResultMetadata(value: Record<string, unknown>): boolean {
@@ -514,11 +545,17 @@ function hasAllowedResultMetadata(value: Record<string, unknown>): boolean {
   if (value.action !== "getActiveFileExcerpt" && value.contextAttachment !== undefined) {
     return false;
   }
+  if (value.action !== "runVerificationCommand" && (value.commandId !== undefined || value.exitCode !== undefined || value.durationMs !== undefined || value.outputTail !== undefined || value.truncated !== undefined)) {
+    return false;
+  }
   if (value.action === "getContextSnapshot") {
     return value.workspaceRelativePath === undefined && value.range === undefined;
   }
   if (value.action === "getActiveFileExcerpt") {
     return value.workspaceRelativePath === undefined && value.range === undefined && value.context === undefined;
+  }
+  if (value.action === "runVerificationCommand") {
+    return value.workspaceRelativePath === undefined && value.range === undefined && value.context === undefined && value.contextAttachment === undefined && isVerificationCommandId(value.commandId);
   }
   if (value.action === "openWorkspaceFile" || value.action === "revealWorkspaceRange") {
     return value.context === undefined;
@@ -535,6 +572,9 @@ function hasRequiredSuccessfulResultMetadata(value: Record<string, unknown>): bo
   }
   if (value.action === "getActiveFileExcerpt") {
     return isActiveFileExcerptAttachment(value.contextAttachment);
+  }
+  if (value.action === "runVerificationCommand") {
+    return isVerificationCommandId(value.commandId) && optionalBoundedInteger(value.exitCode, 0, 255) && optionalBoundedInteger(value.durationMs, 0, 3600000) && safeVerificationOutputTail(value.outputTail) && typeof value.truncated === "boolean";
   }
   if (value.action === "openWorkspaceFile" || value.action === "revealWorkspaceRange") {
     return value.context === undefined;
@@ -555,11 +595,18 @@ function hasRequiredSuccessfulActionMetadata(value: Record<string, unknown>): bo
   if (value.action === "getActiveFileExcerpt") {
     return value.workspaceRelativePath === undefined && value.range === undefined && value.context === undefined;
   }
+  if (value.action === "runVerificationCommand") {
+    return value.workspaceRelativePath === undefined && value.range === undefined && value.context === undefined && isVerificationCommandId(value.commandId);
+  }
   return value.action === "getContextSnapshot" && value.workspaceRelativePath === undefined && value.range === undefined;
 }
 
 function optionalIdeActionType(value: unknown): boolean {
-  return value === undefined || value === "getContextSnapshot" || value === "getActiveFileExcerpt" || value === "openWorkspaceFile" || value === "revealWorkspaceRange";
+  return value === undefined || value === "getContextSnapshot" || value === "getActiveFileExcerpt" || value === "openWorkspaceFile" || value === "revealWorkspaceRange" || value === "runVerificationCommand";
+}
+
+function isVerificationCommandId(value: unknown): value is VerificationCommandId {
+  return value === "repository-check" || value === "gui-app-tests" || value === "engine-chat-tests";
 }
 
 function isOptionalIdeActionContext(value: unknown): boolean {
@@ -604,6 +651,10 @@ function isActiveFileExcerptFile(value: unknown): boolean {
 
 function safeActiveFileExcerptText(value: unknown): boolean {
   return typeof value === "string" && value.length > 0 && value.length <= 8000 && !hasControlCharactersExceptCodeWhitespace(value) && !unsafeDisplayText(value) && !hasPrivatePathLikeText(value) && !hasKeyLikeSecretText(value);
+}
+
+function safeVerificationOutputTail(value: unknown): boolean {
+  return typeof value === "string" && value.length <= 4000 && !hasControlCharactersExceptCodeWhitespace(value) && !unsafeDisplayText(value) && !hasPrivatePathLikeText(value) && !hasKeyLikeSecretText(value);
 }
 
 function hasControlCharactersExceptCodeWhitespace(value: string): boolean {

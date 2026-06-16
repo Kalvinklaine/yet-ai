@@ -3,7 +3,7 @@ import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspac
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, removeOptimisticUserMessage, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToBundleItem, activeFileExcerptToChatContext, addExplicitContextBundleItem, explicitContextBundleMaxItems, explicitContextBundleToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, rangeFromContextSelection, type ExplicitContextBundleItem } from "./services/activeEditorContext";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
-import { IdeActionProposalPanel, IdeActionsPanel, type IdeActionAttemptState } from "./components/IdeActionsPanel";
+import { IdeActionProposalPanel, IdeActionsPanel, VerificationCommandPanel, type IdeActionAttemptState, type VerificationCommand } from "./components/IdeActionsPanel";
 import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
 import { chatLifecycleLabels, chatRecoveryCodeForRuntimeError, type ChatLifecycleState } from "./services/chatLifecycle";
 import { conversationHistoryStatusLabel, resolveChatAfterList, resolveFallbackChatAfterDelete } from "./services/conversationHistory";
@@ -24,6 +24,11 @@ export const completedIdeActionRequestChatsLimit = 64;
 export const completedApplyRequestChatsLimit = 64;
 const ignoredDuplicateApplyResultNote = sanitizeDisplayText("Ignored duplicate host apply result.");
 const ignoredStaleApplyResultNote = sanitizeDisplayText("Ignored stale host apply result.");
+const verificationCommands: VerificationCommand[] = [
+  { id: "repository-check", label: "Repository check", description: "Run the repository validation command allowlisted by the IDE host." },
+  { id: "gui-app-tests", label: "GUI app tests", description: "Run the GUI application test command allowlisted by the IDE host." },
+  { id: "engine-chat-tests", label: "Engine chat tests", description: "Run the engine chat test command allowlisted by the IDE host." },
+];
 
 const providerAuthStatusCopy: Record<ProviderAuthStatus, string> = {
   not_configured: "No production OpenAI account login is configured. Use the OpenAI API-key fallback as the safe/default real-provider path.",
@@ -1927,6 +1932,7 @@ export function App() {
                 <ExplicitContextBundlePanel items={explicitContextBundleItems} include={includeExplicitContextBundle} status={explicitContextBundleStatus} onIncludeChange={setIncludeExplicitContextBundle} onRemove={removeExplicitContextBundleItem} onClear={() => clearExplicitContextBundle("Cleared the one-shot explicit context bundle.")} />
                 <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} acknowledged={attachedContextAcknowledged} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} onAcknowledgeChange={setAttachedContextAcknowledged} />
                 <CodingActionsPanel canUseContext={codingActionsCanUseContext} context={currentAttachedContext} onAction={applyCodingAction} />
+                <VerificationCommandPanel host={bridgeHost} commands={verificationCommands} attempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} note={ideActionAttempt?.action === "runVerificationCommand" ? ideActionNote : null} onRun={(commandId) => requestIdeAction({ action: "runVerificationCommand", commandId }, "gui-verification-command")} onClearPending={clearPendingIdeActionState} />
                 <IdeActionsPanel host={bridgeHost} attempt={ideActionAttempt} note={ideActionNote} workspaceRelativePath={safeActiveWorkspacePath} range={safeActiveRange} onGetContext={() => requestIdeAction({ action: "getContextSnapshot" })} onOpenFile={(workspaceRelativePath) => requestIdeAction({ action: "openWorkspaceFile", workspaceRelativePath })} onRevealRange={(workspaceRelativePath, range) => requestIdeAction({ action: "revealWorkspaceRange", workspaceRelativePath, range })} onClearPendingIdeAction={clearPendingIdeActionState} />
               </div>
               <div className="composer-input-area">
@@ -2184,6 +2190,8 @@ function ideActionLabel(action: IdeActionType): string {
       return "Open file";
     case "revealWorkspaceRange":
       return "Reveal range";
+    case "runVerificationCommand":
+      return "Run verification command";
   }
 }
 

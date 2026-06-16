@@ -1,6 +1,6 @@
-import type { BridgeHost, IdeActionProgressPayload, IdeActionRequestPayload, IdeActionResultPayload, IdeActionType, WorkspaceEditRange } from "../bridge/bridgeAdapter";
+import type { BridgeHost, IdeActionProgressPayload, IdeActionRequestPayload, IdeActionResultPayload, IdeActionType, VerificationCommandId, WorkspaceEditRange } from "../bridge/bridgeAdapter";
 import { describeIdeActionProposal, type IdeActionProposalState } from "../services/ideActionProposal";
-import { sanitizeDisplayText } from "../services/redaction";
+import { sanitizeDisplayText, sanitizeTimelineText } from "../services/redaction";
 
 export type IdeActionAttemptState = {
   requestId: string;
@@ -24,6 +24,12 @@ export type IdeActionsPanelProps = {
   onOpenFile: (workspaceRelativePath: string) => void;
   onRevealRange: (workspaceRelativePath: string, range: WorkspaceEditRange) => void;
   onClearPendingIdeAction: () => void;
+};
+
+export type VerificationCommand = {
+  id: VerificationCommandId;
+  label: string;
+  description: string;
 };
 
 export function IdeActionsPanel({ host, attempt, note, workspaceRelativePath, range, onGetContext, onOpenFile, onRevealRange, onClearPendingIdeAction }: IdeActionsPanelProps) {
@@ -112,6 +118,58 @@ function renderIdeActionResultMetadata(result: IdeActionResultPayload | undefine
     return <span>Result path: {sanitizeDisplayText(result.workspaceRelativePath)} · result range: {formatEditRange(result.range)}</span>;
   }
   return null;
+}
+
+export type VerificationCommandPanelProps = {
+  host: BridgeHost;
+  commands: VerificationCommand[];
+  attempt: IdeActionAttemptState | null;
+  note: string | null;
+  onRun: (commandId: VerificationCommandId) => void;
+  onClearPending: () => void;
+};
+
+export function VerificationCommandPanel({ host, commands, attempt, note, onRun, onClearPending }: VerificationCommandPanelProps) {
+  const supported = host === "vscode" || host === "jetbrains";
+  const pending = attempt?.status === "pending" || attempt?.status === "inProgress";
+  const activeCommandId = attempt?.result?.commandId ?? attempt?.progress?.commandId;
+  return (
+    <section className={`readiness-card ${supported ? "ready" : "warn"} verification-command-card stack`} aria-label="Verification commands">
+      <div className="row">
+        <strong>Verification commands</strong>
+        <span className={`badge ${supported ? "ok" : "warn"}`}>{supported ? `${host} explicit run` : "browser preview only"}</span>
+        {pending && <span className="badge warn">pending</span>}
+      </div>
+      <span className="subtle">Allowlisted local verification only. Click a button to ask the IDE host to run one command; output stays in this panel and is not attached or sent automatically.</span>
+      <div className="row" role="group" aria-label="Allowlisted verification commands">
+        {commands.map((command) => (
+          <button type="button" key={command.id} onClick={() => onRun(command.id)} disabled={!supported || pending} title={command.description}>
+            {pending && activeCommandId === command.id ? "Verification pending…" : command.label}
+          </button>
+        ))}
+      </div>
+      {!supported && <div className="readiness-card warn" role="status">Browser preview only. Open {sanitizeDisplayText(host === "browser" ? "Yet AI in VS Code or JetBrains" : "an IDE host")} to request allowlisted verification commands.</div>}
+      {supported && pending && <button type="button" className="secondary-button" onClick={onClearPending}>Clear pending verification state</button>}
+      {attempt && attempt.action === "runVerificationCommand" ? <VerificationCommandAttemptPreview attempt={attempt} /> : <span className="subtle">No verification command requested yet.</span>}
+      {note && <span className="subtle" role="status">{sanitizeDisplayText(note)}</span>}
+    </section>
+  );
+}
+
+function VerificationCommandAttemptPreview({ attempt }: { attempt: IdeActionAttemptState }) {
+  const result = attempt.result;
+  return (
+    <div className={`ide-action-status ${attempt.status}`} role="status">
+      <strong>{sanitizeDisplayText(attempt.label)}: {sanitizeDisplayText(attempt.status)}</strong>
+      <span>{sanitizeDisplayText(attempt.message)}</span>
+      <span>Request: {sanitizeDisplayText(attempt.requestId)} · cloud required: false</span>
+      {result?.commandId && <span>Command id: {sanitizeDisplayText(result.commandId)}</span>}
+      {result?.exitCode !== undefined && <span>Exit code: {result.exitCode}</span>}
+      {result?.durationMs !== undefined && <span>Duration: {result.durationMs} ms</span>}
+      {result?.outputTail !== undefined && <pre aria-label="Verification output tail">{sanitizeTimelineText(result.outputTail)}</pre>}
+      {result?.truncated !== undefined && <span>Output truncated: {result.truncated ? "yes" : "no"}</span>}
+    </div>
+  );
 }
 
 export type IdeActionProposalPanelProps = {
