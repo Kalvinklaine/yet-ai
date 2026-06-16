@@ -10,9 +10,12 @@ docs/
   architecture/         # architecture baselines, decisions, contracts, roadmaps
 ```
 
+Additional local evidence templates live under `docs/dogfood/`.
+
 ## Where to add documents
 
 - `docs/architecture/` — add architecture decisions, subsystem boundaries, protocol contracts, storage rules, product-sensitive audits, roadmaps, implementation plans, and risks.
+- `docs/dogfood/` — add sanitized manual local evidence templates and checklists for dogfood runs; keep completed reports in ignored local evidence locations unless a task explicitly asks for a sanitized tracked example.
 - Implementation notes — add them next to the future subsystem when it exists, or in `docs/architecture/` if the note affects multiple subsystems.
 - Decisions — record them as separate numbered architecture documents when they affect layout, identity, public protocols, storage, packaging, licensing, or long-term maintenance.
 
@@ -95,6 +98,8 @@ For the login-based GPT first-message milestone foundation, run `cd apps/gui && 
 ### Safe IDE dogfood reports
 
 Use `npm run dogfood:ide-report -- --template` for local safe-share installed first-message reports, especially VS Code dogfood runs. The template/checker records artifact/checksum, launch mode, runtime status, provider path, first-message result, and second-message refresh result while excluding provider API keys, runtime tokens, auth headers/codes, secret URL query or fragment values, private absolute paths, raw provider responses, and bridge payload dumps. Keep completed reports in ignored local evidence locations unless a task explicitly asks for a sanitized excerpt in tracked docs.
+
+Use `npm run dogfood:real-provider-report -- --template` for manual real BYOK active-file coding chat evidence. Validate any completed local report with `npm run dogfood:real-provider-report -- --check path/to/local-report.md` before sharing. This helper is a sanitizer/template checker only: it does not call providers, launch runtimes, use real credentials, create CI evidence, or prove production release readiness. The checklist records commit/artifact, runtime launch mode, IDE/browser surface, non-secret provider/model ID, active-file excerpt attached/omitted status, first streaming answer result, no-secret checks, and known issues.
 
 ### Chat response refresh verification bundle
 

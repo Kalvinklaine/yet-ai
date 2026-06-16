@@ -1,19 +1,21 @@
 import { spawnSync } from "node:child_process";
 
 const validators = [
-  "scripts/validate-product-identity.mjs",
-  "scripts/validate-public-hygiene.mjs",
-  "scripts/validate-docs-index.mjs",
-  "scripts/validate-contracts.mjs",
-  "scripts/validate-ide-artifact-contract.mjs",
-  "scripts/validate-ide-artifact-workflow.mjs",
-  "scripts/validate-ide-surface-contract.mjs",
-  "scripts/validate-npm-spawn.mjs",
-  "scripts/check-gui-asset-freshness.mjs"
+  ["scripts/validate-product-identity.mjs"],
+  ["scripts/validate-public-hygiene.mjs"],
+  ["scripts/validate-docs-index.mjs"],
+  ["scripts/validate-contracts.mjs"],
+  ["scripts/validate-ide-artifact-contract.mjs"],
+  ["scripts/validate-ide-artifact-workflow.mjs"],
+  ["scripts/validate-ide-surface-contract.mjs"],
+  ["scripts/validate-npm-spawn.mjs"],
+  ["scripts/check-gui-asset-freshness.mjs"],
+  ["scripts/dogfood-real-provider-report.mjs", "--check-template"],
+  ["scripts/dogfood-real-provider-report.mjs", "--self-test"]
 ];
 
 for (const validator of validators) {
-  const result = spawnSync(process.execPath, [validator], { stdio: "inherit" });
+  const result = spawnSync(process.execPath, validator, { stdio: "inherit" });
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }

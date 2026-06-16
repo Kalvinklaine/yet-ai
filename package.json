@@ -30,6 +30,7 @@
     "smoke:ide-dogfood": "node scripts/smoke-ide-dogfood.mjs",
     "smoke:ide-release-candidate": "node scripts/smoke-ide-release-candidate.mjs",
     "dogfood:ide-report": "node scripts/ide-dogfood-report.mjs",
+    "dogfood:real-provider-report": "node scripts/dogfood-real-provider-report.mjs",
     "smoke:vscode-preview": "node scripts/smoke-vscode-preview.mjs",
     "smoke:vscode-wrapper-browser": "node scripts/smoke-vscode-wrapper-browser.mjs",
     "smoke:installed-plugin-chat-visual": "node scripts/smoke-installed-plugin-chat-visual.mjs",
