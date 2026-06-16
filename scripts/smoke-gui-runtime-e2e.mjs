@@ -23,14 +23,17 @@ const userMessageWithContext = "Say hello from GUI runtime smoke with attached c
 const userMessageWithoutContext = "Say hello from GUI runtime smoke without attached context.";
 const userMessageWithBundle = "Say hello from GUI runtime smoke with multi-file bundle.";
 const userMessageAfterBundle = "Say hello from GUI runtime smoke after multi-file bundle cleared.";
+const userMessageAfterVerification = "Say hello from GUI runtime smoke with attached verification output.";
 const safeEditPrompt = "Coding action: propose_safe_edit\n\nPropose a safe edit for the selected code. Nothing is applied automatically.";
 const assistantTextWithContext = "Hello smoke from mock provider with context.";
 const assistantTextWithoutContext = "Hello smoke from mock provider without context.";
 const assistantTextWithBundle = "Hello smoke from mock provider with multi-file bundle.";
 const assistantTextAfterBundle = "Hello smoke from mock provider after bundle cleared.";
+const assistantTextAfterVerification = "Hello smoke from mock provider after verification output.";
 const activeContextSentinel = `ACTIVE_CONTEXT_SENTINEL_${"x".repeat(64)}`;
 const activeContextText = `function smokeContext() { return "${activeContextSentinel}"; }`;
 const activeContextPath = "src/smoke-context.ts";
+const verificationOutputTail = "Repository check failed.\nSmoke fixture expected one failing assertion.\nNo real shell command ran.";
 const bundleSentinelOne = `BUNDLE_CONTEXT_ONE_${"a".repeat(48)}`;
 const bundleSentinelTwo = `BUNDLE_CONTEXT_TWO_${"b".repeat(48)}`;
 const bundlePreviewOne = `export const bundleOnePreview = "${"a".repeat(16)}";`;
@@ -226,14 +229,18 @@ try {
   assert(applyRequestsAfterSafeEdit === applyRequestsBeforeSafeEdit, "GUI emitted a workspace edit apply request before an explicit apply click");
   await waitForProviderHits(5);
 
+  await exerciseEditVerifyLoop(page);
+  await waitForProviderHits(6);
+
   assert(providerAuth === `Bearer ${fakeApiKey}`, "mock provider did not receive the configured fake bearer key");
-  assert(providerRequestBodies.length === 5, "mock provider received " + providerRequestBodies.length + " chat request(s), expected 5");
+  assert(providerRequestBodies.length === 6, "mock provider received " + providerRequestBodies.length + " chat request(s), expected 6");
   const parsedProviderBodies = providerRequestBodies.map((body) => JSON.parse(body));
   const bundlePrompt = parsedProviderBodies[0].messages?.[0]?.content;
   const afterBundlePrompt = parsedProviderBodies[1].messages?.[0]?.content;
   const includedPrompt = parsedProviderBodies[2].messages?.[0]?.content;
   const omittedPrompt = parsedProviderBodies[3].messages?.[0]?.content;
   const safeEditProviderPrompt = parsedProviderBodies[4].messages?.[0]?.content;
+  const verificationPrompt = parsedProviderBodies[5].messages?.[0]?.content;
   assert(parsedProviderBodies.every((body) => body.stream === true), "mock provider requests were not streaming");
   assert(parsedProviderBodies.every((body) => body.model === modelId), "mock provider request used the wrong model");
   assert(typeof bundlePrompt === "string" && bundlePrompt.includes("IDE context bundle"), "bundle request did not prepend IDE context bundle");
@@ -252,6 +259,11 @@ try {
   assert(!omittedPrompt.includes(activeContextSentinel), "omitted-context request leaked active context sentinel");
   assert(safeEditProviderPrompt === safeEditPrompt, "safe-edit request did not reach the mock provider as the user coding action prompt");
   assert(!safeEditProviderPrompt.includes(activeContextSentinel), "safe-edit request unexpectedly included stale active context sentinel");
+  assert(typeof verificationPrompt === "string" && verificationPrompt.includes("IDE context bundle"), "verification follow-up request did not prepend explicit context bundle");
+  assert(verificationPrompt.includes("verification output commandId=repository-check status=failed exitCode=1 truncated=false"), "verification follow-up request missed verification output metadata");
+  assert(verificationPrompt.includes(verificationOutputTail), "verification follow-up request missed failed output tail");
+  assert(verificationPrompt.includes(userMessageAfterVerification), "verification follow-up request missed user content");
+  assert(!verificationPrompt.includes(activeContextSentinel) && !verificationPrompt.includes(bundleSentinelOne) && !verificationPrompt.includes(bundleSentinelTwo), "verification follow-up request leaked stale editor context");
 
   await exerciseHistoryReload(page, runtimeBaseUrl);
 
@@ -274,7 +286,7 @@ try {
   }
 
   console.log("GUI runtime e2e smoke passed.");
-  console.log("Verified built GUI, loopback runtime, mock OpenAI-compatible streaming provider, IDE-like active-file multi-file bundle include/one-shot clear, active context include/omit, streamed chat responses, mock safe-edit JSON proposal preview without auto-apply, local history reload, and browser-state redaction.");
+  console.log("Verified built GUI, loopback runtime, mock OpenAI-compatible streaming provider, IDE-like active-file multi-file bundle include/one-shot clear, active context include/omit, streamed chat responses, mock safe-edit JSON proposal preview without auto-apply, explicit apply result to user-clicked verification to one-shot verification_output attachment, local history reload, and browser-state redaction.");
   console.log("No OpenAI/ChatGPT, hosted Yet AI service, non-loopback URL, real IDE launch, or real provider credential was used.");
 } finally {
   await browser?.close().catch(() => undefined);
@@ -416,7 +428,7 @@ async function startMockProvider() {
     });
     request.on("end", () => {
       providerRequestBodies.push(requestBody);
-      const responseText = providerHits === 1 ? assistantTextWithBundle : providerHits === 2 ? assistantTextAfterBundle : providerHits === 3 ? assistantTextWithContext : providerHits === 4 ? assistantTextWithoutContext : JSON.stringify(safeEditProposal);
+      const responseText = providerHits === 1 ? assistantTextWithBundle : providerHits === 2 ? assistantTextAfterBundle : providerHits === 3 ? assistantTextWithContext : providerHits === 4 ? assistantTextWithoutContext : providerHits === 5 ? JSON.stringify(safeEditProposal) : assistantTextAfterVerification;
       response.writeHead(200, {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
@@ -499,6 +511,63 @@ async function exerciseExplicitContextBundle(page) {
   await expectVisibleText(page, userMessageAfterBundle, "visible post-bundle user chat bubble", 20_000);
   await expectVisibleText(page, assistantTextAfterBundle, "post-bundle streamed assistant response", 30_000);
   await assertAssistantAnswerCount(page, assistantTextAfterBundle, 1, "post-bundle streamed assistant response");
+}
+
+async function exerciseEditVerifyLoop(page) {
+  const applyRequestsBeforeClick = await getGuiMessageCount(page, "gui.applyWorkspaceEditRequest");
+  await page.getByRole("button", { name: "Apply in VS Code after review" }).click();
+  const applyRequest = await waitForGuiMessageAfter(page, "gui.applyWorkspaceEditRequest", applyRequestsBeforeClick);
+  assert(applyRequest?.version === "2026-05-15", "safe-edit apply request used the wrong bridge version");
+  assert(typeof applyRequest.requestId === "string" && /^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/.test(applyRequest.requestId), "safe-edit apply request id was not GUI-owned");
+  assert(deepEqual(applyRequest.payload, safeEditProposal.payload), "safe-edit apply request payload did not match the reviewed proposal");
+  await page.waitForTimeout(150);
+  assert(providerHits === 5, "safe-edit apply click auto-sent a chat request before host result or verification attachment");
+
+  await dispatchHostMessage(page, {
+    version: "2026-05-15",
+    type: "host.applyWorkspaceEditResult",
+    requestId: applyRequest.requestId,
+    payload: { status: "applied", message: "Mock host applied the reviewed smoke edit.", cloudRequired: false, appliedEditCount: 1, affectedFiles: [activeContextPath] },
+  });
+  await expectVisibleText(page, "Host apply result: applied", "safe-edit applied host result", 20_000);
+  await expectVisibleText(page, "Next safe step: run verification.", "post-apply verification next step", 20_000);
+  await page.waitForTimeout(150);
+  assert(providerHits === 5, "applied host result auto-sent a chat request before explicit verification attachment");
+
+  const verificationRequestsBeforeClick = await getGuiMessageCount(page, "gui.ideActionRequest");
+  await page.getByRole("button", { name: "Repository check", exact: true }).click();
+  const verificationRequest = await waitForGuiMessageAfter(page, "gui.ideActionRequest", verificationRequestsBeforeClick);
+  assert(verificationRequest?.version === "2026-05-15", "verification request used the wrong bridge version");
+  assert(typeof verificationRequest.requestId === "string" && /^gui-verification-command-\d+$/.test(verificationRequest.requestId), "verification request id was not GUI-owned");
+  assert(deepEqual(verificationRequest.payload, { action: "runVerificationCommand", commandId: "repository-check" }), "verification request payload was not the strict repository-check command");
+  await expectVisibleText(page, "Run verification command: pending", "verification pending status", 20_000);
+
+  await dispatchHostMessage(page, {
+    version: "2026-05-15",
+    type: "host.ideActionResult",
+    requestId: verificationRequest.requestId,
+    payload: { status: "failed", message: "Repository check failed in the mock host.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 1, durationMs: 45, outputTail: verificationOutputTail, truncated: false },
+  });
+  await expectVisibleText(page, "Run verification command: failed", "failed verification result status", 20_000);
+  await expectVisibleText(page, "Repository check failed.", "failed verification output tail", 20_000);
+  await expectVisibleText(page, "Attach verification result to next message", "explicit verification attach action", 20_000);
+  await page.waitForTimeout(150);
+  assert(providerHits === 5, "failed verification result auto-sent a chat request before explicit attach and send");
+
+  await page.getByRole("button", { name: "Attach verification result to next message" }).click();
+  await expectVisibleText(page, "Verification result attached to next message", "verification result attached button state", 20_000);
+  await expectVisibleText(page, "Added repository-check verification output to the one-shot bundle.", "verification output bundle status", 20_000);
+  await expectVisibleText(page, "Verification output", "verification output bundle preview", 20_000);
+  await page.waitForTimeout(150);
+  assert(providerHits === 5, "verification attachment auto-sent a chat request before explicit Send");
+
+  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(userMessageAfterVerification);
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expectVisibleText(page, userMessageAfterVerification, "visible verification-context user chat bubble", 20_000);
+  await expectVisibleText(page, assistantTextAfterVerification, "verification-context streamed assistant response", 30_000);
+  await assertAssistantAnswerCount(page, assistantTextAfterVerification, 1, "verification-context streamed assistant response");
+  await expectVisibleText(page, "One-shot explicit context bundle attached to the last accepted message and cleared.", "verification context one-shot clear status", 20_000);
+  await expectVisibleText(page, "empty", "explicit context bundle empty after verification send", 20_000);
 }
 
 async function waitForGuiMessage(page, type) {
@@ -678,10 +747,12 @@ async function exerciseHistoryReload(page, runtimeBaseUrl) {
   await expectVisibleText(page, userMessageAfterBundle, "persisted post-bundle message after reload", 20_000);
   await expectVisibleText(page, userMessageWithContext, "persisted included-context message after reload", 20_000);
   await expectVisibleText(page, userMessageWithoutContext, "persisted omitted-context message after reload", 20_000);
+  await expectVisibleText(page, userMessageAfterVerification, "persisted verification-context message after reload", 20_000);
   await expectVisibleText(page, assistantTextWithBundle, "persisted bundle-context assistant response after reload", 20_000);
   await expectVisibleText(page, assistantTextAfterBundle, "persisted post-bundle assistant response after reload", 20_000);
   await expectVisibleText(page, assistantTextWithContext, "persisted included-context assistant response after reload", 20_000);
   await expectVisibleText(page, assistantTextWithoutContext, "persisted omitted-context assistant response after reload", 20_000);
+  await expectVisibleText(page, assistantTextAfterVerification, "persisted verification-context assistant response after reload", 20_000);
   await assertContextSentinelNotVisible(page, "reloaded history DOM");
 }
 
@@ -831,6 +902,10 @@ function redactSecrets(text) {
   return redacted
     .replace(/Bearer\s+[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/gi, "Bearer [redacted]")
     .replace(/sk-[A-Za-z0-9_-]{8,}/g, "[redacted]");
+}
+
+function deepEqual(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function failActionable(summary, lines) {
