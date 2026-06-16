@@ -1,4 +1,6 @@
 import type { HostContextSnapshotPayload, WorkspaceEditRange } from "../bridge/bridgeAdapter";
+import type { ActiveFileExcerptAttachment } from "../bridge/bridgeAdapter";
+import type { ChatContext } from "./runtimeClient";
 import { redactSecrets, sanitizeDisplayText } from "./redaction";
 
 export type ActiveEditorContextUsability = "none" | "file" | "selection";
@@ -10,6 +12,17 @@ export type BoundedContextPreviewResult = {
 };
 
 const contextPreviewLimit = 360;
+
+export type ActiveFileExcerptPreviewResult = {
+  fileLabel: string;
+  language: string;
+  range: string;
+  characters: number;
+  text: string;
+  redacted: boolean;
+  truncated: boolean;
+  hostTruncated: boolean;
+};
 
 export function activeEditorContextUsability(context: HostContextSnapshotPayload | null | undefined): ActiveEditorContextUsability {
   if (!context) {
@@ -74,6 +87,52 @@ export function classifyBoundedContextPreview(text: string): BoundedContextPrevi
     redacted: redactedText !== text,
     truncated: truncated || sanitized.length < bounded.trim().length,
   };
+}
+
+export function activeFileExcerptToChatContext(attachment: ActiveFileExcerptAttachment): ChatContext {
+  return {
+    kind: "active_editor",
+    source: attachment.source,
+    file: attachment.file,
+    selection: {
+      startLine: attachment.range.start.line,
+      startCharacter: attachment.range.start.character,
+      endLine: attachment.range.end.line,
+      endCharacter: attachment.range.end.character,
+      text: attachment.text,
+    },
+  };
+}
+
+export function activeFileExcerptSummary(attachment: ActiveFileExcerptAttachment): string {
+  return `${activeEditorSourceLabel(attachment.source)} ${sanitizeDisplayText(attachment.file.workspaceRelativePath ?? attachment.file.displayPath ?? "active file excerpt")}`;
+}
+
+export function activeFileExcerptPreview(attachment: ActiveFileExcerptAttachment): ActiveFileExcerptPreviewResult {
+  const preview = classifyBoundedContextPreview(attachment.text);
+  return {
+    fileLabel: activeFileExcerptFileLabel(attachment),
+    language: attachment.file.languageId ? sanitizeDisplayText(attachment.file.languageId) : "unknown language",
+    range: formatEditRange(attachment.range),
+    characters: attachment.text.length,
+    text: preview.text,
+    redacted: preview.redacted,
+    truncated: preview.truncated,
+    hostTruncated: attachment.truncated,
+  };
+}
+
+export function activeFileExcerptFileLabel(attachment: ActiveFileExcerptAttachment): string {
+  const displayPath = attachment.file.displayPath;
+  const workspacePath = attachment.file.workspaceRelativePath;
+  if (displayPath && workspacePath && displayPath !== workspacePath) {
+    return `${sanitizeDisplayText(displayPath)} (${sanitizeDisplayText(workspacePath)})`;
+  }
+  return sanitizeDisplayText(displayPath ?? workspacePath ?? "Active file");
+}
+
+function formatEditRange(range: WorkspaceEditRange): string {
+  return `${range.start.line}:${range.start.character}-${range.end.line}:${range.end.character}`;
 }
 
 export function formatSelectionRange(selection: HostContextSnapshotPayload["selection"] | null | undefined): string {

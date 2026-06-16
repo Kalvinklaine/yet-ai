@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HostContextSnapshotPayload } from "../bridge/bridgeAdapter";
-import { activeEditorContextUsability, activeEditorSourceLabel, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, boundedContextPreview, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, rangeFromContextSelection } from "./activeEditorContext";
+import { activeEditorContextUsability, activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, boundedContextPreview, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, rangeFromContextSelection } from "./activeEditorContext";
 
 const baseContext: HostContextSnapshotPayload = { kind: "active_editor", source: "vscode" };
 
@@ -60,6 +60,52 @@ describe("activeEditorContext", () => {
     expect(attachedContextRequiresAcknowledgement({ ...baseContext, selection: { text: "safe short selected text" } })).toBe(false);
     expect(attachedContextRequiresAcknowledgement({ ...baseContext, selection: { text: "Authorization: Bearer sk-proj-1234567890abcdef" } })).toBe(true);
     expect(attachedContextRequiresAcknowledgement({ ...baseContext, selection: { text: "safe long text ".repeat(100) } })).toBe(true);
+  });
+
+  it("formats active-file excerpt metadata and converts it to chat context", () => {
+    const attachment = {
+      kind: "active_file_excerpt" as const,
+      source: "jetbrains" as const,
+      file: { displayPath: "src/Main.kt", workspaceRelativePath: "src/Main.kt", languageId: "kotlin" },
+      range: { start: { line: 3, character: 2 }, end: { line: 8, character: 1 } },
+      text: "fun greet() = \"hello\"",
+      truncated: false,
+    };
+
+    expect(activeFileExcerptSummary(attachment)).toBe("jetbrains src/Main.kt");
+    expect(activeFileExcerptPreview(attachment)).toMatchObject({
+      fileLabel: "src/Main.kt",
+      language: "kotlin",
+      range: "3:2-8:1",
+      characters: 21,
+      text: "fun greet() = \"hello\"",
+      redacted: false,
+      truncated: false,
+      hostTruncated: false,
+    });
+    expect(activeFileExcerptToChatContext(attachment)).toEqual({
+      kind: "active_editor",
+      source: "jetbrains",
+      file: attachment.file,
+      selection: { startLine: 3, startCharacter: 2, endLine: 8, endCharacter: 1, text: attachment.text },
+    });
+  });
+
+  it("redacts active-file excerpt previews and reports host truncation", () => {
+    const rawSecret = "sk-proj-1234567890abcdef";
+    const preview = activeFileExcerptPreview({
+      kind: "active_file_excerpt",
+      source: "vscode",
+      file: { workspaceRelativePath: "src/main.ts" },
+      range: { start: { line: 1, character: 0 }, end: { line: 2, character: 0 } },
+      text: `const key = "${rawSecret}";`,
+      truncated: true,
+    });
+
+    expect(preview.redacted).toBe(true);
+    expect(preview.hostTruncated).toBe(true);
+    expect(preview.text).toContain("[redacted]");
+    expect(preview.text).not.toContain(rawSecret);
   });
 
   it("uses safe source labels", () => {

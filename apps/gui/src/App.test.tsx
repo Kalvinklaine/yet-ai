@@ -2046,7 +2046,7 @@ describe("agent progress panel", () => {
     expect(text).toContain("6 more summaries hidden.");
     expect(text).not.toContain("T-BOUND-20 / run-20");
     expect(text).not.toContain("safe recent summary 17");
-    expect(text.length).toBeLessThan(33500);
+    expect(text.length).toBeLessThan(34000);
   });
 
   it("endpoint unavailable or corrupt runtime error is sanitized and non-fatal", async () => {
@@ -2740,6 +2740,155 @@ describe("active editor attached context", () => {
     expect(container?.textContent).toContain("Safe local navigation/context actions only.");
     expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Get IDE context");
     expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  it("shows browser active-file excerpt host-required copy without posting host action", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Active file excerpt");
+    expect(container?.textContent).toContain("IDE host required");
+    expect(container?.textContent).toContain("Browser mode will not execute host actions.");
+    expect(buttonsNamed("Attach active file excerpt")).toHaveLength(0);
+    expect(browserStorageDump()).not.toContain("Active file excerpt");
+    expect(localSetItem).not.toHaveBeenCalled();
+  });
+
+  it("requests a VS Code active-file excerpt only after explicit click and blocks pending duplicates", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
+    await act(async () => {
+      findButton("Attach active file excerpt").click();
+    });
+    await act(async () => {
+      findButton("Active file excerpt pending…").click();
+    });
+
+    const ideActionMessages = postMessage.mock.calls.map(([message]) => message).filter((message) => message.type === "gui.ideActionRequest");
+    expect(ideActionMessages).toHaveLength(1);
+    expect(ideActionMessages[0]).toEqual({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "gui-active-file-excerpt-1", payload: { action: "getActiveFileExcerpt" } });
+  });
+
+  it("renders active-file excerpt preview, respects omit toggle, sends once, and clears after accepted send", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Attach active file excerpt").click();
+    });
+    await dispatchHostIdeActionResult("gui-active-file-excerpt-1", activeFileExcerptResultPayload({ text: "export const answer = 42;" }));
+
+    expect(container?.textContent).toContain("Active file excerpt");
+    expect(container?.textContent).toContain("File: src/editor.ts");
+    expect(container?.textContent).toContain("Excerpt range: 10:0-24:1");
+    expect(container?.textContent).toContain("Excerpt characters: 25");
+    expect(container?.textContent).toContain("Bounded redacted previewexport const answer = 42;");
+    expect(activeFileExcerptToggle().checked).toBe(true);
+
+    await act(async () => {
+      activeFileExcerptToggle().click();
+    });
+    expect(activeFileExcerptToggle().checked).toBe(false);
+    fetchMock.mockClear();
+    await act(async () => {
+      setTextareaValue(chatInput(), "send without excerpt");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    expect(lastUserMessageBody().payload).toEqual({ content: "send without excerpt" });
+    expect(container?.textContent).toContain("Active file excerpt");
+
+    await act(async () => {
+      activeFileExcerptToggle().click();
+    });
+    fetchMock.mockClear();
+    await act(async () => {
+      setTextareaValue(chatInput(), "send with excerpt once");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    expect(lastUserMessageBody().payload).toEqual({
+      content: "send with excerpt once",
+      context: {
+        kind: "active_editor",
+        source: "vscode",
+        file: { displayPath: "src/editor.ts", workspaceRelativePath: "src/editor.ts", languageId: "typescript" },
+        selection: { startLine: 10, startCharacter: 0, endLine: 24, endCharacter: 1, text: "export const answer = 42;" },
+      },
+    });
+    expect(container?.textContent).toContain("Context attached to the last accepted message from vscode src/editor.ts.");
+    expect(activeFileExcerptToggleOptional()).toBeUndefined();
+
+    fetchMock.mockClear();
+    await act(async () => {
+      setTextareaValue(chatInput(), "second message no excerpt");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    expect(lastUserMessageBody().payload).toEqual({ content: "second message no excerpt" });
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("export const answer");
+  });
+
+  it("ignores stale active-file excerpt results after chat switch", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Attach active file excerpt").click();
+    });
+    await act(async () => {
+      setInputValue(chatIdInput(), "chat-002");
+      await Promise.resolve();
+    });
+    await dispatchHostIdeActionResult("gui-active-file-excerpt-1", activeFileExcerptResultPayload({ text: "stale excerpt should not render" }));
+
+    expect(container?.textContent).not.toContain("stale excerpt should not render");
+    expect(activeFileExcerptToggleOptional()).toBeUndefined();
+  });
+
+  it("rejects unsafe active-file excerpt host results before rendering or storing raw text", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const rawSecret = "access_token=" + "q".repeat(64);
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Attach active file excerpt").click();
+    });
+    await dispatchHostIdeActionResult("gui-active-file-excerpt-1", activeFileExcerptResultPayload({ text: `const token = "${rawSecret}";` }));
+
+    expect(container?.textContent).toContain("Attach active file excerpt: pending");
+    expect(container?.textContent).toContain("Rejected invalid host bridge message");
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("q".repeat(64));
+    expect(activeFileExcerptToggleOptional()).toBeUndefined();
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(rawSecret);
   });
 
   it("sends unique bounded JetBrains IDE action requests and blocks pending duplicate clicks", async () => {
@@ -8153,6 +8302,35 @@ function chatLifecycleText() {
     throw new Error("Chat lifecycle state not found");
   }
   return lifecycle.textContent ?? "";
+}
+
+function activeFileExcerptToggle() {
+  const input = Array.from(container?.querySelectorAll<HTMLInputElement>(".active-file-excerpt-card input[type='checkbox']") ?? [])[0];
+  if (!input) {
+    throw new Error("Active file excerpt toggle not found");
+  }
+  return input;
+}
+
+function activeFileExcerptToggleOptional() {
+  return Array.from(container?.querySelectorAll<HTMLInputElement>(".active-file-excerpt-card input[type='checkbox']") ?? [])[0];
+}
+
+function activeFileExcerptResultPayload(options: { text?: string; source?: "vscode" | "jetbrains"; truncated?: boolean } = {}) {
+  return {
+    status: "succeeded",
+    message: "Active file excerpt ready.",
+    cloudRequired: false,
+    action: "getActiveFileExcerpt",
+    contextAttachment: {
+      kind: "active_file_excerpt",
+      source: options.source ?? "vscode",
+      file: { displayPath: "src/editor.ts", workspaceRelativePath: "src/editor.ts", languageId: "typescript" },
+      range: { start: { line: 10, character: 0 }, end: { line: 24, character: 1 } },
+      text: options.text ?? "export function greet() {\n  return \"hello\";\n}\n",
+      truncated: options.truncated ?? false,
+    },
+  };
 }
 
 function attachedContextToggle() {

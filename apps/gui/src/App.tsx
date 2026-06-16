@@ -1,7 +1,7 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType } from "./bridge/bridgeAdapter";
+import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type ActiveFileExcerptAttachment } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, removeOptimisticUserMessage, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
-import { activeEditorSourceLabel, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, rangeFromContextSelection } from "./services/activeEditorContext";
+import { activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, rangeFromContextSelection } from "./services/activeEditorContext";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
 import { IdeActionProposalPanel, IdeActionsPanel, type IdeActionAttemptState } from "./components/IdeActionsPanel";
 import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
@@ -262,7 +262,7 @@ export function App() {
   const [timeline, setTimeline] = useState<string[]>([]);
   const [bridgeLog, setBridgeLog] = useState<string[]>([]);
   const [bridgeHost, setBridgeHost] = useState<BridgeHost>("browser");
-  const [attachedContext, setAttachedContext] = useState<{ payload: HostContextSnapshotPayload; settingsRevision: number; chatId: string } | null>(null);
+  const [attachedContext, setAttachedContext] = useState<{ payload: HostContextSnapshotPayload; settingsRevision: number; chatId: string; excerpt?: ActiveFileExcerptAttachment } | null>(null);
   const [includeAttachedContext, setIncludeAttachedContext] = useState(false);
   const [attachedContextAcknowledged, setAttachedContextAcknowledged] = useState(false);
   const [attachedContextStatus, setAttachedContextStatus] = useState<string | null>(null);
@@ -383,14 +383,17 @@ export function App() {
               : "Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK OpenAI-compatible provider/model for real answers.";
   const chatModelStatus = apiKeyReadiness.model ? modelStatusText(apiKeyReadiness.model, apiKeyReadiness.provider) : null;
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
-  const currentAttachedContext = attachedContext?.settingsRevision === settingsRevision && attachedContext.chatId === chatId ? attachedContext.payload : null;
-  const codingActionsCanUseContext = Boolean(currentAttachedContext && hasUsableAttachedContext(currentAttachedContext) && (!attachedContextRequiresAcknowledgement(currentAttachedContext) || attachedContextAcknowledged));
+  const currentAttachedContextState = attachedContext?.settingsRevision === settingsRevision && attachedContext.chatId === chatId ? attachedContext : null;
+  const currentAttachedContext = currentAttachedContextState?.payload ?? null;
+  const currentActiveFileExcerpt = currentAttachedContextState?.excerpt ?? null;
+  const codingActionsCanUseContext = Boolean(currentAttachedContext && !currentActiveFileExcerpt && hasUsableAttachedContext(currentAttachedContext) && (!attachedContextRequiresAcknowledgement(currentAttachedContext) || attachedContextAcknowledged));
   const editProposalCandidate = latestEditProposalCandidateFromMessages(chatView.messages);
   const activeEditProposal = editProposalCandidateIdentityMatches(editProposal, editProposalCandidate) ? editProposal : null;
   const ideActionProposalCandidate = useMemo(() => latestIdeActionProposalCandidateFromMessages(chatView.messages), [chatView.messages]);
   const activeIdeActionProposal = ideActionProposalMatchesCandidate(ideActionProposal, ideActionProposalCandidate) ? ideActionProposal : null;
   const safeActiveWorkspacePath = currentAttachedContext?.file?.workspaceRelativePath;
   const safeActiveRange = rangeFromContextSelection(currentAttachedContext?.selection);
+  const pendingActiveFileExcerpt = pendingIdeActionRequestIdRef.current !== null && ideActionAttempt?.action === "getActiveFileExcerpt" && (ideActionAttempt.status === "pending" || ideActionAttempt.status === "inProgress");
   const chatHistoryStatus = conversationHistoryStatusLabel({ loading: chatHistoryLoading, current: chatHistoryCurrent, count: activeChatSummaries.length, hasError: Boolean(chatHistoryError) });
 
   useEffect(() => {
@@ -607,6 +610,13 @@ export function App() {
         pendingIdeActionRequestIdRef.current = null;
         pendingIdeActionChatIdRef.current = null;
         setIdeActionNote(null);
+        if (payload.status === "succeeded" && payload.action === "getActiveFileExcerpt" && payload.contextAttachment) {
+          const attachment = payload.contextAttachment;
+          setAttachedContext({ payload: activeFileExcerptToChatContext(attachment), settingsRevision: settingsRevisionRef.current, chatId: chatIdRef.current, excerpt: attachment });
+          setIncludeAttachedContext(true);
+          setAttachedContextAcknowledged(false);
+          setAttachedContextStatus(null);
+        }
         setIdeActionAttempt((current) => current?.requestId === requestId ? {
           ...current,
           status: payload.status,
@@ -641,7 +651,7 @@ export function App() {
       setAttachedContext(null);
       setIncludeAttachedContext(false);
       setAttachedContextAcknowledged(false);
-      setAttachedContextStatus(`Context attached to the last accepted message from ${attachedContextSummary(submittedContext.payload)}.`);
+      setAttachedContextStatus(`Context attached to the last accepted message from ${submittedContext.excerpt ? activeFileExcerptSummary(submittedContext.excerpt) : attachedContextSummary(submittedContext.payload)}.`);
     }
   }, []);
 
@@ -1531,9 +1541,9 @@ export function App() {
       addTimeline("Command blocked until current runtime settings are ready");
       return;
     }
-    const attachedContextAllowed = currentAttachedContext && (!attachedContextRequiresAcknowledgement(currentAttachedContext) || attachedContextAcknowledged);
+    const attachedContextAllowed = currentAttachedContext && (currentActiveFileExcerpt || !attachedContextRequiresAcknowledgement(currentAttachedContext) || attachedContextAcknowledged);
     const submittedAttachedContext = includeAttachedContext && attachedContextAllowed && attachedContextRef.current?.settingsRevision === targetRevision && attachedContextRef.current.chatId === targetChatId && currentAttachedContext && hasUsableAttachedContext(currentAttachedContext) ? attachedContextRef.current : null;
-    const context = submittedAttachedContext?.payload;
+    const context = submittedAttachedContext?.excerpt ? activeFileExcerptToChatContext(submittedAttachedContext.excerpt) : submittedAttachedContext?.payload;
     setChatLifecycleState("command_submitting");
     optimisticUserMessageCounterRef.current += 1;
     const optimisticUserMessageId = `${targetChatId}-optimistic-user-${optimisticUserMessageCounterRef.current}`;
@@ -1855,6 +1865,7 @@ export function App() {
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
+                <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onIncludeChange={setIncludeAttachedContext} />
                 <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} acknowledged={attachedContextAcknowledged} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} onAcknowledgeChange={setAttachedContextAcknowledged} />
                 <CodingActionsPanel canUseContext={codingActionsCanUseContext} context={currentAttachedContext} onAction={applyCodingAction} />
                 <IdeActionsPanel host={bridgeHost} attempt={ideActionAttempt} note={ideActionNote} workspaceRelativePath={safeActiveWorkspacePath} range={safeActiveRange} onGetContext={() => requestIdeAction({ action: "getContextSnapshot" })} onOpenFile={(workspaceRelativePath) => requestIdeAction({ action: "openWorkspaceFile", workspaceRelativePath })} onRevealRange={(workspaceRelativePath, range) => requestIdeAction({ action: "revealWorkspaceRange", workspaceRelativePath, range })} onClearPendingIdeAction={clearPendingIdeActionState} />
@@ -2098,6 +2109,8 @@ function ideActionLabel(action: IdeActionType): string {
   switch (action) {
     case "getContextSnapshot":
       return "Get IDE context";
+    case "getActiveFileExcerpt":
+      return "Attach active file excerpt";
     case "openWorkspaceFile":
       return "Open file";
     case "revealWorkspaceRange":
@@ -2309,6 +2322,55 @@ function FirstMessageActionButton({ action, runtimeRefreshInFlight, providerTest
     return <button type="button" onClick={() => onTestProvider(action.providerId)} disabled={testing}>{testing ? "Testing provider…" : action.label}</button>;
   }
   return <button type="button" onClick={onFocusPrompt}>{action.label}</button>;
+}
+
+function ActiveFileExcerptAttachPanel({ host, excerpt, include, pending, status, onRequest, onIncludeChange }: { host: BridgeHost; excerpt: ActiveFileExcerptAttachment | null; include: boolean; pending: boolean; status: string | null; onRequest: () => void; onIncludeChange: (include: boolean) => void }) {
+  const supported = host === "vscode" || host === "jetbrains";
+  if (!supported) {
+    return (
+      <section className="readiness-card warn active-file-excerpt-card" role="status" aria-label="Active file excerpt">
+        <div className="row">
+          <strong>Active file excerpt</strong>
+          <span className="badge warn">IDE host required</span>
+        </div>
+        <span className="subtle">Open {productName} in VS Code or JetBrains to attach a bounded active-file excerpt. Browser mode will not execute host actions.</span>
+      </section>
+    );
+  }
+  const preview = excerpt ? activeFileExcerptPreview(excerpt) : null;
+  return (
+    <section className={`readiness-card ${excerpt ? "ready" : "warn"} active-file-excerpt-card stack`} role="status" aria-label="Active file excerpt">
+      <div className="row">
+        <strong>Active file excerpt</strong>
+        <span className="badge ok">{activeEditorSourceLabel(host)}</span>
+        <button type="button" onClick={onRequest} disabled={pending}>{pending ? "Active file excerpt pending…" : "Attach active file excerpt"}</button>
+      </div>
+      {preview ? (
+        <div className="stack">
+          <div className="attached-context-grid">
+            <span>File: {preview.fileLabel}</span>
+            <span>Language: {preview.language}</span>
+            <span>Excerpt range: {preview.range}</span>
+            <span>Excerpt characters: {preview.characters}</span>
+            <span>Host truncated: {preview.hostTruncated ? "yes" : "no"}</span>
+          </div>
+          <div className="attached-context-preview">
+            <strong>Bounded redacted preview</strong>
+            <pre>{preview.text}</pre>
+          </div>
+          {(preview.redacted || preview.truncated || preview.hostTruncated) && <span className="subtle">Preview metadata: {preview.redacted ? "redacted" : "not redacted"}, {preview.truncated ? "preview shortened" : "preview complete"}, {preview.hostTruncated ? "host truncated" : "host complete"}.</span>}
+          <label className="row attached-context-toggle">
+            <input style={{ width: "auto" }} type="checkbox" checked={include} onChange={(event) => onIncludeChange(event.target.checked)} />
+            {include ? "Attach excerpt to next message" : "Omit excerpt from next message"}
+          </label>
+          <span className="subtle">Excerpt stays in React state only, is prompt-only, and clears after the next accepted message.</span>
+        </div>
+      ) : (
+        <span className="subtle">Click once to request a bounded excerpt from the visible active editor. No request is made automatically.</span>
+      )}
+      {status && <span className="subtle">{sanitizeDisplayText(status)}</span>}
+    </section>
+  );
 }
 
 function AttachedContextPreview({ context, include, acknowledged, status, onIncludeChange, onAcknowledgeChange }: { context: HostContextSnapshotPayload | null; include: boolean; acknowledged: boolean; status: string | null; onIncludeChange: (include: boolean) => void; onAcknowledgeChange: (acknowledged: boolean) => void }) {

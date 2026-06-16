@@ -101,6 +101,10 @@ function renderIdeActionResultMetadata(result: IdeActionResultPayload | undefine
   if (result.action === "getContextSnapshot" && result.context) {
     return <span>Result context: source {sanitizeDisplayText(result.context.source)} · active editor present {result.context.hasActiveEditor ? "yes" : "no"} · workspace folders {result.context.workspaceFolderCount}</span>;
   }
+  if (result.action === "getActiveFileExcerpt" && result.contextAttachment) {
+    const attachment = result.contextAttachment;
+    return <span>Result excerpt: {sanitizeDisplayText(attachment.file.workspaceRelativePath ?? attachment.file.displayPath ?? "active file")} · range {formatEditRange(attachment.range)} · {attachment.text.length} chars · truncated {attachment.truncated ? "yes" : "no"}</span>;
+  }
   if (result.action === "openWorkspaceFile" && result.workspaceRelativePath) {
     return <span>Result path: {sanitizeDisplayText(result.workspaceRelativePath)}</span>;
   }

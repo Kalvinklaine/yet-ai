@@ -43,6 +43,7 @@ import hostApplyWorkspaceEditResultKeyLikeMessage from "../../../../packages/con
 import guiIdeActionContextMessage from "../../../../packages/contracts/examples/bridge/gui-ide-action-request-get-context-snapshot.json";
 import guiIdeActionOpenMessage from "../../../../packages/contracts/examples/bridge/gui-ide-action-request-open-workspace-file.json";
 import guiIdeActionRevealMessage from "../../../../packages/contracts/examples/bridge/gui-ide-action-request-reveal-workspace-range.json";
+import guiIdeActionActiveFileExcerptMessage from "../../../../packages/contracts/examples/bridge/gui-ide-action-request-get-active-file-excerpt.json";
 import hostIdeActionProgressMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-progress.json";
 import hostIdeActionResultSucceededMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-succeeded.json";
 import hostIdeActionResultRejectedMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-rejected.json";
@@ -54,6 +55,11 @@ import hostIdeActionProgressSucceededOpenWorkspaceFileMessage from "../../../../
 import hostIdeActionResultSucceededOpenWorkspaceFileMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-succeeded-open-workspace-file.json";
 import hostIdeActionProgressSucceededRevealWorkspaceRangeMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-progress-succeeded-reveal-workspace-range.json";
 import hostIdeActionResultSucceededRevealWorkspaceRangeMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-succeeded-reveal-workspace-range.json";
+import hostIdeActionResultSucceededActiveFileExcerptMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-succeeded-get-active-file-excerpt-vscode.json";
+import hostIdeActionResultUnavailableActiveFileExcerptMessage from "../../../../packages/contracts/examples/bridge/host-ide-action-result-unavailable-get-active-file-excerpt.json";
+import hostIdeActionResultActiveFileExcerptAbsolutePathMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-active-file-excerpt-absolute-path.json";
+import hostIdeActionResultActiveFileExcerptSecretTextMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-active-file-excerpt-secret-like-text.json";
+import hostIdeActionResultActiveFileExcerptUnavailableWithAttachmentMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-active-file-excerpt-unavailable-with-attachment.json";
 import hostIdeActionResultFailedOpenWithContextMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-failed-open-with-context.json";
 import hostIdeActionResultRejectedRevealWithContextMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-rejected-reveal-with-context.json";
 import hostIdeActionResultUnavailableContextWithPathRangeMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-unavailable-context-with-path-range.json";
@@ -835,7 +841,9 @@ describe("bridgeAdapter", () => {
     expect(isGuiMessage(guiIdeActionContextMessage)).toBe(true);
     expect(isGuiMessage(guiIdeActionOpenMessage)).toBe(true);
     expect(isGuiMessage(guiIdeActionRevealMessage)).toBe(true);
+    expect(isGuiMessage(guiIdeActionActiveFileExcerptMessage)).toBe(true);
     expect(isIdeActionRequestPayload(guiIdeActionRevealMessage.payload)).toBe(true);
+    expect(isIdeActionRequestPayload(guiIdeActionActiveFileExcerptMessage.payload)).toBe(true);
     expect(isHostMessage(hostReadyMessage)).toBe(true);
     expect(isHostMessage(hostOpenedFromCommandMessage)).toBe(true);
     expect(isHostMessage(hostContextSnapshotMessage)).toBe(true);
@@ -848,6 +856,8 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage(hostIdeActionResultSucceededOpenWorkspaceFileMessage)).toBe(true);
     expect(isHostMessage(hostIdeActionProgressSucceededRevealWorkspaceRangeMessage)).toBe(true);
     expect(isHostMessage(hostIdeActionResultSucceededRevealWorkspaceRangeMessage)).toBe(true);
+    expect(isHostMessage(hostIdeActionResultSucceededActiveFileExcerptMessage)).toBe(true);
+    expect(isHostMessage(hostIdeActionResultUnavailableActiveFileExcerptMessage)).toBe(true);
     expect(isIdeActionProgressPayload(hostIdeActionProgressMessage.payload)).toBe(true);
     expect(isIdeActionResultPayload(hostIdeActionResultSucceededMessage.payload)).toBe(true);
     expect(isGuiMessage(guiApplyWorkspaceEditRequestValidMessage)).toBe(true);
@@ -912,6 +922,11 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-6", payload: { phase: "running", status: "inProgress", summary: "Reading /Users/alice/project/file.ts", cloudRequired: false, action: "getContextSnapshot" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-7", payload: { status: "failed", message: "provider response sk-abcdefghijklmnopqrstuvwxyz", cloudRequired: false, action: "getContextSnapshot" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-8", payload: { status: "succeeded", message: "Done.", cloudRequired: false, action: "getContextSnapshot", rawPrompt: "show me" } })).toBe(false);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "req-9", payload: { action: "getActiveFileExcerpt" } })).toBe(true);
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "req-10", payload: { action: "getActiveFileExcerpt", path: "src/App.tsx" } })).toBe(false);
+    expect(isHostMessage(hostIdeActionResultActiveFileExcerptAbsolutePathMessage)).toBe(false);
+    expect(isHostMessage(hostIdeActionResultActiveFileExcerptSecretTextMessage)).toBe(false);
+    expect(isHostMessage(hostIdeActionResultActiveFileExcerptUnavailableWithAttachmentMessage)).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-9", payload: { status: "succeeded", message: "Opened.", cloudRequired: false, action: "openWorkspaceFile" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "req-9-context", payload: { status: "succeeded", message: "Opened.", cloudRequired: false, action: "openWorkspaceFile", workspaceRelativePath: "src/App.tsx", context: { source: "vscode" } } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionProgress", requestId: "req-9-progress-context", payload: { phase: "completed", status: "succeeded", summary: "Opened.", cloudRequired: false, action: "openWorkspaceFile", workspaceRelativePath: "src/App.tsx", context: { source: "vscode" } } })).toBe(false);

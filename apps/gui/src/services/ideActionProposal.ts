@@ -1,12 +1,14 @@
 import type { IdeActionRequestPayload, WorkspaceEditRange } from "../bridge/bridgeAdapter";
 
+type AssistantIdeActionRequestPayload = Exclude<IdeActionRequestPayload, { action: "getActiveFileExcerpt" }>;
+
 export type AssistantIdeActionProposal = {
   type: "assistant.ideActionProposal";
   version: "2026-05-15";
   requiresUserConfirmation: true;
   cloudRequired: false;
   summary: string;
-} & IdeActionRequestPayload;
+} & AssistantIdeActionRequestPayload;
 
 export type IdeActionProposalSourceMessage = {
   id: string;

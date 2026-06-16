@@ -35,10 +35,11 @@ export type ApplyWorkspaceEditResultPayload = {
   affectedFiles?: string[];
 };
 
-export type IdeActionType = "getContextSnapshot" | "openWorkspaceFile" | "revealWorkspaceRange";
+export type IdeActionType = "getContextSnapshot" | "getActiveFileExcerpt" | "openWorkspaceFile" | "revealWorkspaceRange";
 
 export type IdeActionRequestPayload =
   | { action: "getContextSnapshot" }
+  | { action: "getActiveFileExcerpt" }
   | { action: "openWorkspaceFile"; workspaceRelativePath: string }
   | { action: "revealWorkspaceRange"; workspaceRelativePath: string; range: WorkspaceEditRange };
 
@@ -50,6 +51,19 @@ export type IdeActionProgressPayload = {
   action?: IdeActionType;
   workspaceRelativePath?: string;
   range?: WorkspaceEditRange;
+};
+
+export type ActiveFileExcerptAttachment = {
+  kind: "active_file_excerpt";
+  source: "vscode" | "jetbrains";
+  file: {
+    displayPath?: string;
+    workspaceRelativePath?: string;
+    languageId?: string;
+  };
+  range: WorkspaceEditRange;
+  text: string;
+  truncated: boolean;
 };
 
 export type IdeActionResultPayload = {
@@ -64,6 +78,7 @@ export type IdeActionResultPayload = {
     hasActiveEditor: boolean;
     workspaceFolderCount: number;
   };
+  contextAttachment?: ActiveFileExcerptAttachment;
 };
 
 export type GuiMessage = {
@@ -434,7 +449,7 @@ export function isIdeActionRequestPayload(value: unknown): value is IdeActionReq
   if (!isPlainObject(value) || !hasOnlyKeys(value, ["action", "workspaceRelativePath", "range"])) {
     return false;
   }
-  if (value.action === "getContextSnapshot") {
+  if (value.action === "getContextSnapshot" || value.action === "getActiveFileExcerpt") {
     return hasOnlyKeys(value, ["action"]);
   }
   if (value.action === "openWorkspaceFile") {
@@ -474,7 +489,7 @@ function isIdeActionProgressPhaseStatus(phase: unknown, status: unknown): boolea
 }
 
 export function isIdeActionResultPayload(value: unknown): value is IdeActionResultPayload {
-  if (!isPlainObject(value) || !hasOnlyKeys(value, ["status", "message", "cloudRequired", "action", "workspaceRelativePath", "range", "context"])) {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["status", "message", "cloudRequired", "action", "workspaceRelativePath", "range", "context", "contextAttachment"])) {
     return false;
   }
   return (
@@ -485,6 +500,7 @@ export function isIdeActionResultPayload(value: unknown): value is IdeActionResu
     safeRelativePath(value.workspaceRelativePath) &&
     (value.range === undefined || isEditRange(value.range)) &&
     isOptionalIdeActionContext(value.context) &&
+    isOptionalActiveFileExcerptAttachment(value.contextAttachment) &&
     hasAllowedResultMetadata(value) &&
     hasRequiredSuccessfulActionMetadata(value) &&
     hasRequiredSuccessfulResultMetadata(value)
@@ -492,8 +508,17 @@ export function isIdeActionResultPayload(value: unknown): value is IdeActionResu
 }
 
 function hasAllowedResultMetadata(value: Record<string, unknown>): boolean {
+  if (value.status !== "succeeded" && value.contextAttachment !== undefined) {
+    return false;
+  }
+  if (value.action !== "getActiveFileExcerpt" && value.contextAttachment !== undefined) {
+    return false;
+  }
   if (value.action === "getContextSnapshot") {
     return value.workspaceRelativePath === undefined && value.range === undefined;
+  }
+  if (value.action === "getActiveFileExcerpt") {
+    return value.workspaceRelativePath === undefined && value.range === undefined && value.context === undefined;
   }
   if (value.action === "openWorkspaceFile" || value.action === "revealWorkspaceRange") {
     return value.context === undefined;
@@ -507,6 +532,9 @@ function hasRequiredSuccessfulResultMetadata(value: Record<string, unknown>): bo
   }
   if (value.action === "getContextSnapshot") {
     return isIdeActionContext(value.context);
+  }
+  if (value.action === "getActiveFileExcerpt") {
+    return isActiveFileExcerptAttachment(value.contextAttachment);
   }
   if (value.action === "openWorkspaceFile" || value.action === "revealWorkspaceRange") {
     return value.context === undefined;
@@ -524,11 +552,14 @@ function hasRequiredSuccessfulActionMetadata(value: Record<string, unknown>): bo
   if (value.action === "revealWorkspaceRange") {
     return requiredSafeRelativePath(value.workspaceRelativePath) && isEditRange(value.range);
   }
+  if (value.action === "getActiveFileExcerpt") {
+    return value.workspaceRelativePath === undefined && value.range === undefined && value.context === undefined;
+  }
   return value.action === "getContextSnapshot" && value.workspaceRelativePath === undefined && value.range === undefined;
 }
 
 function optionalIdeActionType(value: unknown): boolean {
-  return value === undefined || value === "getContextSnapshot" || value === "openWorkspaceFile" || value === "revealWorkspaceRange";
+  return value === undefined || value === "getContextSnapshot" || value === "getActiveFileExcerpt" || value === "openWorkspaceFile" || value === "revealWorkspaceRange";
 }
 
 function isOptionalIdeActionContext(value: unknown): boolean {
@@ -546,6 +577,37 @@ function isIdeActionContext(value: unknown): boolean {
   return (value.source === "vscode" || value.source === "jetbrains") &&
     typeof value.hasActiveEditor === "boolean" &&
     typeof workspaceFolderCount === "number" && Number.isInteger(workspaceFolderCount) && workspaceFolderCount >= 0 && workspaceFolderCount <= 100;
+}
+
+function isOptionalActiveFileExcerptAttachment(value: unknown): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  return isActiveFileExcerptAttachment(value);
+}
+
+function isActiveFileExcerptAttachment(value: unknown): value is ActiveFileExcerptAttachment {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["kind", "source", "file", "range", "text", "truncated"])) {
+    return false;
+  }
+  return value.kind === "active_file_excerpt" &&
+    (value.source === "vscode" || value.source === "jetbrains") &&
+    isActiveFileExcerptFile(value.file) &&
+    isEditRange(value.range) &&
+    safeActiveFileExcerptText(value.text) &&
+    typeof value.truncated === "boolean";
+}
+
+function isActiveFileExcerptFile(value: unknown): boolean {
+  return isPlainObject(value) && hasOnlyKeys(value, ["displayPath", "workspaceRelativePath", "languageId"]) && Object.keys(value).length > 0 && safeDisplayPath(value.displayPath) && safeRelativePath(value.workspaceRelativePath) && optionalLanguageId(value.languageId);
+}
+
+function safeActiveFileExcerptText(value: unknown): boolean {
+  return typeof value === "string" && value.length > 0 && value.length <= 8000 && !hasControlCharactersExceptCodeWhitespace(value) && !unsafeDisplayText(value) && !hasPrivatePathLikeText(value) && !hasKeyLikeSecretText(value);
+}
+
+function hasControlCharactersExceptCodeWhitespace(value: string): boolean {
+  return /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value);
 }
 
 function isFileTextEdits(value: unknown): value is WorkspaceFileTextEdits {
