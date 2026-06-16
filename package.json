@@ -33,6 +33,7 @@
     "dogfood:real-provider-report": "node scripts/dogfood-real-provider-report.mjs",
     "smoke:vscode-preview": "node scripts/smoke-vscode-preview.mjs",
     "smoke:vscode-wrapper-browser": "node scripts/smoke-vscode-wrapper-browser.mjs",
+    "smoke:vscode-verification-command": "node scripts/smoke-vscode-verification-command.mjs",
     "smoke:installed-plugin-chat-visual": "node scripts/smoke-installed-plugin-chat-visual.mjs",
     "smoke:installed-plugin-demo-mode": "node scripts/smoke-installed-plugin-demo-mode.mjs",
     "smoke:vscode-installable": "node scripts/smoke-vscode-installable.mjs",
