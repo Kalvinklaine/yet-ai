@@ -17,6 +17,10 @@ class ControlledIdeActionsTest {
         assertIs<ControlledIdeActions.Request.GetContextSnapshot>(context)
         assertEquals("req-1", context.requestId)
 
+        val excerpt = ControlledIdeActions.parse(message("req-excerpt", """{"action":"getActiveFileExcerpt"}"""))
+        assertIs<ControlledIdeActions.Request.GetActiveFileExcerpt>(excerpt)
+        assertEquals("req-excerpt", excerpt.requestId)
+
         val open = ControlledIdeActions.parse(message("req-2", """{"action":"openWorkspaceFile","workspaceRelativePath":"src/main.kt"}"""))
         assertIs<ControlledIdeActions.Request.OpenWorkspaceFile>(open)
         assertEquals("src/main.kt", open.workspaceRelativePath)
@@ -108,6 +112,75 @@ class ControlledIdeActionsTest {
         assertNull(ControlledIdeActions.parse(message("req-1", """{"action":"revealWorkspaceRange","workspaceRelativePath":"src/main.kt","range":{"start":{"line":1000001,"character":0},"end":{"line":1000001,"character":1}}}""")))
         assertNull(ControlledIdeActions.parse(message("req-1", """{"action":"getContextSnapshot","cloudRequired":true}""")))
         assertNull(ControlledIdeActions.parse(message("req-1", """{"action":"openWorkspaceFile","workspaceRelativePath":"src/main.kt","extra":true}""")))
+    }
+
+    @Test
+    fun getActiveFileExcerptRejectsEveryExtraAuthorityField() {
+        listOf(
+            "path" to "src/main.kt",
+            "glob" to "**/*.kt",
+            "includeFullFile" to true,
+            "provider" to "openai",
+            "tool" to "readFile",
+            "shell" to "cat src/main.kt",
+            "git" to "status",
+        ).forEach { (name, value) ->
+            val field = when (value) {
+                is Boolean -> "\"$name\":$value"
+                else -> "\"$name\":${jsonString(value.toString())}"
+            }
+            assertNull(ControlledIdeActions.parse(message("req-excerpt", """{"action":"getActiveFileExcerpt",$field}""")), name)
+        }
+    }
+
+    @Test
+    fun activeFileExcerptResultIsStrictAndSanitized() {
+        val result = JsonParser.parseString(
+            ControlledIdeActions.ideActionResult(
+                requestId = "req-excerpt-result",
+                status = ControlledIdeActions.ResultStatus.Succeeded,
+                message = "Active file excerpt ready.",
+                action = "getActiveFileExcerpt",
+                contextAttachment = ControlledIdeActions.ActiveFileExcerptAttachment(
+                    displayPath = "src/main.kt",
+                    workspaceRelativePath = "src/main.kt",
+                    languageId = "kotlin",
+                    range = ControlledIdeActions.Range(ControlledIdeActions.Position(0, 0), ControlledIdeActions.Position(1, 2)),
+                    text = "fun main() {\n}",
+                    truncated = false,
+                ),
+            ),
+        ).asJsonObject
+        val payload = result.getAsJsonObject("payload")
+        assertEquals(setOf("status", "message", "cloudRequired", "action", "contextAttachment"), payload.keySet())
+        assertEquals("getActiveFileExcerpt", payload.get("action").asString)
+        val attachment = payload.getAsJsonObject("contextAttachment")
+        assertEquals("active_file_excerpt", attachment.get("kind").asString)
+        assertEquals("jetbrains", attachment.get("source").asString)
+        assertEquals("src/main.kt", attachment.getAsJsonObject("file").get("workspaceRelativePath").asString)
+        assertEquals("fun main() {\n}", attachment.get("text").asString)
+        assertFalse(payload.has("workspaceRelativePath"))
+        assertFalse(payload.has("context"))
+
+        val unsafe = JsonParser.parseString(
+            ControlledIdeActions.ideActionResult(
+                requestId = "req-excerpt-result",
+                status = ControlledIdeActions.ResultStatus.Succeeded,
+                message = "Active file excerpt ready.",
+                action = "getActiveFileExcerpt",
+                contextAttachment = ControlledIdeActions.ActiveFileExcerptAttachment(
+                    displayPath = "/Users/person/main.kt",
+                    workspaceRelativePath = "src/main.kt",
+                    languageId = "kotlin",
+                    range = ControlledIdeActions.Range(ControlledIdeActions.Position(0, 0), ControlledIdeActions.Position(0, 1)),
+                    text = "secret token",
+                    truncated = false,
+                ),
+            ),
+        ).asJsonObject
+        val unsafePayload = unsafe.getAsJsonObject("payload")
+        assertEquals("rejected", unsafePayload.get("status").asString)
+        assertFalse(unsafePayload.has("contextAttachment"))
     }
 
     @Test

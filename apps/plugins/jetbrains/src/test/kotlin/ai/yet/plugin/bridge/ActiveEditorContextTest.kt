@@ -103,6 +103,11 @@ class ActiveEditorContextTest {
     }
 
     @Test
+    fun activeFileExcerptTextContractIsEightThousandCharacters() {
+        assertEquals(8_000, ActiveEditorContext.MaxExcerptTextLength)
+    }
+
+    @Test
     fun returnsNullWhenNothingSafeOrUsefulExists() {
         val snapshot = ActiveEditorContext.snapshot(
             displayPath = "/",

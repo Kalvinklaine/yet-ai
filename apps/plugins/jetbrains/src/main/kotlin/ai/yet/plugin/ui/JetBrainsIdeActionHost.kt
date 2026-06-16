@@ -1,5 +1,6 @@
 package ai.yet.plugin.ui
 
+import ai.yet.plugin.bridge.ActiveEditorContext
 import ai.yet.plugin.bridge.ControlledIdeActions
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
@@ -37,6 +38,7 @@ data class IdeActionHostResult(
     val range: ControlledIdeActions.Range? = null,
     val hasActiveEditor: Boolean = false,
     val workspaceFolderCount: Int = 0,
+    val contextAttachment: ControlledIdeActions.ActiveFileExcerptAttachment? = null,
 )
 
 class JetBrainsIdeActionHost(private val project: Project) : IdeActionHost, ApplyWorkspaceEditHost {
@@ -46,6 +48,7 @@ class JetBrainsIdeActionHost(private val project: Project) : IdeActionHost, Appl
 
     override fun execute(request: ControlledIdeActions.Request): CompletableFuture<IdeActionHostResult> = when (request) {
         is ControlledIdeActions.Request.GetContextSnapshot -> contextSnapshot()
+        is ControlledIdeActions.Request.GetActiveFileExcerpt -> activeFileExcerpt()
         is ControlledIdeActions.Request.OpenWorkspaceFile -> resolveOnPool(request.workspaceRelativePath) { resolved ->
             runOnUi {
                 val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(resolved.path)
@@ -85,6 +88,42 @@ class JetBrainsIdeActionHost(private val project: Project) : IdeActionHost, Appl
         )
     }
 
+    private fun activeFileExcerpt(): CompletableFuture<IdeActionHostResult> = runOnUi {
+        val editor = FileEditorManager.getInstance(project).selectedTextEditor
+            ?: return@runOnUi unavailable("No active editor is available.")
+        val virtualFile = FileDocumentManager.getInstance().getFile(editor.document)
+            ?: return@runOnUi rejected("Active editor is not a workspace file.")
+        val workspaceRelativePath = workspaceRelativePath(project.basePath, virtualFile.path)
+            ?: return@runOnUi rejected("Active editor is not a workspace file.")
+        val resolved = resolveWorkspaceFile(project.basePath, workspaceRelativePath)
+            ?: return@runOnUi rejected("Active editor file is unavailable.")
+        if (virtualFile.toNioPath().toRealPath() != resolved.path) {
+            return@runOnUi rejected("Active editor file is unavailable.")
+        }
+        val document = editor.document
+        val fullText = document.text
+        if (!ControlledIdeActions.isSafeActiveFileExcerptContent(fullText)) {
+            return@runOnUi rejected("Active editor content is not safe to attach.")
+        }
+        val text = fullText.take(ActiveEditorContext.MaxExcerptTextLength)
+        val endOffset = text.length.coerceAtMost(document.textLength)
+        val range = excerptRange(document, endOffset)
+            ?: return@runOnUi rejected("Active editor range is unavailable.")
+        val languageId = virtualFile.fileType.name.takeIf { it.isNotEmpty() && it.length <= 64 }
+        IdeActionHostResult(
+            status = ControlledIdeActions.ResultStatus.Succeeded,
+            message = "Active file excerpt ready.",
+            contextAttachment = ControlledIdeActions.ActiveFileExcerptAttachment(
+                displayPath = resolved.safePath,
+                workspaceRelativePath = resolved.safePath,
+                languageId = languageId,
+                range = range,
+                text = text,
+                truncated = fullText.length > text.length,
+            ),
+        )
+    }
+
     private fun resolveOnPool(workspaceRelativePath: String, next: (ResolvedWorkspaceFile) -> CompletableFuture<IdeActionHostResult>): CompletableFuture<IdeActionHostResult> {
         val future = CompletableFuture<IdeActionHostResult>()
         ApplicationManager.getApplication().executeOnPooledThread {
@@ -113,6 +152,10 @@ class JetBrainsIdeActionHost(private val project: Project) : IdeActionHost, Appl
     }
 
     private fun failed(message: String) = IdeActionHostResult(ControlledIdeActions.ResultStatus.Failed, message)
+
+    private fun rejected(message: String) = IdeActionHostResult(ControlledIdeActions.ResultStatus.Rejected, message)
+
+    private fun unavailable(message: String) = IdeActionHostResult(ControlledIdeActions.ResultStatus.Unavailable, message)
 }
 
 class JetBrainsApplyWorkspaceEditHost(private val project: Project) : ApplyWorkspaceEditHost {
@@ -214,6 +257,28 @@ fun resolveApplyWorkspaceEditTargets(
 
 private fun canWriteDocument(virtualFile: VirtualFile, document: Document): Boolean =
     virtualFile.isWritable && FileDocumentManager.getInstance().requestWriting(document, null)
+
+fun workspaceRelativePath(basePath: String?, filePath: String): String? = try {
+    val base = Path.of(basePath ?: return null).toAbsolutePath().normalize().toRealPath()
+    val file = Path.of(filePath).toAbsolutePath().normalize().toRealPath()
+    if (!file.startsWith(base)) {
+        null
+    } else {
+        base.relativize(file).joinToString("/") { it.toString() }.takeIf(ControlledIdeActions::isStrictSafeWorkspaceRelativePath)
+    }
+} catch (_: Exception) {
+    null
+}
+
+fun excerptRange(document: Document, endOffset: Int): ControlledIdeActions.Range? {
+    if (endOffset !in 0..document.textLength || document.lineCount <= 0) return null
+    val endLine = document.getLineNumber(endOffset)
+    val endCharacter = endOffset - document.getLineStartOffset(endLine)
+    return ControlledIdeActions.Range(
+        ControlledIdeActions.Position(0, 0),
+        ControlledIdeActions.Position(endLine, endCharacter),
+    )
+}
 
 fun prepareReplacements(document: Document, replacements: List<ControlledIdeActions.ApplyWorkspaceTextReplacement>): List<PreparedTextReplacement>? {
     val prepared = replacements.map { replacement ->

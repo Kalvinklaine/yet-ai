@@ -172,6 +172,30 @@ class JetBrainsIdeActionHostTest {
         assertNull(resolveWorkspaceFile(root.toString(), "/safe.txt"))
         assertNull(resolveWorkspaceFile(null, "safe.txt"))
     }
+
+    @Test
+    fun workspaceRelativePathRequiresExistingLocalWorkspaceFile() {
+        val root = createTempDirectory()
+        val outside = createTempDirectory()
+        root.resolve("src").createDirectory()
+        root.resolve("src/Main.kt").writeText("fun main() {}\n")
+        outside.resolve("Secret.kt").writeText("val secret = 1\n")
+
+        assertEquals("src/Main.kt", workspaceRelativePath(root.toString(), root.resolve("src/Main.kt").toString()))
+        assertNull(workspaceRelativePath(root.toString(), outside.resolve("Secret.kt").toString()))
+        assertNull(workspaceRelativePath(null, root.resolve("src/Main.kt").toString()))
+    }
+
+    @Test
+    fun excerptRangeCoversBoundedPrefixOnly() {
+        val document = DocumentImpl("alpha\nbeta\ngamma\n")
+
+        val range = assertNotNull(excerptRange(document, 8))
+
+        assertEquals(ControlledIdeActions.Position(0, 0), range.start)
+        assertEquals(ControlledIdeActions.Position(1, 2), range.end)
+        assertNull(excerptRange(document, document.textLength + 1))
+    }
 }
 
 private fun fileEdit(path: String, vararg replacements: ControlledIdeActions.ApplyWorkspaceTextReplacement): ControlledIdeActions.ApplyWorkspaceFileEdit =

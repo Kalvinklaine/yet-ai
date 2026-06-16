@@ -169,7 +169,9 @@ class YetToolWindowFactoryTest {
 
         assertContains(html, "const maxIdeActionRequestBytes = 8192;")
         assertContains(html, "message.type !== \"gui.ideActionRequest\"")
-        assertContains(html, "const allowedIdeActionNames = [\"getContextSnapshot\", \"openWorkspaceFile\", \"revealWorkspaceRange\"];")
+        assertContains(html, "const allowedIdeActionNames = [\"getContextSnapshot\", \"openWorkspaceFile\", \"revealWorkspaceRange\", \"getActiveFileExcerpt\"];")
+        assertContains(html, "if (payload.action === \"getActiveFileExcerpt\") return hasOnlyKeys(payload, [\"action\"]);")
+        assertContains(html, "const isActiveFileExcerptAttachment = (attachment)")
         assertContains(html, "const isGuiIdeActionRequest = (message) => {")
         assertContains(html, "JSON.stringify(message)")
         assertContains(html, "new Blob([serialized]).size > maxIdeActionRequestBytes")

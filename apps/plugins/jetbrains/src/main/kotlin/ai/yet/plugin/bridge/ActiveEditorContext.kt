@@ -5,7 +5,8 @@ object ActiveEditorContext {
     private const val MaxDisplayPathLength = 256
     private const val MaxLanguageIdLength = 64
     private const val MaxSelectionPosition = 1_000_000
-    private const val MaxSelectionTextLength = 8_000
+    const val MaxExcerptTextLength = 8_000
+    private const val MaxSelectionTextLength = MaxExcerptTextLength
     private val languagePattern = Regex("^[A-Za-z0-9_.+-]+$")
     private val secretLikePattern = Regex(
         "(?i)(api[_-]?key|secret|token|password|passwd|authorization|bearer|sk-[a-z0-9]|session[_-]?id|cookie)"

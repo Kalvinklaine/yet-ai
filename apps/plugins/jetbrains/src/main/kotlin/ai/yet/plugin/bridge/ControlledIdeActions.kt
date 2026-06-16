@@ -16,7 +16,7 @@ object ControlledIdeActions {
     private const val MaxApplyWorkspaceReplacementTextLength = 8_192
     private const val MaxApplyWorkspaceTotalReplacementTextLength = 32_768
 
-    val supportedActions: Set<String> = setOf("getContextSnapshot", "openWorkspaceFile", "revealWorkspaceRange")
+    val supportedActions: Set<String> = setOf("getContextSnapshot", "openWorkspaceFile", "revealWorkspaceRange", "getActiveFileExcerpt")
     const val supportsApplyWorkspaceEditResult: Boolean = true
 
     sealed class Request {
@@ -25,6 +25,10 @@ object ControlledIdeActions {
 
         data class GetContextSnapshot(override val requestId: String) : Request() {
             override val action: String = "getContextSnapshot"
+        }
+
+        data class GetActiveFileExcerpt(override val requestId: String) : Request() {
+            override val action: String = "getActiveFileExcerpt"
         }
 
         data class OpenWorkspaceFile(override val requestId: String, val workspaceRelativePath: String) : Request() {
@@ -38,6 +42,14 @@ object ControlledIdeActions {
 
     data class Position(val line: Int, val character: Int)
     data class Range(val start: Position, val end: Position)
+    data class ActiveFileExcerptAttachment(
+        val displayPath: String,
+        val workspaceRelativePath: String,
+        val languageId: String?,
+        val range: Range,
+        val text: String,
+        val truncated: Boolean,
+    )
     data class ApplyWorkspaceEditRequest(val requestId: String, val summary: String, val edits: List<ApplyWorkspaceFileEdit>)
     data class ApplyWorkspaceFileEdit(val workspaceRelativePath: String, val textReplacements: List<ApplyWorkspaceTextReplacement>)
     data class ApplyWorkspaceTextReplacement(val range: Range, val replacementText: String)
@@ -84,6 +96,10 @@ object ControlledIdeActions {
             "getContextSnapshot" -> {
                 if (!payload.keySet().all { it == "action" }) return null
                 Request.GetContextSnapshot(requestId)
+            }
+            "getActiveFileExcerpt" -> {
+                if (!payload.keySet().all { it == "action" }) return null
+                Request.GetActiveFileExcerpt(requestId)
             }
             "openWorkspaceFile" -> {
                 if (!payload.keySet().all { it in setOf("action", "workspaceRelativePath") }) return null
@@ -211,31 +227,41 @@ object ControlledIdeActions {
         includeContextMetadata: Boolean = false,
         hasActiveEditor: Boolean = false,
         workspaceFolderCount: Int = 0,
-    ): String = JsonObject().apply {
-        addProperty("version", ProductIdentity.bridgeVersion)
-        addProperty("type", "host.ideActionResult")
-        addProperty("requestId", sanitizeRequestIdForHost(requestId))
-        add("payload", JsonObject().apply {
-            addProperty("status", status.wireValue)
-            addProperty("message", sanitizeStatusMessage(message))
-            addProperty("cloudRequired", false)
-            val safeAction = action?.takeIf { it in supportedActions }
-            safeAction?.let { addProperty("action", it) }
-            if (safeAction != "getContextSnapshot") {
-                workspaceRelativePath?.takeIf(::isStrictSafeWorkspaceRelativePath)?.let { addProperty("workspaceRelativePath", it) }
-            }
-            if (safeAction == "revealWorkspaceRange" && range != null) {
-                add("range", range.toJson())
-            }
-            if (includeContextMetadata || safeAction == "getContextSnapshot") {
-                add("context", JsonObject().apply {
-                    addProperty("source", "jetbrains")
-                    addProperty("hasActiveEditor", hasActiveEditor)
-                    addProperty("workspaceFolderCount", workspaceFolderCount.coerceAtLeast(0))
-                })
-            }
-        })
-    }.toString()
+        contextAttachment: ActiveFileExcerptAttachment? = null,
+    ): String {
+        val safeAction = action?.takeIf { it in supportedActions }
+        val safeContextAttachment = contextAttachment?.takeIf(::isSafeActiveFileExcerptAttachment)
+        val missingRequiredAttachment = status == ResultStatus.Succeeded && safeAction == "getActiveFileExcerpt" && safeContextAttachment == null
+        val effectiveStatus = if (missingRequiredAttachment) ResultStatus.Rejected else status
+        val effectiveMessage = if (missingRequiredAttachment) "IDE action request was rejected by policy." else message
+        return JsonObject().apply {
+            addProperty("version", ProductIdentity.bridgeVersion)
+            addProperty("type", "host.ideActionResult")
+            addProperty("requestId", sanitizeRequestIdForHost(requestId))
+            add("payload", JsonObject().apply {
+                addProperty("status", effectiveStatus.wireValue)
+                addProperty("message", sanitizeStatusMessage(effectiveMessage))
+                addProperty("cloudRequired", false)
+                safeAction?.let { addProperty("action", it) }
+                if (safeAction != "getContextSnapshot" && safeAction != "getActiveFileExcerpt") {
+                    workspaceRelativePath?.takeIf(::isStrictSafeWorkspaceRelativePath)?.let { addProperty("workspaceRelativePath", it) }
+                }
+                if (safeAction == "revealWorkspaceRange" && range != null) {
+                    add("range", range.toJson())
+                }
+                if (includeContextMetadata || safeAction == "getContextSnapshot") {
+                    add("context", JsonObject().apply {
+                        addProperty("source", "jetbrains")
+                        addProperty("hasActiveEditor", hasActiveEditor)
+                        addProperty("workspaceFolderCount", workspaceFolderCount.coerceAtLeast(0))
+                    })
+                }
+                if (effectiveStatus == ResultStatus.Succeeded && safeAction == "getActiveFileExcerpt") {
+                    safeContextAttachment?.let { add("contextAttachment", it.toJson()) }
+                }
+            })
+        }.toString()
+    }
 
     fun applyWorkspaceEditResult(
         requestId: String,
@@ -295,6 +321,34 @@ object ControlledIdeActions {
         val character = position.intValue("character") ?: return null
         if (line !in 0..MaxPositionValue || character !in 0..MaxPositionValue) return null
         return Position(line, character)
+    }
+
+    fun isSafeActiveFileExcerptContent(value: String): Boolean =
+        value.isNotEmpty() &&
+            value.none { it.isISOControl() && it != '\n' && it != '\r' && it != '\t' } &&
+            !SecretTextRegex.containsMatchIn(value) &&
+            !PrivatePathRegex.containsMatchIn(value)
+
+    fun isSafeActiveFileExcerptText(value: String): Boolean =
+        value.length <= ActiveEditorContext.MaxExcerptTextLength && isSafeActiveFileExcerptContent(value)
+
+    private fun isSafeActiveFileExcerptAttachment(value: ActiveFileExcerptAttachment): Boolean =
+        isStrictSafeWorkspaceRelativePath(value.displayPath) &&
+            isStrictSafeWorkspaceRelativePath(value.workspaceRelativePath) &&
+            value.languageId?.let { it.isNotEmpty() && it.length <= 64 && LanguageIdRegex.matches(it) } ?: true &&
+            isSafeActiveFileExcerptText(value.text)
+
+    private fun ActiveFileExcerptAttachment.toJson(): JsonObject = JsonObject().apply {
+        addProperty("kind", "active_file_excerpt")
+        addProperty("source", "jetbrains")
+        add("file", JsonObject().apply {
+            addProperty("displayPath", displayPath)
+            addProperty("workspaceRelativePath", workspaceRelativePath)
+            languageId?.let { addProperty("languageId", it) }
+        })
+        add("range", range.toJson())
+        addProperty("text", text)
+        addProperty("truncated", truncated)
     }
 
     private fun Range.toJson(): JsonObject = JsonObject().apply {
@@ -361,6 +415,7 @@ object ControlledIdeActions {
         }
     }
 
+    private val LanguageIdRegex = Regex("^[A-Za-z0-9_.+-]+$")
     private val RequestIdRegex = Regex("^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
     private val SecretRequestIdRegex = Regex("authorization|bearer|api[_-]?key|token|secret|access[_-]?token|provider[_-]?key|openai[_-]?api[_-]?key|sk-(?:proj-)?[A-Za-z0-9_-]{8,}", RegexOption.IGNORE_CASE)
     private val SecretPathSegmentPrefixRegex = Regex("^(?:auth|authorization|bearer|cookie|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:[._-]|$)", RegexOption.IGNORE_CASE)

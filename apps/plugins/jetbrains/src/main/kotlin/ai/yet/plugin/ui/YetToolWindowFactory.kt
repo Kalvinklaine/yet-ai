@@ -37,7 +37,6 @@ import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefJSQuery
 import java.awt.BorderLayout
 import java.net.URI
-import java.nio.file.Path
 import javax.swing.JLabel
 import javax.swing.JPanel
 
@@ -457,6 +456,7 @@ object JetBrainsIdeActionBridge {
                     includeContextMetadata = request is ControlledIdeActions.Request.GetContextSnapshot,
                     hasActiveEditor = result.hasActiveEditor,
                     workspaceFolderCount = result.workspaceFolderCount,
+                    contextAttachment = result.contextAttachment,
                 ),
             )
         }
@@ -467,6 +467,7 @@ object JetBrainsIdeActionBridge {
         is ControlledIdeActions.Request.OpenWorkspaceFile -> request.workspaceRelativePath
         is ControlledIdeActions.Request.RevealWorkspaceRange -> request.workspaceRelativePath
         is ControlledIdeActions.Request.GetContextSnapshot -> null
+        is ControlledIdeActions.Request.GetActiveFileExcerpt -> null
     }
 }
 
@@ -540,7 +541,7 @@ object ActiveEditorContextCollector {
     fun snapshot(project: Project): ActiveEditorContext.Snapshot? = ApplicationManager.getApplication().runReadAction<ActiveEditorContext.Snapshot?> {
         val editor = FileEditorManager.getInstance(project).selectedTextEditor ?: return@runReadAction null
         val virtualFile = FileDocumentManager.getInstance().getFile(editor.document)
-        val workspaceRelativePath = virtualFile?.let { workspaceRelativePath(project, it.path) }
+        val workspaceRelativePath = virtualFile?.let { workspaceRelativePath(project.basePath, it.path) }
         val displayPath = workspaceRelativePath ?: virtualFile?.path
         val languageId = virtualFile?.fileType?.name
         val selection = editor.selectionModel
@@ -563,18 +564,6 @@ object ActiveEditorContextCollector {
         )
     }
 
-    private fun workspaceRelativePath(project: Project, filePath: String): String? = try {
-        val basePath = project.basePath ?: return null
-        val base = Path.of(basePath).normalize()
-        val file = Path.of(filePath).normalize()
-        if (!file.startsWith(base)) {
-            null
-        } else {
-            base.relativize(file).joinToString("/") { it.toString() }
-        }
-    } catch (_: Exception) {
-        null
-    }
 }
 
 fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packagedGui: PackagedGui?): String {
@@ -670,7 +659,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isFrameNonce = (value) => typeof value === "string" && /^[0-9a-f]{32}$/.test(value);
         const maxIdeActionRequestBytes = 8192;
         const maxApplyWorkspaceEditRequestBytes = 65536;
-        const allowedIdeActionNames = ["getContextSnapshot", "openWorkspaceFile", "revealWorkspaceRange"];
+        const allowedIdeActionNames = ["getContextSnapshot", "openWorkspaceFile", "revealWorkspaceRange", "getActiveFileExcerpt"];
         const optionalString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length <= maxLength);
         const optionalNonEmptyString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength);
         const requiredRequestId = (value) => typeof value === "string" && value.length > 0 && value.length <= 128 && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value) && !/(authorization|bearer|api[_-]?key|token|secret|access[_-]?token|provider[_-]?key|openai[_-]?api[_-]?key|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value);
@@ -697,7 +686,9 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && requiredLoopbackRuntimeUrl(payload.runtimeUrl) && optionalString(payload.sessionToken, 4096) && optionalNonEmptyString(payload.productId, 256) && optionalNonEmptyString(payload.displayName, 256) && (payload.cloudRequired === undefined || payload.cloudRequired === false);
         const isHostIdeActionProgressPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["phase", "status", "summary", "cloudRequired", "action", "workspaceRelativePath"]) && ["queued", "checkingPolicy", "running", "completed"].includes(payload.phase) && ["pending", "inProgress", "succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.summary === "string" && payload.summary.length > 0 && payload.summary.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512);
         const isHostIdeActionResultContext = (context) => isPlainObject(context) && hasOnlyKeys(context, ["source", "hasActiveEditor", "workspaceFolderCount"]) && context.source === "jetbrains" && typeof context.hasActiveEditor === "boolean" && Number.isInteger(context.workspaceFolderCount) && context.workspaceFolderCount >= 0 && context.workspaceFolderCount <= 100;
-        const isHostIdeActionResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "action", "workspaceRelativePath", "range", "context"]) && ["succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512) && (payload.range === undefined || isIdeActionRange(payload.range)) && (payload.context === undefined || isHostIdeActionResultContext(payload.context));
+        const isActiveFileExcerptText = (text) => typeof text === "string" && text.length > 0 && text.length <= 8000 && !/(authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|\/(?:Users|Home|Tmp|Var|Etc|Opt|Mnt|Volumes|Private)(?=\/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:\/|\\)|~(?:\/|\\)|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(text);
+        const isActiveFileExcerptAttachment = (attachment) => isPlainObject(attachment) && hasOnlyKeys(attachment, ["kind", "source", "file", "range", "text", "truncated"]) && attachment.kind === "active_file_excerpt" && attachment.source === "jetbrains" && isPlainObject(attachment.file) && hasOnlyKeys(attachment.file, ["displayPath", "workspaceRelativePath", "languageId"]) && safePath(attachment.file.displayPath, 256) && safePath(attachment.file.workspaceRelativePath, 512) && (attachment.file.languageId === undefined || (typeof attachment.file.languageId === "string" && attachment.file.languageId.length > 0 && attachment.file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(attachment.file.languageId))) && isIdeActionRange(attachment.range) && isActiveFileExcerptText(attachment.text) && typeof attachment.truncated === "boolean";
+        const isHostIdeActionResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "action", "workspaceRelativePath", "range", "context", "contextAttachment"]) && ["succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512) && (payload.range === undefined || isIdeActionRange(payload.range)) && (payload.context === undefined || isHostIdeActionResultContext(payload.context)) && (payload.contextAttachment === undefined || isActiveFileExcerptAttachment(payload.contextAttachment));
         const isHostApplyWorkspaceEditResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "appliedEditCount", "affectedFiles"]) && ["applied", "denied", "rejected", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.appliedEditCount === undefined || (Number.isInteger(payload.appliedEditCount) && payload.appliedEditCount >= 0 && payload.appliedEditCount <= 64)) && (payload.affectedFiles === undefined || (Array.isArray(payload.affectedFiles) && payload.affectedFiles.length <= 4 && payload.affectedFiles.every((path) => safeRequiredWorkspacePath(path))));
         const isHostMessage = (message) => {
           if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion) return false;
@@ -713,6 +704,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isGuiIdeActionPayload = (payload) => {
           if (!isPlainObject(payload) || typeof payload.action !== "string" || !allowedIdeActionNames.includes(payload.action)) return false;
           if (payload.action === "getContextSnapshot") return hasOnlyKeys(payload, ["action"]);
+          if (payload.action === "getActiveFileExcerpt") return hasOnlyKeys(payload, ["action"]);
           if (payload.action === "openWorkspaceFile") return hasOnlyKeys(payload, ["action", "workspaceRelativePath"]) && safeRequiredWorkspacePath(payload.workspaceRelativePath);
           if (payload.action === "revealWorkspaceRange") return hasOnlyKeys(payload, ["action", "workspaceRelativePath", "range"]) && safeRequiredWorkspacePath(payload.workspaceRelativePath) && isIdeActionRange(payload.range);
           return false;
