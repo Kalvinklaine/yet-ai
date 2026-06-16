@@ -2683,7 +2683,7 @@ describe("active editor attached context", () => {
     expect(chatInput().value).toContain("Propose a safe edit for the selected code");
     expect(chatInput().value).toContain("Coding action: propose_safe_edit");
     expect(chatInput().value).toContain("Nothing is applied automatically");
-    expect(chatInput().value).toContain("wait for explicit review/approval");
+    expect(chatInput().value).toContain("explicit user confirmation");
     expect(attachedContextToggle().checked).toBe(true);
 
     await act(async () => {
@@ -6581,8 +6581,7 @@ describe("edit proposal preview", () => {
     const postIntellijMessage = vi.fn();
     window.postIntellijMessage = postIntellijMessage;
     const proposal = demoModeSafeEditProposalPayload();
-    const assistantRequestId = "assistant-demo-request-id-ignored";
-    const envelope = demoModeSafeEditProposalEnvelope(proposal, assistantRequestId);
+    const envelope = demoModeSafeEditProposalEnvelope(proposal);
     mockRuntimeResponses({
       ...readyRuntimeOptions(),
       chats: [chatSummary("chat-001", "JetBrains Demo Mode edit proposal", 1)],
@@ -6601,8 +6600,8 @@ describe("edit proposal preview", () => {
     expect(text).toContain("replacement characters 0");
     expect(text).toContain("Empty replacement text.");
     expect(text).toContain("Apply in JetBrains after review");
-    expect(text).not.toContain(assistantRequestId);
-    expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+    expect(text).not.toContain("requestId");
+    expect(text).not.toContain("requestId");
 
     await act(async () => {
       findButton("Apply in JetBrains after review").click();
@@ -6612,7 +6611,7 @@ describe("edit proposal preview", () => {
     expect(applyCalls).toHaveLength(1);
     expect(applyCalls[0][0]).toMatchObject({ version: bridgeVersion, type: "gui.applyWorkspaceEditRequest", payload: proposal });
     expect(applyCalls[0][0].requestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
-    expect(applyCalls[0][0].requestId).not.toBe(assistantRequestId);
+    expect(applyCalls[0][0].requestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
   });
 
   it("renders actionable JetBrains apply panel for persisted Demo Mode edit envelope followed by status text", async () => {
@@ -6620,7 +6619,7 @@ describe("edit proposal preview", () => {
     window.postIntellijMessage = postIntellijMessage;
     const proposal = demoModeSafeEditProposalPayload();
     const assistantRequestId = "assistant-demo-status-request-id-ignored";
-    const envelope = demoModeSafeEditProposalEnvelope(proposal, assistantRequestId);
+    const envelope = demoModeSafeEditProposalEnvelope(proposal);
     mockRuntimeResponses({
       ...readyRuntimeOptions(),
       demoMode: demoModeResponse(true),
@@ -6645,7 +6644,7 @@ describe("edit proposal preview", () => {
     expect(text).toContain("Apply in JetBrains after review");
     expect(text).not.toContain(assistantRequestId);
     expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
-
+    expect(text).not.toContain("requestId");
     await act(async () => {
       findButton("Apply in JetBrains after review").click();
     });
@@ -6703,7 +6702,7 @@ describe("edit proposal preview", () => {
     expect(applyCalls[0][0].requestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
   });
 
-  it("uses a GUI-owned bounded apply request id and ignores an assistant-supplied requestId", async () => {
+  it("rejects an assistant-supplied apply requestId without posting apply", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
     const proposal = safeEditProposalPayload();
@@ -6711,24 +6710,19 @@ describe("edit proposal preview", () => {
     const envelope = { type: "gui.applyWorkspaceEditRequest", version: bridgeVersion, requestId: assistantRequestId, payload: proposal };
     mockRuntimeResponses({
       ...readyRuntimeOptions(),
-      chats: [chatSummary("chat-001", "Assistant request id ignored", 1)],
-      chatThreads: { "chat-001": chatThread("chat-001", "Assistant request id ignored", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(envelope))]) },
+      chats: [chatSummary("chat-001", "Assistant request id rejected", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Assistant request id rejected", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(envelope))]) },
     });
 
     renderApp();
     await flushAsync();
     await flushAsync();
 
-    expect(container?.textContent ?? "").toContain("Propose safe edit");
-    expect(container?.textContent ?? "").not.toContain(assistantRequestId);
-    await act(async () => {
-      findButton("Apply in VS Code after review").click();
-    });
-    const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
-    expect(applyCalls).toHaveLength(1);
-    expect(applyCalls[0][0].requestId).toMatch(/^gui-edit-proposal-apply-[A-Za-z0-9][A-Za-z0-9_.-]*-\d+$/);
-    expect(applyCalls[0][0].requestId).not.toBe(assistantRequestId);
-    expect(applyCalls[0][0].payload).toEqual(proposal);
+    const text = container?.textContent ?? "";
+    expect(text).not.toContain("Propose safe edit");
+    expect(text).not.toContain("Apply in VS Code after review");
+    expect(text).toContain(assistantRequestId);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
 
   it("clears proposal apply state synchronously on direct chat id changes", async () => {

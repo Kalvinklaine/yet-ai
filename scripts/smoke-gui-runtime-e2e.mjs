@@ -21,11 +21,28 @@ const modelId = "smoke-model";
 const providerName = "Smoke Mock Provider";
 const userMessageWithContext = "Say hello from GUI runtime smoke with attached context.";
 const userMessageWithoutContext = "Say hello from GUI runtime smoke without attached context.";
+const safeEditPrompt = "Coding action: propose_safe_edit\n\nPropose a safe edit for the selected code. Nothing is applied automatically.";
 const assistantTextWithContext = "Hello smoke from mock provider with context.";
 const assistantTextWithoutContext = "Hello smoke from mock provider without context.";
 const activeContextSentinel = `ACTIVE_CONTEXT_SENTINEL_${"x".repeat(64)}`;
 const activeContextText = `function smokeContext() { return "${activeContextSentinel}"; }`;
 const activeContextPath = "src/smoke-context.ts";
+const safeEditProposal = {
+  type: "gui.applyWorkspaceEditRequest",
+  version: "2026-05-15",
+  payload: {
+    requiresUserConfirmation: true,
+    summary: "Mock provider proposes one safe edit after user review.",
+    cloudRequired: false,
+    edits: [{
+      workspaceRelativePath: activeContextPath,
+      textReplacements: [{
+        range: { start: { line: 0, character: 0 }, end: { line: 0, character: 27 } },
+        replacementText: "function smokeContextEdited() { return true; }",
+      }],
+    }],
+  },
+};
 const secretMarkers = [
   token,
   fakeApiKey,
@@ -170,13 +187,26 @@ try {
   await expectVisibleText(page, userMessageWithoutContext, "visible omitted-context user chat bubble", 20_000);
   await expectVisibleText(page, assistantTextWithoutContext, "omitted-context streamed assistant response", 30_000);
   await assertAssistantAnswerCount(page, assistantTextWithoutContext, 1, "omitted-context streamed assistant response");
-  await waitForProviderHits(2);
+
+  const applyRequestsBeforeSafeEdit = await applyWorkspaceEditRequestCount(page);
+  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(safeEditPrompt);
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expectVisibleText(page, "Coding action: propose_safe_edit", "visible safe-edit coding action prompt", 20_000);
+  await expectVisibleText(page, "Proposed a safe edit. Review the proposal card below. It will not apply automatically.", "safe-edit compact assistant bubble", 30_000);
+  await expectVisibleText(page, "Propose safe edit", "safe-edit proposal card", 20_000);
+  await expectVisibleText(page, safeEditProposal.payload.summary, "mock-provider safe-edit proposal summary", 20_000);
+  await expectVisibleText(page, activeContextPath, "mock-provider safe-edit proposal workspace path", 20_000);
+  await expectVisibleText(page, "Preview only in this host. Browser cannot apply proposed edits; VS Code and JetBrains can receive an apply request after you review and click.", "browser preview-only safe-edit apply boundary", 20_000);
+  const applyRequestsAfterSafeEdit = await applyWorkspaceEditRequestCount(page);
+  assert(applyRequestsAfterSafeEdit === applyRequestsBeforeSafeEdit, "GUI emitted a workspace edit apply request before an explicit apply click");
+  await waitForProviderHits(3);
 
   assert(providerAuth === `Bearer ${fakeApiKey}`, "mock provider did not receive the configured fake bearer key");
-  assert(providerRequestBodies.length === 2, `mock provider received ${providerRequestBodies.length} chat request(s), expected 2`);
+  assert(providerRequestBodies.length === 3, "mock provider received " + providerRequestBodies.length + " chat request(s), expected 3");
   const parsedProviderBodies = providerRequestBodies.map((body) => JSON.parse(body));
   const includedPrompt = parsedProviderBodies[0].messages?.[0]?.content;
   const omittedPrompt = parsedProviderBodies[1].messages?.[0]?.content;
+  const safeEditProviderPrompt = parsedProviderBodies[2].messages?.[0]?.content;
   assert(parsedProviderBodies.every((body) => body.stream === true), "mock provider requests were not streaming");
   assert(parsedProviderBodies.every((body) => body.model === modelId), "mock provider request used the wrong model");
   assert(typeof includedPrompt === "string" && includedPrompt.includes("IDE context"), "included-context request did not prepend IDE context");
@@ -185,6 +215,8 @@ try {
   assert(includedPrompt.includes(userMessageWithContext), "included-context request missed user content");
   assert(omittedPrompt === userMessageWithoutContext, "omitted-context request unexpectedly included IDE context");
   assert(!omittedPrompt.includes(activeContextSentinel), "omitted-context request leaked active context sentinel");
+  assert(safeEditProviderPrompt === safeEditPrompt, "safe-edit request did not reach the mock provider as the user coding action prompt");
+  assert(!safeEditProviderPrompt.includes(activeContextSentinel), "safe-edit request unexpectedly included stale active context sentinel");
 
   await exerciseHistoryReload(page, runtimeBaseUrl);
 
@@ -207,7 +239,7 @@ try {
   }
 
   console.log("GUI runtime e2e smoke passed.");
-  console.log("Verified built GUI, loopback runtime, mock OpenAI-compatible streaming provider, IDE-like active context include/omit, streamed chat responses, local history reload, and browser-state redaction.");
+  console.log("Verified built GUI, loopback runtime, mock OpenAI-compatible streaming provider, IDE-like active context include/omit, streamed chat responses, mock safe-edit JSON proposal preview without auto-apply, local history reload, and browser-state redaction.");
   console.log("No OpenAI/ChatGPT, hosted Yet AI service, non-loopback URL, IDE, or real provider credential was used.");
 } finally {
   await browser?.close().catch(() => undefined);
@@ -349,12 +381,12 @@ async function startMockProvider() {
     });
     request.on("end", () => {
       providerRequestBodies.push(requestBody);
-      const responseText = providerHits === 1 ? assistantTextWithContext : assistantTextWithoutContext;
+      const responseText = providerHits === 1 ? assistantTextWithContext : providerHits === 2 ? assistantTextWithoutContext : JSON.stringify(safeEditProposal);
       response.writeHead(200, {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
       });
-      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: responseText } }] })}\n\n`);
+      response.write("data: " + JSON.stringify({ choices: [{ delta: { content: responseText } }] }) + "\n\n");
       response.end("data: [DONE]\n\n");
     });
   });
@@ -417,6 +449,10 @@ async function assertAssistantAnswerCount(page, text, expected, description) {
     text,
   );
   assert(count === expected, `Expected ${description} to appear exactly ${expected} time(s) in assistant bubbles, observed ${count}: ${text}`);
+}
+
+async function applyWorkspaceEditRequestCount(page) {
+  return page.evaluate(() => (window.__yetAiSmokeApplyRequests ?? []).length);
 }
 
 async function deliverActiveContext(page) {
