@@ -437,19 +437,15 @@ function createActiveFileExcerptAttachment(editor: vscode.TextEditor): ActiveFil
   if (document.isUntitled || document.uri.scheme !== "file") {
     return undefined;
   }
-  const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
-  if (!workspaceFolder) {
-    return undefined;
-  }
-  const workspaceRelativePath = sanitizeRelativePath(vscode.workspace.asRelativePath(document.uri, false), 512);
+  const workspaceRelativePath = activeDocumentWorkspaceRelativePath(document);
   if (!workspaceRelativePath) {
     return undefined;
   }
-  const visibleRange = editor.visibleRanges[0];
-  if (!visibleRange) {
+  const sourceRange = activeFileExcerptSourceRange(editor);
+  if (!sourceRange) {
     return undefined;
   }
-  const excerpt = createBoundedActiveFileExcerpt(document, visibleRange);
+  const excerpt = createBoundedActiveFileExcerpt(document, sourceRange);
   if (!excerpt) {
     return undefined;
   }
@@ -468,21 +464,62 @@ function createActiveFileExcerptAttachment(editor: vscode.TextEditor): ActiveFil
   };
 }
 
-function createBoundedActiveFileExcerpt(document: vscode.TextDocument, visibleRange: vscode.Range): { range: ApplyWorkspaceTextReplacement["range"]; text: string; truncated: boolean } | undefined {
-  const range = toStrictRange(visibleRange);
-  if (!range || !isRangeWithinDocument(range, document)) {
+function activeDocumentWorkspaceRelativePath(document: vscode.TextDocument): string | undefined {
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (!workspaceFolders || workspaceFolders.length === 0) {
     return undefined;
   }
-  const text = document.getText(toVscodeRange(range));
-  const boundedText = text.length > maxActiveFileExcerptTextLength ? text.slice(0, maxActiveFileExcerptTextLength) : text;
-  const sanitizedText = sanitizeActiveFileExcerptText(boundedText);
+  const matches = workspaceFolders
+    .filter((folder) => folder.uri.scheme === "file")
+    .map((folder) => path.relative(folder.uri.fsPath, document.uri.fsPath).replaceAll(path.sep, "/"))
+    .filter((relativePath) => relativePath.length > 0 && !relativePath.startsWith("..") && !path.isAbsolute(relativePath))
+    .map((relativePath) => sanitizeRelativePath(relativePath, 512))
+    .filter((relativePath): relativePath is string => relativePath !== undefined);
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+function activeFileExcerptSourceRange(editor: vscode.TextEditor): vscode.Range | undefined {
+  if (!editor.selection.isEmpty) {
+    return editor.selection;
+  }
+  const visibleRange = editor.visibleRanges[0];
+  if (visibleRange && !visibleRange.isEmpty) {
+    return visibleRange;
+  }
+  const line = editor.document.lineAt(editor.selection.active.line);
+  if (line.text.length === 0) {
+    return undefined;
+  }
+  return new vscode.Range(line.range.start, line.range.end);
+}
+
+function createBoundedActiveFileExcerpt(document: vscode.TextDocument, sourceRange: vscode.Range): { range: ApplyWorkspaceTextReplacement["range"]; text: string; truncated: boolean } | undefined {
+  const range = toStrictRange(sourceRange);
+  if (!range || !isRangeWithinDocument(range, document) || isZeroLengthRange(range)) {
+    return undefined;
+  }
+  const startOffset = document.offsetAt(toVscodePosition(range.start));
+  const endOffset = document.offsetAt(toVscodePosition(range.end));
+  if (endOffset <= startOffset) {
+    return undefined;
+  }
+  const boundedEndOffset = Math.min(endOffset, startOffset + maxActiveFileExcerptTextLength);
+  const boundedRange = {
+    start: range.start,
+    end: toStrictPosition(document.positionAt(boundedEndOffset)),
+  };
+  if (!isStrictRange(boundedRange) || isZeroLengthRange(boundedRange)) {
+    return undefined;
+  }
+  const text = document.getText(toVscodeRange(boundedRange));
+  const sanitizedText = sanitizeActiveFileExcerptText(text);
   if (sanitizedText === undefined) {
     return undefined;
   }
   return {
-    range,
+    range: boundedRange,
     text: sanitizedText,
-    truncated: text.length > maxActiveFileExcerptTextLength,
+    truncated: boundedEndOffset < endOffset,
   };
 }
 
@@ -502,6 +539,17 @@ function toStrictRange(range: vscode.Range): ApplyWorkspaceTextReplacement["rang
 
 function toVscodeRange(range: ApplyWorkspaceTextReplacement["range"]): vscode.Range {
   return new vscode.Range(new vscode.Position(range.start.line, range.start.character), new vscode.Position(range.end.line, range.end.character));
+}
+
+function toVscodePosition(position: ApplyWorkspacePosition): vscode.Position {
+  return new vscode.Position(position.line, position.character);
+}
+
+function toStrictPosition(position: vscode.Position): ApplyWorkspacePosition {
+  return {
+    line: position.line,
+    character: position.character,
+  };
 }
 
 function createIdeActionContextMetadata(): Record<string, unknown> {

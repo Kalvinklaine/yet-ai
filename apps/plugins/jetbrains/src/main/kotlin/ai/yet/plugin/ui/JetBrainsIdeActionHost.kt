@@ -12,6 +12,7 @@ import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
+import java.awt.Point
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
@@ -100,15 +101,11 @@ class JetBrainsIdeActionHost(private val project: Project) : IdeActionHost, Appl
         if (virtualFile.toNioPath().toRealPath() != resolved.path) {
             return@runOnUi rejected("Active editor file is unavailable.")
         }
-        val document = editor.document
-        val fullText = document.text
-        if (!ControlledIdeActions.isSafeActiveFileExcerptContent(fullText)) {
+        val excerpt = activeFileExcerpt(editor)
+            ?: return@runOnUi rejected("Active editor excerpt is unavailable.")
+        if (!ControlledIdeActions.isSafeActiveFileExcerptText(excerpt.text)) {
             return@runOnUi rejected("Active editor content is not safe to attach.")
         }
-        val text = fullText.take(ActiveEditorContext.MaxExcerptTextLength)
-        val endOffset = text.length.coerceAtMost(document.textLength)
-        val range = excerptRange(document, endOffset)
-            ?: return@runOnUi rejected("Active editor range is unavailable.")
         val languageId = virtualFile.fileType.name.takeIf { it.isNotEmpty() && it.length <= 64 }
         IdeActionHostResult(
             status = ControlledIdeActions.ResultStatus.Succeeded,
@@ -117,9 +114,9 @@ class JetBrainsIdeActionHost(private val project: Project) : IdeActionHost, Appl
                 displayPath = resolved.safePath,
                 workspaceRelativePath = resolved.safePath,
                 languageId = languageId,
-                range = range,
-                text = text,
-                truncated = fullText.length > text.length,
+                range = excerpt.range,
+                text = excerpt.text,
+                truncated = excerpt.truncated,
             ),
         )
     }
@@ -227,6 +224,7 @@ class JetBrainsApplyWorkspaceEditHost(private val project: Project) : ApplyWorks
 
 data class ResolvedApplyWorkspaceFile(val file: ResolvedWorkspaceFile, val replacements: List<ControlledIdeActions.ApplyWorkspaceTextReplacement>)
 data class PreparedTextReplacement(val startOffset: Int, val endOffset: Int, val replacementText: String)
+data class PreparedActiveFileExcerpt(val range: ControlledIdeActions.Range, val text: String, val truncated: Boolean)
 
 sealed class ApplyWorkspaceEditTargetResolution {
     data class Accepted(val files: List<ResolvedApplyWorkspaceFile>) : ApplyWorkspaceEditTargetResolution()
@@ -270,14 +268,58 @@ fun workspaceRelativePath(basePath: String?, filePath: String): String? = try {
     null
 }
 
-fun excerptRange(document: Document, endOffset: Int): ControlledIdeActions.Range? {
-    if (endOffset !in 0..document.textLength || document.lineCount <= 0) return null
+fun activeFileExcerpt(editor: com.intellij.openapi.editor.Editor): PreparedActiveFileExcerpt? {
+    val document = editor.document
+    val sourceOffsets = activeFileExcerptSourceOffsets(editor) ?: return null
+    return boundedActiveFileExcerpt(document, sourceOffsets.first, sourceOffsets.second)
+}
+
+fun boundedActiveFileExcerpt(document: Document, startOffset: Int, endOffset: Int): PreparedActiveFileExcerpt? {
+    if (startOffset !in 0..document.textLength || endOffset !in 0..document.textLength || endOffset <= startOffset) return null
+    val boundedEndOffset = (startOffset + ActiveEditorContext.MaxExcerptTextLength).coerceAtMost(endOffset)
+    if (boundedEndOffset <= startOffset) return null
+    val text = document.charsSequence.subSequence(startOffset, boundedEndOffset).toString()
+    if (!ControlledIdeActions.isSafeActiveFileExcerptText(text)) return null
+    val range = excerptRange(document, startOffset, boundedEndOffset) ?: return null
+    return PreparedActiveFileExcerpt(range, text, boundedEndOffset < endOffset)
+}
+
+fun activeFileExcerptSourceOffsets(editor: com.intellij.openapi.editor.Editor): Pair<Int, Int>? {
+    val selection = editor.selectionModel
+    if (selection.hasSelection()) {
+        return normalizedNonEmptyOffsets(editor.document, selection.selectionStart, selection.selectionEnd)
+    }
+    val visibleArea = editor.scrollingModel.visibleArea
+    val visibleStart = editor.logicalPositionToOffset(editor.xyToLogicalPosition(Point(visibleArea.x, visibleArea.y)))
+    val visibleEnd = editor.logicalPositionToOffset(editor.xyToLogicalPosition(Point(visibleArea.x + visibleArea.width, visibleArea.y + visibleArea.height)))
+    return normalizedNonEmptyOffsets(editor.document, visibleStart, visibleEnd)
+        ?: caretLineOffsets(editor.document, editor.caretModel.offset)
+}
+
+fun excerptRange(document: Document, startOffset: Int, endOffset: Int): ControlledIdeActions.Range? {
+    if (startOffset !in 0..document.textLength || endOffset !in 0..document.textLength || endOffset < startOffset || document.lineCount <= 0) return null
+    val startLine = document.getLineNumber(startOffset)
+    val startCharacter = startOffset - document.getLineStartOffset(startLine)
     val endLine = document.getLineNumber(endOffset)
     val endCharacter = endOffset - document.getLineStartOffset(endLine)
     return ControlledIdeActions.Range(
-        ControlledIdeActions.Position(0, 0),
+        ControlledIdeActions.Position(startLine, startCharacter),
         ControlledIdeActions.Position(endLine, endCharacter),
     )
+}
+
+private fun normalizedNonEmptyOffsets(document: Document, firstOffset: Int, secondOffset: Int): Pair<Int, Int>? {
+    val start = firstOffset.coerceIn(0, document.textLength)
+    val end = secondOffset.coerceIn(0, document.textLength)
+    val lower = minOf(start, end)
+    val upper = maxOf(start, end)
+    return if (upper > lower) lower to upper else null
+}
+
+private fun caretLineOffsets(document: Document, caretOffset: Int): Pair<Int, Int>? {
+    if (document.lineCount <= 0 || caretOffset !in 0..document.textLength) return null
+    val line = document.getLineNumber(caretOffset)
+    return normalizedNonEmptyOffsets(document, document.getLineStartOffset(line), document.getLineEndOffset(line))
 }
 
 fun prepareReplacements(document: Document, replacements: List<ControlledIdeActions.ApplyWorkspaceTextReplacement>): List<PreparedTextReplacement>? {

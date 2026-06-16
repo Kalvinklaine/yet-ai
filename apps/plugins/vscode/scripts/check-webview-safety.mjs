@@ -20,7 +20,10 @@ const requiredSnippets = [
   "payload.action === \"getActiveFileExcerpt\"",
   "vscode.window.activeTextEditor",
   "document.uri.scheme !== \"file\"",
+  "activeDocumentWorkspaceRelativePath(document)",
   "editor.visibleRanges[0]",
+  "document.offsetAt(toVscodePosition(range.start))",
+  "document.positionAt(boundedEndOffset)",
   "sanitizeActiveFileExcerptText(value.text) === value.text",
   "isBoundedForwardedApplyWorkspaceEditMessage(record)",
   "isBoundedForwardedIdeActionMessage(record)",
@@ -136,11 +139,14 @@ for (const snippet of [
     throw new Error(`Active-file excerpt handler must not call mutation/navigation/provider/task API: ${snippet}`);
   }
 }
-if (!activeFileExcerptSource.includes("document.uri.scheme !== \"file\"") || !activeFileExcerptSource.includes("vscode.workspace.getWorkspaceFolder(document.uri)")) {
-  throw new Error("Active-file excerpt handler must require local file scheme inside a workspace folder.");
+if (!activeFileExcerptSource.includes("document.uri.scheme !== \"file\"") || !activeFileExcerptSource.includes("activeDocumentWorkspaceRelativePath(document)")) {
+  throw new Error("Active-file excerpt handler must require local file scheme inside exactly one workspace folder.");
 }
-if (!activeFileExcerptSource.includes("editor.visibleRanges[0]") || !activeFileExcerptSource.includes("maxActiveFileExcerptTextLength")) {
-  throw new Error("Active-file excerpt handler must read only bounded visible active-editor text.");
+if (!activeFileExcerptSource.includes("editor.visibleRanges[0]") || !activeFileExcerptSource.includes("document.offsetAt(toVscodePosition(range.start))") || !activeFileExcerptSource.includes("document.positionAt(boundedEndOffset)")) {
+  throw new Error("Active-file excerpt handler must compute bounded active-editor offsets before getText.");
+}
+if (activeFileExcerptSource.indexOf("document.getText(toVscodeRange(boundedRange))") < activeFileExcerptSource.indexOf("const boundedEndOffset")) {
+  throw new Error("Active-file excerpt handler must not get text before computing bounded end offset.");
 }
 if (!ideActionRunSource.includes("resolveExistingWorkspaceFile(request.workspaceRelativePath, workspaceFolders, maxControlledIdeActionFileBytes)")) {
   throw new Error("Controlled IDE navigation must resolve files with a max-size guard before openTextDocument.");
@@ -834,21 +840,54 @@ for (const guiDevUrl of httpsLoopbackGuiDevUrls) {
 
 function createFakeActiveTextEditor({ fsPath, scheme = "file", languageId, selectionText, selection, visibleRanges, isUntitled = false }) {
   const visibleRange = visibleRanges?.[0] ?? selection;
+  const sourceRange = selection.isEmpty ? visibleRange : selection;
+  const lineLengths = new Map();
+  for (const range of [selection, ...(visibleRanges ?? [])]) {
+    lineLengths.set(range.start.line, Math.max(lineLengths.get(range.start.line) ?? 0, range.start.character));
+    lineLengths.set(range.end.line, Math.max(lineLengths.get(range.end.line) ?? 0, range.end.character));
+  }
+  function offsetAt(position) {
+    let offset = 0;
+    for (let line = 0; line < position.line; line += 1) {
+      offset += (lineLengths.get(line) ?? 200) + 1;
+    }
+    return offset + position.character;
+  }
+  function positionAt(offset) {
+    let remaining = offset;
+    for (let line = 0; line < 100; line += 1) {
+      const lineLength = lineLengths.get(line) ?? 200;
+      if (remaining <= lineLength) {
+        return { line, character: remaining };
+      }
+      remaining -= lineLength + 1;
+    }
+    return { line: 99, character: Math.max(0, remaining) };
+  }
+  const expectedTextStartOffset = offsetAt(sourceRange.start);
   return {
     document: {
       uri: { fsPath, scheme, path: fsPath },
       languageId,
       isUntitled,
       lineCount: 100,
-      lineAt() {
-        return { text: "x".repeat(200) };
+      lineAt(line) {
+        const length = lineLengths.get(line) ?? 200;
+        return {
+          text: "x".repeat(length),
+          range: {
+            start: { line, character: 0 },
+            end: { line, character: length },
+          },
+        };
       },
+      offsetAt,
+      positionAt,
       getText(range) {
-        assert.equal(range.start.line, visibleRange.start.line);
-        assert.equal(range.start.character, visibleRange.start.character);
-        assert.equal(range.end.line, visibleRange.end.line);
-        assert.equal(range.end.character, visibleRange.end.character);
-        return selectionText;
+        assert.equal(range.start.line, sourceRange.start.line);
+        assert.equal(range.start.character, sourceRange.start.character);
+        const requestedLength = offsetAt(range.end) - expectedTextStartOffset;
+        return selectionText.slice(0, requestedLength);
       },
     },
     selection,
@@ -859,6 +898,7 @@ function createFakeActiveTextEditor({ fsPath, scheme = "file", languageId, selec
 function createFakeSelection(startLine, startCharacter, endLine, endCharacter) {
   return {
     isEmpty: startLine === endLine && startCharacter === endCharacter,
+    active: { line: endLine, character: endCharacter },
     start: { line: startLine, character: startCharacter },
     end: { line: endLine, character: endCharacter },
   };
@@ -1012,7 +1052,7 @@ async function assertIdeActionBehavior() {
       start: { line: 2, character: 0 },
       end: { line: 2, character: 21 },
     },
-    text: "const visible = true;\n",
+    text: "const visible = true;",
     truncated: false,
   });
 
@@ -1021,12 +1061,50 @@ async function assertIdeActionBehavior() {
     languageId: "typescript",
     selectionText: "x".repeat(8001),
     selection: createFakeSelection(0, 0, 0, 0),
-    visibleRanges: [createFakeSelection(0, 0, 0, 200)],
+    visibleRanges: [createFakeSelection(0, 0, 0, 9000)],
   });
   await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "getActiveFileExcerpt" }));
   assert.equal(webviewMessages.at(-1).payload.status, "succeeded");
   assert.equal(webviewMessages.at(-1).payload.contextAttachment.text.length, 8000);
+  assert.deepEqual(webviewMessages.at(-1).payload.contextAttachment.range, { start: { line: 0, character: 0 }, end: { line: 0, character: 8000 } });
   assert.equal(webviewMessages.at(-1).payload.contextAttachment.truncated, true);
+
+  fakeVscode.window.activeTextEditor = createFakeActiveTextEditor({
+    fsPath: path.join(workspaceRoot, "src", "main.ts"),
+    languageId: "typescript",
+    selectionText: "selected text",
+    selection: createFakeSelection(1, 2, 1, 15),
+    visibleRanges: [createFakeSelection(0, 0, 0, 9000)],
+  });
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "getActiveFileExcerpt" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "succeeded");
+  assert.deepEqual(webviewMessages.at(-1).payload.contextAttachment.range, { start: { line: 1, character: 2 }, end: { line: 1, character: 15 } });
+  assert.equal(webviewMessages.at(-1).payload.contextAttachment.text, "selected text");
+
+  fakeVscode.window.activeTextEditor = createFakeActiveTextEditor({
+    fsPath: path.join(workspaceRoot, "src", "empty.ts"),
+    languageId: "typescript",
+    selectionText: "",
+    selection: createFakeSelection(0, 0, 0, 0),
+    visibleRanges: [createFakeSelection(0, 0, 0, 0)],
+  });
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "getActiveFileExcerpt" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+
+  fakeVscode.workspace.workspaceFolders = [
+    { uri: { fsPath: workspaceRoot, scheme: "file", path: workspaceRoot } },
+    { uri: { fsPath: path.join(workspaceRoot, "src"), scheme: "file", path: path.join(workspaceRoot, "src") } },
+  ];
+  fakeVscode.window.activeTextEditor = createFakeActiveTextEditor({
+    fsPath: path.join(workspaceRoot, "src", "main.ts"),
+    languageId: "typescript",
+    selectionText: "const ambiguous = true;",
+    selection: createFakeSelection(0, 0, 0, 0),
+    visibleRanges: [createFakeSelection(0, 0, 0, 23)],
+  });
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "getActiveFileExcerpt" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+  fakeVscode.workspace.workspaceFolders = [{ uri: { fsPath: workspaceRoot, scheme: "file", path: workspaceRoot } }];
 
   for (const editor of [
     createFakeActiveTextEditor({ fsPath: path.join(workspaceRoot, "src", "main.ts"), scheme: "untitled", languageId: "typescript", selectionText: "const visible = true;", selection: createFakeSelection(0, 0, 0, 0), visibleRanges: [createFakeSelection(0, 0, 0, 21)] }),

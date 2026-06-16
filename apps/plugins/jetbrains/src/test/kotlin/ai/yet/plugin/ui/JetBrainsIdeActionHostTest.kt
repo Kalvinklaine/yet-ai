@@ -190,13 +190,43 @@ class JetBrainsIdeActionHostTest {
     fun excerptRangeCoversBoundedPrefixOnly() {
         val document = DocumentImpl("alpha\nbeta\ngamma\n")
 
-        val range = assertNotNull(excerptRange(document, 8))
+        val range = assertNotNull(excerptRange(document, 0, 8))
 
         assertEquals(ControlledIdeActions.Position(0, 0), range.start)
         assertEquals(ControlledIdeActions.Position(1, 2), range.end)
-        assertNull(excerptRange(document, document.textLength + 1))
+        assertNull(excerptRange(document, 0, document.textLength + 1))
+    }
+
+    @Test
+    fun excerptRangeCanStartAfterDocumentBeginning() {
+        val document = DocumentImpl("alpha\nbeta\ngamma\n")
+
+        val range = assertNotNull(excerptRange(document, 6, 10))
+
+        assertEquals(ControlledIdeActions.Position(1, 0), range.start)
+        assertEquals(ControlledIdeActions.Position(1, 4), range.end)
+    }
+
+    @Test
+    fun boundedActiveFileExcerptReturnsMatchingTruncatedRange() {
+        val document = DocumentImpl("x".repeat(ActiveEditorContextMaxExcerptTextLengthForTest + 10))
+
+        val excerpt = assertNotNull(boundedActiveFileExcerpt(document, 0, document.textLength))
+
+        assertEquals(ActiveEditorContextMaxExcerptTextLengthForTest, excerpt.text.length)
+        assertEquals(ControlledIdeActions.Range(ControlledIdeActions.Position(0, 0), ControlledIdeActions.Position(0, ActiveEditorContextMaxExcerptTextLengthForTest)), excerpt.range)
+        assertEquals(true, excerpt.truncated)
+    }
+
+    @Test
+    fun boundedActiveFileExcerptRejectsEmptyUnsafeAndOutOfBoundsText() {
+        assertNull(boundedActiveFileExcerpt(DocumentImpl(""), 0, 0))
+        assertNull(boundedActiveFileExcerpt(DocumentImpl("Authorization Bearer sample"), 0, 27))
+        assertNull(boundedActiveFileExcerpt(DocumentImpl("safe"), 0, 5))
     }
 }
+
+private const val ActiveEditorContextMaxExcerptTextLengthForTest = 8000
 
 private fun fileEdit(path: String, vararg replacements: ControlledIdeActions.ApplyWorkspaceTextReplacement): ControlledIdeActions.ApplyWorkspaceFileEdit =
     ControlledIdeActions.ApplyWorkspaceFileEdit(path, replacements.toList())
