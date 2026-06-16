@@ -138,13 +138,16 @@ try {
   await page.getByLabel("Model display name").fill(modelId);
   await page.getByRole("button", { name: "Create provider" }).click();
   await expectVisibleText(page, providerName, "created provider", 20_000);
-  await expectVisibleText(page, `Ready to send using ${modelId}.`, "chat readiness", 20_000);
+  await expectVisibleText(page, `Ready to send using ${modelId} through the local runtime.`, "chat readiness", 20_000);
 
   await openDetailsBySummary(page, "Advanced chat controls", page.getByLabel("Chat id"));
   await page.getByLabel("Chat id").fill(chatId);
   await deliverActiveContext(page);
   await expectVisibleText(page, "Active editor context", "active editor context card", 20_000);
   await expectVisibleText(page, activeContextPath, "active context file path", 20_000);
+  await page.getByTestId("attached-context-active-details").evaluate((element) => {
+    if (element instanceof HTMLDetailsElement) element.open = true;
+  });
   await expectVisibleText(page, "Selected characters:", "active context selected character count", 20_000);
   await acknowledgeHiddenContextIfNeeded(page);
   await expectVisibleText(page, "Attach to next message", "active context include state", 20_000);

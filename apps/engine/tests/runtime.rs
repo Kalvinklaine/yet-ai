@@ -9669,6 +9669,228 @@ async fn chat_context_is_included_before_user_request_in_provider_prompt() {
 }
 
 #[tokio::test]
+async fn chat_command_active_file_excerpt_context_is_prompt_only_and_not_persisted() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let api_key = "sk-active-excerpt-prompt-secret-abcd";
+    let (base_url, mut body_receiver) = start_mock_provider_with_request_body(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"active excerpt response\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+    let excerpt_text = "export function activeExcerpt() { return 'prompt-only-sentinel'; }";
+    let command = json!({
+        "requestId": "req-active-excerpt-prompt-only",
+        "type": "user_message",
+        "payload": {
+            "content": "Explain the active file excerpt.",
+            "context": {
+                "kind": "active_editor",
+                "source": "vscode",
+                "file": {
+                    "displayPath": "src/active-excerpt.ts",
+                    "workspaceRelativePath": "src/active-excerpt.ts",
+                    "languageId": "typescript"
+                },
+                "selection": {
+                    "startLine": 4,
+                    "startCharacter": 2,
+                    "endLine": 4,
+                    "endCharacter": 64,
+                    "text": excerpt_text
+                }
+            }
+        }
+    });
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-active-excerpt-prompt-only/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accepted"], true);
+
+    let loaded = wait_for_chat_messages(app.clone(), "chat-active-excerpt-prompt-only", 2).await;
+    assert_eq!(loaded["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(loaded["messages"][0]["role"], "user");
+    assert_eq!(
+        loaded["messages"][0]["content"],
+        "Explain the active file excerpt."
+    );
+    assert_eq!(loaded["messages"][1]["role"], "assistant");
+    assert!(!loaded.to_string().contains(excerpt_text));
+    assert!(!loaded.to_string().contains("prompt-only-sentinel"));
+    assert!(!loaded.to_string().contains("context"));
+
+    let provider_body =
+        tokio::time::timeout(std::time::Duration::from_secs(2), body_receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+    let prompt = provider_body["messages"][0]["content"].as_str().unwrap();
+    assert_text_contains_in_order(
+        prompt,
+        &[
+            "IDE context",
+            "Source: vscode",
+            "File: src/active-excerpt.ts",
+            "Workspace-relative path: src/active-excerpt.ts",
+            "Language: typescript",
+            "Range: 4:2-4:64",
+            "Selection:",
+            excerpt_text,
+            "User request",
+            "Explain the active file excerpt.",
+        ],
+    );
+
+    let restarted = yet_lsp::app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths,
+    ));
+    let text = sse_text_from(
+        restarted,
+        "/v1/chats/subscribe?chat_id=chat-active-excerpt-prompt-only",
+    )
+    .await;
+    assert!(text.contains("Explain the active file excerpt."));
+    assert!(text.contains("active excerpt response"));
+    assert!(!text.contains(excerpt_text));
+    assert!(!text.contains("prompt-only-sentinel"));
+    assert!(!text.contains(api_key));
+}
+
+#[tokio::test]
+async fn chat_command_active_file_excerpt_context_omit_keeps_provider_prompt_context_free() {
+    let api_key = "sk-active-excerpt-omit-secret-abcd";
+    let (base_url, mut body_receiver) = start_mock_provider_with_request_body(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"omit response\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    let command = json!({
+        "requestId": "req-active-excerpt-omit",
+        "type": "user_message",
+        "payload": {
+            "content": "Explain without attached excerpt."
+        }
+    });
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-active-excerpt-omit/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accepted"], true);
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-active-excerpt-omit").await;
+    assert!(text.contains("omit response"));
+    let provider_body =
+        tokio::time::timeout(std::time::Duration::from_secs(2), body_receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+    let prompt = provider_body["messages"][0]["content"].as_str().unwrap();
+    assert_eq!(prompt, "Explain without attached excerpt.");
+    assert!(!prompt.contains("IDE context"));
+    assert!(!prompt.contains("Selection:"));
+    assert!(!prompt.contains("ACTIVE_CONTEXT_SENTINEL"));
+    assert!(!text.contains(api_key));
+}
+
+#[tokio::test]
+async fn chat_command_active_file_excerpt_context_bounds_and_path_safety_are_enforced() {
+    let valid_text = "x".repeat(8_000);
+    let valid_command = json!({
+        "requestId": "req-active-excerpt-max",
+        "type": "user_message",
+        "payload": {
+            "content": "hello",
+            "context": {
+                "kind": "active_editor",
+                "source": "jetbrains",
+                "file": {
+                    "displayPath": "src/max.ts",
+                    "workspaceRelativePath": "src/max.ts",
+                    "languageId": "typescript"
+                },
+                "selection": { "text": valid_text }
+            }
+        }
+    });
+    let (status, body) = json_response_from(
+        test_app(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-active-excerpt-max/commands",
+            Body::from(valid_command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accepted"], true);
+
+    for (path, text) in [
+        ("src/token.txt", "safe text".to_string()),
+        (
+            "/Users/example/project/src/main.ts",
+            "safe text".to_string(),
+        ),
+        ("src/main.ts", "x".repeat(8_001)),
+    ] {
+        let command = json!({
+            "requestId": "req-active-excerpt-reject",
+            "type": "user_message",
+            "payload": {
+                "content": "hello",
+                "context": {
+                    "kind": "active_editor",
+                    "source": "vscode",
+                    "file": {
+                        "displayPath": path,
+                        "workspaceRelativePath": path,
+                        "languageId": "typescript"
+                    },
+                    "selection": { "text": text }
+                }
+            }
+        });
+        let (status, response_text) = text_response_from(
+            test_app(),
+            authed_request(
+                Method::POST,
+                "/v1/chats/chat-active-excerpt-reject/commands",
+                Body::from(command.to_string()),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(!response_text.contains(path));
+        assert!(!response_text.contains("safe text"));
+        assert!(!response_text.contains(&"x".repeat(64)));
+        assert!(!response_text.contains("Users/example"));
+    }
+}
+
+#[tokio::test]
 async fn abort_with_no_active_stream_is_accepted_and_multiple_aborts_are_safe() {
     let app = test_app();
     send_abort(app.clone(), "chat-no-active-abort", "req-abort-1").await;
