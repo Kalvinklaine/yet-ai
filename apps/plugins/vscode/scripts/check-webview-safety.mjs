@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import Module from "node:module";
 import os from "node:os";
@@ -18,6 +19,19 @@ const requiredSnippets = [
   "const maxControlledIdeActionFileBytes = 2 * 1024 * 1024;",
   "const maxActiveFileExcerptTextLength = 8000;",
   "payload.action === \"getActiveFileExcerpt\"",
+  "payload.action === \"runVerificationCommand\"",
+  "const verificationCommandTimeoutMs = 120000;",
+  "const maxVerificationOutputTailLength = 4000;",
+  "const verificationCommandConfirmationLabel = \"Run verification\";",
+  "const pendingVerificationCommandIds = new Set<VerificationCommandId>();",
+  "\"repository-check\": { command: \"npm\", args: [\"run\", \"check\"]",
+  "\"gui-app-tests\": { command: \"npm\", args: [\"--prefix\", \"apps/gui\", \"test\", \"--\", \"App\"]",
+  "\"engine-chat-tests\": { command: \"cargo\", args: [\"test\", \"-p\", \"yet-lsp\", \"chat\"]",
+  "spawn(command, args, {",
+  "shell: false",
+  "workspaceFolders.length !== 1",
+  "vscode.window.showWarningMessage(",
+  "sanitizeVerificationOutputTail",
   "vscode.window.activeTextEditor",
   "document.uri.scheme !== \"file\"",
   "activeDocumentWorkspaceRelativePath(document)",
@@ -39,6 +53,7 @@ const requiredSnippets = [
   "const hasSecretRequestIdMarker = (value) => /authorization|bearer|api[_-]?key|token|secret|access[_-]?token|provider[_-]?key|openai[_-]?api[_-]?key|sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value);",
   "new TextEncoder().encode(JSON.stringify(value)).length <= maxForwardedApplyWorkspaceEditMessageBytes",
   "message.type === \"gui.ideActionRequest\" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)",
+  "payload.action === \"runVerificationCommand\" && isVerificationCommandId(payload.commandId)",
   "message.type === \"gui.applyWorkspaceEditRequest\" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)",
   "latestHostReady = event.data",
   "const isEmptyHostPayload = (payload) => payload === undefined || (isPlainObject(payload) && Object.keys(payload).length === 0)",
@@ -210,11 +225,65 @@ for (const snippet of [
     throw new Error(`Controlled IDE action handler must not call write/shell/task API: ${snippet}`);
   }
 }
+
+const verificationCommandSource = extractSection("async function runVerificationCommandRequest", "function createActiveFileExcerptResult");
+for (const snippet of [
+  "spawn(command, args, {",
+  "shell: false",
+  "workspaceFolders.length !== 1",
+  "workspaceFolders[0].uri.scheme !== \"file\"",
+  "vscode.window.showWarningMessage(",
+  "pendingVerificationCommandIds.has(request.commandId)",
+  "setTimeout(() => {",
+  "sanitizeVerificationOutputTail",
+]) {
+  if (!verificationCommandSource.includes(snippet)) {
+    throw new Error(`Verification command handler missing safety policy: ${snippet}`);
+  }
+}
+for (const snippet of [
+  "createTerminal",
+  "executeTask",
+  "executeCommand",
+  "git ",
+  "npm install",
+  "curl",
+  "fetch(",
+  "exec(",
+  "execFile(",
+]) {
+  if (verificationCommandSource.includes(snippet)) {
+    throw new Error(`Verification command handler must not include shell/network/mutation backdoor: ${snippet}`);
+  }
+}
 if (!extractSection("export async function handleApplyWorkspaceEditRequest", "export async function validateWorkspaceEditBeforeApply").includes("vscode.workspace.applyEdit(workspaceEdit)")) {
   throw new Error("Confirmed edit proposal path must remain the only workspace.applyEdit path.");
 }
 
 const originalLoad = Module._load;
+const fakeChildProcess = {
+  spawn(command, args, options) {
+    fakeChildProcess.calls.push({ command, args, options });
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => {
+      fakeChildProcess.kills += 1;
+    };
+    setImmediate(() => {
+      child.stdout.emit("data", Buffer.from(fakeChildProcess.stdout));
+      child.stderr.emit("data", Buffer.from(fakeChildProcess.stderr));
+      child.emit("close", fakeChildProcess.exitCode);
+    });
+    return child;
+  },
+  calls: [],
+  kills: 0,
+  stdout: "verification ok",
+  stderr: "",
+  exitCode: 0,
+};
+
 const fakeVscode = {
   Uri: {
     joinPath(base, ...segments) {
@@ -307,6 +376,9 @@ try {
   Module._load = function load(request, parent, isMain) {
     if (request === "vscode") {
       return fakeVscode;
+    }
+    if (request === "node:child_process") {
+      return fakeChildProcess;
     }
     return originalLoad.call(this, request, parent, isMain);
   };
@@ -447,6 +519,9 @@ const validApplyWorkspaceEditRequest = createApplyWorkspaceEditRequest();
 const validIdeActionRequests = [
   createIdeActionRequest({ action: "getContextSnapshot" }),
   createIdeActionRequest({ action: "getActiveFileExcerpt" }),
+  createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check" }),
+  createIdeActionRequest({ action: "runVerificationCommand", commandId: "gui-app-tests" }),
+  createIdeActionRequest({ action: "runVerificationCommand", commandId: "engine-chat-tests" }),
   createIdeActionRequest({ action: "openWorkspaceFile", workspaceRelativePath: "src/main.ts" }),
   createIdeActionRequest({ action: "revealWorkspaceRange", workspaceRelativePath: "src/main.ts", range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } } }),
 ];
@@ -472,6 +547,12 @@ const invalidIdeActionRequests = [
   createIdeActionRequest({ action: "getActiveFileExcerpt", payload: { tool: "read" } }),
   createIdeActionRequest({ action: "getActiveFileExcerpt", payload: { shell: "cat" } }),
   createIdeActionRequest({ action: "getActiveFileExcerpt", payload: { git: "show" } }),
+  createIdeActionRequest({ action: "runVerificationCommand", commandId: "unknown-command" }),
+  createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check", payload: { command: "git status" } }),
+  createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check", payload: { args: ["install"] } }),
+  createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check", payload: { cwd: "apps/gui" } }),
+  createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check", payload: { env: { TOKEN: "value" } } }),
+  createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check", payload: { shell: true } }),
   createIdeActionRequest({ action: "getContextSnapshot", requestId: undefined }),
 ];
 const unsafeEditTextSamples = [
@@ -940,6 +1021,7 @@ function createIdeActionRequest(overrides = {}) {
     action: overrides.action ?? "getContextSnapshot",
     ...(overrides.workspaceRelativePath === undefined ? {} : { workspaceRelativePath: overrides.workspaceRelativePath }),
     ...(overrides.range === undefined ? {} : { range: overrides.range }),
+    ...(overrides.commandId === undefined ? {} : { commandId: overrides.commandId }),
     ...(overrides.payload ?? {}),
   };
   return {
@@ -1025,6 +1107,54 @@ async function assertIdeActionBehavior() {
   await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "getContextSnapshot" }));
   assert.equal(webviewMessages.at(-1).payload.status, "succeeded");
   assert.equal(webviewMessages.at(-1).payload.context.source, "vscode");
+
+  fakeVscode.window.showWarningMessage = (message, options, action) => {
+    assert.equal(options.modal, true);
+    assert.equal(action, "Run verification");
+    assert.equal(message.includes("allowlisted repository check verification command"), true);
+    return Promise.resolve(undefined);
+  };
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+  assert.equal(webviewMessages.at(-1).payload.commandId, "repository-check");
+  assert.equal(fakeChildProcess.calls.length, 0, "Denied verification command must not spawn.");
+
+  fakeVscode.workspace.workspaceFolders = [
+    { uri: { fsPath: workspaceRoot, scheme: "file", path: workspaceRoot } },
+    { uri: { fsPath: path.join(workspaceRoot, "second"), scheme: "file", path: path.join(workspaceRoot, "second") } },
+  ];
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "unavailable");
+  assert.equal(fakeChildProcess.calls.length, 0, "Verification command must require exactly one workspace folder before spawn.");
+
+  fakeVscode.workspace.workspaceFolders = [{ uri: { fsPath: workspaceRoot, scheme: "file", path: workspaceRoot } }];
+  fakeVscode.window.showWarningMessage = (_message, options, action) => {
+    assert.equal(options.modal, true);
+    assert.equal(action, "Run verification");
+    return Promise.resolve("Run verification");
+  };
+  fakeChildProcess.stdout = "verification passed";
+  fakeChildProcess.stderr = "";
+  fakeChildProcess.exitCode = 0;
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "succeeded");
+  assert.equal(webviewMessages.at(-1).payload.commandId, "repository-check");
+  assert.equal(webviewMessages.at(-1).payload.exitCode, 0);
+  assert.equal(webviewMessages.at(-1).payload.outputTail, "verification passed");
+  assert.equal(fakeChildProcess.calls.at(-1).command, "npm");
+  assert.deepEqual(fakeChildProcess.calls.at(-1).args, ["run", "check"]);
+  assert.equal(fakeChildProcess.calls.at(-1).options.cwd, workspaceRoot);
+  assert.equal(fakeChildProcess.calls.at(-1).options.shell, false);
+
+  fakeChildProcess.stdout = "Failed at /Users/example/private/secret.ts";
+  fakeChildProcess.stderr = "";
+  fakeChildProcess.exitCode = 1;
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "runVerificationCommand", commandId: "engine-chat-tests" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "failed");
+  assert.equal(webviewMessages.at(-1).payload.commandId, "engine-chat-tests");
+  assert.equal(webviewMessages.at(-1).payload.outputTail, "Verification output hidden by host policy.");
+  assert.equal(fakeChildProcess.calls.at(-1).command, "cargo");
+  assert.deepEqual(fakeChildProcess.calls.at(-1).args, ["test", "-p", "yet-lsp", "chat"]);
 
   fakeVscode.window.activeTextEditor = undefined;
   await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "getActiveFileExcerpt" }));
@@ -1124,7 +1254,9 @@ async function assertIdeActionBehavior() {
   assertNoAbsolutePath(JSON.stringify(webviewMessages), "VS Code IDE action messages");
 
   fakeVscode.workspace.workspaceFolders = undefined;
+  fakeVscode.window.showWarningMessage = () => Promise.resolve(undefined);
 }
+
 
 async function assertApplyWorkspaceEditBehavior() {
   const existingPath = path.join(workspaceRoot, "src", "main.ts");

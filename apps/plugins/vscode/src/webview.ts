@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import * as crypto from "node:crypto";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { EngineConnection, getLoopbackOrigin, isBridgeSafeSessionToken, validateRuntimeUrl } from "./engineConnection";
@@ -34,7 +35,9 @@ type GuiMessage = {
   payload?: Record<string, unknown>;
 };
 
-type IdeActionType = "getContextSnapshot" | "getActiveFileExcerpt" | "openWorkspaceFile" | "revealWorkspaceRange";
+type VerificationCommandId = "repository-check" | "gui-app-tests" | "engine-chat-tests";
+
+type IdeActionType = "getContextSnapshot" | "getActiveFileExcerpt" | "openWorkspaceFile" | "revealWorkspaceRange" | "runVerificationCommand";
 
 type IdeActionStatus = "succeeded" | "rejected" | "unavailable" | "failed";
 
@@ -42,7 +45,8 @@ type IdeActionRequest =
   | { requestId: string; action: "getContextSnapshot" }
   | { requestId: string; action: "getActiveFileExcerpt" }
   | { requestId: string; action: "openWorkspaceFile"; workspaceRelativePath: string }
-  | { requestId: string; action: "revealWorkspaceRange"; workspaceRelativePath: string; range: ApplyWorkspaceTextReplacement["range"] };
+  | { requestId: string; action: "revealWorkspaceRange"; workspaceRelativePath: string; range: ApplyWorkspaceTextReplacement["range"] }
+  | { requestId: string; action: "runVerificationCommand"; commandId: VerificationCommandId };
 
 type ActiveFileExcerptAttachment = {
   kind: "active_file_excerpt";
@@ -102,6 +106,15 @@ const maxForwardedIdeActionMessageBytes = 8192;
 const maxControlledIdeActionFileBytes = 2 * 1024 * 1024;
 const maxActiveFileExcerptTextLength = 8000;
 const inFlightIdeActionRequestIds = new Set<string>();
+const verificationCommandTimeoutMs = 120000;
+const maxVerificationOutputTailLength = 4000;
+const verificationCommandConfirmationLabel = "Run verification";
+const pendingVerificationCommandIds = new Set<VerificationCommandId>();
+const verificationCommands: Record<VerificationCommandId, { command: string; args: string[]; label: string }> = {
+  "repository-check": { command: "npm", args: ["run", "check"], label: "repository check" },
+  "gui-app-tests": { command: "npm", args: ["--prefix", "apps/gui", "test", "--", "App"], label: "GUI app tests" },
+  "engine-chat-tests": { command: "cargo", args: ["test", "-p", "yet-lsp", "chat"], label: "engine chat tests" },
+};
 
 export function openYetAiWebview(
   context: vscode.ExtensionContext,
@@ -257,6 +270,7 @@ export function createIdeActionProgress(
   summary: string,
   action?: IdeActionType,
   workspaceRelativePath?: string,
+  commandId?: VerificationCommandId,
 ): HostMessage {
   const payload: Record<string, unknown> = {
     phase,
@@ -271,6 +285,9 @@ export function createIdeActionProgress(
   if (pathValue) {
     payload.workspaceRelativePath = pathValue;
   }
+  if (commandId && isVerificationCommandId(commandId)) {
+    payload.commandId = commandId;
+  }
   return { version: bridgeVersion, type: "host.ideActionProgress", requestId, payload };
 }
 
@@ -278,7 +295,7 @@ export function createIdeActionResult(
   requestId: string,
   status: IdeActionStatus,
   message: string,
-  metadata: { action?: IdeActionType; workspaceRelativePath?: string; range?: ApplyWorkspaceTextReplacement["range"]; context?: Record<string, unknown>; contextAttachment?: ActiveFileExcerptAttachment } = {},
+  metadata: { action?: IdeActionType; workspaceRelativePath?: string; range?: ApplyWorkspaceTextReplacement["range"]; context?: Record<string, unknown>; contextAttachment?: ActiveFileExcerptAttachment; commandId?: VerificationCommandId; exitCode?: number; durationMs?: number; outputTail?: string; truncated?: boolean } = {},
 ): HostMessage {
   const payload: Record<string, unknown> = {
     status,
@@ -300,6 +317,15 @@ export function createIdeActionResult(
   }
   if (metadata.contextAttachment && status === "succeeded" && metadata.action === "getActiveFileExcerpt") {
     payload.contextAttachment = metadata.contextAttachment;
+  }
+  if (metadata.commandId && isVerificationCommandId(metadata.commandId)) {
+    payload.commandId = metadata.commandId;
+  }
+  if (metadata.action === "runVerificationCommand" && metadata.commandId && metadata.exitCode !== undefined && metadata.durationMs !== undefined && metadata.outputTail !== undefined && metadata.truncated !== undefined) {
+    payload.exitCode = clampExitCode(metadata.exitCode);
+    payload.durationMs = clampDurationMs(metadata.durationMs);
+    payload.outputTail = sanitizeVerificationOutputTail(metadata.outputTail).outputTail;
+    payload.truncated = metadata.truncated;
   }
   hardenIdeActionResultPayload(payload);
   return { version: bridgeVersion, type: "host.ideActionResult", requestId, payload };
@@ -332,6 +358,21 @@ function hardenIdeActionResultPayload(payload: Record<string, unknown>): void {
   }
   if (payload.action === "revealWorkspaceRange") {
     delete payload.context;
+  }
+  if (payload.action === "runVerificationCommand") {
+    delete payload.workspaceRelativePath;
+    delete payload.range;
+    delete payload.context;
+    delete payload.contextAttachment;
+    if (!isVerificationCommandId(payload.commandId) || !isBoundedInteger(payload.exitCode) || !isBoundedInteger(payload.durationMs) || typeof payload.outputTail !== "string" || sanitizeVerificationOutputTail(payload.outputTail).outputTail !== payload.outputTail || typeof payload.truncated !== "boolean") {
+      payload.status = "failed";
+      payload.message = "Verification command status changed.";
+      payload.commandId = isVerificationCommandId(payload.commandId) ? payload.commandId : "repository-check";
+      payload.exitCode = 1;
+      payload.durationMs = 0;
+      payload.outputTail = "Verification output hidden by host policy.";
+      payload.truncated = true;
+    }
   }
 }
 
@@ -369,13 +410,16 @@ export async function handleIdeActionRequest(webview: vscode.Webview, message: G
     return;
   }
   if (inFlightIdeActionRequestIds.has(request.requestId)) {
-    await webview.postMessage(createIdeActionResult(request.requestId, "rejected", "IDE action rejected by host policy.", { action: request.action }));
+    const metadata = request.action === "runVerificationCommand"
+      ? createVerificationResultMetadata(request.commandId, 1, 0, "Verification command is already running.", false)
+      : { action: request.action };
+    await webview.postMessage(createIdeActionResult(request.requestId, "rejected", "IDE action rejected by host policy.", metadata));
     return;
   }
 
   inFlightIdeActionRequestIds.add(request.requestId);
   try {
-    await webview.postMessage(createIdeActionProgress(request.requestId, "checkingPolicy", "inProgress", "IDE action policy check started.", request.action, "workspaceRelativePath" in request ? request.workspaceRelativePath : undefined));
+    await webview.postMessage(createIdeActionProgress(request.requestId, "checkingPolicy", "inProgress", "IDE action policy check started.", request.action, "workspaceRelativePath" in request ? request.workspaceRelativePath : undefined, "commandId" in request ? request.commandId : undefined));
     const result = await runIdeActionRequest(request);
     await webview.postMessage(result);
   } catch {
@@ -394,6 +438,9 @@ async function runIdeActionRequest(request: IdeActionRequest): Promise<HostMessa
   }
   if (request.action === "getActiveFileExcerpt") {
     return createActiveFileExcerptResult(request.requestId);
+  }
+  if (request.action === "runVerificationCommand") {
+    return runVerificationCommandRequest(request);
   }
 
   const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -418,6 +465,102 @@ async function runIdeActionRequest(request: IdeActionRequest): Promise<HostMessa
   const editor = await vscode.window.showTextDocument(document, { preview: true, selection: toVscodeRange(request.range) });
   editor.revealRange(toVscodeRange(request.range), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
   return createIdeActionResult(request.requestId, "succeeded", "Workspace range revealed.", { action: request.action, workspaceRelativePath: request.workspaceRelativePath, range: request.range });
+}
+
+async function runVerificationCommandRequest(request: Extract<IdeActionRequest, { action: "runVerificationCommand" }>): Promise<HostMessage> {
+  const commandSpec = verificationCommands[request.commandId];
+  if (!commandSpec) {
+    return createIdeActionResult(request.requestId, "rejected", "Verification command rejected by host policy.", { action: request.action, commandId: request.commandId });
+  }
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (!workspaceFolders || workspaceFolders.length !== 1 || workspaceFolders[0].uri.scheme !== "file") {
+    return createIdeActionResult(request.requestId, "unavailable", "Verification command requires exactly one local workspace folder.", createVerificationResultMetadata(request.commandId, 1, 0, "Verification command requires exactly one local workspace folder.", false));
+  }
+  if (pendingVerificationCommandIds.has(request.commandId)) {
+    return createIdeActionResult(request.requestId, "rejected", "Verification command is already running.", createVerificationResultMetadata(request.commandId, 1, 0, "Verification command is already running.", false));
+  }
+  const confirmed = await vscode.window.showWarningMessage(
+    `Yet AI wants to run the allowlisted ${commandSpec.label} verification command in this workspace.`,
+    { modal: true },
+    verificationCommandConfirmationLabel,
+  );
+  if (confirmed !== verificationCommandConfirmationLabel) {
+    return createIdeActionResult(request.requestId, "rejected", "Verification command denied by user.", createVerificationResultMetadata(request.commandId, 1, 0, "Verification command denied by user.", false));
+  }
+  pendingVerificationCommandIds.add(request.commandId);
+  try {
+    const startedAt = Date.now();
+    const result = await spawnVerificationCommand(commandSpec.command, commandSpec.args, workspaceFolders[0].uri.fsPath);
+    const durationMs = Date.now() - startedAt;
+    const status = result.exitCode === 0 ? "succeeded" : "failed";
+    const message = result.exitCode === 0 ? "Verification command completed." : "Verification command failed.";
+    return createIdeActionResult(request.requestId, status, message, createVerificationResultMetadata(request.commandId, result.exitCode, durationMs, result.outputTail, result.truncated));
+  } finally {
+    pendingVerificationCommandIds.delete(request.commandId);
+  }
+}
+
+function createVerificationResultMetadata(commandId: VerificationCommandId, exitCode: number, durationMs: number, outputTail: string, truncated: boolean): { action: "runVerificationCommand"; commandId: VerificationCommandId; exitCode: number; durationMs: number; outputTail: string; truncated: boolean } {
+  const sanitized = sanitizeVerificationOutputTail(outputTail);
+  return {
+    action: "runVerificationCommand",
+    commandId,
+    exitCode: clampExitCode(exitCode),
+    durationMs: clampDurationMs(durationMs),
+    outputTail: sanitized.outputTail,
+    truncated: truncated || sanitized.truncated,
+  };
+}
+
+function spawnVerificationCommand(command: string, args: string[], cwd: string): Promise<{ exitCode: number; outputTail: string; truncated: boolean }> {
+  return new Promise((resolve) => {
+    let completed = false;
+    let output = "";
+    let truncated = false;
+    const child = spawn(command, args, {
+      cwd,
+      shell: false,
+      windowsHide: true,
+      env: { PATH: process.env.PATH ?? "" },
+    });
+    const finish = (exitCode: number, extraOutput = "") => {
+      if (completed) {
+        return;
+      }
+      completed = true;
+      if (extraOutput.length > 0) {
+        output = appendVerificationOutput(output, extraOutput).output;
+        truncated = true;
+      }
+      clearTimeout(timeout);
+      const sanitized = sanitizeVerificationOutputTail(output.length > 0 ? output : "Verification command produced no output.");
+      resolve({ exitCode: clampExitCode(exitCode), outputTail: sanitized.outputTail, truncated: truncated || sanitized.truncated });
+    };
+    const timeout = setTimeout(() => {
+      child.kill();
+      finish(1, "\nVerification command timed out.");
+    }, verificationCommandTimeoutMs);
+    child.stdout.on("data", (chunk: Buffer) => {
+      const appended = appendVerificationOutput(output, chunk.toString("utf8"));
+      output = appended.output;
+      truncated = truncated || appended.truncated;
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      const appended = appendVerificationOutput(output, chunk.toString("utf8"));
+      output = appended.output;
+      truncated = truncated || appended.truncated;
+    });
+    child.on("error", () => finish(1, "Verification binary unavailable."));
+    child.on("close", (code) => finish(code ?? 1));
+  });
+}
+
+function appendVerificationOutput(current: string, next: string): { output: string; truncated: boolean } {
+  const combined = current + next;
+  if (combined.length <= maxVerificationOutputTailLength) {
+    return { output: combined, truncated: false };
+  }
+  return { output: combined.slice(combined.length - maxVerificationOutputTailLength), truncated: true };
 }
 
 function createActiveFileExcerptResult(requestId: string): HostMessage {
@@ -745,6 +888,13 @@ export function parseIdeActionRequest(message: GuiMessage): IdeActionRequest | u
   ) {
     return { requestId: message.requestId, action: "revealWorkspaceRange", workspaceRelativePath: message.payload.workspaceRelativePath, range: message.payload.range };
   }
+  if (
+    hasOnlyKeys(message.payload, ["action", "commandId"]) &&
+    message.payload.action === "runVerificationCommand" &&
+    isVerificationCommandId(message.payload.commandId)
+  ) {
+    return { requestId: message.requestId, action: "runVerificationCommand", commandId: message.payload.commandId };
+  }
   return undefined;
 }
 
@@ -825,6 +975,10 @@ function isRequiredRequestId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value) && !hasSecretRequestIdMarker(value);
 }
 
+function isVerificationCommandId(value: unknown): value is VerificationCommandId {
+  return value === "repository-check" || value === "gui-app-tests" || value === "engine-chat-tests";
+}
+
 function sanitizeApplyWorkspaceEditResultMessage(value: string): string {
   if (value.length === 0 || value.length > 1000 || hasSecretLikeText(value) || hasPrivatePathLikeText(value) || hasBinaryLikeText(value)) {
     return "Edit request status changed.";
@@ -837,6 +991,33 @@ function sanitizeIdeActionStatusMessage(value: string): string {
     return "IDE action status changed.";
   }
   return value;
+}
+
+function sanitizeVerificationOutputTail(value: string): { outputTail: string; truncated: boolean } {
+  let outputTail = value.replace(/\r\n/g, "\n").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, "");
+  let truncated = false;
+  if (outputTail.length > maxVerificationOutputTailLength) {
+    outputTail = outputTail.slice(outputTail.length - maxVerificationOutputTailLength);
+    truncated = true;
+  }
+  if (outputTail.length === 0 || hasSecretLikeText(outputTail) || hasPrivatePathLikeText(outputTail)) {
+    return { outputTail: "Verification output hidden by host policy.", truncated: true };
+  }
+  return { outputTail, truncated };
+}
+
+function clampExitCode(value: number): number {
+  if (!Number.isInteger(value) || value < 0) {
+    return 1;
+  }
+  return Math.min(value, 255);
+}
+
+function clampDurationMs(value: number): number {
+  if (!Number.isInteger(value) || value < 0) {
+    return 0;
+  }
+  return Math.min(value, 3600000);
 }
 
 function clampAppliedEditCount(value: number): number {
@@ -993,7 +1174,8 @@ const isSecretLikePathSegment = (value) => /^(?:auth|authorization|bearer|cookie
 const isStrictSafeRelativePath = (value) => typeof value === "string" && value.length > 0 && value.length <= 512 && !value.startsWith("/") && !value.startsWith("~") && !value.includes("%") && !value.includes("\\\\") && !value.includes(":") && !value.includes("?") && !value.includes("#") && !/[\u0000-\u001f\u007f-\u009f]/.test(value) && !/(^|\/)\.\.?(\/|$)/.test(value) && !value.includes("//") && !value.endsWith("/") && !value.split("/").some(isSecretLikePathSegment);
 const isStrictPosition = (value) => isPlainObject(value) && Object.keys(value).every((key) => key === "line" || key === "character") && Number.isInteger(value.line) && Number.isInteger(value.character) && value.line >= 0 && value.line <= 1000000 && value.character >= 0 && value.character <= 1000000;
 const isStrictRange = (value) => isPlainObject(value) && Object.keys(value).every((key) => key === "start" || key === "end") && isStrictPosition(value.start) && isStrictPosition(value.end) && (value.end.line > value.start.line || (value.end.line === value.start.line && value.end.character >= value.start.character));
-const isStrictIdeActionPayload = (payload) => isPlainObject(payload) && ((Object.keys(payload).every((key) => key === "action") && (payload.action === "getContextSnapshot" || payload.action === "getActiveFileExcerpt")) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath") && payload.action === "openWorkspaceFile" && isStrictSafeRelativePath(payload.workspaceRelativePath)) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath" || key === "range") && payload.action === "revealWorkspaceRange" && isStrictSafeRelativePath(payload.workspaceRelativePath) && isStrictRange(payload.range)));
+const isVerificationCommandId = (value) => value === "repository-check" || value === "gui-app-tests" || value === "engine-chat-tests";
+const isStrictIdeActionPayload = (payload) => isPlainObject(payload) && ((Object.keys(payload).every((key) => key === "action") && (payload.action === "getContextSnapshot" || payload.action === "getActiveFileExcerpt")) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath") && payload.action === "openWorkspaceFile" && isStrictSafeRelativePath(payload.workspaceRelativePath)) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath" || key === "range") && payload.action === "revealWorkspaceRange" && isStrictSafeRelativePath(payload.workspaceRelativePath) && isStrictRange(payload.range)) || (Object.keys(payload).every((key) => key === "action" || key === "commandId") && payload.action === "runVerificationCommand" && isVerificationCommandId(payload.commandId)));
 const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && ((message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload)) || (message.type === "gui.ideActionRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)) || (message.type === "gui.applyWorkspaceEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)));
 const isEmptyHostPayload = (payload) => payload === undefined || (isPlainObject(payload) && Object.keys(payload).length === 0);
 const isHostMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && (message.type === "host.openedFromCommand" ? message.requestId === undefined && isEmptyHostPayload(message.payload) : (message.type === "host.ready" || message.type === "host.contextSnapshot" || message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult"));
