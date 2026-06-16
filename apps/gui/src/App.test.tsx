@@ -2891,6 +2891,40 @@ describe("active editor attached context", () => {
     expect(browserStorageDump()).not.toContain(rawSecret);
   });
 
+  it("lets users clear pending active-file excerpt state after an invalid host result and retry", async () => {
+    const postMessage = vi.fn();
+    const rawSecret = "access_token=" + "r".repeat(64);
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Attach active file excerpt").click();
+    });
+    await dispatchHostIdeActionResult("gui-active-file-excerpt-1", activeFileExcerptResultPayload({ text: `const token = "${rawSecret}";` }));
+
+    expect(findButton("Active file excerpt pending…").disabled).toBe(true);
+    expect(findButton("Clear pending active-file excerpt")).toBeDefined();
+    expect(container?.textContent).not.toContain("access_token");
+
+    await act(async () => {
+      findButton("Clear pending active-file excerpt").click();
+    });
+
+    expect(container?.textContent).toContain("Cleared pending IDE action state in the GUI only. No host-side cancellation was requested.");
+    expect(findButton("Attach active file excerpt").disabled).toBe(false);
+
+    await act(async () => {
+      findButton("Attach active file excerpt").click();
+    });
+
+    const ideActionMessages = postMessage.mock.calls.map(([message]) => message).filter((message) => message.type === "gui.ideActionRequest");
+    expect(ideActionMessages).toHaveLength(2);
+    expect(ideActionMessages[1]).toEqual({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "gui-active-file-excerpt-2", payload: { action: "getActiveFileExcerpt" } });
+    expect(browserStorageDump()).not.toContain(rawSecret);
+  });
+
   it("sends unique bounded JetBrains IDE action requests and blocks pending duplicate clicks", async () => {
     const postIntellijMessage = vi.fn();
     window.postIntellijMessage = postIntellijMessage;
@@ -3048,6 +3082,21 @@ describe("active editor attached context", () => {
     await flushAsync();
 
     expect(findButton("Run read-only IDE action").disabled).toBe(false);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
+  });
+
+  it("rejects assistant active-file excerpt proposals as not runnable and posts no request", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = ideActionProposal({ action: "getActiveFileExcerpt", summary: "Attach active file excerpt." });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Unsafe excerpt proposal", 1)], chatThreads: { "chat-001": chatThread("chat-001", "Unsafe excerpt proposal", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).not.toContain("Read-only IDE action proposal");
+    expect(buttonsNamed("Run read-only IDE action")).toHaveLength(0);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
   });
 

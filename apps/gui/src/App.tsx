@@ -1865,7 +1865,7 @@ export function App() {
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
-                <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onIncludeChange={setIncludeAttachedContext} />
+                <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onClearPending={clearPendingIdeActionState} onIncludeChange={setIncludeAttachedContext} />
                 <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} acknowledged={attachedContextAcknowledged} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} onAcknowledgeChange={setAttachedContextAcknowledged} />
                 <CodingActionsPanel canUseContext={codingActionsCanUseContext} context={currentAttachedContext} onAction={applyCodingAction} />
                 <IdeActionsPanel host={bridgeHost} attempt={ideActionAttempt} note={ideActionNote} workspaceRelativePath={safeActiveWorkspacePath} range={safeActiveRange} onGetContext={() => requestIdeAction({ action: "getContextSnapshot" })} onOpenFile={(workspaceRelativePath) => requestIdeAction({ action: "openWorkspaceFile", workspaceRelativePath })} onRevealRange={(workspaceRelativePath, range) => requestIdeAction({ action: "revealWorkspaceRange", workspaceRelativePath, range })} onClearPendingIdeAction={clearPendingIdeActionState} />
@@ -2324,7 +2324,7 @@ function FirstMessageActionButton({ action, runtimeRefreshInFlight, providerTest
   return <button type="button" onClick={onFocusPrompt}>{action.label}</button>;
 }
 
-function ActiveFileExcerptAttachPanel({ host, excerpt, include, pending, status, onRequest, onIncludeChange }: { host: BridgeHost; excerpt: ActiveFileExcerptAttachment | null; include: boolean; pending: boolean; status: string | null; onRequest: () => void; onIncludeChange: (include: boolean) => void }) {
+function ActiveFileExcerptAttachPanel({ host, excerpt, include, pending, status, onRequest, onClearPending, onIncludeChange }: { host: BridgeHost; excerpt: ActiveFileExcerptAttachment | null; include: boolean; pending: boolean; status: string | null; onRequest: () => void; onClearPending: () => void; onIncludeChange: (include: boolean) => void }) {
   const supported = host === "vscode" || host === "jetbrains";
   if (!supported) {
     return (
@@ -2344,6 +2344,7 @@ function ActiveFileExcerptAttachPanel({ host, excerpt, include, pending, status,
         <strong>Active file excerpt</strong>
         <span className="badge ok">{activeEditorSourceLabel(host)}</span>
         <button type="button" onClick={onRequest} disabled={pending}>{pending ? "Active file excerpt pending…" : "Attach active file excerpt"}</button>
+        {pending && <button type="button" className="secondary-button" onClick={onClearPending}>Clear pending active-file excerpt</button>}
       </div>
       {preview ? (
         <div className="stack">

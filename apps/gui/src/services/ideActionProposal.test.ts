@@ -66,6 +66,13 @@ describe("ideActionProposal", () => {
     }
   });
 
+  it("rejects assistant active-file excerpt proposals", () => {
+    const content = JSON.stringify({ ...base, summary: "Attach active file excerpt.", action: "getActiveFileExcerpt" });
+
+    expect(parseAssistantIdeActionProposalContent(content)).toBeNull();
+    expect(latestIdeActionProposalCandidateFromMessages([assistantMessage("a1", content)])).toBeNull();
+  });
+
   it("rejects unsafe paths", () => {
     for (const workspaceRelativePath of ["/Users/alice/project/src/App.tsx", "../src/App.tsx", "src/../App.tsx", "config/SK-proj-abcdefghijklmnop.env"]) {
       expect(parseAssistantIdeActionProposalContent(JSON.stringify({ ...base, action: "openWorkspaceFile", workspaceRelativePath }))).toBeNull();
