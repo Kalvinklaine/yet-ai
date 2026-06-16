@@ -14,7 +14,7 @@ assert(ideSurfaceContract?.safety?.noSigningPublishingOrReleaseClaim === true, "
 assert(ideSurfaceContract?.safety?.noAutonomousMutation === true, "Contract must forbid autonomous mutation.");
 assertArrayEquals(
   ideSurfaceContract?.safety?.allowedReadOnlyIdeActions ?? [],
-  ["getContextSnapshot", "getActiveFileExcerpt", "openWorkspaceFile", "revealWorkspaceRange"],
+  ["getContextSnapshot", "getActiveFileExcerpt", "openWorkspaceFile", "revealWorkspaceRange", "searchWorkspaceSnippets"],
   "Allowed read-only IDE actions must remain exactly bounded."
 );
 assertArrayEquals(

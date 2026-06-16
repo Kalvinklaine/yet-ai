@@ -1,0 +1,46 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-snippet-search-001",
+  "payload": {
+    "status": "succeeded",
+    "message": "Workspace snippets ready.",
+    "cloudRequired": false,
+    "action": "searchWorkspaceSnippets",
+    "queryLabel": "render chat panel",
+    "resultCount": 2,
+    "snippets": [
+      {
+        "workspaceRelativePath": "apps/gui/src/App.tsx",
+        "languageId": "typescriptreact",
+        "range": {
+          "start": {
+            "line": 42,
+            "character": 2
+          },
+          "end": {
+            "line": 47,
+            "character": 4
+          }
+        },
+        "text": "function ChatPanel() {\n  return <section>Chat</section>;\n}"
+      },
+      {
+        "workspaceRelativePath": "apps/gui/src/chat/render.ts",
+        "languageId": "typescript",
+        "range": {
+          "start": {
+            "line": 8,
+            "character": 0
+          },
+          "end": {
+            "line": 12,
+            "character": 1
+          }
+        },
+        "text": "export function renderMessage(text: string) {\n  return text.trim();\n}"
+      }
+    ],
+    "truncated": false
+  }
+}

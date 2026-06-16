@@ -1,0 +1,10 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.ideActionRequest",
+  "requestId": "req-snippet-invalid-001",
+  "payload": {
+    "action": "searchWorkspaceSnippets",
+    "query": "render panel",
+    "cwd": "."
+  }
+}

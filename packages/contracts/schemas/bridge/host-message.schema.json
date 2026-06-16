@@ -386,7 +386,8 @@
         "openWorkspaceFile",
         "revealWorkspaceRange",
         "getActiveFileExcerpt",
-        "runVerificationCommand"
+        "runVerificationCommand",
+        "searchWorkspaceSnippets"
       ]
     },
     "ideActionResultPayload": {
@@ -432,6 +433,30 @@
               "workspaceRelativePath": false,
               "range": false,
               "context": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "searchWorkspaceSnippets"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "properties": {
+              "workspaceRelativePath": false,
+              "range": false,
+              "context": false,
+              "contextAttachment": false,
+              "commandId": false,
+              "exitCode": false,
+              "durationMs": false,
+              "outputTail": false
             }
           }
         },
@@ -559,6 +584,55 @@
                 "const": "succeeded"
               },
               "action": {
+                "const": "searchWorkspaceSnippets"
+              }
+            },
+            "required": [
+              "status",
+              "action"
+            ]
+          },
+          "then": {
+            "properties": {
+              "workspaceRelativePath": false,
+              "range": false,
+              "context": false,
+              "contextAttachment": false,
+              "queryLabel": {
+                "$ref": "#/$defs/workspaceSnippetQueryLabel"
+              },
+              "resultCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 20
+              },
+              "snippets": {
+                "type": "array",
+                "minItems": 0,
+                "maxItems": 20,
+                "items": {
+                  "$ref": "#/$defs/workspaceSnippet"
+                }
+              },
+              "truncated": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "queryLabel",
+              "resultCount",
+              "snippets",
+              "truncated"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              },
+              "action": {
                 "const": "openWorkspaceFile"
               }
             },
@@ -628,7 +702,10 @@
           },
           "then": {
             "properties": {
-              "contextAttachment": false
+              "contextAttachment": false,
+              "queryLabel": false,
+              "resultCount": false,
+              "snippets": false
             }
           }
         },
@@ -748,6 +825,22 @@
         },
         "truncated": {
           "type": "boolean"
+        },
+        "queryLabel": {
+          "$ref": "#/$defs/workspaceSnippetQueryLabel"
+        },
+        "resultCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "snippets": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/workspaceSnippet"
+          }
         }
       }
     },
@@ -977,6 +1070,26 @@
               "commandId"
             ]
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "searchWorkspaceSnippets"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "properties": {
+              "workspaceRelativePath": false,
+              "range": false,
+              "context": false,
+              "commandId": false
+            }
+          }
         }
       ],
       "properties": {
@@ -1092,6 +1205,48 @@
       "type": "string",
       "maxLength": 4000,
       "pattern": "^(?!.*(?:[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Pp][Aa][Tt][Hh]|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][_-]?[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Rr][Aa][Ww][_-]?[Pp][Rr][Oo][Mm][Pp][Tt]|[Ff][Ii][Ll][Ee][_-]?[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}))[\\s\\S]*$"
+    },
+    "workspaceSnippetQueryLabel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "^(?!.*(?:[\\u0000-\\u001f\\u007f-\\u009f]|[*/\\\\~]|\\.\\.|[{}[\\]()^$+?|]|[;&`$<>]|\\b(?:cwd|env|shell|git|tool|provider|model|apiKey|requestId|assistant|regex|glob|path)\\b|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Pp][Aa][Tt][Hh]|[A-Za-z]:|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}))[\\s\\S]*\\S[\\s\\S]*$"
+    },
+    "workspaceSnippetText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "pattern": "^(?![\\s\\S]*(?:[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Pp][Aa][Tt][Hh]|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}))[\\s\\S]*$"
+    },
+    "languageId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_.+-]+$"
+    },
+    "workspaceSnippet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaceRelativePath",
+        "languageId",
+        "range",
+        "text"
+      ],
+      "properties": {
+        "workspaceRelativePath": {
+          "$ref": "#/$defs/safeRelativePath"
+        },
+        "languageId": {
+          "$ref": "#/$defs/languageId"
+        },
+        "range": {
+          "$ref": "#/$defs/range"
+        },
+        "text": {
+          "$ref": "#/$defs/workspaceSnippetText"
+        }
+      }
     }
   },
   "allOf": [

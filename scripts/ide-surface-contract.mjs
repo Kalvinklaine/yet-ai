@@ -21,6 +21,7 @@ export const ideSurfaceContract = Object.freeze({
       "getActiveFileExcerpt",
       "openWorkspaceFile",
       "revealWorkspaceRange",
+      "searchWorkspaceSnippets",
     ]),
     allowedVerificationCommandIds: Object.freeze([
       "repository-check",
@@ -60,6 +61,13 @@ export const ideSurfaceContract = Object.freeze({
     surface("active-file-excerpt-context", "Active-file excerpt prompt context", "supported", "supported", {
       vscode: ["npm run validate:contracts"],
       jetbrains: ["npm run validate:contracts"],
+    }),
+    surface("workspace-snippet-search", "Explicit workspace snippet search", "preview-only", "preview-only", {
+      vscode: ["npm run validate:contracts"],
+      jetbrains: ["npm run validate:contracts"],
+    }, {
+      vscode: "Contract-only preview: GUI/user-confirmed searchWorkspaceSnippets accepts only a literal bounded query, returns sanitized bounded snippets, uses GUI-minted request ids, and grants no indexing, arbitrary reads, provider, model, API-key, or assistant request authority.",
+      jetbrains: "Contract-only preview: GUI/user-confirmed searchWorkspaceSnippets accepts only a literal bounded query, returns sanitized bounded snippets, uses GUI-minted request ids, and grants no indexing, arbitrary reads, provider, model, API-key, or assistant request authority.",
     }),
     surface("verification-command-bridge", "Allowlisted verification command bridge", "preview-only", "preview-only", {
       vscode: ["npm run validate:contracts"],

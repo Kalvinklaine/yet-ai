@@ -227,7 +227,8 @@
         "openWorkspaceFile",
         "revealWorkspaceRange",
         "getActiveFileExcerpt",
-        "runVerificationCommand"
+        "runVerificationCommand",
+        "searchWorkspaceSnippets"
       ]
     },
     "ideActionRequestPayload": {
@@ -307,6 +308,22 @@
               "$ref": "#/$defs/verificationCommandId"
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "action",
+            "query"
+          ],
+          "properties": {
+            "action": {
+              "const": "searchWorkspaceSnippets"
+            },
+            "query": {
+              "$ref": "#/$defs/workspaceSnippetSearchQuery"
+            }
+          }
         }
       ]
     },
@@ -317,6 +334,12 @@
         "gui-app-tests",
         "engine-chat-tests"
       ]
+    },
+    "workspaceSnippetSearchQuery": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "^(?!.*(?:[\\u0000-\\u001f\\u007f-\\u009f]|[*/\\\\~]|\\.\\.|[{}[\\]()^$+?|]|[;&`$<>]|\\b(?:cwd|env|shell|git|tool|provider|model|apiKey|requestId|assistant|regex|glob|path)\\b|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Pp][Aa][Tt][Hh]|[A-Za-z]:|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}))[\\s\\S]*\\S[\\s\\S]*$"
     }
   },
   "allOf": [

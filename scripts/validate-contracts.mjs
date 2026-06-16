@@ -115,7 +115,10 @@ const mappings = [
   ["packages/contracts/examples/bridge/gui-ide-action-request-get-active-file-excerpt.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-ide-action-request-open-workspace-file.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-ide-action-request-reveal-workspace-range.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
-  ["packages/contracts/examples/bridge/gui-ide-action-request-run-verification-command.json", "packages/contracts/schemas/bridge/gui-message.schema.json"]
+  ["packages/contracts/examples/bridge/gui-ide-action-request-run-verification-command.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
+  ["packages/contracts/examples/bridge/gui-ide-action-request-search-workspace-snippets.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
+  ["packages/contracts/examples/bridge/host-ide-action-progress-search-workspace-snippets.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
+  ["packages/contracts/examples/bridge/host-ide-action-result-search-workspace-snippets.json", "packages/contracts/schemas/bridge/host-message.schema.json"]
 ].map(([examplePath, schemaPath]) => [normalizeContractPath(examplePath), normalizeContractPath(schemaPath)]);
 
 const invalidMappings = [
@@ -331,7 +334,23 @@ const invalidMappings = [
     "gui-ide-action-request-run-verification-command-freeform-command.json",
     "gui-ide-action-request-run-verification-command-unknown-id.json",
     "gui-ide-action-request-run-verification-command-payload-request-id.json",
-    "gui-ide-action-request-run-verification-command-missing-request-id.json"
+    "gui-ide-action-request-run-verification-command-missing-request-id.json",
+    "gui-ide-action-request-search-workspace-snippets-empty-query.json",
+    "gui-ide-action-request-search-workspace-snippets-overlong-query.json",
+    "gui-ide-action-request-search-workspace-snippets-regex-query.json",
+    "gui-ide-action-request-search-workspace-snippets-glob-query.json",
+    "gui-ide-action-request-search-workspace-snippets-path-query.json",
+    "gui-ide-action-request-search-workspace-snippets-path-field.json",
+    "gui-ide-action-request-search-workspace-snippets-cwd-field.json",
+    "gui-ide-action-request-search-workspace-snippets-env-field.json",
+    "gui-ide-action-request-search-workspace-snippets-shell-field.json",
+    "gui-ide-action-request-search-workspace-snippets-git-field.json",
+    "gui-ide-action-request-search-workspace-snippets-tool-field.json",
+    "gui-ide-action-request-search-workspace-snippets-provider-field.json",
+    "gui-ide-action-request-search-workspace-snippets-model-field.json",
+    "gui-ide-action-request-search-workspace-snippets-api-key-field.json",
+    "gui-ide-action-request-search-workspace-snippets-payload-request-id.json",
+    "gui-ide-action-request-search-workspace-snippets-assistant-query.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/gui-message.schema.json"
@@ -410,7 +429,13 @@ const invalidMappings = [
     "host-ide-action-result-run-verification-command-cloud-required.json",
     "host-ide-action-result-run-verification-command-secret-output.json",
     "host-ide-action-result-run-verification-command-missing-output.json",
-    "host-ide-action-progress-run-verification-command-with-path.json"
+    "host-ide-action-progress-run-verification-command-with-path.json",
+    "host-ide-action-result-search-workspace-snippets-cloud-required.json",
+    "host-ide-action-result-search-workspace-snippets-absolute-path.json",
+    "host-ide-action-result-search-workspace-snippets-secret-text.json",
+    "host-ide-action-result-search-workspace-snippets-command-field.json",
+    "host-ide-action-result-search-workspace-snippets-provider-field.json",
+    "host-ide-action-result-search-workspace-snippets-missing-snippets.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/host-message.schema.json"

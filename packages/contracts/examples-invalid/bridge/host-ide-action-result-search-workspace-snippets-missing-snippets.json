@@ -1,0 +1,14 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-snippet-invalid-002",
+  "payload": {
+    "status": "succeeded",
+    "message": "Workspace snippets ready.",
+    "cloudRequired": false,
+    "action": "searchWorkspaceSnippets",
+    "queryLabel": "render panel",
+    "resultCount": 1,
+    "truncated": false
+  }
+}
