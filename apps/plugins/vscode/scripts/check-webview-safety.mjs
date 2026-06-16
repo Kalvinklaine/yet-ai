@@ -16,6 +16,12 @@ const requiredSnippets = [
   "const maxForwardedApplyWorkspaceEditMessageBytes = 65536;",
   "const maxForwardedIdeActionMessageBytes = 8192;",
   "const maxControlledIdeActionFileBytes = 2 * 1024 * 1024;",
+  "const maxActiveFileExcerptTextLength = 8000;",
+  "payload.action === \"getActiveFileExcerpt\"",
+  "vscode.window.activeTextEditor",
+  "document.uri.scheme !== \"file\"",
+  "editor.visibleRanges[0]",
+  "sanitizeActiveFileExcerptText(value.text) === value.text",
   "isBoundedForwardedApplyWorkspaceEditMessage(record)",
   "isBoundedForwardedIdeActionMessage(record)",
   "Buffer.byteLength(JSON.stringify(value), \"utf8\") <= maxForwardedApplyWorkspaceEditMessageBytes",
@@ -112,6 +118,30 @@ if (!renderWebviewHtmlSource.includes("message.type === \"gui.applyWorkspaceEdit
 }
 
 const ideActionRunSource = extractSection("async function runIdeActionRequest", "function toVscodeRange");
+const activeFileExcerptSource = extractSection("function createActiveFileExcerptResult", "function toVscodeRange");
+for (const snippet of [
+  "vscode.workspace.openTextDocument",
+  "vscode.window.showTextDocument",
+  "vscode.workspace.applyEdit",
+  "new vscode.WorkspaceEdit",
+  "workspaceEdit.replace",
+  "vscode.workspace.fs.writeFile",
+  "vscode.workspace.fs.delete",
+  "vscode.workspace.fs.rename",
+  "vscode.commands.executeCommand",
+  "vscode.window.createTerminal",
+  "vscode.tasks.executeTask",
+]) {
+  if (activeFileExcerptSource.includes(snippet)) {
+    throw new Error(`Active-file excerpt handler must not call mutation/navigation/provider/task API: ${snippet}`);
+  }
+}
+if (!activeFileExcerptSource.includes("document.uri.scheme !== \"file\"") || !activeFileExcerptSource.includes("vscode.workspace.getWorkspaceFolder(document.uri)")) {
+  throw new Error("Active-file excerpt handler must require local file scheme inside a workspace folder.");
+}
+if (!activeFileExcerptSource.includes("editor.visibleRanges[0]") || !activeFileExcerptSource.includes("maxActiveFileExcerptTextLength")) {
+  throw new Error("Active-file excerpt handler must read only bounded visible active-editor text.");
+}
 if (!ideActionRunSource.includes("resolveExistingWorkspaceFile(request.workspaceRelativePath, workspaceFolders, maxControlledIdeActionFileBytes)")) {
   throw new Error("Controlled IDE navigation must resolve files with a max-size guard before openTextDocument.");
 }
@@ -410,6 +440,7 @@ const rejectedPrivilegedGuiMessages = [
 const validApplyWorkspaceEditRequest = createApplyWorkspaceEditRequest();
 const validIdeActionRequests = [
   createIdeActionRequest({ action: "getContextSnapshot" }),
+  createIdeActionRequest({ action: "getActiveFileExcerpt" }),
   createIdeActionRequest({ action: "openWorkspaceFile", workspaceRelativePath: "src/main.ts" }),
   createIdeActionRequest({ action: "revealWorkspaceRange", workspaceRelativePath: "src/main.ts", range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } } }),
 ];
@@ -423,6 +454,18 @@ const invalidIdeActionRequests = [
   createIdeActionRequest({ action: "openWorkspaceFile", workspaceRelativePath: "src//main.ts" }),
   createIdeActionRequest({ action: "revealWorkspaceRange", workspaceRelativePath: "src/main.ts", range: { start: { line: 2, character: 0 }, end: { line: 1, character: 0 } } }),
   createIdeActionRequest({ action: "getContextSnapshot", payload: { includeFileContent: true } }),
+  createIdeActionRequest({ action: "getActiveFileExcerpt", workspaceRelativePath: "src/main.ts" }),
+  createIdeActionRequest({ action: "getActiveFileExcerpt", payload: { path: "src/main.ts" } }),
+  createIdeActionRequest({ action: "getActiveFileExcerpt", payload: { glob: "**/*" } }),
+  createIdeActionRequest({ action: "getActiveFileExcerpt", payload: { includeFullFile: true } }),
+  createIdeActionRequest({ action: "getActiveFileExcerpt", payload: { recursive: true } }),
+  createIdeActionRequest({ action: "getActiveFileExcerpt", payload: { indexWorkspace: true } }),
+  createIdeActionRequest({ action: "getActiveFileExcerpt", payload: { provider: "openai" } }),
+  createIdeActionRequest({ action: "getActiveFileExcerpt", payload: { model: "model" } }),
+  createIdeActionRequest({ action: "getActiveFileExcerpt", payload: { auth: "token" } }),
+  createIdeActionRequest({ action: "getActiveFileExcerpt", payload: { tool: "read" } }),
+  createIdeActionRequest({ action: "getActiveFileExcerpt", payload: { shell: "cat" } }),
+  createIdeActionRequest({ action: "getActiveFileExcerpt", payload: { git: "show" } }),
   createIdeActionRequest({ action: "getContextSnapshot", requestId: undefined }),
 ];
 const unsafeEditTextSamples = [
@@ -789,18 +832,27 @@ for (const guiDevUrl of httpsLoopbackGuiDevUrls) {
   assertNoInlineSessionToken(httpsGuiDevHtml, label);
 }
 
-function createFakeActiveTextEditor({ fsPath, languageId, selectionText, selection }) {
+function createFakeActiveTextEditor({ fsPath, scheme = "file", languageId, selectionText, selection, visibleRanges, isUntitled = false }) {
+  const visibleRange = visibleRanges?.[0] ?? selection;
   return {
     document: {
-      uri: { fsPath, scheme: "file", path: fsPath },
+      uri: { fsPath, scheme, path: fsPath },
       languageId,
-      isUntitled: false,
+      isUntitled,
+      lineCount: 100,
+      lineAt() {
+        return { text: "x".repeat(200) };
+      },
       getText(range) {
-        assert.equal(range, selection);
+        assert.equal(range.start.line, visibleRange.start.line);
+        assert.equal(range.start.character, visibleRange.start.character);
+        assert.equal(range.end.line, visibleRange.end.line);
+        assert.equal(range.end.character, visibleRange.end.character);
         return selectionText;
       },
     },
     selection,
+    visibleRanges: visibleRanges ?? [selection],
   };
 }
 
@@ -933,6 +985,62 @@ async function assertIdeActionBehavior() {
   await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "getContextSnapshot" }));
   assert.equal(webviewMessages.at(-1).payload.status, "succeeded");
   assert.equal(webviewMessages.at(-1).payload.context.source, "vscode");
+
+  fakeVscode.window.activeTextEditor = undefined;
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "getActiveFileExcerpt" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "unavailable");
+  assert.equal(webviewMessages.at(-1).payload.contextAttachment, undefined);
+
+  fakeVscode.window.activeTextEditor = createFakeActiveTextEditor({
+    fsPath: path.join(workspaceRoot, "src", "main.ts"),
+    languageId: "typescript",
+    selectionText: "const visible = true;\n",
+    selection: createFakeSelection(0, 0, 0, 0),
+    visibleRanges: [createFakeSelection(2, 0, 2, 21)],
+  });
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "getActiveFileExcerpt" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "succeeded");
+  assert.deepEqual(webviewMessages.at(-1).payload.contextAttachment, {
+    kind: "active_file_excerpt",
+    source: "vscode",
+    file: {
+      displayPath: "src/main.ts",
+      workspaceRelativePath: "src/main.ts",
+      languageId: "typescript",
+    },
+    range: {
+      start: { line: 2, character: 0 },
+      end: { line: 2, character: 21 },
+    },
+    text: "const visible = true;\n",
+    truncated: false,
+  });
+
+  fakeVscode.window.activeTextEditor = createFakeActiveTextEditor({
+    fsPath: path.join(workspaceRoot, "src", "main.ts"),
+    languageId: "typescript",
+    selectionText: "x".repeat(8001),
+    selection: createFakeSelection(0, 0, 0, 0),
+    visibleRanges: [createFakeSelection(0, 0, 0, 200)],
+  });
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "getActiveFileExcerpt" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "succeeded");
+  assert.equal(webviewMessages.at(-1).payload.contextAttachment.text.length, 8000);
+  assert.equal(webviewMessages.at(-1).payload.contextAttachment.truncated, true);
+
+  for (const editor of [
+    createFakeActiveTextEditor({ fsPath: path.join(workspaceRoot, "src", "main.ts"), scheme: "untitled", languageId: "typescript", selectionText: "const visible = true;", selection: createFakeSelection(0, 0, 0, 0), visibleRanges: [createFakeSelection(0, 0, 0, 21)] }),
+    createFakeActiveTextEditor({ fsPath: path.join(workspaceRoot, "src", "main.ts"), scheme: "vscode-remote", languageId: "typescript", selectionText: "const visible = true;", selection: createFakeSelection(0, 0, 0, 0), visibleRanges: [createFakeSelection(0, 0, 0, 21)] }),
+    createFakeActiveTextEditor({ fsPath: "/Users/example/private/outside.ts", languageId: "typescript", selectionText: "const visible = true;", selection: createFakeSelection(0, 0, 0, 0), visibleRanges: [createFakeSelection(0, 0, 0, 21)] }),
+    createFakeActiveTextEditor({ fsPath: path.join(workspaceRoot, "src", "main.ts"), languageId: "typescript", selectionText: "Authorization Bearer fake-session-token-webview-behavioral-sentinel", selection: createFakeSelection(0, 0, 0, 0), visibleRanges: [createFakeSelection(0, 0, 0, 64)] }),
+    createFakeActiveTextEditor({ fsPath: path.join(workspaceRoot, "src", "main.ts"), languageId: "typescript", selectionText: "private path /Users/example/project", selection: createFakeSelection(0, 0, 0, 0), visibleRanges: [createFakeSelection(0, 0, 0, 33)] }),
+    createFakeActiveTextEditor({ fsPath: path.join(workspaceRoot, "src", "main.ts"), languageId: "typescript", selectionText: "binary\u0000text", selection: createFakeSelection(0, 0, 0, 0), visibleRanges: [createFakeSelection(0, 0, 0, 11)] }),
+  ]) {
+    fakeVscode.window.activeTextEditor = editor;
+    await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "getActiveFileExcerpt" }));
+    assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+    assert.equal(webviewMessages.at(-1).payload.contextAttachment, undefined);
+  }
   assert.equal(applyCalls, 0, "Controlled IDE actions must not apply workspace edits.");
   assertNoSecretSentinels(JSON.stringify(webviewMessages), fakeSecretValues, "VS Code IDE action messages");
   assertNoAbsolutePath(JSON.stringify(webviewMessages), "VS Code IDE action messages");

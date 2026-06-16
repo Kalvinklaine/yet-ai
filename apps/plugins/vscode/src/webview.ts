@@ -34,14 +34,28 @@ type GuiMessage = {
   payload?: Record<string, unknown>;
 };
 
-type IdeActionType = "getContextSnapshot" | "openWorkspaceFile" | "revealWorkspaceRange";
+type IdeActionType = "getContextSnapshot" | "getActiveFileExcerpt" | "openWorkspaceFile" | "revealWorkspaceRange";
 
 type IdeActionStatus = "succeeded" | "rejected" | "unavailable" | "failed";
 
 type IdeActionRequest =
   | { requestId: string; action: "getContextSnapshot" }
+  | { requestId: string; action: "getActiveFileExcerpt" }
   | { requestId: string; action: "openWorkspaceFile"; workspaceRelativePath: string }
   | { requestId: string; action: "revealWorkspaceRange"; workspaceRelativePath: string; range: ApplyWorkspaceTextReplacement["range"] };
+
+type ActiveFileExcerptAttachment = {
+  kind: "active_file_excerpt";
+  source: "vscode";
+  file: {
+    displayPath: string;
+    workspaceRelativePath: string;
+    languageId?: string;
+  };
+  range: ApplyWorkspaceTextReplacement["range"];
+  text: string;
+  truncated: boolean;
+};
 
 type ApplyWorkspaceEditRequest = {
   requestId: string;
@@ -86,6 +100,7 @@ const applyWorkspaceEditConfirmationLabel = "Apply edits";
 const maxForwardedApplyWorkspaceEditMessageBytes = 65536;
 const maxForwardedIdeActionMessageBytes = 8192;
 const maxControlledIdeActionFileBytes = 2 * 1024 * 1024;
+const maxActiveFileExcerptTextLength = 8000;
 const inFlightIdeActionRequestIds = new Set<string>();
 
 export function openYetAiWebview(
@@ -263,7 +278,7 @@ export function createIdeActionResult(
   requestId: string,
   status: IdeActionStatus,
   message: string,
-  metadata: { action?: IdeActionType; workspaceRelativePath?: string; range?: ApplyWorkspaceTextReplacement["range"]; context?: Record<string, unknown> } = {},
+  metadata: { action?: IdeActionType; workspaceRelativePath?: string; range?: ApplyWorkspaceTextReplacement["range"]; context?: Record<string, unknown>; contextAttachment?: ActiveFileExcerptAttachment } = {},
 ): HostMessage {
   const payload: Record<string, unknown> = {
     status,
@@ -283,6 +298,9 @@ export function createIdeActionResult(
   if (metadata.context && (status !== "succeeded" || metadata.action === "getContextSnapshot")) {
     payload.context = { ...metadata.context, source: "vscode" };
   }
+  if (metadata.contextAttachment && status === "succeeded" && metadata.action === "getActiveFileExcerpt") {
+    payload.contextAttachment = metadata.contextAttachment;
+  }
   hardenIdeActionResultPayload(payload);
   return { version: bridgeVersion, type: "host.ideActionResult", requestId, payload };
 }
@@ -296,6 +314,16 @@ function hardenIdeActionResultPayload(payload: Record<string, unknown>): void {
     delete payload.range;
     if (!isIdeActionContextMetadata(payload.context)) {
       payload.context = createIdeActionContextMetadata();
+    }
+  }
+  if (payload.action === "getActiveFileExcerpt") {
+    delete payload.workspaceRelativePath;
+    delete payload.range;
+    delete payload.context;
+    if (!isActiveFileExcerptAttachment(payload.contextAttachment)) {
+      delete payload.contextAttachment;
+      payload.status = "rejected";
+      payload.message = "IDE action rejected by host policy.";
     }
   }
   if (payload.action === "openWorkspaceFile") {
@@ -313,6 +341,24 @@ function isIdeActionContextMetadata(value: unknown): value is Record<string, unk
     (value.source === undefined || value.source === "vscode") &&
     (value.hasActiveEditor === undefined || typeof value.hasActiveEditor === "boolean") &&
     (value.workspaceFolderCount === undefined || (Number.isInteger(value.workspaceFolderCount) && typeof value.workspaceFolderCount === "number" && value.workspaceFolderCount >= 0 && value.workspaceFolderCount <= 100));
+}
+
+function isActiveFileExcerptAttachment(value: unknown): value is ActiveFileExcerptAttachment {
+  return isPlainRecord(value) &&
+    hasOnlyKeys(value, ["kind", "source", "file", "range", "text", "truncated"]) &&
+    value.kind === "active_file_excerpt" &&
+    value.source === "vscode" &&
+    isPlainRecord(value.file) &&
+    hasOnlyKeys(value.file, ["displayPath", "workspaceRelativePath", "languageId"]) &&
+    typeof value.file.displayPath === "string" &&
+    sanitizeRelativePath(value.file.displayPath, 512) === value.file.displayPath &&
+    typeof value.file.workspaceRelativePath === "string" &&
+    sanitizeRelativePath(value.file.workspaceRelativePath, 512) === value.file.workspaceRelativePath &&
+    (value.file.languageId === undefined || (typeof value.file.languageId === "string" && sanitizeLanguageId(value.file.languageId) === value.file.languageId)) &&
+    isStrictRange(value.range) &&
+    typeof value.text === "string" &&
+    sanitizeActiveFileExcerptText(value.text) === value.text &&
+    typeof value.truncated === "boolean";
 }
 
 export async function handleIdeActionRequest(webview: vscode.Webview, message: GuiMessage): Promise<void> {
@@ -346,6 +392,9 @@ async function runIdeActionRequest(request: IdeActionRequest): Promise<HostMessa
       context: createIdeActionContextMetadata(),
     });
   }
+  if (request.action === "getActiveFileExcerpt") {
+    return createActiveFileExcerptResult(request.requestId);
+  }
 
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (!workspaceFolders || workspaceFolders.length === 0) {
@@ -369,6 +418,86 @@ async function runIdeActionRequest(request: IdeActionRequest): Promise<HostMessa
   const editor = await vscode.window.showTextDocument(document, { preview: true, selection: toVscodeRange(request.range) });
   editor.revealRange(toVscodeRange(request.range), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
   return createIdeActionResult(request.requestId, "succeeded", "Workspace range revealed.", { action: request.action, workspaceRelativePath: request.workspaceRelativePath, range: request.range });
+}
+
+function createActiveFileExcerptResult(requestId: string): HostMessage {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    return createIdeActionResult(requestId, "unavailable", "Active file excerpt is unavailable in this surface.", { action: "getActiveFileExcerpt" });
+  }
+  const attachment = createActiveFileExcerptAttachment(editor);
+  if (!attachment) {
+    return createIdeActionResult(requestId, "rejected", "Active file excerpt rejected by host policy.", { action: "getActiveFileExcerpt" });
+  }
+  return createIdeActionResult(requestId, "succeeded", "Active file excerpt ready.", { action: "getActiveFileExcerpt", contextAttachment: attachment });
+}
+
+function createActiveFileExcerptAttachment(editor: vscode.TextEditor): ActiveFileExcerptAttachment | undefined {
+  const document = editor.document;
+  if (document.isUntitled || document.uri.scheme !== "file") {
+    return undefined;
+  }
+  const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+  if (!workspaceFolder) {
+    return undefined;
+  }
+  const workspaceRelativePath = sanitizeRelativePath(vscode.workspace.asRelativePath(document.uri, false), 512);
+  if (!workspaceRelativePath) {
+    return undefined;
+  }
+  const visibleRange = editor.visibleRanges[0];
+  if (!visibleRange) {
+    return undefined;
+  }
+  const excerpt = createBoundedActiveFileExcerpt(document, visibleRange);
+  if (!excerpt) {
+    return undefined;
+  }
+  const languageId = sanitizeLanguageId(document.languageId);
+  return {
+    kind: "active_file_excerpt",
+    source: "vscode",
+    file: {
+      displayPath: workspaceRelativePath,
+      workspaceRelativePath,
+      ...(languageId ? { languageId } : {}),
+    },
+    range: excerpt.range,
+    text: excerpt.text,
+    truncated: excerpt.truncated,
+  };
+}
+
+function createBoundedActiveFileExcerpt(document: vscode.TextDocument, visibleRange: vscode.Range): { range: ApplyWorkspaceTextReplacement["range"]; text: string; truncated: boolean } | undefined {
+  const range = toStrictRange(visibleRange);
+  if (!range || !isRangeWithinDocument(range, document)) {
+    return undefined;
+  }
+  const text = document.getText(toVscodeRange(range));
+  const boundedText = text.length > maxActiveFileExcerptTextLength ? text.slice(0, maxActiveFileExcerptTextLength) : text;
+  const sanitizedText = sanitizeActiveFileExcerptText(boundedText);
+  if (sanitizedText === undefined) {
+    return undefined;
+  }
+  return {
+    range,
+    text: sanitizedText,
+    truncated: text.length > maxActiveFileExcerptTextLength,
+  };
+}
+
+function toStrictRange(range: vscode.Range): ApplyWorkspaceTextReplacement["range"] | undefined {
+  const strictRange = {
+    start: {
+      line: range.start.line,
+      character: range.start.character,
+    },
+    end: {
+      line: range.end.line,
+      character: range.end.character,
+    },
+  };
+  return isStrictRange(strictRange) ? strictRange : undefined;
 }
 
 function toVscodeRange(range: ApplyWorkspaceTextReplacement["range"]): vscode.Range {
@@ -549,6 +678,9 @@ export function parseIdeActionRequest(message: GuiMessage): IdeActionRequest | u
   }
   if (hasOnlyKeys(message.payload, ["action"]) && message.payload.action === "getContextSnapshot") {
     return { requestId: message.requestId, action: "getContextSnapshot" };
+  }
+  if (hasOnlyKeys(message.payload, ["action"]) && message.payload.action === "getActiveFileExcerpt") {
+    return { requestId: message.requestId, action: "getActiveFileExcerpt" };
   }
   if (
     hasOnlyKeys(message.payload, ["action", "workspaceRelativePath"]) &&
@@ -813,7 +945,7 @@ const isSecretLikePathSegment = (value) => /^(?:auth|authorization|bearer|cookie
 const isStrictSafeRelativePath = (value) => typeof value === "string" && value.length > 0 && value.length <= 512 && !value.startsWith("/") && !value.startsWith("~") && !value.includes("%") && !value.includes("\\\\") && !value.includes(":") && !value.includes("?") && !value.includes("#") && !/[\u0000-\u001f\u007f-\u009f]/.test(value) && !/(^|\/)\.\.?(\/|$)/.test(value) && !value.includes("//") && !value.endsWith("/") && !value.split("/").some(isSecretLikePathSegment);
 const isStrictPosition = (value) => isPlainObject(value) && Object.keys(value).every((key) => key === "line" || key === "character") && Number.isInteger(value.line) && Number.isInteger(value.character) && value.line >= 0 && value.line <= 1000000 && value.character >= 0 && value.character <= 1000000;
 const isStrictRange = (value) => isPlainObject(value) && Object.keys(value).every((key) => key === "start" || key === "end") && isStrictPosition(value.start) && isStrictPosition(value.end) && (value.end.line > value.start.line || (value.end.line === value.start.line && value.end.character >= value.start.character));
-const isStrictIdeActionPayload = (payload) => isPlainObject(payload) && ((Object.keys(payload).every((key) => key === "action") && payload.action === "getContextSnapshot") || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath") && payload.action === "openWorkspaceFile" && isStrictSafeRelativePath(payload.workspaceRelativePath)) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath" || key === "range") && payload.action === "revealWorkspaceRange" && isStrictSafeRelativePath(payload.workspaceRelativePath) && isStrictRange(payload.range)));
+const isStrictIdeActionPayload = (payload) => isPlainObject(payload) && ((Object.keys(payload).every((key) => key === "action") && (payload.action === "getContextSnapshot" || payload.action === "getActiveFileExcerpt")) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath") && payload.action === "openWorkspaceFile" && isStrictSafeRelativePath(payload.workspaceRelativePath)) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath" || key === "range") && payload.action === "revealWorkspaceRange" && isStrictSafeRelativePath(payload.workspaceRelativePath) && isStrictRange(payload.range)));
 const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && ((message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload)) || (message.type === "gui.ideActionRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)) || (message.type === "gui.applyWorkspaceEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)));
 const isEmptyHostPayload = (payload) => payload === undefined || (isPlainObject(payload) && Object.keys(payload).length === 0);
 const isHostMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && (message.type === "host.openedFromCommand" ? message.requestId === undefined && isEmptyHostPayload(message.payload) : (message.type === "host.ready" || message.type === "host.contextSnapshot" || message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult"));
@@ -983,6 +1115,13 @@ function sanitizePositionNumber(value: number): number | undefined {
 
 function sanitizeSelectionText(value: string): string | undefined {
   if (value.length === 0 || value.length > 8000 || hasSecretLikeText(value) || hasBinaryLikeText(value)) {
+    return undefined;
+  }
+  return value;
+}
+
+function sanitizeActiveFileExcerptText(value: string): string | undefined {
+  if (value.length === 0 || value.length > maxActiveFileExcerptTextLength || hasSecretLikeText(value) || hasPrivatePathLikeText(value) || hasBinaryLikeText(value)) {
     return undefined;
   }
   return value;
