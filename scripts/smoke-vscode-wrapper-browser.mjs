@@ -30,6 +30,12 @@ const activeFileExcerptPath = "src/active-excerpt-smoke.ts";
 const activeFileExcerptRange = { start: { line: 3, character: 0 }, end: { line: 5, character: 1 } };
 const activeFileExcerptText = "export function activeExcerptSmoke() {\n  return 42;\n}";
 const activeFileExcerptPrompt = "Use the attached VS Code active file excerpt.";
+const bundleExcerptOnePath = "src/vscode-bundle-one.ts";
+const bundleExcerptTwoPath = "src/vscode-bundle-two.ts";
+const bundleExcerptOneText = "export const vscodeBundleOne = 1;";
+const bundleExcerptTwoText = "export const vscodeBundleTwo = 2;";
+const bundlePrompt = "Use the attached VS Code multi-file context bundle.";
+const afterBundlePrompt = "Send after VS Code multi-file context bundle clears.";
 const openResultMessage = "Workspace file opened.";
 const revealProgressSummary = "Reveal policy check started.";
 const revealResultMessage = "Workspace range revealed.";
@@ -471,6 +477,8 @@ try {
   await expectVisibleText(page, "Attach excerpt to next message", "active-file excerpt default include toggle");
   await assertBrowserStorageDoesNotContain(page, [activeFileExcerptPath, activeFileExcerptText], "active-file excerpt preview storage check");
 
+  await runExplicitContextBundleScenario(page);
+
   const chatCommandCountBeforeActiveExcerptSend = countChatCommandPosts();
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(activeFileExcerptPrompt);
   await clickSendButtonWithActionability(page, "VS Code active-file excerpt send");
@@ -541,6 +549,78 @@ async function waitForGuiMessageAfter(page, type, previousCount) {
 
 async function getGuiMessageCount(page, type) {
   return await page.evaluate((messageType) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).length, type);
+}
+
+async function runExplicitContextBundleScenario(page) {
+  await attachBundleExcerpt(page, {
+    path: bundleExcerptOnePath,
+    text: bundleExcerptOneText,
+    range: { start: { line: 11, character: 0 }, end: { line: 11, character: 34 } },
+  });
+  await expectVisibleText(page, bundleExcerptOnePath, "first VS Code bundle excerpt path");
+  await page.getByRole("button", { name: "Add to multi-file context bundle" }).click();
+  await expectVisibleText(page, "1/4 excerpts", "first VS Code bundle item");
+
+  await attachBundleExcerpt(page, {
+    path: bundleExcerptTwoPath,
+    text: bundleExcerptTwoText,
+    range: { start: { line: 12, character: 0 }, end: { line: 12, character: 34 } },
+  });
+  await expectVisibleText(page, bundleExcerptTwoPath, "second VS Code bundle excerpt path");
+  await page.getByRole("button", { name: "Add to multi-file context bundle" }).click();
+  await expectVisibleText(page, "2/4 excerpts", "second VS Code bundle item");
+  await expectVisibleText(page, "Include bundle with next message", "VS Code bundle include toggle");
+  await assertBrowserStorageDoesNotContain(page, [bundleExcerptOnePath, bundleExcerptOneText, bundleExcerptTwoPath, bundleExcerptTwoText], "VS Code bundle preview storage check");
+
+  const chatCommandCountBeforeBundleSend = countChatCommandPosts();
+  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(bundlePrompt);
+  await clickSendButtonWithActionability(page, "VS Code explicit context bundle send");
+  await expectVisibleText(page, bundlePrompt, "VS Code bundle user bubble");
+  const bundleChatPosts = countChatCommandPosts() - chatCommandCountBeforeBundleSend;
+  if (bundleChatPosts !== 1) failures.push(`Explicit context bundle send posted ${bundleChatPosts} chat commands instead of exactly one.`);
+  assertExplicitContextBundleChatCommand(chatCommandBodies.at(-1), "vscode");
+  await expectVisibleText(page, "One-shot explicit context bundle attached to the last accepted message and cleared.", "VS Code bundle one-shot clear status");
+  await expectVisibleText(page, "empty", "VS Code bundle empty after send");
+  await expectNoVisibleText(page, bundleExcerptOneText, "first VS Code bundle preview after send");
+  await expectNoVisibleText(page, bundleExcerptTwoText, "second VS Code bundle preview after send");
+
+  const activeExcerptInclude = page.locator("label.attached-context-toggle", { hasText: "Attach excerpt to next message" }).getByRole("checkbox");
+  if (await activeExcerptInclude.isVisible().catch(() => false)) {
+    await activeExcerptInclude.uncheck();
+  }
+  const chatCommandCountBeforeAfterBundleSend = countChatCommandPosts();
+  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(afterBundlePrompt);
+  await clickSendButtonWithActionability(page, "VS Code post-bundle send");
+  await expectVisibleText(page, afterBundlePrompt, "VS Code post-bundle user bubble");
+  const afterBundleChatPosts = countChatCommandPosts() - chatCommandCountBeforeAfterBundleSend;
+  if (afterBundleChatPosts !== 1) failures.push(`Post-bundle send posted ${afterBundleChatPosts} chat commands instead of exactly one.`);
+  assertNoChatCommandContext(chatCommandBodies.at(-1), "post-bundle send");
+  await attachBundleExcerpt(page, {
+    path: activeFileExcerptPath,
+    text: activeFileExcerptText,
+    range: activeFileExcerptRange,
+  });
+  await expectVisibleText(page, activeFileExcerptPath, "restored active-file excerpt path after bundle scenario");
+  await assertBrowserStorageDoesNotContain(page, [bundleExcerptOnePath, bundleExcerptOneText, bundleExcerptTwoPath, bundleExcerptTwoText], "VS Code bundle final storage check");
+}
+
+async function attachBundleExcerpt(page, excerpt) {
+  const activeExcerptButton = page.getByRole("button", { name: "Attach active file excerpt", exact: true });
+  const before = await getGuiMessageCount(page, "gui.ideActionRequest");
+  await activeExcerptButton.click();
+  const request = await waitForGuiMessageAfter(page, "gui.ideActionRequest", before);
+  if (!request) {
+    failures.push("Attach active file excerpt did not send a bridge request for bundle setup.");
+    return;
+  }
+  if (request.payload?.action !== "getActiveFileExcerpt") failures.push("Bundle active-file excerpt bridge request was not getActiveFileExcerpt.");
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.ideActionResult",
+    requestId: request.requestId,
+    payload: activeFileExcerptResultPayload({ source: "vscode", text: excerpt.text, workspaceRelativePath: excerpt.path, range: excerpt.range }),
+  });
+  await expectVisibleText(page, "Attach active file excerpt: succeeded", "bundle active-file excerpt result");
 }
 
 async function runDemoModeFirstMessageScenario(page) {
@@ -679,7 +759,7 @@ async function startMockRuntimeServer() {
   return listen(server);
 }
 
-function activeFileExcerptResultPayload({ source, text, workspaceRelativePath = activeFileExcerptPath }) {
+function activeFileExcerptResultPayload({ source, text, workspaceRelativePath = activeFileExcerptPath, range = activeFileExcerptRange }) {
   return {
     status: "succeeded",
     message: "Active file excerpt ready.",
@@ -689,7 +769,7 @@ function activeFileExcerptResultPayload({ source, text, workspaceRelativePath = 
       kind: "active_file_excerpt",
       source,
       file: { displayPath: workspaceRelativePath, workspaceRelativePath, languageId: "typescript" },
-      range: activeFileExcerptRange,
+      range,
       text,
       truncated: false,
     },
@@ -713,6 +793,36 @@ function assertActiveFileExcerptChatCommand(command, source) {
   if (context.selection?.startLine !== activeFileExcerptRange.start.line || context.selection?.startCharacter !== activeFileExcerptRange.start.character || context.selection?.endLine !== activeFileExcerptRange.end.line || context.selection?.endCharacter !== activeFileExcerptRange.end.character) {
     failures.push("Active-file excerpt chat command context range was wrong.");
   }
+}
+
+function assertExplicitContextBundleChatCommand(command, source) {
+  if (command?.payload?.content !== bundlePrompt) {
+    failures.push("Explicit context bundle chat command content did not match the prompt.");
+  }
+  const context = command?.payload?.context;
+  if (!context || typeof context !== "object") {
+    failures.push("Explicit context bundle chat command did not include prompt context.");
+    return;
+  }
+  if (context.kind !== "explicit_context_bundle") failures.push("Explicit context bundle chat command context kind was wrong.");
+  if (!Array.isArray(context.items) || context.items.length !== 2) {
+    failures.push("Explicit context bundle chat command did not include exactly two items.");
+    return;
+  }
+  const [first, second] = context.items;
+  assertBundleItem(first, source, bundleExcerptOnePath, bundleExcerptOneText, 11);
+  assertBundleItem(second, source, bundleExcerptTwoPath, bundleExcerptTwoText, 12);
+}
+
+function assertBundleItem(item, source, expectedPath, expectedText, expectedLine) {
+  if (item?.kind !== "active_editor" || item?.source !== source) failures.push(`Bundle item ${expectedPath} kind/source was wrong.`);
+  if (item?.file?.workspaceRelativePath !== expectedPath || item?.file?.displayPath !== expectedPath || item?.file?.languageId !== "typescript") failures.push(`Bundle item ${expectedPath} file metadata was wrong.`);
+  if (item?.selection?.text !== expectedText) failures.push(`Bundle item ${expectedPath} text was wrong.`);
+  if (item?.selection?.startLine !== expectedLine || item?.selection?.startCharacter !== 0 || item?.selection?.endLine !== expectedLine || item?.selection?.endCharacter !== 34) failures.push(`Bundle item ${expectedPath} range was wrong.`);
+}
+
+function assertNoChatCommandContext(command, label) {
+  if (command?.payload?.context !== undefined) failures.push(`${label} unexpectedly included prompt context.`);
 }
 
 function mockProposalChatSummary() {

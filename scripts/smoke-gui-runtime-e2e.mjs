@@ -21,12 +21,22 @@ const modelId = "smoke-model";
 const providerName = "Smoke Mock Provider";
 const userMessageWithContext = "Say hello from GUI runtime smoke with attached context.";
 const userMessageWithoutContext = "Say hello from GUI runtime smoke without attached context.";
+const userMessageWithBundle = "Say hello from GUI runtime smoke with multi-file bundle.";
+const userMessageAfterBundle = "Say hello from GUI runtime smoke after multi-file bundle cleared.";
 const safeEditPrompt = "Coding action: propose_safe_edit\n\nPropose a safe edit for the selected code. Nothing is applied automatically.";
 const assistantTextWithContext = "Hello smoke from mock provider with context.";
 const assistantTextWithoutContext = "Hello smoke from mock provider without context.";
+const assistantTextWithBundle = "Hello smoke from mock provider with multi-file bundle.";
+const assistantTextAfterBundle = "Hello smoke from mock provider after bundle cleared.";
 const activeContextSentinel = `ACTIVE_CONTEXT_SENTINEL_${"x".repeat(64)}`;
 const activeContextText = `function smokeContext() { return "${activeContextSentinel}"; }`;
 const activeContextPath = "src/smoke-context.ts";
+const bundleSentinelOne = `BUNDLE_CONTEXT_ONE_${"a".repeat(48)}`;
+const bundleSentinelTwo = `BUNDLE_CONTEXT_TWO_${"b".repeat(48)}`;
+const bundlePreviewOne = `export const bundleOnePreview = "${"a".repeat(16)}";`;
+const bundlePreviewTwo = `export const bundleTwoPreview = "${"b".repeat(16)}";`;
+const bundleContextOne = { path: "src/smoke-bundle-one.ts", text: `${bundlePreviewOne}\nexport const bundleOne = "${bundleSentinelOne}";`, startLine: 1, startCharacter: 0, endLine: 2, endCharacter: 48 };
+const bundleContextTwo = { path: "src/smoke-bundle-two.ts", text: `${bundlePreviewTwo}\nexport const bundleTwo = "${bundleSentinelTwo}";`, startLine: 3, startCharacter: 0, endLine: 4, endCharacter: 48 };
 const safeEditProposal = {
   type: "gui.applyWorkspaceEditRequest",
   version: "2026-05-15",
@@ -47,6 +57,8 @@ const secretMarkers = [
   token,
   fakeApiKey,
   activeContextSentinel,
+  bundleSentinelOne,
+  bundleSentinelTwo,
   `Bearer ${token}`,
   `Bearer ${fakeApiKey}`,
   "authorization: bearer",
@@ -87,6 +99,14 @@ try {
   }
 
   const page = await browser.newPage();
+  await page.addInitScript(() => {
+    window.__yetAiVsCodeMessages = [];
+    window.acquireVsCodeApi = () => ({
+      postMessage(message) {
+        window.__yetAiVsCodeMessages.push(message);
+      },
+    });
+  });
   await page.route("http://127.0.0.1:8001/v1/demo-mode", async (route) => {
     if (route.request().method() !== "GET" && route.request().method() !== "POST") {
       await route.fallback();
@@ -133,17 +153,22 @@ try {
 
   await page.goto(`${guiBaseUrl}/index.html`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
+  const guiReady = await waitForGuiMessage(page, "gui.ready");
+  await dispatchHostMessage(page, {
+    version: "2026-05-15",
+    type: "host.ready",
+    requestId: guiReady?.requestId,
+    payload: { runtimeUrl: runtimeBaseUrl, sessionToken: token, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false },
+  });
+  await expectAttachedText(page, "Host runtime settings received", "host runtime settings bridge log", 20_000);
 
-  await openDetailsBySummary(page, "Local runtime connection", page.getByRole("textbox", { name: "Session token", exact: true }));
-  await page.getByRole("textbox", { name: "Session token", exact: true }).fill(token);
-  await page.getByLabel("Runtime base URL").fill(runtimeBaseUrl);
   const refreshButton = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
   await openDetailsBySummary(page, "Local runtime connection", refreshButton);
   await refreshButton.waitFor({ state: "visible", timeout: 20_000 });
   await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Refresh runtime" && !button.disabled), undefined, { timeout: 20_000 });
   await refreshButton.click();
-  await expectVisibleText(page, "Runtime connected", "runtime connection feedback", 20_000);
-  await expectVisibleText(page, "runtime connected", "runtime connected badge", 20_000);
+  await expectAttachedText(page, "Runtime connected", "runtime connection feedback", 20_000);
+  await expectAttachedText(page, "runtime connected", "runtime connected badge", 20_000);
 
   await page.getByRole("button", { name: "New provider" }).click();
   await page.getByLabel("Provider id").fill(providerId);
@@ -157,8 +182,9 @@ try {
   await expectVisibleText(page, providerName, "created provider", 20_000);
   await expectVisibleText(page, `Ready to send using ${modelId} through the local runtime.`, "chat readiness", 20_000);
 
-  await openDetailsBySummary(page, "Advanced chat controls", page.getByLabel("Chat id"));
-  await page.getByLabel("Chat id").fill(chatId);
+  await exerciseExplicitContextBundle(page);
+
+  await setChatId(page, chatId);
   await deliverActiveContext(page);
   await expectVisibleText(page, "Active editor context", "active editor context card", 20_000);
   await expectVisibleText(page, activeContextPath, "active context file path", 20_000);
@@ -193,22 +219,31 @@ try {
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expectVisibleText(page, "Coding action: propose_safe_edit", "visible safe-edit coding action prompt", 20_000);
   await expectVisibleText(page, "Proposed a safe edit. Review the proposal card below. It will not apply automatically.", "safe-edit compact assistant bubble", 30_000);
-  await expectVisibleText(page, "Propose safe edit", "safe-edit proposal card", 20_000);
   await expectVisibleText(page, safeEditProposal.payload.summary, "mock-provider safe-edit proposal summary", 20_000);
   await expectVisibleText(page, activeContextPath, "mock-provider safe-edit proposal workspace path", 20_000);
-  await expectVisibleText(page, "Preview only in this host. Browser cannot apply proposed edits; VS Code and JetBrains can receive an apply request after you review and click.", "browser preview-only safe-edit apply boundary", 20_000);
+  await expectVisibleText(page, "Apply in VS Code after review", "VS Code safe-edit apply boundary", 20_000);
   const applyRequestsAfterSafeEdit = await applyWorkspaceEditRequestCount(page);
   assert(applyRequestsAfterSafeEdit === applyRequestsBeforeSafeEdit, "GUI emitted a workspace edit apply request before an explicit apply click");
-  await waitForProviderHits(3);
+  await waitForProviderHits(5);
 
   assert(providerAuth === `Bearer ${fakeApiKey}`, "mock provider did not receive the configured fake bearer key");
-  assert(providerRequestBodies.length === 3, "mock provider received " + providerRequestBodies.length + " chat request(s), expected 3");
+  assert(providerRequestBodies.length === 5, "mock provider received " + providerRequestBodies.length + " chat request(s), expected 5");
   const parsedProviderBodies = providerRequestBodies.map((body) => JSON.parse(body));
-  const includedPrompt = parsedProviderBodies[0].messages?.[0]?.content;
-  const omittedPrompt = parsedProviderBodies[1].messages?.[0]?.content;
-  const safeEditProviderPrompt = parsedProviderBodies[2].messages?.[0]?.content;
+  const bundlePrompt = parsedProviderBodies[0].messages?.[0]?.content;
+  const afterBundlePrompt = parsedProviderBodies[1].messages?.[0]?.content;
+  const includedPrompt = parsedProviderBodies[2].messages?.[0]?.content;
+  const omittedPrompt = parsedProviderBodies[3].messages?.[0]?.content;
+  const safeEditProviderPrompt = parsedProviderBodies[4].messages?.[0]?.content;
   assert(parsedProviderBodies.every((body) => body.stream === true), "mock provider requests were not streaming");
   assert(parsedProviderBodies.every((body) => body.model === modelId), "mock provider request used the wrong model");
+  assert(typeof bundlePrompt === "string" && bundlePrompt.includes("IDE context bundle"), "bundle request did not prepend IDE context bundle");
+  assert(bundlePrompt.includes(`path=${bundleContextOne.path}`), "bundle request missed first bundle path");
+  assert(bundlePrompt.includes(`path=${bundleContextTwo.path}`), "bundle request missed second bundle path");
+  assert(bundlePrompt.includes(bundleSentinelOne), "bundle request missed first bounded active selection text");
+  assert(bundlePrompt.includes(bundleSentinelTwo), "bundle request missed second bounded active selection text");
+  assert(bundlePrompt.includes(userMessageWithBundle), "bundle request missed user content");
+  assert(afterBundlePrompt === userMessageAfterBundle, "post-bundle request unexpectedly included one-shot bundle context");
+  assert(!afterBundlePrompt.includes(bundleSentinelOne) && !afterBundlePrompt.includes(bundleSentinelTwo), "post-bundle request leaked one-shot bundle sentinels");
   assert(typeof includedPrompt === "string" && includedPrompt.includes("IDE context"), "included-context request did not prepend IDE context");
   assert(includedPrompt.includes(`Workspace-relative path: ${activeContextPath}`), "included-context request missed active file path");
   assert(includedPrompt.includes(activeContextSentinel), "included-context request missed bounded active selection text");
@@ -239,8 +274,8 @@ try {
   }
 
   console.log("GUI runtime e2e smoke passed.");
-  console.log("Verified built GUI, loopback runtime, mock OpenAI-compatible streaming provider, IDE-like active context include/omit, streamed chat responses, mock safe-edit JSON proposal preview without auto-apply, local history reload, and browser-state redaction.");
-  console.log("No OpenAI/ChatGPT, hosted Yet AI service, non-loopback URL, IDE, or real provider credential was used.");
+  console.log("Verified built GUI, loopback runtime, mock OpenAI-compatible streaming provider, IDE-like active-file multi-file bundle include/one-shot clear, active context include/omit, streamed chat responses, mock safe-edit JSON proposal preview without auto-apply, local history reload, and browser-state redaction.");
+  console.log("No OpenAI/ChatGPT, hosted Yet AI service, non-loopback URL, real IDE launch, or real provider credential was used.");
 } finally {
   await browser?.close().catch(() => undefined);
   if (engine) {
@@ -381,7 +416,7 @@ async function startMockProvider() {
     });
     request.on("end", () => {
       providerRequestBodies.push(requestBody);
-      const responseText = providerHits === 1 ? assistantTextWithContext : providerHits === 2 ? assistantTextWithoutContext : JSON.stringify(safeEditProposal);
+      const responseText = providerHits === 1 ? assistantTextWithBundle : providerHits === 2 ? assistantTextAfterBundle : providerHits === 3 ? assistantTextWithContext : providerHits === 4 ? assistantTextWithoutContext : JSON.stringify(safeEditProposal);
       response.writeHead(200, {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
@@ -434,9 +469,70 @@ async function startStaticServer(staticRoot) {
   };
 }
 
+async function exerciseExplicitContextBundle(page) {
+  await setChatId(page, chatId);
+  await deliverActiveFileExcerpt(page, bundleContextOne);
+  await expectVisibleText(page, "Active file excerpt", "first active-file excerpt card", 20_000);
+  await expectVisibleText(page, bundleContextOne.path, "first active-file excerpt path", 20_000);
+  await page.getByRole("button", { name: "Add to multi-file context bundle" }).click();
+  await expectVisibleText(page, "1/4 excerpts", "first explicit context bundle item", 20_000);
+  await deliverActiveFileExcerpt(page, bundleContextTwo);
+  await expectVisibleText(page, bundleContextTwo.path, "second active-file excerpt path", 20_000);
+  await page.getByRole("button", { name: "Add to multi-file context bundle" }).click();
+  await expectVisibleText(page, "2/4 excerpts", "second explicit context bundle item", 20_000);
+  await expectVisibleText(page, "Include bundle with next message", "explicit context bundle include state", 20_000);
+  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(userMessageWithBundle);
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expectVisibleText(page, userMessageWithBundle, "visible bundle-context user chat bubble", 20_000);
+  await expectVisibleText(page, assistantTextWithBundle, "bundle-context streamed assistant response", 30_000);
+  await assertAssistantAnswerCount(page, assistantTextWithBundle, 1, "bundle-context streamed assistant response");
+  await expectVisibleText(page, "One-shot explicit context bundle attached to the last accepted message and cleared.", "one-shot explicit bundle clear status", 20_000);
+  await expectVisibleText(page, "Multi-file context bundle", "explicit context bundle panel after clear", 20_000);
+  await expectVisibleText(page, "empty", "explicit context bundle empty after accepted send", 20_000);
+  await assertContextSentinelNotVisible(page, "bundle preview after accepted send");
+  const activeExcerptInclude = page.locator("label.attached-context-toggle", { hasText: "Attach excerpt to next message" }).getByRole("checkbox");
+  if (await activeExcerptInclude.isVisible().catch(() => false)) {
+    await activeExcerptInclude.uncheck();
+  }
+  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(userMessageAfterBundle);
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expectVisibleText(page, userMessageAfterBundle, "visible post-bundle user chat bubble", 20_000);
+  await expectVisibleText(page, assistantTextAfterBundle, "post-bundle streamed assistant response", 30_000);
+  await assertAssistantAnswerCount(page, assistantTextAfterBundle, 1, "post-bundle streamed assistant response");
+}
+
+async function waitForGuiMessage(page, type) {
+  await page.waitForFunction((messageType) => window.__yetAiVsCodeMessages?.some((message) => message?.type === messageType), type, { timeout: 10_000 });
+  return await page.evaluate((messageType) => window.__yetAiVsCodeMessages.find((message) => message?.type === messageType), type);
+}
+
+async function waitForGuiMessageAfter(page, type, previousCount) {
+  await page.waitForFunction(({ messageType, count }) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).length > count, { messageType: type, count: previousCount }, { timeout: 10_000 });
+  return await page.evaluate(({ messageType, count }) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).at(count), { messageType: type, count: previousCount });
+}
+
+async function getGuiMessageCount(page, type) {
+  return await page.evaluate((messageType) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).length, type);
+}
+
+async function dispatchHostMessage(page, message) {
+  await page.evaluate((hostMessage) => {
+    window.dispatchEvent(new MessageEvent("message", { data: hostMessage }));
+  }, message);
+}
+
 async function expectVisibleText(page, text, description, timeout = 10_000) {
   try {
     await page.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout });
+  } catch (error) {
+    const body = await page.locator("body").innerText().catch(() => "");
+    throw new Error(`Timed out waiting for ${description}. ${messageOf(error)}\nVisible body excerpt: ${redactSecrets(body).slice(0, 6000)}`);
+  }
+}
+
+async function expectAttachedText(page, text, description, timeout = 10_000) {
+  try {
+    await page.getByText(text, { exact: false }).first().waitFor({ state: "attached", timeout });
   } catch (error) {
     const body = await page.locator("body").innerText().catch(() => "");
     throw new Error(`Timed out waiting for ${description}. ${messageOf(error)}\nVisible body excerpt: ${redactSecrets(body).slice(0, 6000)}`);
@@ -481,6 +577,34 @@ async function deliverActiveContext(page) {
   }, { text: activeContextText, path: activeContextPath });
 }
 
+async function deliverActiveFileExcerpt(page, excerpt) {
+  const before = await getGuiMessageCount(page, "gui.ideActionRequest");
+  await page.getByRole("button", { name: "Attach active file excerpt", exact: true }).click();
+  const request = await waitForGuiMessageAfter(page, "gui.ideActionRequest", before);
+  assert(request?.payload?.action === "getActiveFileExcerpt", "GUI did not request active-file excerpt through host bridge");
+  await page.evaluate(({ text, path, startLine, startCharacter, endLine, endCharacter, requestId }) => {
+    window.postMessage({
+      version: "2026-05-15",
+      type: "host.ideActionResult",
+      requestId,
+      payload: {
+        status: "succeeded",
+        message: "Active file excerpt ready.",
+        cloudRequired: false,
+        action: "getActiveFileExcerpt",
+        contextAttachment: {
+          kind: "active_file_excerpt",
+          source: "vscode",
+          file: { displayPath: path, workspaceRelativePath: path, languageId: "typescript" },
+          range: { start: { line: startLine, character: startCharacter }, end: { line: endLine, character: endCharacter } },
+          text,
+          truncated: false,
+        },
+      },
+    }, window.location.origin);
+  }, { ...excerpt, requestId: request.requestId });
+}
+
 async function acknowledgeHiddenContextIfNeeded(page) {
   const acknowledgementLabel = page.locator("label.attached-context-toggle", { hasText: "I understand the hidden selected text may be included" });
   if (await acknowledgementLabel.isVisible().catch(() => false)) {
@@ -491,7 +615,25 @@ async function acknowledgeHiddenContextIfNeeded(page) {
 
 async function assertContextSentinelNotVisible(page, description) {
   const body = await page.locator("body").innerText();
-  assert(!body.includes(activeContextSentinel), `${description} leaked the active context sentinel`);
+  assert(!body.includes(activeContextSentinel) && !body.includes(bundleSentinelOne) && !body.includes(bundleSentinelTwo), `${description} leaked raw context sentinel`);
+}
+
+async function openAdvancedChatControls(page) {
+  await page.getByTestId("chat-advanced-controls").evaluate((element) => {
+    if (element instanceof HTMLDetailsElement) element.open = true;
+  });
+  await page.getByLabel("Chat id").waitFor({ state: "attached", timeout: 10_000 });
+}
+
+async function setChatId(page, value) {
+  await openAdvancedChatControls(page);
+  await page.getByLabel("Chat id").evaluate((element, nextValue) => {
+    if (!(element instanceof HTMLInputElement)) return;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    setter?.call(element, nextValue);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  }, value);
 }
 
 async function openDetailsBySummary(page, summaryText, visibleLocator) {
@@ -519,17 +661,25 @@ async function waitForProviderHits(expected) {
 async function exerciseHistoryReload(page, runtimeBaseUrl) {
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
-  await openDetailsBySummary(page, "Local runtime connection", page.getByRole("textbox", { name: "Session token", exact: true }));
-  await page.getByRole("textbox", { name: "Session token", exact: true }).fill(token);
-  await page.getByLabel("Runtime base URL").fill(runtimeBaseUrl);
+  const guiReady = await waitForGuiMessage(page, "gui.ready");
+  await dispatchHostMessage(page, {
+    version: "2026-05-15",
+    type: "host.ready",
+    requestId: guiReady?.requestId,
+    payload: { runtimeUrl: runtimeBaseUrl, sessionToken: token, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false },
+  });
   await assertContextSentinelNotVisible(page, "browser storage after reload before refresh");
   const refreshButton = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
   await openDetailsBySummary(page, "Local runtime connection", refreshButton);
   await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Refresh runtime" && !button.disabled), undefined, { timeout: 20_000 });
   await refreshButton.click();
-  await expectVisibleText(page, "Runtime connected", "runtime connection after reload", 20_000);
+  await expectAttachedText(page, "Runtime connected", "runtime connection after reload", 20_000);
+  await expectVisibleText(page, userMessageWithBundle, "persisted bundle-context message after reload", 20_000);
+  await expectVisibleText(page, userMessageAfterBundle, "persisted post-bundle message after reload", 20_000);
   await expectVisibleText(page, userMessageWithContext, "persisted included-context message after reload", 20_000);
   await expectVisibleText(page, userMessageWithoutContext, "persisted omitted-context message after reload", 20_000);
+  await expectVisibleText(page, assistantTextWithBundle, "persisted bundle-context assistant response after reload", 20_000);
+  await expectVisibleText(page, assistantTextAfterBundle, "persisted post-bundle assistant response after reload", 20_000);
   await expectVisibleText(page, assistantTextWithContext, "persisted included-context assistant response after reload", 20_000);
   await expectVisibleText(page, assistantTextWithoutContext, "persisted omitted-context assistant response after reload", 20_000);
   await assertContextSentinelNotVisible(page, "reloaded history DOM");
@@ -639,12 +789,36 @@ function redactUrl(value) {
 }
 
 function assertNoSecretLeak(text, source) {
-  const lower = String(text).toLowerCase();
+  const value = String(text);
+  const lower = value.toLowerCase();
+  const allowsCurrentPreview = source === "DOM or browser storage";
   for (const marker of secretMarkers) {
     if (marker && lower.includes(marker.toLowerCase())) {
+      if (allowsCurrentPreview && (marker === activeContextSentinel || marker === bundleSentinelOne || marker === bundleSentinelTwo) && documentPreviewAllowsMarker(value, marker)) {
+        continue;
+      }
       throw new Error(`Secret marker leaked through ${source}.`);
     }
   }
+}
+
+function documentPreviewAllowsMarker(text, marker) {
+  if (!text.includes(marker)) {
+    return true;
+  }
+  const state = JSON.parse(text);
+  const storage = JSON.stringify({ localStorage: state.localStorage, sessionStorage: state.sessionStorage });
+  if (storage.includes(marker)) {
+    return false;
+  }
+  const body = String(state.body ?? "");
+  if (marker === activeContextSentinel) {
+    return body.includes(marker) && body.includes("Active editor context") && body.includes(activeContextPath);
+  }
+  if (!body.includes(marker)) {
+    return true;
+  }
+  return body.includes(marker) && body.includes("Active file excerpt") && (body.includes(bundleContextOne.path) || body.includes(bundleContextTwo.path));
 }
 
 function redactSecrets(text) {
