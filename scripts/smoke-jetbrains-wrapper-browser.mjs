@@ -30,6 +30,10 @@ const oauthSentinels = {
 };
 const activeContextSelectionMarker = `context marker ${randomUUID()}`;
 const liveContextSelectionMarker = `live context marker ${randomUUID()}`;
+const activeFileExcerptMarker = `jetbrains active excerpt ${randomUUID()}`;
+const activeFileExcerptPath = "src/main/kotlin/ActiveExcerptSmoke.kt";
+const activeFileExcerptPrompt = "Use the attached JetBrains active file excerpt.";
+const activeFileExcerptRange = { start: { line: 4, character: 0 }, end: { line: 6, character: 1 } };
 const jetbrainsContextSnapshot = {
   kind: "active_editor",
   source: "jetbrains",
@@ -627,13 +631,26 @@ try {
   if (!await includeContextToggle.isChecked({ timeout: 5000 }).catch(() => false)) {
     failures.push("JetBrains attached context include toggle was not re-enabled for the next context snapshot.");
   }
+  await assertJetBrainsActiveFileExcerptRoundtrip(page, frameLocator);
+  await page.evaluate(({ version, payload, requestId }) => {
+    window.__yetAiSendHostMessageToFrame({
+      version,
+      type: "host.contextSnapshot",
+      requestId,
+      payload,
+    });
+  }, { version: bridgeVersion, payload: jetbrainsContextSnapshot, requestId: contextRequestId });
+  await includeContextToggle.waitFor({ state: "visible", timeout: 5000 });
+  if (!await includeContextToggle.isChecked({ timeout: 5000 }).catch(() => false)) {
+    failures.push("JetBrains attached context include toggle was not re-enabled after active-file excerpt smoke.");
+  }
   await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill("Say hello through JetBrains login-shaped smoke.");
   await clickSendButtonWithActionability(frameLocator, "second enabled-context send");
-  await waitForAssistantAnswerCount(frameLocator, "JetBrains login smoke", 2, "JetBrains mock SSE assistant response after two sends");
-  await assertAssistantAnswerCount(frameLocator, "JetBrains login smoke", 2, "JetBrains mock SSE assistant response after two sends");
+  await waitForAssistantAnswerCount(frameLocator, "JetBrains login smoke", 3, "JetBrains mock SSE assistant response after three canned sends");
+  await assertAssistantAnswerCount(frameLocator, "JetBrains login smoke", 3, "JetBrains mock SSE assistant response after three canned sends");
   chatCommandRequestCountBeforeEditSmoke = chatCommandRequestCount;
-  if (chatCommandRequestCount !== 2) {
-    failures.push(`Mock runtime received ${chatCommandRequestCount} chat command requests instead of exactly two.`);
+  if (chatCommandRequestCount !== 4) {
+    failures.push(`Mock runtime received ${chatCommandRequestCount} chat command requests instead of exactly four.`);
   }
   if (chatSubscriptionCount < 1 || chatSubscriptionCount > 2) {
     failures.push(`Mock runtime received ${chatSubscriptionCount} chat subscriptions instead of one or two expected local subscriptions.`);
@@ -653,6 +670,9 @@ try {
     window.__yetAiBridgeMessages = window.__yetAiBridgeMessages?.filter((message) => message?.type !== "host.ready") ?? [];
     window.__yetAiPendingHostMessages = [];
   });
+  await page.evaluate(() => {
+    window.__yetAiHostMessagesPosted = window.__yetAiHostMessagesPosted?.filter((message) => message?.payload?.contextAttachment === undefined) ?? [];
+  });
   console.log(`JetBrains wrapper smoke viewport: ${finalLayoutMetrics.viewport.width}x${finalLayoutMetrics.viewport.height}.`);
   const browserVisibleState = await collectBrowserVisibleState(page);
   assertNoSecretLeak(browserVisibleState, [
@@ -666,6 +686,7 @@ try {
     { label: "active context selection marker", value: activeContextSelectionMarker },
     { label: "live active context selection marker", value: liveContextSelectionMarker },
     { label: "authorization header marker", value: "authorization: bearer" },
+    { label: "active file excerpt marker", value: activeFileExcerptMarker },
     { label: "set-cookie marker", value: "set-cookie" },
     { label: "client secret marker", value: "client_secret" },
   ]);
@@ -1566,6 +1587,114 @@ function assertJetBrainsContext(context) {
   }
 }
 
+function activeFileExcerptResultPayload({ text = activeFileExcerptMarker, path = activeFileExcerptPath } = {}) {
+  return {
+    status: "succeeded",
+    message: "Active file excerpt ready.",
+    cloudRequired: false,
+    action: "getActiveFileExcerpt",
+    contextAttachment: {
+      kind: "active_file_excerpt",
+      source: "jetbrains",
+      file: { displayPath: path, workspaceRelativePath: path, languageId: "kotlin" },
+      range: activeFileExcerptRange,
+      text,
+      truncated: false,
+    },
+  };
+}
+
+function assertJetBrainsActiveFileExcerptContext(context) {
+  if (!context || typeof context !== "object") {
+    failures.push("Mock runtime did not receive active-file excerpt context.");
+    return;
+  }
+  if (context.kind !== "active_editor" || context.source !== "jetbrains") failures.push("Active-file excerpt context kind/source was wrong.");
+  if (context.file?.displayPath !== activeFileExcerptPath || context.file?.workspaceRelativePath !== activeFileExcerptPath || context.file?.languageId !== "kotlin") {
+    failures.push("Active-file excerpt context file metadata was wrong.");
+  }
+  if (context.selection?.text !== activeFileExcerptMarker) failures.push("Active-file excerpt context text was wrong.");
+  if (context.selection?.startLine !== activeFileExcerptRange.start.line || context.selection?.startCharacter !== activeFileExcerptRange.start.character || context.selection?.endLine !== activeFileExcerptRange.end.line || context.selection?.endCharacter !== activeFileExcerptRange.end.character) {
+    failures.push("Active-file excerpt context range was wrong.");
+  }
+}
+
+async function assertJetBrainsActiveFileExcerptRoundtrip(page, frameLocator) {
+  const invalidAssistantProposal = JSON.stringify({
+    type: "assistant.ideActionProposal",
+    version: bridgeVersion,
+    requiresUserConfirmation: true,
+    cloudRequired: false,
+    summary: "JetBrains assistant must not request active excerpts.",
+    action: "getActiveFileExcerpt",
+  });
+  await page.evaluate(({ content }) => window.__yetAiSetNextAssistantResponseForSmoke?.(content), { content: invalidAssistantProposal });
+  await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill("Render invalid JetBrains active excerpt proposal.");
+  const beforeInvalidProposalIdeRequests = await page.evaluate(() => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.ideActionRequest").length ?? 0);
+  await clickSendButtonWithActionability(frameLocator, "JetBrains invalid active-file excerpt proposal send");
+  await page.waitForTimeout(250);
+  const afterInvalidProposalIdeRequests = await page.evaluate(() => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.ideActionRequest").length ?? 0);
+  if (afterInvalidProposalIdeRequests !== beforeInvalidProposalIdeRequests) failures.push("Assistant getActiveFileExcerpt proposal caused a gui.ideActionRequest.");
+  if (await frameLocator.getByText("Read-only IDE action proposal", { exact: true }).first().isVisible().catch(() => false)) failures.push("Assistant getActiveFileExcerpt proposal rendered a read-only proposal card.");
+  if (await frameLocator.getByRole("button", { name: "Run read-only IDE action", exact: true }).first().isVisible().catch(() => false)) failures.push("Assistant getActiveFileExcerpt proposal rendered a runnable IDE action button.");
+
+  const button = frameLocator.getByRole("button", { name: "Attach active file excerpt", exact: true }).first();
+  await button.waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("JetBrains active-file excerpt button was not visible."));
+  const before = await page.evaluate(() => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.ideActionRequest").length ?? 0);
+  await centerInNearestScrollContainer(button);
+  await button.click();
+  await page.waitForFunction((count) => (window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.ideActionRequest").length ?? 0) === count + 1, before, { timeout: 5000 })
+    .catch(() => failures.push("Wrapper did not collect exactly one active-file excerpt gui.ideActionRequest."));
+  const requests = await page.evaluate((count) => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.ideActionRequest").slice(count) ?? [], before);
+  const request = requests[0];
+  if (!request || request.version !== bridgeVersion || request.payload?.action !== "getActiveFileExcerpt" || Object.keys(request.payload ?? {}).length !== 1) {
+    failures.push(`Wrapper collected malformed active-file excerpt request: ${JSON.stringify(request)}`);
+    return;
+  }
+  if (typeof request.requestId !== "string" || !/^gui-active-file-excerpt-\d+$/.test(request.requestId)) failures.push(`Active-file excerpt request id was not GUI-owned: ${String(request.requestId)}.`);
+  await button.click({ force: true }).catch(() => undefined);
+  await page.waitForTimeout(100);
+  const afterDuplicate = await page.evaluate(() => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.ideActionRequest").length ?? 0);
+  if (afterDuplicate !== before + 1) failures.push("Pending JetBrains active-file excerpt allowed a duplicate request.");
+
+  await page.evaluate(({ version, requestId, payload }) => {
+    window.__yetAiSendHostMessageToFrame({ version, type: "host.ideActionResult", requestId: `${requestId}-stale`, payload });
+  }, { version: bridgeVersion, requestId: request.requestId, payload: activeFileExcerptResultPayload({ text: "staleJetBrainsExcerptShouldNotRender", path: "src/main/kotlin/Stale.kt" }) });
+  await page.waitForTimeout(150);
+  if (await frameLocator.getByText("staleJetBrainsExcerptShouldNotRender", { exact: false }).first().isVisible().catch(() => false)) failures.push("Stale JetBrains active-file excerpt result rendered.");
+
+  await page.evaluate(({ version, requestId, payload }) => {
+    window.__yetAiSendHostMessageToFrame({ version, type: "host.ideActionResult", requestId, payload });
+  }, { version: bridgeVersion, requestId: request.requestId, payload: activeFileExcerptResultPayload({ text: "const access_token = \"must-not-render\";" }) });
+  await page.waitForTimeout(150);
+  if (await frameLocator.getByText("access_token", { exact: false }).first().isVisible().catch(() => false)) failures.push("Invalid secret-like JetBrains active-file excerpt rendered.");
+
+  await page.evaluate(({ version, requestId }) => {
+    window.__yetAiSendHostMessageToFrame({ version, type: "host.ideActionProgress", requestId, payload: { phase: "running", status: "inProgress", summary: "Reading JetBrains active visible editor excerpt.", cloudRequired: false, action: "getActiveFileExcerpt" } });
+  }, { version: bridgeVersion, requestId: request.requestId });
+  await frameLocator.getByText("Attach active file excerpt: inProgress", { exact: false }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Iframe GUI did not render active-file excerpt progress."));
+  await page.evaluate(({ version, requestId, payload }) => {
+    window.__yetAiSendHostMessageToFrame({ version, type: "host.ideActionResult", requestId, payload });
+  }, { version: bridgeVersion, requestId: request.requestId, payload: activeFileExcerptResultPayload() });
+  await frameLocator.getByText("Attach active file excerpt: succeeded", { exact: false }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Iframe GUI did not render active-file excerpt success."));
+  await frameLocator.getByText(`File: ${activeFileExcerptPath}`, { exact: true }).first().waitFor({ state: "attached", timeout: 5000 })
+    .catch(() => failures.push("Iframe GUI did not show active-file excerpt file label."));
+  await frameLocator.getByText(activeFileExcerptMarker, { exact: false }).first().waitFor({ state: "attached", timeout: 5000 })
+    .catch(() => failures.push("Iframe GUI did not show active-file excerpt preview text."));
+
+  const beforeSend = chatCommandRequestCount;
+  await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill(activeFileExcerptPrompt);
+  await clickSendButtonWithActionability(frameLocator, "JetBrains active-file excerpt send");
+  await waitForAssistantAnswerCount(frameLocator, "JetBrains login smoke", beforeSend, "JetBrains active-file excerpt assistant response");
+  if (chatCommandRequestCount !== beforeSend + 1) failures.push("Active-file excerpt send did not post exactly one chat command.");
+  if (chatCommandRequest?.payload?.content !== activeFileExcerptPrompt) failures.push("Active-file excerpt chat command prompt was wrong.");
+  assertJetBrainsActiveFileExcerptContext(chatCommandRequest?.payload?.context);
+  await page.waitForTimeout(100);
+  if (await frameLocator.getByText(activeFileExcerptMarker, { exact: false }).first().isVisible().catch(() => false)) failures.push("One-shot active-file excerpt preview remained visible after send.");
+}
+
 async function assertJetBrainsIdeActionRoundtrip(page, frameLocator) {
   await frameLocator.getByText("JetBrains controlled actions", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
     .catch(() => failures.push("Iframe GUI did not expose JetBrains controlled action controls."));
@@ -1796,6 +1925,8 @@ async function assertForbiddenIdeActionMessagesRejected(page, frameLocator) {
       { version, type: "gui.executeIdeTool", requestId: "forbidden-tool", payload: { tool: "anything" } },
       { version, type: "gui.ideActionRequest", requestId: "unsafe-path", payload: { action: "openWorkspaceFile", workspaceRelativePath: "../secret.txt" } },
       { version, type: "gui.ideActionRequest", requestId: "unknown-action", payload: { action: "runShellCommand" } },
+      { version, type: "gui.ideActionRequest", requestId: "active-excerpt-path", payload: { action: "getActiveFileExcerpt", workspaceRelativePath: "src/App.tsx" } },
+      { version, type: "gui.ideActionRequest", requestId: "active-excerpt-shell", payload: { action: "getActiveFileExcerpt", shell: "cat" } },
       { version, type: "gui.ideActionRequest", requestId: "forbidden-shell", payload: { action: "runShellCommand", command: "pwd" } },
       { version, type: "gui.ideActionRequest", requestId: "forbidden-task", payload: { action: "runTask", task: "build" } },
       { version, type: "gui.ideActionRequest", requestId: "forbidden-provider", payload: { action: "callProvider", providerId: "openai" } },
@@ -2093,7 +2224,10 @@ const isRequestId = (value) => value === undefined || (typeof value === "string"
 const isFrameNonce = (value) => typeof value === "string" && /^[0-9a-f]{32}$/.test(value);
 const optionalString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length <= maxLength);
 const optionalNonEmptyString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength);
-const allowedIdeActionNames = ["getContextSnapshot", "openWorkspaceFile", "revealWorkspaceRange"];
+const allowedIdeActionNames = ["getContextSnapshot", "openWorkspaceFile", "revealWorkspaceRange", "getActiveFileExcerpt"];
+const hasUnsafeExcerptText = (text) => /(authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|\\/(?:Users|Home|Tmp|Var|Etc|Opt|Mnt|Volumes|Private)(?=\\/|$|[^A-Za-z0-9_])|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(text);
+const isActiveFileExcerptText = (text) => typeof text === "string" && text.length > 0 && text.length <= 8000 && !hasUnsafeExcerptText(text);
+const isActiveFileExcerptAttachment = (attachment) => isPlainObject(attachment) && hasOnlyKeys(attachment, ["kind", "source", "file", "range", "text", "truncated"]) && attachment.kind === "active_file_excerpt" && attachment.source === "jetbrains" && isPlainObject(attachment.file) && hasOnlyKeys(attachment.file, ["displayPath", "workspaceRelativePath", "languageId"]) && safePath(attachment.file.displayPath, 256) && safePath(attachment.file.workspaceRelativePath, 512) && (attachment.file.languageId === undefined || (typeof attachment.file.languageId === "string" && attachment.file.languageId.length > 0 && attachment.file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(attachment.file.languageId))) && isIdeActionRange(attachment.range) && isActiveFileExcerptText(attachment.text) && typeof attachment.truncated === "boolean";
 const requiredLoopbackRuntimeUrl = (value) => {
   if (typeof value !== "string" || value.length === 0 || value.length > 2048) return false;
   try {
@@ -2117,7 +2251,7 @@ const isIdeActionPosition = (position) => isPlainObject(position) && hasOnlyKeys
 const isIdeActionRange = (range) => isPlainObject(range) && hasOnlyKeys(range, ["start", "end"]) && isIdeActionPosition(range.start) && isIdeActionPosition(range.end) && (range.end.line > range.start.line || (range.end.line === range.start.line && range.end.character >= range.start.character));
 const isHostIdeActionProgressPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["phase", "status", "summary", "cloudRequired", "action", "workspaceRelativePath"]) && ["queued", "checkingPolicy", "running", "completed"].includes(payload.phase) && ["pending", "inProgress", "succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.summary === "string" && payload.summary.length > 0 && payload.summary.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512);
 const isHostIdeActionResultContext = (context) => isPlainObject(context) && hasOnlyKeys(context, ["source", "hasActiveEditor", "workspaceFolderCount"]) && context.source === "jetbrains" && typeof context.hasActiveEditor === "boolean" && Number.isInteger(context.workspaceFolderCount) && context.workspaceFolderCount >= 0 && context.workspaceFolderCount <= 100;
-const isHostIdeActionResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "action", "workspaceRelativePath", "range", "context"]) && ["succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512) && (payload.range === undefined || isIdeActionRange(payload.range)) && (payload.context === undefined || isHostIdeActionResultContext(payload.context));
+const isHostIdeActionResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "action", "workspaceRelativePath", "range", "context", "contextAttachment"]) && ["succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512) && (payload.range === undefined || isIdeActionRange(payload.range)) && (payload.context === undefined || isHostIdeActionResultContext(payload.context)) && (payload.contextAttachment === undefined || (payload.status === "succeeded" && payload.action === "getActiveFileExcerpt" && isActiveFileExcerptAttachment(payload.contextAttachment))) && (payload.action !== "getActiveFileExcerpt" || (payload.workspaceRelativePath === undefined && payload.range === undefined && payload.context === undefined)) && (payload.status !== "succeeded" || payload.action !== "getActiveFileExcerpt" || isActiveFileExcerptAttachment(payload.contextAttachment));
 const isHostApplyWorkspaceEditResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "appliedEditCount", "affectedFiles"]) && ["applied", "denied", "rejected", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && payload.cloudRequired === false && (payload.appliedEditCount === undefined || (Number.isInteger(payload.appliedEditCount) && payload.appliedEditCount >= 0 && payload.appliedEditCount <= 64)) && (payload.affectedFiles === undefined || (Array.isArray(payload.affectedFiles) && payload.affectedFiles.length <= 16 && payload.affectedFiles.every((file) => safePath(file, 512))));
 const isHostMessage = (message) => {
   if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion) return false;
@@ -2135,6 +2269,7 @@ const safeRequiredWorkspacePath = (value) => safePath(value, 512) && !value.incl
 const isGuiIdeActionPayload = (payload) => {
   if (!isPlainObject(payload) || typeof payload.action !== "string" || !allowedIdeActionNames.includes(payload.action)) return false;
   if (payload.action === "getContextSnapshot") return hasOnlyKeys(payload, ["action"]);
+  if (payload.action === "getActiveFileExcerpt") return hasOnlyKeys(payload, ["action"]);
   if (payload.action === "openWorkspaceFile") return hasOnlyKeys(payload, ["action", "workspaceRelativePath"]) && safeRequiredWorkspacePath(payload.workspaceRelativePath);
   if (payload.action === "revealWorkspaceRange") return hasOnlyKeys(payload, ["action", "workspaceRelativePath", "range"]) && safeRequiredWorkspacePath(payload.workspaceRelativePath) && isIdeActionRange(payload.range);
   return false;

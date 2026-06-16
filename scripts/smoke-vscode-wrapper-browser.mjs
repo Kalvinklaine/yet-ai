@@ -26,6 +26,10 @@ const activeContextRange = { start: { line: 7, character: 1 }, end: { line: 7, c
 const activeContextSelection = "selectedReadOnlyContext";
 const liveContextPath = "src/smoke-live.ts";
 const liveContextSelection = "selectedLiveContextReplacement";
+const activeFileExcerptPath = "src/active-excerpt-smoke.ts";
+const activeFileExcerptRange = { start: { line: 3, character: 0 }, end: { line: 5, character: 1 } };
+const activeFileExcerptText = "export function activeExcerptSmoke() {\n  return 42;\n}";
+const activeFileExcerptPrompt = "Use the attached VS Code active file excerpt.";
 const openResultMessage = "Workspace file opened.";
 const revealProgressSummary = "Reveal policy check started.";
 const revealResultMessage = "Workspace range revealed.";
@@ -48,6 +52,7 @@ const assistantIdeActionProposal = {
 const mockChatMessages = [{ id: proposalAssistantMessageId, chatId: "chat-001", role: "assistant", content: JSON.stringify(assistantIdeActionProposal), createdAt: new Date(0).toISOString(), status: "complete" }];
 const mockChatSubscribers = new Set();
 const runtimeRequestLog = [];
+const chatCommandBodies = [];
 const failures = [];
 const consoleMessages = [];
 let observedRuntimeAuthorization = false;
@@ -135,6 +140,17 @@ try {
   const initialChatText = await page.locator("body").innerText();
   if (initialChatText.includes('"type":"assistant.ideActionProposal"') || initialChatText.includes('"type": "assistant.ideActionProposal"')) {
     failures.push("Assistant IDE action proposal raw JSON rendered instead of compact proposal copy before inspection.");
+  }
+  const activeFileExcerptAssistantProposal = JSON.stringify({
+    type: "assistant.ideActionProposal",
+    version: bridgeVersion,
+    requiresUserConfirmation: true,
+    cloudRequired: false,
+    summary: "Assistant must not request active file excerpts.",
+    action: "getActiveFileExcerpt",
+  });
+  if (initialChatText.includes(activeFileExcerptAssistantProposal) || initialChatText.includes("Assistant must not request active file excerpts.")) {
+    failures.push("Assistant getActiveFileExcerpt proposal rendered or became actionable.");
   }
   await expectVisibleText(page, "Proposed a read-only IDE action: Reveal workspace range. Review the proposal card below. It will not run automatically.", "compact assistant proposal chat copy");
   await expectVisibleText(page, "Read-only IDE action proposal", "assistant read-only IDE action proposal card");
@@ -389,16 +405,82 @@ try {
   await expectVisibleText(page, revealResultMessage, "reveal range IDE action result message");
   await expectVisibleText(page, `Result path: ${liveContextPath} · result range: 9:2-9:18`, "reveal range IDE action result path/range metadata");
 
+  const activeExcerptButton = page.getByRole("button", { name: "Attach active file excerpt", exact: true });
+  await activeExcerptButton.waitFor({ state: "visible", timeout: 10_000 });
+  if (await activeExcerptButton.isDisabled()) failures.push("Attach active file excerpt button was disabled in VS Code host mode.");
+  const activeExcerptPreClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
+  await activeExcerptButton.click();
+  const activeExcerptIdeRequest = await waitForGuiMessageAfter(page, "gui.ideActionRequest", activeExcerptPreClickIdeRequestCount);
+  if (!activeExcerptIdeRequest) {
+    failures.push("Clicking Attach active file excerpt did not send gui.ideActionRequest.");
+  } else {
+    if (activeExcerptIdeRequest.version !== bridgeVersion) failures.push("Active file excerpt IDE action request used the wrong bridge version.");
+    if (typeof activeExcerptIdeRequest.requestId !== "string" || !/^gui-active-file-excerpt-\d+$/.test(activeExcerptIdeRequest.requestId)) {
+      failures.push("Active file excerpt IDE action request id was not GUI-owned with the expected prefix.");
+    }
+    if (!deepEqual(activeExcerptIdeRequest.payload, { action: "getActiveFileExcerpt" })) failures.push("Active file excerpt IDE action request payload was not exactly getActiveFileExcerpt.");
+    if (hasForbiddenPrivilegedKeys(activeExcerptIdeRequest.payload)) failures.push("Active file excerpt IDE action request payload contained privileged fields.");
+  }
+  const activeExcerptRequestId = activeExcerptIdeRequest?.requestId ?? "gui-active-file-excerpt-missing";
+  await expectVisibleText(page, "Active file excerpt pending…", "active file excerpt pending button label");
+  const duplicateActiveExcerptCount = await getGuiMessageCount(page, "gui.ideActionRequest");
+  await activeExcerptButton.click({ force: true }).catch(() => undefined);
+  await page.waitForTimeout(100);
+  const duplicateActiveExcerptPostClickCount = await getGuiMessageCount(page, "gui.ideActionRequest");
+  if (duplicateActiveExcerptPostClickCount !== duplicateActiveExcerptCount) failures.push("Pending active-file excerpt allowed a duplicate gui.ideActionRequest.");
+
+  const staleActiveExcerptText = "staleActiveExcerptShouldNotRender";
   await dispatchHostMessage(page, {
     version: bridgeVersion,
     type: "host.ideActionResult",
-    requestId: revealRequestId,
-    payload: { status: "succeeded", message: `Secret-like result must not render ${providerKey}`, cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: `token/${providerKey}.ts`, range: activeContextRange },
+    requestId: `${activeExcerptRequestId}-stale`,
+    payload: activeFileExcerptResultPayload({ source: "vscode", text: staleActiveExcerptText, workspaceRelativePath: "src/stale-excerpt.ts" }),
   });
   await page.waitForTimeout(150);
-  await expectNoVisibleText(page, `Secret-like result must not render ${providerKey}`, "secret-like reveal host result");
-  await expectVisibleText(page, "Reveal range: succeeded", "valid reveal result remains visible after rejected secret-like result");
-  await assertBrowserStorageDoesNotContain(page, [runtimeToken, providerKey, authorizationSentinel, activeContextPath, activeContextSelection, liveContextPath, liveContextSelection], "final storage no-secret/no-context persistence check");
+  await expectNoVisibleText(page, staleActiveExcerptText, "stale active-file excerpt result");
+
+  const rejectedActiveExcerptSecret = "const access_token = \"must-not-render\";";
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.ideActionResult",
+    requestId: activeExcerptRequestId,
+    payload: activeFileExcerptResultPayload({ source: "vscode", text: rejectedActiveExcerptSecret }),
+  });
+  await page.waitForTimeout(150);
+  await expectNoVisibleText(page, providerKey, "invalid secret-like active-file excerpt host result");
+  await expectVisibleText(page, "Active file excerpt: pending", "active-file excerpt remains pending after invalid result");
+
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.ideActionProgress",
+    requestId: activeExcerptRequestId,
+    payload: { phase: "running", status: "inProgress", summary: "Reading active visible editor excerpt.", cloudRequired: false, action: "getActiveFileExcerpt" },
+  });
+  await expectVisibleText(page, "Attach active file excerpt: inProgress", "correlated active-file excerpt progress");
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.ideActionResult",
+    requestId: activeExcerptRequestId,
+    payload: activeFileExcerptResultPayload({ source: "vscode", text: activeFileExcerptText, workspaceRelativePath: activeFileExcerptPath }),
+  });
+  await expectVisibleText(page, "Attach active file excerpt: succeeded", "correlated active-file excerpt result");
+  await expectVisibleText(page, "Active file excerpt", "active-file excerpt preview card");
+  await expectAttachedText(page, `File: ${activeFileExcerptPath}`, "active-file excerpt file label");
+  await expectAttachedText(page, "Excerpt range: 3:0-5:1", "active-file excerpt range label");
+  await expectAttachedText(page, activeFileExcerptText, "active-file excerpt bounded preview text");
+  await expectVisibleText(page, "Attach excerpt to next message", "active-file excerpt default include toggle");
+  await assertBrowserStorageDoesNotContain(page, [activeFileExcerptPath, activeFileExcerptText], "active-file excerpt preview storage check");
+
+  const chatCommandCountBeforeActiveExcerptSend = countChatCommandPosts();
+  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(activeFileExcerptPrompt);
+  await clickSendButtonWithActionability(page, "VS Code active-file excerpt send");
+  await expectVisibleText(page, activeFileExcerptPrompt, "VS Code active-file excerpt user bubble");
+  const activeExcerptChatPosts = countChatCommandPosts() - chatCommandCountBeforeActiveExcerptSend;
+  if (activeExcerptChatPosts !== 1) failures.push(`Active-file excerpt send posted ${activeExcerptChatPosts} chat commands instead of exactly one.`);
+  assertActiveFileExcerptChatCommand(chatCommandBodies.at(-1), "vscode");
+  await expectNoVisibleText(page, activeFileExcerptText, "one-shot active-file excerpt preview after send");
+  await assertBrowserStorageDoesNotContain(page, [runtimeToken, providerKey, authorizationSentinel, activeContextPath, activeContextSelection, liveContextPath, liveContextSelection, activeFileExcerptPath, activeFileExcerptText], "final storage no-secret/no-context persistence check");
+  await assertBrowserStorageDoesNotContain(page, [runtimeToken, providerKey, authorizationSentinel, activeContextPath, activeContextSelection, liveContextPath, liveContextSelection, activeFileExcerptPath, activeFileExcerptText], "final storage no-secret/no-context persistence check");
   assertNoForbiddenRuntimeRequests();
 
   if (!observedRuntimeAuthorization) failures.push("Mock runtime did not observe Authorization from host.ready session token.");
@@ -582,6 +664,7 @@ async function startMockRuntimeServer() {
     if (request.method === "POST" && commandMatch) {
       const chatId = decodeURIComponent(commandMatch[1]);
       const body = JSON.parse(await readBody(request));
+      chatCommandBodies.push(body);
       const createdAt = new Date(0).toISOString();
       const userMessage = { id: `user-visual-chat-${mockChatMessages.length}`, chatId, role: "user", content: body.payload?.content ?? "", createdAt, status: "complete" };
       const assistantMessage = { id: `assistant-visual-chat-${mockChatMessages.length}`, chatId, role: "assistant", content: "VS Code wrapper canned chat response.", createdAt, status: "complete" };
@@ -594,6 +677,42 @@ async function startMockRuntimeServer() {
     json(response, 404, { error: "Not found" });
   });
   return listen(server);
+}
+
+function activeFileExcerptResultPayload({ source, text, workspaceRelativePath = activeFileExcerptPath }) {
+  return {
+    status: "succeeded",
+    message: "Active file excerpt ready.",
+    cloudRequired: false,
+    action: "getActiveFileExcerpt",
+    contextAttachment: {
+      kind: "active_file_excerpt",
+      source,
+      file: { displayPath: workspaceRelativePath, workspaceRelativePath, languageId: "typescript" },
+      range: activeFileExcerptRange,
+      text,
+      truncated: false,
+    },
+  };
+}
+
+function assertActiveFileExcerptChatCommand(command, source) {
+  if (command?.payload?.content !== activeFileExcerptPrompt) {
+    failures.push("Active-file excerpt chat command content did not match the prompt.");
+  }
+  const context = command?.payload?.context;
+  if (!context || typeof context !== "object") {
+    failures.push("Active-file excerpt chat command did not include prompt context.");
+    return;
+  }
+  if (context.kind !== "active_editor" || context.source !== source) failures.push("Active-file excerpt chat command context kind/source was wrong.");
+  if (context.file?.workspaceRelativePath !== activeFileExcerptPath || context.file?.displayPath !== activeFileExcerptPath || context.file?.languageId !== "typescript") {
+    failures.push("Active-file excerpt chat command context file metadata was wrong.");
+  }
+  if (context.selection?.text !== activeFileExcerptText) failures.push("Active-file excerpt chat command context text was wrong.");
+  if (context.selection?.startLine !== activeFileExcerptRange.start.line || context.selection?.startCharacter !== activeFileExcerptRange.start.character || context.selection?.endLine !== activeFileExcerptRange.end.line || context.selection?.endCharacter !== activeFileExcerptRange.end.character) {
+    failures.push("Active-file excerpt chat command context range was wrong.");
+  }
 }
 
 function mockProposalChatSummary() {
