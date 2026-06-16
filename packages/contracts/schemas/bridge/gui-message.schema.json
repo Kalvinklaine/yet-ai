@@ -226,7 +226,8 @@
         "getContextSnapshot",
         "openWorkspaceFile",
         "revealWorkspaceRange",
-        "getActiveFileExcerpt"
+        "getActiveFileExcerpt",
+        "runVerificationCommand"
       ]
     },
     "ideActionRequestPayload": {
@@ -290,7 +291,31 @@
               "$ref": "#/$defs/range"
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "action",
+            "commandId"
+          ],
+          "properties": {
+            "action": {
+              "const": "runVerificationCommand"
+            },
+            "commandId": {
+              "$ref": "#/$defs/verificationCommandId"
+            }
+          }
         }
+      ]
+    },
+    "verificationCommandId": {
+      "type": "string",
+      "enum": [
+        "repository-check",
+        "gui-app-tests",
+        "engine-chat-tests"
       ]
     }
   },

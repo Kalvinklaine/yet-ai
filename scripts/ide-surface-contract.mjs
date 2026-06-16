@@ -22,6 +22,11 @@ export const ideSurfaceContract = Object.freeze({
       "openWorkspaceFile",
       "revealWorkspaceRange",
     ]),
+    allowedVerificationCommandIds: Object.freeze([
+      "repository-check",
+      "gui-app-tests",
+      "engine-chat-tests",
+    ]),
   }),
   surfaces: Object.freeze([
     surface("runtime-bootstrap", "Runtime bootstrap", "supported", "supported", {
@@ -55,6 +60,13 @@ export const ideSurfaceContract = Object.freeze({
     surface("active-file-excerpt-context", "Active-file excerpt prompt context", "supported", "supported", {
       vscode: ["npm run validate:contracts"],
       jetbrains: ["npm run validate:contracts"],
+    }),
+    surface("verification-command-bridge", "Allowlisted verification command bridge", "preview-only", "preview-only", {
+      vscode: ["npm run validate:contracts"],
+      jetbrains: ["npm run validate:contracts"],
+    }, {
+      vscode: "Contract-only preview: GUI/user-confirmed runVerificationCommand uses only allowlisted command ids and GUI-minted request ids; browser remains preview-only and no free-form shell, args, cwd, env, git, package install, network, provider, model, or API-key authority is granted.",
+      jetbrains: "Contract-only preview: GUI/user-confirmed runVerificationCommand uses only allowlisted command ids and GUI-minted request ids; browser remains preview-only and no free-form shell, args, cwd, env, git, package install, network, provider, model, or API-key authority is granted.",
     }),
     surface("confirmed-edit-preview", "Confirmed edit proposal preview", "supported", "supported", {
       vscode: ["npm run smoke:vscode-edit-proposal"],

@@ -1,0 +1,16 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-verify-004",
+  "payload": {
+    "status": "succeeded",
+    "message": "Repository check passed.",
+    "cloudRequired": true,
+    "action": "runVerificationCommand",
+    "commandId": "repository-check",
+    "exitCode": 0,
+    "durationMs": 900,
+    "outputTail": "Repository validation passed.",
+    "truncated": false
+  }
+}

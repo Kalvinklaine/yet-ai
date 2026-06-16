@@ -17,6 +17,11 @@ assertArrayEquals(
   ["getContextSnapshot", "getActiveFileExcerpt", "openWorkspaceFile", "revealWorkspaceRange"],
   "Allowed read-only IDE actions must remain exactly bounded."
 );
+assertArrayEquals(
+  ideSurfaceContract?.safety?.allowedVerificationCommandIds ?? [],
+  ["repository-check", "gui-app-tests", "engine-chat-tests"],
+  "Allowed verification command ids must remain exactly bounded."
+);
 
 const surfaces = Array.isArray(ideSurfaceContract?.surfaces) ? ideSurfaceContract.surfaces : [];
 assert(surfaces.length > 0, "Contract must define at least one surface.");
@@ -46,7 +51,7 @@ for (const surface of surfaces) {
   }
 
   const searchable = JSON.stringify(surface);
-  if (!["lsp-status", "confirmed-edit-apply"].includes(surface.id)) {
+  if (!["lsp-status", "confirmed-edit-apply", "verification-command-bridge"].includes(surface.id)) {
     assert(!forbiddenClaimPattern.test(searchable), `Surface ${surface.id} must not claim shell/tools/tasks/git/provider-backed IDE actions or autonomous mutation.`);
   }
 }
@@ -89,6 +94,32 @@ const activeFileExcerpt = surfaces.find((surface) => surface.id === "active-file
 assert(activeFileExcerpt?.vscode?.status === "supported" && activeFileExcerpt?.jetbrains?.status === "supported", "Active-file excerpt context must be contract-supported in VS Code and JetBrains after implementation.");
 assert(activeFileExcerpt?.vscode?.smoke?.includes("npm run validate:contracts"), "VS Code active-file excerpt context must be covered by contract validation.");
 assert(activeFileExcerpt?.jetbrains?.smoke?.includes("npm run validate:contracts"), "JetBrains active-file excerpt context must be covered by contract validation.");
+
+const verificationBridge = surfaces.find((surface) => surface.id === "verification-command-bridge");
+assert(verificationBridge?.vscode?.status === "preview-only" && verificationBridge?.jetbrains?.status === "preview-only", "Verification command bridge must stay preview-only until host execution is implemented.");
+assert(verificationBridge?.vscode?.smoke?.includes("npm run validate:contracts"), "VS Code verification bridge must be covered by contract validation.");
+assert(verificationBridge?.jetbrains?.smoke?.includes("npm run validate:contracts"), "JetBrains verification bridge must be covered by contract validation.");
+for (const ide of ["vscode", "jetbrains"]) {
+  const reason = verificationBridge?.[ide]?.reason ?? "";
+  for (const [pattern, message] of [
+    [/GUI\/user-confirmed/i, `${ide} verification reason must require GUI/user confirmation.`],
+    [/allowlisted command ids/i, `${ide} verification reason must state allowlisted command ids only.`],
+    [/GUI-minted request ids/i, `${ide} verification reason must require GUI-minted request ids.`],
+    [/browser remains preview-only/i, `${ide} verification reason must keep browser preview-only.`],
+    [/no free-form shell/i, `${ide} verification reason must forbid free-form shell.`],
+    [/args/i, `${ide} verification reason must forbid args.`],
+    [/cwd/i, `${ide} verification reason must forbid cwd.`],
+    [/env/i, `${ide} verification reason must forbid env.`],
+    [/git/i, `${ide} verification reason must forbid git.`],
+    [/package install/i, `${ide} verification reason must forbid package install.`],
+    [/network/i, `${ide} verification reason must forbid network authority.`],
+    [/provider/i, `${ide} verification reason must forbid provider authority.`],
+    [/model/i, `${ide} verification reason must forbid model authority.`],
+    [/API-key/i, `${ide} verification reason must forbid API-key authority.`],
+  ]) {
+    assert(pattern.test(reason), message);
+  }
+}
 
 const lsp = surfaces.find((surface) => surface.id === "lsp-status");
 assert(lsp?.vscode?.status === "preview-only", "VS Code LSP must remain off-by-default preview-only MVP status.");

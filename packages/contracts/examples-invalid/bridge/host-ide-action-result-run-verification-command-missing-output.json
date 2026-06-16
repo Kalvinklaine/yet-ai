@@ -1,0 +1,15 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-verify-006",
+  "payload": {
+    "status": "failed",
+    "message": "Repository check failed.",
+    "cloudRequired": false,
+    "action": "runVerificationCommand",
+    "commandId": "repository-check",
+    "exitCode": 1,
+    "durationMs": 900,
+    "truncated": false
+  }
+}

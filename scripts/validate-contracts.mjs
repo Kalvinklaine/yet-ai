@@ -101,6 +101,8 @@ const mappings = [
   ["packages/contracts/examples/bridge/host-ide-action-progress-succeeded-get-context-snapshot.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-ide-action-progress-succeeded-open-workspace-file.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-ide-action-progress-succeeded-reveal-workspace-range.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
+  ["packages/contracts/examples/bridge/host-ide-action-progress-run-verification-command.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
+  ["packages/contracts/examples/bridge/host-ide-action-result-run-verification-command.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-ready-message.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-ready-with-frame-nonce.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-unloaded-message.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
@@ -108,7 +110,8 @@ const mappings = [
   ["packages/contracts/examples/bridge/gui-ide-action-request-get-context-snapshot.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-ide-action-request-get-active-file-excerpt.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-ide-action-request-open-workspace-file.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
-  ["packages/contracts/examples/bridge/gui-ide-action-request-reveal-workspace-range.json", "packages/contracts/schemas/bridge/gui-message.schema.json"]
+  ["packages/contracts/examples/bridge/gui-ide-action-request-reveal-workspace-range.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
+  ["packages/contracts/examples/bridge/gui-ide-action-request-run-verification-command.json", "packages/contracts/schemas/bridge/gui-message.schema.json"]
 ].map(([examplePath, schemaPath]) => [normalizeContractPath(examplePath), normalizeContractPath(schemaPath)]);
 
 const invalidMappings = [
@@ -312,7 +315,11 @@ const invalidMappings = [
     "gui-ide-action-request-get-active-file-excerpt-apiKey.json",
     "gui-ide-action-request-get-active-file-excerpt-tool.json",
     "gui-ide-action-request-get-active-file-excerpt-shell.json",
-    "gui-ide-action-request-get-active-file-excerpt-git.json"
+    "gui-ide-action-request-get-active-file-excerpt-git.json",
+    "gui-ide-action-request-run-verification-command-freeform-command.json",
+    "gui-ide-action-request-run-verification-command-unknown-id.json",
+    "gui-ide-action-request-run-verification-command-payload-request-id.json",
+    "gui-ide-action-request-run-verification-command-missing-request-id.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/gui-message.schema.json"
@@ -386,7 +393,12 @@ const invalidMappings = [
     "host-ide-action-result-active-file-excerpt-secret-like-text.json",
     "host-ide-action-result-active-file-excerpt-oversized-text.json",
     "host-ide-action-result-active-file-excerpt-unknown-field.json",
-    "host-ide-action-result-active-file-excerpt-unavailable-with-attachment.json"
+    "host-ide-action-result-active-file-excerpt-unavailable-with-attachment.json",
+    "host-ide-action-result-run-verification-command-command-field.json",
+    "host-ide-action-result-run-verification-command-cloud-required.json",
+    "host-ide-action-result-run-verification-command-secret-output.json",
+    "host-ide-action-result-run-verification-command-missing-output.json",
+    "host-ide-action-progress-run-verification-command-with-path.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/host-message.schema.json"

@@ -1,0 +1,9 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.ideActionRequest",
+  "requestId": "req-verify-001",
+  "payload": {
+    "action": "runVerificationCommand",
+    "commandId": "repository-check"
+  }
+}
