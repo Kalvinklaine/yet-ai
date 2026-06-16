@@ -96,9 +96,20 @@ export type ActiveEditorChatContext = {
   };
 };
 
+export type VerificationOutputContext = {
+  kind: "verification_output";
+  commandId: "repository-check" | "gui-app-tests" | "engine-chat-tests";
+  status: "succeeded" | "failed";
+  exitCode: number;
+  outputTail: string;
+  truncated: boolean;
+};
+
+export type ExplicitContextBundleItem = ActiveEditorChatContext | VerificationOutputContext;
+
 export type ExplicitContextBundle = {
   kind: "explicit_context_bundle";
-  items: ActiveEditorChatContext[];
+  items: ExplicitContextBundleItem[];
 };
 
 export type ChatContext = ActiveEditorChatContext | ExplicitContextBundle;

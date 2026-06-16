@@ -125,14 +125,20 @@ export type VerificationCommandPanelProps = {
   commands: VerificationCommand[];
   attempt: IdeActionAttemptState | null;
   note: string | null;
+  showAppliedEditNextStep: boolean;
+  attachedVerificationKey: string | null;
   onRun: (commandId: VerificationCommandId) => void;
   onClearPending: () => void;
+  onAttachResult: (result: IdeActionResultPayload) => void;
 };
 
-export function VerificationCommandPanel({ host, commands, attempt, note, onRun, onClearPending }: VerificationCommandPanelProps) {
+export function VerificationCommandPanel({ host, commands, attempt, note, showAppliedEditNextStep, attachedVerificationKey, onRun, onClearPending, onAttachResult }: VerificationCommandPanelProps) {
   const supported = host === "vscode" || host === "jetbrains";
   const pending = attempt?.status === "pending" || attempt?.status === "inProgress";
   const activeCommandId = attempt?.result?.commandId ?? attempt?.progress?.commandId;
+  const attachableResult = attempt?.result?.action === "runVerificationCommand" && (attempt.result.status === "succeeded" || attempt.result.status === "failed") && attempt.result.commandId && attempt.result.exitCode !== undefined && attempt.result.outputTail !== undefined && attempt.result.truncated !== undefined ? attempt.result : null;
+  const attachableKey = attachableResult ? verificationOutputKey(attachableResult) : null;
+  const alreadyAttached = attachableKey !== null && attachedVerificationKey === attachableKey;
   return (
     <section className={`readiness-card ${supported ? "ready" : "warn"} verification-command-card stack`} aria-label="Verification commands">
       <div className="row">
@@ -141,6 +147,7 @@ export function VerificationCommandPanel({ host, commands, attempt, note, onRun,
         {pending && <span className="badge warn">pending</span>}
       </div>
       <span className="subtle">Allowlisted local verification only. Click a button to ask the IDE host to run one command; output stays in this panel and is not attached or sent automatically.</span>
+      {showAppliedEditNextStep && <div className="readiness-card ready" role="status"><strong>Next safe step: run verification.</strong><span>Edits were applied by the IDE host. Pick an allowlisted command below when you are ready; the GUI will not run or send anything automatically.</span></div>}
       <div className="row" role="group" aria-label="Allowlisted verification commands">
         {commands.map((command) => (
           <button type="button" key={command.id} onClick={() => onRun(command.id)} disabled={!supported || pending} title={command.description}>
@@ -151,6 +158,7 @@ export function VerificationCommandPanel({ host, commands, attempt, note, onRun,
       {!supported && <div className="readiness-card warn" role="status">Browser preview only. Open {sanitizeDisplayText(host === "browser" ? "Yet AI in VS Code or JetBrains" : "an IDE host")} to request allowlisted verification commands.</div>}
       {supported && pending && <button type="button" className="secondary-button" onClick={onClearPending}>Clear pending verification state</button>}
       {attempt && attempt.action === "runVerificationCommand" ? <VerificationCommandAttemptPreview attempt={attempt} /> : <span className="subtle">No verification command requested yet.</span>}
+      {attachableResult && <div className="row" role="group" aria-label="Verification result attachment"><button type="button" onClick={() => onAttachResult(attachableResult)} disabled={alreadyAttached}>{alreadyAttached ? "Verification result attached to next message" : "Attach verification result to next message"}</button><span className="subtle">Explicit one-shot context only. It clears after the next accepted send and stays available if send fails.</span></div>}
       {note && <span className="subtle" role="status">{sanitizeDisplayText(note)}</span>}
     </section>
   );
@@ -170,6 +178,10 @@ function VerificationCommandAttemptPreview({ attempt }: { attempt: IdeActionAtte
       {result?.truncated !== undefined && <span>Output truncated: {result.truncated ? "yes" : "no"}</span>}
     </div>
   );
+}
+
+export function verificationOutputKey(result: IdeActionResultPayload): string {
+  return [result.commandId ?? "unknown", result.status, result.exitCode ?? "unknown", result.truncated === true ? "truncated" : "complete", result.outputTail ?? ""].join("|");
 }
 
 export type IdeActionProposalPanelProps = {

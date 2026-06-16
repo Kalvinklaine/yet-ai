@@ -3,7 +3,7 @@ import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspac
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, removeOptimisticUserMessage, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToBundleItem, activeFileExcerptToChatContext, addExplicitContextBundleItem, explicitContextBundleMaxItems, explicitContextBundleToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, rangeFromContextSelection, type ExplicitContextBundleItem } from "./services/activeEditorContext";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
-import { IdeActionProposalPanel, IdeActionsPanel, VerificationCommandPanel, type IdeActionAttemptState, type VerificationCommand } from "./components/IdeActionsPanel";
+import { IdeActionProposalPanel, IdeActionsPanel, VerificationCommandPanel, verificationOutputKey, type IdeActionAttemptState, type VerificationCommand } from "./components/IdeActionsPanel";
 import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
 import { chatLifecycleLabels, chatRecoveryCodeForRuntimeError, type ChatLifecycleState } from "./services/chatLifecycle";
 import { conversationHistoryStatusLabel, resolveChatAfterList, resolveFallbackChatAfterDelete } from "./services/conversationHistory";
@@ -116,6 +116,8 @@ type ActiveFilePromptAction = {
 };
 
 type RuntimeConnectionSource = "manual" | "host.ready";
+
+type VerificationOutputBundleItem = Extract<ExplicitContextBundleItem, { kind: "verification_output" }>;
 
 const emptyProviderForm: ProviderForm = {
   providerId: "openai-local",
@@ -308,6 +310,7 @@ export function App() {
   const [ideActionAttempt, setIdeActionAttempt] = useState<IdeActionAttemptState | null>(null);
   const [ideActionNote, setIdeActionNote] = useState<string | null>(null);
   const [ideActionProposal, setIdeActionProposal] = useState<IdeActionProposalState | null>(null);
+  const [attachedVerificationKey, setAttachedVerificationKey] = useState<string | null>(null);
   const bridgeAdapterRef = useRef<BridgeAdapter | null>(null);
   const editProposalCounterRef = useRef(0);
   const editProposalApplyCounterRef = useRef(0);
@@ -410,6 +413,7 @@ export function App() {
   const pendingActiveFileExcerpt = pendingIdeActionRequestIdRef.current !== null && ideActionAttempt?.action === "getActiveFileExcerpt" && (ideActionAttempt.status === "pending" || ideActionAttempt.status === "inProgress");
   const activeFilePromptAction = useMemo(() => currentActiveFileExcerpt ? buildActiveFilePromptAction(currentActiveFileExcerpt) : null, [currentActiveFileExcerpt]);
   const chatHistoryStatus = conversationHistoryStatusLabel({ loading: chatHistoryLoading, current: chatHistoryCurrent, count: activeChatSummaries.length, hasError: Boolean(chatHistoryError) });
+  const showAppliedEditVerificationStep = activeEditProposal !== null && applyResult?.proposalRequestId === activeEditProposal.requestId && applyResult.payload.status === "applied";
 
   useEffect(() => {
     setRuntimeDetailsOpen(!runtimeConnected);
@@ -427,6 +431,7 @@ export function App() {
     setExplicitContextBundleItems([]);
     setIncludeExplicitContextBundle(true);
     setExplicitContextBundleStatus(status);
+    setAttachedVerificationKey(null);
   }, []);
 
   const clearEditProposalState = useCallback(() => {
@@ -1575,7 +1580,38 @@ export function App() {
 
   const removeExplicitContextBundleItem = (key: string) => {
     setExplicitContextBundleItems((current) => current.filter((item) => item.key !== key));
+    if (attachedVerificationKey === key) {
+      setAttachedVerificationKey(null);
+    }
     setExplicitContextBundleStatus("Removed one excerpt from the one-shot bundle.");
+  };
+
+  const attachVerificationResultToBundle = (result: IdeActionResultPayload) => {
+    if (!isVerificationOutputResult(result)) {
+      return;
+    }
+    const key = verificationOutputKey(result);
+    setExplicitContextBundleItems((current) => {
+      const next = addExplicitContextBundleItem(current, {
+        kind: "verification_output",
+        commandId: result.commandId,
+        status: result.status,
+        exitCode: result.exitCode,
+        outputTail: result.outputTail,
+        truncated: result.truncated,
+        key,
+      });
+      if (next === current) {
+        setExplicitContextBundleStatus(current.some((item) => item.key === key) ? "This verification result is already in the one-shot bundle." : `Bundle limit reached. Remove an item before adding another; max ${explicitContextBundleMaxItems} items.`);
+        return current;
+      }
+      setAttachedVerificationKey(key);
+      setIncludeExplicitContextBundle(true);
+      setExplicitContextBundleStatus(`Added ${result.commandId} verification output to the one-shot bundle.`);
+      setChatInput((current) => current || `Use the attached verification_output from ${result.commandId} to explain the verification result and suggest the next safe step.`);
+      chatInputRef.current?.focus();
+      return next;
+    });
   };
 
   const submitChat = async (event: FormEvent<HTMLFormElement>) => {
@@ -1932,7 +1968,7 @@ export function App() {
                 <ExplicitContextBundlePanel items={explicitContextBundleItems} include={includeExplicitContextBundle} status={explicitContextBundleStatus} onIncludeChange={setIncludeExplicitContextBundle} onRemove={removeExplicitContextBundleItem} onClear={() => clearExplicitContextBundle("Cleared the one-shot explicit context bundle.")} />
                 <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} acknowledged={attachedContextAcknowledged} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} onAcknowledgeChange={setAttachedContextAcknowledged} />
                 <CodingActionsPanel canUseContext={codingActionsCanUseContext} context={currentAttachedContext} onAction={applyCodingAction} />
-                <VerificationCommandPanel host={bridgeHost} commands={verificationCommands} attempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} note={ideActionAttempt?.action === "runVerificationCommand" ? ideActionNote : null} onRun={(commandId) => requestIdeAction({ action: "runVerificationCommand", commandId }, "gui-verification-command")} onClearPending={clearPendingIdeActionState} />
+                <VerificationCommandPanel host={bridgeHost} commands={verificationCommands} attempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} note={ideActionAttempt?.action === "runVerificationCommand" ? ideActionNote : null} showAppliedEditNextStep={showAppliedEditVerificationStep} attachedVerificationKey={attachedVerificationKey} onRun={(commandId) => requestIdeAction({ action: "runVerificationCommand", commandId }, "gui-verification-command")} onClearPending={clearPendingIdeActionState} onAttachResult={attachVerificationResultToBundle} />
                 <IdeActionsPanel host={bridgeHost} attempt={ideActionAttempt} note={ideActionNote} workspaceRelativePath={safeActiveWorkspacePath} range={safeActiveRange} onGetContext={() => requestIdeAction({ action: "getContextSnapshot" })} onOpenFile={(workspaceRelativePath) => requestIdeAction({ action: "openWorkspaceFile", workspaceRelativePath })} onRevealRange={(workspaceRelativePath, range) => requestIdeAction({ action: "revealWorkspaceRange", workspaceRelativePath, range })} onClearPendingIdeAction={clearPendingIdeActionState} />
               </div>
               <div className="composer-input-area">
@@ -2156,6 +2192,14 @@ export function App() {
       </section>
     </main>
   );
+}
+
+function isVerificationOutputResult(result: IdeActionResultPayload): result is IdeActionResultPayload & Omit<VerificationOutputBundleItem, "kind" | "key"> {
+  return result.action === "runVerificationCommand" && (result.status === "succeeded" || result.status === "failed") && result.commandId !== undefined && result.exitCode !== undefined && result.outputTail !== undefined && result.truncated !== undefined;
+}
+
+function isVerificationOutputBundleItem(item: ExplicitContextBundleItem): item is VerificationOutputBundleItem {
+  return item.kind === "verification_output";
 }
 
 function buildActiveFilePromptAction(excerpt: ActiveFileExcerptAttachment): ActiveFilePromptAction {
@@ -2510,6 +2554,20 @@ function ExplicitContextBundlePanel({ items, include, status, onIncludeChange, o
       </label>
       <div className="stack">
         {items.map((item, index) => {
+          if (isVerificationOutputBundleItem(item)) {
+            const preview = classifyBoundedContextPreview(item.outputTail);
+            return (
+              <div className="provider-item stack" key={item.key}>
+                <div className="row">
+                  <strong>{index + 1}. Verification output</strong>
+                  <span className="badge ok">{sanitizeDisplayText(item.commandId)}</span>
+                  <button type="button" className="secondary-button" onClick={() => onRemove(item.key)}>Remove item</button>
+                </div>
+                <span className="subtle">Status {sanitizeDisplayText(item.status)} · exit code {item.exitCode} · truncated {item.truncated ? "yes" : "no"}</span>
+                <div className="attached-context-preview"><pre>{preview.text}</pre></div>
+              </div>
+            );
+          }
           const fileLabel = sanitizeDisplayText(item.file?.workspaceRelativePath ?? item.file?.displayPath ?? "active editor");
           const range = formatSelectionRange(item.selection);
           const preview = classifyBoundedContextPreview(item.selection?.text ?? "");

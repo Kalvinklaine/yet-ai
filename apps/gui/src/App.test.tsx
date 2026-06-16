@@ -7833,6 +7833,113 @@ describe("edit proposal preview", () => {
     },
   );
 
+  it("shows apply-to-verify next step only after an applied host result", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Apply verify step", 1)], chatThreads: { "chat-001": chatThread("chat-001", "Apply verify step", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.textContent ?? "").not.toContain("Next safe step: run verification.");
+    await act(async () => {
+      findButton("Apply in VS Code after review").click();
+    });
+    const requestId = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0].requestId;
+    await dispatchHostApplyResult(requestId, {
+      status: "denied",
+      message: "User skipped apply.",
+      cloudRequired: false,
+      appliedEditCount: 0,
+      affectedFiles: [],
+    });
+    expect(container?.textContent ?? "").not.toContain("Next safe step: run verification.");
+
+    await act(async () => {
+      findButton("Apply in VS Code after review").click();
+    });
+    const applyRequests = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
+    const secondRequestId = applyRequests[applyRequests.length - 1]?.[0].requestId;
+    await dispatchHostApplyResult(secondRequestId, {
+      status: "applied",
+      message: "Applied before verification.",
+      cloudRequired: false,
+      appliedEditCount: 1,
+      affectedFiles: ["src/example.ts"],
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Next safe step: run verification.");
+    expect(text).toContain("Pick an allowlisted command below when you are ready; the GUI will not run or send anything automatically.");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")).toHaveLength(0);
+  });
+
+  it("attaches verification output explicitly as one-shot context and clears after accepted send", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("GUI app tests").click();
+    });
+    await dispatchHostIdeActionResult("gui-verification-command-1", { status: "succeeded", message: "GUI tests passed.", cloudRequired: false, action: "runVerificationCommand", commandId: "gui-app-tests", exitCode: 0, durationMs: 42, outputTail: "vitest passed", truncated: false });
+    expect(container?.textContent ?? "").toContain("Attach verification result to next message");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")).toHaveLength(1);
+    fetchMock.mockClear();
+
+    await act(async () => {
+      findButton("Attach verification result to next message").click();
+    });
+
+    expect(chatInput().value).toContain("Use the attached verification_output from gui-app-tests");
+    expect(container?.textContent ?? "").toContain("Added gui-app-tests verification output to the one-shot bundle.");
+    expect(findButton("Verification result attached to next message").disabled).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    const body = lastUserMessageBody() as { payload?: { content?: string; context?: { kind?: string; items?: Array<Record<string, unknown>> } } };
+    expect(body.payload?.context?.kind).toBe("explicit_context_bundle");
+    expect(body.payload?.context?.items).toEqual([{ kind: "verification_output", commandId: "gui-app-tests", status: "succeeded", exitCode: 0, outputTail: "vitest passed", truncated: false }]);
+    expect(container?.textContent ?? "").toContain("One-shot explicit context bundle attached to the last accepted message and cleared.");
+    expect(container?.textContent ?? "").toContain("empty");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("vitest passed");
+  });
+
+  it("keeps explicitly attached verification output after failed send for retry", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), commandStatus: 500, commandError: "send failed safely" });
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Repository check").click();
+    });
+    await dispatchHostIdeActionResult("gui-verification-command-1", { status: "failed", message: "Repository check failed.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 1, durationMs: 77, outputTail: "check failed", truncated: false });
+    await act(async () => {
+      findButton("Attach verification result to next message").click();
+    });
+
+    expect(container?.textContent ?? "").toContain("Verification output");
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    expect(chatInput().value).toContain("Use the attached verification_output from repository-check");
+    expect(container?.textContent ?? "").toContain("Verification output");
+    expect(container?.textContent ?? "").toContain("check failed");
+  });
+
   it("drops host apply results whose status is not in the bounded repair-guidance set", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });

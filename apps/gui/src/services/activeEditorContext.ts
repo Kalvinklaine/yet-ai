@@ -24,9 +24,17 @@ export type ActiveFileExcerptPreviewResult = {
   hostTruncated: boolean;
 };
 
-export type ExplicitContextBundleItem = ActiveEditorChatContext & {
+export type VerificationOutputBundleItem = {
+  kind: "verification_output";
+  commandId: "repository-check" | "gui-app-tests" | "engine-chat-tests";
+  status: "succeeded" | "failed";
+  exitCode: number;
+  outputTail: string;
+  truncated: boolean;
   key: string;
 };
+
+export type ExplicitContextBundleItem = (ActiveEditorChatContext & { key: string }) | VerificationOutputBundleItem;
 
 export const explicitContextBundleMaxItems = 4;
 export const explicitContextBundleMaxTextCharacters = 16000;
@@ -132,11 +140,15 @@ export function addExplicitContextBundleItem(current: ExplicitContextBundleItem[
   if (current.some((existing) => existing.key === item.key) || current.length >= explicitContextBundleMaxItems) {
     return current;
   }
-  const textTotal = current.reduce((total, existing) => total + (existing.selection?.text?.length ?? 0), 0) + (item.selection?.text?.length ?? 0);
+  const textTotal = current.reduce((total, existing) => total + explicitContextBundleItemTextLength(existing), 0) + explicitContextBundleItemTextLength(item);
   if (textTotal > explicitContextBundleMaxTextCharacters) {
     return current;
   }
   return [...current, item];
+}
+
+export function explicitContextBundleItemTextLength(item: ExplicitContextBundleItem): number {
+  return item.kind === "verification_output" ? item.outputTail.length : item.selection?.text?.length ?? 0;
 }
 
 export function explicitContextBundleToChatContext(items: ExplicitContextBundleItem[]): ExplicitContextBundle | undefined {
