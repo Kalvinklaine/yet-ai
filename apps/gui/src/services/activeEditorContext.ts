@@ -1,6 +1,6 @@
 import type { HostContextSnapshotPayload, WorkspaceEditRange } from "../bridge/bridgeAdapter";
 import type { ActiveFileExcerptAttachment } from "../bridge/bridgeAdapter";
-import type { ChatContext } from "./runtimeClient";
+import type { ActiveEditorChatContext, ExplicitContextBundle } from "./runtimeClient";
 import { redactSecrets, sanitizeDisplayText } from "./redaction";
 
 export type ActiveEditorContextUsability = "none" | "file" | "selection";
@@ -23,6 +23,13 @@ export type ActiveFileExcerptPreviewResult = {
   truncated: boolean;
   hostTruncated: boolean;
 };
+
+export type ExplicitContextBundleItem = ActiveEditorChatContext & {
+  key: string;
+};
+
+export const explicitContextBundleMaxItems = 4;
+export const explicitContextBundleMaxTextCharacters = 16000;
 
 export function activeEditorContextUsability(context: HostContextSnapshotPayload | null | undefined): ActiveEditorContextUsability {
   if (!context) {
@@ -89,7 +96,7 @@ export function classifyBoundedContextPreview(text: string): BoundedContextPrevi
   };
 }
 
-export function activeFileExcerptToChatContext(attachment: ActiveFileExcerptAttachment): ChatContext {
+export function activeFileExcerptToChatContext(attachment: ActiveFileExcerptAttachment): ActiveEditorChatContext {
   return {
     kind: "active_editor",
     source: attachment.source,
@@ -102,6 +109,53 @@ export function activeFileExcerptToChatContext(attachment: ActiveFileExcerptAtta
       text: attachment.text,
     },
   };
+}
+
+export function activeFileExcerptToBundleItem(attachment: ActiveFileExcerptAttachment): ExplicitContextBundleItem {
+  const context = activeFileExcerptToChatContext(attachment) as ActiveEditorChatContext;
+  return {
+    ...context,
+    key: explicitContextBundleItemKey(context),
+  };
+}
+
+export function explicitContextBundleItemKey(item: ActiveEditorChatContext): string {
+  return [
+    item.source,
+    item.file?.workspaceRelativePath ?? item.file?.displayPath ?? "",
+    formatSelectionRange(item.selection),
+    textHash(item.selection?.text ?? ""),
+  ].join("|");
+}
+
+export function addExplicitContextBundleItem(current: ExplicitContextBundleItem[], item: ExplicitContextBundleItem): ExplicitContextBundleItem[] {
+  if (current.some((existing) => existing.key === item.key) || current.length >= explicitContextBundleMaxItems) {
+    return current;
+  }
+  const textTotal = current.reduce((total, existing) => total + (existing.selection?.text?.length ?? 0), 0) + (item.selection?.text?.length ?? 0);
+  if (textTotal > explicitContextBundleMaxTextCharacters) {
+    return current;
+  }
+  return [...current, item];
+}
+
+export function explicitContextBundleToChatContext(items: ExplicitContextBundleItem[]): ExplicitContextBundle | undefined {
+  if (items.length === 0 || items.length > explicitContextBundleMaxItems) {
+    return undefined;
+  }
+  return {
+    kind: "explicit_context_bundle",
+    items: items.map(({ key: _key, ...item }) => item),
+  };
+}
+
+function textHash(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
 export function activeFileExcerptSummary(attachment: ActiveFileExcerptAttachment): string {

@@ -2879,6 +2879,85 @@ describe("active editor attached context", () => {
     expect(browserStorageDump()).not.toContain("export const answer");
   });
 
+  it("builds removes omits dedupes and clears a multi-file active excerpt bundle", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+
+    for (let index = 0; index < 4; index += 1) {
+      await act(async () => { findButton("Attach active file excerpt").click(); });
+      await dispatchHostIdeActionResult(`gui-active-file-excerpt-${index + 1}`, activeFileExcerptResultPayload({ path: `src/bundle-${index}.ts`, startLine: index + 1, text: `export const bundle${index} = ${index};` }));
+      await act(async () => { findButton("Add to multi-file context bundle").click(); });
+    }
+
+    expect(container?.textContent).toContain("Multi-file context bundle");
+    expect(container?.textContent).toContain("4/4 excerpts");
+    expect(findButton("Bundle full (4 max)").disabled).toBe(true);
+
+    await act(async () => { findButton("Remove excerpt").click(); });
+    expect(container?.textContent).toContain("Removed one excerpt from the one-shot bundle.");
+
+    await act(async () => { findButton("Add to multi-file context bundle").click(); });
+    await act(async () => { findButton("Add to multi-file context bundle").click(); });
+    expect(container?.textContent).toContain("This excerpt is already in the one-shot bundle.");
+
+    const includeToggle = Array.from(container?.querySelectorAll<HTMLInputElement>(".explicit-context-bundle-card input[type='checkbox']") ?? [])[0];
+    expect(includeToggle.checked).toBe(true);
+    await act(async () => { includeToggle.click(); });
+    fetchMock.mockClear();
+    await act(async () => { setTextareaValue(chatInput(), "send without bundle"); });
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); });
+    const omittedBody = lastUserMessageBody() as { payload?: { context?: { kind?: string } } };
+    expect(omittedBody.payload?.context?.kind).toBe("active_editor");
+    expect(container?.textContent).toContain("3/4 excerpts");
+
+    const freshIncludeToggle = Array.from(container?.querySelectorAll<HTMLInputElement>(".explicit-context-bundle-card input[type='checkbox']") ?? [])[0];
+    await act(async () => { freshIncludeToggle.click(); });
+    fetchMock.mockClear();
+    await act(async () => { setTextareaValue(chatInput(), "send with explicit bundle"); });
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); });
+
+    const body = lastUserMessageBody() as { payload?: { context?: { kind?: string; items?: unknown[] } } };
+    expect(body.payload?.context).toMatchObject({ kind: "explicit_context_bundle" });
+    expect(body.payload?.context?.items).toHaveLength(3);
+    expect(container?.textContent).toContain("One-shot explicit context bundle attached to the last accepted message and cleared.");
+    expect(container?.textContent).toContain("empty");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("export const bundle");
+  });
+
+  it("keeps a bundle after failed send for retry and clears it when chat changes", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), commandStatus: 500, commandError: "failed safely" });
+    renderApp();
+    await flushAsync();
+
+    await act(async () => { findButton("Attach active file excerpt").click(); });
+    await dispatchHostIdeActionResult("gui-active-file-excerpt-1", activeFileExcerptResultPayload({ text: "export const retryBundle = 1;" }));
+    await act(async () => { findButton("Add to multi-file context bundle").click(); });
+    fetchMock.mockClear();
+    await act(async () => { setTextareaValue(chatInput(), "message that fails with bundle"); });
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); });
+
+    expect(container?.textContent).toContain("1/4 excerpts");
+    expect(chatInput().value).toBe("message that fails with bundle");
+
+    await act(async () => { findButton("Clear bundle").click(); });
+    expect(container?.textContent).toContain("Cleared the one-shot explicit context bundle.");
+    expect(container?.textContent).toContain("empty");
+    await act(async () => { findButton("Add to multi-file context bundle").click(); });
+    expect(container?.textContent).toContain("1/4 excerpts");
+
+    await act(async () => { setInputValue(chatIdInput(), "chat-002"); });
+    expect(container?.textContent).toContain("Multi-file context bundle");
+    expect(container?.textContent).toContain("empty");
+    expect(browserStorageDump()).not.toContain("retryBundle");
+  });
+
   it("ignores stale active-file excerpt results after chat switch", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
@@ -8390,7 +8469,7 @@ function activeFileExcerptToggleOptional() {
   return Array.from(container?.querySelectorAll<HTMLInputElement>(".active-file-excerpt-card input[type='checkbox']") ?? [])[0];
 }
 
-function activeFileExcerptResultPayload(options: { text?: string; source?: "vscode" | "jetbrains"; truncated?: boolean } = {}) {
+function activeFileExcerptResultPayload(options: { text?: string; source?: "vscode" | "jetbrains"; truncated?: boolean; path?: string; startLine?: number } = {}) {
   return {
     status: "succeeded",
     message: "Active file excerpt ready.",
@@ -8399,8 +8478,8 @@ function activeFileExcerptResultPayload(options: { text?: string; source?: "vsco
     contextAttachment: {
       kind: "active_file_excerpt",
       source: options.source ?? "vscode",
-      file: { displayPath: "src/editor.ts", workspaceRelativePath: "src/editor.ts", languageId: "typescript" },
-      range: { start: { line: 10, character: 0 }, end: { line: 24, character: 1 } },
+      file: { displayPath: options.path ?? "src/editor.ts", workspaceRelativePath: options.path ?? "src/editor.ts", languageId: "typescript" },
+      range: { start: { line: options.startLine ?? 10, character: 0 }, end: { line: (options.startLine ?? 10) + 14, character: 1 } },
       text: options.text ?? "export function greet() {\n  return \"hello\";\n}\n",
       truncated: options.truncated ?? false,
     },

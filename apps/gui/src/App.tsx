@@ -1,7 +1,7 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type ActiveFileExcerptAttachment } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, removeOptimisticUserMessage, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
-import { activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, rangeFromContextSelection } from "./services/activeEditorContext";
+import { activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToBundleItem, activeFileExcerptToChatContext, addExplicitContextBundleItem, explicitContextBundleMaxItems, explicitContextBundleToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, rangeFromContextSelection, type ExplicitContextBundleItem } from "./services/activeEditorContext";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
 import { IdeActionProposalPanel, IdeActionsPanel, type IdeActionAttemptState } from "./components/IdeActionsPanel";
 import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
@@ -271,6 +271,9 @@ export function App() {
   const [includeAttachedContext, setIncludeAttachedContext] = useState(false);
   const [attachedContextAcknowledged, setAttachedContextAcknowledged] = useState(false);
   const [attachedContextStatus, setAttachedContextStatus] = useState<string | null>(null);
+  const [explicitContextBundleItems, setExplicitContextBundleItems] = useState<ExplicitContextBundleItem[]>([]);
+  const [includeExplicitContextBundle, setIncludeExplicitContextBundle] = useState(true);
+  const [explicitContextBundleStatus, setExplicitContextBundleStatus] = useState<string | null>(null);
   const [runtimeRefreshStatus, setRuntimeRefreshStatus] = useState<{ state: "checking" | "connected" | "failed"; attempt: number; checkedAt: string; detail: string } | null>(null);
   const [runtimeRefreshInFlight, setRuntimeRefreshInFlight] = useState(false);
   const [runtimeConnectionSource, setRuntimeConnectionSource] = useState<RuntimeConnectionSource>("manual");
@@ -415,6 +418,12 @@ export function App() {
     setTimeline((current) => [entry, ...current].slice(0, 80));
   }, []);
 
+  const clearExplicitContextBundle = useCallback((status: string | null = null) => {
+    setExplicitContextBundleItems([]);
+    setIncludeExplicitContextBundle(true);
+    setExplicitContextBundleStatus(status);
+  }, []);
+
   const clearEditProposalState = useCallback(() => {
     editProposalIdentityRef.current = null;
     pendingApplyRequestIdRef.current = null;
@@ -504,9 +513,10 @@ export function App() {
     setIncludeAttachedContext(false);
     setAttachedContextAcknowledged(false);
     setAttachedContextStatus(null);
+    clearExplicitContextBundle(null);
     clearEditProposalState();
     clearIdeActionState();
-  }, [abortActiveStream, clearEditProposalState, clearIdeActionState]);
+  }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState]);
 
   const updateRuntimeSettings = useCallback((nextSettings: RuntimeSettings) => {
     const changed = settingsRef.current.baseUrl !== nextSettings.baseUrl || settingsRef.current.token !== nextSettings.token;
@@ -903,6 +913,7 @@ export function App() {
       setIncludeAttachedContext(false);
       setAttachedContextAcknowledged(false);
       setAttachedContextStatus(null);
+      clearExplicitContextBundle(null);
       clearEditProposalState();
       clearIdeActionState();
     } else {
@@ -910,7 +921,7 @@ export function App() {
       setChatHistoryRevision(targetRevision);
     }
     setChatHistoryLoading(false);
-  }, [abortActiveStream, clearEditProposalState, clearIdeActionState, isCurrentRefresh]);
+  }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState, isCurrentRefresh]);
 
   const selectChat = useCallback((nextChatId: string) => {
     setCompactConversationsOpen(false);
@@ -921,13 +932,14 @@ export function App() {
     setChatInput("");
     clearEditProposalState();
     clearIdeActionState();
+    clearExplicitContextBundle(null);
     setAttachedContextAcknowledged(false);
     setChatId(nextChatId);
     const selectedSummary = chatSummaries.find((summary) => summary.chatId === nextChatId);
     setConversationNotice(`Switched to ${sanitizeDisplayText(selectedSummary?.title || nextChatId)}.`);
     setChatView(resetChatViewState(nextChatId));
     void loadChatThread(nextChatId);
-  }, [abortActiveStream, chatSummaries, clearEditProposalState, clearIdeActionState, loadChatThread]);
+  }, [abortActiveStream, chatSummaries, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState, loadChatThread]);
 
   const updateDirectChatId = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const nextChatId = event.target.value;
@@ -940,7 +952,7 @@ export function App() {
       setChatView(resetChatViewState(nextChatId));
     }
     setChatId(nextChatId);
-  }, [abortActiveStream, clearEditProposalState, clearIdeActionState]);
+  }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState]);
 
   const deleteCurrentChat = useCallback(async (targetChatId: string) => {
     const targetSummary = chatSummaries.find((summary) => summary.chatId === targetChatId);
@@ -968,6 +980,7 @@ export function App() {
       setIncludeAttachedContext(false);
       setAttachedContextAcknowledged(false);
       setAttachedContextStatus(null);
+      clearExplicitContextBundle(null);
       clearEditProposalState();
       clearIdeActionState();
     }
@@ -1327,6 +1340,7 @@ export function App() {
     setAttachedContext(null);
     setIncludeAttachedContext(false);
     setAttachedContextStatus(null);
+    clearExplicitContextBundle(null);
     clearEditProposalState();
     clearIdeActionState();
     if (activeChatSummary) {
@@ -1537,6 +1551,28 @@ export function App() {
     chatInputRef.current?.focus();
   };
 
+  const addActiveFileExcerptToBundle = () => {
+    if (!currentActiveFileExcerpt) {
+      return;
+    }
+    const nextItem = activeFileExcerptToBundleItem(currentActiveFileExcerpt);
+    setExplicitContextBundleItems((current) => {
+      const next = addExplicitContextBundleItem(current, nextItem);
+      if (next === current) {
+        setExplicitContextBundleStatus(current.some((item) => item.key === nextItem.key) ? "This excerpt is already in the one-shot bundle." : `Bundle limit reached. Remove an item before adding another; max ${explicitContextBundleMaxItems} excerpts.`);
+        return current;
+      }
+      setIncludeExplicitContextBundle(true);
+      setExplicitContextBundleStatus(`Added ${activeFileExcerptSummary(currentActiveFileExcerpt)} to the one-shot bundle.`);
+      return next;
+    });
+  };
+
+  const removeExplicitContextBundleItem = (key: string) => {
+    setExplicitContextBundleItems((current) => current.filter((item) => item.key !== key));
+    setExplicitContextBundleStatus("Removed one excerpt from the one-shot bundle.");
+  };
+
   const submitChat = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const content = chatInput.trim();
@@ -1561,7 +1597,8 @@ export function App() {
     }
     const attachedContextAllowed = currentAttachedContext && (currentActiveFileExcerpt || !attachedContextRequiresAcknowledgement(currentAttachedContext) || attachedContextAcknowledged);
     const submittedAttachedContext = includeAttachedContext && attachedContextAllowed && attachedContextRef.current?.settingsRevision === targetRevision && attachedContextRef.current.chatId === targetChatId && currentAttachedContext && hasUsableAttachedContext(currentAttachedContext) ? attachedContextRef.current : null;
-    const context = submittedAttachedContext?.excerpt ? activeFileExcerptToChatContext(submittedAttachedContext.excerpt) : submittedAttachedContext?.payload;
+    const submittedExplicitContextBundle = includeExplicitContextBundle ? explicitContextBundleToChatContext(explicitContextBundleItems) : undefined;
+    const context = submittedExplicitContextBundle ?? (submittedAttachedContext?.excerpt ? activeFileExcerptToChatContext(submittedAttachedContext.excerpt) : submittedAttachedContext?.payload);
     setChatLifecycleState("command_submitting");
     optimisticUserMessageCounterRef.current += 1;
     const optimisticUserMessageId = `${targetChatId}-optimistic-user-${optimisticUserMessageCounterRef.current}`;
@@ -1574,7 +1611,10 @@ export function App() {
     }
     if (result.ok) {
       addTimeline(`Command accepted ${result.data.requestId}`);
-      clearSubmittedAttachedContext(submittedAttachedContext);
+      clearSubmittedAttachedContext(submittedExplicitContextBundle ? null : submittedAttachedContext);
+      if (submittedExplicitContextBundle) {
+        clearExplicitContextBundle("One-shot explicit context bundle attached to the last accepted message and cleared.");
+      }
       startSse(targetChatId);
       setChatLifecycleState((current) => current === "command_submitting" || current === "sse_connecting" ? "command_accepted" : current);
     } else {
@@ -1883,7 +1923,8 @@ export function App() {
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
-                <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} promptAction={activeFilePromptAction} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onClearPending={clearPendingIdeActionState} onIncludeChange={setIncludeAttachedContext} onApplyPrompt={applyActiveFilePrompt} />
+                <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} promptAction={activeFilePromptAction} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onClearPending={clearPendingIdeActionState} onIncludeChange={setIncludeAttachedContext} onApplyPrompt={applyActiveFilePrompt} onAddToBundle={addActiveFileExcerptToBundle} />
+                <ExplicitContextBundlePanel items={explicitContextBundleItems} include={includeExplicitContextBundle} status={explicitContextBundleStatus} onIncludeChange={setIncludeExplicitContextBundle} onRemove={removeExplicitContextBundleItem} onClear={() => clearExplicitContextBundle("Cleared the one-shot explicit context bundle.")} />
                 <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} acknowledged={attachedContextAcknowledged} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} onAcknowledgeChange={setAttachedContextAcknowledged} />
                 <CodingActionsPanel canUseContext={codingActionsCanUseContext} context={currentAttachedContext} onAction={applyCodingAction} />
                 <IdeActionsPanel host={bridgeHost} attempt={ideActionAttempt} note={ideActionNote} workspaceRelativePath={safeActiveWorkspacePath} range={safeActiveRange} onGetContext={() => requestIdeAction({ action: "getContextSnapshot" })} onOpenFile={(workspaceRelativePath) => requestIdeAction({ action: "openWorkspaceFile", workspaceRelativePath })} onRevealRange={(workspaceRelativePath, range) => requestIdeAction({ action: "revealWorkspaceRange", workspaceRelativePath, range })} onClearPendingIdeAction={clearPendingIdeActionState} />
@@ -2375,7 +2416,7 @@ function FirstMessageActionButton({ action, runtimeRefreshInFlight, providerTest
   return <button type="button" onClick={onFocusPrompt}>{action.label}</button>;
 }
 
-function ActiveFileExcerptAttachPanel({ host, excerpt, include, pending, status, promptAction, onRequest, onClearPending, onIncludeChange, onApplyPrompt }: { host: BridgeHost; excerpt: ActiveFileExcerptAttachment | null; include: boolean; pending: boolean; status: string | null; promptAction: ActiveFilePromptAction | null; onRequest: () => void; onClearPending: () => void; onIncludeChange: (include: boolean) => void; onApplyPrompt: (action: ActiveFilePromptAction) => void }) {
+function ActiveFileExcerptAttachPanel({ host, excerpt, include, pending, status, promptAction, canAddToBundle, onRequest, onClearPending, onIncludeChange, onApplyPrompt, onAddToBundle }: { host: BridgeHost; excerpt: ActiveFileExcerptAttachment | null; include: boolean; pending: boolean; status: string | null; promptAction: ActiveFilePromptAction | null; canAddToBundle: boolean; onRequest: () => void; onClearPending: () => void; onIncludeChange: (include: boolean) => void; onApplyPrompt: (action: ActiveFilePromptAction) => void; onAddToBundle: () => void }) {
   const supported = host === "vscode" || host === "jetbrains";
   if (!supported) {
     return (
@@ -2415,6 +2456,10 @@ function ActiveFileExcerptAttachPanel({ host, excerpt, include, pending, status,
             <input style={{ width: "auto" }} type="checkbox" checked={include} onChange={(event) => onIncludeChange(event.target.checked)} />
             {include ? "Attach excerpt to next message" : "Omit excerpt from next message"}
           </label>
+          <div className="row" role="group" aria-label="Explicit context bundle actions">
+            <button type="button" onClick={onAddToBundle} disabled={!canAddToBundle}>{canAddToBundle ? "Add to multi-file context bundle" : `Bundle full (${explicitContextBundleMaxItems} max)`}</button>
+          </div>
+          <span className="subtle">Bundle items are explicit one-shot prompt context only. They are not indexed, not auto-attached by the assistant, and not stored in browser storage.</span>
           {promptAction && <div className="active-file-prompt-cta stack" role="group" aria-label="Active-file coding prompt">
             <strong>Real-provider active-file chat path</strong>
             <span className="subtle">Use this after provider readiness says OpenAI-compatible BYOK is ready. It fills the prompt with the bounded excerpt, keeps it one-shot attached, and still waits for your explicit Send.</span>
@@ -2425,6 +2470,55 @@ function ActiveFileExcerptAttachPanel({ host, excerpt, include, pending, status,
       ) : (
         <span className="subtle">Click once to request a bounded excerpt from the visible active editor. No request is made automatically.</span>
       )}
+      {status && <span className="subtle">{sanitizeDisplayText(status)}</span>}
+    </section>
+  );
+}
+
+function ExplicitContextBundlePanel({ items, include, status, onIncludeChange, onRemove, onClear }: { items: ExplicitContextBundleItem[]; include: boolean; status: string | null; onIncludeChange: (include: boolean) => void; onRemove: (key: string) => void; onClear: () => void }) {
+  if (items.length === 0) {
+    return (
+      <section className="readiness-card warn explicit-context-bundle-card" role="status" aria-label="Multi-file context bundle">
+        <div className="row">
+          <strong>Multi-file context bundle</strong>
+          <span className="badge warn">empty</span>
+        </div>
+        <span className="subtle">Add explicitly reviewed active-file excerpts here. Bundle context is one-shot prompt context, not indexed, not stored, and never attached by the assistant.</span>
+        {status && <span className="subtle">{sanitizeDisplayText(status)}</span>}
+      </section>
+    );
+  }
+  return (
+    <section className="readiness-card ready explicit-context-bundle-card stack" role="status" aria-label="Multi-file context bundle">
+      <div className="row">
+        <strong>Multi-file context bundle</strong>
+        <span className="badge ok">{items.length}/{explicitContextBundleMaxItems} excerpts</span>
+        <button type="button" className="secondary-button" onClick={onClear}>Clear bundle</button>
+      </div>
+      <span className="subtle">Explicit one-shot prompt context only. Not indexed, not persisted to browser storage, and cleared after the next accepted send.</span>
+      <label className="row attached-context-toggle">
+        <input style={{ width: "auto" }} type="checkbox" checked={include} onChange={(event) => onIncludeChange(event.target.checked)} />
+        {include ? "Include bundle with next message" : "Omit bundle from next message"}
+      </label>
+      <div className="stack">
+        {items.map((item, index) => {
+          const fileLabel = sanitizeDisplayText(item.file?.workspaceRelativePath ?? item.file?.displayPath ?? "active editor");
+          const range = formatSelectionRange(item.selection);
+          const preview = classifyBoundedContextPreview(item.selection?.text ?? "");
+          return (
+            <div className="provider-item stack" key={item.key}>
+              <div className="row">
+                <strong>{index + 1}. {fileLabel}</strong>
+                <span className="badge ok">{activeEditorSourceLabel(item.source)}</span>
+                <button type="button" className="secondary-button" onClick={() => onRemove(item.key)}>Remove excerpt</button>
+              </div>
+              <span className="subtle">Range {range} · {item.selection?.text?.length ?? 0} chars</span>
+              <div className="attached-context-preview"><pre>{preview.text}</pre></div>
+            </div>
+          );
+        })}
+      </div>
+      {items.length >= explicitContextBundleMaxItems && <span className="subtle">Bundle limit reached. Remove an item before adding another; max {explicitContextBundleMaxItems} excerpts.</span>}
       {status && <span className="subtle">{sanitizeDisplayText(status)}</span>}
     </section>
   );

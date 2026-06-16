@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HostContextSnapshotPayload } from "../bridge/bridgeAdapter";
-import { activeEditorContextUsability, activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, boundedContextPreview, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, rangeFromContextSelection } from "./activeEditorContext";
+import { activeEditorContextUsability, activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToBundleItem, activeFileExcerptToChatContext, addExplicitContextBundleItem, explicitContextBundleMaxItems, explicitContextBundleToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, boundedContextPreview, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, rangeFromContextSelection } from "./activeEditorContext";
 
 const baseContext: HostContextSnapshotPayload = { kind: "active_editor", source: "vscode" };
 
@@ -88,6 +88,34 @@ describe("activeEditorContext", () => {
       source: "jetbrains",
       file: attachment.file,
       selection: { startLine: 3, startCharacter: 2, endLine: 8, endCharacter: 1, text: attachment.text },
+    });
+  });
+
+  it("builds explicit context bundle items with dedupe and max limit", () => {
+    const attachment = {
+      kind: "active_file_excerpt" as const,
+      source: "vscode" as const,
+      file: { displayPath: "src/A.ts", workspaceRelativePath: "src/A.ts", languageId: "typescript" },
+      range: { start: { line: 1, character: 0 }, end: { line: 2, character: 0 } },
+      text: "export const a = 1;",
+      truncated: false,
+    };
+    const item = activeFileExcerptToBundleItem(attachment);
+    const duplicate = activeFileExcerptToBundleItem(attachment);
+    const different = Array.from({ length: explicitContextBundleMaxItems }, (_, index) => activeFileExcerptToBundleItem({ ...attachment, file: { ...attachment.file, workspaceRelativePath: `src/${index}.ts` }, text: `export const value${index} = ${index};` }));
+
+    expect(item.key).toBe(duplicate.key);
+    expect(addExplicitContextBundleItem([item], duplicate)).toEqual([item]);
+    expect(different.reduce((items, next) => addExplicitContextBundleItem(items, next), [] as typeof different)).toHaveLength(explicitContextBundleMaxItems);
+    expect(addExplicitContextBundleItem(different, item)).toHaveLength(explicitContextBundleMaxItems);
+    expect(explicitContextBundleToChatContext([item])).toEqual({
+      kind: "explicit_context_bundle",
+      items: [{
+        kind: "active_editor",
+        source: "vscode",
+        file: attachment.file,
+        selection: { startLine: 1, startCharacter: 0, endLine: 2, endCharacter: 0, text: attachment.text },
+      }],
     });
   });
 

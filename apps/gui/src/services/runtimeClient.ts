@@ -79,7 +79,7 @@ export type DemoModeResponse = {
   message: string;
 };
 
-export type ChatContext = {
+export type ActiveEditorChatContext = {
   kind: "active_editor";
   source: "browser" | "vscode" | "jetbrains";
   file?: {
@@ -95,6 +95,13 @@ export type ChatContext = {
     text?: string;
   };
 };
+
+export type ExplicitContextBundle = {
+  kind: "explicit_context_bundle";
+  items: ActiveEditorChatContext[];
+};
+
+export type ChatContext = ActiveEditorChatContext | ExplicitContextBundle;
 
 export type ChatCommand = {
   requestId: string;
