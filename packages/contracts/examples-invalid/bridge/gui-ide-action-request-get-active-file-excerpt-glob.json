@@ -1,0 +1,9 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.ideActionRequest",
+  "requestId": "req-active-file-excerpt-001",
+  "payload": {
+    "action": "getActiveFileExcerpt",
+    "glob": "src/**/*.ts"
+  }
+}

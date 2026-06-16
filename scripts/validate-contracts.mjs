@@ -87,6 +87,9 @@ const mappings = [
   ["packages/contracts/examples/bridge/host-ide-action-result-succeeded.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-ide-action-result-succeeded-get-context-snapshot.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-ide-action-result-succeeded-get-context-snapshot-no-active-editor.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
+  ["packages/contracts/examples/bridge/host-ide-action-result-succeeded-get-active-file-excerpt-vscode.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
+  ["packages/contracts/examples/bridge/host-ide-action-result-succeeded-get-active-file-excerpt-jetbrains.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
+  ["packages/contracts/examples/bridge/host-ide-action-result-unavailable-get-active-file-excerpt.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-ide-action-result-succeeded-open-workspace-file.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-ide-action-result-succeeded-reveal-workspace-range.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-ide-action-result-rejected.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
@@ -99,6 +102,7 @@ const mappings = [
   ["packages/contracts/examples/bridge/gui-unloaded-message.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-apply-workspace-edit-request-message.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-ide-action-request-get-context-snapshot.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
+  ["packages/contracts/examples/bridge/gui-ide-action-request-get-active-file-excerpt.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-ide-action-request-open-workspace-file.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-ide-action-request-reveal-workspace-range.json", "packages/contracts/schemas/bridge/gui-message.schema.json"]
 ].map(([examplePath, schemaPath]) => [normalizeContractPath(examplePath), normalizeContractPath(schemaPath)]);
@@ -278,7 +282,18 @@ const invalidMappings = [
     "gui-apply-workspace-edit-empty-segment-path.json",
     "gui-apply-workspace-edit-trailing-slash-path.json",
     "gui-ide-action-request-uppercase-sk-request-id.json",
-    "gui-ide-action-request-uppercase-sk-path.json"
+    "gui-ide-action-request-uppercase-sk-path.json",
+    "gui-ide-action-request-get-active-file-excerpt-path.json",
+    "gui-ide-action-request-get-active-file-excerpt-glob.json",
+    "gui-ide-action-request-get-active-file-excerpt-includeFullFile.json",
+    "gui-ide-action-request-get-active-file-excerpt-recursive.json",
+    "gui-ide-action-request-get-active-file-excerpt-indexWorkspace.json",
+    "gui-ide-action-request-get-active-file-excerpt-providerId.json",
+    "gui-ide-action-request-get-active-file-excerpt-modelId.json",
+    "gui-ide-action-request-get-active-file-excerpt-apiKey.json",
+    "gui-ide-action-request-get-active-file-excerpt-tool.json",
+    "gui-ide-action-request-get-active-file-excerpt-shell.json",
+    "gui-ide-action-request-get-active-file-excerpt-git.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/gui-message.schema.json"
@@ -347,7 +362,12 @@ const invalidMappings = [
     "host-ide-action-result-failed-open-with-context.json",
     "host-ide-action-result-rejected-reveal-with-context.json",
     "host-ide-action-result-unavailable-context-with-path-range.json",
-    "host-ide-action-result-uppercase-sk-message.json"
+    "host-ide-action-result-uppercase-sk-message.json",
+    "host-ide-action-result-active-file-excerpt-absolute-path.json",
+    "host-ide-action-result-active-file-excerpt-secret-like-text.json",
+    "host-ide-action-result-active-file-excerpt-oversized-text.json",
+    "host-ide-action-result-active-file-excerpt-unknown-field.json",
+    "host-ide-action-result-active-file-excerpt-unavailable-with-attachment.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/host-message.schema.json"

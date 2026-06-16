@@ -1,0 +1,32 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-active-file-excerpt-jetbrains-001",
+  "payload": {
+    "status": "succeeded",
+    "message": "Active file excerpt ready.",
+    "cloudRequired": false,
+    "action": "getActiveFileExcerpt",
+    "contextAttachment": {
+      "kind": "active_file_excerpt",
+      "source": "jetbrains",
+      "file": {
+        "displayPath": "src/editor.kt",
+        "workspaceRelativePath": "src/editor.kt",
+        "languageId": "typescript"
+      },
+      "range": {
+        "start": {
+          "line": 10,
+          "character": 0
+        },
+        "end": {
+          "line": 24,
+          "character": 1
+        }
+      },
+      "text": "fun greet(name: String): String {\n  return \"hello $name\"\n}\n",
+      "truncated": true
+    }
+  }
+}

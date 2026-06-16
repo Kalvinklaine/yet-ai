@@ -1,0 +1,33 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-active-file-excerpt-unknown-field-001",
+  "payload": {
+    "status": "succeeded",
+    "message": "Active file excerpt ready.",
+    "cloudRequired": false,
+    "action": "getActiveFileExcerpt",
+    "contextAttachment": {
+      "kind": "active_file_excerpt",
+      "source": "vscode",
+      "file": {
+        "displayPath": "src/editor.ts",
+        "workspaceRelativePath": "src/editor.ts",
+        "languageId": "typescript"
+      },
+      "range": {
+        "start": {
+          "line": 10,
+          "character": 0
+        },
+        "end": {
+          "line": 24,
+          "character": 1
+        }
+      },
+      "text": "let visible = true;\n",
+      "truncated": false,
+      "absolutePath": "workspace/src/editor.ts"
+    }
+  }
+}

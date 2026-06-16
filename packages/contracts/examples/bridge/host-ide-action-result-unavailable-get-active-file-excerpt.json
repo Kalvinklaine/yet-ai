@@ -1,0 +1,11 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-active-file-excerpt-unavailable-001",
+  "payload": {
+    "status": "unavailable",
+    "message": "Active file excerpt is unavailable in this surface.",
+    "cloudRequired": false,
+    "action": "getActiveFileExcerpt"
+  }
+}

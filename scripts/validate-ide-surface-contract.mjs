@@ -14,7 +14,7 @@ assert(ideSurfaceContract?.safety?.noSigningPublishingOrReleaseClaim === true, "
 assert(ideSurfaceContract?.safety?.noAutonomousMutation === true, "Contract must forbid autonomous mutation.");
 assertArrayEquals(
   ideSurfaceContract?.safety?.allowedReadOnlyIdeActions ?? [],
-  ["getContextSnapshot", "openWorkspaceFile", "revealWorkspaceRange"],
+  ["getContextSnapshot", "getActiveFileExcerpt", "openWorkspaceFile", "revealWorkspaceRange"],
   "Allowed read-only IDE actions must remain exactly bounded."
 );
 
@@ -84,6 +84,11 @@ for (const [pattern, message] of [
 
 const readOnlyActions = surfaces.find((surface) => surface.id === "read-only-ide-actions");
 assert(readOnlyActions?.vscode?.status === "supported" && readOnlyActions?.jetbrains?.status === "supported", "Read-only IDE actions must remain supported in VS Code and JetBrains.");
+
+const activeFileExcerpt = surfaces.find((surface) => surface.id === "active-file-excerpt-context");
+assert(activeFileExcerpt?.vscode?.status === "supported" && activeFileExcerpt?.jetbrains?.status === "supported", "Active-file excerpt context must be contract-supported in VS Code and JetBrains after implementation.");
+assert(activeFileExcerpt?.vscode?.smoke?.includes("npm run validate:contracts"), "VS Code active-file excerpt context must be covered by contract validation.");
+assert(activeFileExcerpt?.jetbrains?.smoke?.includes("npm run validate:contracts"), "JetBrains active-file excerpt context must be covered by contract validation.");
 
 const lsp = surfaces.find((surface) => surface.id === "lsp-status");
 assert(lsp?.vscode?.status === "preview-only", "VS Code LSP must remain off-by-default preview-only MVP status.");

@@ -225,7 +225,8 @@
       "enum": [
         "getContextSnapshot",
         "openWorkspaceFile",
-        "revealWorkspaceRange"
+        "revealWorkspaceRange",
+        "getActiveFileExcerpt"
       ]
     },
     "ideActionRequestPayload": {
@@ -239,6 +240,18 @@
           "properties": {
             "action": {
               "const": "getContextSnapshot"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "action"
+          ],
+          "properties": {
+            "action": {
+              "const": "getActiveFileExcerpt"
             }
           }
         },

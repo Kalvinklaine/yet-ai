@@ -1,0 +1,30 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-active-file-excerpt-unavailable-bad-001",
+  "payload": {
+    "status": "unavailable",
+    "message": "No active editor available.",
+    "cloudRequired": false,
+    "action": "getActiveFileExcerpt",
+    "contextAttachment": {
+      "kind": "active_file_excerpt",
+      "source": "vscode",
+      "file": {
+        "displayPath": "src/editor.ts"
+      },
+      "range": {
+        "start": {
+          "line": 0,
+          "character": 0
+        },
+        "end": {
+          "line": 1,
+          "character": 0
+        }
+      },
+      "text": "let visible = true;\n",
+      "truncated": false
+    }
+  }
+}

@@ -18,6 +18,7 @@ export const ideSurfaceContract = Object.freeze({
     noAutonomousMutation: true,
     allowedReadOnlyIdeActions: Object.freeze([
       "getContextSnapshot",
+      "getActiveFileExcerpt",
       "openWorkspaceFile",
       "revealWorkspaceRange",
     ]),
@@ -50,6 +51,10 @@ export const ideSurfaceContract = Object.freeze({
     surface("read-only-ide-actions", "Read-only IDE actions", "supported", "supported", {
       vscode: ["npm run smoke:vscode-wrapper-browser"],
       jetbrains: ["npm run smoke:jetbrains-wrapper-browser"],
+    }),
+    surface("active-file-excerpt-context", "Active-file excerpt prompt context", "supported", "supported", {
+      vscode: ["npm run validate:contracts"],
+      jetbrains: ["npm run validate:contracts"],
     }),
     surface("confirmed-edit-preview", "Confirmed edit proposal preview", "supported", "supported", {
       vscode: ["npm run smoke:vscode-edit-proposal"],
