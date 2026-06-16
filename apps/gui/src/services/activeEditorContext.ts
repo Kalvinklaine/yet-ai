@@ -1,6 +1,6 @@
-import type { HostContextSnapshotPayload, WorkspaceEditRange } from "../bridge/bridgeAdapter";
+import type { HostContextSnapshotPayload, WorkspaceEditRange, WorkspaceSnippetSearchResult } from "../bridge/bridgeAdapter";
 import type { ActiveFileExcerptAttachment } from "../bridge/bridgeAdapter";
-import type { ActiveEditorChatContext, ExplicitContextBundle } from "./runtimeClient";
+import type { ActiveEditorChatContext, ExplicitContextBundle, WorkspaceSnippetContext } from "./runtimeClient";
 import { redactSecrets, sanitizeDisplayText } from "./redaction";
 
 export type ActiveEditorContextUsability = "none" | "file" | "selection";
@@ -34,7 +34,9 @@ export type VerificationOutputBundleItem = {
   key: string;
 };
 
-export type ExplicitContextBundleItem = (ActiveEditorChatContext & { key: string }) | VerificationOutputBundleItem;
+export type WorkspaceSnippetBundleItem = WorkspaceSnippetContext & { key: string };
+
+export type ExplicitContextBundleItem = (ActiveEditorChatContext & { key: string }) | VerificationOutputBundleItem | WorkspaceSnippetBundleItem;
 
 export const explicitContextBundleMaxItems = 4;
 export const explicitContextBundleMaxTextCharacters = 16000;
@@ -127,6 +129,29 @@ export function activeFileExcerptToBundleItem(attachment: ActiveFileExcerptAttac
   };
 }
 
+export function workspaceSnippetToBundleItem(snippet: WorkspaceSnippetSearchResult): WorkspaceSnippetBundleItem {
+  const context: WorkspaceSnippetContext = {
+    kind: "workspace_snippet",
+    workspaceRelativePath: snippet.workspaceRelativePath,
+    languageId: snippet.languageId,
+    range: snippet.range,
+    text: snippet.text,
+  };
+  return {
+    ...context,
+    key: workspaceSnippetBundleItemKey(context),
+  };
+}
+
+export function workspaceSnippetBundleItemKey(item: WorkspaceSnippetContext): string {
+  return [
+    "workspace_snippet",
+    item.workspaceRelativePath,
+    formatEditRange(item.range),
+    textHash(item.text),
+  ].join("|");
+}
+
 export function explicitContextBundleItemKey(item: ActiveEditorChatContext): string {
   return [
     item.source,
@@ -148,7 +173,13 @@ export function addExplicitContextBundleItem(current: ExplicitContextBundleItem[
 }
 
 export function explicitContextBundleItemTextLength(item: ExplicitContextBundleItem): number {
-  return item.kind === "verification_output" ? item.outputTail.length : item.selection?.text?.length ?? 0;
+  if (item.kind === "verification_output") {
+    return item.outputTail.length;
+  }
+  if (item.kind === "workspace_snippet") {
+    return item.text.length;
+  }
+  return item.selection?.text?.length ?? 0;
 }
 
 export function explicitContextBundleToChatContext(items: ExplicitContextBundleItem[]): ExplicitContextBundle | undefined {

@@ -7940,6 +7940,115 @@ describe("edit proposal preview", () => {
     expect(container?.textContent ?? "").toContain("check failed");
   });
 
+  it("searches selects and attaches project snippets to the next message context only after explicit clicks", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      setInputValue(projectSnippetQueryInput(), "chat composer");
+    });
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "searchWorkspaceSnippets")).toHaveLength(0);
+
+    await act(async () => {
+      findButton("Search project snippets").click();
+    });
+    await act(async () => {
+      findButton("Project snippet search pending…").click();
+    });
+
+    const searchMessages = postMessage.mock.calls.map(([message]) => message).filter((message) => message.type === "gui.ideActionRequest" && message.payload?.action === "searchWorkspaceSnippets");
+    expect(searchMessages).toHaveLength(1);
+    expect(searchMessages[0]).toEqual({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "gui-workspace-snippet-search-1", payload: { action: "searchWorkspaceSnippets", query: "chat composer" } });
+
+    await dispatchHostIdeActionResult("gui-workspace-snippet-search-1", workspaceSnippetSearchResultPayload());
+    expect(container?.textContent ?? "").toContain("2 sanitized snippets returned for chat composer");
+    expect(container?.textContent ?? "").toContain("Project snippet");
+    expect(findButton("Attach selected snippets (0)").disabled).toBe(true);
+
+    const snippetCheckboxes = Array.from(container?.querySelectorAll<HTMLInputElement>(".workspace-snippet-search-card input[type='checkbox']") ?? []);
+    expect(snippetCheckboxes).toHaveLength(2);
+    await act(async () => {
+      snippetCheckboxes[0]?.click();
+    });
+    await act(async () => {
+      findButton("Attach selected snippets (1)").click();
+    });
+
+    expect(container?.textContent ?? "").toContain("Attached 1 selected project snippet to the next message context.");
+    expect(container?.textContent ?? "").toContain("1/4 excerpts");
+    fetchMock.mockClear();
+    await act(async () => {
+      setTextareaValue(chatInput(), "use attached snippet");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    const body = lastUserMessageBody() as { payload?: { context?: { kind?: string; items?: Array<Record<string, unknown>> } } };
+    expect(body.payload?.context?.kind).toBe("explicit_context_bundle");
+    expect(body.payload?.context?.items).toEqual([{ kind: "workspace_snippet", workspaceRelativePath: "apps/gui/src/App.tsx", languageId: "typescript", range: { start: { line: 10, character: 0 }, end: { line: 12, character: 1 } }, text: "function ChatComposer() {\n  return null;\n}" }]);
+    expect(container?.textContent ?? "").toContain("One-shot explicit context bundle attached to the last accepted message and cleared.");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("ChatComposer");
+  });
+
+  it("keeps selected project snippets after failed send and ignores stale unsafe results", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const rawSecret = "access_token=" + "w".repeat(64);
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), commandStatus: 500, commandError: "send failed safely" });
+    renderApp();
+    await flushAsync();
+
+    await act(async () => { setInputValue(projectSnippetQueryInput(), "chat composer"); });
+    await act(async () => { findButton("Search project snippets").click(); });
+    await dispatchHostIdeActionResult("stale-snippet-search", workspaceSnippetSearchResultPayload({ message: "Stale snippet result ignored." }));
+    expect(container?.textContent ?? "").toContain("Ignored stale IDE action result.");
+    expect(container?.textContent ?? "").not.toContain("Stale snippet result ignored.");
+    await dispatchHostIdeActionResult("gui-workspace-snippet-search-1", workspaceSnippetSearchResultPayload({ snippets: [{ workspaceRelativePath: "apps/gui/src/App.tsx", languageId: "typescript", range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } }, text: `const token = \"\";` }] }));
+    expect(container?.textContent ?? "").toContain("Search project snippets: pending");
+    expect(container?.textContent ?? "").toContain("Rejected invalid host bridge message");
+    expect(container?.textContent ?? "").not.toContain("access_token");
+
+    await act(async () => { findButton("Clear pending project snippet search").click(); });
+    await act(async () => { findButton("Search project snippets").click(); });
+    await dispatchHostIdeActionResult("gui-workspace-snippet-search-2", workspaceSnippetSearchResultPayload());
+    await act(async () => { Array.from(container?.querySelectorAll<HTMLInputElement>(".workspace-snippet-search-card input[type='checkbox']") ?? [])[0]?.click(); });
+    await act(async () => { findButton("Attach selected snippets (1)").click(); });
+    await act(async () => { setTextareaValue(chatInput(), "send fails with snippet"); });
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); });
+
+    expect(chatInput().value).toBe("send fails with snippet");
+    expect(container?.textContent ?? "").toContain("Project snippet");
+    expect(container?.textContent ?? "").toContain("function ChatComposer");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("ChatComposer");
+    expect(browserStorageDump()).not.toContain(rawSecret);
+  });
+
+  it("renders project snippet search as browser preview-only without posting", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    expect(container?.textContent ?? "").toContain("Project snippets");
+    expect(container?.textContent ?? "").toContain("browser preview only");
+    expect(findButton("Search project snippets").disabled).toBe(true);
+    await act(async () => {
+      setInputValue(projectSnippetQueryInput(), "chat composer");
+    });
+    expect(findButton("Search project snippets").disabled).toBe(true);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("chat composer");
+  });
+
   it("drops host apply results whose status is not in the bounded repair-guidance set", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
@@ -8040,6 +8149,23 @@ async function dispatchHostIdeActionResult(requestId: string | undefined, payloa
       },
     }));
   });
+}
+
+function workspaceSnippetSearchResultPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    status: "succeeded",
+    message: "Workspace snippets ready.",
+    cloudRequired: false,
+    action: "searchWorkspaceSnippets",
+    queryLabel: "chat composer",
+    resultCount: 2,
+    snippets: [
+      { workspaceRelativePath: "apps/gui/src/App.tsx", languageId: "typescript", range: { start: { line: 10, character: 0 }, end: { line: 12, character: 1 } }, text: "function ChatComposer() {\n  return null;\n}" },
+      { workspaceRelativePath: "apps/gui/src/bridge/bridgeAdapter.ts", languageId: "typescript", range: { start: { line: 20, character: 0 }, end: { line: 22, character: 1 } }, text: "export type BridgeHost = \"browser\";" },
+    ],
+    truncated: false,
+    ...overrides,
+  };
 }
 
 function renderApp() {
@@ -8654,6 +8780,14 @@ function authCodeInput() {
 
 function authCodeInputOptional() {
   return Array.from(container?.querySelectorAll<HTMLInputElement>('input[type="password"]') ?? []).find((item) => item.placeholder === "Paste authorization code");
+}
+
+function projectSnippetQueryInput(): HTMLInputElement {
+  const input = Array.from(container?.querySelectorAll<HTMLInputElement>(".workspace-snippet-search-card input") ?? []).find((item) => item.placeholder === "function name or symbol text");
+  if (!input) {
+    throw new Error("Project snippet query input not found");
+  }
+  return input;
 }
 
 function chatInput() {

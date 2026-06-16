@@ -913,6 +913,36 @@ describe("bridgeAdapter", () => {
     adapter.dispose();
   });
 
+  it("validates explicit workspace snippet search bridge payloads", () => {
+    const request = { version: bridgeVersion, type: "gui.ideActionRequest", requestId: "snippet-search-1", payload: { action: "searchWorkspaceSnippets", query: "chat composer" } };
+    const result = {
+      version: bridgeVersion,
+      type: "host.ideActionResult",
+      requestId: "snippet-search-1",
+      payload: {
+        status: "succeeded",
+        message: "Workspace snippets ready.",
+        cloudRequired: false,
+        action: "searchWorkspaceSnippets",
+        queryLabel: "chat composer",
+        resultCount: 1,
+        snippets: [{ workspaceRelativePath: "apps/gui/src/App.tsx", languageId: "typescript", range: { start: { line: 10, character: 0 }, end: { line: 12, character: 1 } }, text: "function ChatComposer() {\n  return null;\n}" }],
+        truncated: false,
+      },
+    };
+
+    expect(isIdeActionRequestPayload(request.payload)).toBe(true);
+    expect(isGuiMessage(request)).toBe(true);
+    expect(isIdeActionResultPayload(result.payload)).toBe(true);
+    expect(isHostMessage(result)).toBe(true);
+  });
+
+  it("rejects unsafe workspace snippet queries and host results", () => {
+    expect(isGuiMessage({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "snippet-search-unsafe", payload: { action: "searchWorkspaceSnippets", query: "../../secret path" } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "snippet-search-unsafe-result", payload: { status: "succeeded", message: "Workspace snippets ready.", cloudRequired: false, action: "searchWorkspaceSnippets", queryLabel: "chat composer", resultCount: 1, snippets: [{ workspaceRelativePath: "apps/gui/src/App.tsx", languageId: "typescript", range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } }, text: "Authorization: Bearer unsafe-secret" }], truncated: false } })).toBe(false);
+    expect(isHostMessage({ version: bridgeVersion, type: "host.ideActionResult", requestId: "snippet-search-extra", payload: { status: "succeeded", message: "Workspace snippets ready.", cloudRequired: false, action: "searchWorkspaceSnippets", queryLabel: "chat composer", resultCount: 0, snippets: [], truncated: false, workspaceRelativePath: "apps/gui/src/App.tsx" } })).toBe(false);
+  });
+
   it("validates IDE action messages and rejects traversal, private paths, secret-like messages, and raw fields", () => {
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "req-1", payload: { action: "getContextSnapshot" } })).toBe(true);
     expect(isGuiMessage({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "req-2", payload: { action: "openWorkspaceFile", workspaceRelativePath: "src/App.tsx" } })).toBe(true);

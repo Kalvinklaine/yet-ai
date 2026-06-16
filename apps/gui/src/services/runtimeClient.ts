@@ -105,7 +105,18 @@ export type VerificationOutputContext = {
   truncated: boolean;
 };
 
-export type ExplicitContextBundleItem = ActiveEditorChatContext | VerificationOutputContext;
+export type WorkspaceSnippetContext = {
+  kind: "workspace_snippet";
+  workspaceRelativePath: string;
+  languageId: string;
+  range: {
+    start: { line: number; character: number };
+    end: { line: number; character: number };
+  };
+  text: string;
+};
+
+export type ExplicitContextBundleItem = ActiveEditorChatContext | VerificationOutputContext | WorkspaceSnippetContext;
 
 export type ExplicitContextBundle = {
   kind: "explicit_context_bundle";

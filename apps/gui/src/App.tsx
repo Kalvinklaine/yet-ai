@@ -1,7 +1,7 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type ActiveFileExcerptAttachment } from "./bridge/bridgeAdapter";
+import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type ActiveFileExcerptAttachment, type WorkspaceSnippetSearchResult } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, removeOptimisticUserMessage, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
-import { activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToBundleItem, activeFileExcerptToChatContext, addExplicitContextBundleItem, explicitContextBundleMaxItems, explicitContextBundleToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, rangeFromContextSelection, type ExplicitContextBundleItem } from "./services/activeEditorContext";
+import { activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToBundleItem, activeFileExcerptToChatContext, addExplicitContextBundleItem, explicitContextBundleMaxItems, explicitContextBundleToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, rangeFromContextSelection, workspaceSnippetToBundleItem, type ExplicitContextBundleItem, type WorkspaceSnippetBundleItem } from "./services/activeEditorContext";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
 import { IdeActionProposalPanel, IdeActionsPanel, VerificationCommandPanel, verificationOutputKey, type IdeActionAttemptState, type VerificationCommand } from "./components/IdeActionsPanel";
 import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
@@ -118,6 +118,7 @@ type ActiveFilePromptAction = {
 type RuntimeConnectionSource = "manual" | "host.ready";
 
 type VerificationOutputBundleItem = Extract<ExplicitContextBundleItem, { kind: "verification_output" }>;
+type WorkspaceSnippetSearchResultPayload = IdeActionResultPayload & { action: "searchWorkspaceSnippets"; status: "succeeded"; queryLabel: string; resultCount: number; snippets: WorkspaceSnippetSearchResult[]; truncated: boolean };
 
 const emptyProviderForm: ProviderForm = {
   providerId: "openai-local",
@@ -281,6 +282,10 @@ export function App() {
   const [explicitContextBundleItems, setExplicitContextBundleItems] = useState<ExplicitContextBundleItem[]>([]);
   const [includeExplicitContextBundle, setIncludeExplicitContextBundle] = useState(true);
   const [explicitContextBundleStatus, setExplicitContextBundleStatus] = useState<string | null>(null);
+  const [workspaceSnippetQuery, setWorkspaceSnippetQuery] = useState("");
+  const [workspaceSnippetResult, setWorkspaceSnippetResult] = useState<WorkspaceSnippetSearchResultPayload | null>(null);
+  const [selectedWorkspaceSnippetKeys, setSelectedWorkspaceSnippetKeys] = useState<string[]>([]);
+  const [workspaceSnippetStatus, setWorkspaceSnippetStatus] = useState<string | null>(null);
   const [runtimeRefreshStatus, setRuntimeRefreshStatus] = useState<{ state: "checking" | "connected" | "failed"; attempt: number; checkedAt: string; detail: string } | null>(null);
   const [runtimeRefreshInFlight, setRuntimeRefreshInFlight] = useState(false);
   const [runtimeConnectionSource, setRuntimeConnectionSource] = useState<RuntimeConnectionSource>("manual");
@@ -418,6 +423,12 @@ export function App() {
   useEffect(() => {
     setRuntimeDetailsOpen(!runtimeConnected);
   }, [runtimeConnected]);
+
+  useEffect(() => {
+    setWorkspaceSnippetResult(null);
+    setSelectedWorkspaceSnippetKeys([]);
+    setWorkspaceSnippetStatus(null);
+  }, [chatId, settingsRevision]);
 
   useEffect(() => {
     setProviderDetailsOpen(!canSendChat);
@@ -643,6 +654,11 @@ export function App() {
           setIncludeAttachedContext(true);
           setAttachedContextAcknowledged(false);
           setAttachedContextStatus(null);
+        }
+        if (isWorkspaceSnippetSearchResult(payload)) {
+          setWorkspaceSnippetResult(payload);
+          setSelectedWorkspaceSnippetKeys([]);
+          setWorkspaceSnippetStatus(`${payload.resultCount} sanitized snippet${payload.resultCount === 1 ? "" : "s"} returned for ${payload.queryLabel}. Select snippets, then attach them to the next message.`);
         }
         setIdeActionAttempt((current) => current?.requestId === requestId ? {
           ...current,
@@ -1493,6 +1509,45 @@ export function App() {
     addTimeline(`IDE action requested ${requestId}`);
   }, [addTimeline, bridgeHost]);
 
+  const searchWorkspaceSnippets = () => {
+    const query = workspaceSnippetQuery.trim();
+    if (!query) {
+      setWorkspaceSnippetStatus("Enter a literal project snippet query before searching.");
+      return;
+    }
+    if (bridgeHost !== "vscode" && bridgeHost !== "jetbrains") {
+      setWorkspaceSnippetStatus("Browser preview only. Open Yet AI in VS Code or JetBrains to search local workspace snippets.");
+      return;
+    }
+    setWorkspaceSnippetResult(null);
+    setSelectedWorkspaceSnippetKeys([]);
+    setWorkspaceSnippetStatus(`Searching local workspace snippets for ${query}.`);
+    requestIdeAction({ action: "searchWorkspaceSnippets", query }, "gui-workspace-snippet-search");
+  };
+
+  const attachSelectedWorkspaceSnippetsToBundle = () => {
+    if (!workspaceSnippetResult || selectedWorkspaceSnippetKeys.length === 0) {
+      setWorkspaceSnippetStatus("Select at least one snippet before attaching.");
+      return;
+    }
+    const selected = workspaceSnippetResult.snippets.filter((snippet) => selectedWorkspaceSnippetKeys.includes(workspaceSnippetToBundleItem(snippet).key));
+    setExplicitContextBundleItems((current) => {
+      let next = current;
+      for (const snippet of selected) {
+        next = addExplicitContextBundleItem(next, workspaceSnippetToBundleItem(snippet));
+      }
+      if (next === current) {
+        setWorkspaceSnippetStatus(`Selected snippets are already attached or the bundle is full; max ${explicitContextBundleMaxItems} items.`);
+        return current;
+      }
+      const addedCount = next.length - current.length;
+      setIncludeExplicitContextBundle(true);
+      setExplicitContextBundleStatus(`Added ${addedCount} project snippet${addedCount === 1 ? "" : "s"} to the one-shot bundle.`);
+      setWorkspaceSnippetStatus(`Attached ${addedCount} selected project snippet${addedCount === 1 ? "" : "s"} to the next message context.`);
+      return next;
+    });
+  };
+
   useEffect(() => {
     if (!ideActionProposalCandidate) {
       ideActionProposalIdentityRef.current = null;
@@ -1965,6 +2020,7 @@ export function App() {
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
                 <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} promptAction={activeFilePromptAction} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onClearPending={clearPendingIdeActionState} onIncludeChange={setIncludeAttachedContext} onApplyPrompt={applyActiveFilePrompt} onAddToBundle={addActiveFileExcerptToBundle} />
+                <WorkspaceSnippetSearchPanel host={bridgeHost} query={workspaceSnippetQuery} result={workspaceSnippetResult} selectedKeys={selectedWorkspaceSnippetKeys} pending={ideActionAttempt?.action === "searchWorkspaceSnippets" && (ideActionAttempt.status === "pending" || ideActionAttempt.status === "inProgress")} status={workspaceSnippetStatus} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onQueryChange={setWorkspaceSnippetQuery} onSearch={searchWorkspaceSnippets} onClearPending={clearPendingIdeActionState} onSelectionChange={setSelectedWorkspaceSnippetKeys} onAttachSelected={attachSelectedWorkspaceSnippetsToBundle} />
                 <ExplicitContextBundlePanel items={explicitContextBundleItems} include={includeExplicitContextBundle} status={explicitContextBundleStatus} onIncludeChange={setIncludeExplicitContextBundle} onRemove={removeExplicitContextBundleItem} onClear={() => clearExplicitContextBundle("Cleared the one-shot explicit context bundle.")} />
                 <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} acknowledged={attachedContextAcknowledged} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} onAcknowledgeChange={setAttachedContextAcknowledged} />
                 <CodingActionsPanel canUseContext={codingActionsCanUseContext} context={currentAttachedContext} onAction={applyCodingAction} />
@@ -2202,6 +2258,14 @@ function isVerificationOutputBundleItem(item: ExplicitContextBundleItem): item i
   return item.kind === "verification_output";
 }
 
+function isWorkspaceSnippetBundleItem(item: ExplicitContextBundleItem): item is WorkspaceSnippetBundleItem {
+  return item.kind === "workspace_snippet";
+}
+
+function isWorkspaceSnippetSearchResult(result: IdeActionResultPayload): result is WorkspaceSnippetSearchResultPayload {
+  return result.action === "searchWorkspaceSnippets" && result.status === "succeeded" && result.queryLabel !== undefined && result.resultCount !== undefined && Array.isArray(result.snippets) && result.truncated !== undefined;
+}
+
 function buildActiveFilePromptAction(excerpt: ActiveFileExcerptAttachment): ActiveFilePromptAction {
   const fileLabel = activeFileExcerptSummary(excerpt);
   const language = excerpt.file.languageId ? sanitizeDisplayText(excerpt.file.languageId) : "unknown language";
@@ -2236,6 +2300,8 @@ function ideActionLabel(action: IdeActionType): string {
       return "Reveal range";
     case "runVerificationCommand":
       return "Run verification command";
+    case "searchWorkspaceSnippets":
+      return "Search project snippets";
   }
 }
 
@@ -2527,6 +2593,61 @@ function ActiveFileExcerptAttachPanel({ host, excerpt, include, pending, status,
   );
 }
 
+function WorkspaceSnippetSearchPanel({ host, query, result, selectedKeys, pending, status, canAddToBundle, onQueryChange, onSearch, onClearPending, onSelectionChange, onAttachSelected }: { host: BridgeHost; query: string; result: WorkspaceSnippetSearchResultPayload | null; selectedKeys: string[]; pending: boolean; status: string | null; canAddToBundle: boolean; onQueryChange: (query: string) => void; onSearch: () => void; onClearPending: () => void; onSelectionChange: (keys: string[]) => void; onAttachSelected: () => void }) {
+  const supported = host === "vscode" || host === "jetbrains";
+  const selectedSet = new Set(selectedKeys);
+  const toggleSnippet = (key: string, selected: boolean) => {
+    onSelectionChange(selected ? [...selectedKeys, key] : selectedKeys.filter((item) => item !== key));
+  };
+  return (
+    <section className={`readiness-card ${result ? "ready" : "warn"} workspace-snippet-search-card stack`} role="status" aria-label="Project snippet search">
+      <div className="row">
+        <strong>Project snippets</strong>
+        <span className={`badge ${supported ? "ok" : "warn"}`}>{supported ? "IDE search" : "browser preview only"}</span>
+      </div>
+      <div className="form-grid">
+        <label>
+          Literal snippet query
+          <input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="function name or symbol text" autoComplete="off" />
+        </label>
+      </div>
+      <div className="row">
+        <button type="button" onClick={onSearch} disabled={!supported || pending || !query.trim()}>{pending ? "Project snippet search pending…" : "Search project snippets"}</button>
+        {pending && <button type="button" className="secondary-button" onClick={onClearPending}>Clear pending project snippet search</button>}
+      </div>
+      <span className="subtle">Search runs only after this explicit click. Browser mode does not post host actions. Queries and snippets stay in React state only and are not written to browser storage.</span>
+      {!supported && <span className="subtle">Open {productName} in VS Code or JetBrains to request sanitized local workspace snippets.</span>}
+      {result && (
+        <div className="stack">
+          <div className="row">
+            <span className="badge ok">{result.resultCount} result{result.resultCount === 1 ? "" : "s"}</span>
+            <span className="subtle">Query: {sanitizeDisplayText(result.queryLabel)} · truncated {result.truncated ? "yes" : "no"}</span>
+          </div>
+          {result.snippets.length === 0 ? <span className="subtle">No sanitized snippets returned for this query.</span> : result.snippets.map((snippet, index) => {
+            const item = workspaceSnippetToBundleItem(snippet);
+            const preview = classifyBoundedContextPreview(snippet.text);
+            return (
+              <label className="provider-item stack" key={item.key}>
+                <span className="row">
+                  <input style={{ width: "auto" }} type="checkbox" checked={selectedSet.has(item.key)} onChange={(event) => toggleSnippet(item.key, event.target.checked)} />
+                  <strong>{index + 1}. {sanitizeDisplayText(snippet.workspaceRelativePath)}</strong>
+                  <span className="badge ok">{sanitizeDisplayText(snippet.languageId)}</span>
+                </span>
+                <span className="subtle">Range {formatSelectionRange({ startLine: snippet.range.start.line, startCharacter: snippet.range.start.character, endLine: snippet.range.end.line, endCharacter: snippet.range.end.character })} · {snippet.text.length} chars</span>
+                <div className="attached-context-preview"><pre>{preview.text}</pre></div>
+              </label>
+            );
+          })}
+          <div className="row">
+            <button type="button" onClick={onAttachSelected} disabled={!canAddToBundle || selectedKeys.length === 0}>{canAddToBundle ? `Attach selected snippets (${selectedKeys.length})` : `Bundle full (${explicitContextBundleMaxItems} max)`}</button>
+          </div>
+        </div>
+      )}
+      {status && <span className="subtle">{sanitizeDisplayText(status)}</span>}
+    </section>
+  );
+}
+
 function ExplicitContextBundlePanel({ items, include, status, onIncludeChange, onRemove, onClear }: { items: ExplicitContextBundleItem[]; include: boolean; status: string | null; onIncludeChange: (include: boolean) => void; onRemove: (key: string) => void; onClear: () => void }) {
   if (items.length === 0) {
     return (
@@ -2564,6 +2685,20 @@ function ExplicitContextBundlePanel({ items, include, status, onIncludeChange, o
                   <button type="button" className="secondary-button" onClick={() => onRemove(item.key)}>Remove item</button>
                 </div>
                 <span className="subtle">Status {sanitizeDisplayText(item.status)} · exit code {item.exitCode} · truncated {item.truncated ? "yes" : "no"}</span>
+                <div className="attached-context-preview"><pre>{preview.text}</pre></div>
+              </div>
+            );
+          }
+          if (isWorkspaceSnippetBundleItem(item)) {
+            const preview = classifyBoundedContextPreview(item.text);
+            return (
+              <div className="provider-item stack" key={item.key}>
+                <div className="row">
+                  <strong>{index + 1}. Project snippet</strong>
+                  <span className="badge ok">{sanitizeDisplayText(item.workspaceRelativePath)}</span>
+                  <button type="button" className="secondary-button" onClick={() => onRemove(item.key)}>Remove snippet</button>
+                </div>
+                <span className="subtle">Language {sanitizeDisplayText(item.languageId)} · range {formatSelectionRange({ startLine: item.range.start.line, startCharacter: item.range.start.character, endLine: item.range.end.line, endCharacter: item.range.end.character })} · {item.text.length} chars</span>
                 <div className="attached-context-preview"><pre>{preview.text}</pre></div>
               </div>
             );

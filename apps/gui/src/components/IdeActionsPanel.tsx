@@ -117,6 +117,9 @@ function renderIdeActionResultMetadata(result: IdeActionResultPayload | undefine
   if (result.action === "revealWorkspaceRange" && result.workspaceRelativePath && result.range) {
     return <span>Result path: {sanitizeDisplayText(result.workspaceRelativePath)} · result range: {formatEditRange(result.range)}</span>;
   }
+  if (result.action === "searchWorkspaceSnippets" && result.queryLabel && result.resultCount !== undefined) {
+    return <span>Result snippets: {result.resultCount} sanitized result{result.resultCount === 1 ? "" : "s"} for {sanitizeDisplayText(result.queryLabel)}</span>;
+  }
   return null;
 }
 
