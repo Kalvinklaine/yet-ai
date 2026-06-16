@@ -21,7 +21,7 @@ export type EditProposalIdentity = {
   payloadKey: string;
 };
 
-const envelopeKeys = ["type", "version", "payload", "requestId"] as const;
+const envelopeKeys = ["type", "version", "payload"] as const;
 const maxContentLength = 50000;
 
 export function parseEditProposalContent(content: string): ApplyWorkspaceEditPayload | null {
@@ -45,17 +45,11 @@ export function parseEditProposalContent(content: string): ApplyWorkspaceEditPay
     return null;
   }
 
-  // Envelope form: { type, version, payload } with no extra keys. If an
-  // assistant includes requestId, it is inspect-only metadata: the GUI always
-  // creates its own runnable request id for host correlation.
   if (parsed.type === applyEditRequestType) {
     if (!hasOnlyKeys(parsed, envelopeKeys)) {
       return null;
     }
     if (parsed.version !== bridgeVersion) {
-      return null;
-    }
-    if ("requestId" in parsed && typeof parsed.requestId !== "string") {
       return null;
     }
     if (!isPlainObject(parsed.payload)) {

@@ -90,10 +90,10 @@ describe("parseEditProposalContent", () => {
     expect(parseEditProposalContent(JSON.stringify(proposal) + " " + JSON.stringify(proposal))).toBeNull();
   });
 
-  it("ignores an assistant-supplied requestId envelope for proposal parsing", () => {
+  it("rejects an assistant-supplied requestId envelope", () => {
     const proposal = safeEditProposalPayload();
     const envelopeWithRequestId = { type: "gui.applyWorkspaceEditRequest", version: bridgeVersion, requestId: "assistant-supplied", payload: proposal };
-    expect(parseEditProposalContent(JSON.stringify(envelopeWithRequestId))).toEqual(proposal);
+    expect(parseEditProposalContent(JSON.stringify(envelopeWithRequestId))).toBeNull();
   });
 
   it("rejects envelope with unknown fields or wrong version", () => {
