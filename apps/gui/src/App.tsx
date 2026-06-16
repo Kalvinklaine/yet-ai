@@ -8,7 +8,7 @@ import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, i
 import { chatLifecycleLabels, chatRecoveryCodeForRuntimeError, type ChatLifecycleState } from "./services/chatLifecycle";
 import { conversationHistoryStatusLabel, resolveChatAfterList, resolveFallbackChatAfterDelete } from "./services/conversationHistory";
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
-import { modelStatusText, resolveProviderModelReadiness } from "./services/providerReadiness";
+import { classifyProviderReadinessState, modelStatusText, resolveProviderModelReadiness, type ProviderReadinessState } from "./services/providerReadiness";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
 import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type DemoModeResponse, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
@@ -103,6 +103,11 @@ type FirstMessageReadiness = {
   nextAction: string;
   actions: FirstMessageAction[];
   notes: string[];
+};
+
+type ActiveFilePromptAction = {
+  label: string;
+  prompt: string;
 };
 
 type RuntimeConnectionSource = "manual" | "host.ready";
@@ -345,6 +350,7 @@ export function App() {
   const enabledProviders = useMemo(() => activeProviders.filter((provider) => provider.enabled), [activeProviders]);
   const apiKeyReadiness = useMemo(() => resolveProviderModelReadiness(activeModels, enabledProviders, activeModelError), [activeModels, activeModelError, enabledProviders]);
   const selectedModel = apiKeyReadiness.model;
+  const apiKeyReadinessState = classifyProviderReadinessState(apiKeyReadiness, runtimeConnected);
   const apiKeyChatReady = runtimeConnected && apiKeyReadiness.ready;
   const demoModeEnabled = activeDemoMode?.enabled === true;
   const providerAuthMutationInFlight = providerAuthMutation !== null;
@@ -394,6 +400,7 @@ export function App() {
   const safeActiveWorkspacePath = currentAttachedContext?.file?.workspaceRelativePath;
   const safeActiveRange = rangeFromContextSelection(currentAttachedContext?.selection);
   const pendingActiveFileExcerpt = pendingIdeActionRequestIdRef.current !== null && ideActionAttempt?.action === "getActiveFileExcerpt" && (ideActionAttempt.status === "pending" || ideActionAttempt.status === "inProgress");
+  const activeFilePromptAction = useMemo(() => currentActiveFileExcerpt ? buildActiveFilePromptAction(currentActiveFileExcerpt) : null, [currentActiveFileExcerpt]);
   const chatHistoryStatus = conversationHistoryStatusLabel({ loading: chatHistoryLoading, current: chatHistoryCurrent, count: activeChatSummaries.length, hasError: Boolean(chatHistoryError) });
 
   useEffect(() => {
@@ -1519,6 +1526,17 @@ export function App() {
     chatInputRef.current?.focus();
   };
 
+  const applyActiveFilePrompt = (action: ActiveFilePromptAction) => {
+    if (!currentActiveFileExcerpt || !currentAttachedContext) {
+      chatInputRef.current?.focus();
+      return;
+    }
+    setAttachedContext({ payload: currentAttachedContext, settingsRevision: settingsRevisionRef.current, chatId: chatIdRef.current, excerpt: currentActiveFileExcerpt });
+    setChatInput(action.prompt);
+    setIncludeAttachedContext(true);
+    chatInputRef.current?.focus();
+  };
+
   const submitChat = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const content = chatInput.trim();
@@ -1773,7 +1791,7 @@ export function App() {
             {experimentalOauthChatReady && <span className="subtle">OpenAI API-key fallback remains the safe/default setup and will be preferred when configured.</span>}
             {!canSendChat && <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>}
           </div>
-          <FirstRunChecklist runtimeConnected={runtimeConnected} demoModeReady={activeSelectedDemoMode} apiKeyReady={apiKeyChatReady} experimentalAccountReady={experimentalOauthChatReady} canSendChat={canSendChat} />
+          <FirstRunChecklist runtimeConnected={runtimeConnected} demoModeReady={activeSelectedDemoMode} apiKeyReady={apiKeyChatReady} experimentalAccountReady={experimentalOauthChatReady} canSendChat={canSendChat} readinessState={apiKeyReadinessState} />
           <FirstMessageReadinessWizard
             readiness={firstMessageReadiness}
             canSendChat={canSendChat}
@@ -1865,7 +1883,7 @@ export function App() {
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
-                <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onClearPending={clearPendingIdeActionState} onIncludeChange={setIncludeAttachedContext} />
+                <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} promptAction={activeFilePromptAction} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onClearPending={clearPendingIdeActionState} onIncludeChange={setIncludeAttachedContext} onApplyPrompt={applyActiveFilePrompt} />
                 <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} acknowledged={attachedContextAcknowledged} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} onAcknowledgeChange={setAttachedContextAcknowledged} />
                 <CodingActionsPanel canUseContext={codingActionsCanUseContext} context={currentAttachedContext} onAction={applyCodingAction} />
                 <IdeActionsPanel host={bridgeHost} attempt={ideActionAttempt} note={ideActionNote} workspaceRelativePath={safeActiveWorkspacePath} range={safeActiveRange} onGetContext={() => requestIdeAction({ action: "getContextSnapshot" })} onOpenFile={(workspaceRelativePath) => requestIdeAction({ action: "openWorkspaceFile", workspaceRelativePath })} onRevealRange={(workspaceRelativePath, range) => requestIdeAction({ action: "revealWorkspaceRange", workspaceRelativePath, range })} onClearPendingIdeAction={clearPendingIdeActionState} />
@@ -2093,6 +2111,16 @@ export function App() {
   );
 }
 
+function buildActiveFilePromptAction(excerpt: ActiveFileExcerptAttachment): ActiveFilePromptAction {
+  const fileLabel = activeFileExcerptSummary(excerpt);
+  const language = excerpt.file.languageId ? sanitizeDisplayText(excerpt.file.languageId) : "unknown language";
+  const range = `${excerpt.range.start.line}:${excerpt.range.start.character}-${excerpt.range.end.line}:${excerpt.range.end.character}`;
+  return {
+    label: "Ask about active file",
+    prompt: `Use only the attached one-shot active-file excerpt for ${fileLabel} (${language}), excerpt range ${range}.\nCoding action: ask_about_active_file\n\nExplain what this active file excerpt is doing, call out any likely issues or follow-up questions, and suggest one safe next step. Do not read hidden files, run tools, or apply changes automatically.`,
+  };
+}
+
 function upsertChatSummary(current: ChatSummary[], thread: { chatId: string; title: string; createdAt: string; updatedAt: string; messages: unknown[] }): ChatSummary[] {
   const summary: ChatSummary = {
     chatId: thread.chatId,
@@ -2237,7 +2265,26 @@ function ChatBubble({ message, activeEditProposal, activeIdeActionProposal }: { 
   );
 }
 
-function FirstRunChecklist({ runtimeConnected, demoModeReady, apiKeyReady, experimentalAccountReady, canSendChat }: { runtimeConnected: boolean; demoModeReady: boolean; apiKeyReady: boolean; experimentalAccountReady: boolean; canSendChat: boolean }) {
+function readinessStateLabel(state: ProviderReadinessState, canSendChat: boolean): string {
+  if (state === "demo_mode_ready") {
+    return "Demo Mode ready — local canned responses, no provider calls";
+  }
+  if (state === "openai_compatible_ready") {
+    return "OpenAI-compatible BYOK ready through the local runtime";
+  }
+  if (state === "model_provider_mismatch") {
+    return "Model/provider mismatch";
+  }
+  if (state === "model_not_ready") {
+    return "Model not ready";
+  }
+  if (state === "provider_required") {
+    return "Provider required";
+  }
+  return canSendChat ? "Runtime connected" : "Runtime unavailable";
+}
+
+function FirstRunChecklist({ runtimeConnected, demoModeReady, apiKeyReady, experimentalAccountReady, canSendChat, readinessState }: { runtimeConnected: boolean; demoModeReady: boolean; apiKeyReady: boolean; experimentalAccountReady: boolean; canSendChat: boolean; readinessState: ProviderReadinessState }) {
   const steps = [
     { label: "Runtime", detail: runtimeConnected ? "connected" : "refresh local runtime", ok: runtimeConnected },
     { label: "Demo Mode", detail: demoModeReady ? "local canned trial ready" : "no-key local canned trial", ok: demoModeReady },
@@ -2255,6 +2302,10 @@ function FirstRunChecklist({ runtimeConnected, demoModeReady, apiKeyReady, exper
       <span className={`first-run-step ${experimentalAccountReady ? "warn" : "todo"}`} role="listitem">
         <strong>Account login</strong>
         <span>{experimentalAccountReady ? "experimental high-risk connected" : "experimental non-default"}</span>
+      </span>
+      <span className={`first-run-step ${canSendChat ? "ok" : readinessState === "runtime_unavailable" ? "todo" : "warn"}`} role="listitem">
+        <strong>Readiness state</strong>
+        <span>{readinessStateLabel(readinessState, canSendChat)}</span>
       </span>
     </div>
   );
@@ -2324,7 +2375,7 @@ function FirstMessageActionButton({ action, runtimeRefreshInFlight, providerTest
   return <button type="button" onClick={onFocusPrompt}>{action.label}</button>;
 }
 
-function ActiveFileExcerptAttachPanel({ host, excerpt, include, pending, status, onRequest, onClearPending, onIncludeChange }: { host: BridgeHost; excerpt: ActiveFileExcerptAttachment | null; include: boolean; pending: boolean; status: string | null; onRequest: () => void; onClearPending: () => void; onIncludeChange: (include: boolean) => void }) {
+function ActiveFileExcerptAttachPanel({ host, excerpt, include, pending, status, promptAction, onRequest, onClearPending, onIncludeChange, onApplyPrompt }: { host: BridgeHost; excerpt: ActiveFileExcerptAttachment | null; include: boolean; pending: boolean; status: string | null; promptAction: ActiveFilePromptAction | null; onRequest: () => void; onClearPending: () => void; onIncludeChange: (include: boolean) => void; onApplyPrompt: (action: ActiveFilePromptAction) => void }) {
   const supported = host === "vscode" || host === "jetbrains";
   if (!supported) {
     return (
@@ -2364,6 +2415,11 @@ function ActiveFileExcerptAttachPanel({ host, excerpt, include, pending, status,
             <input style={{ width: "auto" }} type="checkbox" checked={include} onChange={(event) => onIncludeChange(event.target.checked)} />
             {include ? "Attach excerpt to next message" : "Omit excerpt from next message"}
           </label>
+          {promptAction && <div className="active-file-prompt-cta stack" role="group" aria-label="Active-file coding prompt">
+            <strong>Real-provider active-file chat path</strong>
+            <span className="subtle">Use this after provider readiness says OpenAI-compatible BYOK is ready. It fills the prompt with the bounded excerpt, keeps it one-shot attached, and still waits for your explicit Send.</span>
+            <button type="button" onClick={() => onApplyPrompt(promptAction)}>{promptAction.label}</button>
+          </div>}
           <span className="subtle">Excerpt stays in React state only, is prompt-only, and clears after the next accepted message.</span>
         </div>
       ) : (

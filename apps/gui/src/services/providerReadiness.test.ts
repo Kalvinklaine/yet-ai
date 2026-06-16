@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderSummary } from "./providersClient";
 import type { ModelSummary } from "./runtimeClient";
-import { missingModelMetadataMessage, modelCapabilitySummary, modelProviderMismatchMessage, modelStatusText, modelUnreadyMessage, readinessStatusLabel, resolveProviderModelReadiness } from "./providerReadiness";
+import { classifyProviderReadinessState, missingModelMetadataMessage, modelCapabilitySummary, modelProviderMismatchMessage, modelStatusText, modelUnreadyMessage, readinessStatusLabel, resolveProviderModelReadiness } from "./providerReadiness";
 
 function model(overrides: Partial<ModelSummary> = {}): ModelSummary {
   return {
@@ -62,6 +62,23 @@ describe("provider readiness", () => {
     expect(readiness.ready).toBe(true);
     expect(readiness.provider?.id).toBe("yet-demo");
     expect(modelStatusText(demoModel, demoProvider)).toBe("Yet AI Demo Chat (Yet AI Demo Mode): ready; chat supported, streaming supported, tools unsupported, reasoning unsupported");
+  });
+
+  it("classifies browser-first readiness states distinctly", () => {
+    const demoModel = model({ id: "yet-demo-chat", displayName: "Yet AI Demo Chat", providerId: "yet-demo" });
+    const demo = provider({ id: "yet-demo", kind: "demo-local", displayName: "Yet AI Demo Mode", baseUrl: "local-runtime-demo-mode", auth: { type: "none", configured: true }, models: [demoModel] });
+    const realReady = resolveProviderModelReadiness([model()], [provider()], null);
+    const demoReady = resolveProviderModelReadiness([demoModel], [demo], null);
+    const mismatch = resolveProviderModelReadiness([model({ providerId: "missing-provider" })], [provider()], null);
+    const modelNotReady = resolveProviderModelReadiness([model({ readiness: { status: "missing_credentials", reason: "saved key has not tested yet" } })], [provider()], null);
+    const required = resolveProviderModelReadiness([], [], null);
+
+    expect(classifyProviderReadinessState(realReady, false)).toBe("runtime_unavailable");
+    expect(classifyProviderReadinessState(demoReady, true)).toBe("demo_mode_ready");
+    expect(classifyProviderReadinessState(realReady, true)).toBe("openai_compatible_ready");
+    expect(classifyProviderReadinessState(mismatch, true)).toBe("model_provider_mismatch");
+    expect(classifyProviderReadinessState(modelNotReady, true)).toBe("model_not_ready");
+    expect(classifyProviderReadinessState(required, true)).toBe("provider_required");
   });
 
   it("keeps model errors and missing provider metadata send-blocking", () => {

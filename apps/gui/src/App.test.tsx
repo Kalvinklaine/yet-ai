@@ -2776,6 +2776,34 @@ describe("active editor attached context", () => {
     expect(ideActionMessages[0]).toEqual({ version: bridgeVersion, type: "gui.ideActionRequest", requestId: "gui-active-file-excerpt-1", payload: { action: "getActiveFileExcerpt" } });
   });
 
+  it("fills an ask-about-active-file prompt without auto-sending or storing excerpt text", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Attach active file excerpt").click();
+    });
+    await dispatchHostIdeActionResult("gui-active-file-excerpt-1", activeFileExcerptResultPayload({ text: "export const answer = 42;" }));
+    fetchMock.mockClear();
+
+    await act(async () => {
+      findButton("Ask about active file").click();
+    });
+
+    expect(chatInput().value).toContain("Coding action: ask_about_active_file");
+    expect(chatInput().value).toContain("Use only the attached one-shot active-file excerpt for vscode src/editor.ts (typescript), excerpt range 10:0-24:1.");
+    expect(chatInput().value).toContain("Do not read hidden files, run tools, or apply changes automatically.");
+    expect(activeFileExcerptToggle().checked).toBe(true);
+    expect(document.activeElement).toBe(chatInput());
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("export const answer");
+  });
+
   it("renders active-file excerpt preview, respects omit toggle, sends once, and clears after accepted send", async () => {
     const postMessage = vi.fn();
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
@@ -2795,6 +2823,9 @@ describe("active editor attached context", () => {
     expect(container?.textContent).toContain("Excerpt characters: 25");
     expect(container?.textContent).toContain("Bounded redacted previewexport const answer = 42;");
     expect(activeFileExcerptToggle().checked).toBe(true);
+    expect(container?.textContent).toContain("Real-provider active-file chat path");
+    expect(container?.textContent).toContain("Use this after provider readiness says OpenAI-compatible BYOK is ready.");
+    expect(findButton("Ask about active file")).toBeDefined();
 
     await act(async () => {
       activeFileExcerptToggle().click();

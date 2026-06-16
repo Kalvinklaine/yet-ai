@@ -10,6 +10,24 @@ export type ProviderModelReadiness = {
   message?: string;
 };
 
+export type ProviderReadinessState = "runtime_unavailable" | "demo_mode_ready" | "openai_compatible_ready" | "model_provider_mismatch" | "model_not_ready" | "provider_required";
+
+export function classifyProviderReadinessState(readiness: ProviderModelReadiness, runtimeConnected: boolean): ProviderReadinessState {
+  if (!runtimeConnected) {
+    return "runtime_unavailable";
+  }
+  if (readiness.ready) {
+    return readiness.provider?.kind === "demo-local" ? "demo_mode_ready" : "openai_compatible_ready";
+  }
+  if (readiness.mismatch) {
+    return "model_provider_mismatch";
+  }
+  if (readiness.model || readiness.message) {
+    return "model_not_ready";
+  }
+  return "provider_required";
+}
+
 export function resolveProviderModelReadiness(models: ModelSummary[], enabledProviders: ProviderSummary[], modelError: RuntimeError | null): ProviderModelReadiness {
   if (modelError) {
     return { ready: false, mismatch: false };
