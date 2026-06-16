@@ -63,11 +63,25 @@ pub struct ChatEvent {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ChatContext {
+pub enum ChatContext {
+    ActiveEditor(ChatActiveEditorContext),
+    ExplicitContextBundle(ChatExplicitContextBundle),
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChatActiveEditorContext {
     kind: String,
     source: String,
     file: Option<ChatContextFile>,
     selection: Option<ChatContextSelection>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChatExplicitContextBundle {
+    kind: String,
+    items: Vec<ChatActiveEditorContext>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -90,6 +104,8 @@ struct ChatContextSelection {
 
 const CHAT_CONTEXT_SELECTION_TEXT_MAX_CHARS: usize = 8_000;
 const CHAT_CONTEXT_TOTAL_MAX_CHARS: usize = 12_000;
+const CHAT_CONTEXT_BUNDLE_MAX_ITEMS: usize = 4;
+const CHAT_CONTEXT_BUNDLE_SELECTION_TEXT_MAX_CHARS: usize = 16_000;
 const CHAT_CONTEXT_DISPLAY_PATH_MAX_CHARS: usize = 256;
 const CHAT_CONTEXT_WORKSPACE_PATH_MAX_CHARS: usize = 512;
 const CHAT_CONTEXT_LANGUAGE_MAX_CHARS: usize = 64;
@@ -518,10 +534,30 @@ impl ChatRuntime {
 
 impl ChatContext {
     pub fn from_value(value: serde_json::Value) -> Option<Self> {
-        let context: Self = serde_json::from_value(value).ok()?;
-        context.is_valid().then_some(context)
+        if value.get("kind")?.as_str()? == "explicit_context_bundle" {
+            let bundle: ChatExplicitContextBundle = serde_json::from_value(value).ok()?;
+            bundle
+                .is_valid()
+                .then_some(Self::ExplicitContextBundle(bundle))
+        } else {
+            let context: ChatActiveEditorContext = serde_json::from_value(value).ok()?;
+            context.is_valid().then_some(Self::ActiveEditor(context))
+        }
     }
 
+    fn active_items(&self) -> &[ChatActiveEditorContext] {
+        match self {
+            Self::ActiveEditor(context) => std::slice::from_ref(context),
+            Self::ExplicitContextBundle(bundle) => &bundle.items,
+        }
+    }
+
+    fn first_active_item(&self) -> Option<&ChatActiveEditorContext> {
+        self.active_items().first()
+    }
+}
+
+impl ChatActiveEditorContext {
     fn is_valid(&self) -> bool {
         if self.kind != "active_editor" {
             return false;
@@ -544,6 +580,28 @@ impl ChatContext {
                 .selection
                 .as_ref()
                 .map_or(0, ChatContextSelection::prompt_chars)
+    }
+
+    fn selection_text_chars(&self) -> usize {
+        self.selection
+            .as_ref()
+            .and_then(|selection| selection.text.as_ref())
+            .map_or(0, |value| value.chars().count())
+    }
+}
+
+impl ChatExplicitContextBundle {
+    fn is_valid(&self) -> bool {
+        self.kind == "explicit_context_bundle"
+            && !self.items.is_empty()
+            && self.items.len() <= CHAT_CONTEXT_BUNDLE_MAX_ITEMS
+            && self.items.iter().all(ChatActiveEditorContext::is_valid)
+            && self
+                .items
+                .iter()
+                .map(ChatActiveEditorContext::selection_text_chars)
+                .sum::<usize>()
+                <= CHAT_CONTEXT_BUNDLE_SELECTION_TEXT_MAX_CHARS
     }
 }
 
@@ -686,44 +744,99 @@ fn assemble_provider_prompt(content: &str, context: Option<&ChatContext>) -> Str
     let Some(context) = context else {
         return content.to_string();
     };
-    let mut lines = vec![
-        "IDE context".to_string(),
-        format!("Source: {}", context.source),
-    ];
-    if let Some(file) = &context.file {
-        if let Some(value) = &file.display_path {
-            lines.push(format!("File: {value}"));
+    let mut lines = Vec::new();
+    match context {
+        ChatContext::ActiveEditor(item) => {
+            push_active_editor_prompt_lines(&mut lines, item, None);
         }
-        if let Some(value) = &file.workspace_relative_path {
-            lines.push(format!("Workspace-relative path: {value}"));
-        }
-        if let Some(value) = &file.language_id {
-            lines.push(format!("Language: {value}"));
-        }
-    }
-    if let Some(selection) = &context.selection {
-        if selection.start_line.is_some()
-            || selection.start_character.is_some()
-            || selection.end_line.is_some()
-            || selection.end_character.is_some()
-        {
-            lines.push(format!(
-                "Range: {}:{}-{}:{}",
-                selection.start_line.unwrap_or(0),
-                selection.start_character.unwrap_or(0),
-                selection.end_line.unwrap_or(0),
-                selection.end_character.unwrap_or(0)
-            ));
-        }
-        if let Some(value) = &selection.text {
-            lines.push("Selection:".to_string());
-            lines.push(value.clone());
+        ChatContext::ExplicitContextBundle(bundle) => {
+            lines.push("IDE context bundle".to_string());
+            for (index, item) in bundle.items.iter().enumerate() {
+                push_active_editor_prompt_lines(&mut lines, item, Some(index + 1));
+            }
         }
     }
     lines.push(String::new());
     lines.push("User request".to_string());
     lines.push(content.to_string());
     lines.join("\n")
+}
+
+fn push_active_editor_prompt_lines(
+    lines: &mut Vec<String>,
+    context: &ChatActiveEditorContext,
+    item_index: Option<usize>,
+) {
+    if let Some(item_index) = item_index {
+        lines.push(format!(
+            "Item {item_index}: source={} path={} language={} range={}",
+            context.source,
+            context
+                .file
+                .as_ref()
+                .and_then(|file| file
+                    .workspace_relative_path
+                    .as_ref()
+                    .or(file.display_path.as_ref()))
+                .map_or("", String::as_str),
+            context
+                .file
+                .as_ref()
+                .and_then(|file| file.language_id.as_deref())
+                .unwrap_or(""),
+            context
+                .selection
+                .as_ref()
+                .map(selection_range)
+                .unwrap_or_default()
+        ));
+    } else {
+        lines.push("IDE context".to_string());
+        lines.push(format!("Source: {}", context.source));
+    }
+    if let Some(file) = &context.file {
+        if item_index.is_none() {
+            if let Some(value) = &file.display_path {
+                lines.push(format!("File: {value}"));
+            }
+            if let Some(value) = &file.workspace_relative_path {
+                lines.push(format!("Workspace-relative path: {value}"));
+            }
+            if let Some(value) = &file.language_id {
+                lines.push(format!("Language: {value}"));
+            }
+        }
+    }
+    if let Some(selection) = &context.selection {
+        if item_index.is_none() && has_selection_range(selection) {
+            lines.push(format!("Range: {}", selection_range(selection)));
+        }
+        if let Some(value) = &selection.text {
+            lines.push("Selection:".to_string());
+            lines.push(value.clone());
+        }
+    }
+}
+
+fn has_selection_range(selection: &ChatContextSelection) -> bool {
+    selection.start_line.is_some()
+        || selection.start_character.is_some()
+        || selection.end_line.is_some()
+        || selection.end_character.is_some()
+}
+
+fn selection_range(selection: &ChatContextSelection) -> String {
+    if has_selection_range(selection) {
+        format!(
+            "{}:{}-{}:{}",
+            selection.start_line.unwrap_or(0),
+            selection.start_character.unwrap_or(0),
+            selection.end_line.unwrap_or(0),
+            selection.end_character.unwrap_or(0)
+        )
+    } else {
+        String::new()
+    }
 }
 
 async fn select_chat_provider(config_dir: &std::path::Path) -> Result<ChatProvider, ChatError> {
@@ -984,7 +1097,7 @@ fn demo_response(content: &str, context: Option<&ChatContext>) -> String {
         "Hello from Yet AI Demo Mode — your local plugin, runtime, GUI, chat, SSE, and history path is working. Configure a BYOK provider for real model answers. This is a local canned response, not model quality, and no provider call was made."
     }
     .to_string();
-    if let Some(context) = context {
+    if let Some(context) = context.and_then(ChatContext::first_active_item) {
         response.push_str("\n\nAttached context metadata received (raw selected text omitted):");
         response.push_str(&format!(" source={}", context.source));
         if let Some(file) = &context.file {
@@ -1021,12 +1134,14 @@ fn demo_response(content: &str, context: Option<&ChatContext>) -> String {
 
 fn demo_edit_proposal_response(context: Option<&ChatContext>) -> String {
     let valid_workspace_relative_path = context
+        .and_then(ChatContext::first_active_item)
         .and_then(|context| context.file.as_ref())
         .and_then(|file| file.workspace_relative_path.as_deref())
         .filter(|path| demo_safe_workspace_relative_path(path));
     let workspace_relative_path = valid_workspace_relative_path.unwrap_or("src/example.ts");
     let selection = valid_workspace_relative_path
         .and(context)
+        .and_then(ChatContext::first_active_item)
         .and_then(|context| context.selection.as_ref());
     let has_selected_text = selection
         .and_then(|selection| selection.text.as_deref())
@@ -1533,8 +1648,9 @@ fn chat_completions_url(base_url: &str) -> Result<String, ChatError> {
 mod tests {
     use super::{
         chat_completions_url, demo_response, select_chat_provider, sequence_subscription_event,
-        ChatContext, ChatContextFile, ChatContextSelection, ChatEvent, OpenAiSseParser,
-        SubscriptionEvent, PROVIDER_STREAM_EVENT_DATA_LIMIT, PROVIDER_STREAM_LINE_BUFFER_LIMIT,
+        ChatActiveEditorContext, ChatContext, ChatContextFile, ChatContextSelection, ChatEvent,
+        OpenAiSseParser, SubscriptionEvent, PROVIDER_STREAM_EVENT_DATA_LIMIT,
+        PROVIDER_STREAM_LINE_BUFFER_LIMIT,
     };
 
     static TEST_DIR_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1789,7 +1905,7 @@ mod tests {
             "src/main\u{0}.ts",
             "src/main\u{7f}.ts",
         ] {
-            let context = ChatContext {
+            let context = ChatContext::ActiveEditor(ChatActiveEditorContext {
                 kind: "active_editor".to_string(),
                 source: "vscode".to_string(),
                 file: Some(ChatContextFile {
@@ -1798,14 +1914,17 @@ mod tests {
                     language_id: Some("typescript".to_string()),
                 }),
                 selection: None,
-            };
-            assert!(!context.is_valid(), "accepted unsafe path: {path:?}");
+            });
+            assert!(
+                matches!(&context, ChatContext::ActiveEditor(context) if !context.is_valid()),
+                "accepted unsafe path: {path:?}"
+            );
         }
     }
 
     #[test]
     fn chat_context_file_accepts_bounded_safe_workspace_relative_path() {
-        let context = ChatContext {
+        let context = ChatContext::ActiveEditor(ChatActiveEditorContext {
             kind: "active_editor".to_string(),
             source: "vscode".to_string(),
             file: Some(ChatContextFile {
@@ -1814,8 +1933,8 @@ mod tests {
                 language_id: Some("typescript".to_string()),
             }),
             selection: None,
-        };
-        assert!(context.is_valid());
+        });
+        assert!(matches!(&context, ChatContext::ActiveEditor(context) if context.is_valid()));
     }
 
     #[test]
@@ -1925,7 +2044,7 @@ mod tests {
     fn demo_safe_edit_with_valid_workspace_path_preserves_selected_text_as_no_op_replacement() {
         let prompts = representative_gui_coding_action_prompts();
         let selected_text = "export function greet(name: string) {\n  return `Hello, ${name}`;\n}";
-        let context = ChatContext {
+        let context = ChatContext::ActiveEditor(ChatActiveEditorContext {
             kind: "active_editor".to_string(),
             source: "vscode".to_string(),
             file: Some(ChatContextFile {
@@ -1940,7 +2059,7 @@ mod tests {
                 end_character: Some(1),
                 text: Some(selected_text.to_string()),
             }),
-        };
+        });
         let response = demo_response(&prompts[4], Some(&context));
         let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
 
@@ -1970,7 +2089,7 @@ mod tests {
         let prompts = representative_gui_coding_action_prompts();
         let selected_text = "destructive unrelated selected text must not be carried to fallback";
         for workspace_relative_path in [None, Some("src/token.txt".to_string())] {
-            let context = ChatContext {
+            let context = ChatContext::ActiveEditor(ChatActiveEditorContext {
                 kind: "active_editor".to_string(),
                 source: "vscode".to_string(),
                 file: Some(ChatContextFile {
@@ -1985,7 +2104,7 @@ mod tests {
                     end_character: Some(8),
                     text: Some(selected_text.to_string()),
                 }),
-            };
+            });
             let response = demo_response(&prompts[4], Some(&context));
             let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
 

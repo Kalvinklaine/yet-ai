@@ -9669,6 +9669,188 @@ async fn chat_context_is_included_before_user_request_in_provider_prompt() {
 }
 
 #[tokio::test]
+async fn chat_context_bundle_is_included_before_user_request_in_provider_prompt() {
+    let api_key = "sk-context-bundle-stream-secret-abcd";
+    let (base_url, mut body_receiver) = start_mock_provider_with_request_body(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"bundle-ok\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    let command = include_str!(
+        "../../../packages/contracts/examples/engine/user-message-command-with-explicit-context-bundle.json"
+    );
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-context-bundle-prompt/commands",
+            Body::from(command),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accepted"], true);
+
+    let text = sse_text_from(
+        app,
+        "/v1/chats/subscribe?chat_id=chat-context-bundle-prompt",
+    )
+    .await;
+    assert!(text.contains("bundle-ok"));
+    assert!(!text.contains(api_key));
+    let provider_body =
+        tokio::time::timeout(std::time::Duration::from_secs(2), body_receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+    let prompt = provider_body["messages"][0]["content"].as_str().unwrap();
+    assert_text_contains_in_order(
+        prompt,
+        &[
+            "IDE context bundle",
+            "Item 1: source=vscode path=src/a.ts language=typescript range=1:0-20:0",
+            "Selection:",
+            "export function a()",
+            "Item 2: source=jetbrains path=src/b.ts language=typescript range=3:2-8:4",
+            "Selection:",
+            "export function b()",
+            "User request",
+            "Compare these selected snippets.",
+        ],
+    );
+    assert!(!prompt.contains(api_key));
+}
+
+#[tokio::test]
+async fn chat_command_context_bundle_bounds_and_smuggling_are_enforced() {
+    let valid_text = "x".repeat(8_000);
+    let valid_command = json!({
+        "requestId": "req-context-bundle-valid",
+        "type": "user_message",
+        "payload": {
+            "content": "hello",
+            "context": {
+                "kind": "explicit_context_bundle",
+                "items": [
+                    {
+                        "kind": "active_editor",
+                        "source": "vscode",
+                        "file": { "displayPath": "src/a.ts", "workspaceRelativePath": "src/a.ts", "languageId": "typescript" },
+                        "selection": { "text": valid_text }
+                    },
+                    {
+                        "kind": "active_editor",
+                        "source": "vscode",
+                        "file": { "displayPath": "src/b.ts", "workspaceRelativePath": "src/b.ts", "languageId": "typescript" },
+                        "selection": { "text": "y".repeat(8_000) }
+                    }
+                ]
+            }
+        }
+    });
+    let (status, body) = json_response_from(
+        test_app(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-context-bundle-valid/commands",
+            Body::from(valid_command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accepted"], true);
+
+    let oversized_item = json!({
+        "kind": "active_editor",
+        "source": "vscode",
+        "file": { "displayPath": "src/e.ts", "workspaceRelativePath": "src/e.ts", "languageId": "typescript" },
+        "selection": { "text": "z".repeat(8_001) }
+    });
+    let aggregate_item = json!({
+        "kind": "active_editor",
+        "source": "vscode",
+        "file": { "displayPath": "src/e.ts", "workspaceRelativePath": "src/e.ts", "languageId": "typescript" },
+        "selection": { "text": "z".repeat(8_000) }
+    });
+    for context in [
+        json!({ "kind": "explicit_context_bundle", "items": [] }),
+        json!({
+            "kind": "explicit_context_bundle",
+            "items": [aggregate_item.clone(), aggregate_item.clone(), aggregate_item.clone(), aggregate_item.clone(), aggregate_item.clone()]
+        }),
+        json!({
+            "kind": "explicit_context_bundle",
+            "items": [aggregate_item.clone(), aggregate_item.clone(), { "kind": "active_editor", "source": "vscode", "selection": { "text": "overflow" } }]
+        }),
+        json!({ "kind": "explicit_context_bundle", "items": [oversized_item] }),
+        json!({
+            "kind": "explicit_context_bundle",
+            "items": [{
+                "kind": "active_editor",
+                "source": "vscode",
+                "file": { "displayPath": "src/token.txt", "workspaceRelativePath": "src/token.txt", "languageId": "typescript" },
+                "selection": { "text": "safe text" }
+            }]
+        }),
+        json!({
+            "kind": "explicit_context_bundle",
+            "provider": "sk-context-bundle-secret",
+            "items": [{
+                "kind": "active_editor",
+                "source": "vscode",
+                "file": { "displayPath": "src/a.ts", "workspaceRelativePath": "src/a.ts", "languageId": "typescript" },
+                "selection": { "text": "safe text" }
+            }]
+        }),
+        json!({
+            "kind": "explicit_context_bundle",
+            "items": [{
+                "kind": "active_editor",
+                "source": "vscode",
+                "file": { "displayPath": "src/a.ts", "workspaceRelativePath": "src/a.ts", "languageId": "typescript" },
+                "selection": { "text": "safe text" },
+                "tool": { "name": "workspace.read" }
+            }]
+        }),
+        json!({
+            "kind": "explicit_context_bundle",
+            "items": [{
+                "kind": "file_read",
+                "source": "vscode",
+                "file": { "displayPath": "src/a.ts", "workspaceRelativePath": "src/a.ts", "languageId": "typescript" },
+                "selection": { "text": "safe text" }
+            }]
+        }),
+    ] {
+        let command = json!({
+            "requestId": "req-context-bundle-reject",
+            "type": "user_message",
+            "payload": {
+                "content": "hello",
+                "context": context
+            }
+        });
+        let (status, response_text) = text_response_from(
+            test_app(),
+            authed_request(
+                Method::POST,
+                "/v1/chats/chat-context-bundle-reject/commands",
+                Body::from(command.to_string()),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(!response_text.contains("sk-context-bundle-secret"));
+        assert!(!response_text.contains("workspace.read"));
+        assert!(!response_text.contains("src/token.txt"));
+        assert!(!response_text.contains(&"z".repeat(64)));
+    }
+}
+
+#[tokio::test]
 async fn chat_command_active_file_excerpt_context_is_prompt_only_and_not_persisted() {
     let paths = test_storage_paths();
     let app = app(AppState::with_storage_paths(
