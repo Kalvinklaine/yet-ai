@@ -20,8 +20,17 @@ const requiredSnippets = [
   "const maxActiveFileExcerptTextLength = 8000;",
   "payload.action === \"getActiveFileExcerpt\"",
   "payload.action === \"runVerificationCommand\"",
+  "payload.action === \"searchWorkspaceSnippets\"",
   "const verificationCommandTimeoutMs = 120000;",
   "const maxVerificationOutputTailLength = 4000;",
+  "const maxWorkspaceSnippetSearchResults = 20;",
+  "const maxWorkspaceSnippetSearchSnippetsPerFile = 8;",
+  "const maxWorkspaceSnippetSearchSnippetLength = 400;",
+  "const pendingWorkspaceSnippetSearchQueries = new Set<string>();",
+  "vscode.workspace.findFiles(",
+  "vscode.workspace.fs.readFile(uri)",
+  "new vscode.RelativePattern(workspaceFolder, \"**/*\")",
+  "{**/.git/**,**/node_modules/**,**/dist/**,**/target/**,**/build/**,**/cache/**}",
   "const verificationCommandConfirmationLabel = \"Run verification\";",
   "const pendingVerificationCommandIds = new Set<VerificationCommandId>();",
   "\"repository-check\": { command: \"npm\", args: [\"run\", \"check\"]",
@@ -54,6 +63,7 @@ const requiredSnippets = [
   "new TextEncoder().encode(JSON.stringify(value)).length <= maxForwardedApplyWorkspaceEditMessageBytes",
   "message.type === \"gui.ideActionRequest\" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)",
   "payload.action === \"runVerificationCommand\" && isVerificationCommandId(payload.commandId)",
+  "payload.action === \"searchWorkspaceSnippets\" && isWorkspaceSnippetSearchQuery(payload.query)",
   "message.type === \"gui.applyWorkspaceEditRequest\" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)",
   "latestHostReady = event.data",
   "const isEmptyHostPayload = (payload) => payload === undefined || (isPlainObject(payload) && Object.keys(payload).length === 0)",
@@ -293,6 +303,12 @@ const fakeVscode = {
       return { fsPath: value, scheme: "file", path: value };
     },
   },
+  RelativePattern: class RelativePattern {
+    constructor(base, pattern) {
+      this.base = base;
+      this.pattern = pattern;
+    }
+  },
   window: {
     activeTextEditor: undefined,
     showWarningMessage() {
@@ -315,6 +331,9 @@ const fakeVscode = {
       stat() {
         return Promise.reject(new Error("missing"));
       },
+      readFile() {
+        return Promise.reject(new Error("missing"));
+      },
     },
     getWorkspaceFolder() {
       return undefined;
@@ -327,6 +346,9 @@ const fakeVscode = {
     },
     applyEdit() {
       return Promise.resolve(false);
+    },
+    findFiles() {
+      return Promise.resolve([]);
     },
   },
   FileType: {
@@ -522,6 +544,7 @@ const validIdeActionRequests = [
   createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check" }),
   createIdeActionRequest({ action: "runVerificationCommand", commandId: "gui-app-tests" }),
   createIdeActionRequest({ action: "runVerificationCommand", commandId: "engine-chat-tests" }),
+  createIdeActionRequest({ action: "searchWorkspaceSnippets", query: "hello" }),
   createIdeActionRequest({ action: "openWorkspaceFile", workspaceRelativePath: "src/main.ts" }),
   createIdeActionRequest({ action: "revealWorkspaceRange", workspaceRelativePath: "src/main.ts", range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } } }),
 ];
@@ -553,6 +576,15 @@ const invalidIdeActionRequests = [
   createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check", payload: { cwd: "apps/gui" } }),
   createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check", payload: { env: { TOKEN: "value" } } }),
   createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check", payload: { shell: true } }),
+  createIdeActionRequest({ action: "searchWorkspaceSnippets", query: "" }),
+  createIdeActionRequest({ action: "searchWorkspaceSnippets", query: "x".repeat(121) }),
+  createIdeActionRequest({ action: "searchWorkspaceSnippets", query: "*.ts" }),
+  createIdeActionRequest({ action: "searchWorkspaceSnippets", query: "src/path" }),
+  createIdeActionRequest({ action: "searchWorkspaceSnippets", query: "git status" }),
+  createIdeActionRequest({ action: "searchWorkspaceSnippets", query: "regex hello" }),
+  createIdeActionRequest({ action: "searchWorkspaceSnippets", query: "apiKey" }),
+  createIdeActionRequest({ action: "searchWorkspaceSnippets", query: "assistant" }),
+  createIdeActionRequest({ action: "searchWorkspaceSnippets", query: "hello", payload: { path: "src/main.ts" } }),
   createIdeActionRequest({ action: "getContextSnapshot", requestId: undefined }),
 ];
 const unsafeEditTextSamples = [
@@ -1022,6 +1054,7 @@ function createIdeActionRequest(overrides = {}) {
     ...(overrides.workspaceRelativePath === undefined ? {} : { workspaceRelativePath: overrides.workspaceRelativePath }),
     ...(overrides.range === undefined ? {} : { range: overrides.range }),
     ...(overrides.commandId === undefined ? {} : { commandId: overrides.commandId }),
+    ...(overrides.query === undefined ? {} : { query: overrides.query }),
     ...(overrides.payload ?? {}),
   };
   return {
@@ -1155,6 +1188,54 @@ async function assertIdeActionBehavior() {
   assert.equal(webviewMessages.at(-1).payload.outputTail, "Verification output hidden by host policy.");
   assert.equal(fakeChildProcess.calls.at(-1).command, "cargo");
   assert.deepEqual(fakeChildProcess.calls.at(-1).args, ["test", "-p", "yet-lsp", "chat"]);
+
+  const searchablePath = path.join(workspaceRoot, "src", "searchable.txt");
+  const excludedPath = path.join(workspaceRoot, "node_modules", "hidden.txt");
+  const binaryPath = path.join(workspaceRoot, "src", "binary.txt");
+  const secretPath = path.join(workspaceRoot, "src", "secretish.txt");
+  let findFilesCalls = 0;
+  let readFileCalls = 0;
+  fakeVscode.workspace.findFiles = (include, exclude, maxResults) => {
+    findFilesCalls += 1;
+    assert.equal(include.pattern, "**/*");
+    assert.equal(exclude, "{**/.git/**,**/node_modules/**,**/dist/**,**/target/**,**/build/**,**/cache/**}");
+    assert.equal(maxResults, 2000);
+    return Promise.resolve([
+      { fsPath: searchablePath, scheme: "file", path: searchablePath },
+      { fsPath: excludedPath, scheme: "file", path: excludedPath },
+      { fsPath: binaryPath, scheme: "file", path: binaryPath },
+      { fsPath: secretPath, scheme: "file", path: secretPath },
+    ]);
+  };
+  fakeVscode.workspace.fs.stat = (uri) => Promise.resolve({ type: fakeVscode.FileType.File, size: 1024 });
+  fakeVscode.workspace.fs.readFile = (uri) => {
+    readFileCalls += 1;
+    if (uri.fsPath === binaryPath) {
+      return Promise.resolve(Buffer.from("hello\u0000binary"));
+    }
+    if (uri.fsPath === secretPath) {
+      return Promise.resolve(Buffer.from("hello Authorization Bearer fake-session-token-webview-behavioral-sentinel"));
+    }
+    return Promise.resolve(Buffer.from("first hello line\nsecond hello line\nthird hello line"));
+  };
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "searchWorkspaceSnippets", query: "hello" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "succeeded");
+  assert.equal(webviewMessages.at(-1).payload.action, "searchWorkspaceSnippets");
+  assert.equal(webviewMessages.at(-1).payload.queryLabel, "hello");
+  assert.equal(webviewMessages.at(-1).payload.resultCount, 3);
+  assert.equal(webviewMessages.at(-1).payload.snippets.length, 3);
+  assert.equal(webviewMessages.at(-1).payload.snippets[0].workspaceRelativePath, "src/searchable.txt");
+  assert.equal(webviewMessages.at(-1).payload.snippets[0].text.length <= 400, true);
+  assert.equal(findFilesCalls, 1);
+  assert.equal(readFileCalls, 2, "Excluded workspace snippet paths must not be read.");
+
+  fakeVscode.workspace.workspaceFolders = [
+    { uri: { fsPath: workspaceRoot, scheme: "file", path: workspaceRoot } },
+    { uri: { fsPath: path.join(workspaceRoot, "other"), scheme: "file", path: path.join(workspaceRoot, "other") } },
+  ];
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "searchWorkspaceSnippets", query: "hello" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "unavailable");
+  fakeVscode.workspace.workspaceFolders = [{ uri: { fsPath: workspaceRoot, scheme: "file", path: workspaceRoot } }];
 
   fakeVscode.window.activeTextEditor = undefined;
   await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "getActiveFileExcerpt" }));

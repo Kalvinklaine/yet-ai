@@ -37,7 +37,7 @@ type GuiMessage = {
 
 type VerificationCommandId = "repository-check" | "gui-app-tests" | "engine-chat-tests";
 
-type IdeActionType = "getContextSnapshot" | "getActiveFileExcerpt" | "openWorkspaceFile" | "revealWorkspaceRange" | "runVerificationCommand";
+type IdeActionType = "getContextSnapshot" | "getActiveFileExcerpt" | "openWorkspaceFile" | "revealWorkspaceRange" | "runVerificationCommand" | "searchWorkspaceSnippets";
 
 type IdeActionStatus = "succeeded" | "rejected" | "unavailable" | "failed";
 
@@ -46,7 +46,8 @@ type IdeActionRequest =
   | { requestId: string; action: "getActiveFileExcerpt" }
   | { requestId: string; action: "openWorkspaceFile"; workspaceRelativePath: string }
   | { requestId: string; action: "revealWorkspaceRange"; workspaceRelativePath: string; range: ApplyWorkspaceTextReplacement["range"] }
-  | { requestId: string; action: "runVerificationCommand"; commandId: VerificationCommandId };
+  | { requestId: string; action: "runVerificationCommand"; commandId: VerificationCommandId }
+  | { requestId: string; action: "searchWorkspaceSnippets"; query: string };
 
 type ActiveFileExcerptAttachment = {
   kind: "active_file_excerpt";
@@ -58,6 +59,21 @@ type ActiveFileExcerptAttachment = {
   };
   range: ApplyWorkspaceTextReplacement["range"];
   text: string;
+  truncated: boolean;
+};
+
+type WorkspaceSnippet = {
+  workspaceRelativePath: string;
+  languageId: string;
+  range: ApplyWorkspaceTextReplacement["range"];
+  text: string;
+};
+
+type WorkspaceSnippetSearchMetadata = {
+  action: "searchWorkspaceSnippets";
+  queryLabel: string;
+  resultCount: number;
+  snippets: WorkspaceSnippet[];
   truncated: boolean;
 };
 
@@ -105,11 +121,16 @@ const maxForwardedApplyWorkspaceEditMessageBytes = 65536;
 const maxForwardedIdeActionMessageBytes = 8192;
 const maxControlledIdeActionFileBytes = 2 * 1024 * 1024;
 const maxActiveFileExcerptTextLength = 8000;
+const maxWorkspaceSnippetSearchFileBytes = 1024 * 1024;
+const maxWorkspaceSnippetSearchResults = 20;
+const maxWorkspaceSnippetSearchSnippetsPerFile = 8;
+const maxWorkspaceSnippetSearchSnippetLength = 400;
 const inFlightIdeActionRequestIds = new Set<string>();
 const verificationCommandTimeoutMs = 120000;
 const maxVerificationOutputTailLength = 4000;
 const verificationCommandConfirmationLabel = "Run verification";
 const pendingVerificationCommandIds = new Set<VerificationCommandId>();
+const pendingWorkspaceSnippetSearchQueries = new Set<string>();
 const verificationCommands: Record<VerificationCommandId, { command: string; args: string[]; label: string }> = {
   "repository-check": { command: "npm", args: ["run", "check"], label: "repository check" },
   "gui-app-tests": { command: "npm", args: ["--prefix", "apps/gui", "test", "--", "App"], label: "GUI app tests" },
@@ -295,7 +316,7 @@ export function createIdeActionResult(
   requestId: string,
   status: IdeActionStatus,
   message: string,
-  metadata: { action?: IdeActionType; workspaceRelativePath?: string; range?: ApplyWorkspaceTextReplacement["range"]; context?: Record<string, unknown>; contextAttachment?: ActiveFileExcerptAttachment; commandId?: VerificationCommandId; exitCode?: number; durationMs?: number; outputTail?: string; truncated?: boolean } = {},
+  metadata: { action?: IdeActionType; workspaceRelativePath?: string; range?: ApplyWorkspaceTextReplacement["range"]; context?: Record<string, unknown>; contextAttachment?: ActiveFileExcerptAttachment; commandId?: VerificationCommandId; exitCode?: number; durationMs?: number; outputTail?: string; truncated?: boolean; queryLabel?: string; resultCount?: number; snippets?: WorkspaceSnippet[] } = {},
 ): HostMessage {
   const payload: Record<string, unknown> = {
     status,
@@ -325,6 +346,12 @@ export function createIdeActionResult(
     payload.exitCode = clampExitCode(metadata.exitCode);
     payload.durationMs = clampDurationMs(metadata.durationMs);
     payload.outputTail = sanitizeVerificationOutputTail(metadata.outputTail).outputTail;
+    payload.truncated = metadata.truncated;
+  }
+  if (metadata.action === "searchWorkspaceSnippets" && metadata.queryLabel !== undefined && metadata.resultCount !== undefined && metadata.snippets !== undefined && metadata.truncated !== undefined) {
+    payload.queryLabel = sanitizeWorkspaceSnippetSearchQuery(metadata.queryLabel);
+    payload.resultCount = clampWorkspaceSnippetResultCount(metadata.resultCount);
+    payload.snippets = sanitizeWorkspaceSnippets(metadata.snippets);
     payload.truncated = metadata.truncated;
   }
   hardenIdeActionResultPayload(payload);
@@ -374,6 +401,24 @@ function hardenIdeActionResultPayload(payload: Record<string, unknown>): void {
       payload.truncated = true;
     }
   }
+  if (payload.action === "searchWorkspaceSnippets") {
+    delete payload.workspaceRelativePath;
+    delete payload.range;
+    delete payload.context;
+    delete payload.contextAttachment;
+    delete payload.commandId;
+    delete payload.exitCode;
+    delete payload.durationMs;
+    delete payload.outputTail;
+    if (typeof payload.queryLabel !== "string" || sanitizeWorkspaceSnippetSearchQuery(payload.queryLabel) !== payload.queryLabel || !isBoundedSnippetResultCount(payload.resultCount) || !Array.isArray(payload.snippets) || payload.snippets.length !== payload.resultCount || payload.snippets.length > maxWorkspaceSnippetSearchResults || !payload.snippets.every(isWorkspaceSnippet) || typeof payload.truncated !== "boolean") {
+      payload.status = "rejected";
+      payload.message = "IDE action rejected by host policy.";
+      delete payload.queryLabel;
+      delete payload.resultCount;
+      delete payload.snippets;
+      delete payload.truncated;
+    }
+  }
 }
 
 function isIdeActionContextMetadata(value: unknown): value is Record<string, unknown> {
@@ -400,6 +445,18 @@ function isActiveFileExcerptAttachment(value: unknown): value is ActiveFileExcer
     typeof value.text === "string" &&
     sanitizeActiveFileExcerptText(value.text) === value.text &&
     typeof value.truncated === "boolean";
+}
+
+function isWorkspaceSnippet(value: unknown): value is WorkspaceSnippet {
+  return isPlainRecord(value) &&
+    hasOnlyKeys(value, ["workspaceRelativePath", "languageId", "range", "text"]) &&
+    typeof value.workspaceRelativePath === "string" &&
+    sanitizeRelativePath(value.workspaceRelativePath, 512) === value.workspaceRelativePath &&
+    typeof value.languageId === "string" &&
+    sanitizeLanguageId(value.languageId) === value.languageId &&
+    isStrictRange(value.range) &&
+    typeof value.text === "string" &&
+    sanitizeWorkspaceSnippetText(value.text) === value.text;
 }
 
 export async function handleIdeActionRequest(webview: vscode.Webview, message: GuiMessage): Promise<void> {
@@ -441,6 +498,9 @@ async function runIdeActionRequest(request: IdeActionRequest): Promise<HostMessa
   }
   if (request.action === "runVerificationCommand") {
     return runVerificationCommandRequest(request);
+  }
+  if (request.action === "searchWorkspaceSnippets") {
+    return runWorkspaceSnippetSearchRequest(request);
   }
 
   const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -561,6 +621,150 @@ function appendVerificationOutput(current: string, next: string): { output: stri
     return { output: combined, truncated: false };
   }
   return { output: combined.slice(combined.length - maxVerificationOutputTailLength), truncated: true };
+}
+
+async function runWorkspaceSnippetSearchRequest(request: Extract<IdeActionRequest, { action: "searchWorkspaceSnippets" }>): Promise<HostMessage> {
+  if (pendingWorkspaceSnippetSearchQueries.has(request.query)) {
+    return createIdeActionResult(request.requestId, "rejected", "Workspace snippet search is already running.", { action: request.action });
+  }
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (!workspaceFolders || workspaceFolders.length !== 1 || workspaceFolders[0].uri.scheme !== "file") {
+    return createIdeActionResult(request.requestId, "unavailable", "Workspace snippet search requires exactly one local workspace folder.", { action: request.action });
+  }
+  pendingWorkspaceSnippetSearchQueries.add(request.query);
+  try {
+    const metadata = await searchWorkspaceSnippets(workspaceFolders[0], request.query);
+    return createIdeActionResult(request.requestId, "succeeded", "Workspace snippet search completed.", metadata);
+  } finally {
+    pendingWorkspaceSnippetSearchQueries.delete(request.query);
+  }
+}
+
+async function searchWorkspaceSnippets(workspaceFolder: vscode.WorkspaceFolder, query: string): Promise<WorkspaceSnippetSearchMetadata> {
+  const files = await vscode.workspace.findFiles(
+    new vscode.RelativePattern(workspaceFolder, "**/*"),
+    "{**/.git/**,**/node_modules/**,**/dist/**,**/target/**,**/build/**,**/cache/**}",
+    2000,
+  );
+  const snippets: WorkspaceSnippet[] = [];
+  let truncated = files.length >= 2000;
+  for (const uri of files) {
+    if (snippets.length >= maxWorkspaceSnippetSearchResults) {
+      truncated = true;
+      break;
+    }
+    const fileSnippets = await createWorkspaceFileSnippets(workspaceFolder, uri, query);
+    if (fileSnippets.length === 0) {
+      continue;
+    }
+    const remaining = maxWorkspaceSnippetSearchResults - snippets.length;
+    snippets.push(...fileSnippets.slice(0, remaining));
+    truncated = truncated || fileSnippets.length > remaining;
+  }
+  return {
+    action: "searchWorkspaceSnippets",
+    queryLabel: query,
+    resultCount: snippets.length,
+    snippets,
+    truncated,
+  };
+}
+
+async function createWorkspaceFileSnippets(workspaceFolder: vscode.WorkspaceFolder, uri: vscode.Uri, query: string): Promise<WorkspaceSnippet[]> {
+  const workspaceRelativePath = workspaceSnippetRelativePath(workspaceFolder, uri);
+  if (!workspaceRelativePath || isExcludedWorkspaceSnippetPath(workspaceRelativePath)) {
+    return [];
+  }
+  let stat: vscode.FileStat;
+  try {
+    stat = await vscode.workspace.fs.stat(uri);
+  } catch {
+    return [];
+  }
+  if (stat.type !== vscode.FileType.File || stat.size > maxWorkspaceSnippetSearchFileBytes) {
+    return [];
+  }
+  let bytes: Uint8Array;
+  try {
+    bytes = await vscode.workspace.fs.readFile(uri);
+  } catch {
+    return [];
+  }
+  if (isBinaryWorkspaceSnippetBytes(bytes)) {
+    return [];
+  }
+  const text = Buffer.from(bytes).toString("utf8");
+  if (hasBinaryLikeText(text)) {
+    return [];
+  }
+  return createWorkspaceSnippetsFromText(workspaceRelativePath, text, query);
+}
+
+function createWorkspaceSnippetsFromText(workspaceRelativePath: string, text: string, query: string): WorkspaceSnippet[] {
+  const snippets: WorkspaceSnippet[] = [];
+  let searchFrom = 0;
+  while (snippets.length < maxWorkspaceSnippetSearchSnippetsPerFile) {
+    const matchIndex = text.indexOf(query, searchFrom);
+    if (matchIndex === -1) {
+      break;
+    }
+    const snippetStart = Math.max(0, matchIndex - Math.floor((maxWorkspaceSnippetSearchSnippetLength - query.length) / 2));
+    const snippetEnd = Math.min(text.length, snippetStart + maxWorkspaceSnippetSearchSnippetLength);
+    const snippetText = sanitizeWorkspaceSnippetText(text.slice(snippetStart, snippetEnd));
+    if (snippetText !== undefined) {
+      const start = positionAtTextOffset(text, matchIndex);
+      const end = positionAtTextOffset(text, matchIndex + query.length);
+      snippets.push({
+        workspaceRelativePath,
+        languageId: "plaintext",
+        range: { start, end },
+        text: snippetText,
+      });
+    }
+    searchFrom = matchIndex + Math.max(query.length, 1);
+  }
+  return snippets;
+}
+
+function workspaceSnippetRelativePath(workspaceFolder: vscode.WorkspaceFolder, uri: vscode.Uri): string | undefined {
+  if (uri.scheme !== "file") {
+    return undefined;
+  }
+  const relativePath = path.relative(workspaceFolder.uri.fsPath, uri.fsPath).replaceAll(path.sep, "/");
+  if (relativePath.length === 0 || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    return undefined;
+  }
+  return sanitizeRelativePath(relativePath, 512);
+}
+
+function isExcludedWorkspaceSnippetPath(workspaceRelativePath: string): boolean {
+  return workspaceRelativePath.split("/").some((segment) => segment === ".git" || segment === "node_modules" || segment === "dist" || segment === "target" || segment === "build" || segment === "cache");
+}
+
+function isBinaryWorkspaceSnippetBytes(bytes: Uint8Array): boolean {
+  const sampleLength = Math.min(bytes.length, 8000);
+  for (let index = 0; index < sampleLength; index += 1) {
+    const byte = bytes[index];
+    if (byte === 0 || (byte < 9 || (byte > 13 && byte < 32))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function positionAtTextOffset(text: string, targetOffset: number): ApplyWorkspacePosition {
+  let line = 0;
+  let character = 0;
+  const boundedOffset = Math.max(0, Math.min(targetOffset, text.length));
+  for (let index = 0; index < boundedOffset; index += 1) {
+    if (text[index] === "\n") {
+      line += 1;
+      character = 0;
+    } else {
+      character += 1;
+    }
+  }
+  return { line, character };
 }
 
 function createActiveFileExcerptResult(requestId: string): HostMessage {
@@ -895,6 +1099,13 @@ export function parseIdeActionRequest(message: GuiMessage): IdeActionRequest | u
   ) {
     return { requestId: message.requestId, action: "runVerificationCommand", commandId: message.payload.commandId };
   }
+  if (
+    hasOnlyKeys(message.payload, ["action", "query"]) &&
+    message.payload.action === "searchWorkspaceSnippets" &&
+    isWorkspaceSnippetSearchQuery(message.payload.query)
+  ) {
+    return { requestId: message.requestId, action: "searchWorkspaceSnippets", query: message.payload.query };
+  }
   return undefined;
 }
 
@@ -977,6 +1188,51 @@ function isRequiredRequestId(value: unknown): value is string {
 
 function isVerificationCommandId(value: unknown): value is VerificationCommandId {
   return value === "repository-check" || value === "gui-app-tests" || value === "engine-chat-tests";
+}
+
+function isWorkspaceSnippetSearchQuery(value: unknown): value is string {
+  return typeof value === "string" && sanitizeWorkspaceSnippetSearchQuery(value) === value;
+}
+
+function sanitizeWorkspaceSnippetSearchQuery(value: string): string | undefined {
+  if (value.length === 0 || value.length > 120 || !/\S/.test(value) || /[\u0000-\u001f\u007f-\u009f]/.test(value) || /[*/\\~]/.test(value) || value.includes("..") || /[{}[\]()^$+?|]/.test(value) || /[;&`$<>]/.test(value) || /\b(?:cwd|env|shell|git|tool|provider|model|apiKey|requestId|assistant|regex|glob|path)\b/.test(value) || hasSecretLikeText(value) || hasPrivatePathLikeText(value) || /[A-Za-z]:/.test(value)) {
+    return undefined;
+  }
+  return value;
+}
+
+function sanitizeWorkspaceSnippetText(value: string): string | undefined {
+  const text = value.replace(/\r\n/g, "\n").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, "");
+  if (text.length === 0 || text.length > maxWorkspaceSnippetSearchSnippetLength || hasSecretLikeText(text) || hasPrivatePathLikeText(text) || hasBinaryLikeText(text)) {
+    return undefined;
+  }
+  return text;
+}
+
+function sanitizeWorkspaceSnippets(values: WorkspaceSnippet[]): WorkspaceSnippet[] {
+  return values
+    .map((snippet) => {
+      const workspaceRelativePath = sanitizeRelativePath(snippet.workspaceRelativePath, 512);
+      const languageId = sanitizeLanguageId(snippet.languageId);
+      const text = sanitizeWorkspaceSnippetText(snippet.text);
+      if (!workspaceRelativePath || !languageId || !isStrictRange(snippet.range) || text === undefined) {
+        return undefined;
+      }
+      return { workspaceRelativePath, languageId, range: snippet.range, text };
+    })
+    .filter((snippet): snippet is WorkspaceSnippet => snippet !== undefined)
+    .slice(0, maxWorkspaceSnippetSearchResults);
+}
+
+function isBoundedSnippetResultCount(value: unknown): value is number {
+  return Number.isInteger(value) && typeof value === "number" && value >= 0 && value <= maxWorkspaceSnippetSearchResults;
+}
+
+function clampWorkspaceSnippetResultCount(value: number): number {
+  if (!Number.isInteger(value) || value < 0) {
+    return 0;
+  }
+  return Math.min(value, maxWorkspaceSnippetSearchResults);
 }
 
 function sanitizeApplyWorkspaceEditResultMessage(value: string): string {
@@ -1175,7 +1431,8 @@ const isStrictSafeRelativePath = (value) => typeof value === "string" && value.l
 const isStrictPosition = (value) => isPlainObject(value) && Object.keys(value).every((key) => key === "line" || key === "character") && Number.isInteger(value.line) && Number.isInteger(value.character) && value.line >= 0 && value.line <= 1000000 && value.character >= 0 && value.character <= 1000000;
 const isStrictRange = (value) => isPlainObject(value) && Object.keys(value).every((key) => key === "start" || key === "end") && isStrictPosition(value.start) && isStrictPosition(value.end) && (value.end.line > value.start.line || (value.end.line === value.start.line && value.end.character >= value.start.character));
 const isVerificationCommandId = (value) => value === "repository-check" || value === "gui-app-tests" || value === "engine-chat-tests";
-const isStrictIdeActionPayload = (payload) => isPlainObject(payload) && ((Object.keys(payload).every((key) => key === "action") && (payload.action === "getContextSnapshot" || payload.action === "getActiveFileExcerpt")) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath") && payload.action === "openWorkspaceFile" && isStrictSafeRelativePath(payload.workspaceRelativePath)) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath" || key === "range") && payload.action === "revealWorkspaceRange" && isStrictSafeRelativePath(payload.workspaceRelativePath) && isStrictRange(payload.range)) || (Object.keys(payload).every((key) => key === "action" || key === "commandId") && payload.action === "runVerificationCommand" && isVerificationCommandId(payload.commandId)));
+const isWorkspaceSnippetSearchQuery = (value) => typeof value === "string" && value.length > 0 && value.length <= 120 && /\S/.test(value) && !/[\u0000-\u001f\u007f-\u009f]/.test(value) && !/[*/\\~]/.test(value) && !value.includes("..") && !/[{}[\]()^$+?|]/.test(value) && !/[;&\`$<>]/.test(value) && !/\b(?:cwd|env|shell|git|tool|provider|model|apiKey|requestId|assistant|regex|glob|path)\b/.test(value) && !/(?:authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|provider[_-]?response|raw[_-]?prompt|file[_-]?content|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value) && !/(?:\/(?:Users|home|tmp|var|Volumes|Private|etc|opt|mnt)(?=\/|$|[^A-Za-z0-9_])|~[\/\\]|[A-Za-z]:[\/\\])/.test(value) && !/[A-Za-z]:/.test(value);
+const isStrictIdeActionPayload = (payload) => isPlainObject(payload) && ((Object.keys(payload).every((key) => key === "action") && (payload.action === "getContextSnapshot" || payload.action === "getActiveFileExcerpt")) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath") && payload.action === "openWorkspaceFile" && isStrictSafeRelativePath(payload.workspaceRelativePath)) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath" || key === "range") && payload.action === "revealWorkspaceRange" && isStrictSafeRelativePath(payload.workspaceRelativePath) && isStrictRange(payload.range)) || (Object.keys(payload).every((key) => key === "action" || key === "commandId") && payload.action === "runVerificationCommand" && isVerificationCommandId(payload.commandId)) || (Object.keys(payload).every((key) => key === "action" || key === "query") && payload.action === "searchWorkspaceSnippets" && isWorkspaceSnippetSearchQuery(payload.query)));
 const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && ((message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload)) || (message.type === "gui.ideActionRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)) || (message.type === "gui.applyWorkspaceEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)));
 const isEmptyHostPayload = (payload) => payload === undefined || (isPlainObject(payload) && Object.keys(payload).length === 0);
 const isHostMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && (message.type === "host.openedFromCommand" ? message.requestId === undefined && isEmptyHostPayload(message.payload) : (message.type === "host.ready" || message.type === "host.contextSnapshot" || message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult"));
