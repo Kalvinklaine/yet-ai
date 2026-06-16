@@ -1,0 +1,29 @@
+{
+  "requestId": "req-invalid-context-bundle-001",
+  "type": "user_message",
+  "payload": {
+    "content": "Use selected context.",
+    "context": {
+      "kind": "explicit_context_bundle",
+      "items": [
+        {
+          "kind": "active_editor",
+          "source": "vscode",
+          "file": {
+            "displayPath": "src/a.ts",
+            "workspaceRelativePath": "src/a.ts",
+            "languageId": "typescript"
+          },
+          "selection": {
+            "startLine": 1,
+            "startCharacter": 0,
+            "endLine": 2,
+            "endCharacter": 0,
+            "text": "bounded text"
+          },
+          "includeFullFile": true
+        }
+      ]
+    }
+  }
+}

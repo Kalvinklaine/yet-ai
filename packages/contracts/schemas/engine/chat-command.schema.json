@@ -97,6 +97,26 @@
           }
         }
       }
+    },
+    "explicitContextBundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxTotalSelectionText": 16000,
+      "required": ["kind", "items"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "explicit_context_bundle"
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/activeEditorContext"
+          }
+        }
+      }
     }
   },
   "allOf": [
@@ -123,7 +143,14 @@
                 "maxLength": 20000
               },
               "context": {
-                "$ref": "#/$defs/activeEditorContext"
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/activeEditorContext"
+                  },
+                  {
+                    "$ref": "#/$defs/explicitContextBundle"
+                  }
+                ]
               }
             }
           }

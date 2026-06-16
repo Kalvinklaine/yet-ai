@@ -61,6 +61,10 @@ const mappings = [
   ["packages/contracts/examples/engine/chat-message.json", "packages/contracts/schemas/engine/chat-message.schema.json"],
   ["packages/contracts/examples/engine/user-message-command.json", "packages/contracts/schemas/engine/chat-command.schema.json"],
   ["packages/contracts/examples/engine/user-message-command-with-context.json", "packages/contracts/schemas/engine/chat-command.schema.json"],
+  [
+    "packages/contracts/examples/engine/user-message-command-with-explicit-context-bundle.json",
+    "packages/contracts/schemas/engine/chat-command.schema.json"
+  ],
   ["packages/contracts/examples/engine/abort-command.json", "packages/contracts/schemas/engine/chat-command.schema.json"],
   ["packages/contracts/examples/engine/snapshot-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
   ["packages/contracts/examples/engine/stream-started-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
@@ -192,6 +196,21 @@ const invalidMappings = [
     "packages/contracts/examples-invalid/engine/chat-command-context-oversized-selection-text.json",
     "packages/contracts/schemas/engine/chat-command.schema.json"
   ],
+  ...[
+    "chat-command-context-bundle-empty.json",
+    "chat-command-context-bundle-too-many-items.json",
+    "chat-command-context-bundle-aggregate-text-too-large.json",
+    "chat-command-context-bundle-unsafe-path.json",
+    "chat-command-context-bundle-provider-smuggling.json",
+    "chat-command-context-bundle-request-id-smuggling.json",
+    "chat-command-context-bundle-tool-smuggling.json",
+    "chat-command-context-bundle-index-smuggling.json",
+    "chat-command-context-bundle-full-file-smuggling.json",
+    "chat-command-context-bundle-non-active-item.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/chat-command.schema.json"
+  ]),
   [
     "packages/contracts/examples-invalid/bridge/gui-ready-extra-payload.json",
     "packages/contracts/schemas/bridge/gui-message.schema.json"
@@ -1058,6 +1077,28 @@ ajv.addKeyword({
         return false;
       }
       seen.add(path);
+    }
+    return true;
+  }
+});
+
+ajv.addKeyword({
+  keyword: "maxTotalSelectionText",
+  type: "object",
+  schemaType: "number",
+  validate(limit, context) {
+    if (!Array.isArray(context?.items)) {
+      return true;
+    }
+    let total = 0;
+    for (const item of context.items) {
+      const text = item?.selection?.text;
+      if (typeof text === "string") {
+        total += text.length;
+        if (total > limit) {
+          return false;
+        }
+      }
     }
     return true;
   }

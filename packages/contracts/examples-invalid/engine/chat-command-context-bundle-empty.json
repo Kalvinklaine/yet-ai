@@ -1,0 +1,11 @@
+{
+  "requestId": "req-invalid-context-bundle-001",
+  "type": "user_message",
+  "payload": {
+    "content": "Use selected context.",
+    "context": {
+      "kind": "explicit_context_bundle",
+      "items": []
+    }
+  }
+}
