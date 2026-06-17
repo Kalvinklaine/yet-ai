@@ -39,6 +39,7 @@ The current milestone is local-first and conservative:
 - The experimental Codex-like provider-auth path is high-risk, non-default, and mock-only in automation.
 - Official production OpenAI/ChatGPT account login is not implemented, not approved, and not claimed as supported.
 - Core chat, provider setup, IDE GUI workflows, and local storage must not require a hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, or cloud workspace.
+- Native Ollama provider support is documented as direct local-engine access to the user's configured Ollama server at default `http://127.0.0.1:11434`, with auth type `none` and no Yet AI hosted service or provider secret requirement.
 - Current IDE/plugin artifacts and smokes are dev-preview verification surfaces only; they do not imply marketplace publication, signing, notarization, installer readiness, or production release status.
 
 Known limitations: real-provider use still requires user-supplied local credentials; account-login feasibility remains blocked until an official provider-supported local-app flow is documented and approved; the Codex-like path must not use real accounts in CI or smoke automation.

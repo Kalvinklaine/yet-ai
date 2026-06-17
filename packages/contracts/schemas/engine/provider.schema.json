@@ -44,6 +44,19 @@
             },
             "required": ["redacted"]
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": { "const": "none" }
+            },
+            "required": ["type"]
+          },
+          "then": {
+            "not": {
+              "required": ["redacted"]
+            }
+          }
         }
       ],
       "properties": {

@@ -11,6 +11,7 @@ const mappings = [
   ["packages/contracts/examples/engine/ping-response.json", "packages/contracts/schemas/engine/ping.schema.json"],
   ["packages/contracts/examples/engine/caps-response.json", "packages/contracts/schemas/engine/caps.schema.json"],
   ["packages/contracts/examples/engine/provider-response.json", "packages/contracts/schemas/engine/provider.schema.json"],
+  ["packages/contracts/examples/engine/provider-response-ollama.json", "packages/contracts/schemas/engine/provider.schema.json"],
   ["packages/contracts/examples/engine/providers-response.json", "packages/contracts/schemas/engine/providers.schema.json"],
   ["packages/contracts/examples/engine/provider-test-success-response.json", "packages/contracts/schemas/engine/provider-test-response.schema.json"],
   ["packages/contracts/examples/engine/provider-test-failure-response.json", "packages/contracts/schemas/engine/provider-test-response.schema.json"],
@@ -487,6 +488,14 @@ const invalidMappings = [
   [
     "packages/contracts/examples-invalid/engine/provider-test-long-provider-id.json",
     "packages/contracts/schemas/engine/provider-test-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/provider-ollama-api-key-smuggling.json",
+    "packages/contracts/schemas/engine/provider.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/provider-ollama-unknown-field.json",
+    "packages/contracts/schemas/engine/provider.schema.json"
   ],
   ...[
     "provider-auth-start-request-secret-smuggling.json",

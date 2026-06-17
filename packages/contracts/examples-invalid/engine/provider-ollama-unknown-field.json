@@ -1,0 +1,18 @@
+{
+  "id": "ollama-local",
+  "kind": "ollama",
+  "displayName": "Local Ollama",
+  "enabled": true,
+  "baseUrl": "http://127.0.0.1:11434",
+  "auth": {
+    "type": "none",
+    "configured": true
+  },
+  "models": [],
+  "capabilities": {
+    "chat": true,
+    "completion": false,
+    "embeddings": false
+  },
+  "hostedGateway": true
+}

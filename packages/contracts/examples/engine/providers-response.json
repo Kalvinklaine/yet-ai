@@ -31,6 +31,37 @@
         "completion": false,
         "embeddings": false
       }
+    },
+    {
+      "id": "ollama-local",
+      "kind": "ollama",
+      "displayName": "Local Ollama",
+      "enabled": true,
+      "baseUrl": "http://127.0.0.1:11434",
+      "auth": {
+        "type": "none",
+        "configured": true
+      },
+      "models": [
+        {
+          "id": "llama3.2",
+          "displayName": "Llama 3.2",
+          "capabilities": {
+            "chat": true,
+            "streaming": true,
+            "tools": false,
+            "reasoning": false
+          },
+          "readiness": {
+            "status": "ready"
+          }
+        }
+      ],
+      "capabilities": {
+        "chat": true,
+        "completion": false,
+        "embeddings": false
+      }
     }
   ],
   "cloudRequired": false,
