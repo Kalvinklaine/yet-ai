@@ -37,6 +37,8 @@ const mappings = [
   ["packages/contracts/examples/engine/agent-progress-event-failed-command.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-event-done.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-event-ide-action-progress.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
+  ["packages/contracts/examples/engine/agent-progress-event-manual-runner.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
+  ["packages/contracts/examples/engine/agent-progress-event-manual-runner-verification.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
   ["packages/contracts/examples/engine/assistant-ide-action-proposal-get-context.json", "packages/contracts/schemas/engine/assistant-ide-action-proposal.schema.json"],
   ["packages/contracts/examples/engine/assistant-ide-action-proposal-open-file.json", "packages/contracts/schemas/engine/assistant-ide-action-proposal.schema.json"],
   ["packages/contracts/examples/engine/assistant-ide-action-proposal-reveal-range.json", "packages/contracts/schemas/engine/assistant-ide-action-proposal.schema.json"],
@@ -45,12 +47,14 @@ const mappings = [
   ["packages/contracts/examples/engine/agent-progress-snapshot-failed-command.json", "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-snapshot-done.json", "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-snapshot-overflow-recovery.json", "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"],
+  ["packages/contracts/examples/engine/agent-progress-snapshot-manual-runner.json", "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-list-empty.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-list-healthy-command.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-list-stuck-heartbeat.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-list-failed-command.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-list-done.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-list-overflow-recovery.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
+  ["packages/contracts/examples/engine/agent-progress-list-manual-runner.json", "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"],
   ["packages/contracts/examples/engine/planner-scheduler-idle-blocked.json", "packages/contracts/schemas/engine/planner-scheduler-tick.schema.json"],
   ["packages/contracts/examples/engine/planner-scheduler-tool-output-overflow-recovery.json", "packages/contracts/schemas/engine/planner-scheduler-tick.schema.json"],
   ["packages/contracts/examples/engine/planner-pool-complete-next-pool.json", "packages/contracts/schemas/engine/planner-card-pool-status.schema.json"],
@@ -634,6 +638,10 @@ const invalidMappings = [
     "packages/contracts/examples-invalid/engine/agent-progress-event-secret-like-message.json",
     "packages/contracts/schemas/engine/agent-progress-event.schema.json"
   ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-event-manual-runner-shell-git-fields.json",
+    "packages/contracts/schemas/engine/agent-progress-event.schema.json"
+  ],
   ...[
     "assistant-ide-action-proposal-shell-action.json",
     "assistant-ide-action-proposal-tool-action.json",
@@ -711,6 +719,10 @@ const invalidMappings = [
   ],
   [
     "packages/contracts/examples-invalid/engine/agent-progress-snapshot-raw-provider-response.json",
+    "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-snapshot-manual-runner-raw-provider-response.json",
     "packages/contracts/schemas/engine/agent-progress-snapshot.schema.json"
   ],
   [
@@ -825,6 +837,10 @@ const invalidMappings = [
   ],
   [
     "packages/contracts/examples-invalid/engine/agent-progress-list-cloud-required.json",
+    "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/agent-progress-list-manual-runner-secret-prompt.json",
     "packages/contracts/schemas/engine/agent-progress-list-response.schema.json"
   ],
   [

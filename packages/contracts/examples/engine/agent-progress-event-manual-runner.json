@@ -1,0 +1,10 @@
+{
+  "protocolVersion": "2026-05-29",
+  "eventId": "evt-T780-edit-proposed",
+  "runId": "run-T780-manual",
+  "cardId": "T780",
+  "timestamp": "2026-06-17T00:15:00Z",
+  "phase": "editing",
+  "status": "healthy_running",
+  "message": "Manual runner proposed a reviewed edit for user apply."
+}

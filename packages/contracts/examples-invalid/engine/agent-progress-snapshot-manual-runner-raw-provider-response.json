@@ -1,0 +1,15 @@
+{
+  "protocolVersion": "2026-05-29",
+  "runId": "run-T780-manual",
+  "cardId": "T780",
+  "startedAt": "2026-06-17T00:10:00Z",
+  "updatedAt": "2026-06-17T00:13:00Z",
+  "phase": "waiting_for_tool",
+  "status": "healthy_running",
+  "message": "Manual runner state must not carry provider bodies.",
+  "elapsedMs": 180000,
+  "ageMs": 0,
+  "stuckReason": "none",
+  "recentEvents": [],
+  "providerResponse": "raw provider body text"
+}

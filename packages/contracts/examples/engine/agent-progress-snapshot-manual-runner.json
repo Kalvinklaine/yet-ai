@@ -1,0 +1,65 @@
+{
+  "protocolVersion": "2026-05-29",
+  "runId": "run-T780-manual",
+  "cardId": "T780",
+  "startedAt": "2026-06-17T00:10:00Z",
+  "updatedAt": "2026-06-17T00:20:00Z",
+  "completedAt": "2026-06-17T00:20:00Z",
+  "phase": "done",
+  "status": "done",
+  "message": "Manual coding loop summarized for user review.",
+  "elapsedMs": 600000,
+  "ageMs": 0,
+  "stuckReason": "none",
+  "recentEvents": [
+    {
+      "eventId": "evt-T780-plan",
+      "timestamp": "2026-06-17T00:10:00Z",
+      "phase": "started",
+      "status": "running",
+      "message": "Manual runner displayed the plan."
+    },
+    {
+      "eventId": "evt-T780-context-ready",
+      "timestamp": "2026-06-17T00:11:00Z",
+      "phase": "reading_context",
+      "status": "healthy_running",
+      "message": "User-selected context was ready."
+    },
+    {
+      "eventId": "evt-T780-model-response",
+      "timestamp": "2026-06-17T00:13:00Z",
+      "phase": "waiting_for_tool",
+      "status": "healthy_running",
+      "message": "Model response summary became visible."
+    },
+    {
+      "eventId": "evt-T780-edit-proposed",
+      "timestamp": "2026-06-17T00:15:00Z",
+      "phase": "editing",
+      "status": "healthy_running",
+      "message": "Manual runner proposed a reviewed edit."
+    },
+    {
+      "eventId": "evt-T780-user-applied",
+      "timestamp": "2026-06-17T00:16:00Z",
+      "phase": "editing",
+      "status": "healthy_running",
+      "message": "User applied the reviewed edit."
+    },
+    {
+      "eventId": "evt-T780-verification-run",
+      "timestamp": "2026-06-17T00:18:00Z",
+      "phase": "verifying",
+      "status": "healthy_running",
+      "message": "User ran allowlisted verification."
+    },
+    {
+      "eventId": "evt-T780-summarized",
+      "timestamp": "2026-06-17T00:20:00Z",
+      "phase": "done",
+      "status": "done",
+      "message": "Manual runner summarized the outcome."
+    }
+  ]
+}
