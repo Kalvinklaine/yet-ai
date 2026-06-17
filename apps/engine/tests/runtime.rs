@@ -4739,6 +4739,215 @@ async fn agent_progress_event_rejects_execution_commands_and_raw_content_fields(
     }
 }
 
+fn manual_runner_agent_progress_event(
+    event_id: &str,
+    timestamp: &str,
+    phase: &str,
+    status: &str,
+    message: &str,
+) -> Value {
+    json!({
+        "protocolVersion": "2026-05-29",
+        "eventId": event_id,
+        "runId": "run-T790-manual",
+        "cardId": "T790",
+        "timestamp": timestamp,
+        "phase": phase,
+        "status": status,
+        "message": message
+    })
+}
+
+#[tokio::test]
+async fn agent_progress_manual_runner_event_list_flow_accepts_bounded_snapshots() {
+    let app = test_app();
+    let events = [
+        manual_runner_agent_progress_event(
+            "evt-T790-plan",
+            "2026-06-17T00:10:00Z",
+            "started",
+            "running",
+            "Manual runner displayed the plan.",
+        ),
+        manual_runner_agent_progress_event(
+            "evt-T790-context-ready",
+            "2026-06-17T00:11:00Z",
+            "reading_context",
+            "healthy_running",
+            "User-selected context was ready.",
+        ),
+        manual_runner_agent_progress_event(
+            "evt-T790-model-response",
+            "2026-06-17T00:13:00Z",
+            "waiting_for_tool",
+            "healthy_running",
+            "Model response summary became visible.",
+        ),
+        manual_runner_agent_progress_event(
+            "evt-T790-edit-proposed",
+            "2026-06-17T00:15:00Z",
+            "editing",
+            "healthy_running",
+            "Manual runner proposed a reviewed edit.",
+        ),
+        manual_runner_agent_progress_event(
+            "evt-T790-verification-run",
+            "2026-06-17T00:18:00Z",
+            "verifying",
+            "healthy_running",
+            "User ran allowlisted verification.",
+        ),
+        manual_runner_agent_progress_event(
+            "evt-T790-summarized",
+            "2026-06-17T00:20:00Z",
+            "done",
+            "done",
+            "Manual runner summarized the outcome.",
+        ),
+    ];
+
+    for event in events {
+        let (status, body) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::POST,
+                "/v1/agent-progress/events",
+                Body::from(event.to_string()),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["cloudRequired"], false);
+        assert_eq!(body["providerAccess"], "direct");
+    }
+
+    let (status, listed) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/agent-progress", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(listed["cloudRequired"], false);
+    assert_eq!(listed["providerAccess"], "direct");
+    assert_eq!(listed["generatedAt"], "2026-06-17T00:20:00Z");
+    assert_eq!(listed["snapshots"].as_array().unwrap().len(), 1);
+    let snapshot = &listed["snapshots"][0];
+    assert_eq!(snapshot["runId"], "run-T790-manual");
+    assert_eq!(snapshot["cardId"], "T790");
+    assert_eq!(snapshot["phase"], "done");
+    assert_eq!(snapshot["status"], "done");
+    assert_eq!(snapshot["completedAt"], "2026-06-17T00:20:00Z");
+    assert_eq!(snapshot["recentEvents"].as_array().unwrap().len(), 6);
+    assert_eq!(snapshot["recentEvents"][0]["eventId"], "evt-T790-plan");
+    assert_eq!(snapshot["recentEvents"][5]["eventId"], "evt-T790-summarized");
+    let text = listed.to_string().to_lowercase();
+    for forbidden in [
+        "raw prompt",
+        "providerresponse",
+        "filecontent",
+        "authorization",
+        "bearer",
+        "secret",
+        "token",
+        "/users/",
+        "/home/",
+    ] {
+        assert!(!text.contains(forbidden));
+    }
+}
+
+#[tokio::test]
+async fn agent_progress_manual_runner_rejects_dangerous_content_without_raw_echo() {
+    for event in [
+        manual_runner_agent_progress_event(
+            "evt-T790-raw-prompt",
+            "2026-06-17T00:13:00Z",
+            "waiting_for_tool",
+            "healthy_running",
+            "raw prompt included sk-progress-manual-secret",
+        ),
+        manual_runner_agent_progress_event(
+            "evt-T790-provider-response",
+            "2026-06-17T00:13:00Z",
+            "waiting_for_tool",
+            "healthy_running",
+            "provider response included private body",
+        ),
+        manual_runner_agent_progress_event(
+            "evt-T790-private-path",
+            "2026-06-17T00:14:00Z",
+            "editing",
+            "healthy_running",
+            "Opened /Users/example/project/private.txt",
+        ),
+        manual_runner_agent_progress_event(
+            "evt-T790-raw-command",
+            "2026-06-17T00:18:00Z",
+            "verifying",
+            "healthy_running",
+            "raw command was captured instead of summary",
+        ),
+        manual_runner_agent_progress_event(
+            "evt-T790-file-content",
+            "2026-06-17T00:15:00Z",
+            "editing",
+            "healthy_running",
+            "file content follows",
+        ),
+    ] {
+        let forbidden = event["message"].as_str().unwrap().to_string();
+        let (status, body) = json_response(authed_request(
+            Method::POST,
+            "/v1/agent-progress/events",
+            Body::from(event.to_string()),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "agent progress unavailable");
+        let text = body.to_string().to_lowercase();
+        assert!(!text.contains(&forbidden.to_lowercase()));
+        assert!(!text.contains("sk-progress-manual-secret"));
+        assert!(!text.contains("/users/example"));
+    }
+
+    for payload in [
+        json!({
+            "protocolVersion": "2026-05-29",
+            "eventId": "evt-T790-shell-field",
+            "runId": "run-T790-manual",
+            "cardId": "T790",
+            "timestamp": "2026-06-17T00:18:00Z",
+            "phase": "verifying",
+            "status": "healthy_running",
+            "message": "Manual runner state must not carry shell or git fields.",
+            "shell": "npm run check",
+            "git": "git status"
+        }),
+        json!({
+            "protocolVersion": "2026-05-29",
+            "eventId": "evt-T790-file-field",
+            "runId": "run-T790-manual",
+            "cardId": "T790",
+            "timestamp": "2026-06-17T00:15:00Z",
+            "phase": "editing",
+            "status": "healthy_running",
+            "message": "Safe summary.",
+            "fileContent": "raw workspace file content"
+        }),
+    ] {
+        let (status, body) = json_response(authed_request(
+            Method::POST,
+            "/v1/agent-progress/events",
+            Body::from(payload.to_string()),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "invalid request body");
+        assert!(!body.to_string().contains("npm run check"));
+        assert!(!body.to_string().contains("raw workspace file content"));
+    }
+}
+
 fn valid_agent_progress_snapshot(index: usize, event_count: usize) -> Value {
     json!({
         "protocolVersion": "2026-05-29",

@@ -864,6 +864,7 @@ fn contains_unsafe_text(value: &str) -> bool {
         "authcode",
         "chainofthought",
         "rawprompt",
+        "rawcommand",
         "rawdump",
         "rawoutput",
         "rawfile",
