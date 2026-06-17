@@ -57,15 +57,24 @@ async function validateManifest(manifestPath, vscodeArtifact, jetbrainsArtifact)
   if (!/^[a-f0-9]{40}$/i.test(manifest?.commit ?? "")) {
     throw new Error(`${relative(manifestPath)} must include the exact 40-character commit SHA before staging GitHub artifacts.`);
   }
+  if (typeof manifest?.createdAt !== "string" || Number.isNaN(Date.parse(manifest.createdAt))) {
+    throw new Error(`${relative(manifestPath)} must include a parseable createdAt timestamp before staging GitHub artifact provenance metadata.`);
+  }
   const status = manifest?.devPreviewStatus;
-  if (status?.kind !== "dev-preview" || status?.productionRelease !== false || status?.publishable !== false || status?.marketplaceUpload !== false || status?.signing !== "none") {
-    throw new Error(`${relative(manifestPath)} must declare devPreviewStatus as unsigned, unpublished, install-from-file dev-preview metadata before manual dogfood.`);
+  if (status?.kind !== "dev-preview" || status?.productionRelease !== false || status?.publishable !== false || status?.signed !== false || status?.published !== false || status?.notarized !== false || status?.marketplaceUpload !== false || status?.signing !== "none" || status?.notarization !== "none" || status?.productionInstaller !== false) {
+    throw new Error(`${relative(manifestPath)} must declare devPreviewStatus as unsigned, unpublished, not notarized, install-from-file dev-preview metadata before manual dogfood.`);
   }
   if (manifest?.platform?.os !== platform.os || manifest?.platform?.arch !== platform.arch) {
     throw new Error(`${relative(manifestPath)} platform ${manifest?.platform?.os}/${manifest?.platform?.arch} does not match staging platform ${platform.os}/${platform.arch}.`);
   }
   if (!isBoundedArchivePath(manifest?.runtime?.bundledEngineResource, "yet-ai-engine/")) {
     throw new Error(`${relative(manifestPath)} must include bounded runtime.bundledEngineResource under yet-ai-engine/.`);
+  }
+  if (typeof manifest?.runtime?.engineBinaryName !== "string" || !/^[a-f0-9]{64}$/i.test(manifest?.runtime?.engineSha256 ?? "")) {
+    throw new Error(`${relative(manifestPath)} must include runtime.engineBinaryName and runtime.engineSha256 provenance metadata before staging GitHub artifacts.`);
+  }
+  if (!isBoundedArchivePath(manifest?.runtime?.engineBinaryPath, "target/") && !isBoundedArchivePath(manifest?.runtime?.engineBinaryPath, "apps/plugins/vscode/bin/")) {
+    throw new Error(`${relative(manifestPath)} must include a bounded runtime.engineBinaryPath provenance metadata path.`);
   }
 
   const artifacts = Array.isArray(manifest?.artifacts) ? manifest.artifacts : [];

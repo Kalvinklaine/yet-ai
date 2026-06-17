@@ -21,8 +21,13 @@ const requiredDevPreviewStatus = Object.freeze({
   kind: "dev-preview",
   productionRelease: false,
   publishable: false,
+  signed: false,
+  published: false,
+  notarized: false,
   signing: "none",
+  notarization: "none",
   marketplaceUpload: false,
+  productionInstaller: false,
 });
 const identity = JSON.parse(await readFile(path.join(root, "product", "identity.json"), "utf8"));
 const guiDistRoot = path.join(root, "apps", "gui", "dist");
@@ -195,6 +200,9 @@ function validateArtifactManifest(manifest, manifestPath) {
   if (!/^[a-f0-9]{40}$/i.test(manifest.commit ?? "")) {
     failures.push(`${relative(manifestPath)} must include the exact 40-character commit SHA that produced these dev-preview artifacts.`);
   }
+  if (typeof manifest.createdAt !== "string" || Number.isNaN(Date.parse(manifest.createdAt))) {
+    failures.push(`${relative(manifestPath)} must include a parseable createdAt timestamp for generated dev-preview provenance metadata.`);
+  }
   const status = manifest.devPreviewStatus;
   for (const [field, expected] of Object.entries(requiredDevPreviewStatus)) {
     if (status?.[field] !== expected) {
@@ -244,6 +252,12 @@ function validateArtifactManifest(manifest, manifestPath) {
     }
     if (typeof runtime.engineBinaryName !== "string" || runtime.engineBinaryName.length === 0) {
       failures.push(`${relative(manifestPath)} runtime.engineBinaryName must be a non-empty string.`);
+    }
+    if (typeof runtime.engineBinaryPath !== "string" || !isBoundedResourcePath(runtime.engineBinaryPath, "target/") && !isBoundedResourcePath(runtime.engineBinaryPath, "apps/plugins/vscode/bin/")) {
+      failures.push(`${relative(manifestPath)} runtime.engineBinaryPath must be a bounded relative path to the local dev-preview engine binary used for provenance.`);
+    }
+    if (typeof runtime.engineSha256 !== "string" || !/^[a-f0-9]{64}$/i.test(runtime.engineSha256)) {
+      failures.push(`${relative(manifestPath)} runtime.engineSha256 must include a SHA-256 digest of the bundled engine binary.`);
     }
   }
 

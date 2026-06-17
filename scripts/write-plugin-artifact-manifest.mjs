@@ -33,7 +33,7 @@ try {
   }
 
   const platform = resolvePlatform();
-  const runtime = resolveRuntime();
+  const runtime = await resolveRuntime();
 
   const manifest = {
     product: {
@@ -207,11 +207,34 @@ function devPreviewStatus() {
     kind: "dev-preview",
     productionRelease: false,
     publishable: false,
+    signed: false,
+    published: false,
+    notarized: false,
     signing: "none",
+    notarization: "none",
     marketplaceUpload: false,
+    productionInstaller: false,
     manualDogfoodGate: "artifact-manifest-and-smokes-required",
-    notes: "Install-from-file dev-preview evidence only. Do not publish, sign, upload to marketplaces, or treat as a production release.",
+    notes: "Install-from-file dev-preview provenance evidence only. Do not publish, sign, notarize, upload to marketplaces, or treat as a production release.",
   };
+}
+
+async function engineBinaryProvenance(profile) {
+  const binaryFileName = runnerOsLabel() === "windows" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
+  const candidates = [
+    path.join(root, "target", profile, binaryFileName),
+    path.join(root, "apps", "plugins", "vscode", "bin", binaryFileName),
+  ];
+  for (const filePath of candidates) {
+    const fileStat = await stat(filePath).catch(() => undefined);
+    if (fileStat?.isFile()) {
+      return {
+        engineBinaryPath: relative(filePath),
+        engineSha256: createHash("sha256").update(await readFile(filePath)).digest("hex"),
+      };
+    }
+  }
+  throw new Error(`Missing bundled engine binary for provenance metadata. Expected ${relative(candidates[0])} or ${relative(candidates[1])}. Run npm run prepare:ide-engine or the preview prepare scripts first.`);
 }
 
 function resolvePlatform() {
@@ -238,13 +261,14 @@ function resolvePlatform() {
   });
 }
 
-function resolveRuntime() {
+async function resolveRuntime() {
   const envSource = stringOrUndefined(process.env.YET_AI_RUNTIME_BUILD);
   const profile = envSource === "release" || envSource === "debug" ? envSource : "debug";
   return removeUndefined({
     engineBinaryName: identity.engine.binaryName,
     engineCrate: identity.engine.rustCrate,
     bundledEngineResource: `yet-ai-engine/${runnerOsLabel() === "windows" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName}`,
+    ...await engineBinaryProvenance(profile),
     profile,
     source: envSource === undefined ? "local-cargo-build" : "env",
     notes: "Bundled engine is the dev-preview local cargo build output, not a signed or notarized production engine. No signing, notarization, marketplace publication, production installer, or production release claim is made for this artifact.",

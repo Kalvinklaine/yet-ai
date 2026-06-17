@@ -12,8 +12,13 @@ const requiredDevPreviewStatus = Object.freeze({
   kind: "dev-preview",
   productionRelease: false,
   publishable: false,
+  signed: false,
+  published: false,
+  notarized: false,
   signing: "none",
+  notarization: "none",
   marketplaceUpload: false,
+  productionInstaller: false,
 });
 
 if (args.input === undefined || args.output === undefined) {
@@ -52,6 +57,9 @@ try {
     if (!/^[a-f0-9]{40}$/i.test(parsed?.commit ?? "")) {
       throw new Error(`${path.relative(root, filePath)} must include an exact 40-character commit SHA.`);
     }
+    if (typeof parsed?.createdAt !== "string" || Number.isNaN(Date.parse(parsed.createdAt))) {
+      throw new Error(`${path.relative(root, filePath)} must include a parseable createdAt timestamp for generated dev-preview provenance metadata.`);
+    }
     const status = parsed?.devPreviewStatus;
     for (const [field, expected] of Object.entries(requiredDevPreviewStatus)) {
       if (status?.[field] !== expected) {
@@ -68,6 +76,12 @@ try {
     const runtime = parsed?.runtime;
     if (runtime === undefined || typeof runtime !== "object" || !isBoundedPath(runtime.bundledEngineResource, "yet-ai-engine/")) {
       throw new Error(`${path.relative(root, filePath)} is missing bounded runtime.bundledEngineResource metadata under yet-ai-engine/.`);
+    }
+    if (typeof runtime.engineBinaryName !== "string" || !/^[a-f0-9]{64}$/i.test(runtime.engineSha256 ?? "")) {
+      throw new Error(`${path.relative(root, filePath)} runtime metadata must include engineBinaryName and engineSha256 provenance for the bundled dev-preview engine.`);
+    }
+    if (!isBoundedPath(runtime.engineBinaryPath, "target/") && !isBoundedPath(runtime.engineBinaryPath, "apps/plugins/vscode/bin/")) {
+      throw new Error(`${path.relative(root, filePath)} runtime.engineBinaryPath must be a bounded relative local engine binary path.`);
     }
     const artifacts = Array.isArray(parsed?.artifacts) ? parsed.artifacts : [];
     if (artifacts.length !== 2) {
