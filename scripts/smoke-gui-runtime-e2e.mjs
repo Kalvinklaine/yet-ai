@@ -185,6 +185,8 @@ try {
   await expectVisibleText(page, providerName, "created provider", 20_000);
   await expectVisibleText(page, `Ready to send using ${modelId} through the local runtime.`, "chat readiness", 20_000);
 
+  await exerciseManualRunnerStart(page);
+
   await exerciseExplicitContextBundle(page);
 
   await setChatId(page, chatId);
@@ -231,6 +233,8 @@ try {
 
   await exerciseEditVerifyLoop(page);
   await waitForProviderHits(6);
+
+  await assertNoAutonomousBridgeActions(page);
 
   assert(providerAuth === `Bearer ${fakeApiKey}`, "mock provider did not receive the configured fake bearer key");
   assert(providerRequestBodies.length === 6, "mock provider received " + providerRequestBodies.length + " chat request(s), expected 6");
@@ -286,7 +290,7 @@ try {
   }
 
   console.log("GUI runtime e2e smoke passed.");
-  console.log("Verified built GUI, loopback runtime, mock OpenAI-compatible streaming provider, IDE-like active-file multi-file bundle include/one-shot clear, active context include/omit, streamed chat responses, mock safe-edit JSON proposal preview without auto-apply, explicit apply result to user-clicked verification to one-shot verification_output attachment, local history reload, and browser-state redaction.");
+  console.log("Verified built GUI, loopback runtime, mock OpenAI-compatible streaming provider, Manual runner progress guide, IDE-like active-file multi-file bundle include/one-shot clear, active context include/omit, streamed chat responses, mock safe-edit JSON proposal preview without auto-send or auto-apply, explicit apply result to user-clicked verification to one-shot verification_output attachment, no hidden search/read/navigation actions, local history reload, and browser-state redaction.");
   console.log("No OpenAI/ChatGPT, hosted Yet AI service, non-loopback URL, real IDE launch, or real provider credential was used.");
 } finally {
   await browser?.close().catch(() => undefined);
@@ -481,6 +485,55 @@ async function startStaticServer(staticRoot) {
   };
 }
 
+async function exerciseManualRunnerStart(page) {
+  await expectVisibleText(page, "Manual runner · Coding loop", "manual runner panel", 20_000);
+  await expectVisibleText(page, "manual only", "manual runner manual-only badge", 20_000);
+  await expectAttachedText(page, "Progress guide only. It never auto-sends, auto-attaches context, auto-applies edits, auto-runs verification, reads hidden files, or writes browser storage.", "manual runner no-autonomy copy", 20_000);
+  await expectVisibleText(page, "Current step: 1. Draft plan", "manual runner initial current step", 20_000);
+  await page.getByLabel("Manual runner coding loop").getByLabel("Draft plan (local UI state only)").fill("Inspect attached context, ask for a safe edit, apply only after explicit review, run verification manually, then send a follow-up with verification output.");
+  await expectVisibleText(page, "Current step: 2. Attach context", "manual runner context current step", 20_000);
+  await assertNoManualRunnerSideEffects(page, "manual runner start/draft");
+}
+
+async function assertManualRunnerCompleted(page) {
+  await expectVisibleText(page, "Current step: 7. Attach verification result / continue", "manual runner final current step", 20_000);
+  await expectVisibleText(page, "Verification output is attached as explicit one-shot context.", "manual runner verification-attached detail", 20_000);
+  const manualRunnerText = await page.getByLabel("Manual runner coding loop").textContent();
+  for (const label of ["1. Draft plan", "2. Attach context", "3. Ask model", "4. Review safe edit proposal", "5. Apply after explicit confirmation", "6. Run verification", "7. Attach verification result / continue"]) {
+    assert(manualRunnerText?.includes(label), `Manual runner panel missed step label: ${label}`);
+  }
+}
+
+async function assertNoManualRunnerSideEffects(page, description) {
+  const counts = await page.evaluate(() => {
+    const messages = window.__yetAiVsCodeMessages ?? [];
+    return {
+      apply: messages.filter((message) => message?.type === "gui.applyWorkspaceEditRequest").length,
+      ideActions: messages.filter((message) => message?.type === "gui.ideActionRequest").length,
+    };
+  });
+  assert(counts.apply === 0, `${description} unexpectedly emitted apply request(s): ${counts.apply}`);
+  assert(counts.ideActions === 0, `${description} unexpectedly emitted IDE action request(s): ${counts.ideActions}`);
+  assert(providerHits === 0, `${description} unexpectedly sent provider request(s): ${providerHits}`);
+}
+
+async function assertNoAutonomousBridgeActions(page) {
+  const messages = await page.evaluate(() => window.__yetAiVsCodeMessages ?? []);
+  const applyRequests = messages.filter((message) => message?.type === "gui.applyWorkspaceEditRequest");
+  const ideActionRequests = messages.filter((message) => message?.type === "gui.ideActionRequest");
+  const ideActions = ideActionRequests.map((message) => message?.payload?.action);
+  assert(applyRequests.length === 1, `Expected exactly one explicit apply request, observed ${applyRequests.length}.`);
+  assert(deepEqual(applyRequests[0]?.payload, safeEditProposal.payload), "The only apply request was not the reviewed safe-edit proposal.");
+  assert(ideActionRequests.length === 3, `Expected three explicit IDE action requests (two active-file excerpts and one repository verification), observed ${ideActionRequests.length}: ${ideActions.join(", ")}`);
+  assert(ideActions.filter((action) => action === "getActiveFileExcerpt").length === 2, `Expected exactly two explicit active-file excerpt requests, observed ${ideActions.join(", ")}`);
+  assert(ideActions.filter((action) => action === "runVerificationCommand").length === 1, `Expected exactly one explicit verification request, observed ${ideActions.join(", ")}`);
+  assert(!ideActions.includes("getContextSnapshot"), "Manual runner loop performed a hidden context read.");
+  assert(!ideActions.includes("searchWorkspaceSnippets"), "Manual runner loop performed a hidden project snippet search.");
+  assert(!ideActions.includes("openWorkspaceFile") && !ideActions.includes("revealWorkspaceRange"), "Manual runner loop performed hidden navigation/read actions.");
+  const verificationPayloads = ideActionRequests.filter((message) => message?.payload?.action === "runVerificationCommand").map((message) => message.payload);
+  assert(deepEqual(verificationPayloads[0], { action: "runVerificationCommand", commandId: "repository-check" }), "Verification request was not the strict explicit repository-check payload.");
+}
+
 async function exerciseExplicitContextBundle(page) {
   await setChatId(page, chatId);
   await deliverActiveFileExcerpt(page, bundleContextOne);
@@ -560,6 +613,8 @@ async function exerciseEditVerifyLoop(page) {
   await expectVisibleText(page, "Verification output", "verification output bundle preview", 20_000);
   await page.waitForTimeout(150);
   assert(providerHits === 5, "verification attachment auto-sent a chat request before explicit Send");
+
+  await assertManualRunnerCompleted(page);
 
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(userMessageAfterVerification);
   await page.getByRole("button", { name: "Send", exact: true }).click();
