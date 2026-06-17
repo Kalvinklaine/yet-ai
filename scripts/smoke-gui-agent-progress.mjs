@@ -441,6 +441,9 @@ function mockRuntimeResponse(value, method) {
   if (url.pathname === "/v1/provider-auth/openai/status") {
     return json({ provider: "openai", configured: false, status: "login_unavailable", authSource: "none", supportsLogin: false, supportsApiKey: true, cloudRequired: false, message: "OpenAI account login is not available for this local mock." });
   }
+  if (url.pathname === "/v1/project-memory") {
+    return json({ notes: [], cloudRequired: false, providerAccess: "direct" });
+  }
   if (url.pathname === "/v1/chats") {
     return json({ chats: [] });
   }
