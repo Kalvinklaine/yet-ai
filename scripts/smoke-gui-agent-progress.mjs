@@ -106,6 +106,7 @@ try {
   await page.goto(`${guiBaseUrl}/index.html`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
   await expectVisibleText(page, "Agent progress", "agent progress panel");
+  await page.locator("[data-testid='agent-progress-details']").evaluate((details) => { details.open = true; });
   await expectVisibleText(page, "Read-only local observability only.", "read-only agent progress copy");
   await assertNoMutatingAgentControls(page);
 
@@ -122,6 +123,41 @@ try {
   await expectVisibleText(page, "GUI-SMOKE-LONG / run-gui-smoke", "healthy long-running run");
   await expectVisibleText(page, "long-running, not stuck", "healthy long-running not stuck label");
   await expectAbsentText(page, "stuck: heartbeat_timeout", "healthy long-running stuck label");
+
+  agentProgressResponse = progressList([progressSnapshot({
+    cardId: "GUI-SMOKE-PLAN-PROPOSAL",
+    status: "healthy_running",
+    message: "Manual runner has an inert plan proposal ready for review.",
+    planProposal: manualRunnerPlanProposal(),
+  })]);
+  await refreshAgentProgress(page);
+  await expectVisibleText(page, "Plan proposal · Review only", "manual runner plan proposal card");
+  await expectVisibleText(page, "Review local provider readiness", "manual runner plan proposal title");
+  await expectVisibleText(page, "Inspect readiness state", "manual runner plan proposal step");
+  await expectVisibleText(page, "Suggested next user step: Ask the user to review the proposal", "manual runner proposal next step");
+  await expectVisibleText(page, "This proposal is inert. It cannot attach context, send chat, apply edits, run verification, call providers, execute tools, or mutate the workspace.", "manual runner proposal inert copy");
+  const beforeProposalDraftFetchCount = await page.evaluate(() => performance.getEntriesByType("resource").length);
+  await page.getByRole("button", { name: "Use proposal as local draft" }).click();
+  await expectTextareaValue(page, "Review local provider readiness", "manual runner proposal draft title");
+  await expectTextareaValue(page, "1. Inspect readiness state", "manual runner proposal draft step");
+  const afterProposalDraftFetchCount = await page.evaluate(() => performance.getEntriesByType("resource").length);
+  if (afterProposalDraftFetchCount !== beforeProposalDraftFetchCount) {
+    throw new Error("Using a manual runner plan proposal as draft caused a network request.");
+  }
+  await assertNoMutatingAgentControls(page);
+
+  agentProgressResponse = progressList([progressSnapshot({
+    cardId: "GUI-SMOKE-UNSAFE-PLAN-PROPOSAL",
+    message: "Unsafe plan proposal should be dropped.",
+    planProposal: {
+      ...manualRunnerPlanProposal(),
+      steps: ["Run shell command npm run check"],
+      rationale: "Contains provider response raw dump",
+    },
+  })]);
+  await refreshAgentProgress(page);
+  await expectAbsentText(page, "Run shell command npm run check", "unsafe manual runner plan proposal step");
+  await expectAbsentText(page, "Contains provider response raw dump", "unsafe manual runner plan proposal rationale");
 
   agentProgressResponse = progressList([progressSnapshot({ cardId: "GUI-SMOKE-STUCK", phase: "stuck", status: "stuck", stuckReason: "heartbeat_timeout", message: "Heartbeat timeout detected" })]);
   await refreshAgentProgress(page);
@@ -238,8 +274,8 @@ try {
   })));
   await refreshAgentProgress(page);
   await expectVisibleText(page, "GUI-SMOKE-BOUNDED-0 / run-gui-bounded-0", "bounded first run");
-  await expectVisibleText(page, "5 more agent runs hidden.", "bounded hidden run count");
-  await expectVisibleText(page, "6 more summaries hidden.", "bounded hidden summary count");
+  await expectVisibleText(page, "7 more agent runs hidden.", "bounded hidden run count");
+  await expectVisibleText(page, "7 more summaries hidden.", "bounded hidden summary count");
 
   agentProgressResponse = unavailableAgentProgress();
   await refreshAgentProgress(page);
@@ -318,6 +354,7 @@ async function refreshAgentProgress(page) {
   await button.waitFor({ state: "visible", timeout: 10_000 });
   await button.click();
   await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some((item) => item.textContent?.trim() === "Refresh agent progress" && !item.disabled), undefined, { timeout: 10_000 });
+  await page.locator("[data-testid='agent-progress-details']").evaluate((details) => { details.open = true; });
 }
 
 async function assertNoMutatingAgentControls(page) {
@@ -342,6 +379,14 @@ async function expectAbsentText(page, text, description) {
   const body = await page.locator("body").innerText();
   if (body.includes(text)) {
     throw new Error(`Unexpected ${description} text was visible.`);
+  }
+}
+
+async function expectTextareaValue(page, text, description) {
+  const matched = await page.locator("textarea").evaluateAll((textareas, expected) => textareas.some((textarea) => textarea.value.includes(expected)), text);
+  if (!matched) {
+    const values = await page.locator("textarea").evaluateAll((textareas) => textareas.map((textarea) => textarea.value).join("\n---\n"));
+    throw new Error(`Timed out waiting for ${description}. Textarea values: ${redactSecrets(values).slice(0, 2000)}`);
   }
 }
 
@@ -426,6 +471,18 @@ function unavailableAgentProgress() {
 
 function progressList(snapshots) {
   return { cloudRequired: false, providerAccess: "direct", generatedAt: "2026-05-29T15:00:00Z", snapshots };
+}
+
+function manualRunnerPlanProposal(overrides = {}) {
+  return {
+    protocolVersion: "2026-05-29",
+    kind: "manual_runner_plan_proposal",
+    title: "Review local provider readiness",
+    steps: ["Inspect readiness state", "Confirm local model labels"],
+    rationale: "Display the proposed review path before any user-mediated action.",
+    nextAction: "Ask the user to review the proposal",
+    ...overrides,
+  };
 }
 
 function progressSnapshot(overrides = {}) {

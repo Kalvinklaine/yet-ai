@@ -10,7 +10,7 @@ import { conversationHistoryStatusLabel, resolveChatAfterList, resolveFallbackCh
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { classifyProviderReadinessState, modelStatusText, resolveProviderModelReadiness, type ProviderReadinessState } from "./services/providerReadiness";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
-import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type DemoModeResponse, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
+import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type DemoModeResponse, type ManualRunnerPlanProposal, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
 import { editProposalCandidateIdentityMatches, editProposalPayloadKey, isCompleteAssistantEditProposalStatus, latestEditProposalCandidateFromMessages, parseEditProposalContent, type EditProposalIdentity } from "./services/editProposal";
@@ -20,6 +20,7 @@ const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
 const agentProgressSnapshotDisplayLimit = 18;
 const agentProgressRecentEventDisplayLimit = 11;
+const manualRunnerPlanProposalStepLimit = 6;
 export const completedIdeActionRequestChatsLimit = 64;
 export const completedApplyRequestChatsLimit = 64;
 const ignoredDuplicateApplyResultNote = sanitizeDisplayText("Ignored duplicate host apply result.");
@@ -437,6 +438,7 @@ export function App() {
   const activeFilePromptAction = useMemo(() => currentActiveFileExcerpt ? buildActiveFilePromptAction(currentActiveFileExcerpt) : null, [currentActiveFileExcerpt]);
   const chatHistoryStatus = conversationHistoryStatusLabel({ loading: chatHistoryLoading, current: chatHistoryCurrent, count: activeChatSummaries.length, hasError: Boolean(chatHistoryError) });
   const showAppliedEditVerificationStep = applyResult?.payload.status === "applied";
+  const latestPlanProposal = useMemo(() => latestManualRunnerPlanProposal(agentProgress.response), [agentProgress.response]);
 
   useEffect(() => {
     setRuntimeDetailsOpen(!runtimeConnected);
@@ -2038,7 +2040,7 @@ export function App() {
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
-                <ManualRunnerPanel host={bridgeHost} draftPlan={manualRunnerDraftPlan} hasContext={Boolean((currentAttachedContext && hasUsableAttachedContext(currentAttachedContext)) || explicitContextBundleItems.length > 0)} hasPrompt={Boolean(chatInput.trim())} hasAssistantActivity={chatView.messages.some((message) => message.role === "assistant") || chatLifecycleState !== "idle"} hasEditProposal={Boolean(activeEditProposal)} applyResult={applyResult} verificationAttempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} verificationAttached={Boolean(attachedVerificationKey)} canSendChat={canSendChat} onDraftPlanChange={setManualRunnerDraftPlan} onFocusPrompt={() => chatInputRef.current?.focus()} />
+                <ManualRunnerPanel host={bridgeHost} draftPlan={manualRunnerDraftPlan} planProposal={latestPlanProposal} hasContext={Boolean((currentAttachedContext && hasUsableAttachedContext(currentAttachedContext)) || explicitContextBundleItems.length > 0)} hasPrompt={Boolean(chatInput.trim())} hasAssistantActivity={chatView.messages.some((message) => message.role === "assistant") || chatLifecycleState !== "idle"} hasEditProposal={Boolean(activeEditProposal)} applyResult={applyResult} verificationAttempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} verificationAttached={Boolean(attachedVerificationKey)} canSendChat={canSendChat} onDraftPlanChange={setManualRunnerDraftPlan} onFocusPrompt={() => chatInputRef.current?.focus()} />
                 <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} promptAction={activeFilePromptAction} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onClearPending={clearPendingIdeActionState} onIncludeChange={setIncludeAttachedContext} onApplyPrompt={applyActiveFilePrompt} onAddToBundle={addActiveFileExcerptToBundle} />
                 <WorkspaceSnippetSearchPanel host={bridgeHost} query={workspaceSnippetQuery} result={workspaceSnippetResult} selectedKeys={selectedWorkspaceSnippetKeys} pending={ideActionAttempt?.action === "searchWorkspaceSnippets" && (ideActionAttempt.status === "pending" || ideActionAttempt.status === "inProgress")} status={workspaceSnippetStatus} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onQueryChange={setWorkspaceSnippetQuery} onSearch={searchWorkspaceSnippets} onClearPending={clearPendingIdeActionState} onSelectionChange={setSelectedWorkspaceSnippetKeys} onAttachSelected={attachSelectedWorkspaceSnippetsToBundle} />
                 <ExplicitContextBundlePanel items={explicitContextBundleItems} include={includeExplicitContextBundle} status={explicitContextBundleStatus} onIncludeChange={setIncludeExplicitContextBundle} onRemove={removeExplicitContextBundleItem} onClear={() => clearExplicitContextBundle("Cleared the one-shot explicit context bundle.")} />
@@ -2566,7 +2568,7 @@ type ManualRunnerStep = {
   state: ManualRunnerStepState;
 };
 
-function ManualRunnerPanel({ host, draftPlan, hasContext, hasPrompt, hasAssistantActivity, hasEditProposal, applyResult, verificationAttempt, verificationAttached, canSendChat, onDraftPlanChange, onFocusPrompt }: { host: BridgeHost; draftPlan: string; hasContext: boolean; hasPrompt: boolean; hasAssistantActivity: boolean; hasEditProposal: boolean; applyResult: ApplyResultState | null; verificationAttempt: IdeActionAttemptState | null; verificationAttached: boolean; canSendChat: boolean; onDraftPlanChange: (plan: string) => void; onFocusPrompt: () => void }) {
+function ManualRunnerPanel({ host, draftPlan, planProposal, hasContext, hasPrompt, hasAssistantActivity, hasEditProposal, applyResult, verificationAttempt, verificationAttached, canSendChat, onDraftPlanChange, onFocusPrompt }: { host: BridgeHost; draftPlan: string; planProposal: ManualRunnerPlanProposal | null; hasContext: boolean; hasPrompt: boolean; hasAssistantActivity: boolean; hasEditProposal: boolean; applyResult: ApplyResultState | null; verificationAttempt: IdeActionAttemptState | null; verificationAttached: boolean; canSendChat: boolean; onDraftPlanChange: (plan: string) => void; onFocusPrompt: () => void }) {
   const supported = host === "vscode" || host === "jetbrains";
   const applySettled = applyResult?.payload.status === "applied" || applyResult?.payload.status === "denied" || applyResult?.payload.status === "rejected" || applyResult?.payload.status === "failed";
   const applied = applyResult?.payload.status === "applied";
@@ -2581,6 +2583,12 @@ function ManualRunnerPanel({ host, draftPlan, hasContext, hasPrompt, hasAssistan
     { label: "7. Attach verification result / continue", detail: verificationAttached ? "Verification output is attached as explicit one-shot context." : verified ? "Attach the result or continue with a follow-up prompt." : "No verification output is attached automatically.", state: verificationAttached ? "done" : verified ? "current" : "waiting" },
   ];
   const currentStep = [...steps].reverse().find((step) => step.state === "current") ?? steps[steps.length - 1];
+  const useProposalAsDraft = () => {
+    if (!planProposal) {
+      return;
+    }
+    onDraftPlanChange(formatManualRunnerPlanProposalDraft(planProposal));
+  };
   return (
     <section className={`manual-runner-card readiness-card ${currentStep.state === "waiting" ? "warn" : "ready"}`} aria-label="Manual runner coding loop">
       <div className="row">
@@ -2594,6 +2602,7 @@ function ManualRunnerPanel({ host, draftPlan, hasContext, hasPrompt, hasAssistan
         Draft plan (local UI state only)
         <textarea value={draftPlan} onChange={(event) => onDraftPlanChange(event.target.value)} placeholder="Example: inspect context, ask model, review proposal, apply only after confirmation, run verification." />
       </label>
+      {planProposal && <ManualRunnerPlanProposalCard proposal={planProposal} onUseAsDraft={useProposalAsDraft} onFocusPrompt={onFocusPrompt} />}
       <div className="manual-runner-current" role="status">
         <strong>Current step: {currentStep.label}</strong>
         <span>{currentStep.detail}</span>
@@ -2612,6 +2621,38 @@ function ManualRunnerPanel({ host, draftPlan, hasContext, hasPrompt, hasAssistan
       </div>
     </section>
   );
+}
+
+function ManualRunnerPlanProposalCard({ proposal, onUseAsDraft, onFocusPrompt }: { proposal: ManualRunnerPlanProposal; onUseAsDraft: () => void; onFocusPrompt: () => void }) {
+  return (
+    <section className="readiness-card ready manual-runner-proposal-card stack" aria-label="Manual runner plan proposal review">
+      <div className="row">
+        <strong>Plan proposal · Review only</strong>
+        <span className="badge ok">inert</span>
+        <span className="badge">display only</span>
+      </div>
+      <h3>{proposal.title}</h3>
+      <span>{proposal.rationale}</span>
+      <ol className="manual-runner-steps" aria-label="Proposed manual runner steps">
+        {proposal.steps.map((step, index) => <li className="manual-runner-step waiting" key={`${index}:${step}`}>{step}</li>)}
+      </ol>
+      <span>Suggested next user step: {proposal.nextAction}</span>
+      <span className="subtle">This proposal is inert. It cannot attach context, send chat, apply edits, run verification, call providers, execute tools, or mutate the workspace. Tiny velvet rope, surprisingly effective.</span>
+      <div className="row">
+        <button type="button" className="secondary-button" onClick={onUseAsDraft}>Use proposal as local draft</button>
+        <button type="button" className="secondary-button" onClick={onFocusPrompt}>Focus chat prompt</button>
+      </div>
+    </section>
+  );
+}
+
+function formatManualRunnerPlanProposalDraft(proposal: ManualRunnerPlanProposal): string {
+  return [
+    proposal.title,
+    ...proposal.steps.map((step, index) => `${index + 1}. ${step}`),
+    `Rationale: ${proposal.rationale}`,
+    `Next user step: ${proposal.nextAction}`,
+  ].join("\n");
 }
 
 function ActiveFileExcerptAttachPanel({ host, excerpt, include, pending, status, promptAction, canAddToBundle, onRequest, onClearPending, onIncludeChange, onApplyPrompt, onAddToBundle }: { host: BridgeHost; excerpt: ActiveFileExcerptAttachment | null; include: boolean; pending: boolean; status: string | null; promptAction: ActiveFilePromptAction | null; canAddToBundle: boolean; onRequest: () => void; onClearPending: () => void; onIncludeChange: (include: boolean) => void; onApplyPrompt: (action: ActiveFilePromptAction) => void; onAddToBundle: () => void }) {
@@ -2926,6 +2967,7 @@ function normalizeAgentProgressSnapshot(value: unknown, index: number): AgentPro
   const currentTool = normalizeAgentProgressTool(source?.currentTool);
   const recentEvents = Array.isArray(source?.recentEvents) ? source.recentEvents.map((event, eventIndex) => normalizeAgentProgressEvent(event, eventIndex)) : [];
   const overflowRecovery = normalizeAgentOverflowRecovery(source?.overflowRecovery);
+  const planProposal = normalizeManualRunnerPlanProposal(source?.planProposal);
   return {
     protocolVersion: "2026-05-29",
     runId,
@@ -2945,10 +2987,54 @@ function normalizeAgentProgressSnapshot(value: unknown, index: number): AgentPro
     currentTool,
     outputTail: stringOrNull(source?.outputTail) ?? undefined,
     overflowRecovery,
+    planProposal,
     stuckReason: agentProgressStuckReasonOrDefault(source?.stuckReason),
     recentEvents,
   };
 }
+
+function latestManualRunnerPlanProposal(response: AgentProgressListResponse | null): ManualRunnerPlanProposal | null {
+  const snapshot = normalizeAgentProgressResponse(response).snapshots.find((item) => item.planProposal);
+  return snapshot?.planProposal ?? null;
+}
+
+function normalizeManualRunnerPlanProposal(value: unknown): ManualRunnerPlanProposal | undefined {
+  const source = asRecord(value);
+  if (!source || source.protocolVersion !== "2026-05-29" || source.kind !== "manual_runner_plan_proposal") {
+    return undefined;
+  }
+  const title = safeManualRunnerPlanText(source.title, 80);
+  const rationale = safeManualRunnerPlanText(source.rationale, 280);
+  const nextAction = safeManualRunnerPlanText(source.nextAction, 140);
+  if (!title || !rationale || !nextAction || !Array.isArray(source.steps) || source.steps.length < 1 || source.steps.length > manualRunnerPlanProposalStepLimit) {
+    return undefined;
+  }
+  const steps = source.steps.map((step) => safeManualRunnerPlanText(step, 140));
+  if (steps.some((step) => !step)) {
+    return undefined;
+  }
+  return {
+    protocolVersion: "2026-05-29",
+    kind: "manual_runner_plan_proposal",
+    title,
+    steps: steps as string[],
+    rationale,
+    nextAction,
+  };
+}
+
+function safeManualRunnerPlanText(value: unknown, maxLength: number): string | null {
+  if (typeof value !== "string" || value.trim().length === 0 || value.length > maxLength) {
+    return null;
+  }
+  const sanitized = sanitizeDisplayText(value);
+  if (sanitized !== value || unsafeManualRunnerPlanTextPattern.test(value)) {
+    return null;
+  }
+  return sanitized;
+}
+
+const unsafeManualRunnerPlanTextPattern = /api[-_ ]?key|authorization|bearer|token|secret|password|cookie|pkce|refresh|access[-_ ]?token|auth[-_ ]?code|chain[-_ ]?of[-_ ]?thought|raw[-_ ]?(prompt|command|dump|output|file|workspace)|provider[-_ ]?(response|body)|credential|file[-_ ]?content|workspace[-_ ]?(file|content)|shell|git|tool|task|patch|apply|exec|cmd|command|auto[-_ ]?run|hidden[-_ ]?read|npm\s+run|cargo\s+(check|test)|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}|\/users(?=\/|$|[^A-Za-z0-9_])|\/home(?=\/|$|[^A-Za-z0-9_])|\/tmp(?=\/|$|[^A-Za-z0-9_])|\/etc(?=\/|$|[^A-Za-z0-9_])|\/opt(?=\/|$|[^A-Za-z0-9_])|\/mnt(?=\/|$|[^A-Za-z0-9_])|\/var(?=\/|$|[^A-Za-z0-9_])|\/volumes(?=\/|$|[^A-Za-z0-9_])|\/private(?=\/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:\/|\\\\)|~\/|\.codex\/auth\.json|(?:auth|credentials?)\.json|begin [A-Za-z ]*private key/i;
 
 function normalizeAgentProgressTool(value: unknown): AgentProgressSnapshot["currentTool"] {
   const source = asRecord(value);

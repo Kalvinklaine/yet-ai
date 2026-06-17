@@ -1718,6 +1718,71 @@ describe("agent progress panel", () => {
     expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Apply");
   });
 
+  it("renders inert manual runner plan proposals without posting actions", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const proposal = manualRunnerPlanProposal();
+    mockRuntimeResponses({ agentProgress: agentProgressResponse([agentProgressSnapshot({ planProposal: proposal })]) });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Refresh agent progress").click();
+      await Promise.resolve();
+    });
+
+    const card = manualRunnerProposalCard();
+    expect(card.textContent).toContain("Plan proposal · Review only");
+    expect(card.textContent).toContain("inert");
+    expect(card.textContent).toContain("Review local provider readiness");
+    expect(card.textContent).toContain("Inspect readiness state");
+    expect(card.textContent).toContain("Confirm local model labels");
+    expect(card.textContent).toContain("Suggested next user step: Ask the user to review the proposal");
+    expect(card.textContent).toContain("It cannot attach context, send chat, apply edits, run verification, call providers, execute tools, or mutate the workspace.");
+    fetchMock.mockClear();
+
+    await act(async () => {
+      buttonWithin(card, "Use proposal as local draft").click();
+    });
+
+    expect(manualRunnerDraftTextarea().value).toContain("Review local provider readiness");
+    expect(manualRunnerDraftTextarea().value).toContain("1. Inspect readiness state");
+    expect(manualRunnerDraftTextarea().value).toContain("Next user step: Ask the user to review the proposal");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("Review local provider readiness");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Run proposal");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Apply proposal");
+  });
+
+  it("rejects unsafe manual runner plan proposals before rendering", async () => {
+    const rawSecret = "access_token=" + "p".repeat(64);
+    mockRuntimeResponses({
+      agentProgress: agentProgressResponse([agentProgressSnapshot({
+        planProposal: {
+          ...manualRunnerPlanProposal(),
+          steps: ["Run shell command npm run check"],
+          rationale: `Do not show ${rawSecret}`,
+        },
+      })]),
+    });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      findButton("Refresh agent progress").click();
+      await Promise.resolve();
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).not.toContain("Plan proposal · Review only");
+    expect(text).not.toContain("Run shell command");
+    expect(text).not.toContain("npm run check");
+    expect(text).not.toContain("access_token");
+    expect(text).not.toContain("p".repeat(64));
+    expect(manualRunnerProposalCardOptional()).toBeUndefined();
+    expect(browserStorageDump()).not.toContain("npm run check");
+  });
+
   it("malformed live writer freshness falls back safely without raw marker leaks", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     const rawSecret = "access_token=" + "h".repeat(64);
@@ -8905,6 +8970,14 @@ function buttonsNamed(name: string) {
   return Array.from(container?.querySelectorAll<HTMLButtonElement>("button") ?? []).filter((item) => item.textContent === name);
 }
 
+function buttonWithin(parent: HTMLElement, name: string) {
+  const button = Array.from(parent.querySelectorAll<HTMLButtonElement>("button")).find((item) => item.textContent === name);
+  if (!button) {
+    throw new Error(`Button not found within element: ${name}`);
+  }
+  return button;
+}
+
 function findDetails(id: string) {
   const details = container?.querySelector(`[data-testid='${id}']`);
   if (!(details instanceof HTMLDetailsElement)) {
@@ -8983,6 +9056,30 @@ function manualRunnerDraftTextarea() {
     throw new Error("Manual runner draft textarea not found");
   }
   return textarea;
+}
+
+function manualRunnerProposalCardOptional() {
+  return container?.querySelector<HTMLElement>("[aria-label='Manual runner plan proposal review']") ?? undefined;
+}
+
+function manualRunnerProposalCard() {
+  const card = manualRunnerProposalCardOptional();
+  if (!card) {
+    throw new Error("Manual runner plan proposal card not found");
+  }
+  return card;
+}
+
+function manualRunnerPlanProposal(overrides: Record<string, unknown> = {}) {
+  return {
+    protocolVersion: "2026-05-29",
+    kind: "manual_runner_plan_proposal",
+    title: "Review local provider readiness",
+    steps: ["Inspect readiness state", "Confirm local model labels"],
+    rationale: "Display the proposed review path before any user-mediated action.",
+    nextAction: "Ask the user to review the proposal",
+    ...overrides,
+  };
 }
 
 function chatLifecycleText() {

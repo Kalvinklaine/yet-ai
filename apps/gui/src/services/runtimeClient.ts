@@ -195,6 +195,15 @@ export type AgentOverflowRecovery = {
   retryable?: boolean;
 };
 
+export type ManualRunnerPlanProposal = {
+  protocolVersion: "2026-05-29";
+  kind: "manual_runner_plan_proposal";
+  title: string;
+  steps: string[];
+  rationale: string;
+  nextAction: string;
+};
+
 export type AgentProgressSnapshot = {
   protocolVersion: "2026-05-29";
   runId: string;
@@ -214,6 +223,7 @@ export type AgentProgressSnapshot = {
   currentTool?: AgentProgressToolSummary;
   outputTail?: string;
   overflowRecovery?: AgentOverflowRecovery;
+  planProposal?: ManualRunnerPlanProposal;
   stuckReason?: "heartbeat_timeout" | "tool_output_timeout" | "explicit_failure" | "explicit_stuck" | "none";
   recentEvents: AgentProgressRecentEvent[];
 };
