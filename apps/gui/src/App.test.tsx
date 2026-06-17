@@ -2041,11 +2041,11 @@ describe("agent progress panel", () => {
 
     const text = container?.textContent ?? "";
     expect(text).toContain("T-BOUND-0 / run-0");
-    expect(text).toContain("T-BOUND-19 / run-19");
-    expect(text).toContain("5 more agent runs hidden.");
-    expect(text).toContain("6 more summaries hidden.");
-    expect(text).not.toContain("T-BOUND-20 / run-20");
-    expect(text).not.toContain("safe recent summary 17");
+    expect(text).toContain("T-BOUND-17 / run-17");
+    expect(text).toContain("7 more agent runs hidden.");
+    expect(text).toContain("7 more summaries hidden.");
+    expect(text).not.toContain("T-BOUND-18 / run-18");
+    expect(text).not.toContain("safe recent summary 16");
     expect(text.length).toBeLessThan(35000);
   });
 
@@ -2632,6 +2632,103 @@ describe("host.ready runtime bootstrap", () => {
 });
 
 describe("active editor attached context", () => {
+  it("renders manual runner panel as progress-only browser preview without auto actions or storage", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+    fetchMock.mockClear();
+
+    const panel = manualRunnerPanel();
+    expect(panel.textContent).toContain("Manual runner · Coding loop");
+    expect(panel.textContent).toContain("browser preview only");
+    expect(panel.textContent).toContain("manual only");
+    expect(panel.textContent).toContain("Current step: 1. Draft plan");
+    expect(panel.textContent).toContain("It never auto-sends, auto-attaches context, auto-applies edits, auto-runs verification");
+    expect(panel.textContent).toContain("Browser preview can draft and chat with the runtime");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("Manual runner");
+  });
+
+  it("advances manual runner through context and prompt drafting without posting actions", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+    fetchMock.mockClear();
+    postMessage.mockClear();
+
+    const panel = manualRunnerPanel();
+    await act(async () => {
+      setTextareaValue(manualRunnerDraftTextarea(), "Inspect context, ask model, then verify.");
+    });
+    expect(panel.textContent).toContain("Current step: 2. Attach context");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
+
+    await dispatchHostContextSnapshot({ selection: { text: "selected runner context" } });
+    expect(panel.textContent).toContain("Current step: 3. Ask model");
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "Ask model from the manual runner loop.");
+    });
+    expect(panel.textContent).toContain("Prompt is drafted; click Send when ready.");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("selected runner context");
+    expect(browserStorageDump()).not.toContain("Ask model from the manual runner loop.");
+  });
+
+  it("shows manual runner edit apply verification phases while user actions stay explicit", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Manual runner proposal", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Manual runner proposal", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const panel = manualRunnerPanel();
+    expect(panel.textContent).toContain("Current step: 5. Apply after explicit confirmation");
+    expect(panel.textContent).toContain("Review the latest proposal card before applying.");
+    await act(async () => {
+      setTextareaValue(manualRunnerDraftTextarea(), "Review proposal, apply after confirmation, verify.");
+    });
+    expect(panel.textContent).toContain("Current step: 5. Apply after explicit confirmation");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+
+    await act(async () => {
+      findButton("Apply in VS Code after review").click();
+    });
+    const applyCall = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
+    expect(applyCall).toBeDefined();
+    await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "Manual runner apply result.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
+    expect(panel.textContent).toContain("Current step: 6. Run verification");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")).toHaveLength(0);
+
+    await act(async () => {
+      findButton("Repository check").click();
+    });
+    const verificationCall = postMessage.mock.calls.find(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")?.[0];
+    expect(verificationCall).toMatchObject({ payload: { action: "runVerificationCommand", commandId: "repository-check" } });
+    await dispatchHostIdeActionResult(verificationCall.requestId, { status: "succeeded", message: "Repository check passed.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 0, durationMs: 10, outputTail: "passed", truncated: false });
+    expect(panel.textContent).toContain("Current step: 7. Attach verification result / continue");
+
+    await act(async () => {
+      findButton("Attach verification result to next message").click();
+    });
+    expect(panel.textContent).toContain("Verification output is attached as explicit one-shot context.");
+    expect(browserStorageDump()).not.toContain("passed");
+  });
+
   it("shows disabled coding actions guidance when no usable attached context exists", async () => {
     mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
@@ -8791,9 +8888,25 @@ function projectSnippetQueryInput(): HTMLInputElement {
 }
 
 function chatInput() {
-  const textarea = container?.querySelector<HTMLTextAreaElement>("textarea");
+  const textarea = container?.querySelector<HTMLTextAreaElement>(".composer-input-area textarea");
   if (!textarea) {
     throw new Error("Chat textarea not found");
+  }
+  return textarea;
+}
+
+function manualRunnerPanel() {
+  const panel = container?.querySelector<HTMLElement>("[aria-label='Manual runner coding loop']");
+  if (!panel) {
+    throw new Error("Manual runner panel not found");
+  }
+  return panel;
+}
+
+function manualRunnerDraftTextarea() {
+  const textarea = manualRunnerPanel().querySelector<HTMLTextAreaElement>("textarea");
+  if (!textarea) {
+    throw new Error("Manual runner draft textarea not found");
   }
   return textarea;
 }

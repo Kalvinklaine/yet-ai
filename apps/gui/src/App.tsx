@@ -18,8 +18,8 @@ import { codingActions, type CodingAction } from "./services/codingActions";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
-const agentProgressSnapshotDisplayLimit = 20;
-const agentProgressRecentEventDisplayLimit = 12;
+const agentProgressSnapshotDisplayLimit = 18;
+const agentProgressRecentEventDisplayLimit = 11;
 export const completedIdeActionRequestChatsLimit = 64;
 export const completedApplyRequestChatsLimit = 64;
 const ignoredDuplicateApplyResultNote = sanitizeDisplayText("Ignored duplicate host apply result.");
@@ -270,6 +270,7 @@ export function App() {
   const [conversationNotice, setConversationNotice] = useState<string | null>(null);
   const [compactConversationsOpen, setCompactConversationsOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
+  const [manualRunnerDraftPlan, setManualRunnerDraftPlan] = useState("");
   const [chatView, setChatView] = useState(() => createInitialChatViewState("chat-001"));
   const [chatLifecycleState, setChatLifecycleState] = useState<ChatLifecycleState>("idle");
   const [timeline, setTimeline] = useState<string[]>([]);
@@ -418,7 +419,7 @@ export function App() {
   const pendingActiveFileExcerpt = pendingIdeActionRequestIdRef.current !== null && ideActionAttempt?.action === "getActiveFileExcerpt" && (ideActionAttempt.status === "pending" || ideActionAttempt.status === "inProgress");
   const activeFilePromptAction = useMemo(() => currentActiveFileExcerpt ? buildActiveFilePromptAction(currentActiveFileExcerpt) : null, [currentActiveFileExcerpt]);
   const chatHistoryStatus = conversationHistoryStatusLabel({ loading: chatHistoryLoading, current: chatHistoryCurrent, count: activeChatSummaries.length, hasError: Boolean(chatHistoryError) });
-  const showAppliedEditVerificationStep = activeEditProposal !== null && applyResult?.proposalRequestId === activeEditProposal.requestId && applyResult.payload.status === "applied";
+  const showAppliedEditVerificationStep = applyResult?.payload.status === "applied";
 
   useEffect(() => {
     setRuntimeDetailsOpen(!runtimeConnected);
@@ -2019,6 +2020,7 @@ export function App() {
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
+                <ManualRunnerPanel host={bridgeHost} draftPlan={manualRunnerDraftPlan} hasContext={Boolean((currentAttachedContext && hasUsableAttachedContext(currentAttachedContext)) || explicitContextBundleItems.length > 0)} hasPrompt={Boolean(chatInput.trim())} hasAssistantActivity={chatView.messages.some((message) => message.role === "assistant") || chatLifecycleState !== "idle"} hasEditProposal={Boolean(activeEditProposal)} applyResult={applyResult} verificationAttempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} verificationAttached={Boolean(attachedVerificationKey)} canSendChat={canSendChat} onDraftPlanChange={setManualRunnerDraftPlan} onFocusPrompt={() => chatInputRef.current?.focus()} />
                 <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} promptAction={activeFilePromptAction} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onClearPending={clearPendingIdeActionState} onIncludeChange={setIncludeAttachedContext} onApplyPrompt={applyActiveFilePrompt} onAddToBundle={addActiveFileExcerptToBundle} />
                 <WorkspaceSnippetSearchPanel host={bridgeHost} query={workspaceSnippetQuery} result={workspaceSnippetResult} selectedKeys={selectedWorkspaceSnippetKeys} pending={ideActionAttempt?.action === "searchWorkspaceSnippets" && (ideActionAttempt.status === "pending" || ideActionAttempt.status === "inProgress")} status={workspaceSnippetStatus} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onQueryChange={setWorkspaceSnippetQuery} onSearch={searchWorkspaceSnippets} onClearPending={clearPendingIdeActionState} onSelectionChange={setSelectedWorkspaceSnippetKeys} onAttachSelected={attachSelectedWorkspaceSnippetsToBundle} />
                 <ExplicitContextBundlePanel items={explicitContextBundleItems} include={includeExplicitContextBundle} status={explicitContextBundleStatus} onIncludeChange={setIncludeExplicitContextBundle} onRemove={removeExplicitContextBundleItem} onClear={() => clearExplicitContextBundle("Cleared the one-shot explicit context bundle.")} />
@@ -2532,6 +2534,62 @@ function FirstMessageActionButton({ action, runtimeRefreshInFlight, providerTest
     return <button type="button" onClick={() => onTestProvider(action.providerId)} disabled={testing}>{testing ? "Testing provider…" : action.label}</button>;
   }
   return <button type="button" onClick={onFocusPrompt}>{action.label}</button>;
+}
+
+type ManualRunnerStepState = "done" | "current" | "waiting";
+
+type ManualRunnerStep = {
+  label: string;
+  detail: string;
+  state: ManualRunnerStepState;
+};
+
+function ManualRunnerPanel({ host, draftPlan, hasContext, hasPrompt, hasAssistantActivity, hasEditProposal, applyResult, verificationAttempt, verificationAttached, canSendChat, onDraftPlanChange, onFocusPrompt }: { host: BridgeHost; draftPlan: string; hasContext: boolean; hasPrompt: boolean; hasAssistantActivity: boolean; hasEditProposal: boolean; applyResult: ApplyResultState | null; verificationAttempt: IdeActionAttemptState | null; verificationAttached: boolean; canSendChat: boolean; onDraftPlanChange: (plan: string) => void; onFocusPrompt: () => void }) {
+  const supported = host === "vscode" || host === "jetbrains";
+  const applySettled = applyResult?.payload.status === "applied" || applyResult?.payload.status === "denied" || applyResult?.payload.status === "rejected" || applyResult?.payload.status === "failed";
+  const applied = applyResult?.payload.status === "applied";
+  const verified = verificationAttempt?.result?.action === "runVerificationCommand" && (verificationAttempt.result.status === "succeeded" || verificationAttempt.result.status === "failed");
+  const steps: ManualRunnerStep[] = [
+    { label: "1. Draft plan", detail: draftPlan.trim() ? "Local draft plan is written in this panel." : "Write a short plan here; it stays in React state only.", state: draftPlan.trim() ? "done" : "current" },
+    { label: "2. Attach context", detail: hasContext ? "Context is ready for your next explicit Send." : "Use active file, multi-file bundle, or project snippets below when needed.", state: hasContext ? "done" : draftPlan.trim() ? "current" : "waiting" },
+    { label: "3. Ask model", detail: hasAssistantActivity ? "Chat activity exists for this loop." : hasPrompt ? "Prompt is drafted; click Send when ready." : "Use the chat box; nothing is sent by this panel.", state: hasAssistantActivity ? "done" : hasPrompt || hasContext ? "current" : "waiting" },
+    { label: "4. Review safe edit proposal", detail: hasEditProposal ? "Review the latest proposal card before applying." : "Wait for a bounded assistant proposal, or continue in chat.", state: applied ? "done" : hasEditProposal ? "current" : "waiting" },
+    { label: "5. Apply after explicit confirmation", detail: applied ? "Host reported edits applied after confirmation." : applySettled ? "Host returned an apply result; review it before continuing." : "Use the proposal card apply button only after review.", state: applied ? "done" : applySettled ? "done" : hasEditProposal ? "current" : "waiting" },
+    { label: "6. Run verification", detail: verified ? "Verification result is visible in the verification panel." : "Click one allowlisted verification command when ready.", state: verified ? "done" : applied ? "current" : "waiting" },
+    { label: "7. Attach verification result / continue", detail: verificationAttached ? "Verification output is attached as explicit one-shot context." : verified ? "Attach the result or continue with a follow-up prompt." : "No verification output is attached automatically.", state: verificationAttached ? "done" : verified ? "current" : "waiting" },
+  ];
+  const currentStep = [...steps].reverse().find((step) => step.state === "current") ?? steps[steps.length - 1];
+  return (
+    <section className={`manual-runner-card readiness-card ${currentStep.state === "waiting" ? "warn" : "ready"}`} aria-label="Manual runner coding loop">
+      <div className="row">
+        <strong>Manual runner · Coding loop</strong>
+        <span className={`badge ${supported ? "ok" : "warn"}`}>{supported ? `${host} explicit controls` : "browser preview only"}</span>
+        <span className="badge">manual only</span>
+      </div>
+      <span className="subtle">Progress guide only. It never auto-sends, auto-attaches context, auto-applies edits, auto-runs verification, reads hidden files, or writes browser storage. A very sleepy guardrail, but awake enough.</span>
+      {!supported && <span className="subtle">Browser preview can draft and chat with the runtime, but IDE context, apply, and verification buttons stay preview/manual until an IDE host is available.</span>}
+      <label className="stack manual-runner-plan">
+        Draft plan (local UI state only)
+        <textarea value={draftPlan} onChange={(event) => onDraftPlanChange(event.target.value)} placeholder="Example: inspect context, ask model, review proposal, apply only after confirmation, run verification." />
+      </label>
+      <div className="manual-runner-current" role="status">
+        <strong>Current step: {currentStep.label}</strong>
+        <span>{currentStep.detail}</span>
+      </div>
+      <ol className="manual-runner-steps" aria-label="Manual coding loop steps">
+        {steps.map((step) => (
+          <li className={`manual-runner-step ${step.state}`} key={step.label}>
+            <strong>{step.label}</strong>
+            <span>{step.detail}</span>
+          </li>
+        ))}
+      </ol>
+      <div className="row">
+        <button type="button" className="secondary-button" onClick={onFocusPrompt} disabled={!canSendChat}>Focus chat prompt</button>
+        {!canSendChat && <span className="subtle">Connect runtime and choose Demo Mode or a BYOK provider before Send is available.</span>}
+      </div>
+    </section>
+  );
 }
 
 function ActiveFileExcerptAttachPanel({ host, excerpt, include, pending, status, promptAction, canAddToBundle, onRequest, onClearPending, onIncludeChange, onApplyPrompt, onAddToBundle }: { host: BridgeHost; excerpt: ActiveFileExcerptAttachment | null; include: boolean; pending: boolean; status: string | null; promptAction: ActiveFilePromptAction | null; canAddToBundle: boolean; onRequest: () => void; onClearPending: () => void; onIncludeChange: (include: boolean) => void; onApplyPrompt: (action: ActiveFilePromptAction) => void; onAddToBundle: () => void }) {

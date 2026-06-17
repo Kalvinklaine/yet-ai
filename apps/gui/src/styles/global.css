@@ -608,6 +608,48 @@ pre,
   padding: 10px 12px;
 }
 
+.manual-runner-card {
+  padding: 10px 12px;
+}
+
+.manual-runner-plan {
+  font-weight: 700;
+}
+
+.manual-runner-plan textarea {
+  min-height: 58px;
+  max-height: 96px;
+  font-size: 14px;
+}
+
+.manual-runner-current {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #cdd8ff;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.manual-runner-steps {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.manual-runner-step {
+  color: #65728a;
+}
+
+.manual-runner-step.current {
+  color: #2441a1;
+}
+
+.manual-runner-step.done {
+  color: #167347;
+}
+
 .coding-actions-row {
   display: flex;
   flex-wrap: wrap;
@@ -1084,6 +1126,8 @@ pre,
 
 .host-vscode .attached-context-compact,
 .host-jetbrains .attached-context-compact,
+.host-vscode .manual-runner-card,
+.host-jetbrains .manual-runner-card,
 .host-vscode .coding-actions-card,
 .host-jetbrains .coding-actions-card,
 .host-vscode .ide-actions-card,
@@ -1093,15 +1137,31 @@ pre,
 }
 
 .host-vscode .coding-actions-card .stack,
-.host-jetbrains .coding-actions-card .stack {
+.host-jetbrains .coding-actions-card .stack,
+.host-vscode .manual-runner-card,
+.host-jetbrains .manual-runner-card {
   gap: 6px;
 }
 
 .host-vscode .coding-actions-card .subtle,
 .host-jetbrains .coding-actions-card .subtle,
+.host-vscode .manual-runner-card .subtle,
+.host-jetbrains .manual-runner-card .subtle,
 .host-jetbrains .ide-actions-card .subtle,
 .host-vscode .attached-context-preview,
 .host-jetbrains .attached-context-preview {
+  display: none;
+}
+
+.host-vscode .manual-runner-plan textarea,
+.host-jetbrains .manual-runner-plan textarea {
+  min-height: 42px;
+  max-height: 54px;
+  resize: none;
+}
+
+.host-vscode .manual-runner-steps,
+.host-jetbrains .manual-runner-steps {
   display: none;
 }
 
