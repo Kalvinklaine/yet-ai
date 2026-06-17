@@ -571,6 +571,8 @@ flowchart TD
 
 The approved near-term implementation sequence is local-first and incremental. Foundation phases 1-6 now have buildable MVP baselines, but they remain development scaffolds and require hardening before production packaging or privileged workflows.
 
+Sprint 20 closed the manual runner MVP as a progress-only GUI and smoke layer on top of the existing prompt-context, safe-edit, verification-command, and sanitized agent-progress contracts. The final Critical/High audit found no introduced autonomous action, hidden read/search, free-form shell/git/task/tool execution, auto-send, auto-apply, auto-run verification, raw prompt/provider/secret/private-path leakage, browser-storage persistence, production account-login overclaim, or hosted/cloud requirement. The manual runner remains a user-driven guide only; any future runner authority must go through separate architecture, contracts, confirmation policy, and verification.
+
 ### 1. Local runtime skeleton — MVP baseline complete
 
 - Implemented a minimal Rust local runtime with `/v1/ping`, `/v1/caps`, loopback binding, bearer-token authentication, identity-aware storage names, SSE chat plumbing, and a separate read-only stdio LSP MVP for bounded editor-supplied document lifecycle plus deterministic local completion/hover status proofs and bounded document-symbol support.
