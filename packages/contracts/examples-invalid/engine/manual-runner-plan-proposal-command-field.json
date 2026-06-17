@@ -1,0 +1,11 @@
+{
+  "protocolVersion": "2026-05-29",
+  "kind": "manual_runner_plan_proposal",
+  "title": "Unsafe proposal",
+  "steps": [
+    "Run repository validation"
+  ],
+  "rationale": "This tries to carry execution material.",
+  "nextAction": "User may review the proposal",
+  "command": "npm run check"
+}

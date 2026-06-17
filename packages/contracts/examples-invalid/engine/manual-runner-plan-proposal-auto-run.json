@@ -1,0 +1,10 @@
+{
+  "protocolVersion": "2026-05-29",
+  "kind": "manual_runner_plan_proposal",
+  "title": "Unsafe proposal",
+  "steps": [
+    "Inspect bounded labels"
+  ],
+  "rationale": "This tries to authorize unattended behavior.",
+  "nextAction": "Auto run verification"
+}

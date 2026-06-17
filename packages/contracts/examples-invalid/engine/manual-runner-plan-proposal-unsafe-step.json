@@ -1,0 +1,10 @@
+{
+  "protocolVersion": "2026-05-29",
+  "kind": "manual_runner_plan_proposal",
+  "title": "Unsafe proposal",
+  "steps": [
+    "Run npm run check"
+  ],
+  "rationale": "This tries to include a command string inside a label.",
+  "nextAction": "User may review the proposal"
+}

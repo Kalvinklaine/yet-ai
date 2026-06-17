@@ -1,0 +1,12 @@
+{
+  "protocolVersion": "2026-05-29",
+  "kind": "manual_runner_plan_proposal",
+  "title": "Review focused contract update",
+  "steps": [
+    "Inspect the relevant strict schemas",
+    "Adjust bounded proposal fixtures",
+    "Run the required validation gate"
+  ],
+  "rationale": "Keep the user driven runner visible while preserving the current authority boundary.",
+  "nextAction": "User may review the proposal"
+}
