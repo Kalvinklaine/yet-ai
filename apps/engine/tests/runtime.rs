@@ -4606,6 +4606,21 @@ fn valid_agent_progress_event() -> Value {
     })
 }
 
+fn valid_manual_runner_plan_proposal() -> Value {
+    json!({
+        "protocolVersion": "2026-05-29",
+        "kind": "manual_runner_plan_proposal",
+        "title": "Review local provider readiness",
+        "steps": [
+            "Inspect readiness state",
+            "Confirm local model labels",
+            "Summarize verification choices"
+        ],
+        "rationale": "Display the proposed review path before any user-mediated action.",
+        "nextAction": "Ask the user to review the proposal"
+    })
+}
+
 #[tokio::test]
 async fn agent_progress_event_accepts_bounded_sanitized_ide_action_metadata() {
     let app = test_app();
@@ -4639,6 +4654,111 @@ async fn agent_progress_event_accepts_bounded_sanitized_ide_action_metadata() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(listed["snapshots"][0]["runId"], "ide-run-1");
+}
+
+#[tokio::test]
+async fn agent_progress_event_accepts_inert_manual_runner_plan_proposal() {
+    let app = test_app();
+    let mut event = valid_agent_progress_event();
+    event["eventId"] = json!("plan-proposal-evt-1");
+    event["runId"] = json!("plan-proposal-run-1");
+    event["cardId"] = json!("T-890");
+    event["message"] = json!("Manual runner displayed an inert plan proposal.");
+    event["planProposal"] = valid_manual_runner_plan_proposal();
+    event.as_object_mut().unwrap().remove("ideAction");
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/agent-progress/events",
+            Body::from(event.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["snapshots"][0]["planProposal"]["kind"],
+        "manual_runner_plan_proposal"
+    );
+    assert_eq!(
+        body["snapshots"][0]["planProposal"]["title"],
+        "Review local provider readiness"
+    );
+    assert_eq!(
+        body["snapshots"][0]["planProposal"]["steps"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+
+    let (status, listed) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/agent-progress", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        listed["snapshots"][0]["planProposal"]["nextAction"],
+        "Ask the user to review the proposal"
+    );
+    let text = listed.to_string().to_lowercase();
+    for forbidden in [
+        "shell", "command", "autorun", "secret", "token", "bearer", "/users/",
+    ] {
+        assert!(!text.contains(forbidden));
+    }
+}
+
+#[tokio::test]
+async fn agent_progress_event_rejects_unsafe_manual_runner_plan_proposal() {
+    let mut unsafe_label = valid_agent_progress_event();
+    unsafe_label["eventId"] = json!("plan-proposal-unsafe-label");
+    unsafe_label["message"] = json!("Manual runner displayed an inert plan proposal.");
+    unsafe_label["planProposal"] = valid_manual_runner_plan_proposal();
+    unsafe_label["planProposal"]["steps"][0] = json!("Run shell command npm run check");
+    unsafe_label.as_object_mut().unwrap().remove("ideAction");
+
+    let mut command_field = valid_agent_progress_event();
+    command_field["eventId"] = json!("plan-proposal-command-field");
+    command_field["message"] = json!("Manual runner displayed an inert plan proposal.");
+    command_field["planProposal"] = valid_manual_runner_plan_proposal();
+    command_field["planProposal"]["command"] = json!("npm run check");
+    command_field.as_object_mut().unwrap().remove("ideAction");
+
+    let mut too_many_steps = valid_agent_progress_event();
+    too_many_steps["eventId"] = json!("plan-proposal-too-many-steps");
+    too_many_steps["message"] = json!("Manual runner displayed an inert plan proposal.");
+    too_many_steps["planProposal"] = valid_manual_runner_plan_proposal();
+    too_many_steps["planProposal"]["steps"] = json!([
+        "Inspect readiness state",
+        "Confirm local model labels",
+        "Summarize verification choices",
+        "Review UI status labels",
+        "Check docs wording",
+        "Prepare response summary",
+        "Extra display label"
+    ]);
+    too_many_steps.as_object_mut().unwrap().remove("ideAction");
+
+    for event in [unsafe_label, command_field, too_many_steps] {
+        let (status, body) = json_response(authed_request(
+            Method::POST,
+            "/v1/agent-progress/events",
+            Body::from(event.to_string()),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let error = body["error"].as_str().unwrap_or_default();
+        assert!(matches!(
+            error,
+            "agent progress unavailable" | "invalid request body"
+        ));
+        let text = body.to_string().to_lowercase();
+        assert!(!text.contains("npm run check"));
+        assert!(!text.contains("shell command"));
+    }
 }
 
 #[tokio::test]
@@ -5183,6 +5303,59 @@ async fn agent_progress_valid_local_source_returns_populated_list() {
             .len(),
         2
     );
+}
+
+#[tokio::test]
+async fn agent_progress_local_source_accepts_inert_manual_runner_plan_proposal() {
+    let paths = test_storage_paths();
+    let mut snapshot = valid_agent_progress_snapshot(1, 1);
+    snapshot["message"] = json!("Manual runner displayed an inert plan proposal.");
+    snapshot["planProposal"] = valid_manual_runner_plan_proposal();
+    write_agent_progress_source(
+        &paths,
+        &json!({
+            "cloudRequired": false,
+            "providerAccess": "direct",
+            "snapshots": [snapshot]
+        })
+        .to_string(),
+    );
+
+    let (status, body) = agent_progress_response_for_paths(paths).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["snapshots"][0]["planProposal"]["kind"],
+        "manual_runner_plan_proposal"
+    );
+    assert_eq!(
+        body["snapshots"][0]["planProposal"]["steps"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+}
+
+#[tokio::test]
+async fn agent_progress_local_source_rejects_unsafe_manual_runner_plan_proposal() {
+    let paths = test_storage_paths();
+    let mut snapshot = valid_agent_progress_snapshot(1, 1);
+    snapshot["message"] = json!("Manual runner displayed an inert plan proposal.");
+    snapshot["planProposal"] = valid_manual_runner_plan_proposal();
+    snapshot["planProposal"]["nextAction"] = json!("Auto-run shell command npm run check");
+    write_agent_progress_source(
+        &paths,
+        &json!({
+            "cloudRequired": false,
+            "providerAccess": "direct",
+            "snapshots": [snapshot]
+        })
+        .to_string(),
+    );
+
+    let (status, body) = agent_progress_response_for_paths(paths.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_agent_progress_error_is_sanitized(&body, &["Auto-run", "npm run check"], &paths);
 }
 
 #[tokio::test]

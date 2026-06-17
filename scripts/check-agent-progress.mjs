@@ -235,6 +235,52 @@ async function runAssertions() {
   assert.equal(done.completedAt, "2026-05-29T12:59:00Z");
   assert.equal(done.stuckReason, "none");
 
+  const planProposal = {
+    protocolVersion: "2026-05-29",
+    kind: "manual_runner_plan_proposal",
+    title: "Review local provider readiness",
+    steps: ["Inspect readiness state", "Confirm local model labels"],
+    rationale: "Display the proposed review path before any user-mediated action.",
+    nextAction: "Ask the user to review the proposal"
+  };
+  const planProposalSnapshot = reduceAgentProgress(
+    [
+      event({
+        eventId: "evt-plan-proposal-001",
+        timestamp: "2026-05-29T12:59:00Z",
+        phase: "reading_context",
+        status: "running",
+        message: "Manual runner displayed an inert plan proposal.",
+        planProposal
+      })
+    ],
+    { now: NOW }
+  );
+  assert.deepEqual(planProposalSnapshot.planProposal, planProposal);
+  assertNoSensitiveContent(planProposalSnapshot);
+  for (const forbidden of ["shell", "command", "auto-run", "npm run", "cargo test"]) {
+    assert.equal(serialized(planProposalSnapshot).toLowerCase().includes(forbidden), false, `plan proposal leaked ${forbidden}`);
+  }
+
+  const unsafePlanProposalSnapshot = reduceAgentProgress(
+    [
+      event({
+        eventId: "evt-plan-proposal-unsafe",
+        timestamp: "2026-05-29T12:59:00Z",
+        phase: "reading_context",
+        status: "running",
+        message: "Manual runner displayed an inert plan proposal.",
+        planProposal: {
+          ...planProposal,
+          steps: ["Run shell command npm run check"]
+        }
+      })
+    ],
+    { now: NOW }
+  );
+  assert.equal(unsafePlanProposalSnapshot.planProposal, undefined);
+  assertNoSensitiveContent(unsafePlanProposalSnapshot);
+
   const unordered = [
     event({
       eventId: "evt-order-003",

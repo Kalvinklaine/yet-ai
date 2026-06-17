@@ -100,6 +100,8 @@ pub struct AgentProgressSnapshot {
     pub stuck_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overflow_recovery: Option<AgentProgressOverflowRecovery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_proposal: Option<ManualRunnerPlanProposal>,
     pub recent_events: Vec<AgentProgressRecentEvent>,
 }
 
@@ -152,6 +154,19 @@ pub struct AgentProgressEvent {
     pub output_tail: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ide_action: Option<AgentProgressIdeAction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_proposal: Option<ManualRunnerPlanProposal>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManualRunnerPlanProposal {
+    pub protocol_version: String,
+    pub kind: String,
+    pub title: String,
+    pub steps: Vec<String>,
+    pub rationale: String,
+    pub next_action: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -266,6 +281,9 @@ fn upsert_event_snapshot(response: &mut AgentProgressListResponse, event: AgentP
         snapshot.message = event.message;
         snapshot.current_tool = event.tool;
         snapshot.output_tail = event.output_tail;
+        if event.plan_proposal.is_some() {
+            snapshot.plan_proposal = event.plan_proposal;
+        }
         if let Some(heartbeat) = event.heartbeat {
             snapshot.last_heartbeat_at = Some(heartbeat.last_heartbeat_at);
             snapshot.last_tool_output_at = heartbeat.last_tool_output_at;
@@ -308,6 +326,7 @@ fn upsert_event_snapshot(response: &mut AgentProgressListResponse, event: AgentP
             output_tail: event.output_tail,
             stuck_reason: None,
             overflow_recovery: None,
+            plan_proposal: event.plan_proposal,
             recent_events: vec![recent_event],
         },
     );
@@ -455,6 +474,9 @@ fn validate_snapshot(snapshot: &AgentProgressSnapshot) -> Result<(), AgentProgre
         validate_enum(&snapshot.status, &["failed", "stuck", "stalled"])?;
         validate_overflow_recovery(overflow_recovery)?;
     }
+    if let Some(plan_proposal) = &snapshot.plan_proposal {
+        validate_plan_proposal(plan_proposal)?;
+    }
     for event in &snapshot.recent_events {
         validate_recent_event(event)?;
     }
@@ -518,6 +540,37 @@ fn validate_event(event: &AgentProgressEvent) -> Result<(), AgentProgressError> 
     }
     if let Some(ide_action) = &event.ide_action {
         validate_ide_action(ide_action)?;
+    }
+    if let Some(plan_proposal) = &event.plan_proposal {
+        validate_plan_proposal(plan_proposal)?;
+    }
+    Ok(())
+}
+
+fn validate_plan_proposal(proposal: &ManualRunnerPlanProposal) -> Result<(), AgentProgressError> {
+    if proposal.protocol_version != "2026-05-29" || proposal.kind != "manual_runner_plan_proposal" {
+        return Err(AgentProgressError::Unavailable);
+    }
+    validate_plan_string(&proposal.title, 1, 80)?;
+    if proposal.steps.is_empty() || proposal.steps.len() > 6 {
+        return Err(AgentProgressError::Unavailable);
+    }
+    for step in &proposal.steps {
+        validate_plan_string(step, 1, 140)?;
+    }
+    validate_plan_string(&proposal.rationale, 1, 280)?;
+    validate_plan_string(&proposal.next_action, 1, 140)?;
+    Ok(())
+}
+
+fn validate_plan_string(
+    value: &str,
+    min_length: usize,
+    max_length: usize,
+) -> Result<(), AgentProgressError> {
+    validate_safe_string(value, min_length, max_length)?;
+    if contains_unsafe_plan_text(value) {
+        return Err(AgentProgressError::Unavailable);
     }
     Ok(())
 }
@@ -617,9 +670,30 @@ fn is_secret_like_path_segment(value: &str) -> bool {
         || lower == "apikey"
         || lower == "api_key"
         || lower == "api-key"
-        || ["auth", "credential", "credentials", "password", "secret", "token", "access_token", "access-token", "api_key", "api-key"]
-            .iter()
-            .any(|marker| lower.starts_with(&format!("{marker}.")) || lower.starts_with(&format!("{marker}-")) || lower.starts_with(&format!("{marker}_")) || lower.ends_with(&format!(".{marker}")) || lower.ends_with(&format!("-{marker}")) || lower.ends_with(&format!("_{marker}")) || lower.contains(&format!(".{marker}.")) || lower.contains(&format!("-{marker}-")) || lower.contains(&format!("_{marker}_")))
+        || [
+            "auth",
+            "credential",
+            "credentials",
+            "password",
+            "secret",
+            "token",
+            "access_token",
+            "access-token",
+            "api_key",
+            "api-key",
+        ]
+        .iter()
+        .any(|marker| {
+            lower.starts_with(&format!("{marker}."))
+                || lower.starts_with(&format!("{marker}-"))
+                || lower.starts_with(&format!("{marker}_"))
+                || lower.ends_with(&format!(".{marker}"))
+                || lower.ends_with(&format!("-{marker}"))
+                || lower.ends_with(&format!("_{marker}"))
+                || lower.contains(&format!(".{marker}."))
+                || lower.contains(&format!("-{marker}-"))
+                || lower.contains(&format!("_{marker}_"))
+        })
 }
 
 fn validate_tool(tool: &AgentProgressToolSummary) -> Result<(), AgentProgressError> {
@@ -782,11 +856,16 @@ fn validate_timestamp(value: &str) -> Result<(), AgentProgressError> {
 }
 
 fn has_utc_z_timestamp_shape(value: &str) -> bool {
-    let (main, suffix) = match value.strip_suffix('Z').and_then(|value| value.split_once('.').map_or(Some((value, "")), |parts| Some(parts))) {
+    let (main, suffix) = match value.strip_suffix('Z').and_then(|value| {
+        value
+            .split_once('.')
+            .map_or(Some((value, "")), |parts| Some(parts))
+    }) {
         Some(parts) => parts,
         None => return false,
     };
-    if !matches!(main.as_bytes(), [d0, d1, d2, d3, b'-', d5, d6, b'-', d8, d9, b'T', d11, d12, b':', d14, d15, b':', d17, d18] if [d0, d1, d2, d3, d5, d6, d8, d9, d11, d12, d14, d15, d17, d18].iter().all(|ch| ch.is_ascii_digit())) {
+    if !matches!(main.as_bytes(), [d0, d1, d2, d3, b'-', d5, d6, b'-', d8, d9, b'T', d11, d12, b':', d14, d15, b':', d17, d18] if [d0, d1, d2, d3, d5, d6, d8, d9, d11, d12, d14, d15, d17, d18].iter().all(|ch| ch.is_ascii_digit()))
+    {
         return false;
     }
     suffix.is_empty() || (suffix.len() <= 6 && suffix.bytes().all(|ch| ch.is_ascii_digit()))
@@ -842,9 +921,11 @@ fn contains_unsafe_text(value: &str) -> bool {
             return true;
         }
     }
-    if ["/users", "/home", "/tmp", "/var", "/etc", "/opt", "/mnt", "/volumes", "/private"]
-        .iter()
-        .any(|root| has_private_root_marker(&lower, root))
+    if [
+        "/users", "/home", "/tmp", "/var", "/etc", "/opt", "/mnt", "/volumes", "/private",
+    ]
+    .iter()
+    .any(|root| has_private_root_marker(&lower, root))
     {
         return true;
     }
@@ -882,6 +963,33 @@ fn contains_unsafe_text(value: &str) -> bool {
     value.contains(":\\") || value.contains(":/")
 }
 
+fn contains_unsafe_plan_text(value: &str) -> bool {
+    let normalized = value
+        .to_lowercase()
+        .chars()
+        .filter(|value| !matches!(value, '-' | '_' | ' '))
+        .collect::<String>();
+    for marker in [
+        "shell",
+        "git",
+        "tool",
+        "task",
+        "patch",
+        "apply",
+        "exec",
+        "cmd",
+        "command",
+        "autorun",
+        "hiddenread",
+    ] {
+        if normalized.contains(marker) {
+            return true;
+        }
+    }
+    let lower = value.to_lowercase();
+    lower.contains("npm run") || lower.contains("cargo check") || lower.contains("cargo test")
+}
+
 fn has_private_root_marker(value: &str, root: &str) -> bool {
     let mut start = 0;
     while let Some(offset) = value[start..].find(root) {
@@ -917,15 +1025,26 @@ mod tests {
             "secret/local.env",
             "src/sk-proj-abcdef1234567890.txt",
         ] {
-            assert!(validate_safe_relative_path(path).is_err(), "{path} should be rejected");
+            assert!(
+                validate_safe_relative_path(path).is_err(),
+                "{path} should be rejected"
+            );
         }
     }
 
     #[test]
     fn agent_progress_card_id_rejects_secret_like_markers() {
         assert!(validate_card_id("CARD-123_ok").is_ok());
-        for card_id in ["token-card", "AuthorizationBearerFake", "card-sk-abcdef1234567890", "sk-proj-abcdef1234567890"] {
-            assert!(validate_card_id(card_id).is_err(), "{card_id} should be rejected");
+        for card_id in [
+            "token-card",
+            "AuthorizationBearerFake",
+            "card-sk-abcdef1234567890",
+            "sk-proj-abcdef1234567890",
+        ] {
+            assert!(
+                validate_card_id(card_id).is_err(),
+                "{card_id} should be rejected"
+            );
         }
     }
 

@@ -3,6 +3,10 @@ const MAX_MESSAGE_LENGTH = 280;
 const MAX_TOOL_LABEL_LENGTH = 160;
 const MAX_OUTPUT_TAIL_LENGTH = 2000;
 const MAX_OVERFLOW_RECOVERY_MESSAGE_LENGTH = 320;
+const MAX_PLAN_TITLE_LENGTH = 80;
+const MAX_PLAN_LABEL_LENGTH = 140;
+const MAX_PLAN_RATIONALE_LENGTH = 280;
+const MAX_PLAN_STEPS = 6;
 const MAX_RECENT_EVENTS = 20;
 const MAX_ELAPSED_MS = 604800000;
 const MAX_TOOL_ELAPSED_MS = 86400000;
@@ -67,6 +71,25 @@ function clampDuration(value, max = MAX_ELAPSED_MS) {
 function boundedText(value, maxLength, fallback) {
   const text = sanitizeText(value, maxLength);
   return text.length > 0 ? text : fallback;
+}
+
+function containsUnsafePlanText(value) {
+  const normalized = value.toLowerCase().replace(/[-_ ]/g, "");
+  for (const marker of ["shell", "git", "tool", "task", "patch", "apply", "exec", "cmd", "command", "autorun", "hiddenread"]) {
+    if (normalized.includes(marker)) {
+      return true;
+    }
+  }
+  const lower = value.toLowerCase();
+  return lower.includes("npm run") || lower.includes("cargo check") || lower.includes("cargo test");
+}
+
+function boundedPlanText(value, maxLength) {
+  const text = sanitizeText(value, maxLength);
+  if (text.length === 0 || containsUnsafePlanText(text)) {
+    return undefined;
+  }
+  return text;
 }
 
 function redactUnsafeText(value) {
@@ -226,6 +249,33 @@ function sanitizeTool(tool, nowMs) {
   return summary;
 }
 
+function sanitizePlanProposal(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  if (value.protocolVersion !== PROTOCOL_VERSION || value.kind !== "manual_runner_plan_proposal") {
+    return undefined;
+  }
+  if (!Array.isArray(value.steps) || value.steps.length < 1 || value.steps.length > MAX_PLAN_STEPS) {
+    return undefined;
+  }
+  const title = boundedPlanText(value.title, MAX_PLAN_TITLE_LENGTH);
+  const steps = value.steps.map((step) => boundedPlanText(step, MAX_PLAN_LABEL_LENGTH));
+  const rationale = boundedPlanText(value.rationale, MAX_PLAN_RATIONALE_LENGTH);
+  const nextAction = boundedPlanText(value.nextAction, MAX_PLAN_LABEL_LENGTH);
+  if (title === undefined || steps.some((step) => step === undefined) || rationale === undefined || nextAction === undefined) {
+    return undefined;
+  }
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    kind: "manual_runner_plan_proposal",
+    title,
+    steps,
+    rationale,
+    nextAction
+  };
+}
+
 function sanitizeEvent(event, index, nowMs) {
   const timestamp = toIso(event?.timestamp);
   if (timestamp === undefined) {
@@ -275,6 +325,11 @@ function sanitizeEvent(event, index, nowMs) {
   const overflowRecovery = classifyOverflowRecoveryText(rawMessage) ?? classifyOverflowRecoveryText(rawOutputTail) ?? sanitizeOverflowRecovery(event?.overflowRecovery);
   if (overflowRecovery !== undefined) {
     sanitized.overflowRecovery = overflowRecovery;
+  }
+
+  const planProposal = sanitizePlanProposal(event?.planProposal);
+  if (planProposal !== undefined) {
+    sanitized.planProposal = planProposal;
   }
 
   return sanitized;
@@ -433,6 +488,11 @@ function reduceAgentProgress(events, options = {}) {
   const overflowRecovery = mostRecentBy(normalizedEvents, classifyOverflowRecovery);
   if (overflowRecovery !== undefined && (status === "failed" || status === "stuck" || status === "stalled")) {
     snapshot.overflowRecovery = overflowRecovery;
+  }
+
+  const planProposal = mostRecentBy(normalizedEvents, (event) => event.planProposal);
+  if (planProposal !== undefined) {
+    snapshot.planProposal = planProposal;
   }
 
   if (lastHeartbeatAt !== undefined) {
