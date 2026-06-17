@@ -158,7 +158,7 @@ try {
   }, { version: bridgeVersion, text: contextText });
   await expectVisibleText(page, "Active editor context", "VS Code active context bridge delivery");
 
-  await page.locator("textarea").fill(userMessageText);
+  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(userMessageText);
   await sendButton(page).click();
   await expectVisibleText(page, userMessageText, "visible user first message", 20_000);
   await expectVisibleText(page, assistantText, "mock SSE assistant response", 20_000);

@@ -137,7 +137,7 @@ async function collectLayoutMetrics(page, scenario) {
     };
     const withinViewport = (box) => Boolean(box && box.width > 0 && box.height > 0 && box.top >= 0 && box.left >= 0 && box.bottom <= scenarioInfo.height && box.right <= scenarioInfo.width);
     const send = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Send");
-    const textarea = document.querySelector("textarea");
+    const textarea = document.querySelector("textarea[placeholder='Ask about the current file, selection, or project...']");
     const details = document.querySelector("[data-testid='attached-context-active-details']");
     const scroll = rect(".chat-scroll-region");
     const composer = rect(".chat-composer");

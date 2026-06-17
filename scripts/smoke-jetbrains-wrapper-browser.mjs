@@ -1848,7 +1848,6 @@ async function injectJetBrainsAssistantProposal(page, frameLocator, proposal) {
   await page.evaluate(({ version, payload }) => window.__yetAiSetNextAssistantResponseForSmoke?.(JSON.stringify({
     type: "gui.applyWorkspaceEditRequest",
     version,
-    requestId: "assistant-smoke-request-id-must-be-ignored",
     payload,
   })), { version: bridgeVersion, payload: proposal });
   await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill("Render JetBrains confirmed edit smoke proposal.");
