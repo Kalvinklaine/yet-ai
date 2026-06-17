@@ -148,6 +148,20 @@ The IDE-bundled `yet-lsp` is staged from the local or CI Cargo build output for 
 
 Future production packaging should be split into explicit implementation cards rather than hidden inside preview helpers. Required decision points include VS Code publisher/listing workflow, JetBrains Marketplace vendor/listing workflow, signing identities, macOS notarization/hardening, Windows signing, Linux packaging expectations, release artifact naming, updater behavior, checksum/signature publication, rollback/retention policy, license/notice material, and manual release approval gates. Until those cards land, docs and UI copy should keep saying install-from-file dev preview, local/mock-only validation, no signing, no notarization, no marketplace publication, no production installer, and no production release.
 
+Production release decisions must use this checklist before any publish, signing, notarization, marketplace, update, or production-release claim is allowed:
+
+| Area | Decision required before production claim | Current status |
+| --- | --- | --- |
+| Marketplace | Final VS Code publisher/extension identity, JetBrains vendor/plugin identity, listing copy, icon/screenshot provenance, license/notice material, and exact publish workflow. | Not implemented; dev-preview artifacts are unpublished install-from-file validation outputs. |
+| Signing and notarization | Signing identities, scope for IDE packages and engine binaries, macOS notarization/hardening, Windows signing, Linux trust expectations, timestamping, certificate rotation, and retained evidence. | Not implemented; current artifacts are unsigned and not notarized. |
+| SBOM and provenance | SBOM format, generated GUI asset representation, bundled `yet-lsp` binary provenance, dependency and third-party notice handling, build attestations, checksum/signature publication, and evidence location. | Planned decision work only; checksums are dev-preview integrity evidence, not provenance attestation. |
+| Platform engine matrix | Supported OS/architecture targets, build profile, binary naming/layout, keychain assumptions, startup smoke requirements, and compatibility policy for each packaged engine. | Dev-preview GitHub artifact matrix exists for validation; no production support matrix is complete. |
+| Update and rollback | Update channel, version compatibility rules, rollback or withdrawal process, artifact/manifest retention period, and user reinstall/pinning policy. | Not implemented; there is no automatic update channel or production rollback process. |
+| Artifact workflow | Final artifact names, installer/archive choice, release staging, checksum/signature/SBOM publication order, artifact retention, and migration from ignored local outputs. | Current workflow produces ignored local/CI dev-preview artifacts only. |
+| Release approval gates | Required local smokes, manual dogfood evidence, human approval owner, secret-free automation policy, final publish approval, and emergency stop criteria. | Release-candidate smokes are verification aids only and do not publish or create releases. |
+
+If a tracked doc, script, UI string, report helper, or artifact manifest uses production-sounding wording for these areas, it must explicitly frame the item as not implemented, planned/future decision work, unavailable, or install-from-file dev-preview until the relevant card is complete. Ambiguous positive claims about marketplace readiness, publication status, signed or notarized engines, production installers, automatic updates, SBOM/provenance attestations, or production releases must fail public hygiene unless they are clearly negated in the same sentence.
+
 This packaging boundary does not change the local-first BYOK contract: core chat, provider setup, IDE GUI workflows, and local storage must continue to run through the local runtime without a required hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, cloud workspace, or production/default provider account login.
 
 ## OpenAI/ChatGPT auth implementation strategy

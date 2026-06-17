@@ -27,13 +27,20 @@ const productionLoginDenyPatterns = [
 
 const productionPackagingDenyPatterns = [
   /marketplace\s+(?:publication|release)\s+(?:is\s+)?(?:ready|complete|available|supported)/i,
+  new RegExp(["marketplace", "ready"].join("-"), "i"),
+  /(?:ready|approved)\s+(?:for\s+)?(?:the\s+)?(?:vs\s*code|jetbrains|ide\s+)?\s*marketplace/i,
   /published\s+(?:to|on)\s+(?:the\s+)?(?:vs\s*code|jetbrains|ide\s+)?\s*marketplace/i,
   /(?:is\s+)?published\s+(?:to|on)\s+(?:the\s+)?(?:vs\s*code|jetbrains|ide\s+)?\s*marketplace/i,
   /production\s+(?:installer|release)\s+(?:is\s+)?(?:ready|complete|available|supported)/i,
+  /production\s+release\s+(?:has\s+)?(?:shipped|launched)/i,
   /signed\s+(?:and\s+notarized\s+)?production\s+engine/i,
   /notarized\s+production\s+engine/i,
   /signed\s+engine\s+bundle\s+(?:is\s+)?(?:ready|complete|available|supported)/i,
+  /(?:signing|notarization)\s+(?:is\s+)?(?:ready|complete|available|supported)/i,
   /automatic\s+update\s+channel\s+(?:is\s+)?(?:ready|complete|available|supported)/i,
+  /rollback\s+(?:is\s+)?(?:ready|complete|available|supported)/i,
+  /artifact\s+retention\s+(?:is\s+)?(?:ready|complete|available|supported)/i,
+  /(?:sbom|provenance|attestation)\s+(?:is\s+)?(?:ready|complete|available|supported)/i,
   /production-grade\s+bundled\s+engine/i
 ];
 
@@ -47,10 +54,18 @@ const selfTestDenyExamples = [
 
 const packagingSelfTestDenyExamples = [
   "Marketplace publication is ready for Yet AI.",
+  "Yet AI is marketplace-ready for developers.",
+  "Yet AI is approved for the JetBrains Marketplace.",
   "Yet AI is published to the VS Code Marketplace.",
   "The production installer is complete.",
+  "The production release has shipped.",
   "Yet AI includes a signed production engine.",
+  "Notarization is complete for the engine.",
   "The automatic update channel is supported.",
+  "Rollback is ready for released artifacts.",
+  "Artifact retention is complete for public releases.",
+  "SBOM is complete for public distribution.",
+  "Provenance attestation is supported.",
   "Yet AI ships a production-grade bundled engine.",
   "Current artifacts are dev-preview.\nMarketplace publication is ready for Yet AI.",
   "Artifacts are unsigned validation outputs.\nThe production installer is complete."
@@ -66,10 +81,17 @@ const selfTestAllowExamples = [
 
 const packagingSelfTestAllowExamples = [
   "Marketplace publication is not implemented for dev-preview artifacts.",
+  "Yet AI is not marketplace-ready; this remains future decision work.",
   "Yet AI is not published to the VS Code Marketplace.",
   "The production installer is planned but not complete.",
+  "The production release has not shipped; this is a dev-preview artifact.",
   "The bundled engine is not a signed production engine.",
+  "No notarization is complete for the current unsigned dev-preview engine.",
   "No automatic update channel is available for install-from-file dev previews.",
+  "Rollback is planned but not supported for dev-preview artifacts.",
+  "Artifact retention is future production packaging work, not current release support.",
+  "SBOM is planned decision work and not complete for public distribution.",
+  "Provenance attestation is not implemented for current dev-preview artifacts.",
   "Current artifacts do not ship a production-grade bundled engine."
 ];
 
@@ -102,16 +124,20 @@ const productionLoginAllowPatterns = [
 
 const productionPackagingAllowPatterns = [
   /not\s+(?:a\s+)?(?:marketplace|production|signed|notarized|published|release)/i,
-  /not\s+(?:implemented|complete|available|ready|supported)/i,
-  /no\s+(?:marketplace|signing|notarization|production|automatic\s+update|installer|publication|release)/i,
+  /not\s+(?:implemented|complete|available|ready|supported|shipped)/i,
+  /no\s+(?:marketplace|signing|notarization|production|automatic\s+update|installer|publication|release|rollback|artifact\s+retention|sbom|provenance|attestation)/i,
   /does\s+not\s+(?:publish|sign|notarize|create|claim|represent|ship)/i,
   /do\s+not\s+(?:claim|represent|publish|install)/i,
   /must\s+not\s+(?:claim|represent|publish|sign|notarize|require|ship)/i,
+  /dev-preview/i,
+  /install-from-file/i,
+  /unsigned/i,
+  /unpublished/i,
   /future\s+(?:production\s+)?packaging/i,
   /future\s+(?:decision|decisions|work|workflow)/i,
   /decision\s+record/i,
-  /planned\s+but\s+not\s+complete/i,
-  /(?:no|not)\s+(?:[^.]*\s+)?(?:complete|ready|available|supported)/i,
+  /planned\s+but\s+not\s+(?:complete|supported|implemented)/i,
+  /(?:no|not)\s+(?:[^.]*\s+)?(?:complete|ready|available|supported|shipped|implemented)/i,
   /remains?\s+(?:a\s+)?(?:decision|future|follow-up|unimplemented)/i,
   /current\s+artifacts\s+do\s+not/i
 ];

@@ -14,7 +14,7 @@ Additional local evidence templates live under `docs/dogfood/`.
 
 ## Where to add documents
 
-- `docs/architecture/` — add architecture decisions, subsystem boundaries, protocol contracts, storage rules, product-sensitive audits, roadmaps, implementation plans, and risks.
+- `docs/architecture/` — add architecture decisions, subsystem boundaries, protocol contracts, storage rules, product-sensitive audits, release packaging decision records, roadmaps, implementation plans, and risks.
 - `docs/dogfood/` — add sanitized manual local evidence templates and checklists for dogfood runs; keep completed reports in ignored local evidence locations unless a task explicitly asks for a sanitized tracked example.
 - Implementation notes — add them next to the future subsystem when it exists, or in `docs/architecture/` if the note affects multiple subsystems.
 - Decisions — record them as separate numbered architecture documents when they affect layout, identity, public protocols, storage, packaging, licensing, or long-term maintenance.
@@ -48,7 +48,7 @@ Known limitations: real-provider use still requires user-supplied local credenti
 
 Current IDE artifacts are install-from-file dev-preview evidence only. Local `dist/plugins/vscode/*.vsix`, local `dist/plugins/jetbrains/*.zip`, CI downloadable artifacts, checksums, and manifests are unsigned and unpublished validation outputs. They prove local package layout, packaged GUI freshness, identity metadata, safe archive paths, and loopback/mock startup checks; they do not prove marketplace publication, signing, notarization, a production installer, an update channel, or production release readiness.
 
-The bundled `yet-lsp` in those artifacts is a local Cargo build staged from the checkout or CI runner for dev-preview testing. It is not a signed or notarized production engine. Future production packaging decisions still need durable records for marketplace publisher/vendor IDs, signing and notarization, installer or archive format, platform matrix, update channel, release provenance/SBOM expectations, and manual release approval gates.
+The bundled `yet-lsp` in those artifacts is a local Cargo build staged from the checkout or CI runner for dev-preview testing. It is not a signed or notarized production engine. Future production packaging decisions still need durable records for marketplace publisher/vendor IDs, signing and notarization, installer or archive format, platform engine matrix, update and rollback policy, artifact retention, release provenance/SBOM expectations, and manual release approval gates. Until those records are implemented and verified, docs should keep production release wording explicitly framed as dev-preview, not implemented, planned, or future decision work.
 
 ## Verification
 
