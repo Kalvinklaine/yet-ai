@@ -1641,8 +1641,9 @@ export function App() {
       return;
     }
     if (result.ok) {
-      setProjectMemory({ state: "idle", notes: result.data.notes ?? [], error: null });
-      setProjectMemoryStatus(`${result.data.notes?.length ?? 0} local memory note${(result.data.notes?.length ?? 0) === 1 ? "" : "s"} matched ${sanitizeDisplayText(query)}.`);
+      const notes = result.data.matches?.map((item) => item.note) ?? [];
+      setProjectMemory({ state: "idle", notes, error: null });
+      setProjectMemoryStatus(`${notes.length} local memory note${notes.length === 1 ? "" : "s"} matched ${sanitizeDisplayText(result.data.queryLabel ?? query)}.`);
     } else {
       setProjectMemory((current) => ({ ...current, state: "error", error: result.error }));
       setProjectMemoryStatus("Could not search local memory notes.");

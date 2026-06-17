@@ -90,6 +90,7 @@ pub struct ChatExplicitContextBundle {
 pub enum ChatContextBundleItem {
     ActiveEditor(ChatActiveEditorContext),
     VerificationOutput(ChatVerificationOutputContext),
+    ProjectMemory(ChatProjectMemoryContext),
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -101,6 +102,16 @@ pub struct ChatVerificationOutputContext {
     status: String,
     output_tail: String,
     truncated: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChatProjectMemoryContext {
+    kind: String,
+    note_id: String,
+    title: String,
+    text: String,
+    tags: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -130,6 +141,10 @@ const CHAT_CONTEXT_WORKSPACE_PATH_MAX_CHARS: usize = 512;
 const CHAT_CONTEXT_LANGUAGE_MAX_CHARS: usize = 64;
 const CHAT_CONTEXT_MAX_POSITION: u64 = 1_000_000;
 const CHAT_CONTEXT_VERIFICATION_OUTPUT_MAX_CHARS: usize = 4_000;
+const CHAT_CONTEXT_PROJECT_MEMORY_TITLE_MAX_CHARS: usize = 120;
+const CHAT_CONTEXT_PROJECT_MEMORY_TEXT_MAX_CHARS: usize = 8_000;
+const CHAT_CONTEXT_PROJECT_MEMORY_TAG_MAX_CHARS: usize = 32;
+const CHAT_CONTEXT_PROJECT_MEMORY_MAX_TAGS: usize = 10;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ChatError {
@@ -587,6 +602,7 @@ impl ChatContext {
                 bundle.items.iter().find_map(|item| match item {
                     ChatContextBundleItem::ActiveEditor(context) => Some(context),
                     ChatContextBundleItem::VerificationOutput(_) => None,
+                    ChatContextBundleItem::ProjectMemory(_) => None,
                 })
             }
         }
@@ -598,6 +614,7 @@ impl ChatContextBundleItem {
         match self {
             Self::ActiveEditor(context) => context.is_valid(),
             Self::VerificationOutput(context) => context.is_valid(),
+            Self::ProjectMemory(context) => context.is_valid(),
         }
     }
 
@@ -605,6 +622,7 @@ impl ChatContextBundleItem {
         match self {
             Self::ActiveEditor(context) => context.selection_text_chars(),
             Self::VerificationOutput(_) => 0,
+            Self::ProjectMemory(context) => context.text.chars().count(),
         }
     }
 }
@@ -667,6 +685,17 @@ impl ChatVerificationOutputContext {
             && matches!(self.status.as_str(), "succeeded" | "failed")
             && self.output_tail.chars().count() <= CHAT_CONTEXT_VERIFICATION_OUTPUT_MAX_CHARS
             && valid_verification_output_tail(&self.output_tail)
+    }
+}
+
+impl ChatProjectMemoryContext {
+    fn is_valid(&self) -> bool {
+        self.kind == "project_memory"
+            && valid_project_memory_note_id(&self.note_id)
+            && valid_project_memory_text(&self.title, CHAT_CONTEXT_PROJECT_MEMORY_TITLE_MAX_CHARS)
+            && valid_project_memory_text(&self.text, CHAT_CONTEXT_PROJECT_MEMORY_TEXT_MAX_CHARS)
+            && self.tags.len() <= CHAT_CONTEXT_PROJECT_MEMORY_MAX_TAGS
+            && self.tags.iter().all(|tag| valid_project_memory_tag(tag))
     }
 }
 
@@ -810,6 +839,31 @@ fn valid_verification_output_tail(value: &str) -> bool {
         && !contains_secret_like_text(value)
 }
 
+fn valid_project_memory_note_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().count() <= 128
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+}
+
+fn valid_project_memory_text(value: &str, max_chars: usize) -> bool {
+    !value.is_empty()
+        && value.chars().count() <= max_chars
+        && value.trim() == value
+        && !value.chars().any(is_c0_c1_control_except_common_whitespace)
+        && !contains_secret_like_text(value)
+}
+
+fn valid_project_memory_tag(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().count() <= CHAT_CONTEXT_PROJECT_MEMORY_TAG_MAX_CHARS
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+        && !contains_secret_like_text(value)
+}
+
 fn is_c0_c1_control_except_common_whitespace(value: char) -> bool {
     matches!(value as u32, 0x00..=0x1f | 0x7f..=0x9f) && !matches!(value, '\n' | '\r' | '\t')
 }
@@ -909,7 +963,25 @@ fn push_bundle_item_prompt_lines(
         ChatContextBundleItem::VerificationOutput(context) => {
             push_verification_output_prompt_lines(lines, context, item_index);
         }
+        ChatContextBundleItem::ProjectMemory(context) => {
+            push_project_memory_prompt_lines(lines, context, item_index);
+        }
     }
+}
+
+fn push_project_memory_prompt_lines(
+    lines: &mut Vec<String>,
+    context: &ChatProjectMemoryContext,
+    item_index: usize,
+) {
+    lines.push(format!(
+        "Item {item_index}: project memory noteId={} title={} tags={}",
+        context.note_id,
+        context.title,
+        context.tags.join(",")
+    ));
+    lines.push("Memory note:".to_string());
+    lines.push(context.text.clone());
 }
 
 fn push_verification_output_prompt_lines(
