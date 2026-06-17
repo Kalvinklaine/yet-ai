@@ -65,6 +65,14 @@ const mappings = [
   ["packages/contracts/examples/engine/chat-list-response.json", "packages/contracts/schemas/engine/chat-list-response.schema.json"],
   ["packages/contracts/examples/engine/chat-thread-response.json", "packages/contracts/schemas/engine/chat-thread.schema.json"],
   ["packages/contracts/examples/engine/chat-message.json", "packages/contracts/schemas/engine/chat-message.schema.json"],
+  ["packages/contracts/examples/engine/project-memory-note.json", "packages/contracts/schemas/engine/project-memory-note.schema.json"],
+  ["packages/contracts/examples/engine/project-memory-create-request.json", "packages/contracts/schemas/engine/project-memory-create-request.schema.json"],
+  ["packages/contracts/examples/engine/project-memory-list-response.json", "packages/contracts/schemas/engine/project-memory-list-response.schema.json"],
+  ["packages/contracts/examples/engine/project-memory-search-request.json", "packages/contracts/schemas/engine/project-memory-search-request.schema.json"],
+  ["packages/contracts/examples/engine/project-memory-search-response.json", "packages/contracts/schemas/engine/project-memory-search-response.schema.json"],
+  ["packages/contracts/examples/engine/project-memory-delete-request.json", "packages/contracts/schemas/engine/project-memory-delete-request.schema.json"],
+  ["packages/contracts/examples/engine/project-memory-select-context-request.json", "packages/contracts/schemas/engine/project-memory-select-context-request.schema.json"],
+  ["packages/contracts/examples/engine/project-memory-select-context-response.json", "packages/contracts/schemas/engine/project-memory-select-context-response.schema.json"],
   ["packages/contracts/examples/engine/user-message-command.json", "packages/contracts/schemas/engine/chat-command.schema.json"],
   ["packages/contracts/examples/engine/user-message-command-with-context.json", "packages/contracts/schemas/engine/chat-command.schema.json"],
   [
@@ -151,6 +159,62 @@ const invalidMappings = [
   [
     "packages/contracts/examples-invalid/engine/chat-message-oversized-content.json",
     "packages/contracts/schemas/engine/chat-message.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/project-memory-create-request-secret-text.json",
+    "packages/contracts/schemas/engine/project-memory-create-request.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/project-memory-create-request-raw-provider-response.json",
+    "packages/contracts/schemas/engine/project-memory-create-request.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/project-memory-create-request-assistant-source.json",
+    "packages/contracts/schemas/engine/project-memory-create-request.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/project-memory-create-request-unknown-field.json",
+    "packages/contracts/schemas/engine/project-memory-create-request.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/project-memory-note-private-path.json",
+    "packages/contracts/schemas/engine/project-memory-note.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/project-memory-note-oversized-text.json",
+    "packages/contracts/schemas/engine/project-memory-note.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/project-memory-list-cloud-required.json",
+    "packages/contracts/schemas/engine/project-memory-list-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/project-memory-search-request-workspace-scan.json",
+    "packages/contracts/schemas/engine/project-memory-search-request.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/project-memory-search-request-path-query.json",
+    "packages/contracts/schemas/engine/project-memory-search-request.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/project-memory-search-response-embedding-field.json",
+    "packages/contracts/schemas/engine/project-memory-search-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/project-memory-delete-request-extra-field.json",
+    "packages/contracts/schemas/engine/project-memory-delete-request.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/project-memory-select-context-too-many-notes.json",
+    "packages/contracts/schemas/engine/project-memory-select-context-request.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/project-memory-select-context-response-file-body.json",
+    "packages/contracts/schemas/engine/project-memory-select-context-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/project-memory-select-context-response-browser-storage.json",
+    "packages/contracts/schemas/engine/project-memory-select-context-response.schema.json"
   ],
   [
     "packages/contracts/examples-invalid/engine/chat-command-tool-call.json",

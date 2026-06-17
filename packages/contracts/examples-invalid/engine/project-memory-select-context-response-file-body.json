@@ -1,0 +1,16 @@
+{
+  "protocolVersion": "2026-06-17",
+  "cloudRequired": false,
+  "providerAccess": "direct",
+  "context": {
+    "kind": "project_memory_context",
+    "items": [
+      {
+        "noteId": "mem_architecture_notes_1",
+        "title": "File note",
+        "text": "file body copied from source code",
+        "truncated": false
+      }
+    ]
+  }
+}

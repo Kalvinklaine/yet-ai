@@ -93,6 +93,18 @@ Deleting a chat deletes local Yet AI history for that thread only. It does not d
 
 Verification for this area is local-only: use `export PATH="$HOME/.cargo/bin:$PATH"; cargo test -p yet-lsp http_boundary` for focused HTTP boundary regressions, `npm run smoke:local` when changing history behavior, `cd apps/gui && npm run build && cd ../.. && npm run smoke:gui-runtime-e2e` for the polished IDE-like GUI/runtime chat happy path, and `npm run check` for docs/contracts validation.
 
+## Local project memory MVP contract boundary
+
+Sprint 24 defines only contracts and documentation for future local project memory. The engine will own memory storage and API validation when implementation begins; this card does not add runtime endpoints, indexing workers, GUI storage, browser persistence, embeddings, workspace scans, file readers, or cloud synchronization.
+
+A project memory note is manual, user-created, sanitized, and bounded. The contract shape includes a path-safe note id, title, text, tags, `source: "manual"`, and local timestamps. It deliberately rejects raw provider responses, provider bodies, prompts or command dumps, API keys, OAuth tokens, cookies, credential labels, private absolute paths, credential file names, file bodies, workspace file contents, embeddings, background-index fields, workspace-scan flags, assistant-triggered save markers, browser-storage markers, provider/model/API-key fields, cloud-required flags, unknown fields, and oversized values.
+
+List and search are local lookups over existing user-created notes only. Search is bounded literal note retrieval for user-visible memory notes; it is not semantic embedding retrieval, recursive workspace search, arbitrary file read, background indexing, full-file access, hidden context gathering, hosted retrieval, managed gateway behavior, or cloud workspace behavior. Responses carry `cloudRequired: false` and `providerAccess: "direct"` to preserve the local-first BYOK contract.
+
+Select-as-context is an explicit user action over up to four note ids. The response returns bounded one-shot prompt context text for the next user-approved message only. It does not auto-attach future prompts, persist notes in browser storage, let the assistant create notes, or grant file read, shell, git, provider-call, tool execution, workspace mutation, indexing, or cloud-sync authority. Deleting a memory note means local Yet AI project memory deletion only and does not represent provider-side deletion, enterprise retention, legal hold, backup purge, encrypted sync, or hosted account state.
+
+Contract/docs changes for this boundary use `npm run validate:contracts && npm run check && git diff --check`. Future runtime or GUI implementation must add focused engine/GUI tests before claiming project memory support.
+
 
 ## Active context first-message boundary
 

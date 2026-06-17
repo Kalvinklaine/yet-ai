@@ -1,0 +1,16 @@
+{
+  "protocolVersion": "2026-06-17",
+  "cloudRequired": false,
+  "providerAccess": "direct",
+  "context": {
+    "kind": "project_memory_context",
+    "items": [
+      {
+        "noteId": "mem_architecture_notes_1",
+        "title": "Architecture decision reminders",
+        "text": "Keep provider setup local first and describe user selected notes as optional prompt context only.",
+        "truncated": false
+      }
+    ]
+  }
+}

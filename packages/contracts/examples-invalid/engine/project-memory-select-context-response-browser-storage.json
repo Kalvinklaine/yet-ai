@@ -1,0 +1,17 @@
+{
+  "protocolVersion": "2026-06-17",
+  "cloudRequired": false,
+  "providerAccess": "direct",
+  "browserStorage": true,
+  "context": {
+    "kind": "project_memory_context",
+    "items": [
+      {
+        "noteId": "mem_architecture_notes_1",
+        "title": "Architecture decision reminders",
+        "text": "Keep provider setup local first.",
+        "truncated": false
+      }
+    ]
+  }
+}

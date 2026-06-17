@@ -1,0 +1,12 @@
+{
+  "id": "mem_architecture_notes_1",
+  "title": "Architecture decision reminders",
+  "text": "Keep provider setup local first and describe user selected notes as optional prompt context only.",
+  "tags": [
+    "architecture",
+    "local-first"
+  ],
+  "source": "manual",
+  "createdAt": "2026-06-17T12:00:00Z",
+  "updatedAt": "2026-06-17T12:05:00Z"
+}
