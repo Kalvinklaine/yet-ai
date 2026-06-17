@@ -533,6 +533,21 @@ impl ChatRuntime {
                 )
                 .await
             }
+            ChatProvider::Ollama { provider_id, model } => {
+                let provider = providers::get_provider_config(config_dir, &provider_id)
+                    .await
+                    .map_err(|_| ChatError::ProviderConfig)?;
+                ollama_stream(
+                    self,
+                    &self.client,
+                    &provider,
+                    &model,
+                    chat_id,
+                    stream_id,
+                    content,
+                )
+                .await
+            }
             ChatProvider::DemoLocal => {
                 demo_stream(self, chat_id, stream_id, original_content, context).await
             }
@@ -991,12 +1006,16 @@ async fn select_chat_provider(config_dir: &std::path::Path) -> Result<ChatProvid
     let providers = providers::provider_summaries(config_dir)
         .await
         .map_err(|_| ChatError::ProviderConfig)?;
+    let mut ollama_candidates = Vec::new();
     let mut saw_enabled_openai_compatible = false;
     let mut saw_missing_credentials_capable_model = false;
-    for provider in providers
-        .into_iter()
-        .filter(|provider| provider.enabled && provider.kind == ProviderKind::OpenAiCompatible)
-    {
+    for provider in providers.into_iter() {
+        if provider.enabled && provider.kind == ProviderKind::Ollama {
+            ollama_candidates.push(provider.clone());
+        }
+        if !provider.enabled || provider.kind != ProviderKind::OpenAiCompatible {
+            continue;
+        }
         saw_enabled_openai_compatible = true;
         for model in provider.models {
             if !model.capabilities.chat || !model.capabilities.streaming {
@@ -1013,6 +1032,19 @@ async fn select_chat_provider(config_dir: &std::path::Path) -> Result<ChatProvid
                     saw_missing_credentials_capable_model = true;
                 }
                 _ => {}
+            }
+        }
+    }
+    for provider in ollama_candidates {
+        for model in provider.models {
+            if model.capabilities.chat
+                && model.capabilities.streaming
+                && model.readiness.status == ModelReadinessStatus::Ready
+            {
+                return Ok(ChatProvider::Ollama {
+                    provider_id: provider.id,
+                    model: model.id,
+                });
             }
         }
     }
@@ -1039,6 +1071,7 @@ async fn select_chat_provider(config_dir: &std::path::Path) -> Result<ChatProvid
 
 enum ChatProvider {
     OpenAiCompatible { provider_id: String, model: String },
+    Ollama { provider_id: String, model: String },
     DemoLocal,
     ExperimentalCodex(ExperimentalCodexChatAuth),
 }
@@ -1419,6 +1452,30 @@ async fn openai_compatible_stream(
     collect_openai_compatible_stream(runtime, chat_id, stream_id, request).await
 }
 
+async fn ollama_stream(
+    runtime: &ChatRuntime,
+    client: &reqwest::Client,
+    provider: &StoredProviderConfig,
+    model: &str,
+    chat_id: &str,
+    stream_id: u64,
+    content: &str,
+) -> Result<String, ChatError> {
+    if provider.auth.auth_type != AuthType::None {
+        return Err(ChatError::ProviderConfig);
+    }
+    let url = ollama_chat_url(&provider.base_url)?;
+    let request = client
+        .post(url)
+        .timeout(Duration::from_secs(10))
+        .json(&json!({
+            "model": model,
+            "stream": true,
+            "messages": [{ "role": "user", "content": content }]
+        }));
+    collect_ollama_stream(runtime, chat_id, stream_id, request).await
+}
+
 async fn bearer_stream(
     runtime: &ChatRuntime,
     client: &reqwest::Client,
@@ -1511,6 +1568,72 @@ async fn collect_openai_compatible_stream(
     }
     let mut stream = response.bytes_stream();
     let mut parser = OpenAiSseParser::default();
+    let mut utf8_buffer = Vec::new();
+    let mut assistant_content = String::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| {
+            if error.is_timeout() {
+                ChatError::Timeout
+            } else {
+                ChatError::Request
+            }
+        })?;
+        for text in decode_stream_utf8_chunk(&mut utf8_buffer, &chunk)? {
+            parser.push(&text)?;
+        }
+        for delta in parser.drain_deltas() {
+            assistant_content.push_str(&delta);
+            let current = runtime
+                .push_stream_event(
+                    chat_id,
+                    stream_id,
+                    "stream_delta",
+                    json!({ "delta": { "content": delta } }),
+                )
+                .await;
+            if !current {
+                return Ok(assistant_content);
+            }
+        }
+    }
+    if !utf8_buffer.is_empty() {
+        return Err(ChatError::MalformedStream);
+    }
+    for delta in parser.finish()? {
+        assistant_content.push_str(&delta);
+        let current = runtime
+            .push_stream_event(
+                chat_id,
+                stream_id,
+                "stream_delta",
+                json!({ "delta": { "content": delta } }),
+            )
+            .await;
+        if !current {
+            return Ok(assistant_content);
+        }
+    }
+    Ok(assistant_content)
+}
+
+async fn collect_ollama_stream(
+    runtime: &ChatRuntime,
+    chat_id: &str,
+    stream_id: u64,
+    request: reqwest::RequestBuilder,
+) -> Result<String, ChatError> {
+    let response = request.send().await.map_err(|error| {
+        if error.is_timeout() {
+            ChatError::Timeout
+        } else {
+            ChatError::Request
+        }
+    })?;
+    if !response.status().is_success() {
+        return Err(classify_provider_http_error(response).await);
+    }
+    let mut stream = response.bytes_stream();
+    let mut parser = OllamaJsonLineParser::default();
     let mut utf8_buffer = Vec::new();
     let mut assistant_content = String::new();
     while let Some(chunk) = stream.next().await {
@@ -1691,6 +1814,65 @@ struct OpenAiSseParser {
     done: bool,
 }
 
+#[derive(Default)]
+struct OllamaJsonLineParser {
+    buffer: String,
+    deltas: Vec<String>,
+    done: bool,
+}
+
+impl OllamaJsonLineParser {
+    fn push(&mut self, text: &str) -> Result<(), ChatError> {
+        if self.buffer.len() + text.len() > PROVIDER_STREAM_LINE_BUFFER_LIMIT {
+            return Err(ChatError::MalformedStream);
+        }
+        self.buffer.push_str(text);
+        while let Some(index) = self.buffer.find('\n') {
+            let line = self.buffer[..index].trim_end_matches('\r').to_string();
+            self.buffer = self.buffer[index + 1..].to_string();
+            self.handle_line(line.trim())?;
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> Result<Vec<String>, ChatError> {
+        if !self.buffer.trim().is_empty() {
+            let line = std::mem::take(&mut self.buffer);
+            self.handle_line(line.trim())?;
+        }
+        Ok(self.deltas)
+    }
+
+    fn drain_deltas(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.deltas)
+    }
+
+    fn handle_line(&mut self, line: &str) -> Result<(), ChatError> {
+        if line.is_empty() || self.done {
+            return Ok(());
+        }
+        if line.len() > PROVIDER_STREAM_EVENT_DATA_LIMIT {
+            return Err(ChatError::MalformedStream);
+        }
+        let value: serde_json::Value =
+            serde_json::from_str(line).map_err(|_| ChatError::MalformedStream)?;
+        if value.get("error").is_some() {
+            return Err(classify_provider_stream_error(&value));
+        }
+        if value["done"].as_bool() == Some(true) {
+            self.done = true;
+            return Ok(());
+        }
+        if let Some(content) = value["message"]["content"].as_str() {
+            if !content.is_empty() {
+                self.deltas.push(content.to_string());
+            }
+            return Ok(());
+        }
+        Err(ChatError::MalformedStream)
+    }
+}
+
 impl OpenAiSseParser {
     fn push(&mut self, text: &str) -> Result<(), ChatError> {
         if self.buffer.len() + text.len() > PROVIDER_STREAM_LINE_BUFFER_LIMIT {
@@ -1788,6 +1970,18 @@ fn chat_completions_url(base_url: &str) -> Result<String, ChatError> {
         url.set_path(&normalized_path);
     } else {
         url.set_path(&format!("{normalized_path}/chat/completions"));
+    }
+    Ok(url.to_string())
+}
+
+fn ollama_chat_url(base_url: &str) -> Result<String, ChatError> {
+    providers::validate_provider_base_url(base_url).map_err(|_| ChatError::ProviderConfig)?;
+    let mut url = reqwest::Url::parse(base_url).map_err(|_| ChatError::ProviderConfig)?;
+    let normalized_path = url.path().trim_end_matches('/').to_string();
+    if normalized_path.ends_with("/api/chat") {
+        url.set_path(&normalized_path);
+    } else {
+        url.set_path(&format!("{normalized_path}/api/chat"));
     }
     Ok(url.to_string())
 }

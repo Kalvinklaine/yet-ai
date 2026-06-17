@@ -332,8 +332,10 @@ fn normalized_model_summary(
     model: &ModelSummary,
     auth_configured: bool,
 ) -> ModelSummary {
-    let supports_streaming_chat = provider.kind == ProviderKind::OpenAiCompatible
-        && provider.capabilities.chat
+    let supports_streaming_chat = matches!(
+        provider.kind,
+        ProviderKind::OpenAiCompatible | ProviderKind::Ollama
+    ) && provider.capabilities.chat
         && !model.id.trim().is_empty();
     let readiness = if !provider.enabled {
         ModelReadiness {
@@ -625,7 +627,8 @@ pub async fn test_provider(
     let provider = get_provider_config_with_secrets(config_dir, id).await?;
     Ok(match provider.kind {
         ProviderKind::OpenAiCompatible => test_openai_compatible_provider(&provider).await,
-        ProviderKind::Ollama | ProviderKind::Custom | ProviderKind::DemoLocal => ProviderTestResponse {
+        ProviderKind::Ollama => test_ollama_provider(&provider).await,
+        ProviderKind::Custom | ProviderKind::DemoLocal => ProviderTestResponse {
             ok: false,
             provider_id: provider.id,
             status: ProviderTestStatus::UnsupportedKind,
@@ -637,6 +640,135 @@ pub async fn test_provider(
         },
     })
 }
+
+async fn test_ollama_provider(provider: &StoredProviderConfig) -> ProviderTestResponse {
+    let Some(model) = provider.models.first() else {
+        return provider_test_response(
+            provider,
+            false,
+            ProviderTestStatus::MissingModel,
+            "Provider has no configured model.",
+            None,
+        );
+    };
+    let Ok(url) = ollama_tags_url(&provider.base_url) else {
+        return provider_test_response(
+            provider,
+            false,
+            ProviderTestStatus::BadUrl,
+            "Provider base URL is invalid.",
+            Some(model.id.clone()),
+        );
+    };
+    let client = match reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(2))
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => {
+            return provider_test_response(
+                provider,
+                false,
+                ProviderTestStatus::Unreachable,
+                "Provider test client could not be initialized.",
+                Some(model.id.clone()),
+            )
+        }
+    };
+    match client.get(url).send().await {
+        Ok(response) if response.status().is_success() => {
+            match ollama_tags_model_present(response, &model.id).await {
+                Ok(true) => provider_test_response(
+                    provider,
+                    true,
+                    ProviderTestStatus::Reachable,
+                    "Ollama is reachable and the configured model is available.",
+                    Some(model.id.clone()),
+                ),
+                Ok(false) => provider_test_response(
+                    provider,
+                    false,
+                    ProviderTestStatus::MissingModel,
+                    "Ollama is reachable but the configured model is not installed.",
+                    Some(model.id.clone()),
+                ),
+                Err(error) => provider_test_response(
+                    provider,
+                    false,
+                    error,
+                    "Ollama returned an error during the reachability check.",
+                    Some(model.id.clone()),
+                ),
+            }
+        }
+        Ok(response)
+            if response.status() == reqwest::StatusCode::UNAUTHORIZED
+                || response.status() == reqwest::StatusCode::FORBIDDEN =>
+        {
+            provider_test_response(
+                provider,
+                false,
+                ProviderTestStatus::Unauthorized,
+                "Ollama authentication failed. Check the local server configuration.",
+                Some(model.id.clone()),
+            )
+        }
+        Ok(_) => provider_test_response(
+            provider,
+            false,
+            ProviderTestStatus::UpstreamError,
+            "Ollama returned an error during the reachability check.",
+            Some(model.id.clone()),
+        ),
+        Err(error) if error.is_timeout() => provider_test_response(
+            provider,
+            false,
+            ProviderTestStatus::Timeout,
+            "Ollama reachability check timed out.",
+            Some(model.id.clone()),
+        ),
+        Err(_) => provider_test_response(
+            provider,
+            false,
+            ProviderTestStatus::Unreachable,
+            "Ollama could not be reached.",
+            Some(model.id.clone()),
+        ),
+    }
+}
+
+async fn ollama_tags_model_present(
+    response: reqwest::Response,
+    model_id: &str,
+) -> Result<bool, ProviderTestStatus> {
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while body.len() < PROVIDER_TEST_BODY_LIMIT {
+        let Some(chunk) = futures_util::StreamExt::next(&mut stream).await else {
+            break;
+        };
+        let chunk = chunk.map_err(|error| {
+            if error.is_timeout() {
+                ProviderTestStatus::Timeout
+            } else {
+                ProviderTestStatus::UpstreamError
+            }
+        })?;
+        let remaining = PROVIDER_TEST_BODY_LIMIT - body.len();
+        body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+    }
+    let value: serde_json::Value =
+        serde_json::from_slice(&body).map_err(|_| ProviderTestStatus::UpstreamError)?;
+    let models = value["models"]
+        .as_array()
+        .ok_or(ProviderTestStatus::UpstreamError)?;
+    Ok(models.iter().any(|model| {
+        model["name"].as_str() == Some(model_id) || model["model"].as_str() == Some(model_id)
+    }))
+}
+
+const PROVIDER_TEST_BODY_LIMIT: usize = 16 * 1024;
 
 async fn test_openai_compatible_provider(provider: &StoredProviderConfig) -> ProviderTestResponse {
     let Some(model) = provider.models.first() else {
@@ -769,6 +901,18 @@ fn models_url(base_url: &str) -> Result<String, ProviderError> {
         url.set_path(&normalized_path);
     } else {
         url.set_path(&format!("{normalized_path}/models"));
+    }
+    Ok(url.to_string())
+}
+
+fn ollama_tags_url(base_url: &str) -> Result<String, ProviderError> {
+    validate_provider_base_url(base_url)?;
+    let mut url = reqwest::Url::parse(base_url).map_err(|_| ProviderError::InvalidBaseUrl)?;
+    let normalized_path = url.path().trim_end_matches('/').to_string();
+    if normalized_path.ends_with("/api/tags") {
+        url.set_path(&normalized_path);
+    } else {
+        url.set_path(&format!("{normalized_path}/api/tags"));
     }
     Ok(url.to_string())
 }

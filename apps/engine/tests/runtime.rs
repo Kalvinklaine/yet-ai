@@ -456,6 +456,35 @@ async fn configure_openai_api_provider(app: axum::Router, api_key: &str) {
     assert!(!body.to_string().contains(api_key));
 }
 
+async fn configure_ollama_provider_with_id(
+    app: axum::Router,
+    id: &str,
+    base_url: String,
+    model_id: &str,
+) {
+    let provider = json!({
+        "id": id,
+        "kind": "ollama",
+        "displayName": id,
+        "enabled": true,
+        "baseUrl": base_url,
+        "auth": { "type": "none" },
+        "models": [{ "id": model_id, "displayName": model_id }],
+        "capabilities": { "chat": true, "completion": false, "embeddings": false }
+    });
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert!(!body.to_string().to_lowercase().contains("api_key"));
+}
+
 async fn start_mock_provider(
     status: StatusCode,
     stream_body: &'static str,
@@ -587,6 +616,61 @@ async fn start_mock_models_provider(
     (format!("http://{address}"), auth_receiver)
 }
 
+async fn start_mock_ollama_tags_provider(
+    status: StatusCode,
+    body: &'static str,
+) -> (String, mpsc::Receiver<Option<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (auth_sender, auth_receiver) = mpsc::channel(4);
+    tokio::spawn(async move {
+        let handler = move |request: axum::http::Request<Body>| {
+            let auth_sender = auth_sender.clone();
+            async move {
+                let auth = request
+                    .headers()
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                let _ = auth_sender.send(auth.clone()).await;
+                (status, [(header::CONTENT_TYPE, "application/json")], body).into_response()
+            }
+        };
+        let app = axum::Router::new().route("/api/tags", axum::routing::get(handler));
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{address}"), auth_receiver)
+}
+
+async fn start_mock_ollama_chat_provider(
+    status: StatusCode,
+    stream_body: &'static str,
+) -> (String, mpsc::Receiver<Value>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (body_sender, body_receiver) = mpsc::channel(4);
+    tokio::spawn(async move {
+        let handler = move |request: axum::http::Request<Body>| {
+            let body_sender = body_sender.clone();
+            async move {
+                assert!(request.headers().get(header::AUTHORIZATION).is_none());
+                let bytes = to_bytes(request.into_body(), usize::MAX).await.unwrap();
+                let body: Value = serde_json::from_slice(&bytes).unwrap();
+                let _ = body_sender.send(body).await;
+                (
+                    status,
+                    [(header::CONTENT_TYPE, "application/x-ndjson")],
+                    stream_body,
+                )
+                    .into_response()
+            }
+        };
+        let app = axum::Router::new().route("/api/chat", axum::routing::post(handler));
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{address}"), body_receiver)
+}
+
 async fn start_slow_models_provider() -> (String, mpsc::Receiver<Option<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -639,6 +723,21 @@ async fn assert_first_auth_and_no_immediate_extra_auth(
 async fn assert_no_observed_auth(mut auth_receiver: mpsc::Receiver<Option<String>>) {
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(200), auth_receiver.recv())
+            .await
+            .is_err()
+    );
+}
+
+async fn assert_first_request_without_auth_and_no_immediate_extra(
+    mut auth_receiver: mpsc::Receiver<Option<String>>,
+) {
+    let auth = tokio::time::timeout(std::time::Duration::from_secs(2), auth_receiver.recv())
+        .await
+        .expect("expected one auth observation")
+        .expect("auth observation channel closed");
+    assert_eq!(auth, None);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), auth_receiver.recv())
             .await
             .is_err()
     );
@@ -4839,7 +4938,10 @@ async fn agent_progress_manual_runner_event_list_flow_accepts_bounded_snapshots(
     assert_eq!(snapshot["completedAt"], "2026-06-17T00:20:00Z");
     assert_eq!(snapshot["recentEvents"].as_array().unwrap().len(), 6);
     assert_eq!(snapshot["recentEvents"][0]["eventId"], "evt-T790-plan");
-    assert_eq!(snapshot["recentEvents"][5]["eventId"], "evt-T790-summarized");
+    assert_eq!(
+        snapshot["recentEvents"][5]["eventId"],
+        "evt-T790-summarized"
+    );
     let text = listed.to_string().to_lowercase();
     for forbidden in [
         "raw prompt",
@@ -8451,9 +8553,71 @@ async fn provider_operations_do_not_require_cloud_url_or_account() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["ok"], false);
-    assert_eq!(body["status"], "unsupported_kind");
+    assert_eq!(body["status"], "missing_model");
     assert_eq!(body["cloudRequired"], false);
     assert!(!body.to_string().to_lowercase().contains("account"));
+}
+
+#[tokio::test]
+async fn provider_test_ollama_success_and_missing_model_use_loopback_without_auth() {
+    let (base_url, auth_receiver) = start_mock_ollama_tags_provider(
+        StatusCode::OK,
+        r#"{"models":[{"name":"llama3.2:latest"}]}"#,
+    )
+    .await;
+    let app = test_app();
+    configure_ollama_provider_with_id(app.clone(), "ollama-ready", base_url, "llama3.2:latest")
+        .await;
+    let (status, models) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/models", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(models["models"][0]["providerId"], "ollama-ready");
+    assert_eq!(models["models"][0]["capabilities"]["chat"], true);
+    assert_eq!(models["models"][0]["capabilities"]["streaming"], true);
+    assert_eq!(models["models"][0]["readiness"]["status"], "ready");
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/providers/ollama-ready/test",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["status"], "reachable");
+    assert_eq!(body["modelId"], "llama3.2:latest");
+    assert_eq!(body["cloudRequired"], false);
+    assert_first_request_without_auth_and_no_immediate_extra(auth_receiver).await;
+
+    let (missing_base_url, missing_auth_receiver) =
+        start_mock_ollama_tags_provider(StatusCode::OK, r#"{"models":[{"name":"other-model"}]}"#)
+            .await;
+    configure_ollama_provider_with_id(
+        app.clone(),
+        "ollama-missing-model",
+        missing_base_url,
+        "llama3.2:latest",
+    )
+    .await;
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/providers/ollama-missing-model/test",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["status"], "missing_model");
+    assert_first_request_without_auth_and_no_immediate_extra(missing_auth_receiver).await;
 }
 
 #[tokio::test]
@@ -12067,6 +12231,136 @@ async fn provider_without_model_replays_model_not_configured_error_event() {
     let error = find_error_event(&events);
     assert_eq!(error["payload"]["code"], "model_not_configured");
     assert_sanitized_sse_error(&text);
+}
+
+#[tokio::test]
+async fn ollama_chat_streaming_uses_native_api_without_auth_after_openai_precedence() {
+    let api_key = "sk-ollama-precedence-secret-abcd";
+    let (openai_base_url, openai_auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"openai-wins\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let (ollama_base_url, mut ollama_body_receiver) = start_mock_ollama_chat_provider(
+        StatusCode::OK,
+        "{\"message\":{\"content\":\"ollama-unused\"},\"done\":false}\n{\"done\":true}\n",
+    )
+    .await;
+    let app = test_app();
+    configure_ollama_provider_with_id(
+        app.clone(),
+        "aaa-ollama",
+        ollama_base_url,
+        "llama3.2:latest",
+    )
+    .await;
+    configure_openai_provider_with_id(
+        app.clone(),
+        "zzz-openai",
+        openai_base_url,
+        api_key,
+        "gpt-openai",
+    )
+    .await;
+    send_user_message(app.clone(), "chat-openai-before-ollama").await;
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-openai-before-ollama").await;
+    assert!(text.contains("openai-wins"));
+    assert!(!text.contains("ollama-unused"));
+    assert!(!text.contains(api_key));
+    assert_first_auth_and_no_immediate_extra_auth(
+        openai_auth_receiver,
+        "Bearer sk-ollama-precedence-secret-abcd",
+        "openai precedence before ollama",
+    )
+    .await;
+    assert!(tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        ollama_body_receiver.recv()
+    )
+    .await
+    .is_err());
+}
+
+#[tokio::test]
+async fn ollama_chat_streaming_works_before_demo_and_codex_fallback() {
+    let (ollama_base_url, mut body_receiver) = start_mock_ollama_chat_provider(
+        StatusCode::OK,
+        "{\"message\":{\"content\":\"hello \"},\"done\":false}\n{\"message\":{\"content\":\"ollama\"},\"done\":false}\n{\"done\":true}\n",
+    )
+    .await;
+    let (token_endpoint_url, _) = start_mock_codex_token_endpoint().await;
+    let app = test_app();
+    let (status, demo) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/demo-mode",
+            Body::from(json!({ "enabled": true }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(demo["enabled"], true);
+    connect_experimental_openai_oauth(
+        app.clone(),
+        token_endpoint_url,
+        "http://127.0.0.1:1/chat".to_string(),
+    )
+    .await;
+    configure_ollama_provider_with_id(
+        app.clone(),
+        "ollama-chat",
+        ollama_base_url,
+        "llama3.2:latest",
+    )
+    .await;
+    send_user_message(app.clone(), "chat-ollama-native").await;
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-ollama-native").await;
+    assert!(text.contains("hello "));
+    assert!(text.contains("ollama"));
+    assert!(!text.contains("codex-access-token-secret"));
+    assert_sanitized_sse_error(&text);
+    let body = tokio::time::timeout(std::time::Duration::from_secs(2), body_receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(body["model"], "llama3.2:latest");
+    assert_eq!(body["stream"], true);
+    assert_eq!(body["messages"][0]["content"], "hello");
+}
+
+#[tokio::test]
+async fn ollama_chat_stream_errors_are_classified_and_sanitized() {
+    let (ollama_base_url, mut body_receiver) = start_mock_ollama_chat_provider(
+        StatusCode::OK,
+        "{\"error\":\"model not found sk-ollama-stream-secret access_token=secret /Users/example\"}\n",
+    )
+    .await;
+    let app = test_app();
+    configure_ollama_provider_with_id(
+        app.clone(),
+        "ollama-error",
+        ollama_base_url,
+        "missing-model",
+    )
+    .await;
+    send_user_message(app.clone(), "chat-ollama-error").await;
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-ollama-error").await;
+    let events = sse_json_events(&text);
+    let error = find_error_event(&events);
+    assert_eq!(error["payload"]["code"], "provider_invalid_request");
+    assert_provider_error_text_is_sanitized(
+        &text,
+        &["sk-ollama-stream-secret", "access_token", "/Users/example"],
+    );
+    let body = tokio::time::timeout(std::time::Duration::from_secs(2), body_receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(body["model"], "missing-model");
 }
 
 #[tokio::test]
