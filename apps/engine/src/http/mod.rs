@@ -14,6 +14,7 @@ use crate::agent_progress;
 use crate::chat::ChatContext;
 use crate::chat_history;
 use crate::demo_mode;
+use crate::project_memory;
 use crate::provider_auth;
 use crate::providers;
 use crate::security::Authenticated;
@@ -50,6 +51,17 @@ pub fn router(state: AppState) -> Router {
                 .route("/models", get(models_list))
                 .route("/agent-progress", get(agent_progress_list))
                 .route("/agent-progress/events", post(agent_progress_event))
+                .route(
+                    "/project-memory",
+                    get(project_memory_list).post(project_memory_create),
+                )
+                .route("/project-memory/search", post(project_memory_search))
+                .route(
+                    "/project-memory/:note_id",
+                    get(project_memory_get)
+                        .patch(project_memory_update)
+                        .delete(project_memory_delete),
+                )
                 .route("/chats", get(chats_list).post(chats_create))
                 .route("/chats/subscribe", get(chats_subscribe))
                 .route("/chats/:chat_id", get(chats_get).delete(chats_delete))
@@ -432,6 +444,85 @@ async fn agent_progress_event(
         )
             .into_response(),
     }
+}
+
+async fn project_memory_list(_auth: Authenticated, State(state): State<AppState>) -> Response {
+    match project_memory::list(&state.storage_paths.config_dir).await {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => project_memory_error(error),
+    }
+}
+
+async fn project_memory_create(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    request: Result<Json<project_memory::ProjectMemoryCreateRequest>, JsonRejection>,
+) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return invalid_json_body(rejection),
+    };
+    match project_memory::create(&state.storage_paths.config_dir, request).await {
+        Ok(note) => (StatusCode::CREATED, Json(note)).into_response(),
+        Err(error) => project_memory_error(error),
+    }
+}
+
+async fn project_memory_get(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(note_id): Path<String>,
+) -> Response {
+    match project_memory::get(&state.storage_paths.config_dir, &note_id).await {
+        Ok(note) => Json(note).into_response(),
+        Err(error) => project_memory_error(error),
+    }
+}
+
+async fn project_memory_update(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(note_id): Path<String>,
+    request: Result<Json<project_memory::ProjectMemoryUpdateRequest>, JsonRejection>,
+) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return invalid_json_body(rejection),
+    };
+    match project_memory::update(&state.storage_paths.config_dir, &note_id, request).await {
+        Ok(note) => Json(note).into_response(),
+        Err(error) => project_memory_error(error),
+    }
+}
+
+async fn project_memory_delete(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(note_id): Path<String>,
+) -> Response {
+    match project_memory::delete(&state.storage_paths.config_dir, &note_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => project_memory_error(error),
+    }
+}
+
+async fn project_memory_search(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    request: Result<Json<project_memory::ProjectMemorySearchRequest>, JsonRejection>,
+) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return invalid_json_body(rejection),
+    };
+    match project_memory::search(&state.storage_paths.config_dir, request).await {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => project_memory_error(error),
+    }
+}
+
+fn project_memory_error(error: project_memory::ProjectMemoryError) -> Response {
+    (error.status(), Json(json!({ "error": error.to_string() }))).into_response()
 }
 
 async fn chats_list(_auth: Authenticated, State(state): State<AppState>) -> Response {

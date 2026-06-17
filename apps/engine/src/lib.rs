@@ -5,6 +5,7 @@ pub mod demo_mode;
 pub mod http;
 pub mod identity;
 pub mod lsp;
+pub mod project_memory;
 pub mod provider_auth;
 pub mod providers;
 pub mod secret_store;

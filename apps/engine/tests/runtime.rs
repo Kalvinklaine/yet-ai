@@ -5831,6 +5831,300 @@ async fn agent_progress_shape_is_local_only_and_sanitized() {
     }
 }
 
+fn valid_project_memory_create(title: &str, text: &str, tags: Vec<&str>) -> Value {
+    json!({
+        "protocolVersion": "2026-06-17",
+        "title": title,
+        "text": text,
+        "tags": tags,
+        "source": "manual"
+    })
+}
+
+async fn create_project_memory_note(
+    app: axum::Router,
+    title: &str,
+    text: &str,
+    tags: Vec<&str>,
+) -> Value {
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/project-memory",
+            Body::from(valid_project_memory_create(title, text, tags).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    body
+}
+
+#[tokio::test]
+async fn project_memory_crud_list_search_flow_is_local_and_literal() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    std::fs::create_dir_all(&paths.project_dir).unwrap();
+    std::fs::write(
+        paths.project_dir.join("workspace-note.txt"),
+        "workspace-only-literal",
+    )
+    .unwrap();
+
+    let (status, empty) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/project-memory", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(empty["cloudRequired"], false);
+    assert_eq!(empty["providerAccess"], "direct");
+    assert_eq!(empty["notes"], json!([]));
+
+    let note = create_project_memory_note(
+        app.clone(),
+        "Release checklist",
+        "Remember to run deterministic local smoke before preview packaging.",
+        vec!["release", "local"],
+    )
+    .await;
+    let note_id = note["id"].as_str().unwrap().to_string();
+    assert_eq!(note["source"], "manual");
+    assert_eq!(note["tags"], json!(["release", "local"]));
+    assert!(!paths.project_dir.join("project-memory/notes.json").exists());
+    assert!(paths.config_dir.join("project-memory/notes.json").exists());
+
+    let (status, listed) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/project-memory", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(listed["notes"].as_array().unwrap().len(), 1);
+    assert_eq!(listed["notes"][0]["id"], note_id);
+
+    let (status, fetched) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::GET,
+            &format!("/v1/project-memory/{note_id}"),
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(fetched["title"], "Release checklist");
+
+    let update = valid_project_memory_create(
+        "Local memory checklist",
+        "Literal search checks only stored note text and tags.",
+        vec!["memory"],
+    );
+    let (status, updated) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::PATCH,
+            &format!("/v1/project-memory/{note_id}"),
+            Body::from(update.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["id"], note_id);
+    assert_eq!(updated["title"], "Local memory checklist");
+    assert_ne!(updated["updatedAt"], note["updatedAt"]);
+
+    let search = json!({
+        "protocolVersion": "2026-06-17",
+        "query": "stored note",
+        "limit": 5
+    });
+    let (status, matches) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/project-memory/search",
+            Body::from(search.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(matches["cloudRequired"], false);
+    assert_eq!(matches["providerAccess"], "direct");
+    assert_eq!(matches["queryLabel"], "stored note");
+    assert_eq!(matches["matches"].as_array().unwrap().len(), 1);
+    assert_eq!(matches["matches"][0]["scoreLabel"], "text");
+    assert_eq!(matches["matches"][0]["note"]["id"], note_id);
+    let text = matches.to_string().to_lowercase();
+    assert!(!text.contains("embedding"));
+    assert!(!text.contains("index"));
+
+    let workspace_search = json!({
+        "protocolVersion": "2026-06-17",
+        "query": "workspace-only-literal"
+    });
+    let (status, workspace_matches) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/project-memory/search",
+            Body::from(workspace_search.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(workspace_matches["matches"], json!([]));
+
+    let delete_request = json!({
+        "protocolVersion": "2026-06-17",
+        "noteId": note_id
+    });
+    let status = empty_response_from(
+        app.clone(),
+        authed_request(
+            Method::DELETE,
+            &format!(
+                "/v1/project-memory/{}",
+                delete_request["noteId"].as_str().unwrap()
+            ),
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, missing) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            &format!(
+                "/v1/project-memory/{}",
+                delete_request["noteId"].as_str().unwrap()
+            ),
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(missing["error"], "project memory note not found");
+}
+
+#[tokio::test]
+async fn project_memory_rejects_unsafe_unknown_oversized_and_non_manual_payloads() {
+    let unsafe_payloads = [
+        json!({
+            "protocolVersion": "2026-06-17",
+            "title": "Unsafe note",
+            "text": "Bearer sk-project-memory-secret-abcd",
+            "source": "manual"
+        }),
+        json!({
+            "protocolVersion": "2026-06-17",
+            "title": "Unsafe path",
+            "text": "Opened /Users/example/private.txt",
+            "source": "manual"
+        }),
+        json!({
+            "protocolVersion": "2026-06-17",
+            "title": "Provider body",
+            "text": "raw provider response body follows",
+            "source": "manual"
+        }),
+        json!({
+            "protocolVersion": "2026-06-17",
+            "title": "Assistant source",
+            "text": "Safe words only",
+            "source": "assistant"
+        }),
+        json!({
+            "protocolVersion": "2026-06-17",
+            "title": "Unknown field",
+            "text": "Safe words only",
+            "source": "manual",
+            "embedding": [1, 2, 3]
+        }),
+        json!({
+            "protocolVersion": "2026-06-17",
+            "title": "Oversized",
+            "text": "x".repeat(8001),
+            "source": "manual"
+        }),
+    ];
+
+    for payload in unsafe_payloads {
+        let (status, body) = json_response(authed_request(
+            Method::POST,
+            "/v1/project-memory",
+            Body::from(payload.to_string()),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let text = body.to_string().to_lowercase();
+        assert!(!text.contains("sk-project-memory-secret"));
+        assert!(!text.contains("/users/example"));
+        assert!(!text.contains("provider response"));
+        assert!(!text.contains(&"x".repeat(64)));
+    }
+
+    for payload in [
+        json!({ "protocolVersion": "2026-06-17", "query": "workspace scan" }),
+        json!({ "protocolVersion": "2026-06-17", "query": "/tmp/private.txt" }),
+        json!({ "protocolVersion": "2026-06-17", "query": "safe", "limit": 21 }),
+        json!({ "protocolVersion": "2026-06-17", "query": "safe", "cloudRequired": true }),
+    ] {
+        let (status, body) = json_response(authed_request(
+            Method::POST,
+            "/v1/project-memory/search",
+            Body::from(payload.to_string()),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(!body.to_string().to_lowercase().contains("/tmp/private"));
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn project_memory_rejects_store_symlink_without_target_read() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let outside = std::env::temp_dir().join(format!(
+        "yet-ai-project-memory-outside-{}",
+        TEST_STORAGE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&outside);
+    std::fs::create_dir_all(&outside).unwrap();
+    let target = outside.join("notes.json");
+    std::fs::write(
+        &target,
+        r#"{"protocolVersion":"2026-06-17","notes":[{"id":"mem_outside","title":"Outside","text":"outside-target-marker","tags":[],"source":"manual","createdAt":"2026-06-17T00:00:00Z","updatedAt":"2026-06-17T00:00:00Z"}]}"#,
+    )
+    .unwrap();
+    let store_dir = paths.config_dir.join("project-memory");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    std::os::unix::fs::symlink(&target, store_dir.join("notes.json")).unwrap();
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/project-memory", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["error"], "project memory storage error");
+    assert!(!body.to_string().contains("outside-target-marker"));
+    assert!(!body
+        .to_string()
+        .contains(&outside.to_string_lossy().to_string()));
+}
+
 #[tokio::test]
 async fn http_boundary_malformed_provider_create_body_is_sanitized() {
     let raw = r#"{"id":"http-boundary-provider","auth":{"apiKey":"sk-http-boundary-secret-abcd"},"malformed-fragment":"raw-body-fragment""#;
