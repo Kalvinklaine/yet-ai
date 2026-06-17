@@ -190,9 +190,23 @@ const providerPresets: ProviderPreset[] = [
     },
   },
   {
+    id: "ollama-local",
+    label: "Ollama local (native)",
+    description: "Direct local Ollama engine at http://127.0.0.1:11434. No API key, account, hosted Yet AI service, or cloud workspace is required.",
+    form: {
+      providerId: "ollama-local",
+      kind: "ollama",
+      displayName: "Ollama Local",
+      baseUrl: "http://127.0.0.1:11434",
+      authType: "none",
+      modelId: "llama3.2",
+      modelDisplayName: "llama3.2",
+    },
+  },
+  {
     id: "ollama-openai-compatible",
-    label: "Ollama OpenAI-compatible",
-    description: "Uses Ollama's OpenAI-compatible /v1 API; native Ollama chat is future work.",
+    label: "Ollama OpenAI-compatible /v1",
+    description: "Optional compatibility path for Ollama's /v1 API. Prefer Ollama local (native) when your runtime supports it.",
     form: {
       providerId: "ollama-openai-compatible",
       kind: "openai-compatible",
@@ -376,6 +390,7 @@ export function App() {
   const selectedModelRawId = selectedModel?.id;
   const selectedModelProviderRawId = apiKeyReadiness.provider?.id ?? selectedModel?.providerId;
   const activeSelectedDemoMode = demoModeEnabled && selectedModelProviderRawId === activeDemoMode?.providerId && selectedModelRawId === activeDemoMode?.modelId;
+  const activeSelectedLocalProvider = apiKeyReadiness.provider?.kind === "ollama" || apiKeyReadiness.provider?.kind === "custom";
   const selectedModelDisplayName = selectedModel ? sanitizeDisplayText(selectedModel.displayName || selectedModel.id) : undefined;
   const selectedModelProviderId = apiKeyReadiness.provider?.id ? sanitizeDisplayText(apiKeyReadiness.provider.id) : selectedModel?.providerId ? sanitizeDisplayText(selectedModel.providerId) : undefined;
   const chatReadinessLabel = !runtimeConnected
@@ -394,7 +409,9 @@ export function App() {
     : apiKeyChatReady
       ? activeSelectedDemoMode
         ? "Demo Mode is ready: send a prompt to try the chat flow with local canned responses. No provider call or API key is used."
-        : `Ready to send using ${selectedModelDisplayName ?? "the default model"} through the local runtime.`
+        : activeSelectedLocalProvider
+          ? `Ready to send using ${selectedModelDisplayName ?? "the default model"} through the local runtime directly to your local provider.`
+          : `Ready to send using ${selectedModelDisplayName ?? "the default model"} through the local runtime.`
       : apiKeyReadiness.message
         ? apiKeyReadiness.message
         : providerAuthMutationInFlight && activeProviderAuthStatus?.authSource === "oauth" && !apiKeyChatReady
@@ -403,7 +420,7 @@ export function App() {
             ? "Experimental Codex-like OpenAI account chat is connected through the local runtime. This private-endpoint path is high-risk, not official public OAuth support, and not production-ready."
             : activeModelError
               ? "Runtime model refresh failed. Refresh runtime again before sending the first message."
-              : "Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK OpenAI-compatible provider/model for real answers.";
+              : "Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK provider/model such as local Ollama or OpenAI-compatible for real answers.";
   const chatModelStatus = apiKeyReadiness.model ? modelStatusText(apiKeyReadiness.model, apiKeyReadiness.provider) : null;
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
   const currentAttachedContextState = attachedContext?.settingsRevision === settingsRevision && attachedContext.chatId === chatId ? attachedContext : null;
@@ -1193,11 +1210,12 @@ export function App() {
     }
     if (result.ok) {
       const model = result.data.modelId ? ` Model: ${sanitizeDisplayText(result.data.modelId)}.` : "";
+      const action = providerTestAction(result.data.status);
       setProviderTestState({
         providerId,
         state: result.data.ok ? "success" : "failed",
         status: result.data.status,
-        detail: `${sanitizeDisplayText(result.data.message)}${model}`,
+        detail: `${sanitizeDisplayText(result.data.message)}${model}${action ? ` ${action}` : ""}`,
       });
       if (result.data.ok) {
         setProviderForm((current) => ({ ...current, apiKey: "" }));
@@ -1821,8 +1839,8 @@ export function App() {
       title: enabledProviders.length > 0 ? "Provider model required" : "Provider required for first message",
       reason: activeModelError
         ? "Runtime model refresh failed, so no send-ready model can be selected."
-        : "No enabled OpenAI-compatible provider/model is ready for chat streaming.",
-      nextAction: "For real answers, use the OpenAI API-key fallback (safe/default), paste a provider API key, save, test provider, refresh runtime/model readiness, then send. Choose Demo Mode only to try the chat flow without provider calls.",
+        : "No enabled local Ollama, OpenAI-compatible, or custom provider/model is ready for chat streaming.",
+      nextAction: "For local answers without a provider key, choose Ollama local, confirm http://127.0.0.1:11434 and a pulled model id, save, test provider, refresh runtime/model readiness, then send. For hosted OpenAI-compatible answers, use the API-key fallback. Choose Demo Mode only to try the chat flow without provider calls.",
       actions: [{ kind: "enable_demo_mode", label: demoModeToggleLabel }, { kind: "api_key_fallback", label: "Use OpenAI API key fallback" }, { kind: "refresh_runtime", label: "Refresh runtime" }],
       notes,
     };
@@ -2099,16 +2117,17 @@ export function App() {
         {runtimeConnected && !apiKeyChatReady && !experimentalOauthChatReady && (
           <div className="guided-setup-card stack" role="status">
             <strong>Runtime connected — choose the first-message path</strong>
-            <span><strong>Real provider (safe default):</strong> use OpenAI API-key fallback, paste a provider API key once, save, test provider, refresh runtime/model readiness, then send.</span>
+            <span><strong>Local provider:</strong> choose Ollama local for a direct engine call to http://127.0.0.1:11434, no API key, no hosted Yet AI service, no account, and no cloud workspace.</span>
+            <span><strong>Hosted BYOK provider:</strong> use OpenAI API-key fallback, paste a provider API key once, save, test provider, refresh runtime/model readiness, then send.</span>
             <span><strong>Try without provider calls:</strong> enable Demo Mode from Chat readiness. It uses local canned responses only and is not model quality.</span>
             <div className="row">
               <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>
             </div>
           </div>
         )}
-        <p className="subtle"><strong>Runtime Session token</strong> is only for this GUI talking to the local loopback runtime. <strong>Provider API key</strong> is for the upstream OpenAI-compatible provider and is sent to the local runtime only on save, cleared from this form immediately after save/update is submitted, and never written to browser storage.</p>
-        <p className="subtle">ChatGPT/OpenAI account login is experimental/non-default until officially supported and reviewed. It is not production official login. OpenAI API-key setup is the current safe/default real-provider path.</p>
-        <p className="subtle">Current chat uses OpenAI-compatible providers only. Ollama is available here through its OpenAI-compatible /v1 endpoint; native Ollama chat is future work.</p>
+        <p className="subtle"><strong>Runtime Session token</strong> is only for this GUI talking to the local loopback runtime. <strong>Provider API key</strong> is for upstream providers that require one and is sent to the local runtime only on save, cleared from this form immediately after save/update is submitted, and never written to browser storage. Ollama local uses auth None.</p>
+        <p className="subtle">ChatGPT/OpenAI account login is experimental/non-default until officially supported and reviewed. It is not production official login. OpenAI API-key setup remains available as the safe/default hosted real-provider path.</p>
+        <p className="subtle">For local Ollama, the engine calls your Ollama server directly at http://127.0.0.1:11434. No API key, hosted Yet AI service, account, managed model gateway, cloud workspace, or product credit balance is required.</p>
         {providerError && <ErrorBox error={providerError} />}
         <div className="provider-item account-login-card stack">
           <div className="row">
@@ -2361,7 +2380,7 @@ function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, activeDe
       <div className="chat-empty-state" role="status">
         <span className="badge warn">Provider required</span>
         <strong>Choose how this first chat should answer.</strong>
-        <span>Try Demo Mode from Chat readiness for local canned responses with no API key, or configure a BYOK OpenAI-compatible provider for real model answers. Provider credentials are sent only to the local runtime and are not stored by the GUI.</span>
+        <span>Try Demo Mode from Chat readiness for local canned responses with no API key, configure Ollama local for direct loopback model answers with auth None, or configure a BYOK OpenAI-compatible provider. Provider credentials are sent only to the local runtime and are not stored by the GUI.</span>
         <button type="button" onClick={onProviderSetup}>Use OpenAI API key fallback</button>
       </div>
     );
@@ -2433,6 +2452,9 @@ function readinessStateLabel(state: ProviderReadinessState, canSendChat: boolean
   if (state === "openai_compatible_ready") {
     return "OpenAI-compatible BYOK ready through the local runtime";
   }
+  if (state === "local_provider_ready") {
+    return "Local provider ready through direct local runtime calls";
+  }
   if (state === "model_provider_mismatch") {
     return "Model/provider mismatch";
   }
@@ -2449,7 +2471,7 @@ function FirstRunChecklist({ runtimeConnected, demoModeReady, apiKeyReady, exper
   const steps = [
     { label: "Runtime", detail: runtimeConnected ? "connected" : "refresh local runtime", ok: runtimeConnected },
     { label: "Demo Mode", detail: demoModeReady ? "local canned trial ready" : "no-key local canned trial", ok: demoModeReady },
-    { label: "Real provider", detail: apiKeyReady ? "BYOK API-key ready" : "safe/default API-key fallback", ok: apiKeyReady },
+    { label: "Real provider", detail: apiKeyReady ? readinessState === "local_provider_ready" ? "local provider ready" : "BYOK API-key ready" : "local Ollama or API-key fallback", ok: apiKeyReady },
     { label: "First message", detail: canSendChat ? "Send available" : "choose Demo Mode or BYOK provider", ok: canSendChat },
   ];
   return (
@@ -3370,6 +3392,8 @@ function normalizeRuntimeUrl(value: string): string {
 
 function providerTestAction(status: ProviderTestState["status"]): string {
   switch (status) {
+    case "reachable":
+      return "Local runtime reached the provider. For Ollama, missing model errors mean the model id was not pulled locally yet.";
     case "unauthorized":
     case 401:
       return "Check that the provider API key was saved in the local runtime and belongs to this provider; do not paste the runtime Session token here.";

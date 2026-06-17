@@ -64,6 +64,25 @@ describe("provider readiness", () => {
     expect(modelStatusText(demoModel, demoProvider)).toBe("Yet AI Demo Chat (Yet AI Demo Mode): ready; chat supported, streaming supported, tools unsupported, reasoning unsupported");
   });
 
+  it("accepts native local Ollama provider readiness without credentials", () => {
+    const ollamaModel = model({ id: "llama3.2", displayName: "llama3.2", providerId: "ollama-local" });
+    const ollamaProvider = provider({
+      id: "ollama-local",
+      kind: "ollama",
+      displayName: "Ollama Local",
+      baseUrl: "http://127.0.0.1:11434",
+      auth: { type: "none", configured: false },
+      models: [ollamaModel],
+    });
+
+    const readiness = resolveProviderModelReadiness([ollamaModel], [ollamaProvider], null);
+
+    expect(readiness.ready).toBe(true);
+    expect(readiness.provider?.kind).toBe("ollama");
+    expect(classifyProviderReadinessState(readiness, true)).toBe("local_provider_ready");
+    expect(modelStatusText(ollamaModel, ollamaProvider)).toBe("llama3.2 (Ollama Local): ready; chat supported, streaming supported, tools unsupported, reasoning unsupported");
+  });
+
   it("classifies browser-first readiness states distinctly", () => {
     const demoModel = model({ id: "yet-demo-chat", displayName: "Yet AI Demo Chat", providerId: "yet-demo" });
     const demo = provider({ id: "yet-demo", kind: "demo-local", displayName: "Yet AI Demo Mode", baseUrl: "local-runtime-demo-mode", auth: { type: "none", configured: true }, models: [demoModel] });
@@ -76,6 +95,7 @@ describe("provider readiness", () => {
     expect(classifyProviderReadinessState(realReady, false)).toBe("runtime_unavailable");
     expect(classifyProviderReadinessState(demoReady, true)).toBe("demo_mode_ready");
     expect(classifyProviderReadinessState(realReady, true)).toBe("openai_compatible_ready");
+    expect(classifyProviderReadinessState(resolveProviderModelReadiness([model({ providerId: "custom-local" })], [provider({ id: "custom-local", kind: "custom", displayName: "Custom Local", auth: { type: "none", configured: false } })], null), true)).toBe("local_provider_ready");
     expect(classifyProviderReadinessState(mismatch, true)).toBe("model_provider_mismatch");
     expect(classifyProviderReadinessState(modelNotReady, true)).toBe("model_not_ready");
     expect(classifyProviderReadinessState(required, true)).toBe("provider_required");

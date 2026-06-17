@@ -10,14 +10,20 @@ export type ProviderModelReadiness = {
   message?: string;
 };
 
-export type ProviderReadinessState = "runtime_unavailable" | "demo_mode_ready" | "openai_compatible_ready" | "model_provider_mismatch" | "model_not_ready" | "provider_required";
+export type ProviderReadinessState = "runtime_unavailable" | "demo_mode_ready" | "openai_compatible_ready" | "local_provider_ready" | "model_provider_mismatch" | "model_not_ready" | "provider_required";
 
 export function classifyProviderReadinessState(readiness: ProviderModelReadiness, runtimeConnected: boolean): ProviderReadinessState {
   if (!runtimeConnected) {
     return "runtime_unavailable";
   }
   if (readiness.ready) {
-    return readiness.provider?.kind === "demo-local" ? "demo_mode_ready" : "openai_compatible_ready";
+    if (readiness.provider?.kind === "demo-local") {
+      return "demo_mode_ready";
+    }
+    if (isLocalProviderKind(readiness.provider?.kind)) {
+      return "local_provider_ready";
+    }
+    return "openai_compatible_ready";
   }
   if (readiness.mismatch) {
     return "model_provider_mismatch";
@@ -93,6 +99,10 @@ function resolveRuntimeModelProvider(model: ModelSummary, enabledProviders: Prov
   }
   const matchingProviders = enabledProviders.filter((provider) => provider.models.some((providerModel) => providerModel.id.trim() === model.id.trim()));
   return matchingProviders.length === 1 ? matchingProviders[0] : undefined;
+}
+
+function isLocalProviderKind(kind: ProviderSummary["kind"] | undefined): boolean {
+  return kind === "ollama" || kind === "custom";
 }
 
 export function modelStatusText(model: ModelSummary, provider?: ProviderSummary): string {

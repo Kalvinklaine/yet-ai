@@ -1084,7 +1084,7 @@ describe("provider secret boundary", () => {
     expect(browserStorageDump()).not.toContain(secret);
   });
 
-  it("provider presets fill OpenAI-compatible fields without an API key", async () => {
+  it("provider presets fill OpenAI-compatible and local fields without an API key", async () => {
     mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
 
@@ -1115,14 +1115,26 @@ describe("provider secret boundary", () => {
     expect(apiKeyInput().value).toBe("");
 
     await act(async () => {
-      findButton("Ollama OpenAI-compatible").click();
+      findButton("Ollama local (native)").click();
+    });
+
+    expect(findInputValue("ollama-local")).toBeDefined();
+    expect(findInputValue("http://127.0.0.1:11434")).toBeDefined();
+    expect(findSelectValue("ollama")).toBeDefined();
+    expect(findSelectValue("none")).toBeDefined();
+    expect(findInputValue("llama3.2")).toBeDefined();
+    expect(apiKeyInput().value).toBe("");
+    expect(container?.textContent).toContain("For local Ollama, the engine calls your Ollama server directly at http://127.0.0.1:11434");
+    expect(container?.textContent).toContain("No API key, hosted Yet AI service, account, managed model gateway, cloud workspace, or product credit balance is required");
+
+    await act(async () => {
+      findButton("Ollama OpenAI-compatible /v1").click();
     });
 
     expect(findInputValue("ollama-openai-compatible")).toBeDefined();
     expect(findInputValue("http://127.0.0.1:11434/v1")).toBeDefined();
-    expect(findInputValue("llama3.2")).toBeDefined();
+    expect(findSelectValue("openai-compatible")).toBeDefined();
     expect(apiKeyInput().value).toBe("");
-    expect(container?.textContent).toContain("native Ollama chat is future work");
   });
 
   it("keeps Session token and provider API key guidance visibly distinct", async () => {
@@ -1132,7 +1144,7 @@ describe("provider secret boundary", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("This local runtime token authorizes the GUI to the loopback runtime");
-    expect(container?.textContent).toContain("Provider API key is for the upstream OpenAI-compatible provider and is sent to the local runtime only on save, cleared from this form immediately after save/update is submitted, and never written to browser storage");
+    expect(container?.textContent).toContain("Provider API key is for upstream providers that require one and is sent to the local runtime only on save, cleared from this form immediately after save/update is submitted, and never written to browser storage. Ollama local uses auth None.");
     expect(apiKeyInput().placeholder).toBe("Provider API key, not the runtime Session token");
     expect(container?.textContent).toContain("This is your provider/OpenAI API key, not the runtime Session token.");
   });
@@ -2183,7 +2195,7 @@ describe("host.ready runtime bootstrap", () => {
     expect(text).toContain("Runtime needs refresh");
     expect(text).toContain("Runtimerefresh local runtime");
     expect(text).toContain("Demo Modeno-key local canned trial");
-    expect(text).toContain("Real providersafe/default API-key fallback");
+    expect(text).toContain("Real providerlocal Ollama or API-key fallback");
     expect(text).toContain("Account loginexperimental non-default");
     expect(text).toContain("Next safest action: Use Refresh runtime from this chat page; the IDE host will re-deliver trusted runtime settings automatically. If it still fails, use the IDE runtime status/restart command instead of copying a token. In JetBrains installed mode, also use Tools → Yet AI: Show Runtime Status or Restart Runtime if Refresh runtime keeps failing.");
     expect(findButton("Refresh runtime")).toBeDefined();
@@ -2202,15 +2214,15 @@ describe("host.ready runtime bootstrap", () => {
     expect(text).toContain("Runtime connected — choose the first-message path");
     expect(text).toContain("Provider setup");
     expect(text).toContain("State: Provider required");
-    expect(text).toContain("Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK OpenAI-compatible provider/model for real answers.");
+    expect(text).toContain("Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK provider/model such as local Ollama or OpenAI-compatible for real answers.");
     expect(text).toContain("Choose how this first chat should answer.");
     expect(text).toContain("Provider or Demo Mode needed");
     expect(text).toContain("Runtimeconnected");
     expect(text).toContain("Demo Modeno-key local canned trial");
-    expect(text).toContain("Real providersafe/default API-key fallback");
+    expect(text).toContain("Real providerlocal Ollama or API-key fallback");
     expect(text).toContain("First messagechoose Demo Mode or BYOK provider");
     expect(text).toContain("Account loginexperimental non-default");
-    expect(text).toContain("Next safest action: For real answers, use the OpenAI API-key fallback (safe/default), paste a provider API key, save, test provider, refresh runtime/model readiness, then send. Choose Demo Mode only to try the chat flow without provider calls.");
+    expect(text).toContain("Next safest action: For local answers without a provider key, choose Ollama local, confirm http://127.0.0.1:11434 and a pulled model id, save, test provider, refresh runtime/model readiness, then send. For hosted OpenAI-compatible answers, use the API-key fallback. Choose Demo Mode only to try the chat flow without provider calls.");
     expect(findButton("Use OpenAI API key fallback")).toBeDefined();
     expect(findButton("Send").disabled).toBe(true);
   });
@@ -5004,14 +5016,14 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("Chat readiness");
     expect(container?.textContent).toContain("0 enabled providers");
     expect(container?.textContent).toContain("Runtime connected — choose the first-message path");
-    expect(container?.textContent).toContain("Real provider (safe default): use OpenAI API-key fallback, paste a provider API key once, save, test provider, refresh runtime/model readiness, then send.");
+    expect(container?.textContent).toContain("Local provider: choose Ollama local for a direct engine call to http://127.0.0.1:11434, no API key, no hosted Yet AI service, no account, and no cloud workspace.");
     expect(container?.textContent).toContain("OpenAI API-key fallback is the current safe/default real-provider path for first-message GPT; provider setup stays local-first BYOK with no Yet AI hosted backend, account, cloud workspace, or credit balance required.");
     expect(container?.textContent).toContain("State: Provider required");
-    expect(container?.textContent).toContain("Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK OpenAI-compatible provider/model for real answers.");
+    expect(container?.textContent).toContain("Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK provider/model such as local Ollama or OpenAI-compatible for real answers.");
     expect(container?.textContent).toContain("For the quickest real-provider path, choose OpenAI API-key fallback, paste a provider API key once, save, test provider, refresh runtime/model readiness");
     expect(container?.textContent).toContain("Provider required for first message");
-    expect(container?.textContent).toContain("Why: No enabled OpenAI-compatible provider/model is ready for chat streaming.");
-    expect(container?.textContent).toContain("Next safest action: For real answers, use the OpenAI API-key fallback (safe/default), paste a provider API key, save, test provider, refresh runtime/model readiness, then send. Choose Demo Mode only to try the chat flow without provider calls.");
+    expect(container?.textContent).toContain("Why: No enabled local Ollama, OpenAI-compatible, or custom provider/model is ready for chat streaming.");
+    expect(container?.textContent).toContain("Next safest action: For local answers without a provider key, choose Ollama local, confirm http://127.0.0.1:11434 and a pulled model id, save, test provider, refresh runtime/model readiness, then send. For hosted OpenAI-compatible answers, use the API-key fallback. Choose Demo Mode only to try the chat flow without provider calls.");
     expect(container?.textContent).toContain("OpenAI API-key fallback is the current safe/default real-provider path for first-message GPT; provider setup stays local-first BYOK");
     expect(findButton("Send").disabled).toBe(true);
   });
@@ -5306,7 +5318,7 @@ describe("chat panel", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("State: Provider required");
-    expect(container?.textContent).toContain("Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK OpenAI-compatible provider/model for real answers.");
+    expect(container?.textContent).toContain("Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK provider/model such as local Ollama or OpenAI-compatible for real answers.");
     expect(findButton("Send").disabled).toBe(true);
   });
 
@@ -5363,6 +5375,68 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
     expect(container?.textContent).toContain("Ready to send using GPT-4o mini through the local runtime.");
     expect(findButton("Send").disabled).toBe(false);
+  });
+
+  it("shows native Ollama local provider readiness without browser secret storage", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const ollamaProvider = {
+      ...enabledProvider(),
+      id: "ollama-local",
+      kind: "ollama",
+      displayName: "Ollama Local",
+      baseUrl: "http://127.0.0.1:11434",
+      auth: { type: "none", configured: false },
+      models: [readyModel({ id: "llama3.2", displayName: "llama3.2", providerId: "ollama-local" })],
+    };
+    mockRuntimeResponses({
+      providers: [ollamaProvider],
+      models: [readyModel({ id: "llama3.2", displayName: "llama3.2", providerId: "ollama-local" })],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("1 enabled provider");
+    expect(container?.textContent).toContain("State: llama3.2 (ollama-local)");
+    expect(container?.textContent).toContain("Ready to send using llama3.2 through the local runtime directly to your local provider.");
+    expect(container?.textContent).toContain("Local provider ready through direct local runtime calls");
+    expect(container?.textContent).toContain("Ollama Local");
+    expect(container?.textContent).toContain("http://127.0.0.1:11434");
+    expect(container?.textContent).toContain("Secret configured: false");
+    expect(findButton("Send").disabled).toBe(false);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("ollama-local");
+  });
+
+  it("explains local provider unreachable and missing model states", async () => {
+    const ollamaProvider = {
+      ...enabledProvider(),
+      id: "ollama-local",
+      kind: "ollama",
+      displayName: "Ollama Local",
+      baseUrl: "http://127.0.0.1:11434",
+      auth: { type: "none", configured: false },
+      models: [readyModel({ id: "llama3.2", displayName: "llama3.2", providerId: "ollama-local" })],
+    };
+    mockRuntimeResponses({
+      providers: [ollamaProvider],
+      models: [readyModel({ id: "llama3.2", displayName: "llama3.2", providerId: "ollama-local", readiness: { status: "missing_model", reason: "Run ollama pull llama3.2 before sending." } })],
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Model llama3.2 is not ready for chat streaming: missing model. Run ollama pull llama3.2 before sending.");
+    expect(container?.textContent).toContain("Model is not ready yet");
+    expect(findButton("Send").disabled).toBe(true);
+
+    await act(async () => {
+      findButton("Test provider").click();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("Provider test succeeded");
+    expect(container?.textContent).toContain("Local runtime reached the provider. For Ollama, missing model errors mean the model id was not pulled locally yet.");
   });
 
   it("requires ready chat streaming model metadata before enabling Send", async () => {
