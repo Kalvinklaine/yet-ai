@@ -1,6 +1,6 @@
 import type { HostContextSnapshotPayload, WorkspaceEditRange, WorkspaceSnippetSearchResult } from "../bridge/bridgeAdapter";
 import type { ActiveFileExcerptAttachment } from "../bridge/bridgeAdapter";
-import type { ActiveEditorChatContext, ExplicitContextBundle, WorkspaceSnippetContext } from "./runtimeClient";
+import type { ActiveEditorChatContext, ExplicitContextBundle, ProjectMemoryContext, WorkspaceSnippetContext } from "./runtimeClient";
 import { redactSecrets, sanitizeDisplayText } from "./redaction";
 
 export type ActiveEditorContextUsability = "none" | "file" | "selection";
@@ -35,8 +35,9 @@ export type VerificationOutputBundleItem = {
 };
 
 export type WorkspaceSnippetBundleItem = WorkspaceSnippetContext & { key: string };
+export type ProjectMemoryBundleItem = ProjectMemoryContext & { key: string };
 
-export type ExplicitContextBundleItem = (ActiveEditorChatContext & { key: string }) | VerificationOutputBundleItem | WorkspaceSnippetBundleItem;
+export type ExplicitContextBundleItem = (ActiveEditorChatContext & { key: string }) | VerificationOutputBundleItem | WorkspaceSnippetBundleItem | ProjectMemoryBundleItem;
 
 export const explicitContextBundleMaxItems = 4;
 export const explicitContextBundleMaxTextCharacters = 16000;
@@ -152,6 +153,17 @@ export function workspaceSnippetBundleItemKey(item: WorkspaceSnippetContext): st
   ].join("|");
 }
 
+export function projectMemoryToBundleItem(note: ProjectMemoryContext): ProjectMemoryBundleItem {
+  return {
+    ...note,
+    key: projectMemoryBundleItemKey(note),
+  };
+}
+
+export function projectMemoryBundleItemKey(item: ProjectMemoryContext): string {
+  return ["project_memory", item.noteId, textHash(item.title), textHash(item.text)].join("|");
+}
+
 export function explicitContextBundleItemKey(item: ActiveEditorChatContext): string {
   return [
     item.source,
@@ -177,6 +189,9 @@ export function explicitContextBundleItemTextLength(item: ExplicitContextBundleI
     return item.outputTail.length;
   }
   if (item.kind === "workspace_snippet") {
+    return item.text.length;
+  }
+  if (item.kind === "project_memory") {
     return item.text.length;
   }
   return item.selection?.text?.length ?? 0;

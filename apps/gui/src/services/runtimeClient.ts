@@ -116,7 +116,15 @@ export type WorkspaceSnippetContext = {
   text: string;
 };
 
-export type ExplicitContextBundleItem = ActiveEditorChatContext | VerificationOutputContext | WorkspaceSnippetContext;
+export type ProjectMemoryContext = {
+  kind: "project_memory";
+  noteId: string;
+  title: string;
+  text: string;
+  tags: string[];
+};
+
+export type ExplicitContextBundleItem = ActiveEditorChatContext | VerificationOutputContext | WorkspaceSnippetContext | ProjectMemoryContext;
 
 export type ExplicitContextBundle = {
   kind: "explicit_context_bundle";

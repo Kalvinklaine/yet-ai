@@ -1,7 +1,7 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type ActiveFileExcerptAttachment, type WorkspaceSnippetSearchResult } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, removeOptimisticUserMessage, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
-import { activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToBundleItem, activeFileExcerptToChatContext, addExplicitContextBundleItem, explicitContextBundleMaxItems, explicitContextBundleToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, rangeFromContextSelection, workspaceSnippetToBundleItem, type ExplicitContextBundleItem, type WorkspaceSnippetBundleItem } from "./services/activeEditorContext";
+import { activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToBundleItem, activeFileExcerptToChatContext, addExplicitContextBundleItem, explicitContextBundleMaxItems, explicitContextBundleToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, projectMemoryToBundleItem, rangeFromContextSelection, workspaceSnippetToBundleItem, type ExplicitContextBundleItem, type ProjectMemoryBundleItem, type WorkspaceSnippetBundleItem } from "./services/activeEditorContext";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
 import { IdeActionProposalPanel, IdeActionsPanel, VerificationCommandPanel, verificationOutputKey, type IdeActionAttemptState, type VerificationCommand } from "./components/IdeActionsPanel";
 import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
@@ -15,6 +15,7 @@ import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from 
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
 import { editProposalCandidateIdentityMatches, editProposalPayloadKey, isCompleteAssistantEditProposalStatus, latestEditProposalCandidateFromMessages, parseEditProposalContent, type EditProposalIdentity } from "./services/editProposal";
 import { codingActions, type CodingAction } from "./services/codingActions";
+import { createProjectMemory, deleteProjectMemory, listProjectMemory, searchProjectMemory, type ProjectMemoryNote } from "./services/projectMemoryClient";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
@@ -120,6 +121,12 @@ type RuntimeConnectionSource = "manual" | "host.ready";
 
 type VerificationOutputBundleItem = Extract<ExplicitContextBundleItem, { kind: "verification_output" }>;
 type WorkspaceSnippetSearchResultPayload = IdeActionResultPayload & { action: "searchWorkspaceSnippets"; status: "succeeded"; queryLabel: string; resultCount: number; snippets: WorkspaceSnippetSearchResult[]; truncated: boolean };
+
+type ProjectMemoryState = {
+  state: "idle" | "loading" | "saving" | "searching" | "deleting" | "error";
+  notes: ProjectMemoryNote[];
+  error: RuntimeError | null;
+};
 
 const emptyProviderForm: ProviderForm = {
   providerId: "openai-local",
@@ -302,6 +309,12 @@ export function App() {
   const [workspaceSnippetResult, setWorkspaceSnippetResult] = useState<WorkspaceSnippetSearchResultPayload | null>(null);
   const [selectedWorkspaceSnippetKeys, setSelectedWorkspaceSnippetKeys] = useState<string[]>([]);
   const [workspaceSnippetStatus, setWorkspaceSnippetStatus] = useState<string | null>(null);
+  const [projectMemoryTitle, setProjectMemoryTitle] = useState("");
+  const [projectMemoryText, setProjectMemoryText] = useState("");
+  const [projectMemoryTags, setProjectMemoryTags] = useState("");
+  const [projectMemoryQuery, setProjectMemoryQuery] = useState("");
+  const [projectMemory, setProjectMemory] = useState<ProjectMemoryState>({ state: "idle", notes: [], error: null });
+  const [projectMemoryStatus, setProjectMemoryStatus] = useState<string | null>(null);
   const [runtimeRefreshStatus, setRuntimeRefreshStatus] = useState<{ state: "checking" | "connected" | "failed"; attempt: number; checkedAt: string; detail: string } | null>(null);
   const [runtimeRefreshInFlight, setRuntimeRefreshInFlight] = useState(false);
   const [runtimeConnectionSource, setRuntimeConnectionSource] = useState<RuntimeConnectionSource>("manual");
@@ -434,6 +447,7 @@ export function App() {
   const activeIdeActionProposal = ideActionProposalMatchesCandidate(ideActionProposal, ideActionProposalCandidate) ? ideActionProposal : null;
   const safeActiveWorkspacePath = currentAttachedContext?.file?.workspaceRelativePath;
   const safeActiveRange = rangeFromContextSelection(currentAttachedContext?.selection);
+  const attachedProjectMemoryCount = explicitContextBundleItems.filter((item) => item.kind === "project_memory").length;
   const pendingActiveFileExcerpt = pendingIdeActionRequestIdRef.current !== null && ideActionAttempt?.action === "getActiveFileExcerpt" && (ideActionAttempt.status === "pending" || ideActionAttempt.status === "inProgress");
   const activeFilePromptAction = useMemo(() => currentActiveFileExcerpt ? buildActiveFilePromptAction(currentActiveFileExcerpt) : null, [currentActiveFileExcerpt]);
   const chatHistoryStatus = conversationHistoryStatusLabel({ loading: chatHistoryLoading, current: chatHistoryCurrent, count: activeChatSummaries.length, hasError: Boolean(chatHistoryError) });
@@ -1569,6 +1583,114 @@ export function App() {
     });
   };
 
+  const refreshProjectMemory = useCallback(async () => {
+    const targetSettings = settingsRef.current;
+    const targetRevision = settingsRevisionRef.current;
+    setProjectMemory((current) => ({ ...current, state: "loading", error: null }));
+    const result = await listProjectMemory(targetSettings);
+    if (!isCurrentRefresh(targetRevision)) {
+      return;
+    }
+    if (result.ok) {
+      setProjectMemory({ state: "idle", notes: result.data.notes ?? [], error: null });
+      setProjectMemoryStatus(`${result.data.notes?.length ?? 0} local memory note${(result.data.notes?.length ?? 0) === 1 ? "" : "s"} loaded.`);
+    } else {
+      setProjectMemory({ state: "error", notes: [], error: result.error });
+      setProjectMemoryStatus("Project memory unavailable from the local runtime.");
+    }
+  }, [isCurrentRefresh]);
+
+  const createProjectMemoryNote = async () => {
+    const title = projectMemoryTitle.trim();
+    const text = projectMemoryText.trim();
+    if (!title || !text) {
+      setProjectMemoryStatus("Enter a title and bounded note text before saving local memory.");
+      return;
+    }
+    const tags = projectMemoryTags.split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 10);
+    const targetSettings = settingsRef.current;
+    const targetRevision = settingsRevisionRef.current;
+    setProjectMemory((current) => ({ ...current, state: "saving", error: null }));
+    const result = await createProjectMemory(targetSettings, { title, text, tags, source: "manual" });
+    if (!isCurrentRefresh(targetRevision)) {
+      return;
+    }
+    if (result.ok) {
+      setProjectMemoryTitle("");
+      setProjectMemoryText("");
+      setProjectMemoryTags("");
+      setProjectMemory((current) => ({ state: "idle", notes: [result.data, ...current.notes.filter((note) => note.id !== result.data.id)], error: null }));
+      setProjectMemoryStatus(`Saved local memory note ${sanitizeDisplayText(result.data.title)}.`);
+    } else {
+      setProjectMemory((current) => ({ ...current, state: "error", error: result.error }));
+      setProjectMemoryStatus("Could not save local memory note.");
+    }
+  };
+
+  const searchProjectMemoryNotes = async () => {
+    const query = projectMemoryQuery.trim();
+    if (!query) {
+      await refreshProjectMemory();
+      return;
+    }
+    const targetSettings = settingsRef.current;
+    const targetRevision = settingsRevisionRef.current;
+    setProjectMemory((current) => ({ ...current, state: "searching", error: null }));
+    const result = await searchProjectMemory(targetSettings, query);
+    if (!isCurrentRefresh(targetRevision)) {
+      return;
+    }
+    if (result.ok) {
+      setProjectMemory({ state: "idle", notes: result.data.notes ?? [], error: null });
+      setProjectMemoryStatus(`${result.data.notes?.length ?? 0} local memory note${(result.data.notes?.length ?? 0) === 1 ? "" : "s"} matched ${sanitizeDisplayText(query)}.`);
+    } else {
+      setProjectMemory((current) => ({ ...current, state: "error", error: result.error }));
+      setProjectMemoryStatus("Could not search local memory notes.");
+    }
+  };
+
+  const deleteProjectMemoryNote = async (note: ProjectMemoryNote) => {
+    const targetSettings = settingsRef.current;
+    const targetRevision = settingsRevisionRef.current;
+    setProjectMemory((current) => ({ ...current, state: "deleting", error: null }));
+    const result = await deleteProjectMemory(targetSettings, note.id);
+    if (!isCurrentRefresh(targetRevision)) {
+      return;
+    }
+    if (result.ok) {
+      setProjectMemory((current) => ({ state: "idle", notes: current.notes.filter((item) => item.id !== note.id), error: null }));
+      setExplicitContextBundleItems((current) => current.filter((item) => !(item.kind === "project_memory" && item.noteId === note.id)));
+      setProjectMemoryStatus(`Deleted local memory note ${sanitizeDisplayText(note.title)}.`);
+    } else {
+      setProjectMemory((current) => ({ ...current, state: "error", error: result.error }));
+      setProjectMemoryStatus("Could not delete local memory note.");
+    }
+  };
+
+  const attachProjectMemoryNote = (note: ProjectMemoryNote) => {
+    const item = projectMemoryToBundleItem({ kind: "project_memory", noteId: note.id, title: note.title, text: note.text, tags: note.tags });
+    setExplicitContextBundleItems((current) => {
+      const next = addExplicitContextBundleItem(current, item);
+      if (next === current) {
+        setProjectMemoryStatus(current.some((existing) => existing.key === item.key) ? "This memory note is already attached." : `Bundle limit reached. Remove an item before attaching memory; max ${explicitContextBundleMaxItems} items.`);
+        return current;
+      }
+      setIncludeExplicitContextBundle(true);
+      setExplicitContextBundleStatus(`Added local memory note ${sanitizeDisplayText(note.title)} to the one-shot bundle.`);
+      setProjectMemoryStatus(`Attached local memory note ${sanitizeDisplayText(note.title)} to the next message context.`);
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (runtimeConnected) {
+      void refreshProjectMemory();
+    } else {
+      setProjectMemory({ state: "idle", notes: [], error: null });
+      setProjectMemoryStatus(null);
+    }
+  }, [refreshProjectMemory, runtimeConnected, settingsRevision]);
+
   useEffect(() => {
     if (!ideActionProposalCandidate) {
       ideActionProposalIdentityRef.current = null;
@@ -2043,6 +2165,7 @@ export function App() {
                 <ManualRunnerPanel host={bridgeHost} draftPlan={manualRunnerDraftPlan} planProposal={latestPlanProposal} hasContext={Boolean((currentAttachedContext && hasUsableAttachedContext(currentAttachedContext)) || explicitContextBundleItems.length > 0)} hasPrompt={Boolean(chatInput.trim())} hasAssistantActivity={chatView.messages.some((message) => message.role === "assistant") || chatLifecycleState !== "idle"} hasEditProposal={Boolean(activeEditProposal)} applyResult={applyResult} verificationAttempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} verificationAttached={Boolean(attachedVerificationKey)} canSendChat={canSendChat} onDraftPlanChange={setManualRunnerDraftPlan} onFocusPrompt={() => chatInputRef.current?.focus()} />
                 <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} promptAction={activeFilePromptAction} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onClearPending={clearPendingIdeActionState} onIncludeChange={setIncludeAttachedContext} onApplyPrompt={applyActiveFilePrompt} onAddToBundle={addActiveFileExcerptToBundle} />
                 <WorkspaceSnippetSearchPanel host={bridgeHost} query={workspaceSnippetQuery} result={workspaceSnippetResult} selectedKeys={selectedWorkspaceSnippetKeys} pending={ideActionAttempt?.action === "searchWorkspaceSnippets" && (ideActionAttempt.status === "pending" || ideActionAttempt.status === "inProgress")} status={workspaceSnippetStatus} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onQueryChange={setWorkspaceSnippetQuery} onSearch={searchWorkspaceSnippets} onClearPending={clearPendingIdeActionState} onSelectionChange={setSelectedWorkspaceSnippetKeys} onAttachSelected={attachSelectedWorkspaceSnippetsToBundle} />
+                <ProjectMemoryPanel notes={projectMemory.notes} state={projectMemory.state} error={projectMemory.error} title={projectMemoryTitle} text={projectMemoryText} tags={projectMemoryTags} query={projectMemoryQuery} status={projectMemoryStatus} attachedCount={attachedProjectMemoryCount} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onTitleChange={setProjectMemoryTitle} onTextChange={setProjectMemoryText} onTagsChange={setProjectMemoryTags} onQueryChange={setProjectMemoryQuery} onCreate={() => void createProjectMemoryNote()} onSearch={() => void searchProjectMemoryNotes()} onRefresh={() => void refreshProjectMemory()} onAttach={attachProjectMemoryNote} onDelete={(note) => void deleteProjectMemoryNote(note)} />
                 <ExplicitContextBundlePanel items={explicitContextBundleItems} include={includeExplicitContextBundle} status={explicitContextBundleStatus} onIncludeChange={setIncludeExplicitContextBundle} onRemove={removeExplicitContextBundleItem} onClear={() => clearExplicitContextBundle("Cleared the one-shot explicit context bundle.")} />
                 <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} acknowledged={attachedContextAcknowledged} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} onAcknowledgeChange={setAttachedContextAcknowledged} />
                 <CodingActionsPanel canUseContext={codingActionsCanUseContext} context={currentAttachedContext} onAction={applyCodingAction} />
@@ -2283,6 +2406,10 @@ function isVerificationOutputBundleItem(item: ExplicitContextBundleItem): item i
 
 function isWorkspaceSnippetBundleItem(item: ExplicitContextBundleItem): item is WorkspaceSnippetBundleItem {
   return item.kind === "workspace_snippet";
+}
+
+function isProjectMemoryBundleItem(item: ExplicitContextBundleItem): item is ProjectMemoryBundleItem {
+  return item.kind === "project_memory";
 }
 
 function isWorkspaceSnippetSearchResult(result: IdeActionResultPayload): result is WorkspaceSnippetSearchResultPayload {
@@ -2769,6 +2896,67 @@ function WorkspaceSnippetSearchPanel({ host, query, result, selectedKeys, pendin
   );
 }
 
+function ProjectMemoryPanel({ notes, state, error, title, text, tags, query, status, attachedCount, canAddToBundle, onTitleChange, onTextChange, onTagsChange, onQueryChange, onCreate, onSearch, onRefresh, onAttach, onDelete }: { notes: ProjectMemoryNote[]; state: ProjectMemoryState["state"]; error: RuntimeError | null; title: string; text: string; tags: string; query: string; status: string | null; attachedCount: number; canAddToBundle: boolean; onTitleChange: (value: string) => void; onTextChange: (value: string) => void; onTagsChange: (value: string) => void; onQueryChange: (value: string) => void; onCreate: () => void; onSearch: () => void; onRefresh: () => void; onAttach: (note: ProjectMemoryNote) => void; onDelete: (note: ProjectMemoryNote) => void }) {
+  const busy = state === "loading" || state === "saving" || state === "searching" || state === "deleting";
+  return (
+    <section className={`readiness-card ${notes.length > 0 || attachedCount > 0 ? "ready" : "warn"} project-memory-card stack`} role="status" aria-label="Local project memory">
+      <div className="row">
+        <strong>Local project memory</strong>
+        <span className="badge ok">engine-owned</span>
+        <span className="badge">{attachedCount} attached</span>
+      </div>
+      <span className="subtle">Manual bounded notes only. The GUI does not write notes to browser storage, auto-save model output, auto-attach memory, scan the workspace, or expose raw secrets. Attach is explicit one-shot prompt context and clears after accepted Send.</span>
+      <div className="form-grid">
+        <label>
+          Memory title
+          <input value={title} onChange={(event) => onTitleChange(event.target.value)} placeholder="Short note title" autoComplete="off" />
+        </label>
+        <label>
+          Tags (comma separated)
+          <input value={tags} onChange={(event) => onTagsChange(event.target.value)} placeholder="architecture, decision" autoComplete="off" />
+        </label>
+      </div>
+      <label className="stack">
+        Memory note text
+        <textarea value={text} onChange={(event) => onTextChange(event.target.value)} placeholder="Manual local note. Do not paste secrets, raw provider responses, private paths, or file bodies." />
+      </label>
+      <div className="row">
+        <button type="button" onClick={onCreate} disabled={busy || !title.trim() || !text.trim()}>{state === "saving" ? "Saving memory…" : "Create memory note"}</button>
+        <button type="button" className="secondary-button" onClick={onRefresh} disabled={busy}>{state === "loading" ? "Loading memory…" : "Refresh memory"}</button>
+      </div>
+      <div className="form-grid">
+        <label>
+          Search local memory
+          <input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Literal memory query" autoComplete="off" />
+        </label>
+      </div>
+      <div className="row">
+        <button type="button" onClick={onSearch} disabled={busy}>{state === "searching" ? "Searching memory…" : query.trim() ? "Search memory" : "List memory"}</button>
+      </div>
+      {error && <ErrorBox error={error} />}
+      {status && <span className="subtle">{sanitizeDisplayText(status)}</span>}
+      {notes.length === 0 ? <span className="subtle">No local memory notes are listed. Create one manually or refresh from the engine-owned local store.</span> : notes.map((note) => {
+        const preview = classifyBoundedContextPreview(note.text);
+        return (
+          <div className="provider-item stack" key={note.id}>
+            <div className="row">
+              <strong>{sanitizeDisplayText(note.title)}</strong>
+              <span className="badge ok">manual</span>
+              {note.tags.map((tag) => <span className="badge" key={tag}>{sanitizeDisplayText(tag)}</span>)}
+            </div>
+            <span className="subtle">Updated {sanitizeDisplayText(note.updatedAt)} · {note.text.length} chars</span>
+            <div className="attached-context-preview"><pre>{preview.text}</pre></div>
+            <div className="row">
+              <button type="button" onClick={() => onAttach(note)} disabled={!canAddToBundle}>{canAddToBundle ? "Attach memory to next message" : `Bundle full (${explicitContextBundleMaxItems} max)`}</button>
+              <button type="button" className="danger-button" onClick={() => onDelete(note)} disabled={busy}>Delete memory</button>
+            </div>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
 function ExplicitContextBundlePanel({ items, include, status, onIncludeChange, onRemove, onClear }: { items: ExplicitContextBundleItem[]; include: boolean; status: string | null; onIncludeChange: (include: boolean) => void; onRemove: (key: string) => void; onClear: () => void }) {
   if (items.length === 0) {
     return (
@@ -2820,6 +3008,20 @@ function ExplicitContextBundlePanel({ items, include, status, onIncludeChange, o
                   <button type="button" className="secondary-button" onClick={() => onRemove(item.key)}>Remove snippet</button>
                 </div>
                 <span className="subtle">Language {sanitizeDisplayText(item.languageId)} · range {formatSelectionRange({ startLine: item.range.start.line, startCharacter: item.range.start.character, endLine: item.range.end.line, endCharacter: item.range.end.character })} · {item.text.length} chars</span>
+                <div className="attached-context-preview"><pre>{preview.text}</pre></div>
+              </div>
+            );
+          }
+          if (isProjectMemoryBundleItem(item)) {
+            const preview = classifyBoundedContextPreview(item.text);
+            return (
+              <div className="provider-item stack" key={item.key}>
+                <div className="row">
+                  <strong>{index + 1}. Project memory</strong>
+                  <span className="badge ok">{sanitizeDisplayText(item.title)}</span>
+                  <button type="button" className="secondary-button" onClick={() => onRemove(item.key)}>Remove memory</button>
+                </div>
+                <span className="subtle">Tags {item.tags.map((tag) => sanitizeDisplayText(tag)).join(", ") || "none"} · {item.text.length} chars</span>
                 <div className="attached-context-preview"><pre>{preview.text}</pre></div>
               </div>
             );

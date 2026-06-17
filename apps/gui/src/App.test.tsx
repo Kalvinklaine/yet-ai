@@ -2709,6 +2709,108 @@ describe("host.ready runtime bootstrap", () => {
 });
 
 describe("active editor attached context", () => {
+  it("creates searches attaches clears and deletes local project memory without browser storage", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const note = projectMemoryNote({ title: "Architecture decision", text: "Use engine-owned local memory only.", tags: ["architecture"] });
+    let notes: unknown[] = [];
+    mockRuntimeResponses({ ...readyRuntimeOptions(), projectMemoryNotes: notes });
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/project-memory") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        expect(body).toEqual({ title: "Architecture decision", text: "Use engine-owned local memory only.", tags: ["architecture"], source: "manual" });
+        notes = [note];
+        return Promise.resolve(jsonResponse(note));
+      }
+      if (url.endsWith("/v1/project-memory/search") && init?.method === "POST") {
+        expect(JSON.parse(String(init.body))).toEqual({ query: "engine" });
+        return Promise.resolve(jsonResponse({ notes, cloudRequired: false, providerAccess: "direct", query: "engine" }));
+      }
+      if (url.endsWith("/v1/project-memory/mem-001") && init?.method === "DELETE") {
+        notes = [];
+        return Promise.resolve(jsonResponse({ deleted: true, noteId: "mem-001" }));
+      }
+      return mockRuntimeResponse(input, init, { ...readyRuntimeOptions(), projectMemoryNotes: notes });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Local project memory");
+    expect(container?.textContent).toContain("No local memory notes are listed");
+
+    await act(async () => {
+      setInputValue(findInputByPlaceholder("Short note title"), "Architecture decision");
+      setTextareaByPlaceholder("Manual local note", "Use engine-owned local memory only.");
+      setInputValue(findInputByPlaceholder("architecture, decision"), "architecture");
+    });
+    await act(async () => {
+      findButton("Create memory note").click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Saved local memory note Architecture decision.");
+    expect(container?.textContent).toContain("Use engine-owned local memory only.");
+    expect(findInputByPlaceholder("Short note title").value).toBe("");
+    expect(findTextareaByPlaceholder("Manual local note").value).toBe("");
+
+    await act(async () => {
+      setInputValue(findInputByPlaceholder("Literal memory query"), "engine");
+    });
+    await act(async () => {
+      findButton("Search memory").click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+    expect(container?.textContent).toContain("1 local memory note matched engine.");
+
+    await act(async () => {
+      findButton("Attach memory to next message").click();
+    });
+    expect(container?.textContent).toContain("Attached local memory note Architecture decision to the next message context.");
+    expect(container?.textContent).toContain("Project memory");
+    expect(browserStorageDump()).not.toContain("Use engine-owned local memory only.");
+
+    await act(async () => {
+      findButton("Clear bundle").click();
+    });
+    expect(container?.textContent).toContain("Cleared the one-shot explicit context bundle.");
+    expect(container?.textContent).toContain("empty");
+
+    await act(async () => {
+      findButton("Attach memory to next message").click();
+    });
+    fetchMock.mockClear();
+    await act(async () => {
+      setTextareaValue(chatInput(), "Use attached memory once");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    expect(lastUserMessageBody().payload).toEqual({
+      content: "Use attached memory once",
+      context: {
+        kind: "explicit_context_bundle",
+        items: [{ kind: "project_memory", noteId: "mem-001", title: "Architecture decision", text: "Use engine-owned local memory only.", tags: ["architecture"] }],
+      },
+    });
+    expect(container?.textContent).toContain("One-shot explicit context bundle attached to the last accepted message and cleared.");
+    expect(container?.textContent).toContain("empty");
+
+    await act(async () => {
+      findButton("Delete memory").click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+    expect(container?.textContent).toContain("Deleted local memory note Architecture decision.");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("Use engine-owned local memory only.");
+  });
+
   it("renders manual runner panel as progress-only browser preview without auto actions or storage", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     mockRuntimeResponses(readyRuntimeOptions());
@@ -8451,6 +8553,7 @@ type MockRuntimeOptions = {
   agentProgress?: unknown;
   agentProgressStatus?: number;
   agentProgressError?: string;
+  projectMemoryNotes?: unknown[];
 };
 
 function providerAuthResponse(status: ProviderAuthStatus): ProviderAuthResponse {
@@ -8678,6 +8781,19 @@ function agentProgressSnapshot(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function projectMemoryNote(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "mem-001",
+    title: "Architecture decision",
+    text: "Use engine-owned local memory only.",
+    tags: ["architecture"],
+    source: "manual",
+    createdAt: "2026-06-17T12:00:00Z",
+    updatedAt: "2026-06-17T12:00:00Z",
+    ...overrides,
+  };
+}
+
 function mockStreamingReadyRuntime(options: { abortResponse?: Promise<Response> } = {}) {
   let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
   fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -8815,6 +8931,19 @@ function mockRuntimeResponse(input: RequestInfo | URL, init: RequestInit | undef
       return Promise.resolve(jsonResponse({ error: options.agentProgressError ?? "agent progress unavailable" }, options.agentProgressStatus));
     }
     return Promise.resolve(jsonResponse(options.agentProgress ?? agentProgressResponse()));
+  }
+  if (url.endsWith("/v1/project-memory/search") && init?.method === "POST") {
+    return Promise.resolve(jsonResponse({ notes: options.projectMemoryNotes ?? [], cloudRequired: false, providerAccess: "direct" }));
+  }
+  if (url.endsWith("/v1/project-memory") && init?.method === "POST") {
+    return Promise.resolve(jsonResponse(projectMemoryNote(JSON.parse(String(init.body)))));
+  }
+  const memoryMatch = /\/v1\/project-memory\/([^/?]+)$/.exec(url);
+  if (memoryMatch && init?.method === "DELETE") {
+    return Promise.resolve(jsonResponse({ deleted: true, noteId: decodeURIComponent(memoryMatch[1]) }));
+  }
+  if (url.endsWith("/v1/project-memory")) {
+    return Promise.resolve(jsonResponse({ notes: options.projectMemoryNotes ?? [], cloudRequired: false, providerAccess: "direct" }));
   }
   const chatMatch = /\/v1\/chats\/([^/?]+)$/.exec(url);
   if (chatMatch && init?.method === "DELETE") {
@@ -9157,4 +9286,24 @@ function setTextareaValue(input: HTMLTextAreaElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
   setter?.call(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function findInputByPlaceholder(placeholder: string) {
+  const input = Array.from(container?.querySelectorAll<HTMLInputElement>("input") ?? []).find((item) => item.placeholder.includes(placeholder));
+  if (!input) {
+    throw new Error(`Input placeholder not found: ${placeholder}`);
+  }
+  return input;
+}
+
+function findTextareaByPlaceholder(placeholder: string) {
+  const input = Array.from(container?.querySelectorAll<HTMLTextAreaElement>("textarea") ?? []).find((item) => item.placeholder.includes(placeholder));
+  if (!input) {
+    throw new Error(`Textarea placeholder not found: ${placeholder}`);
+  }
+  return input;
+}
+
+function setTextareaByPlaceholder(placeholder: string, value: string) {
+  setTextareaValue(findTextareaByPlaceholder(placeholder), value);
 }
