@@ -17,6 +17,7 @@
     "smoke:project-memory": "node scripts/smoke-project-memory.mjs",
     "smoke:project-memory-v2": "node scripts/smoke-project-memory-v2.mjs",
     "smoke:guided-coding-task": "node scripts/smoke-guided-coding-task.mjs",
+    "smoke:snippet-search-v2": "node scripts/smoke-snippet-search-v2.mjs",
     "smoke:real-coding-task-dogfood": "node scripts/smoke-real-coding-task-dogfood.mjs",
     "smoke:patch-proposal-quality": "node scripts/smoke-patch-proposal-quality.mjs",
     "smoke:verification-loop": "node scripts/smoke-verification-loop.mjs",
