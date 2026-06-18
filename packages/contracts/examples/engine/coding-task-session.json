@@ -1,0 +1,52 @@
+{
+  "protocolVersion": "2026-06-18",
+  "kind": "coding_task_session",
+  "sessionId": "session-001",
+  "title": "Update contract docs",
+  "goal": "Define safe guided session display state for the local coding loop.",
+  "status": "edit_proposed",
+  "selectedContext": {
+    "count": 2,
+    "refs": [
+      {
+        "kind": "active_file_excerpt",
+        "label": "Contracts README selected excerpt",
+        "refId": "ctx-001"
+      },
+      {
+        "kind": "verification_output",
+        "label": "Repository check result",
+        "refId": "verify-001"
+      }
+    ]
+  },
+  "memory": {
+    "count": 1,
+    "refs": [
+      {
+        "noteId": "note-001",
+        "title": "Local first boundary"
+      }
+    ]
+  },
+  "latestResponse": {
+    "status": "completed",
+    "summary": "Model response is visible for user review"
+  },
+  "editProposal": {
+    "status": "proposed",
+    "summary": "One bounded edit proposal is ready for review"
+  },
+  "verification": {
+    "status": "user_ready",
+    "commandId": "repository-check",
+    "summary": "User may trigger the allowlisted repository check"
+  },
+  "nextStepSuggestions": [
+    "Review the proposed changes",
+    "Confirm after reviewing the preview",
+    "Use the allowlisted repository check control"
+  ],
+  "cloudRequired": false,
+  "providerAccess": "direct"
+}

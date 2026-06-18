@@ -41,6 +41,7 @@ const mappings = [
   ["packages/contracts/examples/engine/agent-progress-event-manual-runner.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-event-manual-runner-verification.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
   ["packages/contracts/examples/engine/manual-runner-plan-proposal.json", "packages/contracts/schemas/engine/manual-runner-plan-proposal.schema.json"],
+  ["packages/contracts/examples/engine/coding-task-session.json", "packages/contracts/schemas/engine/coding-task-session.schema.json"],
   ["packages/contracts/examples/engine/assistant-ide-action-proposal-get-context.json", "packages/contracts/schemas/engine/assistant-ide-action-proposal.schema.json"],
   ["packages/contracts/examples/engine/assistant-ide-action-proposal-open-file.json", "packages/contracts/schemas/engine/assistant-ide-action-proposal.schema.json"],
   ["packages/contracts/examples/engine/assistant-ide-action-proposal-reveal-range.json", "packages/contracts/schemas/engine/assistant-ide-action-proposal.schema.json"],
@@ -723,6 +724,14 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/manual-runner-plan-proposal.schema.json"
+  ]),
+  ...[
+    "coding-task-session-unknown-field.json",
+    "coding-task-session-raw-prompt.json",
+    "coding-task-session-cloud-required.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/coding-task-session.schema.json"
   ]),
   ...[
     "assistant-ide-action-proposal-shell-action.json",

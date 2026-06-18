@@ -1,0 +1,31 @@
+{
+  "protocolVersion": "2026-06-18",
+  "kind": "coding_task_session",
+  "sessionId": "session-unsafe",
+  "title": "Unsafe session",
+  "goal": "Carry raw prompt details into visible state.",
+  "status": "response_visible",
+  "selectedContext": {
+    "count": 0,
+    "refs": []
+  },
+  "memory": {
+    "count": 0,
+    "refs": []
+  },
+  "latestResponse": {
+    "status": "completed",
+    "summary": "Includes raw prompt content"
+  },
+  "editProposal": {
+    "status": "none"
+  },
+  "verification": {
+    "status": "not_requested"
+  },
+  "nextStepSuggestions": [
+    "Review visible state"
+  ],
+  "cloudRequired": false,
+  "providerAccess": "direct"
+}

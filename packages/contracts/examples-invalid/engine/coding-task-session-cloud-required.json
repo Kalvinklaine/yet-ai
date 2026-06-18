@@ -1,0 +1,30 @@
+{
+  "protocolVersion": "2026-06-18",
+  "kind": "coding_task_session",
+  "sessionId": "session-cloud",
+  "title": "Cloud session",
+  "goal": "Define safe guided session display state.",
+  "status": "draft",
+  "selectedContext": {
+    "count": 0,
+    "refs": []
+  },
+  "memory": {
+    "count": 0,
+    "refs": []
+  },
+  "latestResponse": {
+    "status": "none"
+  },
+  "editProposal": {
+    "status": "none"
+  },
+  "verification": {
+    "status": "not_requested"
+  },
+  "nextStepSuggestions": [
+    "Review the safe state"
+  ],
+  "cloudRequired": true,
+  "providerAccess": "direct"
+}

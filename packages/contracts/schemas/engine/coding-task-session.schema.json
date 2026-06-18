@@ -1,0 +1,282 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/coding-task-session.schema.json",
+  "title": "Coding Task Session State",
+  "description": "Inert local guided coding task session display state. It contains only bounded sanitized status and reference metadata, and excludes raw prompts, provider responses, file bodies, commands, secrets, cloud fields, auto-action flags, and execution authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocolVersion",
+    "kind",
+    "sessionId",
+    "title",
+    "goal",
+    "status",
+    "selectedContext",
+    "memory",
+    "latestResponse",
+    "editProposal",
+    "verification",
+    "nextStepSuggestions",
+    "cloudRequired",
+    "providerAccess"
+  ],
+  "properties": {
+    "protocolVersion": {
+      "type": "string",
+      "const": "2026-06-18"
+    },
+    "kind": {
+      "type": "string",
+      "const": "coding_task_session"
+    },
+    "sessionId": {
+      "$ref": "#/$defs/id"
+    },
+    "title": {
+      "$ref": "#/$defs/title"
+    },
+    "goal": {
+      "$ref": "#/$defs/goal"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "context_selected",
+        "response_visible",
+        "edit_proposed",
+        "user_applied_edit",
+        "verification_visible",
+        "summarized",
+        "blocked"
+      ]
+    },
+    "selectedContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "count",
+        "refs"
+      ],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "refs": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/contextRef"
+          }
+        }
+      }
+    },
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "count",
+        "refs"
+      ],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "refs": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/memoryRef"
+          }
+        }
+      }
+    },
+    "latestResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "none",
+            "waiting_for_user",
+            "streaming",
+            "completed",
+            "failed",
+            "aborted"
+          ]
+        },
+        "summary": {
+          "$ref": "#/$defs/label"
+        }
+      }
+    },
+    "editProposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "none",
+            "proposed",
+            "user_reviewing",
+            "applied",
+            "denied",
+            "rejected",
+            "failed"
+          ]
+        },
+        "summary": {
+          "$ref": "#/$defs/label"
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "not_requested",
+            "user_ready",
+            "running",
+            "succeeded",
+            "failed",
+            "unavailable"
+          ]
+        },
+        "commandId": {
+          "type": "string",
+          "enum": [
+            "repository-check",
+            "gui-app-tests",
+            "engine-chat-tests"
+          ]
+        },
+        "summary": {
+          "$ref": "#/$defs/label"
+        }
+      }
+    },
+    "nextStepSuggestions": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "$ref": "#/$defs/label"
+      }
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "providerAccess": {
+      "type": "string",
+      "const": "direct"
+    }
+  },
+  "$defs": {
+    "safeTaskSessionText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[aA][pP][iI][-_ ]?[kK][eE][yY]|[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][eE][aA][rR][eE][rR]|[tT][oO][kK][eE][nN]|[sS][eE][cC][rR][eE][tT]|[pP][aA][sS][sS][wW][oO][rR][dD]|[cC][oO][oO][kK][iI][eE]|[pP][kK][cC][eE]|[rR][eE][fF][rR][eE][sS][hH]|[aA][cC][cC][eE][sS][sS][-_ ]?[tT][oO][kK][eE][nN]|[aA][uU][tT][hH][-_ ]?[cC][oO][dD][eE]|[cC][hH][aA][iI][nN][-_ ]?[oO][fF][-_ ]?[tT][hH][oO][uU][gG][hH][tT]|[rR][aA][wW][-_ ]?(?:[pP][rR][oO][mM][pP][tT]|[cC][oO][mM][mM][aA][nN][dD]|[dD][uU][mM][pP]|[oO][uU][tT][pP][uU][tT]|[fF][iI][lL][eE]|[wW][oO][rR][kK][sS][pP][aA][cC][eE])|[pP][rR][oO][vV][iI][dD][eE][rR][-_ ]?(?:[rR][eE][sS][pP][oO][nN][sS][eE]|[bB][oO][dD][yY])|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[fF][iI][lL][eE][-_ ]?[cC][oO][nN][tT][eE][nN][tT]|[wW][oO][rR][kK][sS][pP][aA][cC][eE][-_ ]?(?:[fF][iI][lL][eE]|[cC][oO][nN][tT][eE][nN][tT])|[sS][hH][eE][lL][lL]|[gG][iI][tT]|[tT][oO][oO][lL]|[pP][aA][tT][cC][hH]|[aA][pP][pP][lL][yY]|[eE][xX][eE][cC]|[cC][mM][dD]|[cC][oO][mM][mM][aA][nN][dD]|[aA][uU][tT][oO][-_ ]?(?:[rR][uU][nN]|[rR][eE][aA][dD]|[sS][eE][aA][rR][cC][hH]|[sS][aA][vV][eE]|[sS][eE][nN][dD]|[aA][pP][pP][lL][yY])|[hH][iI][dD][dD][eE][nN][-_ ]?[rR][eE][aA][dD]|[nN][pP][mM]\\s+[rR][uU][nN]|[cC][aA][rR][gG][oO]\\s+(?:[cC][hH][eE][cC][kK]|[tT][eE][sS][tT])|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~/|\\.[cC][oO][dD][eE][xX]/[aA][uU][tT][hH]\\.json|(?:[aA][uU][tT][hH]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL][sS]?)\\.json|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "title": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeTaskSessionText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      ]
+    },
+    "goal": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeTaskSessionText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        }
+      ]
+    },
+    "label": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeTaskSessionText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140
+        }
+      ]
+    },
+    "contextRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "label"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "active_file_excerpt",
+            "workspace_snippet",
+            "verification_output",
+            "project_memory"
+          ]
+        },
+        "label": {
+          "$ref": "#/$defs/label"
+        },
+        "refId": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "memoryRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "noteId",
+        "title"
+      ],
+      "properties": {
+        "noteId": {
+          "$ref": "#/$defs/id"
+        },
+        "title": {
+          "$ref": "#/$defs/title"
+        }
+      }
+    }
+  }
+}
