@@ -1,0 +1,16 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-verify-private-path-output",
+  "payload": {
+    "status": "failed",
+    "message": "Repository check failed.",
+    "cloudRequired": false,
+    "action": "runVerificationCommand",
+    "commandId": "repository-check",
+    "exitCode": 1,
+    "durationMs": 900,
+    "outputTail": "Failed while reading /Users/example/project/build.log",
+    "truncated": false
+  }
+}
