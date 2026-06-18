@@ -125,7 +125,7 @@ try {
   assert(commandCount === 0, "chat command was sent before explicit Send");
 
   await page.getByLabel("Task goal (local React state only)").fill(taskGoal);
-  await page.getByRole("button", { name: "Draft task prompt" }).click();
+  await page.getByRole("button", { name: "Draft ask prompt" }).click();
   await expectTextareaValue(page, taskGoal, "local guided task prompt draft");
   assert(commandCount === 0, "drafting guided task prompt auto-sent chat");
 
