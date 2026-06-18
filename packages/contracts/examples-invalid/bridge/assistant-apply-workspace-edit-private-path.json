@@ -1,0 +1,23 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.applyWorkspaceEditRequest",
+  "payload": {
+    "requiresUserConfirmation": true,
+    "summary": "Replace one reviewed line.",
+    "cloudRequired": false,
+    "edits": [
+      {
+        "workspaceRelativePath": "/Users/alice/project/src/example.ts",
+        "textReplacements": [
+          {
+            "range": {
+              "start": { "line": 1, "character": 0 },
+              "end": { "line": 1, "character": 4 }
+            },
+            "replacementText": "demo"
+          }
+        ]
+      }
+    ]
+  }
+}

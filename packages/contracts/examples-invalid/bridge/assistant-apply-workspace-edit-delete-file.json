@@ -1,0 +1,24 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.applyWorkspaceEditRequest",
+  "payload": {
+    "requiresUserConfirmation": true,
+    "summary": "Delete an obsolete file.",
+    "cloudRequired": false,
+    "edits": [
+      {
+        "workspaceRelativePath": "src/old-helper.ts",
+        "deleteFile": true,
+        "textReplacements": [
+          {
+            "range": {
+              "start": { "line": 0, "character": 0 },
+              "end": { "line": 0, "character": 0 }
+            },
+            "replacementText": ""
+          }
+        ]
+      }
+    ]
+  }
+}

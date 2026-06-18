@@ -1,0 +1,24 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.applyWorkspaceEditRequest",
+  "payload": {
+    "requiresUserConfirmation": true,
+    "summary": "Create a new helper file.",
+    "cloudRequired": false,
+    "edits": [
+      {
+        "workspaceRelativePath": "src/new-helper.ts",
+        "createFile": true,
+        "textReplacements": [
+          {
+            "range": {
+              "start": { "line": 0, "character": 0 },
+              "end": { "line": 0, "character": 0 }
+            },
+            "replacementText": "export const value = true;\n"
+          }
+        ]
+      }
+    ]
+  }
+}

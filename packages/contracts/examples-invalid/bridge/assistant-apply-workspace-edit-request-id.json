@@ -1,0 +1,24 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.applyWorkspaceEditRequest",
+  "requestId": "assistant-must-not-supply-request-id",
+  "payload": {
+    "requiresUserConfirmation": true,
+    "summary": "Replace one reviewed line.",
+    "cloudRequired": false,
+    "edits": [
+      {
+        "workspaceRelativePath": "src/example.ts",
+        "textReplacements": [
+          {
+            "range": {
+              "start": { "line": 1, "character": 0 },
+              "end": { "line": 1, "character": 4 }
+            },
+            "replacementText": "demo"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -100,6 +100,10 @@ const mappings = [
   ["packages/contracts/examples/engine/provider-upstream-error-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
   ["packages/contracts/examples/engine/provider-malformed-stream-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
   ["packages/contracts/examples/engine/provider-config-error-sse-event.json", "packages/contracts/schemas/engine/sse-event.schema.json"],
+  [
+    "packages/contracts/examples/bridge/assistant-apply-workspace-edit-proposal.json",
+    "packages/contracts/schemas/bridge/assistant-apply-workspace-edit-proposal.schema.json"
+  ],
   ["packages/contracts/examples/bridge/host-ready-message.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-opened-from-command-message.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-context-snapshot-message.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
@@ -299,6 +303,24 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/chat-command.schema.json"
+  ]),
+  ...[
+    "assistant-apply-workspace-edit-multiple-proposals.json",
+    "assistant-apply-workspace-edit-request-id.json",
+    "assistant-apply-workspace-edit-cloud-required.json",
+    "assistant-apply-workspace-edit-missing-cloud-required.json",
+    "assistant-apply-workspace-edit-create-file.json",
+    "assistant-apply-workspace-edit-delete-file.json",
+    "assistant-apply-workspace-edit-rename-file.json",
+    "assistant-apply-workspace-edit-move-file.json",
+    "assistant-apply-workspace-edit-command-field.json",
+    "assistant-apply-workspace-edit-tool-field.json",
+    "assistant-apply-workspace-edit-private-path.json",
+    "assistant-apply-workspace-edit-traversal-path.json",
+    "assistant-apply-workspace-edit-secret-summary.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/bridge/${fileName}`,
+    "packages/contracts/schemas/bridge/assistant-apply-workspace-edit-proposal.schema.json"
   ]),
   [
     "packages/contracts/examples-invalid/bridge/gui-ready-extra-payload.json",

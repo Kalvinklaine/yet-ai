@@ -1,0 +1,26 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.applyWorkspaceEditRequest",
+  "payload": {
+    "requiresUserConfirmation": true,
+    "summary": "Replace one reviewed line using a tool.",
+    "cloudRequired": false,
+    "tool": {
+      "name": "apply_patch"
+    },
+    "edits": [
+      {
+        "workspaceRelativePath": "src/example.ts",
+        "textReplacements": [
+          {
+            "range": {
+              "start": { "line": 1, "character": 0 },
+              "end": { "line": 1, "character": 4 }
+            },
+            "replacementText": "demo"
+          }
+        ]
+      }
+    ]
+  }
+}
