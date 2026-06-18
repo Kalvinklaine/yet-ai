@@ -137,7 +137,8 @@ const mappings = [
   ["packages/contracts/examples/bridge/gui-ide-action-request-run-verification-command.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-ide-action-request-search-workspace-snippets.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/host-ide-action-progress-search-workspace-snippets.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
-  ["packages/contracts/examples/bridge/host-ide-action-result-search-workspace-snippets.json", "packages/contracts/schemas/bridge/host-message.schema.json"]
+  ["packages/contracts/examples/bridge/host-ide-action-result-search-workspace-snippets.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
+  ["packages/contracts/examples/bridge/host-ide-action-result-search-workspace-snippets-rejected.json", "packages/contracts/schemas/bridge/host-message.schema.json"]
 ].map(([examplePath, schemaPath]) => [normalizeContractPath(examplePath), normalizeContractPath(schemaPath)]);
 
 const invalidMappings = [
@@ -454,6 +455,7 @@ const invalidMappings = [
     "gui-ide-action-request-search-workspace-snippets-provider-field.json",
     "gui-ide-action-request-search-workspace-snippets-model-field.json",
     "gui-ide-action-request-search-workspace-snippets-api-key-field.json",
+    "gui-ide-action-request-search-workspace-snippets-index-workspace-field.json",
     "gui-ide-action-request-search-workspace-snippets-payload-request-id.json",
     "gui-ide-action-request-search-workspace-snippets-assistant-query.json"
   ].map((fileName) => [
@@ -544,7 +546,8 @@ const invalidMappings = [
     "host-ide-action-result-search-workspace-snippets-secret-text.json",
     "host-ide-action-result-search-workspace-snippets-command-field.json",
     "host-ide-action-result-search-workspace-snippets-provider-field.json",
-    "host-ide-action-result-search-workspace-snippets-missing-snippets.json"
+    "host-ide-action-result-search-workspace-snippets-missing-snippets.json",
+    "host-ide-action-result-search-workspace-snippets-failed-with-snippets.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/host-message.schema.json"

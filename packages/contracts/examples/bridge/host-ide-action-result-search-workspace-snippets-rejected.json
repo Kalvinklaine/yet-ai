@@ -1,0 +1,11 @@
+{
+  "version": "2026-05-15",
+  "type": "host.ideActionResult",
+  "requestId": "req-snippet-search-002",
+  "payload": {
+    "status": "rejected",
+    "message": "Snippet search rejected by local IDE policy.",
+    "cloudRequired": false,
+    "action": "searchWorkspaceSnippets"
+  }
+}
