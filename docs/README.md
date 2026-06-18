@@ -42,6 +42,21 @@ The current milestone is local-first and conservative:
 - Native Ollama provider support is documented as direct local-engine access to the user's configured Ollama server at default `http://127.0.0.1:11434`, with auth type `none` and no Yet AI hosted service or provider secret requirement.
 - Current IDE/plugin artifacts and smokes are dev-preview verification surfaces only; they do not imply marketplace publication, signing, notarization, installer readiness, or production release status.
 
+## IDE surface capability matrix
+
+This matrix summarizes current browser, VS Code, and JetBrains surfaces for local development and dev-preview evidence. It is intentionally conservative: supported means implemented for the bounded local-first flow described here, preview-only means visible or contract/smoke-covered but not production support, and deferred means not implemented as an active user feature. None of these surfaces require a hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, cloud workspace, production account login, marketplace publication, signing, or real provider credentials in automation.
+
+| Capability | Browser / standalone GUI | VS Code | JetBrains |
+| --- | --- | --- | --- |
+| Active context | Preview-only mock/fallback rendering; no IDE workspace authority | Supported dev-preview via bounded `host.contextSnapshot`, opt-in, one-shot prompt context | Supported dev-preview via the same bounded `host.contextSnapshot`, opt-in, one-shot prompt context |
+| Multi-file context | Preview-only explicit bundle UI; no hidden workspace reads | Supported dev-preview only through explicit user-selected active-file/snippet/memory/verification bundle items, capped and one-shot | Supported dev-preview only through the same explicit capped one-shot bundle path |
+| Memory | Supported local GUI/runtime project-memory MVP; manual notes only, no browser storage persistence | Supported through GUI/runtime local memory flow; plugin does not store raw memory or secrets | Supported through GUI/runtime local memory flow; plugin does not store raw memory or secrets |
+| Snippet search | Preview-only/non-executing in browser harnesses | Preview-only explicit literal `searchWorkspaceSnippets` contract/smoke path; no indexing, regex/glob/path input, or background scans | Preview-only explicit literal `searchWorkspaceSnippets` contract/smoke path with the same no-index/no-background-scan boundary |
+| Safe edit apply | Preview-only review UI; browser never mutates files | Supported dev-preview confirmed apply path after GUI apply plus VS Code user confirmation; bounded text replacements in existing workspace-relative files only | Dev-preview confirmed apply path through existing apply/result bridge after GUI apply plus IDE/user confirmation; no production apply claim |
+| Verification commands | Preview-only/non-executing; no shell authority | Preview-only allowlisted `runVerificationCommand` contract; explicit user confirmation, sanitized result tail, no free-form shell/args/cwd/env/git/network | Preview-only allowlisted `runVerificationCommand` contract with the same confirmation and sanitization limits |
+| Controlled runner | Supported as a user-driven GUI smoke/flow only; no auto-send/apply/run | Supported dev-preview UI flow using explicit context, safe-edit, and verification controls; no autonomous execution | Supported dev-preview UI flow using the same explicit controls; no autonomous execution |
+| LSP | Not applicable; browser has no editor LSP host | Preview-only off-by-default read-only MVP/status proof over `yet-lsp --lsp-stdio`; no provider-backed completions or diagnostics | Deferred/foundation only; native IntelliJ LSP client/editor wiring is not implemented or claimed |
+
 Known limitations: real-provider use still requires user-supplied local credentials; account-login feasibility remains blocked until an official provider-supported local-app flow is documented and approved; the Codex-like path must not use real accounts in CI or smoke automation.
 
 ## Dev-preview packaging boundary
