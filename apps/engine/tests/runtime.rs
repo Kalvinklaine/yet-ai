@@ -4826,6 +4826,94 @@ async fn agent_progress_event_accepts_inert_coding_task_session_state() {
 }
 
 #[tokio::test]
+async fn agent_progress_event_keeps_plan_and_session_associated_with_run_snapshot() {
+    let app = test_app();
+    let mut first = valid_agent_progress_event();
+    first["eventId"] = json!("coding-session-associated-1");
+    first["runId"] = json!("coding-session-associated-run");
+    first["cardId"] = json!("T-128");
+    first["timestamp"] = json!("2026-06-18T10:00:00Z");
+    first["message"] = json!("Manual runner displayed safe task state.");
+    first["planProposal"] = valid_manual_runner_plan_proposal();
+    first["codingTaskSession"] = valid_coding_task_session();
+    first.as_object_mut().unwrap().remove("ideAction");
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/agent-progress/events",
+            Body::from(first.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["snapshots"][0]["runId"],
+        "coding-session-associated-run"
+    );
+    assert_eq!(body["snapshots"][0]["cardId"], "T-128");
+
+    let mut followup = valid_agent_progress_event();
+    followup["eventId"] = json!("coding-session-associated-2");
+    followup["runId"] = json!("coding-session-associated-run");
+    followup["cardId"] = json!("T-128");
+    followup["timestamp"] = json!("2026-06-18T10:01:00Z");
+    followup["phase"] = json!("verifying");
+    followup["message"] = json!("User-visible verification summary is ready.");
+    followup.as_object_mut().unwrap().remove("ideAction");
+
+    let (status, listed) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/agent-progress/events",
+            Body::from(followup.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        listed["snapshots"][0]["planProposal"]["title"],
+        "Review local provider readiness"
+    );
+    assert_eq!(
+        listed["snapshots"][0]["codingTaskSession"]["editProposal"]["summary"],
+        "Reviewed edit proposal is visible."
+    );
+    assert_eq!(
+        listed["snapshots"][0]["codingTaskSession"]["verification"]["summary"],
+        "Repository check passed."
+    );
+
+    let mut other_run = valid_agent_progress_event();
+    other_run["eventId"] = json!("coding-session-associated-other");
+    other_run["runId"] = json!("coding-session-associated-other-run");
+    other_run["cardId"] = json!("T-128");
+    other_run["timestamp"] = json!("2026-06-18T10:02:00Z");
+    other_run["message"] = json!("Separate runner snapshot stays separate.");
+    other_run.as_object_mut().unwrap().remove("ideAction");
+
+    let (status, listed) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/agent-progress/events",
+            Body::from(other_run.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(listed["snapshots"].as_array().unwrap().len(), 2);
+    assert!(listed["snapshots"][0].get("planProposal").is_none());
+    assert!(listed["snapshots"][0].get("codingTaskSession").is_none());
+    assert_eq!(
+        listed["snapshots"][1]["planProposal"]["title"],
+        "Review local provider readiness"
+    );
+}
+
+#[tokio::test]
 async fn agent_progress_event_rejects_unsafe_coding_task_session_state() {
     let mut cloud_required = valid_agent_progress_event();
     cloud_required["eventId"] = json!("coding-session-cloud-required");
@@ -4857,7 +4945,27 @@ async fn agent_progress_event_rejects_unsafe_coding_task_session_state() {
     unknown_field["codingTaskSession"]["autoApply"] = json!(true);
     unknown_field.as_object_mut().unwrap().remove("ideAction");
 
-    for event in [cloud_required, raw_prompt, auto_action, unknown_field] {
+    let mut events = vec![cloud_required, raw_prompt, auto_action, unknown_field];
+    for (field, value) in [
+        ("command", json!("npm run check")),
+        ("tool", json!({ "kind": "shell" })),
+        ("git", json!({ "status": "clean" })),
+        ("env", json!({ "NODE_ENV": "test" })),
+        ("cwd", json!("apps/engine")),
+        ("autoRun", json!(true)),
+        ("autoApply", json!(true)),
+        ("providerSecret", json!("sk-runner-secret-abcd")),
+    ] {
+        let mut event = valid_agent_progress_event();
+        event["eventId"] = json!(format!("coding-session-unsafe-field-{field}"));
+        event["message"] = json!("Guided coding task session state is visible.");
+        event["codingTaskSession"] = valid_coding_task_session();
+        event["codingTaskSession"][field] = value;
+        event.as_object_mut().unwrap().remove("ideAction");
+        events.push(event);
+    }
+
+    for event in events {
         let (status, body) = json_response(authed_request(
             Method::POST,
             "/v1/agent-progress/events",
@@ -4872,6 +4980,7 @@ async fn agent_progress_event_rejects_unsafe_coding_task_session_state() {
         ));
         let text = body.to_string().to_lowercase();
         assert!(!text.contains("sk-session-secret"));
+        assert!(!text.contains("sk-runner-secret"));
         assert!(!text.contains("auto-run"));
         assert!(!text.contains("npm run check"));
     }
@@ -4908,7 +5017,27 @@ async fn agent_progress_event_rejects_unsafe_manual_runner_plan_proposal() {
     ]);
     too_many_steps.as_object_mut().unwrap().remove("ideAction");
 
-    for event in [unsafe_label, command_field, too_many_steps] {
+    let mut events = vec![unsafe_label, command_field, too_many_steps];
+    for (field, value) in [
+        ("command", json!("npm run check")),
+        ("tool", json!({ "kind": "shell" })),
+        ("git", json!({ "status": "clean" })),
+        ("env", json!({ "NODE_ENV": "test" })),
+        ("cwd", json!("apps/engine")),
+        ("autoRun", json!(true)),
+        ("autoApply", json!(true)),
+        ("providerSecret", json!("sk-runner-plan-secret-abcd")),
+    ] {
+        let mut event = valid_agent_progress_event();
+        event["eventId"] = json!(format!("plan-proposal-unsafe-field-{field}"));
+        event["message"] = json!("Manual runner displayed an inert plan proposal.");
+        event["planProposal"] = valid_manual_runner_plan_proposal();
+        event["planProposal"][field] = value;
+        event.as_object_mut().unwrap().remove("ideAction");
+        events.push(event);
+    }
+
+    for event in events {
         let (status, body) = json_response(authed_request(
             Method::POST,
             "/v1/agent-progress/events",
@@ -4924,6 +5053,7 @@ async fn agent_progress_event_rejects_unsafe_manual_runner_plan_proposal() {
         let text = body.to_string().to_lowercase();
         assert!(!text.contains("npm run check"));
         assert!(!text.contains("shell command"));
+        assert!(!text.contains("sk-runner-plan-secret"));
     }
 }
 

@@ -1209,13 +1209,19 @@ fn contains_unsafe_task_session_text(value: &str) -> bool {
         "autosend",
         "autoapply",
         "hiddenread",
+        "providersecret",
+        "providerapikey",
+        "providerkey",
     ] {
         if normalized.contains(marker) {
             return true;
         }
     }
     let lower = value.to_lowercase();
-    lower.contains("npm run") || lower.contains("cargo check") || lower.contains("cargo test")
+    has_unsafe_runner_token(&lower)
+        || lower.contains("npm run")
+        || lower.contains("cargo check")
+        || lower.contains("cargo test")
 }
 
 fn contains_unsafe_plan_text(value: &str) -> bool {
@@ -1235,14 +1241,27 @@ fn contains_unsafe_plan_text(value: &str) -> bool {
         "cmd",
         "command",
         "autorun",
+        "autoapply",
         "hiddenread",
+        "providersecret",
+        "providerapikey",
+        "providerkey",
     ] {
         if normalized.contains(marker) {
             return true;
         }
     }
     let lower = value.to_lowercase();
-    lower.contains("npm run") || lower.contains("cargo check") || lower.contains("cargo test")
+    has_unsafe_runner_token(&lower)
+        || lower.contains("npm run")
+        || lower.contains("cargo check")
+        || lower.contains("cargo test")
+}
+
+fn has_unsafe_runner_token(value: &str) -> bool {
+    value
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'))
+        .any(|part| matches!(part, "cwd" | "env" | "auto-run" | "auto-apply"))
 }
 
 fn has_private_root_marker(value: &str, root: &str) -> bool {
