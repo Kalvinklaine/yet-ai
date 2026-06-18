@@ -23,6 +23,7 @@ const requiredSnippets = [
   "payload.action === \"searchWorkspaceSnippets\"",
   "const verificationCommandTimeoutMs = 120000;",
   "const maxVerificationOutputTailLength = 4000;",
+  "const maxWorkspaceSnippetSearchFiles = 500;",
   "const maxWorkspaceSnippetSearchResults = 20;",
   "const maxWorkspaceSnippetSearchSnippetsPerFile = 8;",
   "const maxWorkspaceSnippetSearchSnippetLength = 400;",
@@ -30,6 +31,11 @@ const requiredSnippets = [
   "vscode.workspace.findFiles(",
   "vscode.workspace.fs.readFile(uri)",
   "new vscode.RelativePattern(workspaceFolder, \"**/*\")",
+  "maxWorkspaceSnippetSearchFiles,",
+  "const sortedFiles = files",
+  ".sort((left, right) => left.workspaceRelativePath.localeCompare(right.workspaceRelativePath, \"en-US\"))",
+  "languageIdForWorkspaceSnippetPath(workspaceRelativePath)",
+  "function compareWorkspaceSnippets(left: WorkspaceSnippet, right: WorkspaceSnippet): number",
   "{**/.git/**,**/node_modules/**,**/dist/**,**/target/**,**/build/**,**/cache/**}",
   "const verificationCommandConfirmationLabel = \"Run verification\";",
   "const pendingVerificationCommandIds = new Set<VerificationCommandId>();",
@@ -1263,6 +1269,8 @@ async function assertIdeActionBehavior() {
   assert.deepEqual(fakeChildProcess.calls.at(-1).args, ["test", "-p", "yet-lsp", "chat"]);
 
   const searchablePath = path.join(workspaceRoot, "src", "searchable.txt");
+  const earlierSearchablePath = path.join(workspaceRoot, "docs", "earlier.ts");
+  const remoteSearchablePath = path.join(workspaceRoot, "src", "remote.txt");
   const excludedPath = path.join(workspaceRoot, "node_modules", "hidden.txt");
   const binaryPath = path.join(workspaceRoot, "src", "binary.txt");
   const secretPath = path.join(workspaceRoot, "src", "secretish.txt");
@@ -1272,9 +1280,11 @@ async function assertIdeActionBehavior() {
     findFilesCalls += 1;
     assert.equal(include.pattern, "**/*");
     assert.equal(exclude, "{**/.git/**,**/node_modules/**,**/dist/**,**/target/**,**/build/**,**/cache/**}");
-    assert.equal(maxResults, 2000);
+    assert.equal(maxResults, 500);
     return Promise.resolve([
       { fsPath: searchablePath, scheme: "file", path: searchablePath },
+      { fsPath: remoteSearchablePath, scheme: "vscode-remote", path: remoteSearchablePath },
+      { fsPath: earlierSearchablePath, scheme: "file", path: earlierSearchablePath },
       { fsPath: excludedPath, scheme: "file", path: excludedPath },
       { fsPath: binaryPath, scheme: "file", path: binaryPath },
       { fsPath: secretPath, scheme: "file", path: secretPath },
@@ -1289,18 +1299,22 @@ async function assertIdeActionBehavior() {
     if (uri.fsPath === secretPath) {
       return Promise.resolve(Buffer.from("hello Authorization Bearer fake-session-token-webview-behavioral-sentinel"));
     }
+    if (uri.fsPath === earlierSearchablePath) {
+      return Promise.resolve(Buffer.from("alpha hello line"));
+    }
     return Promise.resolve(Buffer.from("first hello line\nsecond hello line\nthird hello line"));
   };
   await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "searchWorkspaceSnippets", query: "hello" }));
   assert.equal(webviewMessages.at(-1).payload.status, "succeeded");
   assert.equal(webviewMessages.at(-1).payload.action, "searchWorkspaceSnippets");
   assert.equal(webviewMessages.at(-1).payload.queryLabel, "hello");
-  assert.equal(webviewMessages.at(-1).payload.resultCount, 3);
-  assert.equal(webviewMessages.at(-1).payload.snippets.length, 3);
-  assert.equal(webviewMessages.at(-1).payload.snippets[0].workspaceRelativePath, "src/searchable.txt");
+  assert.equal(webviewMessages.at(-1).payload.resultCount, 4);
+  assert.equal(webviewMessages.at(-1).payload.snippets.length, 4);
+  assert.deepEqual(webviewMessages.at(-1).payload.snippets.map((snippet) => snippet.workspaceRelativePath), ["docs/earlier.ts", "src/searchable.txt", "src/searchable.txt", "src/searchable.txt"]);
+  assert.equal(webviewMessages.at(-1).payload.snippets[0].languageId, "typescript");
   assert.equal(webviewMessages.at(-1).payload.snippets[0].text.length <= 400, true);
   assert.equal(findFilesCalls, 1);
-  assert.equal(readFileCalls, 2, "Excluded workspace snippet paths must not be read.");
+  assert.equal(readFileCalls, 3, "Excluded and non-file-scheme workspace snippet paths must not be read.");
 
   fakeVscode.workspace.workspaceFolders = [
     { uri: { fsPath: workspaceRoot, scheme: "file", path: workspaceRoot } },

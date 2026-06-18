@@ -122,6 +122,7 @@ const maxForwardedIdeActionMessageBytes = 8192;
 const maxControlledIdeActionFileBytes = 2 * 1024 * 1024;
 const maxActiveFileExcerptTextLength = 8000;
 const maxWorkspaceSnippetSearchFileBytes = 1024 * 1024;
+const maxWorkspaceSnippetSearchFiles = 500;
 const maxWorkspaceSnippetSearchResults = 20;
 const maxWorkspaceSnippetSearchSnippetsPerFile = 8;
 const maxWorkspaceSnippetSearchSnippetLength = 400;
@@ -644,16 +645,20 @@ async function searchWorkspaceSnippets(workspaceFolder: vscode.WorkspaceFolder, 
   const files = await vscode.workspace.findFiles(
     new vscode.RelativePattern(workspaceFolder, "**/*"),
     "{**/.git/**,**/node_modules/**,**/dist/**,**/target/**,**/build/**,**/cache/**}",
-    2000,
+    maxWorkspaceSnippetSearchFiles,
   );
   const snippets: WorkspaceSnippet[] = [];
-  let truncated = files.length >= 2000;
-  for (const uri of files) {
+  let truncated = files.length >= maxWorkspaceSnippetSearchFiles;
+  const sortedFiles = files
+    .map((uri) => ({ uri, workspaceRelativePath: workspaceSnippetRelativePath(workspaceFolder, uri) }))
+    .filter((entry): entry is { uri: vscode.Uri; workspaceRelativePath: string } => entry.workspaceRelativePath !== undefined && !isExcludedWorkspaceSnippetPath(entry.workspaceRelativePath))
+    .sort((left, right) => left.workspaceRelativePath.localeCompare(right.workspaceRelativePath, "en-US"));
+  for (const { uri, workspaceRelativePath } of sortedFiles) {
     if (snippets.length >= maxWorkspaceSnippetSearchResults) {
       truncated = true;
       break;
     }
-    const fileSnippets = await createWorkspaceFileSnippets(workspaceFolder, uri, query);
+    const fileSnippets = await createWorkspaceFileSnippets(workspaceFolder, uri, workspaceRelativePath, query);
     if (fileSnippets.length === 0) {
       continue;
     }
@@ -661,6 +666,7 @@ async function searchWorkspaceSnippets(workspaceFolder: vscode.WorkspaceFolder, 
     snippets.push(...fileSnippets.slice(0, remaining));
     truncated = truncated || fileSnippets.length > remaining;
   }
+  snippets.sort(compareWorkspaceSnippets);
   return {
     action: "searchWorkspaceSnippets",
     queryLabel: query,
@@ -670,9 +676,8 @@ async function searchWorkspaceSnippets(workspaceFolder: vscode.WorkspaceFolder, 
   };
 }
 
-async function createWorkspaceFileSnippets(workspaceFolder: vscode.WorkspaceFolder, uri: vscode.Uri, query: string): Promise<WorkspaceSnippet[]> {
-  const workspaceRelativePath = workspaceSnippetRelativePath(workspaceFolder, uri);
-  if (!workspaceRelativePath || isExcludedWorkspaceSnippetPath(workspaceRelativePath)) {
+async function createWorkspaceFileSnippets(workspaceFolder: vscode.WorkspaceFolder, uri: vscode.Uri, workspaceRelativePath: string, query: string): Promise<WorkspaceSnippet[]> {
+  if (uri.scheme !== "file" || workspaceSnippetRelativePath(workspaceFolder, uri) !== workspaceRelativePath || isExcludedWorkspaceSnippetPath(workspaceRelativePath)) {
     return [];
   }
   let stat: vscode.FileStat;
@@ -716,14 +721,41 @@ function createWorkspaceSnippetsFromText(workspaceRelativePath: string, text: st
       const end = positionAtTextOffset(text, matchIndex + query.length);
       snippets.push({
         workspaceRelativePath,
-        languageId: "plaintext",
+        languageId: languageIdForWorkspaceSnippetPath(workspaceRelativePath),
         range: { start, end },
         text: snippetText,
       });
     }
     searchFrom = matchIndex + Math.max(query.length, 1);
   }
-  return snippets;
+  return snippets.sort(compareWorkspaceSnippets);
+}
+
+function compareWorkspaceSnippets(left: WorkspaceSnippet, right: WorkspaceSnippet): number {
+  const pathOrder = left.workspaceRelativePath.localeCompare(right.workspaceRelativePath, "en-US");
+  if (pathOrder !== 0) {
+    return pathOrder;
+  }
+  return comparePositions(left.range.start, right.range.start);
+}
+
+function languageIdForWorkspaceSnippetPath(workspaceRelativePath: string): string {
+  const extension = path.posix.extname(workspaceRelativePath).toLowerCase();
+  const languageIds: Record<string, string> = {
+    ".css": "css",
+    ".go": "go",
+    ".html": "html",
+    ".js": "javascript",
+    ".json": "json",
+    ".jsx": "javascriptreact",
+    ".md": "markdown",
+    ".py": "python",
+    ".rs": "rust",
+    ".ts": "typescript",
+    ".tsx": "typescriptreact",
+    ".txt": "plaintext",
+  };
+  return languageIds[extension] ?? "plaintext";
 }
 
 function workspaceSnippetRelativePath(workspaceFolder: vscode.WorkspaceFolder, uri: vscode.Uri): string | undefined {
