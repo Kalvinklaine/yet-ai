@@ -2718,13 +2718,13 @@ describe("active editor attached context", () => {
       const url = String(input);
       if (url.endsWith("/v1/project-memory") && init?.method === "POST") {
         const body = JSON.parse(String(init.body));
-        expect(body).toEqual({ title: "Architecture decision", text: "Use engine-owned local memory only.", tags: ["architecture"], source: "manual" });
+        expect(body).toEqual({ protocolVersion: "2026-06-17", title: "Architecture decision", text: "Use engine-owned local memory only.", tags: ["architecture"], source: "manual" });
         notes = [note];
         return Promise.resolve(jsonResponse(note));
       }
       if (url.endsWith("/v1/project-memory/search") && init?.method === "POST") {
-        expect(JSON.parse(String(init.body))).toEqual({ query: "engine" });
-        return Promise.resolve(jsonResponse({ notes, cloudRequired: false, providerAccess: "direct", query: "engine" }));
+        expect(JSON.parse(String(init.body))).toEqual({ protocolVersion: "2026-06-17", query: "engine" });
+        return Promise.resolve(jsonResponse({ matches: notes.map((memoryNote) => ({ note: memoryNote, scoreLabel: "text" })), cloudRequired: false, providerAccess: "direct", queryLabel: "engine" }));
       }
       if (url.endsWith("/v1/project-memory/mem-001") && init?.method === "DELETE") {
         notes = [];
@@ -8933,7 +8933,7 @@ function mockRuntimeResponse(input: RequestInfo | URL, init: RequestInit | undef
     return Promise.resolve(jsonResponse(options.agentProgress ?? agentProgressResponse()));
   }
   if (url.endsWith("/v1/project-memory/search") && init?.method === "POST") {
-    return Promise.resolve(jsonResponse({ notes: options.projectMemoryNotes ?? [], cloudRequired: false, providerAccess: "direct" }));
+    return Promise.resolve(jsonResponse({ matches: (options.projectMemoryNotes ?? []).map((note) => ({ note, scoreLabel: "text" })), cloudRequired: false, providerAccess: "direct", queryLabel: JSON.parse(String(init.body)).query }));
   }
   if (url.endsWith("/v1/project-memory") && init?.method === "POST") {
     return Promise.resolve(jsonResponse(projectMemoryNote(JSON.parse(String(init.body)))));
