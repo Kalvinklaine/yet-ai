@@ -137,6 +137,8 @@ For the S25 guided coding task smoke, run `npm run smoke:guided-coding-task` fro
 
 For the S26 mock real coding task dogfood smoke, run `npm run smoke:real-coding-task-dogfood` from the repository root. It builds the GUI and uses deterministic Playwright mocks for real-provider-like loopback readiness, local task-goal drafting, explicit active file/snippet/memory attachments, one manual Send click, one context bundle, and a mock coding answer. It is CI-safe and mock-only: no real provider credentials/calls, no auto-send/apply/run, no browser-storage memory/context/secret persistence, no non-loopback network, and no shell/git/tool endpoint calls.
 
+For the S27 patch proposal quality smoke, run `npm run smoke:patch-proposal-quality` from the repository root. It builds the GUI and uses deterministic Playwright mocks for a loopback runtime/provider plus a mock VS Code bridge to exercise one fenced JSON safe edit proposal, exactly one extracted proposal, the quality summary/risk panel, browser preview-only behavior, explicit apply clicks, and applied/rejected host results. It is CI-safe and mock-only: no real provider credentials/calls, no auto-apply, no shell/git/tool or verification bridge actions, no non-loopback network, and no browser-storage proposal/secret persistence.
+
 This bundle is specific to chat response refresh, SSE, history, and packaged first-message regressions. It is not the default sprint checklist for unrelated roadmap work. Normal docs changes use `npm run check`; product/code changes should use focused subsystem gates and add smoke only for changed user journeys or recently fixed regressions.
 
 ## Documentation rules
