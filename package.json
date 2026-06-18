@@ -20,6 +20,7 @@
     "smoke:real-coding-task-dogfood": "node scripts/smoke-real-coding-task-dogfood.mjs",
     "smoke:patch-proposal-quality": "node scripts/smoke-patch-proposal-quality.mjs",
     "smoke:verification-loop": "node scripts/smoke-verification-loop.mjs",
+    "smoke:controlled-runner-v2": "node scripts/smoke-controlled-runner-v2.mjs",
     "smoke:lsp-stdio": "node scripts/smoke-lsp-stdio.mjs",
     "smoke:local": "node scripts/smoke-local.mjs",
     "smoke:provider-errors": "node scripts/smoke-provider-errors.mjs",
