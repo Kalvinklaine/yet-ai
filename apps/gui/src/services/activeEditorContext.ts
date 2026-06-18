@@ -11,7 +11,14 @@ export type BoundedContextPreviewResult = {
   truncated: boolean;
 };
 
+export type WorkspaceSnippetQueryValidation = {
+  query: string;
+  valid: boolean;
+  message: string;
+};
+
 const contextPreviewLimit = 360;
+const workspaceSnippetQueryLimit = 120;
 
 export type ActiveFileExcerptPreviewResult = {
   fileLabel: string;
@@ -90,6 +97,29 @@ export function activeEditorSourceLabel(source: HostContextSnapshotPayload["sour
 
 export function boundedContextPreview(text: string): string {
   return classifyBoundedContextPreview(text).text;
+}
+
+export function validateWorkspaceSnippetQuery(value: string): WorkspaceSnippetQueryValidation {
+  const query = value.trim();
+  if (!query) {
+    return { query, valid: false, message: "Enter a literal project snippet query before searching." };
+  }
+  if (query.length > workspaceSnippetQueryLimit) {
+    return { query, valid: false, message: `Keep the snippet query to ${workspaceSnippetQueryLimit} characters or fewer.` };
+  }
+  if (/[^\S ]/.test(query) || /[\u0000-\u001F\u007F-\u009F]/u.test(query)) {
+    return { query, valid: false, message: "Use a single-line literal snippet query without control characters." };
+  }
+  if (/[*/\\~]|\.\.|[{}[\]()^$+?|]|[;&`$<>]/.test(query)) {
+    return { query, valid: false, message: "Use literal text only; glob, regex, path traversal, shell, and special query operators are not allowed." };
+  }
+  if (/\b(?:cwd|env|shell|git|tool|provider|model|apiKey|requestId|assistant|regex|glob|path)\b/i.test(query)) {
+    return { query, valid: false, message: "Use a code word, symbol, or phrase only; tool, path, provider, regex, and glob queries are not allowed." };
+  }
+  if (redactSecrets(query) !== query) {
+    return { query, valid: false, message: "Remove secret-like text from the snippet query before searching." };
+  }
+  return { query, valid: true, message: "Literal query ready. Click Search project snippets to read bounded IDE-provided snippets." };
 }
 
 export function classifyBoundedContextPreview(text: string): BoundedContextPreviewResult {

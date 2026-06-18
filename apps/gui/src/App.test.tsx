@@ -4,7 +4,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { App, completedApplyRequestChatsLimit, completedIdeActionRequestChatsLimit, generateApplyRequestSessionNonce, rememberCompletedApplyRequest, rememberCompletedIdeActionRequest } from "./App";
 import { buildCodingTaskPrompt } from "./services/codingTaskPrompt";
 import { buildVerificationFollowupPrompt } from "./services/verificationFollowupPrompt";
-import type { ExplicitContextBundleItem } from "./services/activeEditorContext";
+import { validateWorkspaceSnippetQuery, type ExplicitContextBundleItem } from "./services/activeEditorContext";
 import type { ProviderAuthResponse, ProviderAuthStatus } from "./services/providerAuthClient";
 
 const bridgeVersion = "2026-05-15";
@@ -37,6 +37,15 @@ const appParentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
 const appReferrerDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "referrer");
 
 describe("codingTaskPrompt builder", () => {
+  it("validates workspace snippet queries as literal explicit-search input", () => {
+    expect(validateWorkspaceSnippetQuery("chat composer")).toEqual({ query: "chat composer", valid: true, message: "Literal query ready. Click Search project snippets to read bounded IDE-provided snippets." });
+    expect(validateWorkspaceSnippetQuery("   ").message).toBe("Enter a literal project snippet query before searching.");
+    expect(validateWorkspaceSnippetQuery("../secret").message).toContain("literal text only");
+    expect(validateWorkspaceSnippetQuery("chat.*composer").message).toContain("literal text only");
+    expect(validateWorkspaceSnippetQuery("shell env").message).toContain("tool, path, provider, regex, and glob queries are not allowed");
+    expect(validateWorkspaceSnippetQuery("access_token=" + "x".repeat(64)).message).toBe("Remove secret-like text from the snippet query before searching.");
+  });
+
   it("builds sanitized bounded verification follow-up and fix prompts", () => {
     const rawSecret = "access_token=" + "x".repeat(64);
     const prompt = buildVerificationFollowupPrompt({
@@ -8613,6 +8622,15 @@ describe("edit proposal preview", () => {
     renderApp();
     await flushAsync();
 
+    expect(container?.textContent ?? "").toContain("query needs review");
+    expect(container?.textContent ?? "").toContain("Explicit click only; no auto-search");
+    expect(findButton("Search project snippets").disabled).toBe(true);
+    await act(async () => {
+      setInputValue(projectSnippetQueryInput(), "../secret");
+    });
+    expect(findButton("Search project snippets").disabled).toBe(true);
+    expect(container?.textContent ?? "").toContain("Use literal text only; glob, regex, path traversal, shell, and special query operators are not allowed.");
+
     await act(async () => {
       setInputValue(projectSnippetQueryInput(), "chat composer");
     });
@@ -8643,7 +8661,21 @@ describe("edit proposal preview", () => {
       findButton("Attach selected snippets (1)").click();
     });
 
-    expect(container?.textContent ?? "").toContain("Attached 1 selected project snippet to the next message context.");
+    expect(container?.textContent ?? "").toContain("Attached 1 selected project snippet to the next message context. The bundle is one-shot and clears after accepted Send; use Remove snippet to detach before sending.");
+    expect(findButton("Attach selected snippets (0)").disabled).toBe(true);
+    expect(container?.textContent ?? "").toContain("1/4 excerpts");
+    expect(container?.textContent ?? "").toContain("Remove snippet");
+    await act(async () => {
+      findButton("Remove snippet").click();
+    });
+    expect(container?.textContent ?? "").toContain("Removed one excerpt from the one-shot bundle.");
+    expect(container?.textContent ?? "").toContain("empty");
+    await act(async () => {
+      snippetCheckboxes[0]?.click();
+    });
+    await act(async () => {
+      findButton("Attach selected snippets (1)").click();
+    });
     expect(container?.textContent ?? "").toContain("1/4 excerpts");
     fetchMock.mockClear();
     await act(async () => {
