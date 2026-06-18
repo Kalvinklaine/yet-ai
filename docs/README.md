@@ -10,7 +10,7 @@ docs/
   architecture/         # architecture baselines, decisions, contracts, roadmaps
 ```
 
-Additional local evidence templates live under `docs/dogfood/`.
+Additional local evidence templates live under `docs/dogfood/`, including the real-provider active-file chat report and the manual real coding task dogfood checklist.
 
 ## Where to add documents
 
@@ -106,6 +106,8 @@ For the login-based GPT first-message milestone foundation, run `cd apps/gui && 
 Use `npm run dogfood:ide-report -- --template` for local safe-share installed first-message reports, especially VS Code dogfood runs. The template/checker records artifact/checksum, launch mode, runtime status, provider path, first-message result, and second-message refresh result while excluding provider API keys, runtime tokens, auth headers/codes, secret URL query or fragment values, private absolute paths, raw provider responses, and bridge payload dumps. Keep completed reports in ignored local evidence locations unless a task explicitly asks for a sanitized excerpt in tracked docs.
 
 Use `npm run dogfood:real-provider-report -- --template` for manual real BYOK active-file coding chat evidence. Validate any completed local report with `npm run dogfood:real-provider-report -- --check path/to/local-report.md` before sharing. This helper is a sanitizer/template checker only: it does not call providers, launch runtimes, use real credentials, create CI evidence, or prove production release readiness. The checklist records commit/artifact, runtime launch mode, IDE/browser surface, non-secret provider/model ID, active-file excerpt attached/omitted status, first streaming answer result, no-secret checks, and known issues.
+
+Use `docs/dogfood/real-coding-task.md` for manual guided coding task dogfood runs with a real local BYOK provider or local model runtime. The path requires a connected local runtime, locally configured/tested provider, drafted task goal, explicit context/snippet/memory attachments, reviewed prompt draft, manual Send click, and reviewed response. Its report template is sanitized: provider kind and non-secret model family/id only, no API keys or tokens, no production/default account login, no raw private paths, no raw prompts/provider responses, and no raw file bodies except bounded reviewed excerpts. This is manual local dogfood only; guided coding task CI remains mock/loopback-only and must not use real providers, hosted Yet AI services, cloud workspaces, production logins, publishing, signing, or release workflows.
 
 ### Chat response refresh verification bundle
 
