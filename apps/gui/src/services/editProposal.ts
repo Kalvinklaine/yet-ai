@@ -28,16 +28,13 @@ export function parseEditProposalContent(content: string): ApplyWorkspaceEditPay
   if (typeof content !== "string") {
     return null;
   }
-  const trimmed = content.trim();
-  if (trimmed.length === 0 || trimmed.length > maxContentLength) {
-    return null;
-  }
-  if (!isStrictFullJsonObject(trimmed)) {
+  const candidate = extractSingleJsonCandidate(content);
+  if (!candidate) {
     return null;
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(trimmed);
+    parsed = JSON.parse(candidate.text);
   } catch {
     return null;
   }
@@ -58,7 +55,9 @@ export function parseEditProposalContent(content: string): ApplyWorkspaceEditPay
     return isApplyWorkspaceEditPayload(parsed.payload) ? parsed.payload : null;
   }
 
-  // Bounded payload form: the ApplyWorkspaceEditPayload object directly.
+  if (candidate.requireEnvelope) {
+    return null;
+  }
   if ("type" in parsed || "version" in parsed || "payload" in parsed) {
     return null;
   }
@@ -126,17 +125,45 @@ export function editProposalCandidateMatchesIdentity(
   return editProposalCandidateIdentityMatches(candidate, identity);
 }
 
-function isEditProposalLikeContent(content: string): boolean {
-  if (typeof content !== "string") {
-    return false;
-  }
+function extractSingleJsonCandidate(content: string): { text: string; requireEnvelope: boolean } | null {
   const trimmed = content.trim();
-  if (trimmed.length === 0 || trimmed.length > maxContentLength || !isStrictFullJsonObject(trimmed)) {
-    return false;
+  if (trimmed.length === 0 || trimmed.length > maxContentLength) {
+    return null;
+  }
+  const fenceMatches = Array.from(trimmed.matchAll(/```([A-Za-z0-9_-]*)[ \t]*\r?\n([\s\S]*?)\r?\n```/g));
+  if (fenceMatches.length > 0) {
+    if (fenceMatches.length !== 1 || (trimmed.match(/```/g) ?? []).length !== 2) {
+      return null;
+    }
+    const match = fenceMatches[0];
+    if ((match[1] ?? "").toLowerCase() !== "json") {
+      return null;
+    }
+    const before = trimmed.slice(0, match.index).trim();
+    const after = trimmed.slice((match.index ?? 0) + match[0].length).trim();
+    if (looksLikeEditProposalText(before) || looksLikeEditProposalText(after)) {
+      return null;
+    }
+    const inner = match[2].trim();
+    if (inner.length === 0 || !isStrictFullJsonObject(inner)) {
+      return null;
+    }
+    return { text: inner, requireEnvelope: true };
+  }
+  if (!isStrictFullJsonObject(trimmed)) {
+    return null;
+  }
+  return { text: trimmed, requireEnvelope: false };
+}
+
+function isEditProposalLikeContent(content: string): boolean {
+  const candidate = extractSingleJsonCandidate(content);
+  if (!candidate) {
+    return looksLikeEditProposalText(content);
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(trimmed);
+    parsed = JSON.parse(candidate.text);
   } catch {
     return false;
   }
@@ -147,6 +174,10 @@ function isEditProposalLikeContent(content: string): boolean {
     return true;
   }
   return "requiresUserConfirmation" in parsed || "edits" in parsed || "summary" in parsed || "cloudRequired" in parsed;
+}
+
+function looksLikeEditProposalText(text: string): boolean {
+  return /gui\.applyWorkspaceEditRequest|requiresUserConfirmation|workspaceRelativePath|textReplacements|cloudRequired|requestId/i.test(text) || (/\b(?:tool|command)\b/i.test(text) && /\b(?:apply|edit|proposal|workspace)\b/i.test(text));
 }
 
 function isStrictFullJsonObject(text: string): boolean {

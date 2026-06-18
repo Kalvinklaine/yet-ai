@@ -7210,7 +7210,57 @@ describe("edit proposal preview", () => {
     expect(findButton("Inspect proposal JSON").disabled).toBe(false);
   });
 
+  it("renders a single fenced json edit envelope as preview-only until explicit apply", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    const envelope = { type: "gui.applyWorkspaceEditRequest", version: bridgeVersion, payload: proposal };
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Fenced edit proposal chat", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Fenced edit proposal chat", [chatMessage("chat-001", "assistant-1", "assistant", `Here is one reviewable proposal:\n\n\`\`\`json\n${JSON.stringify(envelope, null, 2)}\n\`\`\`\n\nIt will not apply automatically.`)]) },
+    });
 
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Propose safe edit");
+    expect(text).toContain("Replace one visible editor line after user review.");
+    expect(text).toContain("Apply in VS Code after review");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+
+    await act(async () => {
+      findButton("Apply in VS Code after review").click();
+    });
+
+    const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
+    expect(applyCalls).toHaveLength(1);
+    expect(applyCalls[0][0]).toMatchObject({ version: bridgeVersion, type: "gui.applyWorkspaceEditRequest", payload: proposal });
+  });
+
+  it("rejects assistant edit proposals with multiple fenced envelopes before posting", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    const envelope = { type: "gui.applyWorkspaceEditRequest", version: bridgeVersion, payload: proposal };
+    const json = JSON.stringify(envelope);
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Multiple fenced edit proposal chat", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Multiple fenced edit proposal chat", [chatMessage("chat-001", "assistant-1", "assistant", `Option A:\n\`\`\`json\n${json}\n\`\`\`\nOption B:\n\`\`\`json\n${json}\n\`\`\``)]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).not.toContain("Propose safe edit");
+    expect(text).not.toContain("Apply in VS Code after review");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+  });
   it("renders JetBrains proposal preview with explicit apply emission", async () => {
     const postIntellijMessage = vi.fn();
     window.postIntellijMessage = postIntellijMessage;

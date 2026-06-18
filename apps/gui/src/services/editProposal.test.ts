@@ -59,13 +59,19 @@ describe("parseEditProposalContent", () => {
     expect(parseEditProposalContent(`\n\t ${JSON.stringify(proposal)} \n`)).toEqual(proposal);
   });
 
-  it("rejects markdown fenced JSON", () => {
-    const json = JSON.stringify(safeEditProposalPayload());
-    expect(parseEditProposalContent("```json\n" + json + "\n```")).toBeNull();
-    expect(parseEditProposalContent("```\n" + json + "\n```")).toBeNull();
+  it("accepts one fenced json envelope with surrounding prose", () => {
+    const proposal = safeEditProposalPayload();
+    const envelope = { type: "gui.applyWorkspaceEditRequest", version: bridgeVersion, payload: proposal };
+    expect(parseEditProposalContent(`Review this safe edit:\n\n\`\`\`json\n${JSON.stringify(envelope, null, 2)}\n\`\`\`\n\nNothing is applied automatically.`)).toEqual(proposal);
   });
 
-  it("rejects prose before or after JSON", () => {
+  it("rejects fenced json direct payloads and non-json fences", () => {
+    const proposal = safeEditProposalPayload();
+    expect(parseEditProposalContent(`\`\`\`json\n${JSON.stringify(proposal)}\n\`\`\``)).toBeNull();
+    expect(parseEditProposalContent(`\`\`\`\n${JSON.stringify(proposal)}\n\`\`\``)).toBeNull();
+  });
+
+  it("rejects prose before or after raw JSON", () => {
     const json = JSON.stringify(safeEditProposalPayload());
     expect(parseEditProposalContent("Please confirm " + json)).toBeNull();
     expect(parseEditProposalContent("Here you go: " + json + " thanks.")).toBeNull();
@@ -108,6 +114,21 @@ describe("parseEditProposalContent", () => {
     expect(parseEditProposalContent(JSON.stringify({ ...proposal, type: "gui.applyWorkspaceEditRequest" }))).toBeNull();
     expect(parseEditProposalContent(JSON.stringify({ ...proposal, version: bridgeVersion }))).toBeNull();
     expect(parseEditProposalContent(JSON.stringify({ ...proposal, payload: { requiresUserConfirmation: true } }))).toBeNull();
+  });
+
+  it("rejects prose with multiple candidate envelopes", () => {
+    const proposal = safeEditProposalPayload();
+    const envelope = { type: "gui.applyWorkspaceEditRequest", version: bridgeVersion, payload: proposal };
+    const json = JSON.stringify(envelope);
+    expect(parseEditProposalContent(`Option A:\n\`\`\`json\n${json}\n\`\`\`\nOption B:\n\`\`\`json\n${json}\n\`\`\``)).toBeNull();
+    expect(parseEditProposalContent(`\`\`\`json\n${json}\n\`\`\`\nAlso consider {"type":"gui.applyWorkspaceEditRequest"}`)).toBeNull();
+  });
+
+  it("rejects command and tool smuggling fields", () => {
+    const proposal = safeEditProposalPayload();
+    expect(parseEditProposalContent(JSON.stringify({ ...proposal, command: "npm test" }))).toBeNull();
+    expect(parseEditProposalContent(JSON.stringify({ ...proposal, tool: { name: "apply_patch" } }))).toBeNull();
+    expect(parseEditProposalContent(JSON.stringify({ type: "gui.applyWorkspaceEditRequest", version: bridgeVersion, payload: proposal, command: "apply" }))).toBeNull();
   });
 
   it("rejects invalid payload values", () => {

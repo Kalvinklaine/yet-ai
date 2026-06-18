@@ -29,15 +29,17 @@ describe("codingActions", () => {
     const prompt = action!.buildPrompt(activeEditorContext());
 
     expect(prompt).toContain("Coding action: propose_safe_edit");
-    expect(prompt).toContain("Return either normal explanatory prose or exactly one raw JSON object");
-    expect(prompt).toContain('"type": "gui.applyWorkspaceEditRequest"');
+    expect(prompt).toContain("Return either normal explanatory prose or exactly one complete JSON proposal");
+    expect(prompt).toContain("one fenced ```json block is acceptable");
+    expect(prompt).toContain("single complete bridge envelope");
+    expect(prompt).toContain("Do not include requestId, command, tool, or any unknown fields");
     expect(prompt).toContain('"version": "2026-05-15"');
-    expect(prompt).toContain("Do not include requestId");
+    expect(prompt).toContain('"type": "gui.applyWorkspaceEditRequest"');
     expect(prompt).toContain('"requiresUserConfirmation": true');
     expect(prompt).toContain('"cloudRequired": false');
-    expect(prompt).toContain("existing workspace-relative files only");
+    expect(prompt).toContain("Do not create, delete, rename, move, patch files, traverse paths, or use absolute/private paths");
     expect(prompt).toContain("textReplacements");
-    expect(prompt).toContain("Do not use markdown fences");
+    expect(prompt).toContain("Do not provide multiple alternatives or multiple JSON objects");
     expect(prompt).toContain("Do not auto-apply");
     expect(prompt).toContain("Do not ask to run tools, shell, git, or file system commands");
   });
