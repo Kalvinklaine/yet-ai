@@ -16,6 +16,7 @@ import { subscribeToChat, type SseEvent } from "./services/sseClient";
 import { editProposalCandidateIdentityMatches, editProposalPayloadKey, isCompleteAssistantEditProposalStatus, latestEditProposalCandidateFromMessages, parseEditProposalContent, type EditProposalIdentity } from "./services/editProposal";
 import { codingActions, type CodingAction } from "./services/codingActions";
 import { buildCodingTaskPrompt, type CodingTaskPromptMode } from "./services/codingTaskPrompt";
+import { buildVerificationFollowupPrompt, type VerificationFollowupPromptMode } from "./services/verificationFollowupPrompt";
 import { createProjectMemory, deleteProjectMemory, listProjectMemory, searchProjectMemory, type ProjectMemoryNote } from "./services/projectMemoryClient";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
@@ -1804,6 +1805,14 @@ export function App() {
     setExplicitContextBundleStatus("Removed one excerpt from the one-shot bundle.");
   };
 
+  const useVerificationFollowupDraft = (result: IdeActionResultPayload, mode: VerificationFollowupPromptMode) => {
+    if (!isVerificationOutputResult(result)) {
+      return;
+    }
+    setChatInput(buildVerificationFollowupPrompt(result, mode));
+    chatInputRef.current?.focus();
+  };
+
   const attachVerificationResultToBundle = (result: IdeActionResultPayload) => {
     if (!isVerificationOutputResult(result)) {
       return;
@@ -2190,7 +2199,7 @@ export function App() {
                 <ExplicitContextBundlePanel items={explicitContextBundleItems} include={includeExplicitContextBundle} status={explicitContextBundleStatus} onIncludeChange={setIncludeExplicitContextBundle} onRemove={removeExplicitContextBundleItem} onClear={() => clearExplicitContextBundle("Cleared the one-shot explicit context bundle.")} />
                 <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} acknowledged={attachedContextAcknowledged} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} onAcknowledgeChange={setAttachedContextAcknowledged} />
                 <CodingActionsPanel canUseContext={codingActionsCanUseContext} context={currentAttachedContext} onAction={applyCodingAction} />
-                <VerificationCommandPanel host={bridgeHost} commands={verificationCommands} attempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} note={ideActionAttempt?.action === "runVerificationCommand" ? ideActionNote : null} showAppliedEditNextStep={showAppliedEditVerificationStep} attachedVerificationKey={attachedVerificationKey} onRun={(commandId) => requestIdeAction({ action: "runVerificationCommand", commandId }, "gui-verification-command")} onClearPending={clearPendingIdeActionState} onAttachResult={attachVerificationResultToBundle} />
+                <VerificationCommandPanel host={bridgeHost} commands={verificationCommands} attempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} note={ideActionAttempt?.action === "runVerificationCommand" ? ideActionNote : null} showAppliedEditNextStep={showAppliedEditVerificationStep} attachedVerificationKey={attachedVerificationKey} onRun={(commandId) => requestIdeAction({ action: "runVerificationCommand", commandId }, "gui-verification-command")} onClearPending={clearPendingIdeActionState} onAttachResult={attachVerificationResultToBundle} onDraftFollowupPrompt={(result) => useVerificationFollowupDraft(result, "followup")} onDraftFixPrompt={(result) => useVerificationFollowupDraft(result, "fix")} />
                 <IdeActionsPanel host={bridgeHost} attempt={ideActionAttempt} note={ideActionNote} workspaceRelativePath={safeActiveWorkspacePath} range={safeActiveRange} onGetContext={() => requestIdeAction({ action: "getContextSnapshot" })} onOpenFile={(workspaceRelativePath) => requestIdeAction({ action: "openWorkspaceFile", workspaceRelativePath })} onRevealRange={(workspaceRelativePath, range) => requestIdeAction({ action: "revealWorkspaceRange", workspaceRelativePath, range })} onClearPendingIdeAction={clearPendingIdeActionState} />
               </div>
               <div className="composer-input-area">
@@ -2417,7 +2426,7 @@ export function App() {
   );
 }
 
-function isVerificationOutputResult(result: IdeActionResultPayload): result is IdeActionResultPayload & Omit<VerificationOutputBundleItem, "kind" | "key"> {
+function isVerificationOutputResult(result: IdeActionResultPayload): result is IdeActionResultPayload & Omit<VerificationOutputBundleItem, "kind" | "key"> & { action: "runVerificationCommand"; status: "succeeded" | "failed"; commandId: NonNullable<IdeActionResultPayload["commandId"]>; exitCode: number; outputTail: string; truncated: boolean } {
   return result.action === "runVerificationCommand" && (result.status === "succeeded" || result.status === "failed") && result.commandId !== undefined && result.exitCode !== undefined && result.outputTail !== undefined && result.truncated !== undefined;
 }
 

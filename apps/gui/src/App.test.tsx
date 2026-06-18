@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { App, completedApplyRequestChatsLimit, completedIdeActionRequestChatsLimit, generateApplyRequestSessionNonce, rememberCompletedApplyRequest, rememberCompletedIdeActionRequest } from "./App";
 import { buildCodingTaskPrompt } from "./services/codingTaskPrompt";
+import { buildVerificationFollowupPrompt } from "./services/verificationFollowupPrompt";
 import type { ExplicitContextBundleItem } from "./services/activeEditorContext";
 import type { ProviderAuthResponse, ProviderAuthStatus } from "./services/providerAuthClient";
 
@@ -36,6 +37,46 @@ const appParentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
 const appReferrerDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "referrer");
 
 describe("codingTaskPrompt builder", () => {
+  it("builds sanitized bounded verification follow-up and fix prompts", () => {
+    const rawSecret = "access_token=" + "x".repeat(64);
+    const prompt = buildVerificationFollowupPrompt({
+      status: "failed",
+      message: "Tests failed.",
+      cloudRequired: false,
+      action: "runVerificationCommand",
+      commandId: "gui-app-tests",
+      exitCode: 1,
+      durationMs: 25,
+      outputTail: `failed /Users/alice/private/repo ${rawSecret}\n${"safe output line ".repeat(120)}`,
+      truncated: true,
+    }, "fix");
+
+    expect(prompt).toContain("Verification fix prompt");
+    expect(prompt).toContain("Command id: gui-app-tests");
+    expect(prompt).toContain("Status: failed");
+    expect(prompt).toContain("Exit code: 1");
+    expect(prompt).toContain("Output truncated: yes");
+    expect(prompt).toContain("Bounded sanitized output summary");
+    expect(prompt).toContain("Suggest the smallest safe fix plan");
+    expect(prompt).toContain("[redacted]");
+    expect(prompt).not.toContain("access_token");
+    expect(prompt).not.toContain("/Users/alice");
+    expect(prompt.length).toBeLessThan(1800);
+
+    const followup = buildVerificationFollowupPrompt({
+      status: "succeeded",
+      message: "Checks passed.",
+      cloudRequired: false,
+      action: "runVerificationCommand",
+      commandId: "repository-check",
+      exitCode: 0,
+      outputTail: "all checks passed",
+      truncated: false,
+    }, "followup");
+    expect(followup).toContain("Verification follow-up prompt");
+    expect(followup).toContain("Explain this verification result");
+  });
+
   it("builds dogfood sections for ask plan and safe-edit modes", () => {
     const items: ExplicitContextBundleItem[] = [
       { kind: "project_memory", noteId: "mem-1", title: "Architecture note", text: "Keep it local.", tags: ["architecture"], key: "memory-1" },
@@ -3694,6 +3735,54 @@ describe("active editor attached context", () => {
     expect(text).not.toContain("duplicate output");
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("vitest passed");
+  });
+
+  it("drafts verification follow-up and fix prompts inertly without auto-send run apply attach or storage", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Repository check").click();
+    });
+    await dispatchHostIdeActionResult("gui-verification-command-1", { status: "failed", message: "Repository check failed.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 1, durationMs: 42, outputTail: "test failure summary\nexpected true to be false", truncated: false });
+    fetchMock.mockClear();
+    postMessage.mockClear();
+
+    await act(async () => {
+      findButton("Draft verification follow-up prompt").click();
+    });
+
+    expect(chatInput().value).toContain("Verification follow-up prompt");
+    expect(chatInput().value).toContain("Command id: repository-check");
+    expect(chatInput().value).toContain("Status: failed");
+    expect(chatInput().value).toContain("Exit code: 1");
+    expect(chatInput().value).toContain("test failure summary");
+    expect(chatInput().value).toContain("Do not apply edits, run commands, attach context, save memory, or send anything automatically.");
+    expect(document.activeElement).toBe(chatInput());
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+    expect(container?.textContent).not.toContain("Verification output is attached as explicit one-shot context.");
+    expect(browserStorageDump()).not.toContain("test failure summary");
+
+    await act(async () => {
+      findButton("Draft verification fix prompt").click();
+    });
+
+    expect(chatInput().value).toContain("Verification fix prompt");
+    expect(chatInput().value).toContain("Suggest the smallest safe fix plan");
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("test failure summary");
+
+    await act(async () => {
+      findButton("Attach verification result to next message").click();
+    });
+    expect(container?.textContent).toContain("Verification output is attached as explicit one-shot context.");
   });
 
   it("rejects unsafe verification output before rendering or storing it", async () => {

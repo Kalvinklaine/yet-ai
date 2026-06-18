@@ -133,9 +133,11 @@ export type VerificationCommandPanelProps = {
   onRun: (commandId: VerificationCommandId) => void;
   onClearPending: () => void;
   onAttachResult: (result: IdeActionResultPayload) => void;
+  onDraftFollowupPrompt: (result: IdeActionResultPayload) => void;
+  onDraftFixPrompt: (result: IdeActionResultPayload) => void;
 };
 
-export function VerificationCommandPanel({ host, commands, attempt, note, showAppliedEditNextStep, attachedVerificationKey, onRun, onClearPending, onAttachResult }: VerificationCommandPanelProps) {
+export function VerificationCommandPanel({ host, commands, attempt, note, showAppliedEditNextStep, attachedVerificationKey, onRun, onClearPending, onAttachResult, onDraftFollowupPrompt, onDraftFixPrompt }: VerificationCommandPanelProps) {
   const supported = host === "vscode" || host === "jetbrains";
   const pending = attempt?.status === "pending" || attempt?.status === "inProgress";
   const activeCommandId = attempt?.result?.commandId ?? attempt?.progress?.commandId;
@@ -161,6 +163,7 @@ export function VerificationCommandPanel({ host, commands, attempt, note, showAp
       {!supported && <div className="readiness-card warn" role="status">Browser preview only. Open {sanitizeDisplayText(host === "browser" ? "Yet AI in VS Code or JetBrains" : "an IDE host")} to request allowlisted verification commands.</div>}
       {supported && pending && <button type="button" className="secondary-button" onClick={onClearPending}>Clear pending verification state</button>}
       {attempt && attempt.action === "runVerificationCommand" ? <VerificationCommandAttemptPreview attempt={attempt} /> : <span className="subtle">No verification command requested yet.</span>}
+      {attachableResult && <div className="row" role="group" aria-label="Verification result prompt drafts"><button type="button" className="secondary-button" onClick={() => onDraftFollowupPrompt(attachableResult)}>Draft verification follow-up prompt</button><button type="button" className="secondary-button" onClick={() => onDraftFixPrompt(attachableResult)}>Draft verification fix prompt</button><span className="subtle">Drafts use command id, status, exit code, and a bounded sanitized output summary only. They do not send, run, attach, apply, or store anything.</span></div>}
       {attachableResult && <div className="row" role="group" aria-label="Verification result attachment"><button type="button" onClick={() => onAttachResult(attachableResult)} disabled={alreadyAttached}>{alreadyAttached ? "Verification result attached to next message" : "Attach verification result to next message"}</button><span className="subtle">Explicit one-shot context only. It clears after the next accepted send and stays available if send fails.</span></div>}
       {note && <span className="subtle" role="status">{sanitizeDisplayText(note)}</span>}
     </section>
