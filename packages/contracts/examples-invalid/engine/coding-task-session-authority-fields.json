@@ -1,0 +1,36 @@
+{
+  "protocolVersion": "2026-06-18",
+  "kind": "coding_task_session",
+  "sessionId": "session-authority",
+  "title": "Unsafe session",
+  "goal": "Define safe guided session display state.",
+  "status": "draft",
+  "selectedContext": {
+    "count": 0,
+    "refs": []
+  },
+  "memory": {
+    "count": 0,
+    "refs": []
+  },
+  "latestResponse": {
+    "status": "none"
+  },
+  "editProposal": {
+    "status": "none"
+  },
+  "verification": {
+    "status": "not_requested"
+  },
+  "nextStepSuggestions": [
+    "Review the safe state"
+  ],
+  "cloudRequired": false,
+  "providerAccess": "direct",
+  "autoRun": true,
+  "autoApply": true,
+  "tool": "workspace-edit",
+  "shell": "run-checks",
+  "git": "commit",
+  "providerId": "openai"
+}

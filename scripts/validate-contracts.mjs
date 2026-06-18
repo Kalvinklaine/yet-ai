@@ -758,7 +758,8 @@ const invalidMappings = [
   ...[
     "manual-runner-plan-proposal-command-field.json",
     "manual-runner-plan-proposal-unsafe-step.json",
-    "manual-runner-plan-proposal-auto-run.json"
+    "manual-runner-plan-proposal-auto-run.json",
+    "manual-runner-plan-proposal-authority-fields.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/manual-runner-plan-proposal.schema.json"
@@ -766,7 +767,8 @@ const invalidMappings = [
   ...[
     "coding-task-session-unknown-field.json",
     "coding-task-session-raw-prompt.json",
-    "coding-task-session-cloud-required.json"
+    "coding-task-session-cloud-required.json",
+    "coding-task-session-authority-fields.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/coding-task-session.schema.json"

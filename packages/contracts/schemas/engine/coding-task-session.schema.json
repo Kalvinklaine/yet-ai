@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.yet-ai.example/contracts/engine/coding-task-session.schema.json",
   "title": "Coding Task Session State",
-  "description": "Inert local guided coding task session display state. It contains only bounded sanitized status and reference metadata, and excludes raw prompts, provider responses, file bodies, commands, secrets, cloud fields, auto-action flags, and execution authority.",
+  "description": "Inert local guided coding task session display state for the visible user-driven runner v2 loop. It contains only bounded sanitized lifecycle status, count, reference, and summary metadata, and excludes raw prompts, provider responses, file bodies, commands, shell, git, tools, tasks, provider selection, secrets, cloud fields, auto-action flags, and execution authority.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -41,6 +41,7 @@
     },
     "status": {
       "type": "string",
+      "description": "Visible manual lifecycle state only: draft, context selected by the user, model response visible, edit proposed for review, user-applied edit recorded, verification result visible, summarized, or blocked.",
       "enum": [
         "draft",
         "context_selected",

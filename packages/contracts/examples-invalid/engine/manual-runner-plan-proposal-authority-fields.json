@@ -1,0 +1,15 @@
+{
+  "protocolVersion": "2026-05-29",
+  "kind": "manual_runner_plan_proposal",
+  "title": "Unsafe proposal",
+  "steps": [
+    "Inspect bounded labels"
+  ],
+  "rationale": "This tries to add runner authority fields.",
+  "nextAction": "User may review the proposal",
+  "autoApply": true,
+  "tool": "workspace-edit",
+  "shell": "run-checks",
+  "git": "commit",
+  "providerId": "openai"
+}

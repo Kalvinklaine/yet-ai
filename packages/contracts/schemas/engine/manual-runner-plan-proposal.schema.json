@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.yet-ai.example/contracts/engine/manual-runner-plan-proposal.schema.json",
   "title": "Manual Runner Plan Proposal",
-  "description": "Display-only manual runner plan proposal with bounded sanitized labels. It is inert and excludes commands, tools, provider data, file contents, patches, apply requests, hidden reads, and auto-run flags.",
+  "description": "Display-only manual runner plan proposal with bounded sanitized labels for the visible user-driven runner v2 loop. It is inert and excludes commands, shell, git, tools, provider data, file contents, patches, apply requests, verification requests, hidden reads, and auto-run or auto-apply flags.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -27,6 +27,7 @@
     },
     "steps": {
       "type": "array",
+      "description": "One to six user-visible manual step labels only; these are not executable instructions.",
       "minItems": 1,
       "maxItems": 6,
       "items": {
