@@ -6303,6 +6303,263 @@ async fn project_memory_rejects_unsafe_unknown_oversized_and_non_manual_payloads
     }
 }
 
+#[tokio::test]
+async fn project_memory_rejects_secret_paths_in_titles_tags_sources_and_queries() {
+    for payload in [
+        json!({
+            "protocolVersion": "2026-06-17",
+            "title": "Bearer token title",
+            "text": "Safe note text",
+            "source": "manual"
+        }),
+        json!({
+            "protocolVersion": "2026-06-17",
+            "title": "Windows path note",
+            "text": "Opened C:\\Users\\Example\\auth.json",
+            "source": "manual"
+        }),
+        json!({
+            "protocolVersion": "2026-06-17",
+            "title": "Safe tag note",
+            "text": "Safe note text",
+            "tags": ["safe", "secret_tag"],
+            "source": "manual"
+        }),
+        json!({
+            "protocolVersion": "2026-06-17",
+            "title": "Source smuggle",
+            "text": "Safe note text",
+            "source": "manual:/Users/example/auth.json"
+        }),
+    ] {
+        let (status, body) = json_response(authed_request(
+            Method::POST,
+            "/v1/project-memory",
+            Body::from(payload.to_string()),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let text = body.to_string().to_lowercase();
+        assert!(!text.contains("bearer token"));
+        assert!(!text.contains("c:\\users"));
+        assert!(!text.contains("secret_tag"));
+        assert!(!text.contains("/users/example"));
+    }
+
+    for payload in [
+        json!({ "protocolVersion": "2026-06-17", "query": "Bearer search token" }),
+        json!({ "protocolVersion": "2026-06-17", "query": "C:\\Users\\Example\\auth.json" }),
+        json!({ "protocolVersion": "2026-06-17", "query": "safe", "tags": ["api_key"] }),
+    ] {
+        let (status, body) = json_response(authed_request(
+            Method::POST,
+            "/v1/project-memory/search",
+            Body::from(payload.to_string()),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let text = body.to_string().to_lowercase();
+        assert!(!text.contains("bearer search"));
+        assert!(!text.contains("c:\\users"));
+        assert!(!text.contains("api_key"));
+    }
+}
+
+#[tokio::test]
+async fn project_memory_search_is_bounded_and_deterministically_ordered() {
+    let app = test_app();
+    for index in 0..25 {
+        create_project_memory_note(
+            app.clone(),
+            &format!("Bounded memory {index:02}"),
+            &format!("alpha bounded result text {index:02}"),
+            vec!["bounded"],
+        )
+        .await;
+    }
+
+    let search = json!({
+        "protocolVersion": "2026-06-17",
+        "query": "alpha",
+        "tags": ["bounded"],
+        "limit": 3
+    });
+    let (status, first) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/project-memory/search",
+            Body::from(search.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first["matches"].as_array().unwrap().len(), 3);
+    let titles = first["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value["note"]["title"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        titles,
+        vec![
+            "Bounded memory 24".to_string(),
+            "Bounded memory 23".to_string(),
+            "Bounded memory 22".to_string(),
+        ]
+    );
+
+    let (status, second) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/project-memory/search",
+            Body::from(search.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(second["matches"], first["matches"]);
+    assert!(first.to_string().len() < 30_000);
+}
+
+#[tokio::test]
+async fn project_memory_context_is_explicit_selection_only() {
+    let api_key = "sk-project-memory-explicit-context-secret-abcd";
+    let (base_url, mut body_receiver) = start_mock_provider_with_request_body(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"memory-context-ok\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+    let note = create_project_memory_note(
+        app.clone(),
+        "Explicit selected note",
+        "selected-memory-sentinel stays local unless attached",
+        vec!["explicit"],
+    )
+    .await;
+
+    let unselected = json!({
+        "requestId": "req-memory-unselected",
+        "type": "user_message",
+        "payload": { "content": "Answer without selected memory context." }
+    });
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-memory-unselected/commands",
+            Body::from(unselected.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accepted"], true);
+    let _ = sse_text_from(
+        app.clone(),
+        "/v1/chats/subscribe?chat_id=chat-memory-unselected",
+    )
+    .await;
+    let provider_body =
+        tokio::time::timeout(std::time::Duration::from_secs(2), body_receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+    let prompt = provider_body["messages"][0]["content"].as_str().unwrap();
+    assert!(!prompt.contains("selected-memory-sentinel"));
+    assert!(!prompt.contains("Explicit selected note"));
+
+    let selected = json!({
+        "requestId": "req-memory-selected",
+        "type": "user_message",
+        "payload": {
+            "content": "Answer with selected memory context.",
+            "context": {
+                "kind": "explicit_context_bundle",
+                "items": [{
+                    "kind": "project_memory",
+                    "noteId": note["id"],
+                    "title": note["title"],
+                    "text": note["text"],
+                    "tags": note["tags"]
+                }]
+            }
+        }
+    });
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-memory-selected/commands",
+            Body::from(selected.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accepted"], true);
+    let _ = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-memory-selected").await;
+    let provider_body =
+        tokio::time::timeout(std::time::Duration::from_secs(2), body_receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+    let prompt = provider_body["messages"][0]["content"].as_str().unwrap();
+    assert_marker_count(prompt, "Memory note:", 1);
+    assert_marker_count(
+        prompt,
+        "selected-memory-sentinel stays local unless attached",
+        1,
+    );
+    assert!(!prompt.contains(api_key));
+    assert!(paths.config_dir.join("project-memory/notes.json").exists());
+}
+
+fn write_project_memory_store(paths: &StoragePaths, body: impl AsRef<[u8]>) {
+    let store_path = paths.config_dir.join("project-memory").join("notes.json");
+    std::fs::create_dir_all(store_path.parent().unwrap()).unwrap();
+    std::fs::write(store_path, body).unwrap();
+}
+
+#[tokio::test]
+async fn project_memory_corrupt_and_oversized_store_errors_are_sanitized() {
+    for body in [
+        r#"{"protocolVersion":"2026-06-17","notes":[{"title":"sk-corrupt-memory-secret /Users/example/auth.json"}"#.as_bytes().to_vec(),
+        format!(
+            "{} sk-oversized-memory-secret /Users/example/auth.json",
+            "x".repeat(1024 * 1024 + 1)
+        )
+        .into_bytes(),
+    ] {
+        let paths = test_storage_paths();
+        write_project_memory_store(&paths, body);
+        let app = app(AppState::with_storage_paths(
+            ProductIdentity::load().unwrap(),
+            AuthToken::new(TEST_TOKEN).unwrap(),
+            paths.clone(),
+        ));
+        let (status, body) = json_response_from(
+            app,
+            authed_request(Method::GET, "/v1/project-memory", Body::empty()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body["error"], "project memory storage error");
+        let text = body.to_string().to_lowercase();
+        assert!(!text.contains("sk-corrupt-memory-secret"));
+        assert!(!text.contains("sk-oversized-memory-secret"));
+        assert!(!text.contains("/users/example"));
+        assert!(!text.contains(&paths.config_dir.to_string_lossy().to_lowercase().to_string()));
+    }
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn project_memory_rejects_store_symlink_without_target_read() {

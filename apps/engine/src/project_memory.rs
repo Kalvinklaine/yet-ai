@@ -409,6 +409,7 @@ fn contains_unsafe_text(value: &str) -> bool {
         || lower.contains("auth.json")
         || lower.contains("credentials.json")
         || lower.contains(":/")
+        || lower.contains(":\\")
         || lower.contains("begin private key")
 }
 
