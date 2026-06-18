@@ -1529,6 +1529,14 @@ fn assert_chat_context_prompt_has_expected_shape(prompt: &str) {
     );
 }
 
+fn assert_marker_count(text: &str, marker: &str, expected: usize) {
+    assert_eq!(
+        text.matches(marker).count(),
+        expected,
+        "unexpected marker count for {marker:?} in {text:?}"
+    );
+}
+
 async fn send_abort(app: axum::Router, chat_id: &str, request_id: &str) {
     let command = json!({
         "requestId": request_id,
@@ -10717,7 +10725,7 @@ async fn chat_context_is_included_before_user_request_in_provider_prompt() {
 }
 
 #[tokio::test]
-async fn chat_context_bundle_is_included_before_user_request_in_provider_prompt() {
+async fn chat_command_context_bundle_is_included_before_user_request_in_provider_prompt() {
     let api_key = "sk-context-bundle-stream-secret-abcd";
     let (base_url, mut body_receiver) = start_mock_provider_with_request_body(
         StatusCode::OK,
@@ -10769,6 +10777,95 @@ async fn chat_context_bundle_is_included_before_user_request_in_provider_prompt(
             "Compare these selected snippets.",
         ],
     );
+    assert!(!prompt.contains(api_key));
+}
+
+#[tokio::test]
+async fn chat_command_context_bundle_prompt_is_rendered_once_and_bounded() {
+    let api_key = "sk-context-bundle-once-secret-abcd";
+    let (base_url, mut body_receiver) = start_mock_provider_with_request_body(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"bundle-once-ok\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+    let memory_text = "Remember local-first provider setup only.";
+    let verification_tail = "cargo test -p yet-lsp chat_command\ntest result: ok";
+    let command = json!({
+        "requestId": "req-context-bundle-once-bounded",
+        "type": "user_message",
+        "payload": {
+            "content": "Use this explicit context once.",
+            "context": {
+                "kind": "explicit_context_bundle",
+                "items": [
+                    {
+                        "kind": "active_editor",
+                        "source": "vscode",
+                        "file": { "displayPath": "src/once.ts", "workspaceRelativePath": "src/once.ts", "languageId": "typescript" },
+                        "selection": { "startLine": 4, "startCharacter": 0, "endLine": 5, "endCharacter": 1, "text": "export const once = true;" }
+                    },
+                    {
+                        "kind": "verification_output",
+                        "commandId": "engine-chat-tests",
+                        "status": "succeeded",
+                        "exitCode": 0,
+                        "truncated": false,
+                        "outputTail": verification_tail
+                    },
+                    {
+                        "kind": "project_memory",
+                        "noteId": "mem_once_1",
+                        "title": "Local first",
+                        "text": memory_text,
+                        "tags": ["local", "provider"]
+                    }
+                ]
+            }
+        }
+    });
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/chat-context-bundle-once/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accepted"], true);
+
+    let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-context-bundle-once").await;
+    assert!(text.contains("bundle-once-ok"));
+    assert!(!text.contains(api_key));
+    let provider_body =
+        tokio::time::timeout(std::time::Duration::from_secs(2), body_receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+    let prompt = provider_body["messages"][0]["content"].as_str().unwrap();
+    assert!(prompt.len() < 12_000);
+    assert_marker_count(prompt, "IDE context bundle", 1);
+    assert_marker_count(
+        prompt,
+        "Item 1: source=vscode path=src/once.ts language=typescript range=4:0-5:1",
+        1,
+    );
+    assert_marker_count(prompt, "Item 2: verification output commandId=engine-chat-tests status=succeeded exitCode=0 truncated=false", 1);
+    assert_marker_count(
+        prompt,
+        "Item 3: project memory noteId=mem_once_1 title=Local first tags=local,provider",
+        1,
+    );
+    assert_marker_count(prompt, "Selection:", 1);
+    assert_marker_count(prompt, "Output tail:", 1);
+    assert_marker_count(prompt, "Memory note:", 1);
+    assert_marker_count(prompt, "User request", 1);
+    assert_marker_count(prompt, "Use this explicit context once.", 1);
+    assert_marker_count(prompt, memory_text, 1);
+    assert_marker_count(prompt, verification_tail, 1);
     assert!(!prompt.contains(api_key));
 }
 
@@ -12909,7 +13006,7 @@ async fn provider_without_model_replays_model_not_configured_error_event() {
 }
 
 #[tokio::test]
-async fn ollama_chat_streaming_uses_native_api_without_auth_after_openai_precedence() {
+async fn chat_command_ollama_streaming_uses_native_api_without_auth_after_openai_precedence() {
     let api_key = "sk-ollama-precedence-secret-abcd";
     let (openai_base_url, openai_auth_receiver) = start_mock_provider(
         StatusCode::OK,
@@ -12958,7 +13055,7 @@ async fn ollama_chat_streaming_uses_native_api_without_auth_after_openai_precede
 }
 
 #[tokio::test]
-async fn ollama_chat_streaming_works_before_demo_and_codex_fallback() {
+async fn chat_command_ollama_streaming_works_before_demo_and_codex_fallback() {
     let (ollama_base_url, mut body_receiver) = start_mock_ollama_chat_provider(
         StatusCode::OK,
         "{\"message\":{\"content\":\"hello \"},\"done\":false}\n{\"message\":{\"content\":\"ollama\"},\"done\":false}\n{\"done\":true}\n",
@@ -13007,7 +13104,7 @@ async fn ollama_chat_streaming_works_before_demo_and_codex_fallback() {
 }
 
 #[tokio::test]
-async fn ollama_chat_stream_errors_are_classified_and_sanitized() {
+async fn chat_command_ollama_stream_errors_are_classified_and_sanitized() {
     let (ollama_base_url, mut body_receiver) = start_mock_ollama_chat_provider(
         StatusCode::OK,
         "{\"error\":\"model not found sk-ollama-stream-secret access_token=secret /Users/example\"}\n",
@@ -13067,7 +13164,7 @@ async fn provider_unauthorized_produces_sanitized_error_event() {
 }
 
 #[tokio::test]
-async fn chat_provider_http_failures_produce_stable_sanitized_error_events_and_history() {
+async fn chat_command_provider_http_failures_produce_stable_sanitized_error_events_and_history() {
     for (status, body, expected_code, expected_message, chat_id, forbidden) in [
         (
             StatusCode::REQUEST_TIMEOUT,
@@ -13159,7 +13256,7 @@ async fn chat_provider_http_failures_produce_stable_sanitized_error_events_and_h
 }
 
 #[tokio::test]
-async fn chat_provider_stream_error_frame_is_classified_without_raw_body_leakage() {
+async fn chat_command_provider_stream_error_frame_is_classified_without_raw_body_leakage() {
     let api_key = "sk-stream-error-frame-secret-abcd";
     let (base_url, auth_receiver) = start_mock_provider(
         StatusCode::OK,
