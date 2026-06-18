@@ -16,6 +16,7 @@
     "smoke:planner-no-idle": "node scripts/smoke-planner-no-idle.mjs",
     "smoke:project-memory": "node scripts/smoke-project-memory.mjs",
     "smoke:guided-coding-task": "node scripts/smoke-guided-coding-task.mjs",
+    "smoke:real-coding-task-dogfood": "node scripts/smoke-real-coding-task-dogfood.mjs",
     "smoke:lsp-stdio": "node scripts/smoke-lsp-stdio.mjs",
     "smoke:local": "node scripts/smoke-local.mjs",
     "smoke:provider-errors": "node scripts/smoke-provider-errors.mjs",
