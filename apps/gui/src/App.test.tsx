@@ -2830,6 +2830,67 @@ describe("active editor attached context", () => {
     expect(browserStorageDump()).not.toContain("Manual runner");
   });
 
+  it("renders coding task session panel with safe workflow summaries", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+
+    const panel = codingTaskSessionPanel();
+    expect(panel.textContent).toContain("Coding task session");
+    expect(panel.textContent).toContain("local draft");
+    expect(panel.textContent).toContain("inert workflow");
+    expect(panel.textContent).toContain("Buttons only focus the prompt or write local draft text");
+    expect(panel.textContent).toContain("they never auto-attach, send, apply, verify, save memory, call providers, read files, or write browser storage");
+    expect(panel.textContent).toContain("Session: draft not started");
+    expect(panel.textContent).toContain("Model/send: ready · GPT-4o mini (openai-api)");
+    expect(panel.textContent).toContain("Safe edit proposal: none");
+    expect(panel.textContent).toContain("Verification: not requested");
+    expect(panel.textContent).toContain("Memory attachments: 0");
+    expect(panel.textContent).toContain("No explicit bundle items selected");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("Coding task session");
+  });
+
+  it("coding task session next-step buttons only draft local text and focus existing controls", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+    fetchMock.mockClear();
+    postMessage.mockClear();
+
+    await act(async () => {
+      setTextareaByPlaceholder("Describe the coding task goal", "Add a guided panel");
+    });
+    await dispatchHostIdeActionResult("not-pending", activeFileExcerptResultPayload({ text: "export const panel = true;" }));
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
+
+    await act(async () => {
+      findButton("Draft task prompt").click();
+    });
+
+    expect(chatInput().value).toContain("Goal: Add a guided panel");
+    expect(chatInput().value).toContain("Use the currently selected explicit context bundle summary (0 items, 0 memory notes).");
+    expect(document.activeElement).toBe(chatInput());
+
+    await act(async () => {
+      findButton("Copy to manual plan draft").click();
+    });
+    expect(manualRunnerDraftTextarea().value).toContain("Goal: Add a guided panel");
+
+    await act(async () => {
+      findButton("Focus chat prompt").click();
+    });
+    expect(document.activeElement).toBe(chatInput());
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("Add a guided panel");
+  });
+
   it("advances manual runner through context and prompt drafting without posting actions", async () => {
     const postMessage = vi.fn();
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
@@ -9175,6 +9236,14 @@ function manualRunnerPanel() {
   const panel = container?.querySelector<HTMLElement>("[aria-label='Manual runner coding loop']");
   if (!panel) {
     throw new Error("Manual runner panel not found");
+  }
+  return panel;
+}
+
+function codingTaskSessionPanel() {
+  const panel = container?.querySelector<HTMLElement>("[aria-label='Coding task session']");
+  if (!panel) {
+    throw new Error("Coding task session panel not found");
   }
   return panel;
 }

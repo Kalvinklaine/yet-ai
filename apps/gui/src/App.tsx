@@ -293,6 +293,7 @@ export function App() {
   const [compactConversationsOpen, setCompactConversationsOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [manualRunnerDraftPlan, setManualRunnerDraftPlan] = useState("");
+  const [codingTaskGoal, setCodingTaskGoal] = useState("");
   const [chatView, setChatView] = useState(() => createInitialChatViewState("chat-001"));
   const [chatLifecycleState, setChatLifecycleState] = useState<ChatLifecycleState>("idle");
   const [timeline, setTimeline] = useState<string[]>([]);
@@ -453,6 +454,8 @@ export function App() {
   const chatHistoryStatus = conversationHistoryStatusLabel({ loading: chatHistoryLoading, current: chatHistoryCurrent, count: activeChatSummaries.length, hasError: Boolean(chatHistoryError) });
   const showAppliedEditVerificationStep = applyResult?.payload.status === "applied";
   const latestPlanProposal = useMemo(() => latestManualRunnerPlanProposal(agentProgress.response), [agentProgress.response]);
+  const verificationAttempt = ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null;
+  const codingTaskPromptDraft = useMemo(() => buildCodingTaskPromptDraft(codingTaskGoal, explicitContextBundleItems, attachedProjectMemoryCount), [attachedProjectMemoryCount, codingTaskGoal, explicitContextBundleItems]);
 
   useEffect(() => {
     setRuntimeDetailsOpen(!runtimeConnected);
@@ -1760,6 +1763,19 @@ export function App() {
     chatInputRef.current?.focus();
   };
 
+  const focusCodingTaskPrompt = () => {
+    chatInputRef.current?.focus();
+  };
+
+  const useCodingTaskDraftPrompt = () => {
+    setChatInput(codingTaskPromptDraft);
+    chatInputRef.current?.focus();
+  };
+
+  const useCodingTaskDraftPlan = () => {
+    setManualRunnerDraftPlan(codingTaskPromptDraft);
+  };
+
   const addActiveFileExcerptToBundle = () => {
     if (!currentActiveFileExcerpt) {
       return;
@@ -2163,6 +2179,7 @@ export function App() {
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
+                <CodingTaskSessionPanel goal={codingTaskGoal} contextItems={explicitContextBundleItems} memoryAttachedCount={attachedProjectMemoryCount} modelStatus={chatReadinessLabel} canSendChat={canSendChat} latestResponseStatus={chatLifecycleLabel} editProposal={activeEditProposal} applyResult={applyResult} verificationAttempt={verificationAttempt} verificationAttached={Boolean(attachedVerificationKey)} draftPrompt={codingTaskPromptDraft} onGoalChange={setCodingTaskGoal} onUseDraftPrompt={useCodingTaskDraftPrompt} onUseDraftPlan={useCodingTaskDraftPlan} onFocusPrompt={focusCodingTaskPrompt} />
                 <ManualRunnerPanel host={bridgeHost} draftPlan={manualRunnerDraftPlan} planProposal={latestPlanProposal} hasContext={Boolean((currentAttachedContext && hasUsableAttachedContext(currentAttachedContext)) || explicitContextBundleItems.length > 0)} hasPrompt={Boolean(chatInput.trim())} hasAssistantActivity={chatView.messages.some((message) => message.role === "assistant") || chatLifecycleState !== "idle"} hasEditProposal={Boolean(activeEditProposal)} applyResult={applyResult} verificationAttempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} verificationAttached={Boolean(attachedVerificationKey)} canSendChat={canSendChat} onDraftPlanChange={setManualRunnerDraftPlan} onFocusPrompt={() => chatInputRef.current?.focus()} />
                 <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} promptAction={activeFilePromptAction} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onClearPending={clearPendingIdeActionState} onIncludeChange={setIncludeAttachedContext} onApplyPrompt={applyActiveFilePrompt} onAddToBundle={addActiveFileExcerptToBundle} />
                 <WorkspaceSnippetSearchPanel host={bridgeHost} query={workspaceSnippetQuery} result={workspaceSnippetResult} selectedKeys={selectedWorkspaceSnippetKeys} pending={ideActionAttempt?.action === "searchWorkspaceSnippets" && (ideActionAttempt.status === "pending" || ideActionAttempt.status === "inProgress")} status={workspaceSnippetStatus} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onQueryChange={setWorkspaceSnippetQuery} onSearch={searchWorkspaceSnippets} onClearPending={clearPendingIdeActionState} onSelectionChange={setSelectedWorkspaceSnippetKeys} onAttachSelected={attachSelectedWorkspaceSnippetsToBundle} />
@@ -2686,6 +2703,91 @@ function FirstMessageActionButton({ action, runtimeRefreshInFlight, providerTest
     return <button type="button" onClick={() => onTestProvider(action.providerId)} disabled={testing}>{testing ? "Testing provider…" : action.label}</button>;
   }
   return <button type="button" onClick={onFocusPrompt}>{action.label}</button>;
+}
+
+function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, modelStatus, canSendChat, latestResponseStatus, editProposal, applyResult, verificationAttempt, verificationAttached, draftPrompt, onGoalChange, onUseDraftPrompt, onUseDraftPlan, onFocusPrompt }: { goal: string; contextItems: ExplicitContextBundleItem[]; memoryAttachedCount: number; modelStatus: string; canSendChat: boolean; latestResponseStatus: string; editProposal: EditProposalState | null; applyResult: ApplyResultState | null; verificationAttempt: IdeActionAttemptState | null; verificationAttached: boolean; draftPrompt: string; onGoalChange: (goal: string) => void; onUseDraftPrompt: () => void; onUseDraftPlan: () => void; onFocusPrompt: () => void }) {
+  const contextLabels = contextItems.map((item) => codingTaskContextLabel(item));
+  const verificationStatus = verificationAttempt?.result?.action === "runVerificationCommand"
+    ? `${verificationAttempt.result.commandId}: ${verificationAttempt.result.status}`
+    : verificationAttempt
+      ? `${verificationAttempt.label}: ${verificationAttempt.status}`
+      : "not requested";
+  const editProposalStatus = applyResult?.payload.status
+    ? `apply result: ${applyResult.payload.status}`
+    : editProposal
+      ? "proposal visible for review"
+      : "none";
+  const sessionStatus = codingTaskSessionStatus(goal, contextItems.length, latestResponseStatus, editProposalStatus, verificationStatus);
+  return (
+    <section className={`coding-task-session-card readiness-card ${goal.trim() || contextItems.length > 0 || editProposal || verificationAttempt ? "ready" : "warn"} stack`} aria-label="Coding task session">
+      <div className="row">
+        <strong>Coding task session</strong>
+        <span className="badge ok">local draft</span>
+        <span className="badge">inert workflow</span>
+      </div>
+      <span className="subtle">Buttons only focus the prompt or write local draft text; they never auto-attach, send, apply, verify, save memory, call providers, read files, or write browser storage.</span>
+      <label className="stack">
+        Task goal (local React state only)
+        <textarea value={goal} onChange={(event) => onGoalChange(event.target.value)} placeholder="Describe the coding task goal before choosing context and asking the model." />
+      </label>
+      <div className="agent-progress-grid" aria-label="Coding task session status">
+        <span>Session: {sessionStatus}</span>
+        <span>Model/send: {canSendChat ? `ready · ${modelStatus}` : `blocked · ${modelStatus}`}</span>
+        <span>Latest response: {latestResponseStatus}</span>
+        <span>Safe edit proposal: {editProposalStatus}</span>
+        <span>Verification: {verificationStatus}{verificationAttached ? " · attached for follow-up" : ""}</span>
+        <span>Memory attachments: {memoryAttachedCount}</span>
+      </div>
+      <div className="stack">
+        <strong>Explicit context bundle summary</strong>
+        {contextLabels.length === 0 ? <span className="subtle">No explicit bundle items selected. Existing active-context controls remain below.</span> : <ul className="first-message-steps">{contextLabels.map((label) => <li key={label}>{label}</li>)}</ul>}
+      </div>
+      <div className="row" role="group" aria-label="Coding task next steps">
+        <button type="button" className="secondary-button" onClick={onUseDraftPrompt}>Draft task prompt</button>
+        <button type="button" className="secondary-button" onClick={onUseDraftPlan}>Copy to manual plan draft</button>
+        <button type="button" className="secondary-button" onClick={onFocusPrompt}>Focus chat prompt</button>
+      </div>
+    </section>
+  );
+}
+
+function codingTaskSessionStatus(goal: string, contextCount: number, latestResponseStatus: string, editProposalStatus: string, verificationStatus: string): string {
+  if (verificationStatus !== "not requested") {
+    return "verification visible";
+  }
+  if (editProposalStatus !== "none") {
+    return "safe edit proposal visible";
+  }
+  if (!latestResponseStatus.startsWith("Ready") && !latestResponseStatus.startsWith("Demo Mode ready") && latestResponseStatus !== "Configure a provider/model or enable Demo Mode before sending." && latestResponseStatus !== "Connect the local runtime before sending.") {
+    return "model response in progress";
+  }
+  if (contextCount > 0) {
+    return "context selected";
+  }
+  return goal.trim() ? "draft goal" : "draft not started";
+}
+
+function codingTaskContextLabel(item: ExplicitContextBundleItem): string {
+  if (isVerificationOutputBundleItem(item)) {
+    return `verification output · ${sanitizeDisplayText(item.commandId)} · ${sanitizeDisplayText(item.status)}`;
+  }
+  if (isWorkspaceSnippetBundleItem(item)) {
+    return `project snippet · ${sanitizeDisplayText(item.workspaceRelativePath)}`;
+  }
+  if (isProjectMemoryBundleItem(item)) {
+    return `project memory · ${sanitizeDisplayText(item.title)}`;
+  }
+  return `active file excerpt · ${sanitizeDisplayText(item.file?.workspaceRelativePath ?? item.file?.displayPath ?? "active editor")}`;
+}
+
+function buildCodingTaskPromptDraft(goal: string, contextItems: ExplicitContextBundleItem[], memoryAttachedCount: number): string {
+  const trimmedGoal = goal.trim();
+  const lines = [
+    trimmedGoal ? `Goal: ${trimmedGoal}` : "Goal: describe the coding task.",
+    `Use the currently selected explicit context bundle summary (${contextItems.length} item${contextItems.length === 1 ? "" : "s"}, ${memoryAttachedCount} memory note${memoryAttachedCount === 1 ? "" : "s"}).`,
+    "Propose the next safe step for this coding task. Do not read hidden files, send additional requests, apply edits, run verification, save memory, or perform workspace changes unless I explicitly use the existing controls.",
+  ];
+  return lines.join("\n");
 }
 
 type ManualRunnerStepState = "done" | "current" | "waiting";
