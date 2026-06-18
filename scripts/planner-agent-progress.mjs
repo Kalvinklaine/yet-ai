@@ -7,6 +7,10 @@ const MAX_PLAN_TITLE_LENGTH = 80;
 const MAX_PLAN_LABEL_LENGTH = 140;
 const MAX_PLAN_RATIONALE_LENGTH = 280;
 const MAX_PLAN_STEPS = 6;
+const MAX_TASK_SESSION_REFS = 4;
+const MAX_TASK_SESSION_TITLE_LENGTH = 80;
+const MAX_TASK_SESSION_GOAL_LENGTH = 240;
+const MAX_TASK_SESSION_LABEL_LENGTH = 140;
 const MAX_RECENT_EVENTS = 20;
 const MAX_ELAPSED_MS = 604800000;
 const MAX_TOOL_ELAPSED_MS = 86400000;
@@ -73,15 +77,19 @@ function boundedText(value, maxLength, fallback) {
   return text.length > 0 ? text : fallback;
 }
 
-function containsUnsafePlanText(value) {
+function containsUnsafeActionText(value) {
   const normalized = value.toLowerCase().replace(/[-_ ]/g, "");
-  for (const marker of ["shell", "git", "tool", "task", "patch", "apply", "exec", "cmd", "command", "autorun", "hiddenread"]) {
+  for (const marker of ["shell", "git", "tool", "patch", "apply", "exec", "cmd", "command", "autorun", "autoread", "autosearch", "autosave", "autosend", "autoapply", "hiddenread"]) {
     if (normalized.includes(marker)) {
       return true;
     }
   }
   const lower = value.toLowerCase();
   return lower.includes("npm run") || lower.includes("cargo check") || lower.includes("cargo test");
+}
+
+function containsUnsafePlanText(value) {
+  return containsUnsafeActionText(value) || value.toLowerCase().replace(/[-_ ]/g, "").includes("task");
 }
 
 function boundedPlanText(value, maxLength) {
@@ -249,6 +257,182 @@ function sanitizeTool(tool, nowMs) {
   return summary;
 }
 
+
+function containsUnsafeTaskSessionText(value) {
+  const lower = value.toLowerCase();
+  if (/\b(?:api[_-]?key|authorization|bearer|token|secret|password|cookie|pkce|refresh|access[_-]?token|credential)\b/.test(lower)) {
+    return true;
+  }
+  if (/(?:^|[^a-z0-9_-])sk-(?:proj-)?[a-z0-9_-]{8,}/i.test(value)) {
+    return true;
+  }
+  if (/\/(?:users|home|tmp|etc|opt|mnt|var|volumes|private)(?=\/|$|[^a-z0-9_])/i.test(value) || /[a-z]:(?:\/|\\)/i.test(value) || value.includes("~/")) {
+    return true;
+  }
+  if (/\.codex\/auth\.json|(?:auth|credentials?)\.json|begin [a-z ]*private key/i.test(value)) {
+    return true;
+  }
+  const normalized = lower.replace(/[-_\s]/g, "");
+  for (const marker of ["authcode", "chainofthought", "rawprompt", "rawcommand", "rawdump", "rawoutput", "rawfile", "rawworkspace", "providerresponse", "providerbody", "filecontent", "workspacefile", "workspacecontent"]) {
+    if (normalized.includes(marker)) {
+      return true;
+    }
+  }
+  return containsUnsafeActionText(value);
+}
+
+function safeTaskSessionText(value, maxLength) {
+  if (typeof value !== "string" || containsUnsafeTaskSessionText(value)) {
+    return undefined;
+  }
+  const text = sanitizeText(value, maxLength);
+  if (text.length === 0 || containsUnsafeTaskSessionText(text)) {
+    return undefined;
+  }
+  return text;
+}
+
+function safeTaskSessionId(value) {
+  if (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/.test(value)) {
+    return value;
+  }
+  return undefined;
+}
+
+function hasOnlyKeys(value, allowed) {
+  return Object.keys(value).every((key) => allowed.includes(key));
+}
+
+function sanitizeTaskSessionRefs(value, sanitizeRef) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || !Array.isArray(value.refs) || !hasOnlyKeys(value, ["count", "refs"])) {
+    return undefined;
+  }
+  if (!Number.isInteger(value.count) || value.count < 0 || value.count > MAX_TASK_SESSION_REFS || value.refs.length > MAX_TASK_SESSION_REFS || value.count !== value.refs.length) {
+    return undefined;
+  }
+  const refs = value.refs.map(sanitizeRef);
+  if (refs.some((ref) => ref === undefined)) {
+    return undefined;
+  }
+  return { count: value.count, refs };
+}
+
+function sanitizeTaskSessionContextRef(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || !hasOnlyKeys(value, ["kind", "label", "refId"])) {
+    return undefined;
+  }
+  if (!["active_file_excerpt", "workspace_snippet", "verification_output", "project_memory"].includes(value.kind)) {
+    return undefined;
+  }
+  const label = safeTaskSessionText(value.label, MAX_TASK_SESSION_LABEL_LENGTH);
+  if (label === undefined) {
+    return undefined;
+  }
+  const ref = { kind: value.kind, label };
+  if (value.refId !== undefined) {
+    const refId = safeTaskSessionId(value.refId);
+    if (refId === undefined) {
+      return undefined;
+    }
+    ref.refId = refId;
+  }
+  return ref;
+}
+
+function sanitizeTaskSessionMemoryRef(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || !hasOnlyKeys(value, ["noteId", "title"])) {
+    return undefined;
+  }
+  const noteId = safeTaskSessionId(value.noteId);
+  const title = safeTaskSessionText(value.title, MAX_TASK_SESSION_TITLE_LENGTH);
+  if (noteId === undefined || title === undefined) {
+    return undefined;
+  }
+  return { noteId, title };
+}
+
+function sanitizeTaskSessionStatusSummary(value, allowed) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || !hasOnlyKeys(value, ["status", "summary"]) || !allowed.includes(value.status)) {
+    return undefined;
+  }
+  const summary = { status: value.status };
+  if (value.summary !== undefined) {
+    const text = safeTaskSessionText(value.summary, MAX_TASK_SESSION_LABEL_LENGTH);
+    if (text === undefined) {
+      return undefined;
+    }
+    summary.summary = text;
+  }
+  return summary;
+}
+
+function sanitizeTaskSessionVerification(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || !hasOnlyKeys(value, ["status", "commandId", "summary"])) {
+    return undefined;
+  }
+  if (!["not_requested", "user_ready", "running", "succeeded", "failed", "unavailable"].includes(value.status)) {
+    return undefined;
+  }
+  const verification = { status: value.status };
+  if (value.commandId !== undefined) {
+    if (!["repository-check", "gui-app-tests", "engine-chat-tests"].includes(value.commandId)) {
+      return undefined;
+    }
+    verification.commandId = value.commandId;
+  }
+  if (value.summary !== undefined) {
+    const summary = safeTaskSessionText(value.summary, MAX_TASK_SESSION_LABEL_LENGTH);
+    if (summary === undefined) {
+      return undefined;
+    }
+    verification.summary = summary;
+  }
+  return verification;
+}
+
+function sanitizeCodingTaskSession(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || !hasOnlyKeys(value, ["protocolVersion", "kind", "sessionId", "title", "goal", "status", "selectedContext", "memory", "latestResponse", "editProposal", "verification", "nextStepSuggestions", "cloudRequired", "providerAccess"])) {
+    return undefined;
+  }
+  if (value.protocolVersion !== "2026-06-18" || value.kind !== "coding_task_session" || value.cloudRequired !== false || value.providerAccess !== "direct") {
+    return undefined;
+  }
+  const sessionId = safeTaskSessionId(value.sessionId);
+  const title = safeTaskSessionText(value.title, MAX_TASK_SESSION_TITLE_LENGTH);
+  const goal = safeTaskSessionText(value.goal, MAX_TASK_SESSION_GOAL_LENGTH);
+  if (sessionId === undefined || title === undefined || goal === undefined || !["draft", "context_selected", "response_visible", "edit_proposed", "user_applied_edit", "verification_visible", "summarized", "blocked"].includes(value.status)) {
+    return undefined;
+  }
+  const selectedContext = sanitizeTaskSessionRefs(value.selectedContext, sanitizeTaskSessionContextRef);
+  const memory = sanitizeTaskSessionRefs(value.memory, sanitizeTaskSessionMemoryRef);
+  const latestResponse = sanitizeTaskSessionStatusSummary(value.latestResponse, ["none", "waiting_for_user", "streaming", "completed", "failed", "aborted"]);
+  const editProposal = sanitizeTaskSessionStatusSummary(value.editProposal, ["none", "proposed", "user_reviewing", "applied", "denied", "rejected", "failed"]);
+  const verification = sanitizeTaskSessionVerification(value.verification);
+  if (selectedContext === undefined || memory === undefined || latestResponse === undefined || editProposal === undefined || verification === undefined || !Array.isArray(value.nextStepSuggestions) || value.nextStepSuggestions.length > MAX_TASK_SESSION_REFS) {
+    return undefined;
+  }
+  const nextStepSuggestions = value.nextStepSuggestions.map((suggestion) => safeTaskSessionText(suggestion, MAX_TASK_SESSION_LABEL_LENGTH));
+  if (nextStepSuggestions.some((suggestion) => suggestion === undefined)) {
+    return undefined;
+  }
+  return {
+    protocolVersion: "2026-06-18",
+    kind: "coding_task_session",
+    sessionId,
+    title,
+    goal,
+    status: value.status,
+    selectedContext,
+    memory,
+    latestResponse,
+    editProposal,
+    verification,
+    nextStepSuggestions,
+    cloudRequired: false,
+    providerAccess: "direct"
+  };
+}
+
 function sanitizePlanProposal(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
@@ -330,6 +514,11 @@ function sanitizeEvent(event, index, nowMs) {
   const planProposal = sanitizePlanProposal(event?.planProposal);
   if (planProposal !== undefined) {
     sanitized.planProposal = planProposal;
+  }
+
+  const codingTaskSession = sanitizeCodingTaskSession(event?.codingTaskSession);
+  if (codingTaskSession !== undefined) {
+    sanitized.codingTaskSession = codingTaskSession;
   }
 
   return sanitized;
@@ -493,6 +682,11 @@ function reduceAgentProgress(events, options = {}) {
   const planProposal = mostRecentBy(normalizedEvents, (event) => event.planProposal);
   if (planProposal !== undefined) {
     snapshot.planProposal = planProposal;
+  }
+
+  const codingTaskSession = mostRecentBy(normalizedEvents, (event) => event.codingTaskSession);
+  if (codingTaskSession !== undefined) {
+    snapshot.codingTaskSession = codingTaskSession;
   }
 
   if (lastHeartbeatAt !== undefined) {

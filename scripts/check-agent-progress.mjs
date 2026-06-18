@@ -281,6 +281,72 @@ async function runAssertions() {
   assert.equal(unsafePlanProposalSnapshot.planProposal, undefined);
   assertNoSensitiveContent(unsafePlanProposalSnapshot);
 
+  const codingTaskSession = {
+    protocolVersion: "2026-06-18",
+    kind: "coding_task_session",
+    sessionId: "session-T103",
+    title: "Improve local status panel",
+    goal: "Show safe progress for a guided coding session.",
+    status: "verification_visible",
+    selectedContext: {
+      count: 2,
+      refs: [
+        { kind: "active_file_excerpt", label: "Active editor excerpt", refId: "ctx-active-1" },
+        { kind: "project_memory", label: "Stored project note", refId: "mem-note-1" }
+      ]
+    },
+    memory: {
+      count: 1,
+      refs: [{ noteId: "mem-note-1", title: "Local progress convention" }]
+    },
+    latestResponse: { status: "completed", summary: "Response summary is visible." },
+    editProposal: { status: "proposed", summary: "Reviewed edit proposal is visible." },
+    verification: { status: "succeeded", commandId: "repository-check", summary: "Repository check passed." },
+    nextStepSuggestions: ["Review proposed changes", "Summarize outcome"],
+    cloudRequired: false,
+    providerAccess: "direct"
+  };
+  const codingTaskSessionSnapshot = reduceAgentProgress(
+    [
+      event({
+        eventId: "evt-coding-session-001",
+        timestamp: "2026-05-29T12:59:00Z",
+        phase: "reading_context",
+        status: "running",
+        message: "Guided coding session state is visible.",
+        codingTaskSession
+      })
+    ],
+    { now: NOW }
+  );
+  assert.deepEqual(codingTaskSessionSnapshot.codingTaskSession, codingTaskSession);
+  assertNoSensitiveContent(codingTaskSessionSnapshot);
+  assert.equal(codingTaskSessionSnapshot.codingTaskSession.cloudRequired, false);
+  assert.equal(codingTaskSessionSnapshot.codingTaskSession.providerAccess, "direct");
+
+  for (const unsafeCodingTaskSession of [
+    { ...codingTaskSession, cloudRequired: true },
+    { ...codingTaskSession, latestResponse: { status: "completed", summary: "raw prompt sk-live-secret" } },
+    { ...codingTaskSession, nextStepSuggestions: ["Auto-run shell command npm run check"] },
+    { ...codingTaskSession, autoApply: true }
+  ]) {
+    const unsafeCodingTaskSessionSnapshot = reduceAgentProgress(
+      [
+        event({
+          eventId: `evt-coding-session-unsafe-${JSON.stringify(unsafeCodingTaskSession).length}`,
+          timestamp: "2026-05-29T12:59:00Z",
+          phase: "reading_context",
+          status: "running",
+          message: "Guided coding session state is visible.",
+          codingTaskSession: unsafeCodingTaskSession
+        })
+      ],
+      { now: NOW }
+    );
+    assert.equal(unsafeCodingTaskSessionSnapshot.codingTaskSession, undefined);
+    assertNoSensitiveContent(unsafeCodingTaskSessionSnapshot);
+  }
+
   const unordered = [
     event({
       eventId: "evt-order-003",

@@ -102,6 +102,8 @@ pub struct AgentProgressSnapshot {
     pub overflow_recovery: Option<AgentProgressOverflowRecovery>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan_proposal: Option<ManualRunnerPlanProposal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coding_task_session: Option<CodingTaskSessionState>,
     pub recent_events: Vec<AgentProgressRecentEvent>,
 }
 
@@ -156,6 +158,8 @@ pub struct AgentProgressEvent {
     pub ide_action: Option<AgentProgressIdeAction>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan_proposal: Option<ManualRunnerPlanProposal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coding_task_session: Option<CodingTaskSessionState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -167,6 +171,66 @@ pub struct ManualRunnerPlanProposal {
     pub steps: Vec<String>,
     pub rationale: String,
     pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodingTaskSessionState {
+    pub protocol_version: String,
+    pub kind: String,
+    pub session_id: String,
+    pub title: String,
+    pub goal: String,
+    pub status: String,
+    pub selected_context: CodingTaskSessionRefs<CodingTaskSessionContextRef>,
+    pub memory: CodingTaskSessionRefs<CodingTaskSessionMemoryRef>,
+    pub latest_response: CodingTaskSessionStatusSummary,
+    pub edit_proposal: CodingTaskSessionStatusSummary,
+    pub verification: CodingTaskSessionVerification,
+    pub next_step_suggestions: Vec<String>,
+    pub cloud_required: bool,
+    pub provider_access: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodingTaskSessionRefs<T> {
+    pub count: u64,
+    pub refs: Vec<T>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodingTaskSessionContextRef {
+    pub kind: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ref_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodingTaskSessionMemoryRef {
+    pub note_id: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodingTaskSessionStatusSummary {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodingTaskSessionVerification {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -284,6 +348,9 @@ fn upsert_event_snapshot(response: &mut AgentProgressListResponse, event: AgentP
         if event.plan_proposal.is_some() {
             snapshot.plan_proposal = event.plan_proposal;
         }
+        if event.coding_task_session.is_some() {
+            snapshot.coding_task_session = event.coding_task_session;
+        }
         if let Some(heartbeat) = event.heartbeat {
             snapshot.last_heartbeat_at = Some(heartbeat.last_heartbeat_at);
             snapshot.last_tool_output_at = heartbeat.last_tool_output_at;
@@ -327,6 +394,7 @@ fn upsert_event_snapshot(response: &mut AgentProgressListResponse, event: AgentP
             stuck_reason: None,
             overflow_recovery: None,
             plan_proposal: event.plan_proposal,
+            coding_task_session: event.coding_task_session,
             recent_events: vec![recent_event],
         },
     );
@@ -477,6 +545,9 @@ fn validate_snapshot(snapshot: &AgentProgressSnapshot) -> Result<(), AgentProgre
     if let Some(plan_proposal) = &snapshot.plan_proposal {
         validate_plan_proposal(plan_proposal)?;
     }
+    if let Some(coding_task_session) = &snapshot.coding_task_session {
+        validate_coding_task_session(coding_task_session)?;
+    }
     for event in &snapshot.recent_events {
         validate_recent_event(event)?;
     }
@@ -543,6 +614,159 @@ fn validate_event(event: &AgentProgressEvent) -> Result<(), AgentProgressError> 
     }
     if let Some(plan_proposal) = &event.plan_proposal {
         validate_plan_proposal(plan_proposal)?;
+    }
+    if let Some(coding_task_session) = &event.coding_task_session {
+        validate_coding_task_session(coding_task_session)?;
+    }
+    Ok(())
+}
+
+fn validate_coding_task_session(
+    session: &CodingTaskSessionState,
+) -> Result<(), AgentProgressError> {
+    if session.protocol_version != "2026-06-18"
+        || session.kind != "coding_task_session"
+        || session.cloud_required
+        || session.provider_access != "direct"
+    {
+        return Err(AgentProgressError::Unavailable);
+    }
+    validate_id(&session.session_id, 80)?;
+    validate_task_session_string(&session.title, 1, 80)?;
+    validate_task_session_string(&session.goal, 1, 240)?;
+    validate_enum(
+        &session.status,
+        &[
+            "draft",
+            "context_selected",
+            "response_visible",
+            "edit_proposed",
+            "user_applied_edit",
+            "verification_visible",
+            "summarized",
+            "blocked",
+        ],
+    )?;
+    validate_task_session_refs(&session.selected_context, validate_task_session_context_ref)?;
+    validate_task_session_refs(&session.memory, validate_task_session_memory_ref)?;
+    validate_task_session_status_summary(
+        &session.latest_response,
+        &[
+            "none",
+            "waiting_for_user",
+            "streaming",
+            "completed",
+            "failed",
+            "aborted",
+        ],
+    )?;
+    validate_task_session_status_summary(
+        &session.edit_proposal,
+        &[
+            "none",
+            "proposed",
+            "user_reviewing",
+            "applied",
+            "denied",
+            "rejected",
+            "failed",
+        ],
+    )?;
+    validate_task_session_verification(&session.verification)?;
+    if session.next_step_suggestions.len() > 4 {
+        return Err(AgentProgressError::Unavailable);
+    }
+    for suggestion in &session.next_step_suggestions {
+        validate_task_session_string(suggestion, 1, 140)?;
+    }
+    Ok(())
+}
+
+fn validate_task_session_refs<T>(
+    refs: &CodingTaskSessionRefs<T>,
+    validate_ref: fn(&T) -> Result<(), AgentProgressError>,
+) -> Result<(), AgentProgressError> {
+    if refs.count > 4 || refs.refs.len() > 4 || refs.count as usize != refs.refs.len() {
+        return Err(AgentProgressError::Unavailable);
+    }
+    for value in &refs.refs {
+        validate_ref(value)?;
+    }
+    Ok(())
+}
+
+fn validate_task_session_context_ref(
+    value: &CodingTaskSessionContextRef,
+) -> Result<(), AgentProgressError> {
+    validate_enum(
+        &value.kind,
+        &[
+            "active_file_excerpt",
+            "workspace_snippet",
+            "verification_output",
+            "project_memory",
+        ],
+    )?;
+    validate_task_session_string(&value.label, 1, 140)?;
+    if let Some(ref_id) = &value.ref_id {
+        validate_id(ref_id, 80)?;
+    }
+    Ok(())
+}
+
+fn validate_task_session_memory_ref(
+    value: &CodingTaskSessionMemoryRef,
+) -> Result<(), AgentProgressError> {
+    validate_id(&value.note_id, 80)?;
+    validate_task_session_string(&value.title, 1, 80)?;
+    Ok(())
+}
+
+fn validate_task_session_status_summary(
+    value: &CodingTaskSessionStatusSummary,
+    allowed: &[&str],
+) -> Result<(), AgentProgressError> {
+    validate_enum(&value.status, allowed)?;
+    if let Some(summary) = &value.summary {
+        validate_task_session_string(summary, 1, 140)?;
+    }
+    Ok(())
+}
+
+fn validate_task_session_verification(
+    value: &CodingTaskSessionVerification,
+) -> Result<(), AgentProgressError> {
+    validate_enum(
+        &value.status,
+        &[
+            "not_requested",
+            "user_ready",
+            "running",
+            "succeeded",
+            "failed",
+            "unavailable",
+        ],
+    )?;
+    if let Some(command_id) = &value.command_id {
+        validate_enum(
+            command_id,
+            &["repository-check", "gui-app-tests", "engine-chat-tests"],
+        )?;
+    }
+    if let Some(summary) = &value.summary {
+        validate_task_session_string(summary, 1, 140)?;
+    }
+    Ok(())
+}
+
+fn validate_task_session_string(
+    value: &str,
+    min_length: usize,
+    max_length: usize,
+) -> Result<(), AgentProgressError> {
+    validate_safe_string(value, min_length, max_length)?;
+    if contains_unsafe_task_session_text(value) {
+        return Err(AgentProgressError::Unavailable);
     }
     Ok(())
 }
@@ -961,6 +1185,37 @@ fn contains_unsafe_text(value: &str) -> bool {
         }
     }
     value.contains(":\\") || value.contains(":/")
+}
+
+fn contains_unsafe_task_session_text(value: &str) -> bool {
+    let normalized = value
+        .to_lowercase()
+        .chars()
+        .filter(|value| !matches!(value, '-' | '_' | ' '))
+        .collect::<String>();
+    for marker in [
+        "shell",
+        "git",
+        "tool",
+        "patch",
+        "apply",
+        "exec",
+        "cmd",
+        "command",
+        "autorun",
+        "autoread",
+        "autosearch",
+        "autosave",
+        "autosend",
+        "autoapply",
+        "hiddenread",
+    ] {
+        if normalized.contains(marker) {
+            return true;
+        }
+    }
+    let lower = value.to_lowercase();
+    lower.contains("npm run") || lower.contains("cargo check") || lower.contains("cargo test")
 }
 
 fn contains_unsafe_plan_text(value: &str) -> bool {

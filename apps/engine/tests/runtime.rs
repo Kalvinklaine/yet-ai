@@ -4621,6 +4621,49 @@ fn valid_manual_runner_plan_proposal() -> Value {
     })
 }
 
+fn valid_coding_task_session() -> Value {
+    json!({
+        "protocolVersion": "2026-06-18",
+        "kind": "coding_task_session",
+        "sessionId": "session-T103",
+        "title": "Improve local status panel",
+        "goal": "Show safe progress for a guided coding task.",
+        "status": "verification_visible",
+        "selectedContext": {
+            "count": 2,
+            "refs": [
+                { "kind": "active_file_excerpt", "label": "Active editor excerpt", "refId": "ctx-active-1" },
+                { "kind": "project_memory", "label": "Stored project note", "refId": "mem-note-1" }
+            ]
+        },
+        "memory": {
+            "count": 1,
+            "refs": [
+                { "noteId": "mem-note-1", "title": "Local progress convention" }
+            ]
+        },
+        "latestResponse": {
+            "status": "completed",
+            "summary": "Response summary is visible."
+        },
+        "editProposal": {
+            "status": "proposed",
+            "summary": "Reviewed edit proposal is visible."
+        },
+        "verification": {
+            "status": "succeeded",
+            "commandId": "repository-check",
+            "summary": "Repository check passed."
+        },
+        "nextStepSuggestions": [
+            "Review proposed changes",
+            "Summarize task outcome"
+        ],
+        "cloudRequired": false,
+        "providerAccess": "direct"
+    })
+}
+
 #[tokio::test]
 async fn agent_progress_event_accepts_bounded_sanitized_ide_action_metadata() {
     let app = test_app();
@@ -4708,6 +4751,121 @@ async fn agent_progress_event_accepts_inert_manual_runner_plan_proposal() {
         "shell", "command", "autorun", "secret", "token", "bearer", "/users/",
     ] {
         assert!(!text.contains(forbidden));
+    }
+}
+
+#[tokio::test]
+async fn agent_progress_event_accepts_inert_coding_task_session_state() {
+    let app = test_app();
+    let mut event = valid_agent_progress_event();
+    event["eventId"] = json!("coding-session-evt-1");
+    event["runId"] = json!("coding-session-run-1");
+    event["cardId"] = json!("T-103");
+    event["message"] = json!("Guided coding task session state is visible.");
+    event["codingTaskSession"] = valid_coding_task_session();
+    event.as_object_mut().unwrap().remove("ideAction");
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/agent-progress/events",
+            Body::from(event.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["cloudRequired"], false);
+    assert_eq!(body["providerAccess"], "direct");
+    assert_eq!(
+        body["snapshots"][0]["codingTaskSession"]["kind"],
+        "coding_task_session"
+    );
+    assert_eq!(
+        body["snapshots"][0]["codingTaskSession"]["providerAccess"],
+        "direct"
+    );
+    assert_eq!(
+        body["snapshots"][0]["codingTaskSession"]["selectedContext"]["count"],
+        2
+    );
+
+    let (status, listed) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/agent-progress", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        listed["snapshots"][0]["codingTaskSession"]["verification"]["commandId"],
+        "repository-check"
+    );
+    let text = listed.to_string().to_lowercase();
+    for forbidden in [
+        "cloudrequired:true",
+        "raw prompt",
+        "providerresponse",
+        "filecontent",
+        "authorization",
+        "bearer",
+        "secret",
+        "token",
+        "/users/",
+        "/home/",
+    ] {
+        assert!(!text.contains(forbidden));
+    }
+}
+
+#[tokio::test]
+async fn agent_progress_event_rejects_unsafe_coding_task_session_state() {
+    let mut cloud_required = valid_agent_progress_event();
+    cloud_required["eventId"] = json!("coding-session-cloud-required");
+    cloud_required["message"] = json!("Guided coding task session state is visible.");
+    cloud_required["codingTaskSession"] = valid_coding_task_session();
+    cloud_required["codingTaskSession"]["cloudRequired"] = json!(true);
+    cloud_required.as_object_mut().unwrap().remove("ideAction");
+
+    let mut raw_prompt = valid_agent_progress_event();
+    raw_prompt["eventId"] = json!("coding-session-raw-prompt");
+    raw_prompt["message"] = json!("Guided coding task session state is visible.");
+    raw_prompt["codingTaskSession"] = valid_coding_task_session();
+    raw_prompt["codingTaskSession"]["latestResponse"]["summary"] =
+        json!("raw prompt sk-session-secret");
+    raw_prompt.as_object_mut().unwrap().remove("ideAction");
+
+    let mut auto_action = valid_agent_progress_event();
+    auto_action["eventId"] = json!("coding-session-auto-action");
+    auto_action["message"] = json!("Guided coding task session state is visible.");
+    auto_action["codingTaskSession"] = valid_coding_task_session();
+    auto_action["codingTaskSession"]["nextStepSuggestions"][0] =
+        json!("Auto-run shell command npm run check");
+    auto_action.as_object_mut().unwrap().remove("ideAction");
+
+    let mut unknown_field = valid_agent_progress_event();
+    unknown_field["eventId"] = json!("coding-session-unknown-field");
+    unknown_field["message"] = json!("Guided coding task session state is visible.");
+    unknown_field["codingTaskSession"] = valid_coding_task_session();
+    unknown_field["codingTaskSession"]["autoApply"] = json!(true);
+    unknown_field.as_object_mut().unwrap().remove("ideAction");
+
+    for event in [cloud_required, raw_prompt, auto_action, unknown_field] {
+        let (status, body) = json_response(authed_request(
+            Method::POST,
+            "/v1/agent-progress/events",
+            Body::from(event.to_string()),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let error = body["error"].as_str().unwrap_or_default();
+        assert!(matches!(
+            error,
+            "agent progress unavailable" | "invalid request body"
+        ));
+        let text = body.to_string().to_lowercase();
+        assert!(!text.contains("sk-session-secret"));
+        assert!(!text.contains("auto-run"));
+        assert!(!text.contains("npm run check"));
     }
 }
 
@@ -5303,6 +5461,56 @@ async fn agent_progress_valid_local_source_returns_populated_list() {
             .len(),
         2
     );
+}
+
+#[tokio::test]
+async fn agent_progress_local_source_accepts_inert_coding_task_session_state() {
+    let paths = test_storage_paths();
+    let mut snapshot = valid_agent_progress_snapshot(1, 1);
+    snapshot["message"] = json!("Guided coding task session state is visible.");
+    snapshot["codingTaskSession"] = valid_coding_task_session();
+    write_agent_progress_source(
+        &paths,
+        &json!({
+            "cloudRequired": false,
+            "providerAccess": "direct",
+            "snapshots": [snapshot]
+        })
+        .to_string(),
+    );
+
+    let (status, body) = agent_progress_response_for_paths(paths).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["snapshots"][0]["codingTaskSession"]["kind"],
+        "coding_task_session"
+    );
+    assert_eq!(
+        body["snapshots"][0]["codingTaskSession"]["memory"]["count"],
+        1
+    );
+}
+
+#[tokio::test]
+async fn agent_progress_local_source_rejects_unsafe_coding_task_session_state() {
+    let paths = test_storage_paths();
+    let mut snapshot = valid_agent_progress_snapshot(1, 1);
+    snapshot["message"] = json!("Guided coding task session state is visible.");
+    snapshot["codingTaskSession"] = valid_coding_task_session();
+    snapshot["codingTaskSession"]["goal"] = json!("Auto-apply patch with hidden read.");
+    write_agent_progress_source(
+        &paths,
+        &json!({
+            "cloudRequired": false,
+            "providerAccess": "direct",
+            "snapshots": [snapshot]
+        })
+        .to_string(),
+    );
+
+    let (status, body) = agent_progress_response_for_paths(paths.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_agent_progress_error_is_sanitized(&body, &["Auto-apply", "hidden read"], &paths);
 }
 
 #[tokio::test]
