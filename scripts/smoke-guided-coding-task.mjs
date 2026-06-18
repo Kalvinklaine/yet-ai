@@ -190,7 +190,7 @@ try {
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(userPrompt);
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expectVisibleText(page, "Proposed a safe edit. Review the proposal card below. It will not apply automatically.", "assistant safe edit proposal", 20_000);
-  await expectVisibleText(page, "Safe edit proposal: proposal visible for review", "guided safe proposal status", 20_000);
+  await expectVisibleText(page, "Edit proposed/applied: proposal visible for review", "guided safe proposal status", 20_000);
   assert(commandCount === 1, `expected one explicit chat command, received ${commandCount}`);
   assert(abortCount === 0, "smoke unexpectedly sent abort command");
   assert(lastCommandBody?.payload?.context?.kind === "explicit_context_bundle", "send did not include explicit context bundle");
@@ -239,9 +239,9 @@ try {
     },
   });
   await expectVisibleText(page, verificationTail, "verification result", 20_000);
-  await expectVisibleText(page, "Verification: repository-check: succeeded", "guided verification status", 20_000);
+  await expectVisibleText(page, "Verification/follow-up: repository-check: succeeded", "guided verification status", 20_000);
   await page.getByRole("button", { name: "Attach verification result to next message" }).click();
-  await expectVisibleText(page, "Verification: repository-check: succeeded · attached for follow-up", "guided verification follow-up cue", 20_000);
+  await expectVisibleText(page, "Verification/follow-up: repository-check: succeeded · attached for follow-up", "guided verification follow-up cue", 20_000);
   await expectVisibleText(page, "Use the attached verification_output from repository-check", "verification follow-up prompt cue", 20_000);
 
   await assertNoForbiddenBridgeActions(page);
