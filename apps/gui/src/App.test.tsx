@@ -2,6 +2,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { App, completedApplyRequestChatsLimit, completedIdeActionRequestChatsLimit, generateApplyRequestSessionNonce, rememberCompletedApplyRequest, rememberCompletedIdeActionRequest } from "./App";
+import { buildCodingTaskPrompt } from "./services/codingTaskPrompt";
+import type { ExplicitContextBundleItem } from "./services/activeEditorContext";
 import type { ProviderAuthResponse, ProviderAuthStatus } from "./services/providerAuthClient";
 
 const bridgeVersion = "2026-05-15";
@@ -32,6 +34,55 @@ afterEach(() => {
 
 const appParentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
 const appReferrerDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "referrer");
+
+describe("codingTaskPrompt builder", () => {
+  it("builds dogfood sections for ask plan and safe-edit modes", () => {
+    const items: ExplicitContextBundleItem[] = [
+      { kind: "project_memory", noteId: "mem-1", title: "Architecture note", text: "Keep it local.", tags: ["architecture"], key: "memory-1" },
+      { kind: "workspace_snippet", workspaceRelativePath: "apps/gui/src/App.tsx", languageId: "typescript", range: { start: { line: 1, character: 0 }, end: { line: 3, character: 1 } }, text: "function App() {}", key: "snippet-1" },
+      { kind: "verification_output", commandId: "gui-app-tests", status: "succeeded", exitCode: 0, outputTail: "passed", truncated: false, key: "verification-1" },
+    ];
+
+    const ask = buildCodingTaskPrompt({ mode: "ask", goal: "Explain the prompt builder", contextItems: items, providerReadiness: "ready · GPT-4o mini" });
+    const plan = buildCodingTaskPrompt({ mode: "implementation_plan", goal: "Plan the prompt builder", contextItems: items, providerReadiness: "ready · GPT-4o mini" });
+    const safeEdit = buildCodingTaskPrompt({ mode: "safe_edit", goal: "Patch the prompt builder", contextItems: items, providerReadiness: "ready · GPT-4o mini" });
+
+    expect(ask).toContain("Ask prompt");
+    expect(ask).toContain("Goal\nExplain the prompt builder");
+    expect(ask).toContain("Explicit context summary");
+    expect(ask).toContain("memory: Architecture note");
+    expect(ask).toContain("snippet: apps/gui/src/App.tsx");
+    expect(ask).toContain("verification: gui-app-tests succeeded exit 0");
+    expect(ask).toContain("Count: 1");
+    expect(ask).toContain("Titles: Architecture note");
+    expect(ask).toContain("Provider readiness\nready · GPT-4o mini");
+    expect(ask).toContain("Use only the attached explicit context");
+    expect(ask).toContain("Do not auto-run commands, auto-apply edits, auto-save memory");
+    expect(plan).toContain("Implementation plan request");
+    expect(plan).toContain("draft a concise implementation plan");
+    expect(safeEdit).toContain("Safe-edit request");
+    expect(safeEdit).toContain("propose the smallest safe edit");
+  });
+
+  it("sanitizes secrets and private paths from prompt drafts", () => {
+    const secret = "access_token=" + "x".repeat(64);
+    const prompt = buildCodingTaskPrompt({
+      mode: "safe_edit",
+      goal: `Fix /Users/alice/private/repo with ${secret}`,
+      providerReadiness: `model ready ${secret}`,
+      contextItems: [
+        { kind: "project_memory", noteId: "mem-secret", title: `Token note ${secret}`, text: "raw memory body", tags: [], key: "memory-secret" },
+        { kind: "workspace_snippet", workspaceRelativePath: "/Users/alice/private/src/secret.ts", languageId: "typescript", range: { start: { line: 1, character: 0 }, end: { line: 2, character: 0 } }, text: "secret body", key: "snippet-secret" },
+      ],
+    });
+
+    expect(prompt).toContain("[redacted]");
+    expect(prompt).not.toContain(secret);
+    expect(prompt).not.toContain("access_token");
+    expect(prompt).not.toContain("/Users/alice");
+    expect(prompt).not.toContain("private/src/secret.ts");
+  });
+});
 
 describe("hosted iframe shell layout", () => {
   afterEach(() => {
@@ -2852,6 +2903,17 @@ describe("active editor attached context", () => {
     expect(browserStorageDump()).not.toContain("Coding task session");
   });
 
+  it("shows coding task recovery copy when provider is not ready", async () => {
+    mockRuntimeResponses({ providers: [enabledProvider()], models: [readyModel({ providerId: "missing-provider" })] });
+    renderApp();
+    await flushAsync();
+
+    const panel = codingTaskSessionPanel();
+    expect(panel.textContent).toContain("Prompt recovery");
+    expect(panel.textContent).toContain("Model/provider mismatch is visible. Test the saved provider, fix the model id mapping locally, refresh runtime, then draft/send again.");
+    expect(findButton("Send").disabled).toBe(true);
+  });
+
   it("coding task session next-step buttons only draft local text and focus existing controls", async () => {
     const postMessage = vi.fn();
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
@@ -2869,17 +2931,34 @@ describe("active editor attached context", () => {
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
 
     await act(async () => {
-      findButton("Draft task prompt").click();
+      findButton("Draft ask prompt").click();
     });
 
-    expect(chatInput().value).toContain("Goal: Add a guided panel");
-    expect(chatInput().value).toContain("Use the currently selected explicit context bundle summary (0 items, 0 memory notes).");
+    expect(chatInput().value).toContain("Ask prompt");
+    expect(chatInput().value).toContain("Goal\nAdd a guided panel");
+    expect(chatInput().value).toContain("Explicit context summary");
+    expect(chatInput().value).toContain("Count: 0");
+    expect(chatInput().value).toContain("Provider readiness\nGPT-4o mini (openai-api)");
+    expect(chatInput().value).toContain("Use only the attached explicit context");
     expect(document.activeElement).toBe(chatInput());
 
     await act(async () => {
-      findButton("Copy to manual plan draft").click();
+      findButton("Draft implementation plan prompt").click();
     });
-    expect(manualRunnerDraftTextarea().value).toContain("Goal: Add a guided panel");
+    expect(chatInput().value).toContain("Implementation plan request");
+    expect(chatInput().value).toContain("draft a concise implementation plan");
+
+    await act(async () => {
+      findButton("Draft safe-edit request").click();
+    });
+    expect(chatInput().value).toContain("Safe-edit request");
+    expect(chatInput().value).toContain("propose the smallest safe edit");
+
+    await act(async () => {
+      findButton("Copy plan prompt to manual draft").click();
+    });
+    expect(manualRunnerDraftTextarea().value).toContain("Implementation plan request");
+    expect(manualRunnerDraftTextarea().value).toContain("Goal\nAdd a guided panel");
 
     await act(async () => {
       findButton("Focus chat prompt").click();

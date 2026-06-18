@@ -15,6 +15,7 @@ import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from 
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
 import { editProposalCandidateIdentityMatches, editProposalPayloadKey, isCompleteAssistantEditProposalStatus, latestEditProposalCandidateFromMessages, parseEditProposalContent, type EditProposalIdentity } from "./services/editProposal";
 import { codingActions, type CodingAction } from "./services/codingActions";
+import { buildCodingTaskPrompt, type CodingTaskPromptMode } from "./services/codingTaskPrompt";
 import { createProjectMemory, deleteProjectMemory, listProjectMemory, searchProjectMemory, type ProjectMemoryNote } from "./services/projectMemoryClient";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
@@ -455,7 +456,7 @@ export function App() {
   const showAppliedEditVerificationStep = applyResult?.payload.status === "applied";
   const latestPlanProposal = useMemo(() => latestManualRunnerPlanProposal(agentProgress.response), [agentProgress.response]);
   const verificationAttempt = ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null;
-  const codingTaskPromptDraft = useMemo(() => buildCodingTaskPromptDraft(codingTaskGoal, explicitContextBundleItems, attachedProjectMemoryCount), [attachedProjectMemoryCount, codingTaskGoal, explicitContextBundleItems]);
+  const codingTaskPromptDraft = useMemo(() => buildCodingTaskPrompt({ mode: "ask", goal: codingTaskGoal, contextItems: explicitContextBundleItems, providerReadiness: chatReadinessLabel }), [chatReadinessLabel, codingTaskGoal, explicitContextBundleItems]);
 
   useEffect(() => {
     setRuntimeDetailsOpen(!runtimeConnected);
@@ -1767,13 +1768,15 @@ export function App() {
     chatInputRef.current?.focus();
   };
 
-  const useCodingTaskDraftPrompt = () => {
-    setChatInput(codingTaskPromptDraft);
+  const buildCodingTaskDraft = (mode: CodingTaskPromptMode) => buildCodingTaskPrompt({ mode, goal: codingTaskGoal, contextItems: explicitContextBundleItems, providerReadiness: chatReadinessLabel });
+
+  const useCodingTaskDraftPrompt = (mode: CodingTaskPromptMode) => {
+    setChatInput(buildCodingTaskDraft(mode));
     chatInputRef.current?.focus();
   };
 
   const useCodingTaskDraftPlan = () => {
-    setManualRunnerDraftPlan(codingTaskPromptDraft);
+    setManualRunnerDraftPlan(buildCodingTaskDraft("implementation_plan"));
   };
 
   const addActiveFileExcerptToBundle = () => {
@@ -2705,7 +2708,7 @@ function FirstMessageActionButton({ action, runtimeRefreshInFlight, providerTest
   return <button type="button" onClick={onFocusPrompt}>{action.label}</button>;
 }
 
-function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, modelStatus, canSendChat, latestResponseStatus, editProposal, applyResult, verificationAttempt, verificationAttached, draftPrompt, onGoalChange, onUseDraftPrompt, onUseDraftPlan, onFocusPrompt }: { goal: string; contextItems: ExplicitContextBundleItem[]; memoryAttachedCount: number; modelStatus: string; canSendChat: boolean; latestResponseStatus: string; editProposal: EditProposalState | null; applyResult: ApplyResultState | null; verificationAttempt: IdeActionAttemptState | null; verificationAttached: boolean; draftPrompt: string; onGoalChange: (goal: string) => void; onUseDraftPrompt: () => void; onUseDraftPlan: () => void; onFocusPrompt: () => void }) {
+function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, modelStatus, canSendChat, latestResponseStatus, editProposal, applyResult, verificationAttempt, verificationAttached, draftPrompt, onGoalChange, onUseDraftPrompt, onUseDraftPlan, onFocusPrompt }: { goal: string; contextItems: ExplicitContextBundleItem[]; memoryAttachedCount: number; modelStatus: string; canSendChat: boolean; latestResponseStatus: string; editProposal: EditProposalState | null; applyResult: ApplyResultState | null; verificationAttempt: IdeActionAttemptState | null; verificationAttached: boolean; draftPrompt: string; onGoalChange: (goal: string) => void; onUseDraftPrompt: (mode: CodingTaskPromptMode) => void; onUseDraftPlan: () => void; onFocusPrompt: () => void }) {
   const contextLabels = contextItems.map((item) => codingTaskContextLabel(item));
   const verificationStatus = verificationAttempt?.result?.action === "runVerificationCommand"
     ? `${verificationAttempt.result.commandId}: ${verificationAttempt.result.status}`
@@ -2718,6 +2721,7 @@ function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, model
       ? "proposal visible for review"
       : "none";
   const sessionStatus = codingTaskSessionStatus(goal, contextItems.length, latestResponseStatus, editProposalStatus, verificationStatus);
+  const recoveryCopy = codingTaskRecoveryCopy(modelStatus, latestResponseStatus);
   return (
     <section className={`coding-task-session-card readiness-card ${goal.trim() || contextItems.length > 0 || editProposal || verificationAttempt ? "ready" : "warn"} stack`} aria-label="Coding task session">
       <div className="row">
@@ -2738,13 +2742,16 @@ function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, model
         <span>Verification: {verificationStatus}{verificationAttached ? " · attached for follow-up" : ""}</span>
         <span>Memory attachments: {memoryAttachedCount}</span>
       </div>
+      {recoveryCopy && <div className="readiness-card warn" role="status"><strong>Prompt recovery</strong><span>{recoveryCopy}</span></div>}
       <div className="stack">
         <strong>Explicit context bundle summary</strong>
         {contextLabels.length === 0 ? <span className="subtle">No explicit bundle items selected. Existing active-context controls remain below.</span> : <ul className="first-message-steps">{contextLabels.map((label) => <li key={label}>{label}</li>)}</ul>}
       </div>
       <div className="row" role="group" aria-label="Coding task next steps">
-        <button type="button" className="secondary-button" onClick={onUseDraftPrompt}>Draft task prompt</button>
-        <button type="button" className="secondary-button" onClick={onUseDraftPlan}>Copy to manual plan draft</button>
+        <button type="button" className="secondary-button" onClick={() => onUseDraftPrompt("ask")}>Draft ask prompt</button>
+        <button type="button" className="secondary-button" onClick={() => onUseDraftPrompt("implementation_plan")}>Draft implementation plan prompt</button>
+        <button type="button" className="secondary-button" onClick={() => onUseDraftPrompt("safe_edit")}>Draft safe-edit request</button>
+        <button type="button" className="secondary-button" onClick={onUseDraftPlan}>Copy plan prompt to manual draft</button>
         <button type="button" className="secondary-button" onClick={onFocusPrompt}>Focus chat prompt</button>
       </div>
     </section>
@@ -2767,6 +2774,26 @@ function codingTaskSessionStatus(goal: string, contextCount: number, latestRespo
   return goal.trim() ? "draft goal" : "draft not started";
 }
 
+function codingTaskRecoveryCopy(modelStatus: string, latestResponseStatus: string): string | null {
+  const text = `${modelStatus} ${latestResponseStatus}`.toLowerCase();
+  if (/context.*(too large|large|length|window)|too large|maximum context/.test(text)) {
+    return "Context is too large. Remove low-value bundle items, keep only explicit summaries/snippets, and ask for a narrower answer before sending again.";
+  }
+  if (/rate|quota|429/.test(text)) {
+    return "Provider rate limit or quota is visible. Wait, choose a smaller prompt, or switch to another ready local/BYOK model before sending.";
+  }
+  if (/timeout|timed out/.test(text)) {
+    return "Provider timeout is visible. Narrow the prompt, reduce explicit context, verify provider reachability, then retry manually.";
+  }
+  if (/mismatch|model.*provider/.test(text)) {
+    return "Model/provider mismatch is visible. Test the saved provider, fix the model id mapping locally, refresh runtime, then draft/send again.";
+  }
+  if (/runtime unavailable|provider required|provider or demo mode needed|blocked/.test(text)) {
+    return "Provider is not ready. Refresh runtime or choose Demo Mode/local/BYOK provider first; drafts stay local until you explicitly send.";
+  }
+  return null;
+}
+
 function codingTaskContextLabel(item: ExplicitContextBundleItem): string {
   if (isVerificationOutputBundleItem(item)) {
     return `verification output · ${sanitizeDisplayText(item.commandId)} · ${sanitizeDisplayText(item.status)}`;
@@ -2778,16 +2805,6 @@ function codingTaskContextLabel(item: ExplicitContextBundleItem): string {
     return `project memory · ${sanitizeDisplayText(item.title)}`;
   }
   return `active file excerpt · ${sanitizeDisplayText(item.file?.workspaceRelativePath ?? item.file?.displayPath ?? "active editor")}`;
-}
-
-function buildCodingTaskPromptDraft(goal: string, contextItems: ExplicitContextBundleItem[], memoryAttachedCount: number): string {
-  const trimmedGoal = goal.trim();
-  const lines = [
-    trimmedGoal ? `Goal: ${trimmedGoal}` : "Goal: describe the coding task.",
-    `Use the currently selected explicit context bundle summary (${contextItems.length} item${contextItems.length === 1 ? "" : "s"}, ${memoryAttachedCount} memory note${memoryAttachedCount === 1 ? "" : "s"}).`,
-    "Propose the next safe step for this coding task. Do not read hidden files, send additional requests, apply edits, run verification, save memory, or perform workspace changes unless I explicitly use the existing controls.",
-  ];
-  return lines.join("\n");
 }
 
 type ManualRunnerStepState = "done" | "current" | "waiting";
