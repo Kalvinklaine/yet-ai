@@ -1,0 +1,8 @@
+{
+  "protocolVersion": "2026-06-17",
+  "query": "architecture",
+  "limit": 5,
+  "env": {
+    "YET_AI_CONTEXT": "local"
+  }
+}

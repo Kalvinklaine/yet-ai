@@ -182,6 +182,10 @@ const invalidMappings = [
     "packages/contracts/schemas/engine/project-memory-create-request.schema.json"
   ],
   [
+    "packages/contracts/examples-invalid/engine/project-memory-create-request-cwd-field.json",
+    "packages/contracts/schemas/engine/project-memory-create-request.schema.json"
+  ],
+  [
     "packages/contracts/examples-invalid/engine/project-memory-note-private-path.json",
     "packages/contracts/schemas/engine/project-memory-note.schema.json"
   ],
@@ -202,6 +206,10 @@ const invalidMappings = [
     "packages/contracts/schemas/engine/project-memory-search-request.schema.json"
   ],
   [
+    "packages/contracts/examples-invalid/engine/project-memory-search-request-env-field.json",
+    "packages/contracts/schemas/engine/project-memory-search-request.schema.json"
+  ],
+  [
     "packages/contracts/examples-invalid/engine/project-memory-search-response-embedding-field.json",
     "packages/contracts/schemas/engine/project-memory-search-response.schema.json"
   ],
@@ -211,6 +219,10 @@ const invalidMappings = [
   ],
   [
     "packages/contracts/examples-invalid/engine/project-memory-select-context-too-many-notes.json",
+    "packages/contracts/schemas/engine/project-memory-select-context-request.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/project-memory-select-context-request-provider-field.json",
     "packages/contracts/schemas/engine/project-memory-select-context-request.schema.json"
   ],
   [
