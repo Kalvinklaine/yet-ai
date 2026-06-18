@@ -2936,7 +2936,7 @@ describe("active editor attached context", () => {
     expect(panel.textContent).toContain("Manual runner · Coding loop");
     expect(panel.textContent).toContain("browser preview only");
     expect(panel.textContent).toContain("manual only");
-    expect(panel.textContent).toContain("Current step: 1. Draft plan");
+    expect(panel.textContent).toContain("Current manual lifecycle step: 1. Goal");
     expect(panel.textContent).toContain("It never auto-sends, auto-attaches context, auto-applies edits, auto-runs verification");
     expect(panel.textContent).toContain("Browser preview can draft and chat with the runtime");
     expect(fetchMock).not.toHaveBeenCalled();
@@ -2957,9 +2957,13 @@ describe("active editor attached context", () => {
     expect(panel.textContent).toContain("Buttons only focus the prompt or write local draft text");
     expect(panel.textContent).toContain("they never auto-attach, send, apply, verify, save memory, call providers, read files, or write browser storage");
     expect(panel.textContent).toContain("Session: draft not started");
+    expect(panel.textContent).toContain("Goal: not written");
+    expect(panel.textContent).toContain("Context selected: none");
+    expect(panel.textContent).toContain("Prompt drafted: ready");
+    expect(panel.textContent).toContain("Response received: Ready to send.");
+    expect(panel.textContent).toContain("Edit proposed/applied: none");
+    expect(panel.textContent).toContain("Verification/follow-up: not requested · draft or attach manually");
     expect(panel.textContent).toContain("Model/send: ready · GPT-4o mini (openai-api)");
-    expect(panel.textContent).toContain("Safe edit proposal: none");
-    expect(panel.textContent).toContain("Verification: not requested");
     expect(panel.textContent).toContain("Memory attachments: 0");
     expect(panel.textContent).toContain("No explicit bundle items selected");
     expect(localSetItem).not.toHaveBeenCalled();
@@ -3018,6 +3022,12 @@ describe("active editor attached context", () => {
     expect(chatInput().value).toContain("propose the smallest safe edit");
 
     await act(async () => {
+      findButton("Draft follow-up prompt").click();
+    });
+    expect(chatInput().value).toContain("Follow-up prompt");
+    expect(chatInput().value).toContain("suggest the next safe manual step");
+
+    await act(async () => {
       findButton("Copy plan prompt to manual draft").click();
     });
     expect(manualRunnerDraftTextarea().value).toContain("Implementation plan request");
@@ -3047,12 +3057,12 @@ describe("active editor attached context", () => {
     await act(async () => {
       setTextareaValue(manualRunnerDraftTextarea(), "Inspect context, ask model, then verify.");
     });
-    expect(panel.textContent).toContain("Current step: 2. Attach context");
+    expect(panel.textContent).toContain("Current manual lifecycle step: 2. Context selected");
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
 
     await dispatchHostContextSnapshot({ selection: { text: "selected runner context" } });
-    expect(panel.textContent).toContain("Current step: 3. Ask model");
+    expect(panel.textContent).toContain("Current manual lifecycle step: 3. Prompt drafted");
 
     await act(async () => {
       setTextareaValue(chatInput(), "Ask model from the manual runner loop.");
@@ -3079,12 +3089,12 @@ describe("active editor attached context", () => {
     await flushAsync();
 
     const panel = manualRunnerPanel();
-    expect(panel.textContent).toContain("Current step: 5. Apply after explicit confirmation");
+    expect(panel.textContent).toContain("Current manual lifecycle step: 5. Edit proposed/applied");
     expect(panel.textContent).toContain("Review the latest proposal card before applying.");
     await act(async () => {
       setTextareaValue(manualRunnerDraftTextarea(), "Review proposal, apply after confirmation, verify.");
     });
-    expect(panel.textContent).toContain("Current step: 5. Apply after explicit confirmation");
+    expect(panel.textContent).toContain("Current manual lifecycle step: 5. Edit proposed/applied");
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
 
     await act(async () => {
@@ -3093,7 +3103,7 @@ describe("active editor attached context", () => {
     const applyCall = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
     expect(applyCall).toBeDefined();
     await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "Manual runner apply result.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
-    expect(panel.textContent).toContain("Current step: 6. Run verification");
+    expect(panel.textContent).toContain("Current manual lifecycle step: 6. Verification");
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")).toHaveLength(0);
 
     await act(async () => {
@@ -3102,7 +3112,7 @@ describe("active editor attached context", () => {
     const verificationCall = postMessage.mock.calls.find(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")?.[0];
     expect(verificationCall).toMatchObject({ payload: { action: "runVerificationCommand", commandId: "repository-check" } });
     await dispatchHostIdeActionResult(verificationCall.requestId, { status: "succeeded", message: "Repository check passed.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 0, durationMs: 10, outputTail: "passed", truncated: false });
-    expect(panel.textContent).toContain("Current step: 7. Attach verification result / continue");
+    expect(panel.textContent).toContain("Current manual lifecycle step: 7. Follow-up");
 
     await act(async () => {
       findButton("Attach verification result to next message").click();

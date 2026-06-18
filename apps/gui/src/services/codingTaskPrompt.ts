@@ -2,7 +2,7 @@ import type { ExplicitContextBundleItem } from "./activeEditorContext";
 import { formatSelectionRange } from "./activeEditorContext";
 import { sanitizeDisplayText, sanitizeTimelineText } from "./redaction";
 
-export type CodingTaskPromptMode = "ask" | "implementation_plan" | "safe_edit";
+export type CodingTaskPromptMode = "ask" | "implementation_plan" | "safe_edit" | "follow_up";
 
 export type CodingTaskPromptInput = {
   mode: CodingTaskPromptMode;
@@ -70,6 +70,9 @@ function modeTitle(mode: CodingTaskPromptMode): string {
   if (mode === "safe_edit") {
     return "Safe-edit request";
   }
+  if (mode === "follow_up") {
+    return "Follow-up prompt";
+  }
   return "Ask prompt";
 }
 
@@ -79,6 +82,9 @@ function modeInstruction(mode: CodingTaskPromptMode): string {
   }
   if (mode === "safe_edit") {
     return "Request: propose the smallest safe edit for the goal. Return a reviewable proposal only; do not assume it will be applied automatically.";
+  }
+  if (mode === "follow_up") {
+    return "Request: use the visible response, edit, and verification state to suggest the next safe manual step. Do not assume any action was run unless it is shown above.";
   }
   return "Request: answer the task question, identify missing explicit context, and suggest the next safe step.";
 }

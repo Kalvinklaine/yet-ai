@@ -2731,6 +2731,7 @@ function FirstMessageActionButton({ action, runtimeRefreshInFlight, providerTest
 
 function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, modelStatus, canSendChat, latestResponseStatus, editProposal, applyResult, verificationAttempt, verificationAttached, draftPrompt, onGoalChange, onUseDraftPrompt, onUseDraftPlan, onFocusPrompt }: { goal: string; contextItems: ExplicitContextBundleItem[]; memoryAttachedCount: number; modelStatus: string; canSendChat: boolean; latestResponseStatus: string; editProposal: EditProposalState | null; applyResult: ApplyResultState | null; verificationAttempt: IdeActionAttemptState | null; verificationAttached: boolean; draftPrompt: string; onGoalChange: (goal: string) => void; onUseDraftPrompt: (mode: CodingTaskPromptMode) => void; onUseDraftPlan: () => void; onFocusPrompt: () => void }) {
   const contextLabels = contextItems.map((item) => codingTaskContextLabel(item));
+  const promptDrafted = draftPrompt.trim().length > 0;
   const verificationStatus = verificationAttempt?.result?.action === "runVerificationCommand"
     ? `${verificationAttempt.result.commandId}: ${verificationAttempt.result.status}`
     : verificationAttempt
@@ -2757,10 +2758,13 @@ function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, model
       </label>
       <div className="agent-progress-grid" aria-label="Coding task session status">
         <span>Session: {sessionStatus}</span>
+        <span>Goal: {goal.trim() ? "written" : "not written"}</span>
+        <span>Context selected: {contextItems.length > 0 ? `${contextItems.length} explicit item${contextItems.length === 1 ? "" : "s"}` : "none"}</span>
+        <span>Prompt drafted: {promptDrafted ? "ready" : "available"}</span>
+        <span>Response received: {latestResponseStatus}</span>
+        <span>Edit proposed/applied: {editProposalStatus}</span>
+        <span>Verification/follow-up: {verificationStatus}{verificationAttached ? " · attached for follow-up" : " · draft or attach manually"}</span>
         <span>Model/send: {canSendChat ? `ready · ${modelStatus}` : `blocked · ${modelStatus}`}</span>
-        <span>Latest response: {latestResponseStatus}</span>
-        <span>Safe edit proposal: {editProposalStatus}</span>
-        <span>Verification: {verificationStatus}{verificationAttached ? " · attached for follow-up" : ""}</span>
         <span>Memory attachments: {memoryAttachedCount}</span>
       </div>
       {recoveryCopy && <div className="readiness-card warn" role="status"><strong>Prompt recovery</strong><span>{recoveryCopy}</span></div>}
@@ -2772,6 +2776,7 @@ function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, model
         <button type="button" className="secondary-button" onClick={() => onUseDraftPrompt("ask")}>Draft ask prompt</button>
         <button type="button" className="secondary-button" onClick={() => onUseDraftPrompt("implementation_plan")}>Draft implementation plan prompt</button>
         <button type="button" className="secondary-button" onClick={() => onUseDraftPrompt("safe_edit")}>Draft safe-edit request</button>
+        <button type="button" className="secondary-button" onClick={() => onUseDraftPrompt("follow_up")}>Draft follow-up prompt</button>
         <button type="button" className="secondary-button" onClick={onUseDraftPlan}>Copy plan prompt to manual draft</button>
         <button type="button" className="secondary-button" onClick={onFocusPrompt}>Focus chat prompt</button>
       </div>
@@ -2842,13 +2847,13 @@ function ManualRunnerPanel({ host, draftPlan, planProposal, hasContext, hasPromp
   const applied = applyResult?.payload.status === "applied";
   const verified = verificationAttempt?.result?.action === "runVerificationCommand" && (verificationAttempt.result.status === "succeeded" || verificationAttempt.result.status === "failed");
   const steps: ManualRunnerStep[] = [
-    { label: "1. Draft plan", detail: draftPlan.trim() ? "Local draft plan is written in this panel." : "Write a short plan here; it stays in React state only.", state: draftPlan.trim() ? "done" : "current" },
-    { label: "2. Attach context", detail: hasContext ? "Context is ready for your next explicit Send." : "Use active file, multi-file bundle, or project snippets below when needed.", state: hasContext ? "done" : draftPlan.trim() ? "current" : "waiting" },
-    { label: "3. Ask model", detail: hasAssistantActivity ? "Chat activity exists for this loop." : hasPrompt ? "Prompt is drafted; click Send when ready." : "Use the chat box; nothing is sent by this panel.", state: hasAssistantActivity ? "done" : hasPrompt || hasContext ? "current" : "waiting" },
-    { label: "4. Review safe edit proposal", detail: hasEditProposal ? "Review the latest proposal card before applying." : "Wait for a bounded assistant proposal, or continue in chat.", state: applied ? "done" : hasEditProposal ? "current" : "waiting" },
-    { label: "5. Apply after explicit confirmation", detail: applied ? "Host reported edits applied after confirmation." : applySettled ? "Host returned an apply result; review it before continuing." : "Use the proposal card apply button only after review.", state: applied ? "done" : applySettled ? "done" : hasEditProposal ? "current" : "waiting" },
-    { label: "6. Run verification", detail: verified ? "Verification result is visible in the verification panel." : "Click one allowlisted verification command when ready.", state: verified ? "done" : applied ? "current" : "waiting" },
-    { label: "7. Attach verification result / continue", detail: verificationAttached ? "Verification output is attached as explicit one-shot context." : verified ? "Attach the result or continue with a follow-up prompt." : "No verification output is attached automatically.", state: verificationAttached ? "done" : verified ? "current" : "waiting" },
+    { label: "1. Goal", detail: draftPlan.trim() ? "Goal and local draft plan are written in this panel." : "Write the goal or plan here; it stays in React state only.", state: draftPlan.trim() ? "done" : "current" },
+    { label: "2. Context selected", detail: hasContext ? "Context is selected for your next explicit Send." : "Use active file, multi-file bundle, memory, or project snippets below when needed.", state: hasContext ? "done" : draftPlan.trim() ? "current" : "waiting" },
+    { label: "3. Prompt drafted", detail: hasAssistantActivity ? "Prompt was sent manually and chat activity exists." : hasPrompt ? "Prompt is drafted; click Send when ready." : "Draft or focus the chat box; nothing is sent by this panel.", state: hasAssistantActivity ? "done" : hasPrompt || hasContext ? "current" : "waiting" },
+    { label: "4. Response received", detail: hasAssistantActivity ? "A response or stream state is visible in chat." : "Wait for the manual Send and assistant response.", state: hasAssistantActivity ? "done" : hasPrompt ? "current" : "waiting" },
+    { label: "5. Edit proposed/applied", detail: applied ? "Host reported edits applied after confirmation." : applySettled ? "Host returned an apply result; review it before continuing." : hasEditProposal ? "Review the latest proposal card before applying." : "No edit is proposed or applied automatically.", state: applied ? "done" : applySettled ? "done" : hasEditProposal ? "current" : "waiting" },
+    { label: "6. Verification", detail: verified ? "Verification result is visible in the verification panel." : "Click one allowlisted verification command when ready.", state: verified ? "done" : applied ? "current" : "waiting" },
+    { label: "7. Follow-up", detail: verificationAttached ? "Verification output is attached as explicit one-shot context." : verified ? "Attach the result or draft a follow-up prompt." : "No verification output or follow-up is attached automatically.", state: verificationAttached ? "done" : verified ? "current" : "waiting" },
   ];
   const currentStep = [...steps].reverse().find((step) => step.state === "current") ?? steps[steps.length - 1];
   const useProposalAsDraft = () => {
@@ -2864,7 +2869,7 @@ function ManualRunnerPanel({ host, draftPlan, planProposal, hasContext, hasPromp
         <span className={`badge ${supported ? "ok" : "warn"}`}>{supported ? `${host} explicit controls` : "browser preview only"}</span>
         <span className="badge">manual only</span>
       </div>
-      <span className="subtle">Progress guide only. It never auto-sends, auto-attaches context, auto-applies edits, auto-runs verification, reads hidden files, or writes browser storage. A very sleepy guardrail, but awake enough.</span>
+      <span className="subtle">Progress guide only. It never auto-sends, auto-attaches context, auto-applies edits, auto-runs verification, reads hidden files, or writes browser storage.</span>
       {!supported && <span className="subtle">Browser preview can draft and chat with the runtime, but IDE context, apply, and verification buttons stay preview/manual until an IDE host is available.</span>}
       <label className="stack manual-runner-plan">
         Draft plan (local UI state only)
@@ -2872,7 +2877,7 @@ function ManualRunnerPanel({ host, draftPlan, planProposal, hasContext, hasPromp
       </label>
       {planProposal && <ManualRunnerPlanProposalCard proposal={planProposal} onUseAsDraft={useProposalAsDraft} onFocusPrompt={onFocusPrompt} />}
       <div className="manual-runner-current" role="status">
-        <strong>Current step: {currentStep.label}</strong>
+        <strong>Current manual lifecycle step: {currentStep.label}</strong>
         <span>{currentStep.detail}</span>
       </div>
       <ol className="manual-runner-steps" aria-label="Manual coding loop steps">
