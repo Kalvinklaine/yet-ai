@@ -2803,7 +2803,8 @@ describe("host.ready runtime bootstrap", () => {
 describe("active editor attached context", () => {
   it("creates searches attaches clears and deletes local project memory without browser storage", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
-    const note = projectMemoryNote({ title: "Architecture decision", text: "Use engine-owned local memory only.", tags: ["architecture"] });
+    const rawSecret = "access_token=" + "m".repeat(64);
+    const note = projectMemoryNote({ title: "Architecture decision " + rawSecret, text: "Use engine-owned local memory only. " + rawSecret, tags: ["architecture", rawSecret], updatedAt: "2026-06-17T12:00:00Z " + rawSecret });
     let notes: unknown[] = [];
     mockRuntimeResponses({ ...readyRuntimeOptions(), projectMemoryNotes: notes });
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -2830,6 +2831,8 @@ describe("active editor attached context", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("Local project memory");
+    expect(container?.textContent).toContain("ready");
+    expect(container?.textContent).toContain("No memory notes listed");
     expect(container?.textContent).toContain("No local memory notes are listed");
 
     await act(async () => {
@@ -2843,8 +2846,13 @@ describe("active editor attached context", () => {
     });
     await flushAsync();
 
-    expect(container?.textContent).toContain("Saved local memory note Architecture decision.");
+    expect(container?.textContent).toContain("Saved local memory note Architecture decision [redacted].");
     expect(container?.textContent).toContain("Use engine-owned local memory only.");
+    expect(container?.textContent).toContain("Sanitized bounded preview");
+    expect(container?.textContent).toContain("source manual");
+    expect(container?.textContent).toContain("tags architecture, [redacted]");
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("m".repeat(64));
     expect(findInputByPlaceholder("Short note title").value).toBe("");
     expect(findTextareaByPlaceholder("Manual local note").value).toBe("");
 
@@ -2861,10 +2869,22 @@ describe("active editor attached context", () => {
     await act(async () => {
       findButton("Attach memory to next message").click();
     });
-    expect(container?.textContent).toContain("Attached local memory note Architecture decision to the next message context.");
+    expect(container?.textContent).toContain("Attached local memory note Architecture decision [redacted] to the next message context.");
+    expect(container?.textContent).toContain("attached to next message");
+    expect(findButton("Detach memory from next message")).toBeDefined();
     expect(container?.textContent).toContain("Project memory");
     expect(browserStorageDump()).not.toContain("Use engine-owned local memory only.");
 
+    await act(async () => {
+      findButton("Detach memory from next message").click();
+    });
+
+    expect(container?.textContent).toContain("Detached local memory note Architecture decision [redacted] from the next message context.");
+    expect(findButton("Attach memory to next message")).toBeDefined();
+
+    await act(async () => {
+      findButton("Attach memory to next message").click();
+    });
     await act(async () => {
       findButton("Clear bundle").click();
     });
@@ -2887,7 +2907,7 @@ describe("active editor attached context", () => {
       content: "Use attached memory once",
       context: {
         kind: "explicit_context_bundle",
-        items: [{ kind: "project_memory", noteId: "mem-001", title: "Architecture decision", text: "Use engine-owned local memory only.", tags: ["architecture"] }],
+        items: [{ kind: "project_memory", noteId: "mem-001", title: "Architecture decision " + rawSecret, text: "Use engine-owned local memory only. " + rawSecret, tags: ["architecture", rawSecret] }],
       },
     });
     expect(container?.textContent).toContain("One-shot explicit context bundle attached to the last accepted message and cleared.");
@@ -2898,9 +2918,11 @@ describe("active editor attached context", () => {
       await Promise.resolve();
     });
     await flushAsync();
-    expect(container?.textContent).toContain("Deleted local memory note Architecture decision.");
+
+    expect(container?.textContent).toContain("Deleted local memory note Architecture decision [redacted].");
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("Use engine-owned local memory only.");
+    expect(browserStorageDump()).not.toContain(rawSecret);
   });
 
   it("renders manual runner panel as progress-only browser preview without auto actions or storage", async () => {

@@ -450,7 +450,9 @@ export function App() {
   const activeIdeActionProposal = ideActionProposalMatchesCandidate(ideActionProposal, ideActionProposalCandidate) ? ideActionProposal : null;
   const safeActiveWorkspacePath = currentAttachedContext?.file?.workspaceRelativePath;
   const safeActiveRange = rangeFromContextSelection(currentAttachedContext?.selection);
-  const attachedProjectMemoryCount = explicitContextBundleItems.filter((item) => item.kind === "project_memory").length;
+  const attachedProjectMemoryItems = explicitContextBundleItems.filter((item): item is ProjectMemoryBundleItem => item.kind === "project_memory");
+  const attachedProjectMemoryCount = attachedProjectMemoryItems.length;
+  const attachedProjectMemoryNoteIds = useMemo(() => new Set(attachedProjectMemoryItems.map((item) => item.noteId)), [attachedProjectMemoryItems]);
   const pendingActiveFileExcerpt = pendingIdeActionRequestIdRef.current !== null && ideActionAttempt?.action === "getActiveFileExcerpt" && (ideActionAttempt.status === "pending" || ideActionAttempt.status === "inProgress");
   const activeFilePromptAction = useMemo(() => currentActiveFileExcerpt ? buildActiveFilePromptAction(currentActiveFileExcerpt) : null, [currentActiveFileExcerpt]);
   const chatHistoryStatus = conversationHistoryStatusLabel({ loading: chatHistoryLoading, current: chatHistoryCurrent, count: activeChatSummaries.length, hasError: Boolean(chatHistoryError) });
@@ -1797,12 +1799,22 @@ export function App() {
     });
   };
 
-  const removeExplicitContextBundleItem = (key: string) => {
+  const removeExplicitContextBundleItem = (key: string, status = "Removed one excerpt from the one-shot bundle.") => {
     setExplicitContextBundleItems((current) => current.filter((item) => item.key !== key));
     if (attachedVerificationKey === key) {
       setAttachedVerificationKey(null);
     }
-    setExplicitContextBundleStatus("Removed one excerpt from the one-shot bundle.");
+    setExplicitContextBundleStatus(status);
+  };
+
+  const detachProjectMemoryNote = (noteId: string, title: string) => {
+    const item = explicitContextBundleItems.find((current): current is ProjectMemoryBundleItem => current.kind === "project_memory" && current.noteId === noteId);
+    if (!item) {
+      setProjectMemoryStatus("This memory note is not attached to the one-shot bundle.");
+      return;
+    }
+    removeExplicitContextBundleItem(item.key, `Detached local memory note ${sanitizeDisplayText(title)} from the one-shot bundle.`);
+    setProjectMemoryStatus(`Detached local memory note ${sanitizeDisplayText(title)} from the next message context.`);
   };
 
   const useVerificationFollowupDraft = (result: IdeActionResultPayload, mode: VerificationFollowupPromptMode) => {
@@ -2195,8 +2207,8 @@ export function App() {
                 <ManualRunnerPanel host={bridgeHost} draftPlan={manualRunnerDraftPlan} planProposal={latestPlanProposal} hasContext={Boolean((currentAttachedContext && hasUsableAttachedContext(currentAttachedContext)) || explicitContextBundleItems.length > 0)} hasPrompt={Boolean(chatInput.trim())} hasAssistantActivity={chatView.messages.some((message) => message.role === "assistant") || chatLifecycleState !== "idle"} hasEditProposal={Boolean(activeEditProposal)} applyResult={applyResult} verificationAttempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} verificationAttached={Boolean(attachedVerificationKey)} canSendChat={canSendChat} onDraftPlanChange={setManualRunnerDraftPlan} onFocusPrompt={() => chatInputRef.current?.focus()} />
                 <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} promptAction={activeFilePromptAction} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onClearPending={clearPendingIdeActionState} onIncludeChange={setIncludeAttachedContext} onApplyPrompt={applyActiveFilePrompt} onAddToBundle={addActiveFileExcerptToBundle} />
                 <WorkspaceSnippetSearchPanel host={bridgeHost} query={workspaceSnippetQuery} result={workspaceSnippetResult} selectedKeys={selectedWorkspaceSnippetKeys} pending={ideActionAttempt?.action === "searchWorkspaceSnippets" && (ideActionAttempt.status === "pending" || ideActionAttempt.status === "inProgress")} status={workspaceSnippetStatus} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onQueryChange={setWorkspaceSnippetQuery} onSearch={searchWorkspaceSnippets} onClearPending={clearPendingIdeActionState} onSelectionChange={setSelectedWorkspaceSnippetKeys} onAttachSelected={attachSelectedWorkspaceSnippetsToBundle} />
-                <ProjectMemoryPanel notes={projectMemory.notes} state={projectMemory.state} error={projectMemory.error} title={projectMemoryTitle} text={projectMemoryText} tags={projectMemoryTags} query={projectMemoryQuery} status={projectMemoryStatus} attachedCount={attachedProjectMemoryCount} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onTitleChange={setProjectMemoryTitle} onTextChange={setProjectMemoryText} onTagsChange={setProjectMemoryTags} onQueryChange={setProjectMemoryQuery} onCreate={() => void createProjectMemoryNote()} onSearch={() => void searchProjectMemoryNotes()} onRefresh={() => void refreshProjectMemory()} onAttach={attachProjectMemoryNote} onDelete={(note) => void deleteProjectMemoryNote(note)} />
-                <ExplicitContextBundlePanel items={explicitContextBundleItems} include={includeExplicitContextBundle} status={explicitContextBundleStatus} onIncludeChange={setIncludeExplicitContextBundle} onRemove={removeExplicitContextBundleItem} onClear={() => clearExplicitContextBundle("Cleared the one-shot explicit context bundle.")} />
+                <ProjectMemoryPanel notes={projectMemory.notes} state={projectMemory.state} error={projectMemory.error} title={projectMemoryTitle} text={projectMemoryText} tags={projectMemoryTags} query={projectMemoryQuery} status={projectMemoryStatus} attachedCount={attachedProjectMemoryCount} attachedNoteIds={attachedProjectMemoryNoteIds} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onTitleChange={setProjectMemoryTitle} onTextChange={setProjectMemoryText} onTagsChange={setProjectMemoryTags} onQueryChange={setProjectMemoryQuery} onCreate={() => void createProjectMemoryNote()} onSearch={() => void searchProjectMemoryNotes()} onRefresh={() => void refreshProjectMemory()} onAttach={attachProjectMemoryNote} onDetach={detachProjectMemoryNote} onDelete={(note) => void deleteProjectMemoryNote(note)} />
+                <ExplicitContextBundlePanel items={explicitContextBundleItems} include={includeExplicitContextBundle} status={explicitContextBundleStatus} onIncludeChange={setIncludeExplicitContextBundle} onRemove={(key) => removeExplicitContextBundleItem(key)} onClear={() => clearExplicitContextBundle("Cleared the one-shot explicit context bundle.")} />
                 <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} acknowledged={attachedContextAcknowledged} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} onAcknowledgeChange={setAttachedContextAcknowledged} />
                 <CodingActionsPanel canUseContext={codingActionsCanUseContext} context={currentAttachedContext} onAction={applyCodingAction} />
                 <VerificationCommandPanel host={bridgeHost} commands={verificationCommands} attempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} note={ideActionAttempt?.action === "runVerificationCommand" ? ideActionNote : null} showAppliedEditNextStep={showAppliedEditVerificationStep} attachedVerificationKey={attachedVerificationKey} onRun={(commandId) => requestIdeAction({ action: "runVerificationCommand", commandId }, "gui-verification-command")} onClearPending={clearPendingIdeActionState} onAttachResult={attachVerificationResultToBundle} onDraftFollowupPrompt={(result) => useVerificationFollowupDraft(result, "followup")} onDraftFixPrompt={(result) => useVerificationFollowupDraft(result, "fix")} />
@@ -3025,13 +3037,25 @@ function WorkspaceSnippetSearchPanel({ host, query, result, selectedKeys, pendin
   );
 }
 
-function ProjectMemoryPanel({ notes, state, error, title, text, tags, query, status, attachedCount, canAddToBundle, onTitleChange, onTextChange, onTagsChange, onQueryChange, onCreate, onSearch, onRefresh, onAttach, onDelete }: { notes: ProjectMemoryNote[]; state: ProjectMemoryState["state"]; error: RuntimeError | null; title: string; text: string; tags: string; query: string; status: string | null; attachedCount: number; canAddToBundle: boolean; onTitleChange: (value: string) => void; onTextChange: (value: string) => void; onTagsChange: (value: string) => void; onQueryChange: (value: string) => void; onCreate: () => void; onSearch: () => void; onRefresh: () => void; onAttach: (note: ProjectMemoryNote) => void; onDelete: (note: ProjectMemoryNote) => void }) {
+function ProjectMemoryPanel({ notes, state, error, title, text, tags, query, status, attachedCount, attachedNoteIds, canAddToBundle, onTitleChange, onTextChange, onTagsChange, onQueryChange, onCreate, onSearch, onRefresh, onAttach, onDetach, onDelete }: { notes: ProjectMemoryNote[]; state: ProjectMemoryState["state"]; error: RuntimeError | null; title: string; text: string; tags: string; query: string; status: string | null; attachedCount: number; attachedNoteIds: Set<string>; canAddToBundle: boolean; onTitleChange: (value: string) => void; onTextChange: (value: string) => void; onTagsChange: (value: string) => void; onQueryChange: (value: string) => void; onCreate: () => void; onSearch: () => void; onRefresh: () => void; onAttach: (note: ProjectMemoryNote) => void; onDetach: (noteId: string, title: string) => void; onDelete: (note: ProjectMemoryNote) => void }) {
   const busy = state === "loading" || state === "saving" || state === "searching" || state === "deleting";
+  const stateLabel = state === "idle" ? "ready" : state;
+  const emptyCopy = query.trim() ? "No local memory notes matched this search. Try a narrower literal query or list all memory again." : "No local memory notes are listed. Create one manually or refresh from the engine-owned local store.";
+  const busyCopy = state === "loading"
+    ? "Loading memory notes from the engine-owned local store…"
+    : state === "saving"
+      ? "Saving a manual local memory note…"
+      : state === "searching"
+        ? "Searching engine-owned local memory…"
+        : state === "deleting"
+          ? "Deleting a selected local memory note…"
+          : null;
   return (
     <section className={`readiness-card ${notes.length > 0 || attachedCount > 0 ? "ready" : "warn"} project-memory-card stack`} role="status" aria-label="Local project memory">
       <div className="row">
         <strong>Local project memory</strong>
         <span className="badge ok">engine-owned</span>
+        <span className={`badge ${busy ? "warn" : "ok"}`}>{stateLabel}</span>
         <span className="badge">{attachedCount} attached</span>
       </div>
       <span className="subtle">Manual bounded notes only. The GUI does not write notes to browser storage, auto-save model output, auto-attach memory, scan the workspace, or expose raw secrets. Attach is explicit one-shot prompt context and clears after accepted Send.</span>
@@ -3062,21 +3086,27 @@ function ProjectMemoryPanel({ notes, state, error, title, text, tags, query, sta
       <div className="row">
         <button type="button" onClick={onSearch} disabled={busy}>{state === "searching" ? "Searching memory…" : query.trim() ? "Search memory" : "List memory"}</button>
       </div>
-      {error && <ErrorBox error={error} />}
+      {busyCopy && <div className="readiness-card warn" role="status"><strong>{busyCopy}</strong><span>Memory curation stays local and manual while this request finishes.</span></div>}
+      {error && <div className="readiness-card warn" role="alert"><strong>Project memory request failed</strong><ErrorBox error={error} /><span className="subtle">No memory was attached automatically. Check the local runtime, then refresh or retry manually.</span></div>}
       {status && <span className="subtle">{sanitizeDisplayText(status)}</span>}
-      {notes.length === 0 ? <span className="subtle">No local memory notes are listed. Create one manually or refresh from the engine-owned local store.</span> : notes.map((note) => {
+      {notes.length === 0 ? <div className="readiness-card warn" role="status"><strong>{state === "error" ? "Memory list unavailable" : "No memory notes listed"}</strong><span>{emptyCopy}</span></div> : notes.map((note) => {
         const preview = classifyBoundedContextPreview(note.text);
+        const attached = attachedNoteIds.has(note.id);
+        const sourceLabel = sanitizeDisplayText(note.source || "manual");
+        const safeTags = note.tags.map((tag) => sanitizeDisplayText(tag));
         return (
-          <div className="provider-item stack" key={note.id}>
+          <div className={`provider-item stack ${attached ? "ready" : ""}`} key={note.id}>
             <div className="row">
               <strong>{sanitizeDisplayText(note.title)}</strong>
-              <span className="badge ok">manual</span>
-              {note.tags.map((tag) => <span className="badge" key={tag}>{sanitizeDisplayText(tag)}</span>)}
+              <span className="badge ok">source {sourceLabel}</span>
+              {attached && <span className="badge ok">attached to next message</span>}
+              {safeTags.length === 0 ? <span className="badge">no tags</span> : safeTags.map((tag) => <span className="badge" key={tag}>{tag}</span>)}
             </div>
-            <span className="subtle">Updated {sanitizeDisplayText(note.updatedAt)} · {note.text.length} chars</span>
-            <div className="attached-context-preview"><pre>{preview.text}</pre></div>
+            <span className="subtle">Updated {sanitizeDisplayText(note.updatedAt)} · {note.text.length} chars · tags {safeTags.join(", ") || "none"}</span>
+            <div className="attached-context-preview"><strong>Sanitized bounded preview</strong><pre>{preview.text}</pre></div>
+            {(preview.redacted || preview.truncated) && <span className="subtle">Preview metadata: {preview.redacted ? "redacted" : "not redacted"}, {preview.truncated ? "preview shortened" : "preview complete"}.</span>}
             <div className="row">
-              <button type="button" onClick={() => onAttach(note)} disabled={!canAddToBundle}>{canAddToBundle ? "Attach memory to next message" : `Bundle full (${explicitContextBundleMaxItems} max)`}</button>
+              {attached ? <button type="button" className="secondary-button" onClick={() => onDetach(note.id, note.title)}>Detach memory from next message</button> : <button type="button" onClick={() => onAttach(note)} disabled={!canAddToBundle}>{canAddToBundle ? "Attach memory to next message" : `Bundle full (${explicitContextBundleMaxItems} max)`}</button>}
               <button type="button" className="danger-button" onClick={() => onDelete(note)} disabled={busy}>Delete memory</button>
             </div>
           </div>
@@ -3085,7 +3115,6 @@ function ProjectMemoryPanel({ notes, state, error, title, text, tags, query, sta
     </section>
   );
 }
-
 function ExplicitContextBundlePanel({ items, include, status, onIncludeChange, onRemove, onClear }: { items: ExplicitContextBundleItem[]; include: boolean; status: string | null; onIncludeChange: (include: boolean) => void; onRemove: (key: string) => void; onClear: () => void }) {
   if (items.length === 0) {
     return (
