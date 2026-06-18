@@ -1,6 +1,6 @@
 # Real Coding Task Dogfood Checklist
 
-Use this checklist for a manual guided coding task dogfood run with a real local BYOK provider or local model runtime. This is local evidence only. It is not CI evidence, not automation, not a publication gate, and not proof of production/default account login.
+Use this checklist for a manual guided coding task dogfood run with a real local BYOK provider or local model runtime. This is local evidence only. It is not CI evidence, not automation, not a publication gate, and production/default account login remains unavailable and blocked.
 
 CI and smoke automation for guided coding tasks remain mock/loopback-only. Do not put real provider credentials, production accounts, hosted Yet AI services, managed gateways, cloud workspaces, or provider account-login flows into CI.
 
@@ -18,7 +18,7 @@ In scope:
 
 Out of scope:
 
-- Production/default account login, ChatGPT/OpenAI account-login claims, provider web-session reuse, browser profile import, or private provider endpoints.
+- Production/default account login remains unavailable/blocked; ChatGPT/OpenAI account-login claims, provider web-session reuse, browser profile import, or private provider endpoints are out of scope.
 - Hosted Yet AI backend requirements, Yet AI accounts, managed model gateways, product credit balances, cloud workspaces, cloud sync, or cloud-required task execution.
 - Auto-send, auto-apply, auto-run verification, shell/git/tool execution, workspace indexing, hidden file reads, background autonomy, publishing, signing, notarization, marketplace release, or real-provider CI.
 - Raw provider credentials, runtime tokens, auth codes, cookies, request bodies, raw provider responses, raw prompts, raw file bodies, private absolute paths, or bridge payload dumps in tracked docs or shareable reports.
@@ -62,7 +62,7 @@ Manual local evidence only. This report is not CI evidence, not automation evide
 
 - Runtime connected before task drafting: <checked | failed with sanitized summary | not run>
 - Provider configured and tested locally: <checked | failed with sanitized summary | not run>
-- Production/default account login absent: <checked | issue fixed before sharing | not run>
+- Production/default account login remains unavailable/blocked: <checked | issue fixed before sharing | not run>
 - Hosted Yet AI backend/cloud workspace not required: <checked | issue fixed before sharing | not run>
 
 ## Guided task flow
