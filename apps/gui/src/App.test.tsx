@@ -6827,6 +6827,14 @@ describe("edit proposal preview", () => {
     expect(text).toContain("src/example.ts");
     expect(text).toContain("Files: 1");
     expect(text).toContain("Text edits: 1");
+    expect(text).toContain("Quality summary");
+    expect(text).toContain("1 files · 1 replacements · total chars 23 · max chars 23");
+    expect(text).toContain("preview none");
+    expect(text).toContain("status browser preview only");
+    expect(text).toContain("single file");
+    expect(text).toContain("browser preview only");
+    expect(text).toContain("Apply disabled");
+    expect(text).toContain("Browser preview cannot apply. Open VS Code or JetBrains for host confirmation.");
     expect(text).toContain("const label = \"Yet AI\";");
     expect(text).toContain("Preview only in this host. Browser cannot apply proposed edits");
     expect(Array.from(container?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Apply in VS Code after review")).toBe(false);
@@ -6907,6 +6915,10 @@ describe("edit proposal preview", () => {
     const text = container?.textContent ?? "";
     expect(text).toContain("Replacement preview was redacted or shortened. VS Code apply uses the raw proposal text; inspect proposal JSON before requesting apply.");
     expect(text).toContain("I understand the raw replacement text may differ from the redacted preview.");
+    expect(text).toContain("preview redacted/shortened");
+    expect(text).toContain("preview redacted");
+    expect(text).toContain("Apply disabled");
+    expect(text).toContain("Acknowledge the redacted/shortened preview before IDE apply.");
     expect(text).not.toContain(rawToken);
     expect(text).not.toContain(longToken);
     expect(text).not.toContain("api_key=");
@@ -6961,6 +6973,9 @@ describe("edit proposal preview", () => {
     expect(text).not.toContain("I understand the raw replacement text may differ from the redacted preview.");
     expect(container?.querySelector("[data-testid='edit-proposal-acknowledge-redaction']")).toBeNull();
     expect(findButton("Apply in VS Code after review").disabled).toBe(false);
+    expect(text).toContain("status ready for manual apply request");
+    expect(text).toContain("IDE confirmation required");
+    expect(container?.querySelector("[data-testid='edit-proposal-disabled-reasons']")).toBeNull();
 
     await act(async () => {
       findButton("Apply in VS Code after review").click();
@@ -7002,6 +7017,7 @@ describe("edit proposal preview", () => {
     expect(container?.textContent ?? "").toContain("Replacement preview was redacted or shortened. VS Code apply uses the raw proposal text; inspect proposal JSON before requesting apply.");
     expect(container?.textContent ?? "").toContain("I understand the raw replacement text may differ from the redacted preview.");
     expect(container?.querySelector("[data-testid='edit-proposal-acknowledge-redaction']")).not.toBeNull();
+    expect(container?.textContent ?? "").toContain("large replacement");
     expect(html).not.toContain(rawToken);
     expect(html).not.toContain(longToken);
     expect(html).not.toContain(`Bearer ${rawToken}`);
@@ -8021,7 +8037,7 @@ describe("edit proposal preview", () => {
     expect(text).not.toContain("Bearer");
     expect(text).not.toContain("/Users/private/me");
     expect(text).not.toContain("credentials/private-token.txt");
-    expect(text.length).toBeLessThan(12000);
+    expect(text.length).toBeLessThan(12200);
   });
 
   it("ignores stale host apply result while a different apply request is pending in the same chat", async () => {

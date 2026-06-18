@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ApplyWorkspaceEditPayload, ApplyWorkspaceEditResultPayload, BridgeHost } from "../bridge/bridgeAdapter";
+import { buildEditProposalQualitySummary } from "../services/editProposalQuality";
 import { sanitizeDisplayText } from "../services/redaction";
 
 export type EditProposalState = {
@@ -61,6 +62,13 @@ export function EditProposalPreview({ proposal, host, pending, onApply, onCancel
   useEffect(() => {
     setAcknowledgedRedactedPreview(false);
   }, [acknowledgementKey]);
+  const quality = buildEditProposalQualitySummary({
+    payload: proposal.payload,
+    host,
+    pending,
+    hasRedactedPreview,
+    acknowledgedRedactedPreview,
+  });
   const applyBlockedByRedaction = hasRedactedPreview && !acknowledgedRedactedPreview;
   const applyDisabled = pending || applyBlockedByRedaction;
   return (
@@ -72,6 +80,19 @@ export function EditProposalPreview({ proposal, host, pending, onApply, onCancel
         <span data-testid="edit-proposal-edit-count">Text edits: {editCount}</span>
         <span>Cloud required: false</span>
       </div>
+      <div className="readiness-card" data-testid="edit-proposal-quality-summary">
+        <strong>Quality summary</strong>
+        <span>{quality.fileCount} files · {quality.replacementCount} replacements · total chars {quality.totalReplacementChars} · max chars {quality.maxReplacementChars} · preview {quality.hasRedactedPreview ? "redacted/shortened" : "none"} · status {sanitizeDisplayText(quality.latestStatus)}</span>
+      </div>
+      <div className="row" aria-label="Edit proposal risk badges" data-testid="edit-proposal-risk-badges">
+        {quality.riskBadges.map((badge) => <span className="badge warn" key={badge}>{sanitizeDisplayText(badge)}</span>)}
+      </div>
+      {quality.disabledApplyReasons.length > 0 && (
+        <div className="readiness-card warn" role="status" data-testid="edit-proposal-disabled-reasons">
+          <strong>Apply disabled</strong>
+          {quality.disabledApplyReasons.map((reason) => <span key={reason}>{sanitizeDisplayText(reason)}</span>)}
+        </div>
+      )}
       {hasRedactedPreview && (
         <div className="readiness-card warn" role="status" data-testid="edit-proposal-redaction-warning">
           Replacement preview was redacted or shortened. VS Code apply uses the raw proposal text; inspect proposal JSON before requesting apply.
