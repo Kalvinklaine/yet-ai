@@ -539,16 +539,16 @@ async function runVerificationCommandRequest(request: Extract<IdeActionRequest, 
   if (pendingVerificationCommandIds.has(request.commandId)) {
     return createIdeActionResult(request.requestId, "rejected", "Verification command is already running.", createVerificationResultMetadata(request.commandId, 1, 0, "Verification command is already running.", false));
   }
-  const confirmed = await vscode.window.showWarningMessage(
-    `Yet AI wants to run the allowlisted ${commandSpec.label} verification command in this workspace.`,
-    { modal: true },
-    verificationCommandConfirmationLabel,
-  );
-  if (confirmed !== verificationCommandConfirmationLabel) {
-    return createIdeActionResult(request.requestId, "rejected", "Verification command denied by user.", createVerificationResultMetadata(request.commandId, 1, 0, "Verification command denied by user.", false));
-  }
   pendingVerificationCommandIds.add(request.commandId);
   try {
+    const confirmed = await vscode.window.showWarningMessage(
+      `Yet AI wants to run the allowlisted ${commandSpec.label} verification command in this workspace.`,
+      { modal: true },
+      verificationCommandConfirmationLabel,
+    );
+    if (confirmed !== verificationCommandConfirmationLabel) {
+      return createIdeActionResult(request.requestId, "rejected", "Verification command denied by user.", createVerificationResultMetadata(request.commandId, 1, 0, "Verification command denied by user.", false));
+    }
     const startedAt = Date.now();
     const result = await spawnVerificationCommand(commandSpec.command, commandSpec.args, workspaceFolders[0].uri.fsPath);
     const durationMs = Date.now() - startedAt;

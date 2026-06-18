@@ -38,6 +38,10 @@ const requiredSnippets = [
   "\"engine-chat-tests\": { command: \"cargo\", args: [\"test\", \"-p\", \"yet-lsp\", \"chat\"]",
   "spawn(command, args, {",
   "shell: false",
+  "env: { PATH: process.env.PATH ?? \"\" }",
+  "child.stdout.on(\"data\", (chunk: Buffer) => {",
+  "child.stderr.on(\"data\", (chunk: Buffer) => {",
+  "appendVerificationOutput(output, chunk.toString(\"utf8\"))",
   "workspaceFolders.length !== 1",
   "vscode.window.showWarningMessage(",
   "sanitizeVerificationOutputTail",
@@ -237,19 +241,32 @@ for (const snippet of [
 }
 
 const verificationCommandSource = extractSection("async function runVerificationCommandRequest", "function createActiveFileExcerptResult");
+const verificationCommandSpawnSource = extractSection("function spawnVerificationCommand", "function appendVerificationOutput");
+const verificationResultPayloadSource = extractSection("export function createIdeActionResult", "function hardenIdeActionResultPayload");
 for (const snippet of [
   "spawn(command, args, {",
   "shell: false",
+  "windowsHide: true",
+  "env: { PATH: process.env.PATH ?? \"\" }",
   "workspaceFolders.length !== 1",
   "workspaceFolders[0].uri.scheme !== \"file\"",
   "vscode.window.showWarningMessage(",
   "pendingVerificationCommandIds.has(request.commandId)",
+  "pendingVerificationCommandIds.add(request.commandId);",
+  "pendingVerificationCommandIds.delete(request.commandId);",
   "setTimeout(() => {",
+  "child.kill();",
   "sanitizeVerificationOutputTail",
+  "child.stdout.on(\"data\", (chunk: Buffer) => {",
+  "child.stderr.on(\"data\", (chunk: Buffer) => {",
+  "appendVerificationOutput(output, chunk.toString(\"utf8\"))",
 ]) {
-  if (!verificationCommandSource.includes(snippet)) {
+  if (!verificationCommandSource.includes(snippet) && !verificationCommandSpawnSource.includes(snippet)) {
     throw new Error(`Verification command handler missing safety policy: ${snippet}`);
   }
+}
+if (verificationCommandSource.indexOf("pendingVerificationCommandIds.add(request.commandId);") > verificationCommandSource.indexOf("vscode.window.showWarningMessage(")) {
+  throw new Error("Verification command duplicate guard must be set before user confirmation.");
 }
 for (const snippet of [
   "createTerminal",
@@ -262,8 +279,13 @@ for (const snippet of [
   "exec(",
   "execFile(",
 ]) {
-  if (verificationCommandSource.includes(snippet)) {
+  if (verificationCommandSource.includes(snippet) || verificationCommandSpawnSource.includes(snippet)) {
     throw new Error(`Verification command handler must not include shell/network/mutation backdoor: ${snippet}`);
+  }
+}
+for (const forbidden of ["payload.command =", "payload.args", "payload.cwd", "payload.env", "payload.shell"]) {
+  if (verificationResultPayloadSource.includes(forbidden)) {
+    throw new Error(`Verification command result must not return free-form process fields: ${forbidden}`);
   }
 }
 if (!extractSection("export async function handleApplyWorkspaceEditRequest", "export async function validateWorkspaceEditBeforeApply").includes("vscode.workspace.applyEdit(workspaceEdit)")) {
@@ -279,12 +301,18 @@ const fakeChildProcess = {
     child.stderr = new EventEmitter();
     child.kill = () => {
       fakeChildProcess.kills += 1;
+      child.killed = true;
     };
-    setImmediate(() => {
+    const complete = () => {
       child.stdout.emit("data", Buffer.from(fakeChildProcess.stdout));
       child.stderr.emit("data", Buffer.from(fakeChildProcess.stderr));
       child.emit("close", fakeChildProcess.exitCode);
-    });
+    };
+    if (fakeChildProcess.holdClose) {
+      fakeChildProcess.pendingChildren.push({ child, complete });
+    } else {
+      setImmediate(complete);
+    }
     return child;
   },
   calls: [],
@@ -292,6 +320,8 @@ const fakeChildProcess = {
   stdout: "verification ok",
   stderr: "",
   exitCode: 0,
+  holdClose: false,
+  pendingChildren: [],
 };
 
 const fakeVscode = {
@@ -1178,6 +1208,49 @@ async function assertIdeActionBehavior() {
   assert.deepEqual(fakeChildProcess.calls.at(-1).args, ["run", "check"]);
   assert.equal(fakeChildProcess.calls.at(-1).options.cwd, workspaceRoot);
   assert.equal(fakeChildProcess.calls.at(-1).options.shell, false);
+  assert.equal(fakeChildProcess.calls.at(-1).options.windowsHide, true);
+  assert.deepEqual(Object.keys(fakeChildProcess.calls.at(-1).options.env), ["PATH"]);
+  assert.equal(fakeChildProcess.calls.at(-1).options.env.PATH, process.env.PATH ?? "");
+  for (const forbiddenField of ["command", "args", "cwd", "env", "shell"]) {
+    assert.equal(Object.hasOwn(webviewMessages.at(-1).payload, forbiddenField), false, `Verification result leaked ${forbiddenField}.`);
+  }
+
+  fakeChildProcess.stdout = "stdout ok\n";
+  fakeChildProcess.stderr = "stderr Authorization: Bearer verification-secret-sentinel";
+  fakeChildProcess.exitCode = 1;
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "runVerificationCommand", commandId: "gui-app-tests" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "failed");
+  assert.equal(webviewMessages.at(-1).payload.commandId, "gui-app-tests");
+  assert.equal(webviewMessages.at(-1).payload.outputTail, "Verification output hidden by host policy.");
+  assert.equal(JSON.stringify(webviewMessages.at(-1)).includes("verification-secret-sentinel"), false, "Verification stderr secret leaked through outputTail.");
+  assert.equal(fakeChildProcess.calls.at(-1).command, "npm");
+  assert.deepEqual(fakeChildProcess.calls.at(-1).args, ["--prefix", "apps/gui", "test", "--", "App"]);
+
+  fakeChildProcess.stdout = `${"safe verification output\n".repeat(300)}`;
+  fakeChildProcess.stderr = "";
+  fakeChildProcess.exitCode = 0;
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check" }));
+  assert.equal(webviewMessages.at(-1).payload.status, "succeeded");
+  assert.equal(webviewMessages.at(-1).payload.outputTail.length <= 4000, true, "Verification output tail must be bounded.");
+  assert.equal(webviewMessages.at(-1).payload.truncated, true, "Oversized verification output must be marked truncated.");
+
+  fakeChildProcess.stdout = "verification pending";
+  fakeChildProcess.stderr = "";
+  fakeChildProcess.exitCode = 0;
+  fakeChildProcess.holdClose = true;
+  fakeChildProcess.pendingChildren = [];
+  const firstVerification = handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check", requestId: "req-verify-duplicate-first" }));
+  await new Promise((resolve) => setImmediate(resolve));
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check", requestId: "req-verify-duplicate-second" }));
+  assert.equal(webviewMessages.at(-1).requestId, "req-verify-duplicate-second");
+  assert.equal(webviewMessages.at(-1).payload.status, "rejected");
+  assert.equal(webviewMessages.at(-1).payload.outputTail, "Verification command is already running.");
+  assert.equal(fakeChildProcess.calls.filter((call) => call.args.join(" ") === "run check").length, 3, "Duplicate verification request must not spawn while first is pending.");
+  fakeChildProcess.holdClose = false;
+  fakeChildProcess.pendingChildren.shift().complete();
+  await firstVerification;
+  assert.equal(webviewMessages.at(-1).requestId, "req-verify-duplicate-first");
+  assert.equal(webviewMessages.at(-1).payload.status, "succeeded");
 
   fakeChildProcess.stdout = "Failed at /Users/example/private/secret.ts";
   fakeChildProcess.stderr = "";
