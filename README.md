@@ -1,519 +1,88 @@
 # Yet AI
 
-Yet AI is a local-first AI coding assistant and IDE agent plugin product for developer IDEs. The repository now has a buildable local MVP foundation: a Rust local runtime, provider registry, OpenAI-compatible streaming path, React/Vite GUI shell, VS Code webview host shell, JetBrains JCEF host shell, and typed contracts between them.
+Yet AI is a local-first AI coding assistant for IDEs, with a browser GUI for development previews. It pairs a local Rust runtime with React UI surfaces and dev-preview VS Code and JetBrains plugins so users can bring their own provider credentials or local model runtime without depending on a hosted Yet AI service.
 
-## Current status
+The current repository is a local development and dev-preview foundation. It is useful for validating contracts, GUI flows, plugin packaging, and local runtime behavior; it is not a production release or marketplace-ready distribution.
 
-- Approach: standalone local-first product with its own runtime, UI, IDE plugins, storage, packaging, and release surfaces.
-- Baseline: buildable MVP scaffolds exist for the engine, GUI, VS Code plugin, and JetBrains plugin. They are suitable for local development and contract hardening, not production release.
-- IDE preview status: VS Code and JetBrains shells can use packaged GUI assets generated from `apps/gui/dist`, or a loopback GUI dev server, and both support MVP local runtime `connect`, `launch`, and `auto` workflows for `yet-lsp`. `npm run prepare:vscode-preview` also publishes a local ignored VS Code dev-preview artifact at `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix` with a matching `.sha256` checksum for install-from-file smoke testing.
-- Packaging boundary: current VS Code/JetBrains artifacts are unsigned, unpublished install-from-file dev-preview evidence only. The bundled `yet-lsp` is a local Cargo build staged from the checkout or CI runner, not a signed/notarized production engine. Future production packaging decisions remain open for marketplace publisher/vendor IDs, signing/notarization, installer or archive format, update channel, platform matrix, provenance/SBOM expectations, and release approval gates.
-- Product-sensitive values should be centralized in `product/identity.json` where practical. Temporary identity placeholders remain until final product IDs, publishers, domains, and marketplace metadata are approved.
-- Runtime strategy: local-first BYOK. The IDE plugin starts or connects to the local Yet AI runtime on the user's machine; there is no required Yet AI account, hosted backend, managed model gateway, product credit balance, or cloud workspace for core workflows.
-- Model requests go directly from the local runtime to configured hosted providers or local runtimes. Provider settings and credentials remain local, and GUI-facing responses must not include raw secrets.
-- Provider secret storage status: provider credentials are owned by the engine secret store, not provider config JSON or GUI/browser storage. Production builds prefer OS credential storage where the platform service is available and use protected files under user config only when the primary store is disabled by policy or for safe fallback reads after an empty healthy primary lookup. Debug/test/dev automation uses the protected-file fallback by policy to avoid headless keychain prompts. Keychain reads are bounded and can report sanitized unavailable status, but keychain writes and deletes wait for the blocking operation to complete rather than timing out and assuming a late side effect will not occur. Transient primary write/delete failures, locked-keychain read unavailability, read-back mismatches, or fallback cleanup failures return sanitized storage errors instead of silently succeeding through fallback, which prevents stale primary/keychain values from resurrecting later. If the primary is unavailable, reads fail closed instead of returning potentially stale fallback values; fallback reads are allowed only when the primary is explicitly disabled by build/policy. Legacy provider configs that still contain inline `auth.apiKey` are migrated on normal provider/model/test/chat access: the engine writes the secret first with atomic create-if-absent semantics, then scrubs the provider config. Existing stored secrets win over stale inline values. Fallback records migrate to keychain only after verified write/read-back; fallback cleanup is retried on later healthy primary reads, and healthy primary reads fail closed if cleanup still fails. Keychain/primary values win only when the primary is healthy and strict migration/delete policy has not rejected the operation. The keychain create-if-absent path uses an in-process lock and read-back verification, which protects one local runtime process but is not a cross-process keychain lock. Provider create commits API-key material with put-if-absent before config creation and rolls back the committed secret if config creation fails. Provider delete validates the id and attempts API-key cleanup before removing config so retries can clean orphaned secrets even if the config file is already gone. Provider updates commit explicit secret changes before config persistence and roll secret state back if secret commit or config write fails; metadata-only provider updates do not hydrate, read, rewrite, or delete credentials. This is local-first BYOK storage only: not cloud sync, not hosted custody, not enterprise secret management, not an official production OAuth claim, and not a guarantee that every platform has an unlocked or usable credential service.
-- Provider/model readiness status: `/v1/models`, `/v1/caps`, and provider summaries now expose sanitized normalized model metadata with `capabilities.chat`, `capabilities.streaming`, `capabilities.tools`, `capabilities.reasoning`, and `readiness.status` values `ready`, `disabled`, `missing_credentials`, `missing_model`, or `unsupported`. Chat send/selection uses only enabled configured providers with models whose metadata is `ready` and supports chat plus streaming; older or missing metadata is not treated as ready. This metadata is local display/selection data only: it does not enable tools, tasks, knowledge, shell execution, file edits, reasoning orchestration, dynamic provider discovery, or a production agent runtime.
-- Provider/chat error taxonomy status: chat SSE errors and persisted error messages use stable sanitized categories for not-configured or model-not-configured state, unauthorized credentials, rate limit/quota, context too large, invalid request, timeout, upstream failure, malformed stream, local provider config errors, and safe fallback request failures. Classification can inspect only bounded provider signals and is best-effort because not every provider uses OpenAI-compatible error shapes. GUI recovery guidance maps these categories to user actions such as re-entering local credentials, checking quota, reducing the prompt or attached editor context, selecting a different model, fixing provider configuration, retrying later, or checking provider status. Raw provider error bodies, request bodies, Authorization headers, API keys, OAuth tokens, cookies, private paths, account identifiers, and debug payloads must not be exposed through GUI/SSE/history/docs/tests/smoke output. Provider calls remain direct local BYOK calls from the runtime to configured providers or local runtimes; no Yet AI hosted proxy, managed gateway, account, product credit balance, or cloud workspace is required.
-- First-message context status: VS Code and JetBrains can capture a bounded active editor/selection snapshot through the same strict `host.contextSnapshot` bridge contract, the GUI previews it with an opt-in include toggle, and the local runtime can prepend that context only to the next accepted chat prompt sent to the configured provider. GUI active context is prompt-only and one-shot: after an accepted send, the attached snapshot is cleared and must be supplied again by the IDE host. Selected text is included only when visible to the user and allowed by the attach/policy flow; included context may be sent to the configured provider, so users should not attach selections containing secrets or private data.
-- Local chat history status: conversations are a dev-preview local MVP owned by the engine under Yet AI local storage. The GUI can list, create, switch, load, and delete chats through engine endpoints, but it must not persist messages in browser `localStorage` or `sessionStorage`. User prompts and assistant replies may be persisted locally as chat history, so users should not paste secrets into prompts. Provider API keys, OAuth tokens, authorization codes, PKCE verifiers, cookies, local runtime session tokens, raw provider responses, credential paths, and private local paths are never chat metadata. Deleting a conversation deletes local Yet AI history only; it is not provider-side deletion, cloud sync, encrypted production retention, or enterprise data governance.
-- Engine HTTP boundary status: `/v1` routes use an explicit request body limit sized for current provider, provider-auth, and chat command payloads. Malformed, type-invalid, or oversized JSON bodies return sanitized request-body errors without parser details or request echoes. Chat ids are path-safe bounded identifiers validated before chat history access, chat commands, and SSE subscription work; invalid ids or invalid subscribe queries fail with safe non-SSE errors and do not echo submitted ids. This is boundary hardening only and does not add tools, tasks, knowledge, shell execution, workspace mutation, or production agent functionality.
-- Provider-auth status: the safe/default real-provider path is the OpenAI API-key or project-key fallback through the local runtime. The GUI now presents a more productized OpenAI account-login card with guided unavailable, pending, connected, expired/revoked, sanitized-error, API-key-configured, retry, reconnect, disconnect, and API-key fallback states. Provider-auth pending/session state is local engine-owned state: hardened pending files and the composite keychain/fallback secret-store boundary live under engine custody, while raw provider secrets, tokens, authorization codes, PKCE verifiers, cookies, browser profiles, and credential file paths are never GUI-owned or GUI-facing. That account path is still a separate explicit-risk experimental Codex-like flow backed by engine-owned PKCE/session state, sanitized provider-auth status, local secret storage, and chat fallback when no API-key provider is configured. Its refresh path treats refresh tokens as rotating/single-use, refreshes expired or near-expired chat auth before provider requests, serializes refresh per local provider/account/config state, uses a Unix local file lock where supported, reloads latest stored tokens after locking, handles `refresh_token_reused` by checking for a newer usable access token before requiring reconnect where possible, and keeps token endpoint bodies and raw access/refresh tokens engine-only. Cross-process locking is local and platform-limited: unsupported platforms fail closed for this experimental refresh path, and it is not a distributed or production OAuth guarantee. Chat retries through this path only once for pre-stream HTTP `401` status with a changed stored access token, without depending on reading the provider error body; HTTP `403` permission failures and in-stream auth error frames do not refresh or retry. It is private-endpoint-style hardening, not official public OpenAI OAuth support, not an OpenAI partnership claim, and not production-ready. Automated coverage for that account path is loopback/mock-only; any real account testing is manual, high-risk, account-specific, outside CI, and must capture only sanitized evidence.
-- Planner reliability status: the no-idle autonomous planner/watchdog is documented as a future contract only. It must not silently wait when completed agents, mergeable work, verification, ready cards, failed/stuck recovery, pool closure, or approved next-pool planning can progress; any true idle state must carry an audited reason.
-- Planner scheduler checks are contract/simulator smoke coverage only: `npm run check:planner-scheduler`, `npm run smoke:planner-no-idle`, and `npm run smoke:planner-resume` validate the no-idle invariant, durable local simulator ticks, and restart/resume behavior locally without production autonomous orchestration, real agents, git operations, shell/tool execution, file edits, or workspace mutation.
-- Agent progress observability status: current coverage includes strict event/snapshot/list-response contracts, a pure reducer/classifier, durable local simulator state, a CLI reporter, deterministic simulator smoke, engine `GET /v1/agent-progress`, a focused endpoint smoke, and a GUI read-only Agent progress panel with deterministic browser smoke. The engine endpoint reads an engine-owned local progress source, can return populated sanitized snapshots, returns an empty list when the source is missing, and reports corrupt, oversized, or unsafe source data only as sanitized unavailable/error text. The GUI panel only refreshes and renders safe progress states; it has no Start, Stop, Merge, Apply, shell, tool, provider-call, or workspace-mutation controls. This does not implement production background agents, real runner hooks, real task-board integration, git merges, tool execution, shell authority, workspace mutation, cloud sync, or hosted services. Future runner wiring should emit sanitized progress events from lifecycle hooks only. Safe fields are ids, phase/status, tool label/kind, elapsed and heartbeat ages, stuck reason, recent summaries, bounded sanitized output-tail summaries, and bounded overflow recovery guidance. A `context_length_exceeded` after a broad tool call is treated as planner/tool-output overflow, not a source-code or test failure. Recovery should use scoped calls such as `task_ready_cards`, a specific `task_board_get(card_id)`, targeted `search_pattern`, targeted `cat`, and short summaries; avoid full `task_board_get({})` unless necessary and expected to be small. Large tool outputs and task-board dumps must be summarized, bounded, and sanitized before they appear in progress state, reports, docs, or GUI. Forbidden data includes prompts, chain-of-thought, raw file contents, raw provider responses, tokens, cookies, provider credentials, runtime session tokens, credential paths, private absolute paths, shell scripts, and patch payloads.
-- Controlled IDE action status: controlled IDE actions are local-first, bounded, and limited in VS Code and JetBrains to safe read-only/navigation/context actions. Assistant-authored read-only IDE action proposals stay compact in chat and run only from an explicit confirmation card; they never auto-execute. The only allowed controlled actions are `getContextSnapshot`, `openWorkspaceFile`, and `revealWorkspaceRange`. Controlled `getContextSnapshot` returns metadata only (source, active-editor boolean, workspace folder count) with no file path, selected text, or raw content; this is separate from `host.contextSnapshot`, which may include bounded selected text only for visible opt-in first-message prompt attachment. Open/reveal are navigation only. JetBrains executes these actions only through strict wrapper/Kotlin policy after explicit GUI/user request, then returns sanitized correlated `host.ideActionProgress` / `host.ideActionResult`; browser harnesses remain preview/test fallback surfaces and do not execute controlled actions. The GUI can clear its own pending IDE action state with `Clear pending IDE action state`; this is client-side only and does not cancel any already-open host UI by itself. Stale progress/results after a clear, chat switch, or runtime/settings change are ignored, and completed duplicate results are bounded/cleared rather than accumulated. The engine may observe sanitized agent progress/action metadata only through the agent-progress surface; it does not execute IDE tools, mutate the workspace, read arbitrary files for these actions, call providers because of IDE actions, or perform shell/git/task/tool execution. Confirmed edit proposals remain the only write path, still require explicit GUI apply plus IDE/user confirmation, and remain limited to bounded text replacements in existing workspace-relative files; JetBrains confirmed edit apply is dev-preview only through the existing apply/result bridge messages, while browser mode remains preview-only/non-executing. No controlled action path enables shell/git/tasks/tool execution, arbitrary file reads/indexing, provider calls, hosted backend/cloud/account requirements, autonomous edits, workspace edit/write/create/delete/rename/apply patch, or silent workspace mutation.
-- Bridge and chat command policy: current accepted chat commands are only `user_message` and no-op-safe `abort`; current host-to-GUI messages are `host.ready`, `host.openedFromCommand`, non-privileged `host.contextSnapshot`, sanitized `host.ideActionProgress`, sanitized `host.ideActionResult`, and sanitized `host.applyWorkspaceEditResult`. The first privileged GUI-to-host write action is the confirmed edit-proposal MVP: `gui.applyWorkspaceEditRequest` is accepted only through the strict bounded contract, after GUI preview/review and explicit GUI user action, with `requiresUserConfirmation: true`, `cloudRequired: false`, and text replacements for existing workspace-relative files only. VS Code remains the reference apply host and performs a second user confirmation before applying the workspace edit; JetBrains apply is dev-preview only and also requires IDE/user confirmation before bounded text replacements. The GUI never edits files directly: confirmed edit proposals are preview-only until the user clicks `Apply`, browser surfaces remain preview-only/non-executing for the apply step, the GUI mints the `requestId` on every apply click so assistant-supplied ids are not accepted and historical assistant bubbles stay non-runnable, raw proposal JSON is inspect-only/debug while chat bubbles are compact by default, and the GUI pending-state clear is client-side only and does not cancel any already-open host UI. Stale or duplicate `host.applyWorkspaceEditResult` messages that arrive after clear, chat switch, or settings/runtime change are ignored or bounded/cleared, and a non-`applied` status surfaces a short sanitized repair/retry hint (request a smaller/safe proposal, ask for an updated proposal after the file changed, or re-request apply) without auto-retry. This is local-only and does not require a Yet AI hosted backend, account, managed gateway, product credit balance, or cloud workspace. Future privileged chat commands (`regenerate`, `update_message`, `remove_message`, `set_params`, `tool_decision`, `ide_tool_result`) and non-allowlisted GUI-to-host actions (`gui.openFile`, `gui.revealRange`, `gui.executeIdeTool`, `gui.copyText`, `gui.showNotification`, `gui.getHostContext`) are intentionally rejected. This MVP does not allow autonomous edits, model-triggered apply, provider tool execution, shell/tools/tasks/git, file create/delete/rename, arbitrary file reads/indexing, apply-patch, or unconfirmed workspace mutation.
-- LSP code-intelligence boundary: the current functional LSP MVP is explicitly read-only and local-first. The engine exposes a separate `yet-lsp --lsp-stdio` mode over portable Tokio stdin/stdout, with focused spawned-binary coverage in `npm run smoke:lsp-stdio`. Allowed surfaces are only `initialize`, `initialized`, `shutdown`, `exit`, bounded `textDocument/didOpen`, `textDocument/didChange`, `textDocument/didClose`, deterministic local `textDocument/completion` status proof, deterministic local `textDocument/hover` status proof, and bounded local `textDocument/documentSymbol` extraction over editor-supplied in-memory documents. VS Code has an off-by-default `yetai.lsp.enabled` path that starts a separate no-secret stdio LSP process, performs bounded local `file` document sync, registers completion, hover, and document-symbol providers, handles setting changes, and reports sanitized lifecycle diagnostics. The deterministic `Yet AI LSP connected` completion item and read-only hover text are connectivity/status proofs, not AI or provider-backed completion or diagnostics. Document symbols are bounded names/ranges derived only from cached editor-supplied text and do not include documentation payloads. The LSP MVP must not perform workspace edits, file writes, shell/tool execution, git operations, task execution, apply patches, diagnostics from providers, autonomous indexing, arbitrary file reads, provider-backed completion on keystrokes, model calls on keystrokes, production agent behavior, raw secret exposure, raw unbounded document logging, or any hosted Yet AI backend/account/managed gateway/product-credit/cloud-workspace requirement. JetBrains LSP client wiring remains deferred after a feasibility decision; the JetBrains shell remains chat/runtime/active-context only until a later card proves the IntelliJ LSP API path, separate stdio lifecycle, no-secret environment, URI/document bounds, diagnostics, and smoke coverage.
-- Limitations: the baseline is not production-ready; no marketplace packaging, signed or notarized engine bundles, production installer, autonomous file reads/indexing, production LSP/completions/tools, autonomous file edits/apply patch, shell/tool execution, full agent autonomy, background agent autonomy, production no-idle scheduler, or integration workflows are complete. The confirmed edit-proposal MVP is preview-and-confirm only, limited to bounded text replacements in existing workspace-relative files, and not production agent autonomy; VS Code remains the reference host while JetBrains apply is dev-preview only through existing apply/result bridge messages. Tools, tasks, and knowledge remain disabled. Current chat is a local provider/chat MVP only.
+## Current capabilities
 
-## IDE surface parity
+- **Local runtime and BYOK providers**
+  - Rust `yet-lsp` loopback runtime with authenticated HTTP/SSE endpoints.
+  - Provider setup through local engine-owned storage, including OpenAI-compatible APIs and a local Ollama-style path.
+  - Direct local runtime-to-provider calls using user-configured credentials or local runtimes.
+- **Browser and GUI chat flows**
+  - React/Vite GUI for provider setup, runtime status, chat, streamed responses, local chat history, and first-message development flows.
+  - Demo/local mock flows for validating the chat experience without real provider credentials.
+- **IDE dev-preview plugins**
+  - VS Code webview host shell with packaged GUI preview, local runtime launch/connect modes, first-message smoke coverage, and bounded confirmed edit apply.
+  - JetBrains JCEF host shell with packaged GUI preview, local runtime launch/connect modes, first-message smoke coverage, and dev-preview bridge surfaces.
+- **Bounded coding-assistant surfaces**
+  - Explicit active context attachment, safe edit proposal preview, confirmation-based apply, verification-loop UI, snippet attachment, project memory, guided coding task, and manual runner surfaces.
+  - Browser surfaces remain preview-only for host actions; IDE hosts perform only bounded actions after explicit user confirmation.
+- **Read-only LSP status proof**
+  - `yet-lsp --lsp-stdio` supports a small local read-only LSP MVP for status proof, completion/hover/document-symbol checks, and IDE lifecycle validation.
 
-The cross-IDE parity contract lives in `scripts/ide-surface-contract.mjs` and is enforced by `npm run validate:ide-surface-contract`. Run `npm run smoke:ide-parity` for the local-only fail-fast parity smoke; it prepares ignored dev-preview artifacts, runs packaged GUI/first-message/read-only action smokes, includes the VS Code edit-proposal smoke, and does not launch real IDEs, call providers, require a hosted backend, sign, publish, or claim a production release.
+## Safety and non-goals
 
-| Surface | VS Code | JetBrains |
-| --- | --- | --- |
-| Packaged GUI, `host.ready`, active editor context, provider setup, first-message smoke | Supported dev-preview | Supported dev-preview |
-| Read-only IDE action proposals (`getContextSnapshot`, `openWorkspaceFile`, `revealWorkspaceRange`) | Supported with explicit confirmation smoke | Supported with explicit confirmation smoke |
-| Confirmed edit proposal preview | Supported | Supported |
-| Confirmed edit proposal apply | Supported through bounded confirmed VS Code path | Dev-preview only through existing apply/result bridge messages |
-| LSP status | Off-by-default read-only MVP/status proof | Foundation/deferred only; no enabled production native/client behavior claimed |
-| Artifact installability | Dev-preview VSIX installability smoke | Dev-preview ZIP installability plus bundled runtime startup smoke |
+- Core Yet AI workflows must not require a hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, or cloud workspace.
+- Yet AI does not claim production/default OpenAI or ChatGPT account login support. The safe/default real-provider path is local BYOK provider setup through the runtime.
+- The assistant must not silently mutate workspaces or autonomously run shell, git, task, or tool actions. Edit apply and verification surfaces require explicit user action and bounded contracts.
+- Provider credentials stay local under engine custody. Raw provider secrets, runtime session tokens, cookies, authorization codes, and provider responses must not be exposed through GUI-facing responses, docs, logs, or smoke evidence.
+- Current IDE artifacts are unsigned, unpublished install-from-file dev previews. They do not imply marketplace release, signing, notarization, production installers, or production readiness.
 
 ## Repository map
 
 ```text
 apps/
-  engine/              # Rust local runtime: authenticated loopback HTTP/SSE, providers, OpenAI-compatible streaming
-  gui/                 # React/Vite shell: runtime client, provider setup, chat/SSE, debug bridge
+  engine/              # Rust local runtime, providers, HTTP/SSE, LSP status proof
+  gui/                 # React/Vite GUI for runtime status, provider setup, chat, previews
   plugins/
-    vscode/            # VS Code shell: webview host, loopback runtime settings, bridge hardening
-    jetbrains/         # JetBrains shell: JCEF host, loopback runtime settings, PasswordSafe token, bridge hardening
+    vscode/            # VS Code dev-preview webview host and local runtime launcher
+    jetbrains/         # JetBrains dev-preview JCEF host and local runtime launcher
 packages/
   contracts/           # Shared schemas, examples, and boundary contracts
+product/
+  identity.json        # Product identity, package names, storage dirs, URLs, metadata
+docs/
+  README.md            # Documentation index and verification guidance
+  architecture/        # Architecture, identity, safety, publication, and roadmap docs
+scripts/               # Validation, smoke, packaging, and local helper scripts
 ```
 
-Each subsystem README describes current ownership, implemented surfaces, commands, dependencies on `product/identity.json` and contracts, current limitations, and safety rules. For the first manual VS Code dev-preview path with the packaged GUI and local engine launcher, see `apps/plugins/vscode/README.md`. For a manual IntelliJ IDEA install-from-disk ZIP preview, see `apps/plugins/jetbrains/README.md`.
+## Quick start and verification
 
-## Verification
-
-Install root development dependencies in a fresh checkout before running validation:
+Install root dependencies:
 
 ```sh
 npm ci
 ```
 
-If a lockfile-compatible install is not available in your local workflow, use:
-
-```sh
-npm install
-```
-
-GitHub Actions runs the Yet AI CI workflow for pull requests and pushes to `main`. It is validation-only: it lints `.github/workflows/*.yml` with actionlint, installs root, GUI, and VS Code dependencies with `npm ci`, uses Rust stable, and runs `npm run check`, `cargo check -p yet-lsp`, `cargo test -p yet-lsp`, GUI tests/build, and VS Code compile/engine-connection checks. CI uses local/mock-only checks and must not use secrets, real provider credentials, hosted Yet AI backend services, real IDE launch/JCEF automation, signing, marketplace publication, production installers, artifact release uploads, or real OpenAI/ChatGPT calls.
-
-The `Yet AI Manual IDE Dogfood` GitHub Actions workflow is `workflow_dispatch`-only for heavier opt-in validation. It bootstraps Node 20, Rust stable, Gradle, Playwright Chromium dependencies, and project-local root/GUI/VS Code installs, then runs `npm run smoke:ide-dogfood` as the single fail-fast closure gate. This manual workflow is local-mock/dev-preview validation only: it must not use repository secrets, real provider credentials, OpenAI/ChatGPT calls, hosted Yet AI services, real IDE/JCEF automation, signing, release uploads, marketplace publication, production installers, or production release claims.
-
-Run the local smoke test from the root to exercise the engine/provider/chat path without real provider credentials or hosted services:
-
-```sh
-npm run smoke:local
-```
-
-Run the focused spawned LSP stdio smoke from the root after building the engine binary:
-
-```sh
-export PATH="$HOME/.cargo/bin:$PATH"
-cargo build -p yet-lsp
-npm run smoke:lsp-stdio
-```
-
-`npm run smoke:lsp-stdio` starts `target/debug/yet-lsp --lsp-stdio` without `YET_AI_AUTH_TOKEN`, speaks framed JSON-RPC/LSP over portable Tokio stdin/stdout, verifies initialize/document open/completion/closed-document empty completion/unsupported probe/shutdown/exit, and checks the deterministic local-only `Yet AI LSP connected` completion status item. It does not launch IDEs or GUI, call providers, require credentials, or contact hosted services.
-
-Run the focused VS Code edit-proposal safety check when changing the confirmed apply path:
-
-```sh
-cd apps/plugins/vscode
-npm run check:webview-safety
-```
-
-`npm run check:webview-safety` validates the VS Code webview bridge allowlist and confirmed workspace-edit behavior locally. It covers strict `gui.applyWorkspaceEditRequest` parsing, unsafe path/range/size rejection, explicit VS Code confirmation denial, successful bounded apply handling, and sanitized `host.applyWorkspaceEditResult` responses. Include `npm run smoke:vscode-edit-proposal` in the same focused gate for confirmed edit-proposal smoke coverage. These checks do not launch VS Code, call providers, execute tools or shell commands, create/delete/rename files, run git, index the workspace, or require hosted services.
-
-Run the focused controlled-action wrapper smokes when changing controlled IDE action copy, GUI fallback rendering, or the VS Code/JetBrains bridge paths:
-
-```sh
-npm run smoke:vscode-wrapper-browser
-npm run smoke:jetbrains-wrapper-browser
-npm run smoke:installed-plugin-chat-visual
-npm run smoke:installed-plugin-demo-mode
-export PATH="$HOME/.cargo/bin:$PATH"
-cargo test -p yet-lsp agent_progress
-```
-
-`npm run smoke:vscode-wrapper-browser` and `npm run smoke:jetbrains-wrapper-browser` use packaged GUI assets in browser harnesses to verify the current controlled action contract without launching real IDEs. They cover assistant-authored strict JSON read-only IDE action proposal rendering, no auto-execution before the user clicks, explicit user confirmation, fresh GUI-owned `gui.ideActionRequest` ids, correlated host progress/result rendering, retained manual `getContextSnapshot` request/result rendering, client-side `Clear pending IDE action state`, stale progress/result ignore after clear, bounded duplicate result handling, and secret redaction. VS Code and JetBrains host execution is limited to safe read-only/navigation/context controlled actions: `getContextSnapshot`, `openWorkspaceFile`, and `revealWorkspaceRange`. JetBrains executes those actions only through strict wrapper/Kotlin policy and emits correlated `host.ideActionProgress` / `host.ideActionResult` messages after an explicit GUI/user request. Browser fallback/mock mode can render sanitized progress/result messages but does not execute controlled actions. Controlled `getContextSnapshot` result metadata is metadata only (source, active-editor boolean, workspace folder count) and does not include a file path, selected text, or raw file contents; this is separate from `host.contextSnapshot`, which may include bounded selected text only for visible, opt-in first-message prompt attachment. Open/reveal are navigation only. `cargo test -p yet-lsp agent_progress` covers the engine metadata-only progress endpoint. These checks do not execute IDE tools from the engine, mutate workspaces, run shell/git/tasks/tools, read arbitrary files, call providers, or require hosted services.
-
-`npm run smoke:installed-plugin-chat-visual` runs the focused JetBrains and VS Code wrapper-browser packaged-GUI smokes together and writes sanitized screenshots, DOM excerpts, and layout metrics under ignored `dist/visual-smoke/jetbrains-wrapper-browser/` and `dist/visual-smoke/vscode-wrapper-browser/`. Use `npm run smoke:installed-plugin-chat-visual -- --headed` for human review; the default remains headless for CI/local automation.
-
-`npm run smoke:installed-plugin-demo-mode` runs the same installed-plugin VS Code and JetBrains packaged-GUI wrapper harnesses with `--demo-mode-first-message`, failing fast on the first IDE-specific Demo Mode first-message regression. Demo Mode is runtime-owned no-key chat UX coverage (`/v1/demo-mode` plus normal readiness/SSE/history paths) with canned local responses only; it is not model-quality evidence, does not use provider credentials, makes no OpenAI/ChatGPT or other provider calls, contacts no hosted Yet AI services, performs no real IDE/JCEF automation, and does not sign, publish, or create a release. Use `npm run smoke:installed-plugin-demo-mode -- --headed` for human headed browser review.
-
-`npm run smoke:local` starts the Rust engine on a free loopback port through Cargo, starts local mock OpenAI-compatible, experimental token, and experimental chat endpoints, configures a fake local API key, checks ping/caps/provider setup/chat command/SSE streaming, exercises local chat history create/list/get/delete and persisted snapshot hydration, exercises provider-auth default status plus the local mock OAuth start/exchange/status/disconnect flow, and covers the approved experimental Codex-like start/exchange/chat fallback through loopback mocks only. It also verifies that bounded active editor context attached to a chat command reaches the mock provider prompt through the local runtime. Runtime and provider-test regressions use deterministic loopback mock helpers; Authorization expectations are asserted by the Rust test bodies from observed mock requests rather than hidden provider calls. It verifies raw fake API keys, OAuth access tokens, refresh tokens, Authorization header values, cookies, PKCE verifier values, mock auth codes, active selection markers, Codex credential-file paths, and local chat history responses/events do not leak client-visible secrets. JetBrains wrapper/browser smoke separately covers the JetBrains-style `host.contextSnapshot` bridge path, GUI preview/toggle behavior, one-shot disabled-toggle omission, and enabled context delivery to `user_message.payload.context` with local loopback mocks only. Prerequisites: Node 18+ with root dependencies installed and a Rust toolchain with Cargo on `PATH`.
-
-Run the focused provider error smoke when changing provider chat failure classification, SSE stream error handling, or sanitized chat error history:
-
-```sh
-npm run smoke:provider-errors
-```
-
-`npm run smoke:provider-errors` starts the Rust engine with isolated local storage and loopback-only OpenAI-compatible mocks, configures a fake API-key provider, and exercises unauthorized, rate-limit, context-window, invalid-request, upstream, malformed-SSE, and OpenAI-style stream error-frame failures. It verifies accepted chat commands, stable SSE error codes/messages, sanitized persisted chat history, and no raw fake keys, bearer strings, cookies, provider bodies, auth codes, request-body secret markers, or private paths in client-visible output.
-
-Run the polished IDE Chat MVP browser/runtime smoke after changing the GUI first-message flow, active-context attach behavior, chat history rendering, or IDE bridge wiring:
-
-```sh
-cd apps/gui && npm run build
-cd ../..
-npm run smoke:gui-runtime-e2e
-```
-
-`npm run smoke:gui-runtime-e2e` uses only loopback services and fake credentials. It starts the local runtime with an IDE-style trusted session token, drives the built GUI, configures a fake OpenAI-compatible provider, simulates active editor context, sends one message with context included and one with context omitted, verifies provider prompt boundaries, checks streaming assistant rendering, reloads engine-owned local chat history, and asserts that generated runtime tokens, fake provider keys, and active-context sentinels do not appear in DOM text, browser storage, console/page errors, or smoke output.
-
-Run focused provider secret checks when changing legacy inline API-key migration, keychain/fallback policy, or the engine secret-store boundary:
-
-```sh
-export PATH="$HOME/.cargo/bin:$PATH"
-cargo test -p yet-lsp secret_store
-cargo test -p yet-lsp provider_secret
-npm run smoke:provider-secret-migration
-```
-
-`cargo test -p yet-lsp secret_store` includes deterministic composite secret-store coverage for keychain-primary/fallback behavior, verified fallback-to-primary migration, read-back mismatch preservation, strict transient-unavailable write/delete rejection, disabled-primary fallback policy, cleanup retry, and delete coverage across API-key and OAuth secret kinds without requiring a real OS keychain. `cargo test -p yet-lsp provider_secret` covers provider lifecycle consistency for migration, stored-secret-wins behavior, retryable provider delete cleanup, missing-config orphan cleanup, update rollback after secret failures, and sanitized failure bodies. `npm run smoke:provider-secret-migration` starts the local runtime and loopback provider mocks with isolated storage, seeds legacy provider configs containing fake inline API keys, triggers migration through provider/model endpoints, verifies configs are scrubbed and fallback secret files are created, checks provider-test Authorization with digest/length assertions only, and proves an existing stored secret wins over a different legacy inline key without leaking raw fake secrets. The post-review focused gate for secret-store/provider lifecycle changes is:
-
-```sh
-export PATH="$HOME/.cargo/bin:$PATH"; cargo test -p yet-lsp secret_store && cargo test -p yet-lsp provider_secret && cargo test -p yet-lsp provider_auth && cargo test -p yet-lsp chat && git status --short
-```
-
-The broader secure local credentials final gate context is:
-
-```sh
-export PATH="$HOME/.cargo/bin:$PATH"; cargo test -p yet-lsp secret_store && cargo test -p yet-lsp provider_auth && cargo test -p yet-lsp chat && cargo test -p yet-lsp && npm run smoke:provider-secret-migration && npm run smoke:local && npm run check && git status --short
-```
-
-Run focused engine HTTP boundary regressions when changing request-body rejection, chat id validation, or chat subscribe behavior:
-
-```sh
-export PATH="$HOME/.cargo/bin:$PATH"
-cargo test -p yet-lsp http_boundary
-npm run smoke:local
-```
-
-Run repository validation from the root before publishing or handing off changes:
+Run the default repository validation bundle after documentation, identity, or contract-facing changes:
 
 ```sh
 npm run check
 ```
 
-`npm run check` validates product identity, public repository hygiene, the documentation index, contract schemas/examples, and packaged GUI asset freshness fixtures, including required positive and negative coverage. Run `npm run check:gui-asset-freshness` directly when changing the shared packaged-GUI freshness parser or VS Code/JetBrains GUI asset copy/archive validation.
-
-Contract schemas and examples can be validated separately with:
+Run the local runtime/chat smoke without real provider credentials or hosted services:
 
 ```sh
-npm run validate:contracts
+npm run smoke:local
 ```
 
-`npm run validate:contracts` validates contract schemas/examples only, including mapped examples and product identity fields embedded in contract examples.
-
-Run the pure planner scheduler reducer check, deterministic no-idle smoke, and durable resume smoke from the root when changing planner contracts, scheduler policy docs, or simulator behavior:
+Prepare local install-from-file IDE dev-preview artifacts when validating packaged plugin flows:
 
 ```sh
-npm run check:planner-scheduler
-npm run smoke:planner-no-idle
-npm run smoke:planner-resume
-```
-
-These commands are local-only contract/simulator checks. They verify that completed, mergeable, verifiable, ready, failed/stuck, closeable, approved next-pool, and restarted durable-state states produce progress actions or explicit audited idle blockers. They also cover a simulator state file with sanitized audit timeline entries, a single active scheduler lease owner per tick, released leases after process-like ticks, and stale-heartbeat recovery after reload. They do not launch production agents, edit files, apply patches, run shell/tools, perform real merges, call providers, or mutate workspaces.
-
-The durable scheduler simulator tick CLI is available for explicit local state files:
-
-```sh
-npm run planner:scheduler:tick -- --state path/to/scheduler-state.json
-```
-
-The tick runner loads the given simulator state, acquires a scheduler lease for one owner, applies the pure scheduler decision, appends a sanitized audit tick, releases the lease, persists the state unless `--dry-run` is used, and prints a compact next-action summary. It is a local simulator utility only, not a production task-board, agent, merge, verification, shell, tool, or workspace mutation runner.
-
-Run the agent progress checks and deterministic smokes when changing progress contracts, reducer behavior, local progress state, reporter output, engine read-only progress endpoint, GUI read-only panel, or observability docs:
-
-```sh
-npm run check:agent-progress
-npm run smoke:agent-progress
-npm run smoke:agent-progress-endpoint
-npm run smoke:gui-agent-progress
-```
-
-Agent Progress is local-only observability. The canonical local progress source for normal engine reads is the Yet AI user cache file `agent-progress/progress.json` under the product cache directory, commonly resolved by the JS writer helper as `<cacheRoot>/yet-ai/agent-progress/progress.json` when `cacheRoot` is the platform cache root. The public `progress.json` file is an `AgentProgressListResponse` that the endpoint can read directly. Internal event accumulation is stored separately by the JS helper in a sibling internal events file and should not be consumed by the engine or GUI. `scripts/planner-agent-progress-state.mjs` exposes the local writer API: `resolveAgentProgressStatePath`, `appendProgressEvent`, `readProgressState`, and `snapshotProgressState`. The resolver uses an explicit `--state` path first, then `YET_AI_AGENT_PROGRESS_STATE`, then the canonical cache path. The writer appends sanitized bounded events with atomic replacement and a private local lock file, then publishes the public list-response file; it is for explicit local developer workflows only, not a production background agent.
-
-Use the compact reporter and command wrapper from the root when deliberately writing local progress:
-
-```sh
-npm run planner:agent-progress:report -- --state path/to/progress.json
-npm run planner:agent-progress:run -- --card T-123 --run local-run-1 --state path/to/progress.json -- npm run check
-```
-
-Omit `--state` only when you intentionally want the wrapper to use `YET_AI_AGENT_PROGRESS_STATE` or the canonical cache path. The wrapper records started/running heartbeat/output/done/failed events around the explicitly supplied command and returns that command's exit code. It captures only bounded sanitized output tails and grants no shell/tool/git/provider/workspace authority beyond the local command the developer already chose to run.
-
-`npm run check:agent-progress` validates deterministic sanitization, reducer classification, stuck/healthy/done states, overflow recovery classification, local state persistence, canonical writer path behavior, wrapper behavior, and compact CLI reports. `npm run smoke:agent-progress` exercises local simulator scenarios for healthy long-running work, heartbeat timeout, failed command redaction, explicit secret redaction, context overflow after oversized task-board-like output, oversized tool output, and terminal done state. `npm run smoke:agent-progress-endpoint` starts the local engine with isolated storage, verifies missing-source empty behavior, writes populated sanitized local progress through the live writer/wrapper path, checks local/direct healthy and failed snapshots with heartbeat/tool-output freshness, and verifies corrupt source errors remain sanitized. `npm run smoke:gui-agent-progress` builds and serves the GUI with loopback-only runtime mocks, verifies the read-only Agent progress panel for empty, healthy, stuck, failed redacted, freshness, and overflow recovery states, and checks that mutating agent controls are absent. Missing source returns an empty list. Corrupt, oversized, or unsafe source data returns only sanitized unavailable/error text. Overflow recovery smoke coverage is deterministic and local-only; it asserts bounded sanitized summaries rather than raw prompts, provider responses, file contents, private paths, auth files, task-board dumps, or large tool output. The final agent-progress read-only surface gate context is:
-
-```sh
-npm run check:agent-progress && npm run smoke:agent-progress && npm run smoke:agent-progress-endpoint && npm run smoke:gui-agent-progress && npm run check && git status --short
-```
-
-These commands do not run production agents, execute tools, perform git operations, mutate workspaces, call providers, or require a hosted Yet AI backend.
-
-Run the cross-boundary overflow/raw-content hardening gate when changing planner safe-text contracts, scheduler durable state sanitization, agent-progress reducer classification/redaction, or GUI fallback overflow rendering:
-
-```sh
-npm run validate:contracts && npm run check:planner-scheduler && npm run smoke:planner-no-idle && npm run smoke:planner-resume && npm run check:agent-progress && npm run smoke:agent-progress && npm run smoke:agent-progress-endpoint && npm run smoke:gui-agent-progress && npm run check && git status --short
-```
-
-This gate verifies that contracts reject unsafe public payloads, scheduler simulator state cannot persist unsafe active guidance, agent progress classifies from bounded raw head/tail while persisting sanitized output, and the GUI renders only sanitized bounded overflow guidance.
-
-
-
-Prepare and validate both local IDE installable dev-preview artifacts from the root when changing IDE packaging, packaged GUI, or preview docs:
-
-```sh
-export PATH="$HOME/.cargo/bin:$PATH"
-npm run smoke:ide-preview
-```
-
-`npm run smoke:ide-preview` is the cross-IDE preview gate. `npm run smoke:ide-release-candidate` is the local pre-GitHub/manual-dogfood artifact gate: it prepares JetBrains and then VS Code dev-preview artifacts so packaged GUI freshness checks read current assets, runs installed-plugin visual coverage, installed-plugin Demo Mode first-message coverage, plugin layout, and both first-message smokes before any staging/upload-like validation can pass, starts the extracted JetBrains bundled runtime smoke, writes the required manifest, stages split GitHub artifacts, runs the GitHub artifact smoke, combines manifests outside `dist/github-artifacts`, validates the IDE artifact workflow, checks the safe report helper, prints the expected public artifact summary, and verifies clean tracked status. The Demo Mode coverage is runtime-owned no-key canned local chat UX only, not model quality, provider traffic, OpenAI/ChatGPT usage, hosted Yet AI service usage, real IDE/JCEF automation, signing, publishing, or release creation. The GitHub IDE artifact workflow enforces local/mock-only installed-plugin visual and first-message coverage, including stale GUI asset checks, before artifact upload steps. It is release-candidate artifact gating only; it does not run the broader dogfood closure, launch real IDEs, call providers, contact hosted services, sign, publish, or claim a production release. `npm run smoke:ide-dogfood` is the broader fail-fast ready-to-manual-dogfood closure gate for local and the manual CI workflow: it runs JetBrains Gradle tests, VS Code compile/engine checks, `dogfood:ide-report -- --check-template`, `dogfood:ide-report -- --self-test`, `smoke:ide-preview`, `npm run check`, and prints tracked status as the final labeled step so later steps cannot mask earlier failures. When it passes, it prints the next manual install/report steps and explicitly confirms that the gate is local/mock-only: it does not launch real IDEs, use real provider credentials, call OpenAI/ChatGPT, contact hosted Yet AI services, sign/publish artifacts, or create a production release.
-
-`npm run smoke:ide-preview` runs these exact local commands in order:
-
-```sh
-npm run prepare:jetbrains-preview
-npm run smoke:jetbrains-installable
-npm run smoke:jetbrains-preview
-npm run smoke:jetbrains-gui-browser
-npm run smoke:jetbrains-wrapper-browser
-npm run smoke:jetbrains-first-message
-npm run prepare:vscode-preview
-npm run smoke:plugin-layout
-npm run smoke:vscode-first-message
-npm run smoke:vscode-installable
-npm run smoke:vscode-preview
-npm run smoke:vscode-wrapper-browser
-```
-
-Run the individual packaged-GUI first-message smokes when you are changing only one IDE bridge path:
-
-```sh
-npm run smoke:vscode-first-message
-npm run smoke:jetbrains-first-message
-```
-
-These first-message smokes use loopback mock runtimes/providers and generated local artifacts only. They do not launch real IDEs, use real provider credentials, call OpenAI/ChatGPT, or contact hosted Yet AI services.
-
-Run individual prepare commands when you need one IDE artifact only:
-
-```sh
-export PATH="$HOME/.cargo/bin:$PATH"
 npm run prepare:vscode-preview
 npm run prepare:jetbrains-preview
 ```
 
-The VS Code prepare command builds/prepares the local `yet-lsp` runtime, builds `apps/gui`, copies packaged GUI assets into the extension workspace, compiles the extension, and publishes the ignored install-from-file artifact plus checksum:
-
-```text
-dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix
-dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix.sha256
-```
-
-The JetBrains prepare command builds/prepares the local `yet-lsp` runtime, builds `apps/gui`, refreshes generated JetBrains GUI resources, stages the local cargo-built `yet-lsp` binary as a stable bundled engine resource at `yet-ai-engine/yet-lsp` (or `yet-ai-engine/yet-lsp.exe` on Windows) inside the plugin JAR, runs the Gradle plugin package, prints the Gradle distribution ZIP under `apps/plugins/jetbrains/build/distributions/`, and publishes the ignored Install Plugin from Disk artifact plus checksum. The bundled engine resource is the local cargo build output, not a signed or notarized production engine. No signing, notarization, marketplace publication, production installer, or production release claim is made:
-
-```text
-dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip
-dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip.sha256
-```
-
-All generated VSIX/ZIP files, `.sha256` files, packaged GUI assets, copied engine binaries, Gradle outputs, `apps/gui/dist`, and root `dist/` preview artifacts are ignored/untracked local build outputs and must not be committed.
-
-`npm run smoke:ide-preview` runs `npm run prepare:jetbrains-preview`, `npm run smoke:jetbrains-installable`, `npm run smoke:jetbrains-preview`, `npm run smoke:jetbrains-gui-browser`, `npm run smoke:jetbrains-wrapper-browser`, `npm run smoke:jetbrains-first-message`, `npm run prepare:vscode-preview`, `npm run smoke:plugin-layout`, `npm run smoke:vscode-first-message`, `npm run smoke:vscode-installable`, `npm run smoke:vscode-preview`, and `npm run smoke:vscode-wrapper-browser` in order with fail-fast step labels. The IDE-specific wrapper-browser steps exercise packaged GUI assets in browser harnesses, including the VS Code-like `acquireVsCodeApi` path, proving assistant-authored strict JSON read-only IDE action proposal rendering, no auto-execution before the user clicks, explicit user confirmation, fresh GUI-owned `gui.ideActionRequest` ids, correlated host progress/result rendering, retained manual `getContextSnapshot` coverage, and secret redaction without launching real IDEs or using provider credentials. The underlying prepare commands build/prepare the local engine and `apps/gui`, then publish ignored root dev-preview artifacts under `dist/plugins/vscode/` and `dist/plugins/jetbrains/` with matching `.sha256` checksums. The generated VSIX, ZIP, checksums, GUI assets, extension/plugin output, engine binaries, and root `dist/` artifacts are ignored and must not be committed. This is a local dev-preview/install-from-file and first-message preview flow only: it is not marketplace publication, signing, notarization, a production installer, or a production release, and it requires no provider credentials, hosted Yet AI backend, real OpenAI/ChatGPT calls, or cloud workspace. The automated first-message/controlled-action smokes are loopback/mock-only and differ from manual dogfood; the T-547 manual VS Code dogfood was not run. Real OpenAI API-key fallback testing is manual-only and must produce sanitized evidence.
-
-### GitHub Actions IDE artifact download and install
-
-The `Yet AI IDE Artifacts` workflow (`.github/workflows/ide-artifacts.yml`) builds split dev-preview IDE artifacts in GitHub Actions. Before artifact upload, CI validates the staged artifacts and starts the JetBrains bundled runtime extracted from the built artifact, verifies authenticated `/v1/ping` on loopback, and stops it without launching IntelliJ. This workflow is local/mock-only validation and upload for manual download: it does not publish, sign, notarize, release, upload to a marketplace, call real providers, require provider credentials, or contact a hosted Yet AI backend.
-
-Open GitHub Actions, choose the `Yet AI IDE Artifacts` workflow, and select a successful run for the commit you want to test. The workflow builds per-platform dev-preview artifacts in a `linux-x64` / `macos-arm64` / `windows-x64` matrix because the JetBrains plugin JAR bundles a native `yet-lsp` runtime staged from the local cargo build output (not a signed or notarized production engine). Download the artifact whose `<os>-<arch>` suffix matches your local OS/architecture; mixing platforms will fail because the plugin JAR contains a platform-specific native binary.
-
-Public artifact names are exactly 7 total: three `yet-ai-vscode-unzip-first-<os>-<arch>-<sha>` artifacts, three `yet-ai-jetbrains-install-direct-<os>-<arch>-<sha>` artifacts, and one `yet-ai-plugin-manifest-<sha>` combined manifest. CI writes the same expected public list to the GitHub Step Summary with `artifact:github-summary`; this summary does not add uploaded artifacts. `npm run validate:ide-artifact-contract` validates this shared artifact contract, and `npm run check` catches workflow/summary/public artifact drift. To print the sanitized expected public artifact list for a commit without private paths or release/signing claims, run:
-
-```sh
-npm run artifact:github-summary -- --sha <sha>
-```
-
-The combined `yet-ai-plugin-manifest-<sha>` is uploaded once all per-platform builds finish, with a `platforms[]` array aggregating per-platform commit, checksum, platform, runtime, and artifact metadata. VS Code unzip-first artifacts must be unzipped before installing the inner VSIX; JetBrains direct-install artifacts are selected directly in the IDE. Download/read `yet-ai-plugin-manifest-<sha>` for commit, checksum, and platform metadata before installing.
-
-VS Code install:
-
-1. Download the `yet-ai-vscode-unzip-first-<os>-<arch>-<sha>` artifact matching your local OS/architecture.
-2. Unzip the downloaded GitHub artifact ZIP.
-3. Install the inner VSIX:
-
-   ```sh
-   code --install-extension yet-ai-vscode-<version>-dev-preview.vsix --force
-   ```
-
-JetBrains recommended direct install:
-
-1. Download the `yet-ai-jetbrains-install-direct-<os>-<arch>-<sha>` artifact matching your local OS/architecture.
-2. Use the downloaded GitHub artifact ZIP directly in Settings/Preferences → Plugins → gear → Install Plugin from Disk.
-3. Restart.
-
-Local JetBrains preview preparation still creates `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip` for install-from-disk testing, but the public GitHub Actions JetBrains artifact is the platform-specific direct-install ZIP selected directly in the IDE.
-
-Do not install the old combined artifact bundle or any artifact containing both IDE plugins. JetBrains expects a JetBrains plugin ZIP structure; a generic GitHub transport bundle will fail with something like `Fail to load plugin descriptor`. If you see that error, make sure you selected the JetBrains direct-install artifact ZIP.
-
-These artifacts are unsigned, unpublished dev previews, not marketplace releases or production installers. Report manual verification honestly: if a checklist item was not run, mark it `not run`; if it failed, include only sanitized failure text.
-
-Manual verification checklist for installed artifacts:
-
-- Open Yet AI chat / the Yet AI tool window.
-- Confirm the packaged GUI loads rather than a placeholder or blank panel.
-- Refresh runtime and confirm connected status or sanitized actionable errors.
-- Confirm Provider setup is visible and provider status/errors are sanitized.
-- If active context or read-only IDE actions are relevant, confirm context preview/explicit action confirmation only.
-- If confirmed edit proposals are relevant, confirm preview plus explicit apply only; JetBrains apply is dev-preview only through existing apply/result bridge messages and still requires IDE/user confirmation.
-- Confirm there are no shell, git, task, tool, autonomous edit, silent workspace mutation, or unconfirmed apply controls.
-
-Use the sanitized local report helper before recording manual cross-IDE evidence:
-
-```sh
-npm run dogfood:ide-report -- --template
-npm run dogfood:ide-report -- --check-template
-npm run dogfood:ide-report -- --self-test
-npm run dogfood:ide-report -- --check path/to/local-report.md
-```
-
-The template includes VS Code and JetBrains fields for OS/arch, commit, artifact family, checksum status, install result, runtime launch mode, packaged GUI, runtime refresh, provider setup, active context, read-only IDE action, and first-message status. Leave untested items as `not run`. The `--check-template` and `--self-test` modes are part of `npm run smoke:ide-dogfood` so the safe report helper cannot silently rot. The helper writes nothing by default; if you redirect it to a file, keep that file local unless it contains only sanitized placeholders. Do not commit manual evidence reports that contain local results, machine details, or sanitized failure summaries without an explicit review.
-
-Safe report evidence should include OS/IDE version, workflow run/commit, artifact family rather than a private local path, checksum/manifest status, install result, GUI/runtime/provider status, active-context or edit-proposal status, and first-message outcome. Do not include tokens, provider keys, bearer headers, auth codes, OAuth tokens, cookies, raw bridge payloads, request bodies, private paths, browser storage dumps, raw provider responses, raw prompts, file contents, or screenshots containing secrets. Run `npm run dogfood:ide-report -- --check path/to/local-report.md` before sharing or attaching a report.
-
-Manual launch paths after preparation:
-
-- VS Code primary path: open `apps/plugins/vscode` in VS Code, start an Extension Development Host, keep `yetai.launchMode = auto`, run `Yet AI: Open Chat`, and use the packaged GUI. For install-from-file testing, install `dist/plugins/vscode/yet-ai-vscode-<version>-dev-preview.vsix` with `code --install-extension ...` after `npm run smoke:vscode-installable` passes.
-- JetBrains primary path: open IntelliJ IDEA Settings/Preferences → Plugins → gear → Install Plugin from Disk, choose `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip`, restart the IDE, keep `Launch mode = auto` or `launch`, and open the Yet AI tool window.
-
-Runtime launch modes are the same across IDEs:
-
-- `auto`: default dev-preview path. The plugin discovers or uses the prepared `yet-lsp`, starts it with a generated `YET_AI_AUTH_TOKEN`, and gives the GUI the local Session token through trusted `host.ready` only.
-- `launch`: require the plugin to start a configured absolute `yet-lsp` binary path. Use the path printed by the prepare command when discovery is insufficient.
-- `connect`: use an already running loopback runtime. Start it manually only for debugging, for example `YET_AI_AUTH_TOKEN=local-dev-token YET_AI_HTTP_PORT=8001 cargo run -p yet-lsp`, then configure the matching loopback URL and local Session token in IDE settings/SecretStorage/PasswordSafe.
-
-For normal `auto` or `launch` previews, do not manually start `yet-lsp`, do not paste `local-dev-token`, and do not put provider API keys in runtime-token fields. The safe/default real-provider path is the GUI `OpenAI API` API-key fallback or another OpenAI-compatible/local provider configured through the local runtime. Provider keys belong only in the GUI Provider setup API-key field, clear after save, and remain engine-owned local BYOK credentials. The experimental account-login path remains separate, explicit-risk, private-endpoint-style, mock-only in automation, not official public OpenAI OAuth support, not an OpenAI partnership claim, and not production-ready.
-
-First-message manual checklist for either IDE:
-
-1. Run the IDE prepare command and matching smoke commands, or run the full `npm run smoke:ide-preview` gate when validating both IDEs.
-2. Open the prepared IDE path: VS Code Extension Development Host for VS Code, or IntelliJ Install Plugin from Disk ZIP for JetBrains.
-3. Keep `auto` for the normal preview, or set `launch` with an absolute `yet-lsp` path if discovery fails. Use `connect` only for a manually started loopback runtime.
-4. Open `Yet AI: Open Chat` / the Yet AI tool window and verify the packaged GUI loads.
-5. Click `Refresh runtime`; it checks `/v1/ping`, `/v1/caps`, `/v1/models`, provider summaries, and OpenAI provider-auth status through the local runtime.
-6. Configure the `OpenAI API` API-key fallback or a local OpenAI-compatible mock/provider. Confirm the API-key field clears after save and provider status is sanitized/redacted.
-7. Review active editor/selection context if shown. Attach it only when the selected text is safe to send to the configured provider.
-8. Send `Say hello in one sentence.` Expected behavior: accepted user message, optional one-shot context prepended by the local runtime, SSE snapshot/start/delta/finish updates, visible assistant response, and engine-owned local history reload without a Yet AI hosted backend, cloud workspace, managed gateway, product credit balance, or Yet AI account.
-
-Safe manual report evidence should be actionable but sanitized. Include command pass/fail results, IDE and OS versions, launch mode, artifact path family, checksum presence/match result, packaged GUI vs placeholder, sanitized runtime status, sanitized provider status, active-context attach/omit choice, and first-message outcome. Never share provider API keys, local runtime session tokens, bearer/Authorization values, auth codes, OAuth access/refresh tokens, PKCE verifiers, cookies, query values, fragment values, private absolute paths, raw provider responses, raw bridge payloads, request bodies, browser storage dumps, terminal scrollback containing secrets, or screenshots that show any of those values.
-
-JetBrains wrapper lifecycle policy is fail-closed across iframe reloads. Non-secret diagnostics that exist before the wrapper is initialized may be held only for the current wrapper setup path, but host messages are delivered to the GUI only after an accepted real `gui.ready` with a wrapper-owned generation/sequence nonce. Messages sent while the frame is unready, for an old generation, or with a stale nonce are dropped rather than replayed into a later frame.
-
-Current baseline subsystem checks are:
-
-```sh
-cargo check
-cargo test
-cd apps/gui && npm install && npm run typecheck && npm run build && npm test
-cd apps/plugins/vscode && npm install && npm run compile
-cd apps/plugins/jetbrains && node scripts/check-identity.mjs && gradle test --console=plain && gradle build --console=plain
-```
-
-Manual IDE dev-preview flows are documented in the subsystem READMEs:
-
-- `apps/plugins/vscode/README.md` — packaged GUI copy flow plus `connect`/`launch`/`auto` runtime modes.
-- `apps/plugins/jetbrains/README.md` — Gradle packaged GUI resource flow plus `connect`/`launch`/`auto` runtime modes.
-- `apps/gui/README.md` — GUI build/dev commands and runtime token behavior.
-- `apps/engine/README.md` — local `yet-lsp` run command and runtime API status.
-
-### Runtime token quick guide
-
-There are two separate secret categories in the dev preview:
-
-- Local runtime Session token: authorizes GUI-to-`yet-lsp` loopback HTTP/SSE requests only.
-- Provider API key: authorizes model-provider calls made by the local runtime, for example an OpenAI API key saved through Provider setup.
-
-For IDE-launched runtimes, do not paste `local-dev-token` into the GUI. In VS Code and JetBrains `auto` or `launch` mode, the plugin generates a local runtime token, starts `yet-lsp` with `YET_AI_AUTH_TOKEN`, and provides the token to the packaged GUI through trusted `host.ready` bootstrap. In the normal VS Code dev-preview path, run `npm run prepare:vscode-preview`, keep `yetai.launchMode = auto`, open the Extension Development Host, and run `Yet AI: Open Chat`; do not manually run `yet-lsp` or copy a runtime token. In JetBrains normal dev-preview testing, keep `Launch mode = auto` or `launch` and set `Engine binary path = /absolute/path/to/target/debug/yet-lsp` only when discovery from `PATH` is insufficient.
-
-Use `local-dev-token` only for a manually started runtime:
-
-```sh
-YET_AI_AUTH_TOKEN=local-dev-token YET_AI_HTTP_PORT=8001 cargo run -p yet-lsp
-```
-
-Then set GUI runtime settings to `Runtime base URL = http://127.0.0.1:8001` and `Session token = local-dev-token`. Do not put OpenAI or provider API keys in the Session token field; choose the GUI `OpenAI API` provider preset, paste the provider key once in the API key field, save, and confirm the field clears.
-
-### First-message IDE smoke
-
-Use this concise smoke after preparing either IDE dev preview. For VS Code, the default path is no manual runtime launch and no runtime-token copying:
-
-1. Run `npm run prepare:vscode-preview` from the repository root for VS Code, or the matching prepare command for another IDE preview.
-2. In the VS Code Extension Development Host, keep `yetai.launchMode = auto` and run `Yet AI: Open Chat`. The extension discovers or uses the copied engine, starts it with `YET_AI_AUTH_TOKEN`, and sends the local runtime Session token to the GUI only through trusted `host.ready`.
-3. Do not manually run `yet-lsp` or paste `local-dev-token` for the normal VS Code preview. Use the manual runtime command only for deliberate `connect`-mode debugging.
-4. Click `Refresh runtime`. It checks `/v1/ping`, `/v1/caps`, `/v1/models`, provider summaries, and OpenAI provider-auth status through the local runtime.
-5. Interpret runtime feedback: connected means the loopback runtime and model/provider metadata are reachable; network/configuration errors mean URL, port, binary, or runtime startup problems; runtime `401` means the local Session token does not match `YET_AI_AUTH_TOKEN`; provider `401` means the provider API key was rejected by the upstream provider.
-6. Configure the safe/default `OpenAI API` API-key fallback or a local OpenAI-compatible mock/provider. The provider key belongs only in Provider setup, is sent to the local runtime, clears after save, and must not be stored in VS Code settings or the Session token field.
-7. Use provider test/status as sanitized feedback. If the GUI shows an active editor/selection context preview from VS Code or JetBrains, include it only when the selection is safe to send to the configured provider.
-8. Send `Say hello in one sentence.` Expected behavior: the user message is accepted, optional included context is prepended by the local runtime, SSE opens, the assistant streams snapshot/start/delta/finish updates, and the conversation appears in engine-owned local history without any Yet AI hosted backend, cloud workspace, managed gateway, product credit balance, or Yet AI account. After the accepted send, the GUI clears the attached context; a later message needs a fresh IDE snapshot.
-
-Active context is a prompt-only, bounded, non-privileged IDE context feature for the next accepted message only. The GUI preview shows the source host, file/workspace path, language/range metadata, selected character count, and a bounded sanitized preview before the user chooses whether to attach it. Selected text is attached only when visible to the user and allowed by the attach/policy flow, and attached text may be sent to the configured provider as prompt context. It does not enable autonomous file reads, workspace indexing, file edits/apply patch, shell/tool execution, or background agent autonomy.
-
-A login/account-based GPT first-message UX remains a mandatory future milestone. The safe/default real-provider path is still the OpenAI API-key or project-key fallback through the local runtime. The current experimental Codex-like account path is separate, explicit-risk, private-endpoint-style, mock-only in automation, not official public OpenAI OAuth support, not an OpenAI partnership claim, not production-ready, and not the default first-message path.
-
-For JetBrains runtime failures, use Tools → `Yet AI: Show Runtime Status` for sanitized launch/binary/ping diagnostics and Tools → `Yet AI: Restart Runtime` to restart only the plugin-owned local runtime.
-
-### JetBrains installable ZIP dev preview
-
-Build a local IntelliJ IDEA install-from-disk ZIP with:
-
-```sh
-export PATH="$HOME/.cargo/bin:$PATH"
-npm run prepare:jetbrains-preview
-```
-
-The command builds/prepares `yet-lsp`, builds `apps/gui`, runs the JetBrains Gradle build, prints the original ZIP path under `apps/plugins/jetbrains/build/distributions/`, and copies the current dev-preview artifact plus checksum to the stable ignored root path `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip` and `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip.sha256`. It also prints the local `Engine binary path` to configure when the plugin cannot discover the engine from `PATH`. Missing Gradle is a local prerequisite failure. Gradle failures while resolving JetBrains dependencies such as `java-compiler-ant-tasks`, JetBrains cache metadata, or `instrumentCode` are external Gradle dependency/network failures: retry with a stable network, verify Gradle can resolve JetBrains dependencies, and use cached/offline Gradle only after dependencies are already present locally.
-
-Manual IntelliJ IDEA smoke steps:
-
-1. Run `npm run prepare:jetbrains-preview`.
-2. Open IntelliJ IDEA Settings/Preferences → Plugins → gear → Install Plugin from Disk.
-3. Choose the stable root ZIP at `dist/plugins/jetbrains/yet-ai-jetbrains-<version>-dev-preview.zip` and restart the IDE. The Gradle output path printed under `apps/plugins/jetbrains/build/distributions/` is kept for diagnostics.
-4. Set `Launch mode` / `Engine binary path` if needed.
-5. Open the Yet AI tool window and verify the packaged UI/chat path.
-6. Optional safe provider smoke: use the OpenAI API-key fallback. The experimental account login remains explicit-risk; automated coverage is mock-only and real account testing is manual/high-risk/outside CI.
-
-Validate the local ZIP without launching an IDE with the canonical preflight sequence:
-
-```sh
-npm run prepare:jetbrains-preview
-npm run smoke:jetbrains-installable
-npm run smoke:jetbrains-bundled-runtime
-npm run smoke:jetbrains-gui-browser
-npm run smoke:jetbrains-wrapper-browser
-```
-
-Run `npm run smoke:jetbrains-bundled-runtime` only after `npm run prepare:jetbrains-preview`; it extracts the bundled engine from the root JetBrains dev-preview artifact, starts it with a generated local token and free loopback port, verifies authenticated `/v1/ping`, and stops it without launching IntelliJ. No provider credentials, real provider calls, hosted backend, signing, publishing, release upload, or production-release claim is involved.
-
-The installable smoke checks Gradle ZIP structure, the copied root `dist/plugins/jetbrains/` dev-preview artifact, checksum matching, safe archive paths, packaged GUI contents, docs, and obvious stale root ZIP inputs. The generated-resource preview smoke fails when `apps/gui/dist/index.html` is newer than the copied JetBrains generated GUI resource, so rerun `npm run prepare:jetbrains-preview` after rebuilding GUI assets. The GUI browser smoke verifies the packaged GUI resources from the installable ZIP render on loopback with working JavaScript and CSS assets. The wrapper browser smoke verifies the JetBrains-like wrapper and GUI bridge path on loopback with mock runtime/provider-auth only, including a JetBrains-style active editor/selection `host.contextSnapshot`, attached-context preview, default include behavior, disabled-toggle omission, enabled context delivery to the runtime command, and strict JetBrains read-only controlled action progress/result handling for `getContextSnapshot`, `openWorkspaceFile`, and `revealWorkspaceRange`. It does not cover JetBrains workspace edit apply, JetBrains LSP client support, browser execution of controlled actions, provider credentials, real OpenAI/ChatGPT calls, hosted Yet AI services, signing, marketplace publication, production installer, or bundled notarized engine.
-
-### Manual OpenAI API-key milestone smoke
-
-The current real-provider milestone is a manual VS Code dev-preview smoke path for the OpenAI API-key fallback only. It is not an automated test, does not require a Yet AI hosted backend, and must never commit, log, screenshot, or paste a real key into issue text or repository files.
-
-Use `apps/plugins/vscode/README.md#openai-api-key-fallback-milestone-smoke` for the detailed checklist:
-
-1. Run `npm run prepare:vscode-preview` from the repository root.
-2. Open the Extension Development Host, keep `yetai.launchMode = auto`, and run `Yet AI: Open Chat`; do not manually start `yet-lsp` or paste `local-dev-token` for this normal preview path.
-3. Choose the GUI `OpenAI API` preset, paste an API key once in Provider setup, save, and confirm the key field clears.
-4. Confirm the GUI and runtime show only configured/redacted provider status, never the raw key, and never ask for the provider key in VS Code settings, browser storage, or the Session token field.
-5. Use `Test provider`, then `Refresh runtime` so model readiness reflects the saved provider before sending `Say hello in one sentence.` and verifying snapshot plus streaming response behavior.
-
-Current real-provider testing should use an OpenAI API-key or project-key fallback through the local runtime. This remains the safe/default path.
-
-### Manual experimental account-login checklist
-
-Use this checklist only for an explicitly accepted manual real-account run of the experimental Codex-like account path. It is safe to share as a process checklist, but the resulting evidence must stay sanitized. Do not run this checklist in CI, smoke scripts, or unattended automation.
-
-1. Confirm the tester understands the flow is experimental, private-endpoint-style, account-specific, high-risk, not official public OpenAI OAuth support, not an OpenAI partnership, and not production-ready.
-2. Record only non-secret preconditions: OS, IDE, launch mode, whether the GUI opened from packaged assets, and whether the local runtime used `auto` / `launch` without manual runtime-token copying.
-3. Review visible consent and scopes before continuing. Record scope names and consent wording only if they do not contain tokens, authorization codes, account-private URLs, cookies, or other secrets.
-4. Start the account flow from the GUI account-login card. Verify pending guidance appears without raw session IDs, PKCE verifier values, authorization codes, cookies, access tokens, refresh tokens, or credential-file paths.
-5. Complete connect/exchange only through the GUI/runtime flow. Do not paste secrets into reports, logs, screenshots, issues, fixtures, or repository files.
-6. After connected status, verify the GUI shows only sanitized account labels, scopes, expiry, status, and redacted hints. Send `Say hello in one sentence.` and record only sanitized first-message success or sanitized failure text.
-7. Exercise safe failure paths when feasible: denied consent, expired or revoked session, provider outage/unavailable model, and retry/reconnect behavior. Evidence must be sanitized and must not include raw provider responses.
-8. Disconnect, then reconnect if the task asks for relogin coverage. Confirm disconnect/reconnect states are sanitized and that API-key fallback remains available.
-9. Before sharing results, remove secrets from terminal scrollback, screenshots, browser devtools, notes, and issue text. Reports may include status labels, redacted account hints, non-secret scope names, timestamps, and concise sanitized errors only.
-
-A login/account-based GPT first-message UX is still a mandatory future milestone, but it is not the default current VS Code first-message path. The user approved a T-49 experimental Codex-like login task chain even though no public third-party OpenAI OAuth program has been identified. That approval allows engine-owned PKCE/session state, authorization/token exchange, refresh, revoke/disconnect, sanitized GUI status, and local secret storage modeled after Codex-like behavior. The local smoke test covers this path only with loopback token and chat mocks; CI must not call OpenAI, ChatGPT, private Codex endpoints, or use real account credentials for this flow. Any real provider testing of the experimental path is manual, risky, account-specific, and outside CI. It does not approve cookie scraping, browser profile import, browser cookie reuse, direct import or reading of `~/.codex/auth.json` or other tools' credential files, or any required Yet AI hosted backend, account, managed gateway, product credit balance, or cloud workspace. This approval does not imply production readiness, official OpenAI partnership, or general public OAuth support; private endpoint and client-identity risk must stay visible in implementation and docs.
-
-Run these when changing the corresponding subsystem. The required verification for documentation-only status updates remains `npm run check`.
-
-## Architecture docs
-
-Start here:
-
-- `docs/README.md` — documentation layout and contribution rules.
-- `docs/architecture/000-reference-architecture-baseline.md` — standalone subsystem baseline and product-sensitive surfaces.
-- `docs/architecture/001-product-identity.md` — identity contract based on `product/identity.json`.
-- `docs/architecture/002-product-differentiation-and-provenance.md` — differentiation, provenance, and publication safety rules.
-- `docs/architecture/003-target-architecture.md` — target Yet AI architecture, subsystem boundaries, contracts, and roadmap.
-- `docs/architecture/004-implementation-strategy.md` — implementation strategy and selective reuse policy.
-- `docs/architecture/005-publication-hygiene.md` — public repository hygiene and first-publication checklist.
-
-## Agent guidance
-
-Future agents must read `AGENTS.md` before changing the repository. Important rules: keep public tracked files free of external project identifiers, use local ignored files for private notes, avoid broad product renames unless requested, avoid unapproved third-party code or asset copies, preserve license and attribution if code or assets are approved later, and keep changes incremental with verification commands.
+Generated IDE artifacts, packaged GUI assets, copied engine binaries, checksums, Gradle outputs, `apps/gui/dist`, and root `dist/` outputs are local ignored build products and must not be committed.
+
+## More documentation
+
+- `docs/README.md` — documentation layout, capability matrix, verification matrix, and current dev-preview boundaries.
+- `docs/architecture/003-target-architecture.md` — target subsystem boundaries, contracts, storage rules, and roadmap.
+- `apps/plugins/vscode/README.md` — VS Code dev-preview setup, runtime modes, and manual smoke guidance.
+- `apps/plugins/jetbrains/README.md` — JetBrains dev-preview setup, runtime modes, and install-from-disk guidance.
+- `packages/contracts/README.md` — shared schema and contract validation notes.
+- `AGENTS.md` — repository rules for future agents and contributors.
