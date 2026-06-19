@@ -5474,6 +5474,9 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("Chat with Yet AI");
     expect(container?.textContent).toContain("Choose how this first chat should answer.");
     expect(container?.textContent).toContain("Provider credentials are sent only to the local runtime and are not stored by the GUI.");
+    expect(container?.textContent).toContain("Browser preview mode");
+    expect(container?.textContent).toContain("Browser can use the local runtime for chat and GUI-only previews.");
+    expect(container?.textContent).toContain("Open Yet AI in VS Code or JetBrains for host actions: applying edits, IDE verification commands, active-file/context requests, and project snippet search.");
   });
 
 
@@ -8737,6 +8740,7 @@ describe("edit proposal preview", () => {
 
     expect(container?.textContent ?? "").toContain("Project snippets");
     expect(container?.textContent ?? "").toContain("browser preview only");
+    expect(container?.textContent ?? "").toContain("Open Yet AI in VS Code or JetBrains to request sanitized local workspace snippets.");
     expect(findButton("Search project snippets").disabled).toBe(true);
     await act(async () => {
       setInputValue(projectSnippetQueryInput(), "chat composer");

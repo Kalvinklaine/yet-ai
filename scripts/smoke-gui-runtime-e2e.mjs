@@ -489,17 +489,17 @@ async function exerciseManualRunnerStart(page) {
   await expectVisibleText(page, "Manual runner · Coding loop", "manual runner panel", 20_000);
   await expectVisibleText(page, "manual only", "manual runner manual-only badge", 20_000);
   await expectAttachedText(page, "Progress guide only. It never auto-sends, auto-attaches context, auto-applies edits, auto-runs verification, reads hidden files, or writes browser storage.", "manual runner no-autonomy copy", 20_000);
-  await expectVisibleText(page, "Current step: 1. Draft plan", "manual runner initial current step", 20_000);
+  await expectVisibleText(page, "Current manual lifecycle step: 1. Goal", "manual runner initial current step", 20_000);
   await page.getByLabel("Manual runner coding loop").getByLabel("Draft plan (local UI state only)").fill("Inspect attached context, ask for a safe edit, apply only after explicit review, run verification manually, then send a follow-up with verification output.");
-  await expectVisibleText(page, "Current step: 2. Attach context", "manual runner context current step", 20_000);
+  await expectVisibleText(page, "Current manual lifecycle step: 2. Context selected", "manual runner context current step", 20_000);
   await assertNoManualRunnerSideEffects(page, "manual runner start/draft");
 }
 
 async function assertManualRunnerCompleted(page) {
-  await expectVisibleText(page, "Current step: 7. Attach verification result / continue", "manual runner final current step", 20_000);
+  await expectVisibleText(page, "Current manual lifecycle step: 7. Follow-up", "manual runner final current step", 20_000);
   await expectVisibleText(page, "Verification output is attached as explicit one-shot context.", "manual runner verification-attached detail", 20_000);
   const manualRunnerText = await page.getByLabel("Manual runner coding loop").textContent();
-  for (const label of ["1. Draft plan", "2. Attach context", "3. Ask model", "4. Review safe edit proposal", "5. Apply after explicit confirmation", "6. Run verification", "7. Attach verification result / continue"]) {
+  for (const label of ["1. Goal", "2. Context selected", "3. Prompt drafted", "4. Response received", "5. Edit proposed/applied", "6. Verification", "7. Follow-up"]) {
     assert(manualRunnerText?.includes(label), `Manual runner panel missed step label: ${label}`);
   }
 }

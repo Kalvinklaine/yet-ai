@@ -2076,6 +2076,16 @@ export function App() {
         </div>
       </section>
 
+      {!hostedWebview && (
+        <section className="readiness-card warn browser-preview-card" role="status" aria-label="Browser preview limits">
+          <div className="row">
+            <strong>Browser preview mode</strong>
+            <span className="badge warn">preview-only host actions</span>
+          </div>
+          <span className="subtle">Browser can use the local runtime for chat and GUI-only previews. Open {productName} in VS Code or JetBrains for host actions: applying edits, IDE verification commands, active-file/context requests, and project snippet search.</span>
+        </section>
+      )}
+
       <section className="card stack chat-primary-card">
         <div className="chat-hero-row">
           <div className="stack">
