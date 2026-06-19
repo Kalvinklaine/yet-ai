@@ -6,6 +6,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { assertPackagedGuiFreshness } from "./gui-asset-freshness.mjs";
+import { ideSurfaceContract } from "./ide-surface-contract.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = path.join(root, "apps", "gui", "dist");
@@ -144,6 +145,7 @@ const centerInNearestScrollContainer = async (locator) => {
 
 class RequestBodyTooLargeError extends Error {}
 
+assertJetBrainsParityContract();
 await requireFreshPackagedGui();
 
 let chromium;
@@ -710,6 +712,53 @@ try {
 function assertRandomReadyRequestId(requestId, label) {
   if (typeof requestId !== "string" || !/^gui-ready-\d+-\d+-[0-9a-f]{32}$/.test(requestId)) {
     failures.push(`Wrapper did not synthesize a random authoritative ready id for ${label}, got ${String(requestId)}.`);
+  }
+}
+
+function assertJetBrainsParityContract() {
+  const surfaces = new Map((ideSurfaceContract.surfaces ?? []).map((surface) => [surface.id, surface]));
+  const assertSurface = (id, expectedStatus, label) => {
+    const status = surfaces.get(id)?.jetbrains?.status;
+    if (status !== expectedStatus) {
+      failures.push(`JetBrains parity contract mismatch for ${label}: expected ${expectedStatus}, got ${status ?? "<missing>"}.`);
+    }
+  };
+  assertSurface("active-context", "supported", "active editor context");
+  assertSurface("first-message-flow", "supported", "chat first-message flow");
+  assertSurface("read-only-ide-actions", "supported", "read-only IDE actions");
+  assertSurface("confirmed-edit-preview", "supported", "confirmed edit proposal preview");
+  assertSurface("confirmed-edit-apply", "dev-preview", "confirmed edit proposal apply");
+  assertSurface("workspace-snippet-search", "preview-only", "workspace snippet search");
+  assertSurface("verification-command-bridge", "preview-only", "verification command bridge");
+  assertSurface("lsp-status", "deferred", "native LSP support");
+  const apply = surfaces.get("confirmed-edit-apply")?.jetbrains;
+  const applyReason = apply?.reason ?? "";
+  for (const [pattern, label] of [
+    [/gui\.applyWorkspaceEditRequest \/ host\.applyWorkspaceEditResult only/i, "existing apply/result messages"],
+    [/explicit GUI apply/i, "explicit GUI apply"],
+    [/(IDE|host)\/user confirmation|user confirmation/i, "IDE/user confirmation"],
+    [/existing workspace-relative files/i, "existing workspace-relative files"],
+    [/no new write-capable bridge messages/i, "no new write-capable bridge messages"],
+    [/no .*shell/i, "no shell authority"],
+    [/git/i, "no git authority"],
+    [/tools/i, "no tool authority"],
+    [/tasks/i, "no task authority"],
+    [/provider calls/i, "no provider calls"],
+    [/create\/delete\/rename/i, "no create/delete/rename"],
+    [/apply-patch/i, "no apply-patch"],
+    [/autonomous edits/i, "no autonomous edits"],
+    [/silent mutation/i, "no silent mutation"],
+  ]) {
+    if (!pattern.test(applyReason)) {
+      failures.push(`JetBrains confirmed edit apply contract is missing ${label}.`);
+    }
+  }
+  if (!apply?.smoke?.includes("npm run smoke:jetbrains-wrapper-browser")) {
+    failures.push("JetBrains confirmed edit apply contract must include wrapper browser smoke evidence.");
+  }
+  const verificationReason = surfaces.get("verification-command-bridge")?.jetbrains?.reason ?? "";
+  if (!/preview-only/i.test(verificationReason) || !/no free-form shell/i.test(verificationReason) || !/GUI-minted request ids/i.test(verificationReason)) {
+    failures.push("JetBrains verification command bridge contract must stay preview-only, non-shell, and GUI-request bounded.");
   }
 }
 
