@@ -9,6 +9,7 @@ const validators = [
   ["scripts/validate-ide-artifact-workflow.mjs"],
   ["scripts/validate-ide-surface-contract.mjs"],
   ["scripts/validate-npm-spawn.mjs"],
+  ["scripts/validate-icon-assets.mjs"],
   ["scripts/check-gui-asset-freshness.mjs"],
   ["scripts/dogfood-real-provider-report.mjs", "--check-template"],
   ["scripts/dogfood-real-provider-report.mjs", "--self-test"]

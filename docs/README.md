@@ -59,6 +59,14 @@ This matrix summarizes current browser, VS Code, and JetBrains surfaces for loca
 
 Known limitations: real-provider use still requires user-supplied local credentials; account-login feasibility remains blocked until an official provider-supported local-app flow is documented and approved; the Codex-like path must not use real accounts in CI or smoke automation.
 
+## Icon asset convention
+
+The source icon asset is `assets/identity/yet-ai-icon.svg`; PNG derivatives live next to it. VS Code and JetBrains dev-preview plugin icons are derived copies under their plugin folders. The root `npm run check` bundle validates that these icon files exist, that SVG files remain self-contained with no scripts or remote image references, and that plugin copies match the source assets.
+
+## Versioning policy follow-up
+
+Current package and plugin versions remain static dev-preview values (`0.0.1` for VS Code and `0.1.0` for JetBrains). Do not bump them for routine dev-preview docs/assets changes. Before release automation or any production publication claim, add a single version source and an artifact manifest consistency check across generated plugin artifacts.
+
 ## Dev-preview packaging boundary
 
 Current IDE artifacts are install-from-file dev-preview evidence only. Local `dist/plugins/vscode/*.vsix`, local `dist/plugins/jetbrains/*.zip`, CI downloadable artifacts, checksums, and manifests are unsigned and unpublished validation outputs. They prove local package layout, packaged GUI freshness, identity metadata, safe archive paths, and loopback/mock startup checks; they do not prove marketplace publication, signing, notarization, a production installer, an update channel, or production release readiness.

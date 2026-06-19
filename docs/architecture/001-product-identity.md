@@ -86,6 +86,12 @@ Owned by product architecture.
 - `owner`: accountable owner for reviewing identity changes.
 - `lastReviewed`: review date for audits.
 
+## Icon assets and dev-preview versions
+
+The icon source of truth is `assets/identity/yet-ai-icon.svg`, with generated PNG derivatives beside it. Plugin icon files are derived copies for current packaging conventions: VS Code points its manifest `icon` field at `apps/plugins/vscode/media/yet-ai-icon-128.png`, while JetBrains packages `apps/plugins/jetbrains/src/main/resources/META-INF/pluginIcon.svg`. Keep these copies regenerated from the source asset; `npm run check` includes icon validation for presence, SVG safety, and copy consistency.
+
+Current package/plugin versions are static dev-preview placeholders. Keep `0.0.1` for the VS Code package and `0.1.0` for the JetBrains preview until release automation exists. A future pre-release sprint should add one version source plus artifact manifest consistency checks before any production release or marketplace publication claim.
+
 ## Maintenance rule
 
 When adding a new product-sensitive value, first decide whether it belongs in `product/identity.json`. If it does, update the JSON, update the schema, and update this document before using it elsewhere. Generated files and implementation code should consume the identity contract where practical instead of scattering hardcoded strings.
