@@ -15,6 +15,7 @@ const prepareMessage = "Run `npm run prepare:jetbrains-preview` from the reposit
 await checkFile(path.join(jetbrainsRoot, "build.gradle.kts"), "JetBrains Gradle build file is missing.");
 await checkFile(path.join(jetbrainsRoot, "settings.gradle.kts"), "JetBrains Gradle settings file is missing.");
 await checkFile(path.join(jetbrainsRoot, "src", "main", "resources", "META-INF", "plugin.xml"), "JetBrains plugin.xml is missing.");
+await checkFile(path.join(jetbrainsRoot, "src", "main", "resources", "META-INF", "pluginIcon.svg"), "JetBrains plugin icon resource is missing.");
 await checkDirectory(path.join(jetbrainsRoot, "src", "main", "kotlin", ...identity.jetbrains.packageNamespace.split(".")), "JetBrains Kotlin source root is missing.");
 await checkFile(path.join(jetbrainsRoot, "src", "main", "kotlin", ...identity.jetbrains.packageNamespace.split("."), "runtime", "RuntimeConnectionManager.kt"), "JetBrains runtime connector source is missing.");
 await checkFile(path.join(jetbrainsRoot, "src", "main", "kotlin", ...identity.jetbrains.packageNamespace.split("."), "ui", "YetToolWindowFactory.kt"), "JetBrains tool window source is missing.");

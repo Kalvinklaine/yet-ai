@@ -186,6 +186,7 @@ async function validatePreparedPreview() {
     [path.join(vscodeRoot, "README.md"), "VS Code README is missing at apps/plugins/vscode/README.md."],
     [path.join(vscodeRoot, "out", "extension.js"), "Compiled VS Code extension is missing. Run `cd apps/plugins/vscode && npm run compile` or `npm run prepare:vscode-preview` first."],
     [path.join(vscodeRoot, "out", "product", "identity.json"), "Bundled VS Code product identity is missing. Run `cd apps/plugins/vscode && npm run copy:identity` or `npm run prepare:vscode-preview` first."],
+    [path.join(vscodeRoot, "media", "yet-ai-icon-128.png"), "VS Code package icon is missing at apps/plugins/vscode/media/yet-ai-icon-128.png."],
     [path.join(vscodeRoot, "media", "gui", "index.html"), "Packaged GUI dist is missing. Run `cd apps/gui && npm run build`, then `cd apps/plugins/vscode && npm run copy:gui`, or run `npm run prepare:vscode-preview` first."],
     [path.join(vscodeRoot, "bin", binaryFileName), `Copied engine binary is missing at apps/plugins/vscode/bin/${binaryFileName}. Run \`npm run prepare:ide-engine\` or \`npm run prepare:vscode-preview\` first.`],
   ];
@@ -229,6 +230,8 @@ async function stageVsix(tempRoot) {
   await copyFile(path.join(vscodeRoot, "package.json"), path.join(extensionDir, "package.json"));
   await copyFile(path.join(vscodeRoot, "README.md"), path.join(extensionDir, "README.md"));
   await copyDirectory(path.join(vscodeRoot, "out"), path.join(extensionDir, "out"));
+  await mkdir(path.join(extensionDir, "media"), { recursive: true });
+  await copyFile(path.join(vscodeRoot, "media", "yet-ai-icon-128.png"), path.join(extensionDir, "media", "yet-ai-icon-128.png"));
   await copyDirectory(path.join(vscodeRoot, "media", "gui"), path.join(extensionDir, "media", "gui"));
   await copyDirectory(path.join(vscodeRoot, "bin"), path.join(extensionDir, "bin"));
   await writeFile(path.join(tempRoot, "extension.vsixmanifest"), vsixManifest(), "utf8");

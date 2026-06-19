@@ -54,6 +54,10 @@ await checkFile(
   extensionPath,
   "Compiled extension is missing. Run `npm run prepare:vscode-preview` so `cd apps/plugins/vscode && npm run compile` produces out/extension.js.",
 );
+await checkFile(
+  path.join(vscodeRoot, "media", "yet-ai-icon-128.png"),
+  "VS Code package icon is missing. Keep apps/plugins/vscode/package.json icon pointed at media/yet-ai-icon-128.png.",
+);
 
 const extensionJs = await readTextFile(
   extensionPath,
@@ -125,6 +129,10 @@ function checkManifestSurfaces(manifest) {
   const guiDevUrlDescription = properties["yetai.guiDevUrl"]?.description;
   if (typeof guiDevUrlDescription !== "string" || !guiDevUrlDescription.toLowerCase().includes("loopback")) {
     failures.push("apps/plugins/vscode/package.json configuration yetai.guiDevUrl description must mention loopback URL requirements.");
+  }
+
+  if (manifest.icon !== "media/yet-ai-icon-128.png") {
+    failures.push("apps/plugins/vscode/package.json must keep icon set to media/yet-ai-icon-128.png for the dev-preview package.");
   }
 }
 

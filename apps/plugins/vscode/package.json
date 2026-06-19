@@ -6,6 +6,7 @@
   "private": true,
   "description": "Yet AI local runtime host for VS Code.",
   "license": "UNLICENSED",
+  "icon": "media/yet-ai-icon-128.png",
   "engines": {
     "vscode": "^1.90.0"
   },
