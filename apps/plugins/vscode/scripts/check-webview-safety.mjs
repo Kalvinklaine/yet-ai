@@ -21,6 +21,9 @@ const requiredSnippets = [
   "payload.action === \"getActiveFileExcerpt\"",
   "payload.action === \"runVerificationCommand\"",
   "payload.action === \"searchWorkspaceSnippets\"",
+  "payload.action === \"getContextSnapshot\"",
+  "payload.action === \"openWorkspaceFile\"",
+  "payload.action === \"revealWorkspaceRange\"",
   "const verificationCommandTimeoutMs = 120000;",
   "const maxVerificationOutputTailLength = 4000;",
   "const maxWorkspaceSnippetSearchFiles = 500;",
@@ -701,6 +704,7 @@ for (const message of invalidIdeActionRequests) {
   assert.equal(parseIdeActionRequest(message), undefined, `VS Code host must not parse malformed/forbidden IDE action request: ${message.payload.action}`);
 }
 assert.equal(isGuiMessage(validApplyWorkspaceEditRequest), true, "VS Code host should accept strict confirmed apply requests.");
+assert.deepEqual(validIdeActionRequests.map((message) => message.payload.action), ["getContextSnapshot", "getActiveFileExcerpt", "runVerificationCommand", "runVerificationCommand", "runVerificationCommand", "searchWorkspaceSnippets", "openWorkspaceFile", "revealWorkspaceRange"], "VS Code static parity assertions must cover context, active excerpt, verification, snippet search, and controlled navigation surfaces.");
 for (const message of rejectedPrivilegedGuiMessages) {
   if (message.type === "gui.applyWorkspaceEditRequest") {
     continue;

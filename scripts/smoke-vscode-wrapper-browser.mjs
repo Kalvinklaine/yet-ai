@@ -36,6 +36,36 @@ const bundleExcerptOneText = "export const vscodeBundleOne = 1;";
 const bundleExcerptTwoText = "export const vscodeBundleTwo = 2;";
 const bundlePrompt = "Use the attached VS Code multi-file context bundle.";
 const afterBundlePrompt = "Send after VS Code multi-file context bundle clears.";
+const memoryNoteId = "mem-vscode-parity-001";
+const memoryNoteTitle = "VS Code parity memory";
+const memoryNoteText = "Remember the local first VS Code parity surface.";
+const memoryNoteUpdatedAt = new Date(0).toISOString();
+const snippetSearchQuery = "parity surface";
+const snippetSearchPath = "src/parity-surface.ts";
+const snippetSearchText = "export const paritySurface = true;";
+const editProposalAssistantMessageId = "assistant-edit-proposal-message-001";
+const editProposalSummary = "Update the VS Code parity sample.";
+const editProposalPath = "src/parity-edit.ts";
+const editProposalPayload = {
+  requiresUserConfirmation: true,
+  summary: editProposalSummary,
+  cloudRequired: false,
+  edits: [
+    {
+      workspaceRelativePath: editProposalPath,
+      textReplacements: [
+        { range: { start: { line: 1, character: 0 }, end: { line: 1, character: 5 } }, replacementText: "ready" },
+      ],
+    },
+  ],
+};
+const assistantApplyWorkspaceEditProposal = {
+  type: "gui.applyWorkspaceEditRequest",
+  version: bridgeVersion,
+  payload: editProposalPayload,
+};
+const verificationOutputTail = "repository validation passed";
+const editProposalPrompt = "Request VS Code safe edit proposal.";
 const openResultMessage = "Workspace file opened.";
 const revealProgressSummary = "Reveal policy check started.";
 const revealResultMessage = "Workspace range revealed.";
@@ -254,6 +284,11 @@ try {
   await expectVisibleText(page, `Path: ${proposalPath}`, "proposal IDE action result path");
   await expectVisibleText(page, "Range: 4:2-4:8", "proposal IDE action result range");
   await assertProposalSecretsOnlyInVisibleUi(page, "matched retry proposal result render");
+
+  await runSafeEditProposalScenario(page);
+  await runProjectMemoryScenario(page);
+  await runWorkspaceSnippetSearchScenario(page);
+  await runVerificationCommandScenario(page);
 
   if (demoModeFirstMessage) {
     await runDemoModeFirstMessageScenario(page);
@@ -487,11 +522,12 @@ try {
   if (activeExcerptChatPosts !== 1) failures.push(`Active-file excerpt send posted ${activeExcerptChatPosts} chat commands instead of exactly one.`);
   assertActiveFileExcerptChatCommand(chatCommandBodies.at(-1), "vscode");
   await expectNoVisibleText(page, activeFileExcerptText, "one-shot active-file excerpt preview after send");
-  await assertBrowserStorageDoesNotContain(page, [runtimeToken, providerKey, authorizationSentinel, activeContextPath, activeContextSelection, liveContextPath, liveContextSelection, activeFileExcerptPath, activeFileExcerptText], "final storage no-secret/no-context persistence check");
-  await assertBrowserStorageDoesNotContain(page, [runtimeToken, providerKey, authorizationSentinel, activeContextPath, activeContextSelection, liveContextPath, liveContextSelection, activeFileExcerptPath, activeFileExcerptText], "final storage no-secret/no-context persistence check");
+  await assertBrowserStorageDoesNotContain(page, [runtimeToken, providerKey, authorizationSentinel, activeContextPath, activeContextSelection, liveContextPath, liveContextSelection, activeFileExcerptPath, activeFileExcerptText, memoryNoteTitle, memoryNoteText, snippetSearchPath, snippetSearchText, verificationOutputTail], "final storage no-secret/no-context persistence check");
   assertNoForbiddenRuntimeRequests();
 
   if (!observedRuntimeAuthorization) failures.push("Mock runtime did not observe Authorization from host.ready session token.");
+  await page.getByPlaceholder("Ask about the current file, selection, or project...").scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   const layoutMetrics = await collectVisualLayoutMetrics(page);
   assertVsCodeVisualLayout(layoutMetrics);
   const evidence = await saveVsCodeWrapperEvidence(page, layoutMetrics);
@@ -500,7 +536,7 @@ try {
 
   if (failures.length > 0) reportFailures();
   console.log("VS Code wrapper browser smoke passed.");
-  console.log(`Verified packaged VS Code GUI assets in a VS Code-like browser bridge, gui.ready, trusted loopback host.ready, readiness/provider/Demo Mode setup surfaces, ${demoModeFirstMessage ? "focused no-key Demo Mode enablement and first-message Send click through mock runtime" : "first-message Send click through mock runtime"}, active context preview and safe include policy, compact assistant read-only IDE action proposal rendering without auto-post, explicit proposal confirmation with GUI-owned strict request, duplicate pending suppression, GUI-only pending clear, stale progress/result ignore, retry with a fresh request id, matching getContextSnapshot/openWorkspaceFile/revealWorkspaceRange progress and result rendering, loopback-only networking, invalid and secret-like host-result rejection/non-rendering, and browser storage no-secret/no-context persistence checks.`);
+  console.log(`Verified packaged VS Code GUI assets in a VS Code-like browser bridge, gui.ready, trusted loopback host.ready, readiness/provider/Demo Mode setup surfaces, first-message Send click through mock runtime, active context preview and safe include policy, local project-memory surface and explicit one-shot attach, explicit literal snippet search request/result/attach, safe edit proposal review/apply/result, allowlisted verification command request/progress/result, compact assistant read-only IDE action proposal rendering without auto-post, explicit proposal confirmation with GUI-owned strict request, duplicate pending suppression, GUI-only pending clear, stale progress/result ignore, retry with a fresh request id, matching getContextSnapshot/openWorkspaceFile/revealWorkspaceRange progress and result rendering, loopback-only networking, invalid and secret-like host-result rejection/non-rendering, and browser storage no-secret/no-context persistence checks.`);
   console.log(`Saved sanitized layout screenshot/DOM/metrics under ${path.relative(root, evidenceRoot)}/ (${path.basename(evidence.screenshotPath)}, ${path.basename(evidence.domPath)}, ${path.basename(evidence.metricsPath)}).`);
   console.log("No real VS Code launch, provider credentials, OpenAI/ChatGPT calls, hosted Yet AI service, or non-loopback provider call was used.");
 } finally {
@@ -549,6 +585,123 @@ async function waitForGuiMessageAfter(page, type, previousCount) {
 
 async function getGuiMessageCount(page, type) {
   return await page.evaluate((messageType) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).length, type);
+}
+
+async function runSafeEditProposalScenario(page) {
+  const chatCommandCountBeforeEditProposal = countChatCommandPosts();
+  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(editProposalPrompt);
+  await clickSendButtonWithActionability(page, "VS Code safe edit proposal trigger");
+  await expectVisibleText(page, editProposalPrompt, "VS Code safe edit proposal trigger prompt");
+  const editProposalChatPosts = countChatCommandPosts() - chatCommandCountBeforeEditProposal;
+  if (editProposalChatPosts !== 1) failures.push(`Safe edit proposal trigger posted ${editProposalChatPosts} chat commands instead of exactly one.`);
+  await expectVisibleText(page, "Propose safe edit", "VS Code safe edit proposal surface");
+  await expectVisibleText(page, editProposalSummary, "VS Code safe edit proposal summary");
+  await expectVisibleText(page, editProposalPath, "VS Code safe edit proposal path");
+  await expectVisibleText(page, "Apply in VS Code after review", "VS Code safe edit apply button");
+  const preClickApplyRequestCount = await getGuiMessageCount(page, "gui.applyWorkspaceEditRequest");
+  await page.getByRole("button", { name: "Apply in VS Code after review", exact: true }).click();
+  const applyRequest = await waitForGuiMessageAfter(page, "gui.applyWorkspaceEditRequest", preClickApplyRequestCount);
+  if (!applyRequest) {
+    failures.push("Clicking reviewed safe edit proposal did not send gui.applyWorkspaceEditRequest.");
+  } else {
+    if (applyRequest.version !== bridgeVersion) failures.push("Safe edit apply request used the wrong bridge version.");
+    if (typeof applyRequest.requestId !== "string" || !/^gui-edit-proposal-apply-s[0-9a-f]{12}-\d+$/.test(applyRequest.requestId)) failures.push("Safe edit apply request id was not GUI-owned with the expected prefix.");
+    if (!deepEqual(applyRequest.payload, editProposalPayload)) failures.push("Safe edit apply request payload changed from the assistant proposal payload.");
+    if (hasForbiddenPrivilegedKeys(applyRequest.payload, { allowEditProposalShape: true })) failures.push("Safe edit apply request payload contained forbidden privileged fields outside the bounded edit proposal shape.");
+  }
+  const applyRequestId = applyRequest?.requestId ?? "gui-edit-proposal-apply-missing";
+  await expectVisibleText(page, "VS Code apply request pending…", "VS Code pending safe edit apply label");
+  const duplicateApplyRequestCount = await getGuiMessageCount(page, "gui.applyWorkspaceEditRequest");
+  await page.getByRole("button", { name: "VS Code apply request pending…", exact: true }).click({ force: true }).catch(() => undefined);
+  await page.waitForTimeout(100);
+  const duplicateApplyPostClickCount = await getGuiMessageCount(page, "gui.applyWorkspaceEditRequest");
+  if (duplicateApplyPostClickCount !== duplicateApplyRequestCount) failures.push("Pending safe edit apply allowed a duplicate gui.applyWorkspaceEditRequest.");
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.applyWorkspaceEditResult",
+    requestId: applyRequestId,
+    payload: { status: "applied", message: "Edits were applied by the host after confirmation.", cloudRequired: false, appliedEditCount: 1, affectedFiles: [editProposalPath] },
+  });
+  await expectVisibleText(page, "Host apply result: applied", "VS Code safe edit apply result");
+  await expectVisibleText(page, "Affected files: src/parity-edit.ts", "VS Code safe edit affected files");
+  await expectVisibleText(page, "Next safe step: run verification.", "VS Code post-apply verification cue");
+}
+
+async function runProjectMemoryScenario(page) {
+  await expectVisibleText(page, "Local project memory", "VS Code project memory surface");
+  await expectVisibleText(page, memoryNoteTitle, "VS Code local memory note title");
+  await expectAttachedText(page, "engine-owned", "VS Code project memory engine-owned badge");
+  await expectVisibleText(page, "Manual bounded notes only", "VS Code project memory local-only policy");
+  await expectAttachedText(page, memoryNoteText, "VS Code project memory bounded preview");
+  const attachButton = page.getByRole("button", { name: "Attach memory to next message", exact: true });
+  await attachButton.click();
+  await expectVisibleText(page, "attached to next message", "VS Code project memory attached badge");
+  await expectVisibleText(page, "Project memory", "VS Code project memory item in bundle");
+  await assertBrowserStorageDoesNotContain(page, [memoryNoteTitle, memoryNoteText], "VS Code project memory surface storage check");
+}
+
+async function runWorkspaceSnippetSearchScenario(page) {
+  await expectVisibleText(page, "Project snippets", "VS Code snippet search surface");
+  await expectVisibleText(page, "IDE search", "VS Code snippet search IDE badge");
+  await page.getByPlaceholder("function name or symbol text").fill(snippetSearchQuery);
+  await expectVisibleText(page, "Literal query ready", "VS Code snippet search literal validation");
+  const preClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
+  await page.getByRole("button", { name: "Search project snippets", exact: true }).click();
+  const searchRequest = await waitForGuiMessageAfter(page, "gui.ideActionRequest", preClickIdeRequestCount);
+  if (!searchRequest) {
+    failures.push("Clicking Search project snippets did not send gui.ideActionRequest.");
+  } else {
+    if (!deepEqual(searchRequest.payload, { action: "searchWorkspaceSnippets", query: snippetSearchQuery })) failures.push("Snippet search IDE action payload was not the strict literal query request.");
+    if (hasForbiddenPrivilegedKeys(searchRequest.payload)) failures.push("Snippet search IDE action request payload contained privileged fields.");
+  }
+  const searchRequestId = searchRequest?.requestId ?? "gui-workspace-snippet-search-missing";
+  await expectVisibleText(page, "Project snippet search pending…", "VS Code snippet search pending label");
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.ideActionResult",
+    requestId: searchRequestId,
+    payload: { status: "succeeded", message: "Workspace snippets ready.", cloudRequired: false, action: "searchWorkspaceSnippets", queryLabel: snippetSearchQuery, resultCount: 1, snippets: [{ workspaceRelativePath: snippetSearchPath, languageId: "typescript", range: { start: { line: 2, character: 0 }, end: { line: 2, character: 33 } }, text: snippetSearchText }], truncated: false },
+  });
+  await expectVisibleText(page, "1 sanitized snippet returned", "VS Code snippet search result status");
+  await expectVisibleText(page, snippetSearchPath, "VS Code snippet search result path");
+  await expectAttachedText(page, snippetSearchText, "VS Code snippet search bounded preview");
+  await page.locator("label.provider-item", { hasText: snippetSearchPath }).getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Attach selected snippets (1)", exact: true }).click();
+  await expectVisibleText(page, "Added 1 project snippet to the one-shot bundle.", "VS Code snippet search bundle attach status");
+  await assertBrowserStorageDoesNotContain(page, [snippetSearchPath, snippetSearchText], "VS Code snippet search storage check");
+}
+
+async function runVerificationCommandScenario(page) {
+  await expectVisibleText(page, "Verification commands", "VS Code verification commands surface");
+  await expectVisibleText(page, "Allowlisted local verification only", "VS Code verification command policy");
+  const preClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
+  await page.getByRole("button", { name: "Repository check", exact: true }).click();
+  const verificationRequest = await waitForGuiMessageAfter(page, "gui.ideActionRequest", preClickIdeRequestCount);
+  if (!verificationRequest) {
+    failures.push("Clicking Repository check did not send gui.ideActionRequest.");
+  } else {
+    if (!deepEqual(verificationRequest.payload, { action: "runVerificationCommand", commandId: "repository-check" })) failures.push("Verification IDE action payload was not the strict allowlisted command request.");
+    if (hasForbiddenPrivilegedKeys(verificationRequest.payload)) failures.push("Verification IDE action request payload contained privileged fields.");
+  }
+  const verificationRequestId = verificationRequest?.requestId ?? "gui-verification-command-missing";
+  await expectVisibleText(page, "Run verification command: pending", "VS Code verification pending preview");
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.ideActionProgress",
+    requestId: verificationRequestId,
+    payload: { phase: "running", status: "inProgress", summary: "Running repository check.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check" },
+  });
+  await expectVisibleText(page, "Run verification command: inProgress", "VS Code verification progress preview");
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.ideActionResult",
+    requestId: verificationRequestId,
+    payload: { status: "succeeded", message: "Repository check passed.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 0, durationMs: 12, outputTail: verificationOutputTail, truncated: false },
+  });
+  await expectVisibleText(page, "Run verification command: succeeded", "VS Code verification result preview");
+  await expectVisibleText(page, verificationOutputTail, "VS Code verification sanitized output tail");
+  await expectVisibleText(page, "Attach verification result to next message", "VS Code verification explicit attach action");
+  await assertBrowserStorageDoesNotContain(page, [verificationOutputTail], "VS Code verification output storage check");
 }
 
 async function runExplicitContextBundleScenario(page) {
@@ -724,6 +877,15 @@ async function startMockRuntimeServer() {
       json(response, 200, { provider: "openai", configured: false, status: "login_unavailable", authSource: "none", supportsLogin: false, supportsApiKey: true, cloudRequired: false, message: "Mock-only wrapper smoke." });
       return;
     }
+    if (request.method === "GET" && requestUrl.pathname === "/v1/project-memory") {
+      json(response, 200, { notes: [mockProjectMemoryNote()], cloudRequired: false, providerAccess: "direct" });
+      return;
+    }
+    if (request.method === "POST" && requestUrl.pathname === "/v1/project-memory/search") {
+      const body = JSON.parse(await readBody(request));
+      json(response, 200, { queryLabel: String(body.query ?? ""), matches: [{ note: mockProjectMemoryNote(), scoreLabel: "literal" }], cloudRequired: false, providerAccess: "direct" });
+      return;
+    }
     if (request.method === "GET" && requestUrl.pathname === "/v1/chats") {
       json(response, 200, { chats: [mockProposalChatSummary()] });
       return;
@@ -748,6 +910,13 @@ async function startMockRuntimeServer() {
       const createdAt = new Date(0).toISOString();
       const userMessage = { id: `user-visual-chat-${mockChatMessages.length}`, chatId, role: "user", content: body.payload?.content ?? "", createdAt, status: "complete" };
       const assistantMessage = { id: `assistant-visual-chat-${mockChatMessages.length}`, chatId, role: "assistant", content: "VS Code wrapper canned chat response.", createdAt, status: "complete" };
+      if (body.payload?.content === editProposalPrompt) {
+        mockChatMessages.push(userMessage, mockEditProposalChatMessage());
+        pushMockChatEvent({ seq: mockChatMessages.length - 1, type: "message_added", chatId, payload: { message: userMessage } });
+        pushMockChatEvent({ seq: mockChatMessages.length, type: "message_added", chatId, payload: { message: mockChatMessages.at(-1) } });
+        json(response, 200, { accepted: true, chatId, requestId: body.requestId ?? "vscode-wrapper-edit-proposal-chat", type: body.type });
+        return;
+      }
       mockChatMessages.push(userMessage, assistantMessage);
       pushMockChatEvent({ seq: mockChatMessages.length - 1, type: "message_added", chatId, payload: { message: userMessage } });
       pushMockChatEvent({ seq: mockChatMessages.length, type: "message_added", chatId, payload: { message: assistantMessage } });
@@ -823,6 +992,14 @@ function assertBundleItem(item, source, expectedPath, expectedText, expectedLine
 
 function assertNoChatCommandContext(command, label) {
   if (command?.payload?.context !== undefined) failures.push(`${label} unexpectedly included prompt context.`);
+}
+
+function mockProjectMemoryNote() {
+  return { id: memoryNoteId, title: memoryNoteTitle, text: memoryNoteText, tags: ["parity"], source: "manual", createdAt: memoryNoteUpdatedAt, updatedAt: memoryNoteUpdatedAt };
+}
+
+function mockEditProposalChatMessage() {
+  return { id: editProposalAssistantMessageId, chatId: "chat-001", role: "assistant", content: JSON.stringify(assistantApplyWorkspaceEditProposal), createdAt: new Date(0).toISOString(), status: "complete" };
 }
 
 function mockProposalChatSummary() {
@@ -970,6 +1147,7 @@ async function collectVisualLayoutMetrics(page) {
     const textarea = document.querySelector("textarea");
     const scroll = document.querySelector(".chat-scroll-region");
     const composer = document.querySelector(".chat-composer");
+    if (textarea instanceof HTMLElement) textarea.scrollIntoView({ block: "center" });
     const sendRect = rectFor(send);
     const textareaRect = rectFor(textarea);
     const viewport = { width: window.innerWidth, height: window.innerHeight };
@@ -1102,8 +1280,9 @@ function deepEqual(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function hasForbiddenPrivilegedKeys(value) {
-  const forbidden = new Set(["shell", "command", "edit", "edits", "tool", "tools", "git", "task", "tasks", "applyWorkspaceEdit", "execute", "executeCommand"]);
+function hasForbiddenPrivilegedKeys(value, options = {}) {
+  const baseForbidden = ["shell", "command", "tool", "tools", "git", "task", "tasks", "applyWorkspaceEdit", "execute", "executeCommand"];
+  const forbidden = new Set(options.allowEditProposalShape ? baseForbidden : [...baseForbidden, "edit", "edits"]);
   const visit = (current) => {
     if (!current || typeof current !== "object") return false;
     if (Array.isArray(current)) return current.some(visit);
