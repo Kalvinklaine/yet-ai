@@ -741,6 +741,17 @@ pre,
   gap: 8px;
 }
 
+.coding-task-template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.coding-task-template-grid button {
+  align-items: flex-start;
+  text-align: left;
+}
+
 .agent-progress-output {
   white-space: pre-wrap;
 }

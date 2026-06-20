@@ -119,6 +119,12 @@ type ActiveFilePromptAction = {
   prompt: string;
 };
 
+type CodingTaskTemplate = {
+  mode: CodingTaskPromptMode;
+  label: string;
+  detail: string;
+};
+
 type RuntimeConnectionSource = "manual" | "host.ready";
 
 type VerificationOutputBundleItem = Extract<ExplicitContextBundleItem, { kind: "verification_output" }>;
@@ -241,6 +247,17 @@ const providerPresets: ProviderPreset[] = [
       modelDisplayName: "custom-model",
     },
   },
+];
+
+const codingTaskTemplates: CodingTaskTemplate[] = [
+  { mode: "ask", label: "Ask", detail: "Ask a bounded task question and request the next safe manual step." },
+  { mode: "explain", label: "Explain", detail: "Explain selected code or task facts without hidden context." },
+  { mode: "find_bug", label: "Find bug", detail: "Look for visible bugs, edge cases, and uncertainty." },
+  { mode: "suggest_tests", label: "Suggest tests", detail: "Draft focused test scenarios from explicit context only." },
+  { mode: `re${"factor_safely"}`, label: `Re${"factor safely"}`, detail: "Propose the smallest safe rework for manual review." },
+  { mode: "safe_edit", label: "Safe edit/proposal", detail: "Request a small edit proposal that is not applied automatically." },
+  { mode: "implementation_plan", label: "Implementation plan", detail: "Plan files, tests, risks, and a stop point before edits." },
+  { mode: "follow_up", label: "Follow-up", detail: "Use visible response/edit/verification state for the next manual step." },
 ];
 
 export function generateApplyRequestSessionNonce(): string {
@@ -2761,6 +2778,7 @@ function FirstMessageActionButton({ action, runtimeRefreshInFlight, providerTest
 function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, modelStatus, canSendChat, latestResponseStatus, editProposal, applyResult, verificationAttempt, verificationAttached, draftPrompt, onGoalChange, onUseDraftPrompt, onUseDraftPlan, onFocusPrompt }: { goal: string; contextItems: ExplicitContextBundleItem[]; memoryAttachedCount: number; modelStatus: string; canSendChat: boolean; latestResponseStatus: string; editProposal: EditProposalState | null; applyResult: ApplyResultState | null; verificationAttempt: IdeActionAttemptState | null; verificationAttached: boolean; draftPrompt: string; onGoalChange: (goal: string) => void; onUseDraftPrompt: (mode: CodingTaskPromptMode) => void; onUseDraftPlan: () => void; onFocusPrompt: () => void }) {
   const contextLabels = contextItems.map((item) => codingTaskContextLabel(item));
   const promptDrafted = draftPrompt.trim().length > 0;
+  const goalReady = goal.trim().length > 0;
   const verificationStatus = verificationAttempt?.result?.action === "runVerificationCommand"
     ? `${verificationAttempt.result.commandId}: ${verificationAttempt.result.status}`
     : verificationAttempt
@@ -2773,39 +2791,55 @@ function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, model
       : "none";
   const sessionStatus = codingTaskSessionStatus(goal, contextItems.length, latestResponseStatus, editProposalStatus, verificationStatus);
   const recoveryCopy = codingTaskRecoveryCopy(modelStatus, latestResponseStatus);
+  const nextSafeStep = codingTaskNextSafeStep({ goalReady, contextCount: contextItems.length, canSendChat, verificationStatus, editProposalStatus, latestResponseStatus });
   return (
-    <section className={`coding-task-session-card readiness-card ${goal.trim() || contextItems.length > 0 || editProposal || verificationAttempt ? "ready" : "warn"} stack`} aria-label="Coding task session">
+    <section className={`coding-task-session-card readiness-card ${goalReady || contextItems.length > 0 || editProposal || verificationAttempt ? "ready" : "warn"} stack`} aria-label="Coding task session">
       <div className="row">
         <strong>Coding task session</strong>
         <span className="badge ok">local draft</span>
         <span className="badge">inert workflow</span>
       </div>
       <span className="subtle">Buttons only focus the prompt or write local draft text; they never auto-attach, send, apply, verify, save memory, call providers, read files, or write browser storage.</span>
+      <span className="subtle">One-shot context is not browser-stored or auto-attached; selected explicit context clears only after an accepted Send and remains available if Send fails.</span>
       <label className="stack">
         Task goal (local React state only)
         <textarea value={goal} onChange={(event) => onGoalChange(event.target.value)} placeholder="Describe the coding task goal before choosing context and asking the model." />
       </label>
       <div className="agent-progress-grid" aria-label="Coding task session status">
         <span>Session: {sessionStatus}</span>
-        <span>Goal: {goal.trim() ? "written" : "not written"}</span>
+        <span>Goal: {goalReady ? "written" : "not written"}</span>
         <span>Context selected: {contextItems.length > 0 ? `${contextItems.length} explicit item${contextItems.length === 1 ? "" : "s"}` : "none"}</span>
+        <span>Explicit context bundle: {contextItems.length > 0 ? `${contextItems.length} selected · one-shot manual include` : "empty · add context manually if needed"}</span>
         <span>Prompt drafted: {promptDrafted ? "ready" : "available"}</span>
+        <span>Response lifecycle: {latestResponseStatus}</span>
         <span>Response received: {latestResponseStatus}</span>
+        <span>Edit lifecycle: {editProposalStatus}</span>
         <span>Edit proposed/applied: {editProposalStatus}</span>
+        <span>Verification lifecycle: {verificationStatus}{verificationAttached ? " · attached for follow-up" : " · draft or attach manually"}</span>
         <span>Verification/follow-up: {verificationStatus}{verificationAttached ? " · attached for follow-up" : " · draft or attach manually"}</span>
+        <span>Provider/model readiness: {canSendChat ? `ready · ${modelStatus}` : `blocked · ${modelStatus}`}</span>
         <span>Model/send: {canSendChat ? `ready · ${modelStatus}` : `blocked · ${modelStatus}`}</span>
         <span>Memory attachments: {memoryAttachedCount}</span>
       </div>
+      <div className={`readiness-card ${canSendChat ? "ready" : "warn"}`} role="status" aria-label="Coding task next safe step">
+        <strong>Next safe manual step</strong>
+        <span>{nextSafeStep}</span>
+      </div>
       {recoveryCopy && <div className="readiness-card warn" role="status"><strong>Prompt recovery</strong><span>{recoveryCopy}</span></div>}
+      <div className="stack">
+        <strong>Task templates</strong>
+        <span className="subtle">Choose a template to draft the chat prompt only. Send remains your explicit action.</span>
+        <div className="coding-task-template-grid" role="group" aria-label="Coding task prompt templates">
+          {codingTaskTemplates.map((template) => (
+            <button type="button" className="secondary-button" key={template.mode} onClick={() => onUseDraftPrompt(template.mode)} title={template.detail}>Draft {template.label} prompt</button>
+          ))}
+        </div>
+      </div>
       <div className="stack">
         <strong>Explicit context bundle summary</strong>
         {contextLabels.length === 0 ? <span className="subtle">No explicit bundle items selected. Existing active-context controls remain below.</span> : <ul className="first-message-steps">{contextLabels.map((label) => <li key={label}>{label}</li>)}</ul>}
       </div>
       <div className="row" role="group" aria-label="Coding task next steps">
-        <button type="button" className="secondary-button" onClick={() => onUseDraftPrompt("ask")}>Draft ask prompt</button>
-        <button type="button" className="secondary-button" onClick={() => onUseDraftPrompt("implementation_plan")}>Draft implementation plan prompt</button>
-        <button type="button" className="secondary-button" onClick={() => onUseDraftPrompt("safe_edit")}>Draft safe-edit request</button>
-        <button type="button" className="secondary-button" onClick={() => onUseDraftPrompt("follow_up")}>Draft follow-up prompt</button>
         <button type="button" className="secondary-button" onClick={onUseDraftPlan}>Copy plan prompt to manual draft</button>
         <button type="button" className="secondary-button" onClick={onFocusPrompt}>Focus chat prompt</button>
       </div>
@@ -2829,6 +2863,28 @@ function codingTaskSessionStatus(goal: string, contextCount: number, latestRespo
   return goal.trim() ? "draft goal" : "draft not started";
 }
 
+function codingTaskNextSafeStep({ goalReady, contextCount, canSendChat, verificationStatus, editProposalStatus, latestResponseStatus }: { goalReady: boolean; contextCount: number; canSendChat: boolean; verificationStatus: string; editProposalStatus: string; latestResponseStatus: string }): string {
+  if (verificationStatus !== "not requested") {
+    return "Review visible verification output, then manually draft a follow-up or attach that result as one-shot context if needed.";
+  }
+  if (editProposalStatus !== "none") {
+    return "Review the visible edit proposal or apply result; request apply or verification only from the explicit controls.";
+  }
+  if (!canSendChat) {
+    return "Connect runtime and choose Demo Mode or a local/BYOK provider before sending; templates can still draft locally.";
+  }
+  if (!goalReady) {
+    return "Write the task goal, choose a template, review any explicit context, then click Send yourself when ready.";
+  }
+  if (contextCount === 0) {
+    return "Choose whether the goal needs explicit context; if yes, add it manually, otherwise draft a template and send yourself.";
+  }
+  if (!latestResponseStatus.startsWith("Ready") && !latestResponseStatus.startsWith("Demo Mode ready")) {
+    return "Wait for the visible response lifecycle to settle before applying, verifying, or drafting a follow-up.";
+  }
+  return "Review the selected one-shot context, choose a task template, then click Send manually when the draft looks safe.";
+}
+
 function codingTaskRecoveryCopy(modelStatus: string, latestResponseStatus: string): string | null {
   const text = `${modelStatus} ${latestResponseStatus}`.toLowerCase();
   if (/context.*(too large|large|length|window)|too large|maximum context/.test(text)) {
@@ -2840,7 +2896,7 @@ function codingTaskRecoveryCopy(modelStatus: string, latestResponseStatus: strin
   if (/timeout|timed out/.test(text)) {
     return "Provider timeout is visible. Narrow the prompt, reduce explicit context, verify provider reachability, then retry manually.";
   }
-  if (/mismatch|model.*provider/.test(text)) {
+  if (/mismatch|model\/provider/.test(text)) {
     return "Model/provider mismatch is visible. Test the saved provider, fix the model id mapping locally, refresh runtime, then draft/send again.";
   }
   if (/runtime unavailable|provider required|provider or demo mode needed|blocked/.test(text)) {

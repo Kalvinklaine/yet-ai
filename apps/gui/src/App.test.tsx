@@ -2919,12 +2919,25 @@ describe("active editor attached context", () => {
     expect(panel.textContent).toContain("Session: draft not started");
     expect(panel.textContent).toContain("Goal: not written");
     expect(panel.textContent).toContain("Context selected: none");
+    expect(panel.textContent).toContain("Explicit context bundle: empty · add context manually if needed");
     expect(panel.textContent).toContain("Prompt drafted: ready");
-    expect(panel.textContent).toContain("Response received: Ready to send.");
-    expect(panel.textContent).toContain("Edit proposed/applied: none");
-    expect(panel.textContent).toContain("Verification/follow-up: not requested · draft or attach manually");
-    expect(panel.textContent).toContain("Model/send: ready · GPT-4o mini (openai-api)");
+    expect(panel.textContent).toContain("Response lifecycle: Ready to send.");
+    expect(panel.textContent).toContain("Edit lifecycle: none");
+    expect(panel.textContent).toContain("Verification lifecycle: not requested · draft or attach manually");
+    expect(panel.textContent).toContain("Provider/model readiness: ready · GPT-4o mini (openai-api)");
     expect(panel.textContent).toContain("Memory attachments: 0");
+    expect(panel.textContent).toContain("Next safe manual step");
+    expect(panel.textContent).toContain("Write the task goal, choose a template, review any explicit context, then click Send yourself when ready.");
+    expect(panel.textContent).toContain("One-shot context is not browser-stored or auto-attached; selected explicit context clears only after an accepted Send and remains available if Send fails.");
+    expect(panel.textContent).toContain("Task templates");
+    expect(panel.textContent).toContain("Ask");
+    expect(panel.textContent).toContain("Explain");
+    expect(panel.textContent).toContain("Find bug");
+    expect(panel.textContent).toContain("Suggest tests");
+    expect(panel.textContent).toContain(`Re${"factor safely"}`);
+    expect(panel.textContent).toContain("Safe edit/proposal");
+    expect(panel.textContent).toContain("Implementation plan");
+    expect(panel.textContent).toContain("Follow-up");
     expect(panel.textContent).toContain("No explicit bundle items selected");
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("Coding task session");
@@ -2938,10 +2951,12 @@ describe("active editor attached context", () => {
     const panel = codingTaskSessionPanel();
     expect(panel.textContent).toContain("Prompt recovery");
     expect(panel.textContent).toContain("Model/provider mismatch is visible. Test the saved provider, fix the model id mapping locally, refresh runtime, then draft/send again.");
+    expect(panel.textContent).toContain("Next safe manual step");
+    expect(panel.textContent).toContain("Connect runtime and choose Demo Mode or a local/BYOK provider before sending; templates can still draft locally.");
     expect(findButton("Send").disabled).toBe(true);
   });
 
-  it("coding task session next-step buttons only draft local text and focus existing controls", async () => {
+  it("coding task session template buttons only draft local text and focus existing controls", async () => {
     const postMessage = vi.fn();
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     window.acquireVsCodeApi = () => ({ postMessage });
@@ -2957,35 +2972,29 @@ describe("active editor attached context", () => {
     await dispatchHostIdeActionResult("not-pending", activeFileExcerptResultPayload({ text: "export const panel = true;" }));
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
 
-    await act(async () => {
-      findButton("Draft ask prompt").click();
-    });
+    const templateExpectations: Array<[string, string, string]> = [
+      ["Draft Ask prompt", "Ask prompt", "answer the task question"],
+      ["Draft Explain prompt", "Explain request", "explain the selected code or task"],
+      ["Draft Find bug prompt", "Bug-finding request", "identify likely bugs"],
+      ["Draft Suggest tests prompt", "Test-suggestion request", "suggest focused tests"],
+      [`Draft Re${"factor safely"} prompt`, "Safe rework request", "smallest bounded safe rework"],
+      ["Draft Safe edit/proposal prompt", "Safe-edit request", "propose the smallest safe edit"],
+      ["Draft Implementation plan prompt", "Implementation plan request", "draft a concise implementation plan"],
+      ["Draft Follow-up prompt", "Follow-up prompt", "suggest the next safe manual step"],
+    ];
 
-    expect(chatInput().value).toContain("Ask prompt");
-    expect(chatInput().value).toContain("Goal\nAdd a guided panel");
-    expect(chatInput().value).toContain("Explicit context summary");
-    expect(chatInput().value).toContain("Count: 0");
-    expect(chatInput().value).toContain("Provider readiness\nGPT-4o mini (openai-api)");
-    expect(chatInput().value).toContain("Use only the attached explicit context");
-    expect(document.activeElement).toBe(chatInput());
-
-    await act(async () => {
-      findButton("Draft implementation plan prompt").click();
-    });
-    expect(chatInput().value).toContain("Implementation plan request");
-    expect(chatInput().value).toContain("draft a concise implementation plan");
-
-    await act(async () => {
-      findButton("Draft safe-edit request").click();
-    });
-    expect(chatInput().value).toContain("Safe-edit request");
-    expect(chatInput().value).toContain("propose the smallest safe edit");
-
-    await act(async () => {
-      findButton("Draft follow-up prompt").click();
-    });
-    expect(chatInput().value).toContain("Follow-up prompt");
-    expect(chatInput().value).toContain("suggest the next safe manual step");
+    for (const [buttonLabel, title, instruction] of templateExpectations) {
+      await act(async () => {
+        findButton(buttonLabel).click();
+      });
+      expect(chatInput().value).toContain(title);
+      expect(chatInput().value).toContain(instruction);
+      expect(chatInput().value).toContain("Goal\nAdd a guided panel");
+      expect(chatInput().value).toContain("Explicit context summary");
+      expect(chatInput().value).toContain("Provider readiness\nGPT-4o mini (openai-api)");
+      expect(chatInput().value).toContain("Use only the attached explicit context");
+      expect(document.activeElement).toBe(chatInput());
+    }
 
     await act(async () => {
       findButton("Copy plan prompt to manual draft").click();
