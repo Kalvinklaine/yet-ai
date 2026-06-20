@@ -53,7 +53,7 @@ scripts/               # Validation, smoke, packaging, and local helper scripts
 
 ## Product assets and versions
 
-The original Yet AI icon lives at `assets/identity/yet-ai-icon.svg`, with generated PNG derivatives in the same folder. Plugin preview icons are derived copies: VS Code uses `apps/plugins/vscode/media/yet-ai-icon-128.png`, and JetBrains uses `apps/plugins/jetbrains/src/main/resources/META-INF/pluginIcon.svg`. `npm run check` validates that these assets exist, that plugin copies match their source assets, and that SVG icons do not contain scripts, remote image references, or external refs.
+The original Yet AI icon lives at `assets/identity/yet-ai-icon.svg`, with generated PNG derivatives in the same folder. `assets/identity/yet-ai-icon-derivatives.json` records the source SVG hash and PNG derivative hashes so SVG-only icon drift fails validation. Plugin preview icons are derived copies: VS Code uses `apps/plugins/vscode/media/yet-ai-icon-128.png`, and JetBrains uses `apps/plugins/jetbrains/src/main/resources/META-INF/pluginIcon.svg`. `npm run check` validates that these assets exist, that plugin copies match their source assets, that derivative metadata is current, and that SVG icons do not contain scripts, images, event handlers, or non-fragment references.
 
 Versions are intentionally static during dev-preview (`0.0.1` for the VS Code package and `0.1.0` for the JetBrains preview). Do not bump them just to reflect icon or docs changes. Before a production release, add a single version source and an artifact manifest consistency check so plugin/package versions move together.
 

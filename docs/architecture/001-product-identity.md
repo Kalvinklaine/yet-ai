@@ -88,7 +88,7 @@ Owned by product architecture.
 
 ## Icon assets and dev-preview versions
 
-The icon source of truth is `assets/identity/yet-ai-icon.svg`, with generated PNG derivatives beside it. Plugin icon files are derived copies for current packaging conventions: VS Code points its manifest `icon` field at `apps/plugins/vscode/media/yet-ai-icon-128.png`, while JetBrains packages `apps/plugins/jetbrains/src/main/resources/META-INF/pluginIcon.svg`. Keep these copies regenerated from the source asset; `npm run check` includes icon validation for presence, SVG safety, and copy consistency.
+The icon source of truth is `assets/identity/yet-ai-icon.svg`, with generated PNG derivatives beside it. `assets/identity/yet-ai-icon-derivatives.json` records the source SVG hash and PNG derivative hashes used by validation; update it whenever regenerating the PNG derivatives. Plugin icon files are derived copies for current packaging conventions: VS Code points its manifest `icon` field at `apps/plugins/vscode/media/yet-ai-icon-128.png`, while JetBrains packages `apps/plugins/jetbrains/src/main/resources/META-INF/pluginIcon.svg`. Keep these copies regenerated from the source asset; `npm run check` includes icon validation for presence, SVG safety, derivative freshness metadata, and copy consistency.
 
 Current package/plugin versions are static dev-preview placeholders. Keep `0.0.1` for the VS Code package and `0.1.0` for the JetBrains preview until release automation exists. A future pre-release sprint should add one version source plus artifact manifest consistency checks before any production release or marketplace publication claim.
 

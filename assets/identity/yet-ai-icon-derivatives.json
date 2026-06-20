@@ -1,0 +1,14 @@
+{
+  "sourceSvg": "assets/identity/yet-ai-icon.svg",
+  "sourceSvgSha256": "f0105db78256a15bef737a5892c93aa166a43f224420cb5a4b1a34ea2676992a",
+  "derivatives": {
+    "assets/identity/yet-ai-icon-128.png": {
+      "size": 128,
+      "sha256": "c65a7c3369e0a0c595d6af19c21d5d67ffc899c9e4beffb68ec4b19128b96834"
+    },
+    "assets/identity/yet-ai-icon-256.png": {
+      "size": 256,
+      "sha256": "00ab5cb8dc71d0bf32532258aad995af6a3bdb1b81326461d87c459bd9fd3622"
+    }
+  }
+}

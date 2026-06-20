@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 
 const errors = [];
@@ -7,7 +8,8 @@ const iconPaths = {
   sourcePng128: "assets/identity/yet-ai-icon-128.png",
   sourcePng256: "assets/identity/yet-ai-icon-256.png",
   vscodePng: "apps/plugins/vscode/media/yet-ai-icon-128.png",
-  jetbrainsSvg: "apps/plugins/jetbrains/src/main/resources/META-INF/pluginIcon.svg"
+  jetbrainsSvg: "apps/plugins/jetbrains/src/main/resources/META-INF/pluginIcon.svg",
+  derivativeMetadata: "assets/identity/yet-ai-icon-derivatives.json"
 };
 
 function addError(path, message) {
@@ -32,6 +34,20 @@ async function readBytes(path) {
   }
 }
 
+async function readJson(path) {
+  const text = await readText(path);
+  if (!text) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    addError(path, `must be valid JSON (${error.message})`);
+    return null;
+  }
+}
+
 async function requireFile(path) {
   try {
     const details = await stat(path);
@@ -41,6 +57,10 @@ async function requireFile(path) {
   } catch (error) {
     addError(path, `missing file (${error.message})`);
   }
+}
+
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 function validateSvg(path, svg) {
@@ -55,15 +75,25 @@ function validateSvg(path, svg) {
   const forbiddenPatterns = [
     [/<script\b/i, "must not contain script elements"],
     [/<foreignObject\b/i, "must not contain foreignObject elements"],
-    [/\bon\w+\s*=/i, "must not contain inline event handlers"],
-    [/\b(?:href|xlink:href)\s*=\s*["'](?:https?:|data:|\/\/)/i, "must not contain external or embedded href references"],
-    [/url\(\s*["']?(?:https?:|data:|\/\/)/i, "must not contain external or embedded url references"],
-    [/<image\b/i, "must not contain image elements"]
+    [/<image\b/i, "must not contain image elements"],
+    [/\bon\w+\s*=/i, "must not contain inline event handlers"]
   ];
 
   for (const [pattern, message] of forbiddenPatterns) {
     if (pattern.test(svg)) {
       addError(path, message);
+    }
+  }
+
+  for (const match of svg.matchAll(/\b(?:href|xlink:href)\s*=\s*(["'])(.*?)\1/gi)) {
+    if (!match[2].startsWith("#")) {
+      addError(path, "href references must use internal fragments only");
+    }
+  }
+
+  for (const match of svg.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)/gi)) {
+    if (!match[2].startsWith("#")) {
+      addError(path, "url references must use internal fragments only");
     }
   }
 }
@@ -79,6 +109,18 @@ function validatePng(path, bytes) {
   }
 }
 
+function requirePngSize(path, bytes, expectedSize) {
+  if (!bytes || bytes.length < 24) {
+    return;
+  }
+
+  const width = bytes.readUInt32BE(16);
+  const height = bytes.readUInt32BE(20);
+  if (width !== expectedSize || height !== expectedSize) {
+    addError(path, `must be ${expectedSize}x${expectedSize}px`);
+  }
+}
+
 function requireSameContent(leftPath, left, rightPath, right, description) {
   if (!left || !right) {
     return;
@@ -86,6 +128,53 @@ function requireSameContent(leftPath, left, rightPath, right, description) {
 
   if (!left.equals(right)) {
     addError(rightPath, `must match ${leftPath} (${description})`);
+  }
+}
+
+function requireHash(path, bytes, expectedHash, description) {
+  if (!bytes) {
+    return;
+  }
+
+  if (typeof expectedHash !== "string" || !/^[a-f0-9]{64}$/.test(expectedHash)) {
+    addError(path, `must have a sha256 value in ${description}`);
+    return;
+  }
+
+  const actualHash = sha256(bytes);
+  if (actualHash !== expectedHash) {
+    addError(path, `sha256 must match ${description} (${expectedHash})`);
+  }
+}
+
+function validateDerivativeMetadata(metadata, sourceSvgBytes, sourcePng128, sourcePng256) {
+  if (!metadata) {
+    return;
+  }
+
+  if (metadata.sourceSvg !== iconPaths.sourceSvg) {
+    addError(iconPaths.derivativeMetadata, `sourceSvg must be ${iconPaths.sourceSvg}`);
+  }
+
+  requireHash(iconPaths.sourceSvg, sourceSvgBytes, metadata.sourceSvgSha256, iconPaths.derivativeMetadata);
+
+  const expectedDerivatives = [
+    [iconPaths.sourcePng128, sourcePng128, 128],
+    [iconPaths.sourcePng256, sourcePng256, 256]
+  ];
+
+  for (const [path, bytes, size] of expectedDerivatives) {
+    const record = metadata.derivatives?.[path];
+    if (!record) {
+      addError(iconPaths.derivativeMetadata, `must record ${path}`);
+      continue;
+    }
+
+    if (record.size !== size) {
+      addError(iconPaths.derivativeMetadata, `${path} size must be ${size}`);
+    }
+
+    requireHash(path, bytes, record.sha256, iconPaths.derivativeMetadata);
   }
 }
 
@@ -98,12 +187,19 @@ const jetbrainsSvg = await readText(iconPaths.jetbrainsSvg);
 validateSvg(iconPaths.sourceSvg, sourceSvg);
 validateSvg(iconPaths.jetbrainsSvg, jetbrainsSvg);
 
+const sourceSvgBytes = await readBytes(iconPaths.sourceSvg);
 const sourcePng128 = await readBytes(iconPaths.sourcePng128);
 const sourcePng256 = await readBytes(iconPaths.sourcePng256);
 const vscodePng = await readBytes(iconPaths.vscodePng);
 validatePng(iconPaths.sourcePng128, sourcePng128);
 validatePng(iconPaths.sourcePng256, sourcePng256);
 validatePng(iconPaths.vscodePng, vscodePng);
+requirePngSize(iconPaths.sourcePng128, sourcePng128, 128);
+requirePngSize(iconPaths.sourcePng256, sourcePng256, 256);
+requirePngSize(iconPaths.vscodePng, vscodePng, 128);
+
+const derivativeMetadata = await readJson(iconPaths.derivativeMetadata);
+validateDerivativeMetadata(derivativeMetadata, sourceSvgBytes, sourcePng128, sourcePng256);
 
 if (sourceSvg && jetbrainsSvg && sourceSvg !== jetbrainsSvg) {
   addError(iconPaths.jetbrainsSvg, `must match ${iconPaths.sourceSvg} as the JetBrains plugin icon source copy`);
