@@ -13,7 +13,7 @@ import { listProviders, saveProvider, testProvider, type ProviderSummary, type P
 import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type DemoModeResponse, type ManualRunnerPlanProposal, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
-import { editProposalCandidateIdentityMatches, editProposalPayloadKey, isCompleteAssistantEditProposalStatus, latestEditProposalCandidateFromMessages, parseEditProposalContent, type EditProposalIdentity } from "./services/editProposal";
+import { analyzeEditProposalContent, editProposalCandidateIdentityMatches, editProposalPayloadKey, isCompleteAssistantEditProposalStatus, latestEditProposalCandidateFromMessages, latestEditProposalReviewFromMessages, parseEditProposalContent, type EditProposalIdentity } from "./services/editProposal";
 import { codingActions, type CodingAction } from "./services/codingActions";
 import { buildCodingTaskPrompt, type CodingTaskPromptMode } from "./services/codingTaskPrompt";
 import { buildVerificationFollowupPrompt, type VerificationFollowupPromptMode } from "./services/verificationFollowupPrompt";
@@ -463,8 +463,10 @@ export function App() {
   const currentAttachedContext = currentAttachedContextState?.payload ?? null;
   const currentActiveFileExcerpt = currentAttachedContextState?.excerpt ?? null;
   const codingActionsCanUseContext = Boolean(currentAttachedContext && !currentActiveFileExcerpt && hasUsableAttachedContext(currentAttachedContext) && (!attachedContextRequiresAcknowledgement(currentAttachedContext) || attachedContextAcknowledged));
-  const editProposalCandidate = latestEditProposalCandidateFromMessages(chatView.messages);
+  const editProposalReview = useMemo(() => latestEditProposalReviewFromMessages(chatView.messages), [chatView.messages]);
+  const editProposalCandidate = editProposalReview.state === "valid" ? editProposalReview.candidate : null;
   const activeEditProposal = editProposalCandidateIdentityMatches(editProposal, editProposalCandidate) ? editProposal : null;
+  const activeRejectedEditProposal = editProposalReview.state === "rejected" ? { sourceMessageId: editProposalReview.sourceMessageId, diagnostic: editProposalReview.diagnostic } : null;
   const ideActionProposalCandidate = useMemo(() => latestIdeActionProposalCandidateFromMessages(chatView.messages), [chatView.messages]);
   const activeIdeActionProposal = ideActionProposalMatchesCandidate(ideActionProposal, ideActionProposalCandidate) ? ideActionProposal : null;
   const safeActiveWorkspacePath = currentAttachedContext?.file?.workspaceRelativePath;
@@ -1742,11 +1744,12 @@ export function App() {
   }, [ideActionProposalCandidate]);
 
   useEffect(() => {
-    const candidate = latestEditProposalCandidateFromMessages(chatView.messages);
-    if (!candidate) {
+    const review = latestEditProposalReviewFromMessages(chatView.messages);
+    if (review.state !== "valid") {
       clearEditProposalState();
       return;
     }
+    const candidate = review.candidate;
     const existing = editProposalIdentityRef.current;
     const stableRequestId = existing && editProposalCandidateIdentityMatches(existing, candidate) ? existing.requestId : null;
     const proposal = stableRequestId
@@ -2225,11 +2228,11 @@ export function App() {
             </details>
             <div className="chat-scroll-region" ref={chatScrollRegionRef} aria-label="Chat messages">
               <div className="chat-panel">
-                {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} activeDemoMode={activeSelectedDemoMode} selectedModelDisplayName={selectedModelDisplayName} selectedModelProviderId={selectedModelProviderId} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect()} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeEditProposal={activeEditProposal} activeIdeActionProposal={activeIdeActionProposal} />)}
+                {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} activeDemoMode={activeSelectedDemoMode} selectedModelDisplayName={selectedModelDisplayName} selectedModelProviderId={selectedModelProviderId} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect()} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeEditProposal={activeEditProposal} rejectedEditProposalSourceMessageId={activeRejectedEditProposal?.sourceMessageId ?? null} activeIdeActionProposal={activeIdeActionProposal} />)}
                 <span className={`chat-lifecycle-state ${chatLifecycleState}`}>{chatLifecycleLabel}</span>
                 {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
               </div>
-              <EditProposalPanel proposal={activeEditProposal} result={activeEditProposal ? applyResult : null} host={bridgeHost} pendingRequestId={pendingApplyRequestId} note={applyNote} onApply={submitEditProposal} onCancelPending={cancelPendingEditProposalApply} />
+              <EditProposalPanel proposal={activeEditProposal} rejected={activeRejectedEditProposal} result={activeEditProposal ? applyResult : null} host={bridgeHost} pendingRequestId={pendingApplyRequestId} note={applyNote} onApply={submitEditProposal} onCancelPending={cancelPendingEditProposalApply} />
               <IdeActionProposalPanel proposal={activeIdeActionProposal} host={bridgeHost} pending={pendingIdeActionRequestIdRef.current !== null} onRun={(payload) => requestIdeAction(payload, "gui-ide-proposal-action")} />
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
@@ -2606,13 +2609,15 @@ function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, activeDe
   );
 }
 
-function ChatBubble({ message, activeEditProposal, activeIdeActionProposal }: { message: ChatViewMessage; activeEditProposal: EditProposalState | null; activeIdeActionProposal: IdeActionProposalState | null }) {
+function ChatBubble({ message, activeEditProposal, rejectedEditProposalSourceMessageId, activeIdeActionProposal }: { message: ChatViewMessage; activeEditProposal: EditProposalState | null; rejectedEditProposalSourceMessageId: string | null; activeIdeActionProposal: IdeActionProposalState | null }) {
   const [inspectedProposalPayloadKey, setInspectedProposalPayloadKey] = useState<string | null>(null);
   const [inspectedEditProposalKey, setInspectedEditProposalKey] = useState<string | null>(null);
   const editProposal = message.role === "assistant" && isCompleteAssistantEditProposalStatus(message.status) ? parseEditProposalContent(message.content) : null;
+  const editProposalAnalysis = message.role === "assistant" && isCompleteAssistantEditProposalStatus(message.status) ? analyzeEditProposalContent(message.content) : { state: "none" as const };
   const editProposalJson = editProposal ? JSON.stringify(editProposal, null, 2) : null;
   const editProposalKey = editProposal ? editProposalPayloadKey(editProposal) : null;
   const isActiveEditProposal = Boolean(editProposalKey && activeEditProposal?.sourceMessageId === message.id && activeEditProposal.payloadKey === editProposalKey);
+  const isRejectedEditProposal = editProposalAnalysis.state === "rejected" && rejectedEditProposalSourceMessageId === message.id;
   const proposal = message.role === "assistant" && isCompleteAssistantIdeActionProposalStatus(message.status) ? parseAssistantIdeActionProposalContent(message.content) : null;
   const proposalJson = proposal ? JSON.stringify(proposal, null, 2) : null;
   const proposalPayloadKey = proposal ? ideActionProposalPayloadKey(proposal) : null;
@@ -2633,6 +2638,10 @@ function ChatBubble({ message, activeEditProposal, activeIdeActionProposal }: { 
           <span>{isActiveEditProposal ? "Proposed a safe edit. Review the proposal card below. It will not apply automatically." : "Earlier safe edit proposal. Only the latest valid proposal can be requested from the proposal card."}</span>
           <button type="button" className="link-button" onClick={() => setInspectedEditProposalKey(editProposalJsonVisible ? null : editProposalKey)}>{editProposalJsonVisible ? "Hide proposal JSON" : "Inspect proposal JSON"}</button>
           {editProposalJsonVisible && <pre aria-label="Assistant edit proposal JSON">{editProposalJson}</pre>}
+        </div>
+      ) : isRejectedEditProposal ? (
+        <div className="assistant-proposal-compact stack">
+          <span>Edit proposal detected but rejected. Review the rejection card below; no apply action is available.</span>
         </div>
       ) : proposal && proposalJson && proposalLabel ? (
         <div className="assistant-proposal-compact stack">

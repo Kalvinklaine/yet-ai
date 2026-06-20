@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ApplyWorkspaceEditPayload, ApplyWorkspaceEditResultPayload, BridgeHost } from "../bridge/bridgeAdapter";
+import type { EditProposalRejectedDiagnostic } from "../services/editProposal";
 import { buildEditProposalQualitySummary } from "../services/editProposalQuality";
 import { sanitizeDisplayText } from "../services/redaction";
 
@@ -16,8 +17,14 @@ export type ApplyResultState = {
   payload: ApplyWorkspaceEditResultPayload;
 };
 
+export type RejectedEditProposalState = {
+  sourceMessageId: string;
+  diagnostic: EditProposalRejectedDiagnostic;
+};
+
 export type EditProposalPanelProps = {
   proposal: EditProposalState | null;
+  rejected: RejectedEditProposalState | null;
   result: ApplyResultState | null;
   host: BridgeHost;
   pendingRequestId: string | null;
@@ -26,21 +33,33 @@ export type EditProposalPanelProps = {
   onCancelPending: () => void;
 };
 
-export function EditProposalPanel({ proposal, result, host, pendingRequestId, note, onApply, onCancelPending }: EditProposalPanelProps) {
-  if (!proposal && !result && !note) {
+export function EditProposalPanel({ proposal, rejected, result, host, pendingRequestId, note, onApply, onCancelPending }: EditProposalPanelProps) {
+  if (!proposal && !rejected && !result && !note) {
     return null;
   }
+  const title = rejected && !proposal ? "Edit proposal detected but rejected" : "Propose safe edit";
   return (
-    <section className="edit-proposal-card stack" aria-label="Propose safe edit preview">
+    <section className={`edit-proposal-card stack ${rejected && !proposal ? "rejected" : ""}`} aria-label={rejected && !proposal ? "Rejected edit proposal" : "Propose safe edit preview"}>
       <div className="row">
-        <strong>Propose safe edit</strong>
+        <strong>{title}</strong>
         <span className="badge warn">review required</span>
         <span className="badge ok">no auto-apply</span>
       </div>
-      {proposal ? <EditProposalPreview proposal={proposal} host={host} pending={pendingRequestId !== null} onApply={onApply} onCancelPending={onCancelPending} /> : <span className="subtle">No valid bounded edit proposal is available.</span>}
-      {result && <ApplyResultPreview result={result} />}
+      {rejected && !proposal ? <RejectedEditProposalPreview rejected={rejected} /> : proposal ? <EditProposalPreview proposal={proposal} host={host} pending={pendingRequestId !== null} onApply={onApply} onCancelPending={onCancelPending} /> : <span className="subtle">No valid bounded edit proposal is available.</span>}
+      {result && !rejected && <ApplyResultPreview result={result} />}
       {note && <span className="subtle" role="status">{sanitizeDisplayText(note)}</span>}
     </section>
+  );
+}
+
+export function RejectedEditProposalPreview({ rejected }: { rejected: RejectedEditProposalState }) {
+  return (
+    <div className="readiness-card warn stack" role="status" data-testid="edit-proposal-rejected-card">
+      <strong>Edit proposal detected but rejected</strong>
+      <span>{sanitizeDisplayText(rejected.diagnostic.message)}</span>
+      <span className="subtle">Reason: {sanitizeDisplayText(rejected.diagnostic.reasonCode)}</span>
+      <span>Ask the model to resend one strict edit proposal, or use the Safe edit/proposal template. No apply request is available for this response.</span>
+    </div>
   );
 }
 

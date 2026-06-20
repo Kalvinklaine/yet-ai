@@ -291,7 +291,7 @@ function isProposalLikeParsedValue(value: unknown): boolean {
 }
 
 function looksLikeEditProposalText(text: string): boolean {
-  return /gui\.applyWorkspaceEditRequest|requiresUserConfirmation|workspaceRelativePath|textReplacements|cloudRequired|requestId/i.test(text) || (/\b(?:tool|command)\b/i.test(text) && /\b(?:apply|edit|proposal|workspace)\b/i.test(text));
+  return /gui.applyWorkspaceEditRequest|requiresUserConfirmation|workspaceRelativePath|textReplacements|cloudRequired|requestId|\bedits\b/i.test(text) || (/\b(?:tool|command)\b/i.test(text) && /\b(?:apply|edit|proposal|workspace)\b/i.test(text));
 }
 
 function hasCommandToolSmuggling(value: Record<string, unknown>): boolean {

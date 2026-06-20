@@ -7259,7 +7259,9 @@ describe("edit proposal preview", () => {
     await flushAsync();
 
     const text = container?.textContent ?? "";
-    expect(text).not.toContain("Propose safe edit");
+    expect(text).toContain("Edit proposal detected but rejected");
+    expect(text).toContain("The edit proposal payload is invalid or unsafe.");
+    expect(text).toContain("Ask the model to resend one strict edit proposal");
     expect(text).not.toContain("Apply in VS Code after review");
     expect(container?.querySelector("[data-testid='edit-proposal-unique-files']")).toBeNull();
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
@@ -7371,7 +7373,8 @@ describe("edit proposal preview", () => {
     await flushAsync();
 
     const text = container?.textContent ?? "";
-    expect(text).not.toContain("Propose safe edit");
+    expect(text).toContain("Edit proposal detected but rejected");
+    expect(text).toContain("multiple or ambiguous edit proposal candidates");
     expect(text).not.toContain("Apply in VS Code after review");
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
@@ -7548,9 +7551,41 @@ describe("edit proposal preview", () => {
     await flushAsync();
 
     const text = container?.textContent ?? "";
-    expect(text).not.toContain("Propose safe edit");
+    expect(text).toContain("Edit proposal detected but rejected");
+    expect(text).toContain("The assistant must not supply an apply request id.");
     expect(text).not.toContain("Apply in VS Code after review");
-    expect(text).toContain(assistantRequestId);
+    expect(text).not.toContain(assistantRequestId);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+  });
+
+  it("clears a stale valid apply panel when the latest proposal-like assistant message is rejected", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    const malformed = "{ \"summary\": \"Broken proposal\", \"edits\": [";
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Invalid latest edit proposal", 2)],
+      chatThreads: {
+        "chat-001": chatThread("chat-001", "Invalid latest edit proposal", [
+          chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal)),
+          chatMessage("chat-001", "assistant-2", "assistant", malformed),
+        ]),
+      },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Earlier safe edit proposal. Only the latest valid proposal can be requested from the proposal card.");
+    expect(text).toContain("Edit proposal detected but rejected");
+    expect(text).toContain("The edit proposal JSON is not valid.");
+    expect(text).toContain("Safe edit/proposal template");
+    expect(text).not.toContain("Apply in VS Code after review");
+    expect(text).not.toContain(malformed);
+    expect(container?.querySelector("[data-testid='edit-proposal-apply-button']")).toBeNull();
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
 
@@ -7809,7 +7844,7 @@ describe("edit proposal preview", () => {
     await flushAsync();
 
     expect(container?.textContent ?? "").not.toContain("Propose safe edit");
-    expect(container?.querySelector(".edit-proposal-card")).toBeNull();
+    expect(container?.querySelector(".edit-proposal-card")?.textContent ?? "").toContain("Edit proposal detected but rejected");
   });
 
   it("fail-closes a stale apply when latest chat messages replace a valid proposal with invalid content", async () => {
@@ -7868,7 +7903,7 @@ describe("edit proposal preview", () => {
 
     expect(container?.textContent ?? "").not.toContain("Propose safe edit");
     expect(container?.textContent ?? "").not.toContain("Apply in VS Code after review");
-    expect(container?.querySelector(".edit-proposal-card")).toBeNull();
+    expect(container?.querySelector(".edit-proposal-card")?.textContent ?? "").toContain("Edit proposal detected but rejected");
 
     await act(async () => {
       sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({
@@ -8135,7 +8170,7 @@ describe("edit proposal preview", () => {
     expect(text).not.toContain("Bearer");
     expect(text).not.toContain("/Users/private/me");
     expect(text).not.toContain("credentials/private-token.txt");
-    expect(text.length).toBeLessThan(12200);
+    expect(text.length).toBeLessThan(13200);
   });
 
   it("ignores stale host apply result while a different apply request is pending in the same chat", async () => {
@@ -8423,7 +8458,7 @@ describe("edit proposal preview", () => {
     expect(text).toContain("Earlier safe edit proposal. Only the latest valid proposal can be requested from the proposal card.");
     expect(text).not.toContain("Proposed a safe edit.");
     expect(text).not.toContain("Propose safe edit");
-    expect(container?.querySelector(".edit-proposal-card")).toBeNull();
+    expect(container?.querySelector(".edit-proposal-card")?.textContent ?? "").toContain("Edit proposal detected but rejected");
     expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Apply in VS Code after review");
     expect(container?.querySelector(".chat-bubble.assistant pre[aria-label='Assistant edit proposal JSON']")).toBeNull();
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
