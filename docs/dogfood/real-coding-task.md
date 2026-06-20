@@ -32,16 +32,20 @@ Keep the completed report in an ignored local evidence location unless a task ex
 3. Confirm the runtime is connected and record only the launch mode and surface type.
 4. Configure and test the provider through local BYOK settings, or select a local model runtime.
 5. Record provider kind and non-secret model family/id only; do not record API keys, tokens, account identifiers, organization IDs, billing details, or credential paths.
-6. Draft a concise coding-task goal in the guided coding task UI.
-7. Explicitly attach intended context: active-file excerpt, selected snippets, project-memory notes, or manual notes.
-8. Confirm every excerpt is bounded and reviewed before send. Use workspace-relative labels or generic descriptions; do not paste raw private paths.
-9. Confirm no hidden indexing, recursive workspace read, shell/git/tool execution, auto-send, auto-apply, or auto-run behavior occurred.
-10. Review the prompt draft in the UI. Record only a sanitized summary of the intent, not the raw prompt.
-11. Click Send manually.
-12. Review the streaming or final model response. Record only a short sanitized outcome and whether it was useful.
-13. If an edit proposal appears, review it in the GUI. Record only whether it was reviewable and bounded; do not paste raw patch bodies or full file contents.
-14. If the user explicitly applies an edit or runs verification outside this report path, record only sanitized status and command family where allowed by the active task instructions.
-15. Run the report through the relevant local sanitizer/checker if one exists before sharing.
+6. Open the coding task session panel and draft a concise task goal in local UI state.
+7. Explicitly attach intended context: active-file excerpt, selected snippets, project-memory notes, verification output from a prior manual step, or manual notes.
+8. Confirm the context preview/summary is visible before Send, uses bounded metadata or reviewed excerpts only, and does not show raw private paths.
+9. Choose a task template such as Ask, Explain, Find bug, Suggest tests, safe rework, Safe edit/proposal, Implementation plan, or Follow-up; confirm it only drafts local prompt text.
+10. Review the final prompt draft in the chat box. Record only a sanitized summary of the intent, not the raw prompt.
+11. Confirm no hidden indexing, recursive workspace read, shell/git/tool execution, auto-send, auto-apply, or auto-run behavior occurred before Send.
+12. Click Send manually once.
+13. Confirm the selected one-shot context bundle was included with that manual send and cleared after accepted Send. If Send fails, confirm the bundle remains available for manual retry.
+14. Review the streaming or final model response. Record only a short sanitized outcome and whether it was useful.
+15. If an edit proposal appears, inspect it in the GUI before any apply request. Record only whether it was reviewable and bounded; do not paste raw patch bodies or full file contents.
+16. If the user explicitly applies an edit, use only the visible manual apply control and record sanitized status only.
+17. If the user explicitly runs verification, use an allowlisted local command path and record only sanitized status, command family, and non-sensitive outcome.
+18. Confirm browser storage does not contain provider credentials, raw prompts, raw responses, raw file bodies, private paths, memory note text, or context bodies.
+19. Run the report through the relevant local sanitizer/checker if one exists before sharing.
 
 ## Sanitized report template
 
@@ -68,13 +72,17 @@ Manual local evidence only. This report is not CI evidence, not automation evide
 ## Guided task flow
 
 - Task goal drafted: <short sanitized goal summary, no raw prompt | not run>
-- Explicit context attached: <active-file excerpt | snippets | memory notes | manual notes | intentionally omitted | not run>
-- Reviewed excerpt policy: <bounded reviewed excerpts only | no raw file bodies pasted | not run>
+- Explicit context attached: <active-file excerpt | snippets | memory notes | verification output | manual notes | intentionally omitted | not run>
+- Context preview/summary visible before Send: <checked with sanitized labels/counts | issue found with sanitized summary | not run>
+- Task template chosen: <Ask | Explain | Find bug | Suggest tests | safe rework | Safe edit/proposal | Implementation plan | Follow-up | custom manual draft | not run>
+- Template behavior: <drafted prompt only; no auto-send/attach/apply/verify | issue found with sanitized summary | not run>
 - Prompt draft reviewed before send: <checked | issue found with sanitized summary | not run>
 - User clicked Send manually: <checked | not run>
+- One-shot context bundle behavior: <included on accepted Send and cleared | Send failed and bundle remained | no bundle | issue found with sanitized summary | not run>
 - Response reviewed: <useful | partially useful | not useful | failed with sanitized summary | not run>
 - Edit proposal reviewed: <reviewable bounded proposal | no proposal | failed with sanitized summary | not run>
-- Verification status, if any: <user-run sanitized summary | not run | out of scope for this run>
+- Manual apply status, if any: <applied by explicit user action | skipped | failed/denied with sanitized summary | not run>
+- Verification status, if any: <user-run sanitized summary | skipped | not run | out of scope for this run>
 
 ## Safety checks
 
@@ -83,7 +91,10 @@ Manual local evidence only. This report is not CI evidence, not automation evide
 - Raw private paths absent from report: <checked | issue fixed before sharing | not run>
 - Raw prompts/provider responses absent from report: <checked | issue fixed before sharing | not run>
 - Raw file bodies/patch bodies/bridge payloads absent from report: <checked | issue fixed before sharing | not run>
+- Context/memory/verification bodies absent from tracked report unless explicitly approved and sanitized: <checked | issue fixed before sharing | not run>
+- Browser storage checked for sensitive prompt/context/provider data: <checked | issue fixed before sharing | not run>
 - No cloud-required workflow used or claimed: <checked | issue fixed before sharing | not run>
+- No auto-send, auto-apply, auto-run verification, shell/git/tool execution, hidden file reads, or real-provider automation: <checked | issue fixed before sharing | not run>
 - No real-provider CI, publishing, signing, notarization, marketplace, or production release claim: <checked | issue fixed before sharing | not run>
 
 ## Known issues

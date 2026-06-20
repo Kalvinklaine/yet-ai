@@ -119,6 +119,9 @@ try {
   await waitForGuiMessage(page, "gui.ready");
   await expectVisibleText(page, "Coding task session", "guided coding task panel", 20_000);
   await expectVisibleText(page, "Ready to send using guided-coding-smoke-model through the local runtime.", "mock model readiness", 20_000);
+  await assertCodingTaskTemplatesVisible(page);
+  await expectVisibleText(page, "Explicit context bundle summary", "context summary section before Send", 20_000);
+  await expectVisibleText(page, "No explicit bundle items selected", "empty context summary before Send", 20_000);
 
   await assertNoRequestsOfType(page, "gui.applyWorkspaceEditRequest", "before explicit apply");
   await assertNoIdeAction(page, "runVerificationCommand", "before explicit verification");
@@ -185,6 +188,9 @@ try {
   await page.getByRole("button", { name: "Attach memory to next message" }).click();
   await expectVisibleText(page, "project memory · Guided task memory", "memory in guided session summary", 20_000);
   await expectVisibleText(page, "Memory attachments: 1", "guided memory count", 20_000);
+  await expectVisibleText(page, "Explicit context bundle: 3 selected · one-shot manual include", "selected context count before Send", 20_000);
+  await assertVisibleContextSummary(page, ["active file excerpt · src/guided.ts", "project snippet · src/snippet.ts", "project memory · Guided task memory"]);
+  await assertNoRawText(page, [activeFileText, snippetText, memoryNote.text], "sanitized context summary before Send");
   assert(commandCount === 0, "attaching context auto-sent chat");
 
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(userPrompt);
@@ -194,10 +200,14 @@ try {
   assert(commandCount === 1, `expected one explicit chat command, received ${commandCount}`);
   assert(abortCount === 0, "smoke unexpectedly sent abort command");
   assert(lastCommandBody?.payload?.context?.kind === "explicit_context_bundle", "send did not include explicit context bundle");
+  assert(lastCommandBody.payload.context.items.length === 3, `expected exactly three explicit context items, received ${lastCommandBody.payload.context.items.length}`);
   assert(lastCommandBody.payload.context.items.some((item) => item.kind === "active_editor"), "send missed active editor context item");
   assert(lastCommandBody.payload.context.items.some((item) => item.kind === "workspace_snippet"), "send missed workspace snippet context item");
   assert(lastCommandBody.payload.context.items.some((item) => item.kind === "project_memory"), "send missed project memory context item");
+  assert(lastCommandBody.payload.content === userPrompt, "send command did not wait for the explicit prompt filled before Send");
   await expectVisibleText(page, "One-shot explicit context bundle attached to the last accepted message and cleared.", "bundle clear after send", 20_000);
+  await expectVisibleText(page, "Explicit context bundle: empty · add context manually if needed", "empty context summary after Send", 20_000);
+  await expectVisibleText(page, "No explicit bundle items selected", "cleared context summary after Send", 20_000);
   await assertNoRequestsOfType(page, "gui.applyWorkspaceEditRequest", "after proposal before apply click");
   await assertNoIdeAction(page, "runVerificationCommand", "after proposal before verification click");
 
@@ -460,6 +470,27 @@ async function expectVisibleText(page, text, description, timeout = 10_000) {
   } catch (error) {
     const body = await page.locator("body").innerText().catch(() => "");
     throw new Error(`Timed out waiting for ${description}. ${messageOf(error)}\nVisible body excerpt: ${redactSecrets(body).slice(0, 5000)}`);
+  }
+}
+
+async function assertCodingTaskTemplatesVisible(page) {
+  const templateLabels = ["Ask", "Explain", "Find bug", "Suggest tests", "Safe edit/proposal", "Implementation plan", "Follow-up"];
+  for (const label of templateLabels) {
+    await expectVisibleText(page, `Draft ${label} prompt`, `coding task template ${label}`, 20_000);
+  }
+  await page.waitForFunction(() => document.body.innerText.includes("Draft Re") && document.body.innerText.includes("prompt"), undefined, { timeout: 20_000 });
+}
+
+async function assertVisibleContextSummary(page, labels) {
+  for (const label of labels) {
+    await expectVisibleText(page, label, `context summary ${label}`, 20_000);
+  }
+}
+
+async function assertNoRawText(page, rawValues, source) {
+  const panelText = await page.getByLabel("Coding task session").innerText().catch(() => "");
+  for (const value of rawValues) {
+    assert(value && !panelText.includes(value), `raw context body leaked in ${source}`);
   }
 }
 
