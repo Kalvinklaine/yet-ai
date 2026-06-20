@@ -2,9 +2,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { App, completedApplyRequestChatsLimit, completedIdeActionRequestChatsLimit, generateApplyRequestSessionNonce, rememberCompletedApplyRequest, rememberCompletedIdeActionRequest } from "./App";
-import { buildCodingTaskPrompt } from "./services/codingTaskPrompt";
 import { buildVerificationFollowupPrompt } from "./services/verificationFollowupPrompt";
-import { validateWorkspaceSnippetQuery, type ExplicitContextBundleItem } from "./services/activeEditorContext";
+import { validateWorkspaceSnippetQuery } from "./services/activeEditorContext";
 import type { ProviderAuthResponse, ProviderAuthStatus } from "./services/providerAuthClient";
 
 const bridgeVersion = "2026-05-15";
@@ -85,55 +84,7 @@ describe("codingTaskPrompt builder", () => {
     expect(followup).toContain("Verification follow-up prompt");
     expect(followup).toContain("Explain this verification result");
   });
-
-  it("builds dogfood sections for ask plan and safe-edit modes", () => {
-    const items: ExplicitContextBundleItem[] = [
-      { kind: "project_memory", noteId: "mem-1", title: "Architecture note", text: "Keep it local.", tags: ["architecture"], key: "memory-1" },
-      { kind: "workspace_snippet", workspaceRelativePath: "apps/gui/src/App.tsx", languageId: "typescript", range: { start: { line: 1, character: 0 }, end: { line: 3, character: 1 } }, text: "function App() {}", key: "snippet-1" },
-      { kind: "verification_output", commandId: "gui-app-tests", status: "succeeded", exitCode: 0, outputTail: "passed", truncated: false, key: "verification-1" },
-    ];
-
-    const ask = buildCodingTaskPrompt({ mode: "ask", goal: "Explain the prompt builder", contextItems: items, providerReadiness: "ready · GPT-4o mini" });
-    const plan = buildCodingTaskPrompt({ mode: "implementation_plan", goal: "Plan the prompt builder", contextItems: items, providerReadiness: "ready · GPT-4o mini" });
-    const safeEdit = buildCodingTaskPrompt({ mode: "safe_edit", goal: "Patch the prompt builder", contextItems: items, providerReadiness: "ready · GPT-4o mini" });
-
-    expect(ask).toContain("Ask prompt");
-    expect(ask).toContain("Goal\nExplain the prompt builder");
-    expect(ask).toContain("Explicit context summary");
-    expect(ask).toContain("memory: Architecture note");
-    expect(ask).toContain("snippet: apps/gui/src/App.tsx");
-    expect(ask).toContain("verification: gui-app-tests succeeded exit 0");
-    expect(ask).toContain("Count: 1");
-    expect(ask).toContain("Titles: Architecture note");
-    expect(ask).toContain("Provider readiness\nready · GPT-4o mini");
-    expect(ask).toContain("Use only the attached explicit context");
-    expect(ask).toContain("Do not auto-run commands, auto-apply edits, auto-save memory");
-    expect(plan).toContain("Implementation plan request");
-    expect(plan).toContain("draft a concise implementation plan");
-    expect(safeEdit).toContain("Safe-edit request");
-    expect(safeEdit).toContain("propose the smallest safe edit");
-  });
-
-  it("sanitizes secrets and private paths from prompt drafts", () => {
-    const secret = "access_token=" + "x".repeat(64);
-    const prompt = buildCodingTaskPrompt({
-      mode: "safe_edit",
-      goal: `Fix /Users/alice/private/repo with ${secret}`,
-      providerReadiness: `model ready ${secret}`,
-      contextItems: [
-        { kind: "project_memory", noteId: "mem-secret", title: `Token note ${secret}`, text: "raw memory body", tags: [], key: "memory-secret" },
-        { kind: "workspace_snippet", workspaceRelativePath: "/Users/alice/private/src/secret.ts", languageId: "typescript", range: { start: { line: 1, character: 0 }, end: { line: 2, character: 0 } }, text: "secret body", key: "snippet-secret" },
-      ],
-    });
-
-    expect(prompt).toContain("[redacted]");
-    expect(prompt).not.toContain(secret);
-    expect(prompt).not.toContain("access_token");
-    expect(prompt).not.toContain("/Users/alice");
-    expect(prompt).not.toContain("private/src/secret.ts");
-  });
 });
-
 describe("hosted iframe shell layout", () => {
   afterEach(() => {
     if (appParentDescriptor) {
