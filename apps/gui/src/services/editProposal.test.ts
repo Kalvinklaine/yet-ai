@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { ApplyWorkspaceEditPayload } from "../bridge/bridgeAdapter";
 import {
+  analyzeEditProposalContent,
   editProposalCandidateIdentityMatches,
   editProposalCandidateMatchesIdentity,
   editProposalIdentityMatchesCandidate,
   editProposalPayloadKey,
   isCompleteAssistantEditProposalStatus,
   latestEditProposalCandidateFromMessages,
+  latestEditProposalReviewFromMessages,
   parseEditProposalContent,
   type EditProposalCandidate,
   type EditProposalIdentity,
@@ -159,6 +161,65 @@ describe("parseEditProposalContent", () => {
   });
 });
 
+describe("analyzeEditProposalContent", () => {
+  it("reports valid direct payload and fenced envelope states", () => {
+    const proposal = safeEditProposalPayload();
+    const envelope = { type: "gui.applyWorkspaceEditRequest", version: bridgeVersion, payload: proposal };
+
+    expect(analyzeEditProposalContent(JSON.stringify(proposal))).toEqual({ state: "valid", proposal });
+    expect(analyzeEditProposalContent(`Review:\n\`\`\`json\n${JSON.stringify(envelope)}\n\`\`\``)).toEqual({ state: "valid", proposal });
+  });
+
+  it("reports sanitized diagnostics for fenced direct payload and non-json fences", () => {
+    const proposal = safeEditProposalPayload();
+    const fencedDirect = analyzeEditProposalContent(`\`\`\`json\n${JSON.stringify(proposal)}\n\`\`\``);
+    const nonJsonFence = analyzeEditProposalContent(`\`\`\`ts\n${JSON.stringify(proposal)}\n\`\`\``);
+
+    expect(fencedDirect).toEqual({ state: "rejected", diagnostic: { reasonCode: "fenced_payload_requires_envelope", message: expect.any(String) } });
+    expect(nonJsonFence).toEqual({ state: "rejected", diagnostic: { reasonCode: "invalid_fence", message: expect.any(String) } });
+  });
+
+  it("reports diagnostics for ambiguous or invalid JSON candidates", () => {
+    const proposal = safeEditProposalPayload();
+    const envelope = { type: "gui.applyWorkspaceEditRequest", version: bridgeVersion, payload: proposal };
+
+    expect(analyzeEditProposalContent(`${JSON.stringify(proposal)} ${JSON.stringify(proposal)}`)).toEqual({ state: "rejected", diagnostic: { reasonCode: "ambiguous", message: expect.any(String) } });
+    expect(analyzeEditProposalContent(`\`\`\`json\n${JSON.stringify(envelope)}\n\`\`\`\n\`\`\`json\n${JSON.stringify(envelope)}\n\`\`\``)).toEqual({ state: "rejected", diagnostic: { reasonCode: "ambiguous", message: expect.any(String) } });
+    expect(analyzeEditProposalContent("{bad json}")).toEqual({ state: "rejected", diagnostic: { reasonCode: "invalid_json", message: expect.any(String) } });
+  });
+
+  it("reports envelope diagnostics for wrong version, requestId, and unknown keys", () => {
+    const proposal = safeEditProposalPayload();
+
+    expect(analyzeEditProposalContent(JSON.stringify({ type: "gui.applyWorkspaceEditRequest", version: "1", payload: proposal }))).toEqual({ state: "rejected", diagnostic: { reasonCode: "wrong_version", message: expect.any(String) } });
+    expect(analyzeEditProposalContent(JSON.stringify({ type: "gui.applyWorkspaceEditRequest", version: bridgeVersion, requestId: "assistant", payload: proposal }))).toEqual({ state: "rejected", diagnostic: { reasonCode: "assistant_request_id", message: expect.any(String) } });
+    expect(analyzeEditProposalContent(JSON.stringify({ type: "gui.applyWorkspaceEditRequest", version: bridgeVersion, payload: proposal, extra: true }))).toEqual({ state: "rejected", diagnostic: { reasonCode: "unknown_keys", message: expect.any(String) } });
+  });
+
+  it("reports smuggling, envelope-like direct payload, invalid payload, and no-json diagnostics", () => {
+    const proposal = safeEditProposalPayload();
+
+    expect(analyzeEditProposalContent(JSON.stringify({ ...proposal, command: "npm test" }))).toEqual({ state: "rejected", diagnostic: { reasonCode: "command_tool_smuggling", message: expect.any(String) } });
+    expect(analyzeEditProposalContent(JSON.stringify({ ...proposal, version: bridgeVersion }))).toEqual({ state: "rejected", diagnostic: { reasonCode: "envelope_like_direct_payload", message: expect.any(String) } });
+    expect(analyzeEditProposalContent(JSON.stringify({ ...proposal, requiresUserConfirmation: false }))).toEqual({ state: "rejected", diagnostic: { reasonCode: "invalid_payload", message: expect.any(String) } });
+    expect(analyzeEditProposalContent("Please apply this workspaceRelativePath edit.")).toEqual({ state: "rejected", diagnostic: { reasonCode: "no_json", message: expect.any(String) } });
+  });
+
+  it("returns none for normal assistant text and sanitized diagnostics without raw content", () => {
+    const rawPath = "/Users/private/project/src/secret.ts";
+    const rawSecret = "sk-" + "x".repeat(40);
+    const analysis = analyzeEditProposalContent(`Apply this workspaceRelativePath ${rawPath} ${rawSecret}`);
+
+    expect(analyzeEditProposalContent("Normal assistant response.")).toEqual({ state: "none" });
+    expect(analysis.state).toBe("rejected");
+    if (analysis.state === "rejected") {
+      expect(analysis.diagnostic.message).not.toContain(rawPath);
+      expect(analysis.diagnostic.message).not.toContain(rawSecret);
+      expect(analysis.diagnostic).toEqual({ reasonCode: "no_json", message: expect.any(String) });
+    }
+  });
+});
+
 describe("isCompleteAssistantEditProposalStatus", () => {
   it("treats undefined and complete as active", () => {
     expect(isCompleteAssistantEditProposalStatus(undefined)).toBe(true);
@@ -300,6 +361,58 @@ describe("latestEditProposalCandidateFromMessages", () => {
     expect(editProposalIdentityMatchesCandidate(mismatchedKey, candidate)).toBe(false);
     expect(editProposalCandidateIdentityMatches(null, candidate)).toBe(false);
     expect(editProposalCandidateIdentityMatches(candidate, null)).toBe(false);
+  });
+});
+
+describe("latestEditProposalReviewFromMessages", () => {
+  it("returns the latest valid candidate review", () => {
+    const proposal = safeEditProposalPayload();
+    const review = latestEditProposalReviewFromMessages([
+      assistantMessage("a1", JSON.stringify(proposal)),
+    ]);
+
+    expect(review.state).toBe("valid");
+    if (review.state === "valid") {
+      expect(review.candidate.proposal).toEqual(proposal);
+      expect(review.candidate.sourceMessageId).toBe("a1");
+      expect(review.candidate.payloadKey).toBe(editProposalPayloadKey(proposal));
+    }
+  });
+
+  it("returns a rejected review for the latest invalid proposal-like assistant message", () => {
+    const proposal = safeEditProposalPayload();
+    const review = latestEditProposalReviewFromMessages([
+      assistantMessage("a1", JSON.stringify(proposal)),
+      assistantMessage("a2", JSON.stringify({ ...proposal, requiresUserConfirmation: false })),
+    ]);
+
+    expect(review).toEqual({ state: "rejected", sourceMessageId: "a2", diagnostic: { reasonCode: "invalid_payload", message: expect.any(String) } });
+    expect(latestEditProposalCandidateFromMessages([
+      assistantMessage("a1", JSON.stringify(proposal)),
+      assistantMessage("a2", JSON.stringify({ ...proposal, requiresUserConfirmation: false })),
+    ])).toBeNull();
+  });
+
+  it("preserves current latest valid behavior after a normal assistant message", () => {
+    const proposal = safeEditProposalPayload();
+    const review = latestEditProposalReviewFromMessages([
+      assistantMessage("a1", JSON.stringify(proposal)),
+      assistantMessage("a2", "Normal assistant response."),
+    ]);
+
+    expect(review.state).toBe("valid");
+    if (review.state === "valid") {
+      expect(review.candidate.sourceMessageId).toBe("a1");
+      expect(review.candidate.proposal).toEqual(proposal);
+    }
+  });
+
+  it("returns none when there are no complete assistant proposal reviews", () => {
+    const proposal = safeEditProposalPayload();
+    expect(latestEditProposalReviewFromMessages([
+      { id: "u1", role: "user", status: "complete", content: JSON.stringify(proposal) },
+      assistantMessage("a1", JSON.stringify(proposal), "streaming"),
+    ])).toEqual({ state: "none" });
   });
 });
 
