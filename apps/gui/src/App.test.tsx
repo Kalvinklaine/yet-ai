@@ -2929,6 +2929,7 @@ describe("active editor attached context", () => {
     expect(panel.textContent).toContain("Next safe manual step");
     expect(panel.textContent).toContain("Write the task goal, choose a template, review any explicit context, then click Send yourself when ready.");
     expect(panel.textContent).toContain("One-shot context is not browser-stored or auto-attached; selected explicit context clears only after an accepted Send and remains available if Send fails.");
+    expect(panel.textContent).toContain("Explicit context bundle summary");
     expect(panel.textContent).toContain("Task templates");
     expect(panel.textContent).toContain("Ask");
     expect(panel.textContent).toContain("Explain");
@@ -3354,6 +3355,8 @@ describe("active editor attached context", () => {
     expect(container?.textContent).toContain("Multi-file context bundle");
     expect(container?.textContent).toContain("4/4 excerpts");
     expect(findButton("Bundle full (4 max)").disabled).toBe(true);
+    expect(codingTaskSessionPanel().textContent).toContain("active file excerpt · src/bundle-0.ts · vscode · typescript · range 1:0-15:1 · 25 chars · preview complete · redacted no");
+    expect(container?.textContent).toContain("Range 1:0-15:1 · 25 chars");
 
     await act(async () => { findButton("Remove excerpt").click(); });
     expect(container?.textContent).toContain("Removed one excerpt from the one-shot bundle.");
@@ -3383,6 +3386,7 @@ describe("active editor attached context", () => {
     expect(body.payload?.context?.items).toHaveLength(3);
     expect(container?.textContent).toContain("One-shot explicit context bundle attached to the last accepted message and cleared.");
     expect(container?.textContent).toContain("empty");
+    expect(codingTaskSessionPanel().textContent).toContain("No explicit bundle items selected");
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("export const bundle");
   });
@@ -3403,6 +3407,7 @@ describe("active editor attached context", () => {
 
     expect(container?.textContent).toContain("1/4 excerpts");
     expect(chatInput().value).toBe("message that fails with bundle");
+    expect(codingTaskSessionPanel().textContent).toContain("active file excerpt · src/editor.ts · vscode · typescript · range 10:0-24:1 · 29 chars · preview complete · redacted no");
 
     await act(async () => { findButton("Clear bundle").click(); });
     expect(container?.textContent).toContain("Cleared the one-shot explicit context bundle.");

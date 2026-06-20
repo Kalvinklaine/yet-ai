@@ -46,6 +46,19 @@ export type ProjectMemoryBundleItem = ProjectMemoryContext & { key: string };
 
 export type ExplicitContextBundleItem = (ActiveEditorChatContext & { key: string }) | VerificationOutputBundleItem | WorkspaceSnippetBundleItem | ProjectMemoryBundleItem;
 
+export type ExplicitContextBundleItemSummary = {
+  typeLabel: string;
+  label: string;
+  range?: string;
+  language?: string;
+  charCount: number;
+  redacted: boolean;
+  truncated: boolean;
+  status?: string;
+  metadata: string[];
+  line: string;
+};
+
 export const explicitContextBundleMaxItems = 4;
 export const explicitContextBundleMaxTextCharacters = 16000;
 
@@ -225,6 +238,75 @@ export function explicitContextBundleItemTextLength(item: ExplicitContextBundleI
     return item.text.length;
   }
   return item.selection?.text?.length ?? 0;
+}
+
+export function summarizeExplicitContextBundleItem(item: ExplicitContextBundleItem): ExplicitContextBundleItemSummary {
+  if (item.kind === "verification_output") {
+    const preview = classifyBoundedContextPreview(item.outputTail);
+    const status = `${sanitizeDisplayText(item.status)} · exit ${item.exitCode}`;
+    const metadata = [status, `${item.outputTail.length} chars`, `host truncated ${item.truncated ? "yes" : "no"}`, `preview ${preview.truncated ? "shortened" : "complete"}`, `redacted ${preview.redacted ? "yes" : "no"}`];
+    return {
+      typeLabel: "verification output",
+      label: sanitizeDisplayText(item.commandId),
+      charCount: item.outputTail.length,
+      redacted: preview.redacted,
+      truncated: item.truncated || preview.truncated,
+      status,
+      metadata,
+      line: joinContextSummaryLine("verification output", sanitizeDisplayText(item.commandId), metadata),
+    };
+  }
+  if (item.kind === "workspace_snippet") {
+    const preview = classifyBoundedContextPreview(item.text);
+    const range = formatEditRange(item.range);
+    const metadata = [sanitizeDisplayText(item.languageId), `range ${range}`, `${item.text.length} chars`, `preview ${preview.truncated ? "shortened" : "complete"}`, `redacted ${preview.redacted ? "yes" : "no"}`];
+    return {
+      typeLabel: "project snippet",
+      label: sanitizeDisplayText(item.workspaceRelativePath),
+      range,
+      language: sanitizeDisplayText(item.languageId),
+      charCount: item.text.length,
+      redacted: preview.redacted,
+      truncated: preview.truncated,
+      metadata,
+      line: joinContextSummaryLine("project snippet", sanitizeDisplayText(item.workspaceRelativePath), metadata),
+    };
+  }
+  if (item.kind === "project_memory") {
+    const preview = classifyBoundedContextPreview(item.text);
+    const tagLabel = item.tags.map((tag) => sanitizeDisplayText(tag)).join(", ") || "none";
+    const metadata = [`note ${sanitizeDisplayText(item.noteId)}`, `${item.text.length} chars`, `tags ${tagLabel}`, `preview ${preview.truncated ? "shortened" : "complete"}`, `redacted ${preview.redacted ? "yes" : "no"}`];
+    return {
+      typeLabel: "project memory",
+      label: sanitizeDisplayText(item.title),
+      charCount: item.text.length,
+      redacted: preview.redacted,
+      truncated: preview.truncated,
+      metadata,
+      line: joinContextSummaryLine("project memory", sanitizeDisplayText(item.title), metadata),
+    };
+  }
+  const label = sanitizeDisplayText(item.file?.workspaceRelativePath ?? item.file?.displayPath ?? "active editor");
+  const language = sanitizeDisplayText(item.file?.languageId ?? "unknown language");
+  const range = formatSelectionRange(item.selection);
+  const text = item.selection?.text ?? "";
+  const preview = classifyBoundedContextPreview(text);
+  const metadata = [activeEditorSourceLabel(item.source), language, `range ${range}`, `${text.length} chars`, `preview ${preview.truncated ? "shortened" : "complete"}`, `redacted ${preview.redacted ? "yes" : "no"}`];
+  return {
+    typeLabel: "active file excerpt",
+    label,
+    range,
+    language,
+    charCount: text.length,
+    redacted: preview.redacted,
+    truncated: preview.truncated,
+    metadata,
+    line: joinContextSummaryLine("active file excerpt", label, metadata),
+  };
+}
+
+function joinContextSummaryLine(typeLabel: string, label: string, metadata: string[]): string {
+  return `${typeLabel} · ${label} · ${metadata.join(" · ")}`;
 }
 
 export function explicitContextBundleToChatContext(items: ExplicitContextBundleItem[]): ExplicitContextBundle | undefined {

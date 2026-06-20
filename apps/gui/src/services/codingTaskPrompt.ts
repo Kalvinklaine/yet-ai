@@ -1,5 +1,5 @@
 import type { ExplicitContextBundleItem } from "./activeEditorContext";
-import { formatSelectionRange } from "./activeEditorContext";
+import { summarizeExplicitContextBundleItem } from "./activeEditorContext";
 import { sanitizeDisplayText, sanitizeTimelineText } from "./redaction";
 
 export type CodingTaskPromptMode = "ask" | "explain" | "find_bug" | "suggest_tests" | `re${"factor_safely"}` | "safe_edit" | "implementation_plan" | "follow_up";
@@ -133,21 +133,7 @@ function modeInstruction(mode: CodingTaskPromptMode): string {
 }
 
 function contextItemSummary(item: ExplicitContextBundleItem): string {
-  if (item.kind === "project_memory") {
-    return `memory: ${sanitizePromptLine(item.title)} (${item.text.length} chars, tags ${sanitizePromptLine(item.tags.join(", ") || "none")})`;
-  }
-  if (item.kind === "workspace_snippet") {
-    return `snippet: ${sanitizePromptLine(item.workspaceRelativePath)} (${sanitizePromptLine(item.languageId)}, ${formatWorkspaceRange(item.range)}, ${item.text.length} chars)`;
-  }
-  if (item.kind === "verification_output") {
-    return `verification: ${sanitizePromptLine(item.commandId)} ${sanitizePromptLine(item.status)} exit ${item.exitCode}, truncated ${item.truncated ? "yes" : "no"}, ${item.outputTail.length} chars`;
-  }
-  const file = item.file?.workspaceRelativePath ?? item.file?.displayPath ?? "active editor";
-  return `active editor: ${sanitizePromptLine(file)} (${sanitizePromptLine(item.file?.languageId ?? "unknown language")}, ${formatSelectionRange(item.selection)}, ${item.selection?.text?.length ?? 0} chars)`;
-}
-
-function formatWorkspaceRange(range: { start: { line: number; character: number }; end: { line: number; character: number } }): string {
-  return `${range.start.line}:${range.start.character}-${range.end.line}:${range.end.character}`;
+  return sanitizePromptLine(summarizeExplicitContextBundleItem(item).line);
 }
 
 function sanitizePromptLine(value: string): string {

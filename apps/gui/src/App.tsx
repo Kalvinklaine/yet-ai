@@ -1,7 +1,7 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type ActiveFileExcerptAttachment, type WorkspaceSnippetSearchResult } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, removeOptimisticUserMessage, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
-import { activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToBundleItem, activeFileExcerptToChatContext, addExplicitContextBundleItem, explicitContextBundleMaxItems, explicitContextBundleToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, projectMemoryToBundleItem, rangeFromContextSelection, validateWorkspaceSnippetQuery, workspaceSnippetToBundleItem, type ExplicitContextBundleItem, type ProjectMemoryBundleItem, type WorkspaceSnippetBundleItem } from "./services/activeEditorContext";
+import { activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToBundleItem, activeFileExcerptToChatContext, addExplicitContextBundleItem, explicitContextBundleMaxItems, explicitContextBundleToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, projectMemoryToBundleItem, rangeFromContextSelection, summarizeExplicitContextBundleItem, validateWorkspaceSnippetQuery, workspaceSnippetToBundleItem, type ExplicitContextBundleItem, type ProjectMemoryBundleItem, type WorkspaceSnippetBundleItem } from "./services/activeEditorContext";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
 import { IdeActionProposalPanel, IdeActionsPanel, VerificationCommandPanel, verificationOutputKey, type IdeActionAttemptState, type VerificationCommand } from "./components/IdeActionsPanel";
 import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
@@ -2906,16 +2906,7 @@ function codingTaskRecoveryCopy(modelStatus: string, latestResponseStatus: strin
 }
 
 function codingTaskContextLabel(item: ExplicitContextBundleItem): string {
-  if (isVerificationOutputBundleItem(item)) {
-    return `verification output · ${sanitizeDisplayText(item.commandId)} · ${sanitizeDisplayText(item.status)}`;
-  }
-  if (isWorkspaceSnippetBundleItem(item)) {
-    return `project snippet · ${sanitizeDisplayText(item.workspaceRelativePath)}`;
-  }
-  if (isProjectMemoryBundleItem(item)) {
-    return `project memory · ${sanitizeDisplayText(item.title)}`;
-  }
-  return `active file excerpt · ${sanitizeDisplayText(item.file?.workspaceRelativePath ?? item.file?.displayPath ?? "active editor")}`;
+  return summarizeExplicitContextBundleItem(item).line;
 }
 
 type ManualRunnerStepState = "done" | "current" | "waiting";
