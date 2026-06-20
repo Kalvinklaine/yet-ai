@@ -28,6 +28,7 @@ let browser;
 let server;
 let commandCount = 0;
 let abortCount = 0;
+let lastUserPrompt = "";
 
 const proposalPayload = {
   requiresUserConfirmation: true,
@@ -46,6 +47,29 @@ const assistantProposal = [
   JSON.stringify({ version: bridgeVersion, type: "gui.applyWorkspaceEditRequest", payload: proposalPayload }, null, 2),
   "```",
 ].join("\n");
+const malformedAssistantProposal = [
+  "```json",
+  "{ \"version\": \"2026-05-15\", \"type\": \"gui.applyWorkspaceEditRequest\", \"requestId\": \"assistant-must-not-set-this\", \"payload\": { \"requiresUserConfirmation\": true, \"summary\": \"Malformed proposal-like output\", \"edits\": [ }",
+  "```",
+].join("\n");
+const largeReplacementText = `export const quality = '${"large safe review text ".repeat(18)}done';`;
+const largeProposalPayload = {
+  requiresUserConfirmation: true,
+  summary: "Replace one reviewed line with a large acknowledged patch quality fixture.",
+  cloudRequired: false,
+  edits: [{
+    workspaceRelativePath: "src/quality-large.ts",
+    textReplacements: [{
+      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 28 } },
+      replacementText: largeReplacementText,
+    }],
+  }],
+};
+const largeAssistantProposal = [
+  "```json",
+  JSON.stringify({ version: bridgeVersion, type: "gui.applyWorkspaceEditRequest", payload: largeProposalPayload }, null, 2),
+  "```",
+].join("\n");
 
 await buildGui();
 await requireBuiltGui();
@@ -57,14 +81,17 @@ try {
   browser = await chromium.launch({ headless: true });
 
   await runBrowserPreviewCase(guiBaseUrl);
-  await runHostedApplyCase(guiBaseUrl);
+  await runHostedApplyCase(guiBaseUrl, "vscode");
+  await runHostedApplyCase(guiBaseUrl, "jetbrains");
+  await runRejectedProposalCase(guiBaseUrl);
+  await runLargeAcknowledgementCase(guiBaseUrl);
 
   if (failures.length > 0) {
     throw new Error(`Patch proposal quality smoke failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
   }
 
   console.log("Patch proposal quality smoke passed.");
-  console.log("Verified built-GUI mock-only safe edit proposal review: exactly one fenced JSON proposal extracted, quality panel and risk/status copy rendered, browser stays preview-only with no capable host, VS Code mock host emits no apply request before explicit click, applies/rejects only after clicks, and no non-loopback network, shell/git/tool endpoints, browser-storage proposal/secret persistence, hosted service, real provider, or credential use occurred.");
+  console.log("Verified built-GUI mock-only safe edit proposal review: strict fenced JSON proposals extracted, quality panel and risk/status copy rendered, browser stays preview-only with no capable host, VS Code and JetBrains mock hosts emit no apply request before explicit click, apply/reject only after clicks, malformed proposal-like output shows a rejected non-actionable card with no stale apply request, large/shortened previews keep apply disabled until explicit acknowledgement, and no non-loopback network, shell/git/tool endpoints, browser-storage proposal/secret persistence, hosted service, real provider, or credential use occurred.");
 } catch (error) {
   console.error(redactSecrets(error instanceof Error && error.stack ? error.stack : messageOf(error)));
   process.exit(1);
@@ -74,7 +101,7 @@ try {
 }
 
 async function runBrowserPreviewCase(guiBaseUrl) {
-  const page = await newInstrumentedPage(guiBaseUrl, { hosted: false });
+  const page = await newInstrumentedPage(guiBaseUrl, { host: "browser" });
   try {
     await loadAndSendSafeEditRequest(page, guiBaseUrl, "Preview a safe edit proposal for the patch quality smoke.");
     await expectVisibleText(page, "Propose safe edit", "browser edit proposal card");
@@ -83,7 +110,7 @@ async function runBrowserPreviewCase(guiBaseUrl) {
     await expectVisibleText(page, "browser preview only", "browser preview risk badge");
     await expectVisibleText(page, "Preview only in this host. Browser cannot apply proposed edits", "browser preview-only guard");
     await assertProposalCount(page, 1, "browser preview");
-    await assertNoBridgeMessagesOfType(page, "gui.applyWorkspaceEditRequest", "browser preview");
+    await assertBridgeMessagesOfTypeCount(page, "gui.applyWorkspaceEditRequest", 0, "browser preview");
     await assertNoForbiddenBridgeActions(page);
     await assertStorageClean(page, "browser preview");
   } finally {
@@ -91,45 +118,97 @@ async function runBrowserPreviewCase(guiBaseUrl) {
   }
 }
 
-async function runHostedApplyCase(guiBaseUrl) {
-  const page = await newInstrumentedPage(guiBaseUrl, { hosted: true });
+async function runHostedApplyCase(guiBaseUrl, host) {
+  const page = await newInstrumentedPage(guiBaseUrl, { host });
+  const hostLabel = host === "jetbrains" ? "JetBrains" : "VS Code";
   try {
-    await loadAndSendSafeEditRequest(page, guiBaseUrl, "Return a safe edit proposal for explicit hosted apply review.");
-    await expectVisibleText(page, "Propose safe edit", "hosted edit proposal card");
-    await expectVisibleText(page, "Quality summary", "hosted quality summary");
-    await expectVisibleText(page, "1 files · 1 replacements · total chars 32 · max chars 32 · preview none · status ready for manual apply request", "hosted quality status");
-    await expectVisibleText(page, "IDE confirmation required", "hosted IDE confirmation badge");
-    await expectVisibleText(page, "Apply in VS Code after review", "hosted explicit apply button");
-    await assertProposalCount(page, 1, "hosted preview");
-    await assertNoBridgeMessagesOfType(page, "gui.applyWorkspaceEditRequest", "before explicit apply click");
+    await loadAndSendSafeEditRequest(page, guiBaseUrl, `Return a safe edit proposal for explicit ${hostLabel} apply review.`);
+    await expectVisibleText(page, "Propose safe edit", `${hostLabel} edit proposal card`);
+    await expectVisibleText(page, "Quality summary", `${hostLabel} quality summary`);
+    await expectVisibleText(page, "1 files · 1 replacements · total chars 32 · max chars 32 · preview none · status ready for manual apply request", `${hostLabel} quality status`);
+    await expectVisibleText(page, "IDE confirmation required", `${hostLabel} IDE confirmation badge`);
+    await expectVisibleText(page, `Apply in ${hostLabel} after review`, `${hostLabel} explicit apply button`);
+    await assertProposalCount(page, 1, `${hostLabel} preview`);
+    await assertBridgeMessagesOfTypeCount(page, "gui.applyWorkspaceEditRequest", 0, `${hostLabel} before explicit apply click`);
     await assertNoForbiddenBridgeActions(page);
 
-    await page.getByRole("button", { name: "Apply in VS Code after review" }).click();
+    await page.getByRole("button", { name: `Apply in ${hostLabel} after review` }).click();
     const appliedRequest = await waitForApplyRequest(page, 1);
-    assertApplyRequestShape(appliedRequest, "applied request");
-    await expectVisibleText(page, "VS Code apply request pending…", "pending apply status");
+    assertApplyRequestShape(appliedRequest, "applied request", proposalPayload);
+    await expectVisibleText(page, `${hostLabel} apply request pending…`, "pending apply status");
     await dispatchHostApplyResult(page, appliedRequest.requestId, "applied", "Applied by deterministic patch quality host.", 1, ["src/quality.ts"]);
     await expectVisibleText(page, "Host apply result: applied", "applied host result");
     await expectVisibleText(page, "Applied by deterministic patch quality host.", "applied host message");
 
-    await loadAndSendSafeEditRequest(page, guiBaseUrl, "Return a second safe edit proposal for explicit rejection review.");
-    await page.getByRole("button", { name: "Apply in VS Code after review" }).click();
+    await loadAndSendSafeEditRequest(page, guiBaseUrl, `Return a second safe edit proposal for explicit ${hostLabel} rejection review.`);
+    await page.getByRole("button", { name: `Apply in ${hostLabel} after review` }).click();
     const rejectedRequest = await waitForApplyRequest(page, 1);
-    assertApplyRequestShape(rejectedRequest, "rejected request");
+    assertApplyRequestShape(rejectedRequest, "rejected request", proposalPayload);
     await dispatchHostApplyResult(page, rejectedRequest.requestId, "rejected", "Rejected by deterministic patch quality host.", 0, []);
     await expectVisibleText(page, "Host apply result: rejected", "rejected host result");
     await expectVisibleText(page, "Rejected by deterministic patch quality host.", "rejected host message");
 
     await assertNoForbiddenBridgeActions(page);
-    await assertStorageClean(page, "hosted apply");
+    await assertStorageClean(page, `${hostLabel} hosted apply`);
   } finally {
     await page.close().catch(() => undefined);
   }
 }
 
-async function newInstrumentedPage(guiBaseUrl, { hosted }) {
+async function runRejectedProposalCase(guiBaseUrl) {
+  const page = await newInstrumentedPage(guiBaseUrl, { host: "vscode" });
+  try {
+    await loadAndSendSafeEditRequest(page, guiBaseUrl, "Return a safe edit proposal before the invalid output case.");
+    await expectVisibleText(page, "Apply in VS Code after review", "initial valid apply button");
+    await assertBridgeMessagesOfTypeCount(page, "gui.applyWorkspaceEditRequest", 0, "valid proposal before rejected case");
+
+    await loadAndSendSafeEditRequest(page, guiBaseUrl, "Return malformed proposal-like output for rejection review.", "Edit proposal detected but rejected");
+    await expectVisibleText(page, "Edit proposal detected but rejected", "rejected proposal card");
+    await expectVisibleText(page, "The edit proposal JSON is not valid.", "rejected proposal diagnostic");
+    await expectVisibleText(page, "No apply request is available for this response.", "rejected proposal no apply guidance");
+    await assertProposalCount(page, 0, "rejected proposal");
+    await assertNoVisibleApplyButton(page, "rejected proposal");
+    await assertBridgeMessagesOfTypeCount(page, "gui.applyWorkspaceEditRequest", 0, "rejected proposal");
+    await assertNoForbiddenBridgeActions(page);
+    await assertStorageClean(page, "rejected proposal");
+  } finally {
+    await page.close().catch(() => undefined);
+  }
+}
+
+async function runLargeAcknowledgementCase(guiBaseUrl) {
+  const page = await newInstrumentedPage(guiBaseUrl, { host: "jetbrains" });
+  try {
+    await loadAndSendSafeEditRequest(page, guiBaseUrl, "Return a large acknowledged safe edit proposal for patch quality smoke.", "Replace one reviewed line with a large acknowledged patch quality fixture.");
+    await expectVisibleText(page, "large replacement", "large replacement risk badge");
+    await expectVisibleText(page, "preview redacted", "preview redacted risk badge");
+    await expectVisibleText(page, "preview redacted/shortened · status review blocked", "large proposal blocked status");
+    await expectVisibleText(page, "Acknowledge the redacted/shortened preview before IDE apply.", "large proposal disabled reason");
+    const applyButton = page.getByTestId("edit-proposal-apply-button");
+    await applyButton.waitFor({ state: "visible", timeout: 10_000 });
+    if (!(await applyButton.isDisabled())) {
+      failures.push("Large/redacted proposal apply button was enabled before explicit acknowledgement.");
+    }
+    await assertBridgeMessagesOfTypeCount(page, "gui.applyWorkspaceEditRequest", 0, "large proposal before acknowledgement");
+    await page.getByTestId("edit-proposal-acknowledge-redaction").check();
+    if (await applyButton.isDisabled()) {
+      failures.push("Large/redacted proposal apply button stayed disabled after explicit acknowledgement.");
+    }
+    await applyButton.click();
+    const request = await waitForApplyRequest(page, 1);
+    assertApplyRequestShape(request, "large acknowledged request", largeProposalPayload);
+    await dispatchHostApplyResult(page, request.requestId, "applied", "Applied large acknowledged proposal by deterministic host.", 1, ["src/quality-large.ts"]);
+    await expectVisibleText(page, "Host apply result: applied", "large acknowledged host result");
+    await assertNoForbiddenBridgeActions(page);
+    await assertStorageClean(page, "large acknowledged proposal");
+  } finally {
+    await page.close().catch(() => undefined);
+  }
+}
+
+async function newInstrumentedPage(guiBaseUrl, { host }) {
   const page = await browser.newPage();
-  if (hosted) {
+  if (host === "vscode") {
     await page.addInitScript(() => {
       window.__yetAiVsCodeMessages = [];
       window.acquireVsCodeApi = () => ({
@@ -137,6 +216,13 @@ async function newInstrumentedPage(guiBaseUrl, { hosted }) {
           window.__yetAiVsCodeMessages.push(message);
         },
       });
+    });
+  } else if (host === "jetbrains") {
+    await page.addInitScript(() => {
+      window.__yetAiVsCodeMessages = [];
+      window.postIntellijMessage = (message) => {
+        window.__yetAiVsCodeMessages.push(message);
+      };
     });
   } else {
     await page.addInitScript(() => {
@@ -193,16 +279,16 @@ async function newInstrumentedPage(guiBaseUrl, { hosted }) {
   return page;
 }
 
-async function loadAndSendSafeEditRequest(page, guiBaseUrl, prompt) {
+async function loadAndSendSafeEditRequest(page, guiBaseUrl, prompt, expectedAssistantText = "Replace one reviewed line in the patch quality smoke fixture.") {
   await page.goto(`${guiBaseUrl}/index.html`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
   if (await hasVsCodeBridge(page)) {
     await waitForBridgeMessage(page, (message) => message?.type === "gui.ready");
   }
-  await expectVisibleText(page, "Ready to send using patch-quality-mock-model through the local runtime.", "mock model readiness", 20_000);
+  await expectSendReady(page);
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(prompt);
   await page.getByRole("button", { name: "Send", exact: true }).click();
-  await expectVisibleText(page, "Replace one reviewed line in the patch quality smoke fixture.", "assistant proposal summary", 20_000);
+  await expectVisibleText(page, expectedAssistantText, "assistant proposal response", 20_000);
 }
 
 async function buildGui() {
@@ -281,7 +367,10 @@ async function mockRuntimeResponse(value, method, body) {
   if (method === "POST" && url.pathname === `/v1/chats/${chatId}/commands`) {
     const parsed = JSON.parse(body);
     if (parsed.type === "abort") abortCount += 1;
-    else commandCount += 1;
+    else {
+      commandCount += 1;
+      lastUserPrompt = String(parsed.payload?.content ?? "");
+    }
     return json({ accepted: true, chatId, requestId: parsed.requestId, type: parsed.type });
   }
   if (method === "GET" && url.pathname === "/v1/chats/subscribe" && url.searchParams.get("chat_id") === chatId) {
@@ -316,7 +405,17 @@ function chatThread(messages) {
 }
 
 function assistantMessage(id) {
-  return { id, chatId, role: "assistant", status: "complete", createdAt: "2026-06-18T12:00:01Z", content: assistantProposal };
+  return { id, chatId, role: "assistant", status: "complete", createdAt: "2026-06-18T12:00:01Z", content: assistantContentForPrompt(lastUserPrompt) };
+}
+
+function assistantContentForPrompt(prompt) {
+  if (/malformed proposal-like/i.test(prompt)) {
+    return malformedAssistantProposal;
+  }
+  if (/large acknowledged|large/i.test(prompt)) {
+    return largeAssistantProposal;
+  }
+  return assistantProposal;
 }
 
 function json(body, status = 200) {
@@ -390,6 +489,19 @@ async function expectVisibleText(page, text, description, timeout = 10_000) {
   }
 }
 
+async function expectSendReady(page) {
+  try {
+    await page.getByRole("button", { name: "Send", exact: true }).waitFor({ state: "visible", timeout: 20_000 });
+    await page.waitForFunction(() => {
+      const buttons = Array.from(document.querySelectorAll("button"));
+      return buttons.some((button) => button.textContent?.trim() === "Send" && !button.disabled);
+    }, undefined, { timeout: 20_000 });
+  } catch (error) {
+    const body = await page.locator("body").innerText().catch(() => "");
+    throw new Error(`Timed out waiting for enabled Send button. ${messageOf(error)}\nVisible body excerpt: ${redactSecrets(body).slice(0, 5000)}`);
+  }
+}
+
 async function assertProposalCount(page, expected, label) {
   const count = await page.locator("[data-testid='edit-proposal-quality-summary']").count();
   if (count !== expected) {
@@ -422,10 +534,20 @@ async function waitForApplyRequest(page, count) {
   return page.evaluate((expected) => window.__yetAiVsCodeMessages.filter((message) => message?.type === "gui.applyWorkspaceEditRequest")[expected - 1], count);
 }
 
-async function assertNoBridgeMessagesOfType(page, type, label) {
+async function assertBridgeMessagesOfTypeCount(page, type, expected, label) {
   const count = await page.evaluate((messageType) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).length, type);
-  if (count !== 0) {
-    failures.push(`Unexpected ${type} message in ${label}.`);
+  if (count !== expected) {
+    failures.push(`Expected ${expected} ${type} message(s) in ${label}, found ${count}.`);
+  }
+}
+
+async function assertNoVisibleApplyButton(page, label) {
+  const count = await page.getByTestId("edit-proposal-apply-button").count();
+  for (let index = 0; index < count; index += 1) {
+    if (await page.getByTestId("edit-proposal-apply-button").nth(index).isVisible()) {
+      failures.push(`Unexpected visible edit proposal apply button in ${label}.`);
+      return;
+    }
   }
 }
 
@@ -444,7 +566,7 @@ async function dispatchHostApplyResult(page, requestId, status, message, applied
   }, { version: bridgeVersion, requestId, payload: { status, message, cloudRequired: false, appliedEditCount, affectedFiles } });
 }
 
-function assertApplyRequestShape(message, source) {
+function assertApplyRequestShape(message, source, expectedPayload) {
   if (!message || message.version !== bridgeVersion || message.type !== "gui.applyWorkspaceEditRequest" || typeof message.requestId !== "string") {
     failures.push(`${source} did not emit a correlated gui.applyWorkspaceEditRequest.`);
     return;
@@ -455,8 +577,12 @@ function assertApplyRequestShape(message, source) {
     return;
   }
   const edit = payload.edits[0];
-  if (edit.workspaceRelativePath !== "src/quality.ts" || !Array.isArray(edit.textReplacements) || edit.textReplacements.length !== 1) {
+  const expectedEdit = expectedPayload.edits[0];
+  if (edit.workspaceRelativePath !== expectedEdit.workspaceRelativePath || !Array.isArray(edit.textReplacements) || edit.textReplacements.length !== 1) {
     failures.push(`${source} did not preserve the expected single-file textReplacements shape.`);
+  }
+  if (edit.textReplacements?.[0]?.replacementText !== expectedEdit.textReplacements[0].replacementText) {
+    failures.push(`${source} did not preserve the expected replacement text.`);
   }
 }
 
