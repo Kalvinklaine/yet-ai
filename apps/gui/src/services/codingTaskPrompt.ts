@@ -124,7 +124,7 @@ function modeInstruction(mode: CodingTaskPromptMode): string {
     return "Request: draft a concise implementation plan with explicitly provided files or areas, tests to run manually, risks, and a stop point before edits. Do not expand beyond the selected context.";
   }
   if (mode === "safe_edit") {
-    return "Request: propose the smallest safe edit for the goal. Return a reviewable manual proposal only, or clearly explain what more explicit context is needed; do not assume it will be applied automatically.";
+    return "Request: propose the smallest bounded manual edit for the goal. If returning applyable JSON, return exactly one strict accepted proposal/envelope for manual review: omit requestId, include no unknown fields, include no command/tool/shell/git fields, and do not claim the edit was applied, run, saved, or verified. Do not auto-apply edits or read hidden files. If the explicit context is uncertain or insufficient, return prose explaining exactly what is missing instead of malformed JSON.";
   }
   if (mode === "follow_up") {
     return "Request: use the visible response, edit, and verification state to suggest the next safe manual step. Do not assume any action was run, applied, saved, or verified unless it is shown above.";

@@ -66,9 +66,33 @@ describe("codingTaskPrompt service", () => {
     expect(prompts.get("find_bug")).toContain("identify likely bugs or risky edge cases");
     expect(prompts.get("suggest_tests")).toContain("suggest focused tests");
     expect(prompts.get(`re${"factor_safely"}`)).toContain("smallest bounded safe rework");
-    expect(prompts.get("safe_edit")).toContain("smallest safe edit");
+    expect(prompts.get("safe_edit")).toContain("smallest bounded manual edit");
     expect(prompts.get("implementation_plan")).toContain("concise implementation plan");
     expect(prompts.get("follow_up")).toContain("next safe manual step");
+  });
+
+  it("gives safe-edit strict single-proposal manual-review guidance", () => {
+    const prompt = buildCodingTaskPrompt({ mode: "safe_edit", goal: "Patch selected code", contextItems: [], providerReadiness: "ready" });
+
+    expect(prompt).toContain("smallest bounded manual edit");
+    expect(prompt).toContain("If returning applyable JSON, return exactly one strict accepted proposal/envelope for manual review");
+  });
+
+  it("forbids unsafe safe-edit proposal fields and actions", () => {
+    const prompt = buildCodingTaskPrompt({ mode: "safe_edit", goal: "Patch selected code", contextItems: [], providerReadiness: "ready" });
+
+    expect(prompt).toContain("omit requestId");
+    expect(prompt).toContain("include no unknown fields");
+    expect(prompt).toContain("include no command/tool/shell/git fields");
+    expect(prompt).toContain("do not claim the edit was applied, run, saved, or verified");
+    expect(prompt).toContain("Do not auto-apply edits or read hidden files");
+  });
+
+  it("tells safe-edit to explain missing context instead of malformed JSON", () => {
+    const prompt = buildCodingTaskPrompt({ mode: "safe_edit", goal: "Patch selected code", contextItems: [], providerReadiness: "ready" });
+
+    expect(prompt).toContain("If the explicit context is uncertain or insufficient");
+    expect(prompt).toContain("return prose explaining exactly what is missing instead of malformed JSON");
   });
 
   it("summarizes active editor snippets memory and verification with sanitized bounded metadata", () => {
