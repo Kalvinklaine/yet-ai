@@ -420,7 +420,9 @@ export function App() {
           ? "OpenAI account login changing"
           : experimentalOauthChatReady
             ? "Experimental OpenAI account / gpt-5-codex"
-            : "Provider required";
+            : apiKeyReadiness.message
+              ? readinessStateLabel(apiKeyReadinessState, false)
+              : "Provider required";
   const chatReadinessMessage = !runtimeConnected
     ? "Runtime is not connected yet. Refresh runtime or start the IDE-managed local runtime, then return here to send."
     : apiKeyChatReady
@@ -2640,6 +2642,21 @@ function readinessStateLabel(state: ProviderReadinessState, canSendChat: boolean
   }
   if (state === "model_provider_mismatch") {
     return "Model/provider mismatch";
+  }
+  if (state === "missing_credentials") {
+    return "Provider API key or local credential required";
+  }
+  if (state === "missing_model") {
+    return "Configured provider model missing";
+  }
+  if (state === "unsupported_model") {
+    return "Selected model lacks chat streaming support";
+  }
+  if (state === "local_provider_unready") {
+    return "Local provider or Ollama model not ready";
+  }
+  if (state === "provider_error") {
+    return "Runtime/provider refresh failed";
   }
   if (state === "model_not_ready") {
     return "Model not ready";

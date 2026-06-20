@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderSummary } from "./providersClient";
 import type { ModelSummary } from "./runtimeClient";
-import { classifyProviderReadinessState, missingModelMetadataMessage, modelCapabilitySummary, modelProviderMismatchMessage, modelStatusText, modelUnreadyMessage, readinessStatusLabel, resolveProviderModelReadiness } from "./providerReadiness";
+import { classifyProviderReadinessState, missingModelMetadataMessage, modelCapabilitySummary, modelProviderMismatchMessage, modelStatusText, modelUnreadyMessage, readinessStatusLabel, resolveProviderModelReadiness, runtimeModelErrorMessage } from "./providerReadiness";
 
 function model(overrides: Partial<ModelSummary> = {}): ModelSummary {
   return {
@@ -97,36 +97,68 @@ describe("provider readiness", () => {
     expect(classifyProviderReadinessState(realReady, true)).toBe("openai_compatible_ready");
     expect(classifyProviderReadinessState(resolveProviderModelReadiness([model({ providerId: "custom-local" })], [provider({ id: "custom-local", kind: "custom", displayName: "Custom Local", auth: { type: "none", configured: false } })], null), true)).toBe("local_provider_ready");
     expect(classifyProviderReadinessState(mismatch, true)).toBe("model_provider_mismatch");
-    expect(classifyProviderReadinessState(modelNotReady, true)).toBe("model_not_ready");
+    expect(classifyProviderReadinessState(modelNotReady, true)).toBe("missing_credentials");
     expect(classifyProviderReadinessState(required, true)).toBe("provider_required");
   });
 
-  it("keeps model errors and missing provider metadata send-blocking", () => {
-    expect(resolveProviderModelReadiness([model()], [provider()], { status: "network", message: "failed" })).toEqual({ ready: false, mismatch: false });
+  it("keeps model errors and missing provider metadata send-blocking with recovery copy", () => {
+    const readiness = resolveProviderModelReadiness([model()], [provider()], { status: "network", message: "failed" });
+
+    expect(readiness.ready).toBe(false);
+    expect(readiness.mismatch).toBe(false);
+    expect(readiness.message).toContain("could not reach the local runtime or provider");
+    expect(classifyProviderReadinessState(readiness, true)).toBe("provider_error");
     expect(resolveProviderModelReadiness([], [], null)).toEqual({ ready: false, mismatch: false });
   });
 
-  it("reports provider/model mismatches without changing copy", () => {
+  it("reports provider/model mismatches with recovery guidance", () => {
     const readiness = resolveProviderModelReadiness([model({ providerId: "other-runtime" })], [provider()], null);
 
     expect(readiness.ready).toBe(false);
     expect(readiness.mismatch).toBe(true);
-    expect(readiness.message).toBe("Runtime model/provider mismatch. Refresh runtime or test/save provider before sending. Model GPT-4o mini is not available on enabled provider other-runtime.");
+    expect(readiness.message).toBe("Runtime model/provider mismatch. Test the saved provider, fix the provider/model id mapping locally, then Refresh runtime before sending. Model GPT-4o mini is not available on enabled provider other-runtime.");
   });
 
   it("reports missing readiness metadata", () => {
     const incomplete = model({ capabilities: undefined, readiness: undefined });
 
-    expect(missingModelMetadataMessage(incomplete)).toBe("Model GPT-4o mini is missing readiness metadata from the runtime. Refresh the runtime after updating it before sending.");
-    expect(resolveProviderModelReadiness([incomplete], [provider()], null).message).toBe("Model GPT-4o mini is missing readiness metadata from the runtime. Refresh the runtime after updating it before sending.");
+    expect(missingModelMetadataMessage(incomplete)).toBe("Model GPT-4o mini is missing readiness metadata from the local runtime. Refresh runtime after updating it; if this persists, test the provider before sending.");
+    expect(resolveProviderModelReadiness([incomplete], [provider()], null).message).toBe("Model GPT-4o mini is missing readiness metadata from the local runtime. Refresh runtime after updating it; if this persists, test the provider before sending.");
   });
 
-  it("reports unready and unsupported models with reason/capabilities", () => {
-    const unready = model({ readiness: { status: "missing_model", reason: "model id not returned by provider" } });
+  it("reports missing credentials, missing models, and unsupported models with recovery actions", () => {
+    const missingCredentials = model({ readiness: { status: "missing_credentials", reason: "saved key has not tested yet" } });
+    const missingHostedModel = model({ readiness: { status: "missing_model", reason: "model id not returned by provider" } });
     const unsupported = model({ capabilities: { chat: true, streaming: false, tools: false, reasoning: false } });
 
-    expect(modelUnreadyMessage(unready)).toBe("Model GPT-4o mini is not ready for chat streaming: missing model. model id not returned by provider");
-    expect(resolveProviderModelReadiness([unsupported], [provider()], null).message).toBe("Model GPT-4o mini cannot send chat because required capabilities are unavailable: chat supported, streaming unsupported, tools unsupported, reasoning unsupported.");
+    expect(modelUnreadyMessage(missingCredentials, provider())).toBe("Provider credentials are required before GPT-4o mini can send. Save the provider API key in the local runtime, then Test provider and Refresh runtime. Runtime detail: saved key has not tested yet");
+    expect(classifyProviderReadinessState(resolveProviderModelReadiness([missingCredentials], [provider()], null), true)).toBe("missing_credentials");
+    expect(modelUnreadyMessage(missingHostedModel, provider())).toBe("Model GPT-4o mini is not available from the configured provider. Check the saved model id or choose a provider-returned model, then Test provider and Refresh runtime. Runtime detail: model id not returned by provider");
+    expect(resolveProviderModelReadiness([unsupported], [provider()], null).message).toBe("Model GPT-4o mini cannot send chat because required capabilities are unavailable: chat supported, streaming unsupported, tools unsupported, reasoning unsupported. Choose a chat + streaming capable model, then refresh runtime.");
+    expect(classifyProviderReadinessState(resolveProviderModelReadiness([unsupported], [provider()], null), true)).toBe("unsupported_model");
+  });
+
+  it("reports local Ollama unready separately from hosted missing models", () => {
+    const ollamaModel = model({ id: "llama3.2", displayName: "llama3.2", providerId: "ollama-local", readiness: { status: "missing_model", reason: "pull required" } });
+    const ollamaProvider = provider({
+      id: "ollama-local",
+      kind: "ollama",
+      displayName: "Ollama Local",
+      baseUrl: "http://127.0.0.1:11434",
+      auth: { type: "none", configured: false },
+      models: [ollamaModel],
+    });
+    const readiness = resolveProviderModelReadiness([ollamaModel], [ollamaProvider], null);
+
+    expect(classifyProviderReadinessState(readiness, true)).toBe("local_provider_unready");
+    expect(readiness.message).toBe("Local Ollama model llama3.2 is not available yet. Start Ollama, pull or choose the model locally, Test provider, then Refresh runtime. Runtime detail: pull required");
+  });
+
+  it("maps timeout and HTTP-like model refresh failures to conservative recovery copy", () => {
+    expect(runtimeModelErrorMessage({ status: "timeout", message: "provider timed out" })).toContain("readiness timed out");
+    expect(runtimeModelErrorMessage({ status: 401, message: "Authorization: Bearer secret-token" })).toContain("provider API keys are separate");
+    expect(runtimeModelErrorMessage({ status: 429, message: "quota exceeded" })).toContain("rate limit");
+    expect(runtimeModelErrorMessage({ status: 404, message: "not found" })).toContain("model endpoint was not found");
   });
 
   it("sanitizes token-like model ids, provider ids, and readiness reasons in visible output", () => {

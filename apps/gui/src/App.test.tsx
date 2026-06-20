@@ -206,8 +206,8 @@ describe("runtime refresh feedback", () => {
 
     expect(container?.textContent).toContain("Runtime check failed: 503 models unavailable");
     expect(container?.textContent).toContain("Models refresh failed: 503: models unavailable");
-    expect(container?.textContent).toContain("State: Provider required");
-    expect(container?.textContent).toContain("Runtime model refresh failed. Refresh runtime again before sending the first message.");
+    expect(container?.textContent).toContain("State: Runtime/provider refresh failed");
+    expect(container?.textContent).toContain("Runtime model refresh failed before a send-ready model was selected. Refresh runtime, Test provider, or inspect local runtime logs.");
     expect(findButton("Send").disabled).toBe(true);
   });
 
@@ -5631,7 +5631,7 @@ describe("chat panel", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("State: Runtime model/provider mismatch");
-    expect(container?.textContent).toContain("Runtime model/provider mismatch. Refresh runtime or test/save provider before sending.");
+    expect(container?.textContent).toContain("Runtime model/provider mismatch. Test the saved provider, fix the provider/model id mapping locally, then Refresh runtime before sending.");
     expect(container?.textContent).toContain("Model and provider do not match");
     expect(container?.textContent).toContain("Next safest action: Test the saved provider, then refresh runtime after fixing the provider/model id.");
     expect(findButton("Send").disabled).toBe(true);
@@ -5648,7 +5648,7 @@ describe("chat panel", () => {
 
     expect(container?.textContent).toContain("0 enabled providers");
     expect(container?.textContent).toContain("State: Runtime model/provider mismatch");
-    expect(container?.textContent).toContain("Runtime model/provider mismatch. Refresh runtime or test/save provider before sending.");
+    expect(container?.textContent).toContain("Runtime model/provider mismatch. Test the saved provider, fix the provider/model id mapping locally, then Refresh runtime before sending.");
     expect(findButton("Send").disabled).toBe(true);
   });
 
@@ -5677,7 +5677,7 @@ describe("chat panel", () => {
 
     expect(container?.textContent).toContain("2 enabled providers");
     expect(container?.textContent).toContain("State: Runtime model/provider mismatch");
-    expect(container?.textContent).toContain("Runtime model/provider mismatch. Refresh runtime or test/save provider before sending.");
+    expect(container?.textContent).toContain("Runtime model/provider mismatch. Test the saved provider, fix the provider/model id mapping locally, then Refresh runtime before sending.");
     expect(findButton("Send").disabled).toBe(true);
   });
 
@@ -5693,7 +5693,7 @@ describe("chat panel", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("State: Runtime model/provider mismatch");
-    expect(container?.textContent).toContain("Runtime model/provider mismatch. Refresh runtime or test/save provider before sending.");
+    expect(container?.textContent).toContain("Runtime model/provider mismatch. Test the saved provider, fix the provider/model id mapping locally, then Refresh runtime before sending.");
     expect(container?.textContent).toContain("Model Model [redacted] is not available on enabled provider provider-[redacted].");
     expect(container?.textContent).not.toContain("access_token");
     expect(container?.textContent).not.toContain("refresh_token");
@@ -5817,7 +5817,7 @@ describe("chat panel", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("Model llama3.2 is not ready for chat streaming: missing model. Run ollama pull llama3.2 before sending.");
+    expect(container?.textContent).toContain("Local Ollama model llama3.2 is not available yet. Start Ollama, pull or choose the model locally, Test provider, then Refresh runtime. Runtime detail: Run ollama pull llama3.2 before sending.");
     expect(container?.textContent).toContain("Model is not ready yet");
     expect(findButton("Send").disabled).toBe(true);
 
@@ -5854,7 +5854,7 @@ describe("chat panel", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("Model GPT-4o mini is not ready for chat streaming: missing credentials. Provider login failed [redacted]");
+    expect(container?.textContent).toContain("Provider credentials are required before GPT-4o mini can send. Save the provider API key in the local runtime, then Test provider and Refresh runtime. Runtime detail: Provider login failed [redacted]");
     expect(container?.textContent).toContain("Model status: GPT-4o mini (OpenAI API): missing credentials, Provider login failed [redacted]");
     expect(container?.textContent).toContain("Model is not ready yet");
     expect(container?.textContent).toContain("Next safest action: Test the provider, fix credentials/model readiness locally, then refresh runtime.");
@@ -5896,7 +5896,7 @@ describe("chat panel", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("Model GPT-4o mini is missing readiness metadata from the runtime. Refresh the runtime after updating it before sending.");
+    expect(container?.textContent).toContain("Model GPT-4o mini is missing readiness metadata from the local runtime. Refresh runtime after updating it; if this persists, test the provider before sending.");
     expect(container?.textContent).toContain("Model status: GPT-4o mini (OpenAI API): readiness metadata missing");
     expect(findButton("Send").disabled).toBe(true);
   });

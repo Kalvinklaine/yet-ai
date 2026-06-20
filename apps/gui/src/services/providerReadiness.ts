@@ -8,9 +8,10 @@ export type ProviderModelReadiness = {
   model?: ModelSummary;
   provider?: ProviderSummary;
   message?: string;
+  error?: RuntimeError;
 };
 
-export type ProviderReadinessState = "runtime_unavailable" | "demo_mode_ready" | "openai_compatible_ready" | "local_provider_ready" | "model_provider_mismatch" | "model_not_ready" | "provider_required";
+export type ProviderReadinessState = "runtime_unavailable" | "demo_mode_ready" | "openai_compatible_ready" | "local_provider_ready" | "model_provider_mismatch" | "missing_credentials" | "missing_model" | "unsupported_model" | "local_provider_unready" | "provider_error" | "model_not_ready" | "provider_required";
 
 export function classifyProviderReadinessState(readiness: ProviderModelReadiness, runtimeConnected: boolean): ProviderReadinessState {
   if (!runtimeConnected) {
@@ -28,6 +29,18 @@ export function classifyProviderReadinessState(readiness: ProviderModelReadiness
   if (readiness.mismatch) {
     return "model_provider_mismatch";
   }
+  if (readiness.error) {
+    return "provider_error";
+  }
+  if (readiness.model?.readiness?.status === "missing_credentials") {
+    return "missing_credentials";
+  }
+  if (readiness.model?.readiness?.status === "missing_model") {
+    return isLocalProviderKind(readiness.provider?.kind) ? "local_provider_unready" : "missing_model";
+  }
+  if (readiness.model?.readiness?.status === "unsupported" || (readiness.model && (!readiness.model.capabilities?.chat || !readiness.model.capabilities.streaming))) {
+    return "unsupported_model";
+  }
   if (readiness.model || readiness.message) {
     return "model_not_ready";
   }
@@ -36,7 +49,7 @@ export function classifyProviderReadinessState(readiness: ProviderModelReadiness
 
 export function resolveProviderModelReadiness(models: ModelSummary[], enabledProviders: ProviderSummary[], modelError: RuntimeError | null): ProviderModelReadiness {
   if (modelError) {
-    return { ready: false, mismatch: false };
+    return { ready: false, mismatch: false, error: modelError, message: runtimeModelErrorMessage(modelError) };
   }
   const firstRuntimeModel = models[0];
   if (firstRuntimeModel) {
@@ -64,32 +77,68 @@ function modelReadinessResult(model: ModelSummary, provider: ProviderSummary): P
     return { ready: false, mismatch: false, model, provider, message: missingMessage };
   }
   if (model.readiness?.status !== "ready") {
-    return { ready: false, mismatch: false, model, provider, message: modelUnreadyMessage(model) };
+    return { ready: false, mismatch: false, model, provider, message: modelUnreadyMessage(model, provider) };
   }
   if (!model.capabilities?.chat || !model.capabilities.streaming) {
-    return { ready: false, mismatch: false, model, provider, message: modelUnsupportedMessage(model) };
+    return { ready: false, mismatch: false, model, provider, message: modelUnsupportedMessage(model, provider) };
   }
   return { ready: true, mismatch: false, model, provider };
 }
 
 export function missingModelMetadataMessage(model: ModelSummary): string | undefined {
   if (!model.capabilities || !model.readiness) {
-    return `Model ${sanitizeDisplayText(model.displayName || model.id || "selected model")} is missing readiness metadata from the runtime. Refresh the runtime after updating it before sending.`;
+    return `Model ${sanitizeDisplayText(model.displayName || model.id || "selected model")} is missing readiness metadata from the local runtime. Refresh runtime after updating it; if this persists, test the provider before sending.`;
   }
   return undefined;
 }
 
-export function modelUnreadyMessage(model: ModelSummary): string {
+export function modelUnreadyMessage(model: ModelSummary, provider?: ProviderSummary): string {
   const modelName = sanitizeDisplayText(model.displayName || model.id || "selected model");
-  const status = sanitizeDisplayText(readinessStatusLabel(model.readiness?.status));
-  const reason = model.readiness?.reason ? ` ${sanitizeDisplayText(model.readiness.reason)}` : "";
-  return `Model ${modelName} is not ready for chat streaming: ${status}.${reason}`;
+  const status = model.readiness?.status;
+  const reason = model.readiness?.reason ? ` Runtime detail: ${sanitizeDisplayText(model.readiness.reason)}` : "";
+  switch (status) {
+    case "missing_credentials":
+      return `Provider credentials are required before ${modelName} can send. Save the provider API key in the local runtime, then Test provider and Refresh runtime.${reason}`;
+    case "missing_model":
+      if (provider?.kind === "ollama") {
+        return `Local Ollama model ${modelName} is not available yet. Start Ollama, pull or choose the model locally, Test provider, then Refresh runtime.${reason}`;
+      }
+      if (isLocalProviderKind(provider?.kind)) {
+        return `Local provider model ${modelName} is not available yet. Check the local server and saved model id, Test provider, then Refresh runtime.${reason}`;
+      }
+      return `Model ${modelName} is not available from the configured provider. Check the saved model id or choose a provider-returned model, then Test provider and Refresh runtime.${reason}`;
+    case "unsupported":
+      return modelUnsupportedMessage(model, provider);
+    case "disabled":
+      return `Model ${modelName} is disabled for chat. Enable the provider/model locally or choose Demo Mode for a no-key preview before sending.${reason}`;
+    default:
+      return `Model ${modelName} is not ready for chat streaming: ${sanitizeDisplayText(readinessStatusLabel(status))}.${reason}`;
+  }
 }
 
-export function modelUnsupportedMessage(model: ModelSummary): string {
+export function modelUnsupportedMessage(model: ModelSummary, provider?: ProviderSummary): string {
   const modelName = sanitizeDisplayText(model.displayName || model.id || "selected model");
   const support = modelCapabilitySummary(model);
-  return `Model ${modelName} cannot send chat because required capabilities are unavailable: ${support}.`;
+  const providerHint = provider?.kind === "demo-local" ? " Choose a real BYOK/local provider when you need model capabilities beyond Demo Mode." : " Choose a chat + streaming capable model, then refresh runtime.";
+  return `Model ${modelName} cannot send chat because required capabilities are unavailable: ${support}.${providerHint}`;
+}
+
+export function runtimeModelErrorMessage(error: RuntimeError): string {
+  const detail = sanitizeDisplayText(error.message);
+  switch (error.status) {
+    case 401:
+      return `Runtime rejected the model/provider refresh as unauthorized. Refresh runtime with the correct local Session token; provider API keys are separate. Detail: ${detail}`;
+    case 429:
+      return `Provider or runtime rate limit was reported while refreshing models. Wait, then Test provider or Refresh runtime. Detail: ${detail}`;
+    case 404:
+      return `Runtime or provider model endpoint was not found. Check the local runtime version, provider base URL, and saved model id, then Refresh runtime. Detail: ${detail}`;
+    case "timeout":
+      return `Model/provider readiness timed out. Check the local runtime or local provider server, reduce load if needed, then Refresh runtime. Detail: ${detail}`;
+    case "network":
+      return `Model/provider readiness could not reach the local runtime or provider through it. Inspect the local runtime and provider server, then Refresh runtime. Detail: ${detail}`;
+    default:
+      return `Runtime model refresh failed before a send-ready model was selected. Refresh runtime, Test provider, or inspect local runtime logs. Detail: ${detail}`;
+  }
 }
 
 function resolveRuntimeModelProvider(model: ModelSummary, enabledProviders: ProviderSummary[]): ProviderSummary | undefined {
@@ -148,5 +197,5 @@ export function modelProviderMismatchMessage(model: ModelSummary, provider?: Pro
   const modelName = sanitizeDisplayText(model.displayName || model.id || "selected model");
   const providerName = provider ? sanitizeDisplayText(provider.displayName || provider.id) : model.providerId ? sanitizeDisplayText(model.providerId) : undefined;
   const detail = providerName ? ` Model ${modelName} is not available on enabled provider ${providerName}.` : ` Model ${modelName} does not map to exactly one enabled provider.`;
-  return `Runtime model/provider mismatch. Refresh runtime or test/save provider before sending.${detail}`;
+  return `Runtime model/provider mismatch. Test the saved provider, fix the provider/model id mapping locally, then Refresh runtime before sending.${detail}`;
 }
