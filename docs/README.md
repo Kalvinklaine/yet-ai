@@ -29,6 +29,7 @@ Additional local evidence templates live under `docs/dogfood/`, including the re
 - `architecture/005-publication-hygiene.md` — rules for keeping public tracked files clean before publication.
 - `architecture/006-login-based-gpt-first-message.md` — future mandatory login-based GPT first-message milestone, official/experimental path split, and required gates.
 - `architecture/007-provider-auth-feasibility.md` — provider-auth feasibility decision for OpenAI account-login evaluation, blocking production/default login until an official provider-supported local-app flow is approved.
+- `architecture/008-reference-divergence-guardrails.md` — public-safe guardrails for using reference implementations as architectural signal without copying identity, source, assets, or public wording.
 
 ## Current login-first milestone status
 
