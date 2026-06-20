@@ -22,6 +22,8 @@ Implemented surfaces:
 Known limitations:
 
 ## Dev-preview packaging decision boundary
+Runtime lifecycle ownership and future daemon-lite criteria are tracked in `009-runtime-lifecycle-roadmap.md`. The current model remains direct authenticated loopback engine access with IDE-plugin-owned launch/connect/restart behavior; no daemon, proxy worker, or resumable background-session runtime is implemented.
+
 
 Current IDE artifacts are install-from-file dev-preview evidence only. The VS Code VSIX, JetBrains ZIP, GitHub Actions downloadable artifacts, checksums, and combined manifest prove local package-route structure, packaged GUI freshness, identity metadata, safe archive layout, and loopback/mock startup behavior for development and manual dogfood. They are unsigned and unpublished, and they do not represent a marketplace release, production installer, signed or notarized engine distribution, automatic update channel, or production release.
 
