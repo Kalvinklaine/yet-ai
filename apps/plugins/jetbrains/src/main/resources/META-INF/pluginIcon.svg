@@ -1,23 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <defs>
-    <linearGradient id="bg" x1="24" y1="24" x2="232" y2="232" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#1D4ED8"/>
-      <stop offset="1" stop-color="#0F172A"/>
-    </linearGradient>
-    <linearGradient id="panel" x1="38" y1="40" x2="218" y2="214" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#F8FAFC" stop-opacity=".96"/>
-      <stop offset="1" stop-color="#BFDBFE" stop-opacity=".9"/>
-    </linearGradient>
-  </defs>
-  <rect width="256" height="256" rx="58" fill="url(#bg)"/>
-  <rect x="28" y="34" width="200" height="188" rx="34" fill="url(#panel)"/>
-  <rect x="28" y="34" width="200" height="45" rx="34" fill="#0F172A" opacity=".92"/>
-  <path d="M28 64h200v22H28z" fill="#0F172A" opacity=".92"/>
-  <circle cx="61" cy="59" r="7" fill="#60A5FA"/>
-  <circle cx="85" cy="59" r="7" fill="#93C5FD"/>
-  <circle cx="109" cy="59" r="7" fill="#DBEAFE"/>
-  <path d="M105 101h36l24 39 24-39h36l-43 64v34h-34v-34l-43-64z" fill="#0F172A"/>
-  <path d="M58 132l23 17-23 17" fill="none" stroke="#2563EB" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M88 170h34" stroke="#2563EB" stroke-width="11" stroke-linecap="round"/>
-  <path d="M201 91l5 13 13 5-13 5-5 13-5-13-13-5 13-5 5-13z" fill="#FBBF24"/>
+  <rect width="256" height="256" rx="54" fill="#0B1220"/>
+  <rect x="22" y="30" width="212" height="196" rx="34" fill="#101B2F" stroke="#4F8CFF" stroke-width="8"/>
+  <circle cx="54" cy="60" r="7" fill="#FFB86B"/><circle cx="78" cy="60" r="7" fill="#7DD3FC"/><circle cx="102" cy="60" r="7" fill="#A7F3D0"/>
+  <path d="M72 92l48 58v43h30v-43l48-58h-36l-27 35-27-35H72z" fill="#F8FAFC"/>
+  <path d="M201 73l5 14 14 5-14 5-5 14-5-14-14-5 14-5 5-14z" fill="#A7F3D0"/>
 </svg>
