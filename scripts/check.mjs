@@ -5,6 +5,7 @@ const validators = [
   ["scripts/validate-public-hygiene.mjs"],
   ["scripts/validate-docs-index.mjs"],
   ["scripts/validate-contracts.mjs"],
+  ["scripts/smoke-sandbox-checkpoint.mjs"],
   ["scripts/validate-ide-artifact-contract.mjs"],
   ["scripts/validate-ide-artifact-workflow.mjs"],
   ["scripts/validate-ide-surface-contract.mjs"],

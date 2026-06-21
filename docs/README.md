@@ -89,6 +89,14 @@ Run the root validation command after documentation or identity changes:
 npm run check
 ```
 
+For the Sprint 41 sandbox checkpoint/rollback substrate, run the focused disposable-workspace smoke:
+
+```sh
+npm run smoke:sandbox-checkpoint
+```
+
+The smoke creates only a temporary workspace with the `.yet-ai-disposable-workspace.json` sentinel, checkpoints explicit relative files, mutates and restores them, checks exact byte equality, and verifies fail-closed handling for unsafe paths, symlinks, large files, execution-like metadata, and background scan requests. It is local/disposable evidence only: it does not launch an IDE, call providers or hosted services, execute shell/git/tool commands, use network access, scan a real workspace, or print raw file bodies/private temp roots.
+
 The command runs the repository's local validation bundle: product identity, public hygiene, docs index coverage, IDE surface contract parity, docs validation, and focused self-tests/validators that are safe for the current checkout. It does not run the browser or packaged IDE smoke gates, call providers, require hosted Yet AI services, publish marketplace artifacts, or claim production release status.
 
 ### Sprint 10 verification matrix
@@ -97,6 +105,7 @@ The command runs the repository's local validation bundle: product identity, pub
 | --- | --- | --- | --- |
 | Repository docs, identity, hygiene, IDE surface validators | `npm run check` | Docs index validity, product identity, public hygiene, focused local validators | Local only; no provider calls, hosted Yet AI backend, publishing, signing, or release claim |
 | Shared protocol contracts | `npm run validate:contracts` | Strict schemas and positive/invalid fixtures for engine, provider-auth, bridge, planner, and agent-progress boundaries | Contract validation only; no runtime provider login |
+| Sandbox checkpoint smoke | `npm run smoke:sandbox-checkpoint` | Deterministic disposable-workspace checkpoint creation, exact-byte restore, fail-closed unsafe input cases, and sanitized metadata-only report boundaries | Local temp-dir only; no IDE launch, provider calls, hosted service, shell/git/tool execution, network, background scan, or raw file-body evidence |
 | Rust provider-auth and chat regressions | `export PATH="$HOME/.cargo/bin:$PATH"; cargo test -p yet-lsp provider_auth && cargo test -p yet-lsp chat` | Engine-owned provider-auth state, sanitized responses, and chat behavior | Local tests; fake/mock credentials only |
 | GUI app tests and build | `cd apps/gui && npm test -- App && npm run build` | Login-first/Demo/API-key fallback rendering and production web assets compile | GUI must not persist raw provider secrets or require hosted services |
 | Login-first mock smoke | `npm run smoke:login-first-message` | API-key fallback precedence, mock provider-auth lifecycle, first canned message, sanitized evidence | Loopback/mock-only; no real OpenAI/ChatGPT account or provider call |

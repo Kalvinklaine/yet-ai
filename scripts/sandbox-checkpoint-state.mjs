@@ -38,6 +38,15 @@ function assertDateTime(value, label) {
   }
 }
 
+function assertAllowedKeys(value, allowedKeys, label) {
+  assertPlainObject(value, label);
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      throw checkpointError(`${label}: invalid checkpoint input.`);
+    }
+  }
+}
+
 function hashBuffer(buffer) {
   return createHash("sha256").update(buffer).digest("hex");
 }
@@ -51,7 +60,7 @@ function stableJson(value) {
 }
 
 function normalizeLimits(limits = {}) {
-  assertPlainObject(limits, "limits");
+  assertAllowedKeys(limits, new Set(["maxFiles", "maxFileBytes", "maxTotalBytes"]), "limits");
   const normalized = {
     maxFiles: Number.isInteger(limits.maxFiles) ? limits.maxFiles : DEFAULT_LIMITS.maxFiles,
     maxFileBytes: Number.isInteger(limits.maxFileBytes) ? limits.maxFileBytes : DEFAULT_LIMITS.maxFileBytes,
@@ -240,7 +249,9 @@ function validateManifest(manifest) {
   return manifest;
 }
 
-async function createSandboxCheckpoint({ workspaceRoot, checkpointRoot, checkpointId, createdAt, files, limits = {} }) {
+async function createSandboxCheckpoint(options) {
+  assertAllowedKeys(options, new Set(["workspaceRoot", "checkpointRoot", "checkpointId", "createdAt", "files", "limits"]), "checkpoint request");
+  const { workspaceRoot, checkpointRoot, checkpointId, createdAt, files, limits = {} } = options;
   assertSafeId(checkpointId, "checkpointId");
   assertDateTime(createdAt, "createdAt");
   if (typeof workspaceRoot !== "string" || workspaceRoot.length < 1 || typeof checkpointRoot !== "string" || checkpointRoot.length < 1) {
@@ -286,7 +297,9 @@ async function createSandboxCheckpoint({ workspaceRoot, checkpointRoot, checkpoi
   return { manifest };
 }
 
-async function verifySandboxCheckpoint({ workspaceRoot, checkpointRoot, manifest }) {
+async function verifySandboxCheckpoint(options) {
+  assertAllowedKeys(options, new Set(["workspaceRoot", "checkpointRoot", "manifest"]), "verify request");
+  const { workspaceRoot, checkpointRoot, manifest } = options;
   if (typeof workspaceRoot !== "string" || workspaceRoot.length < 1 || typeof checkpointRoot !== "string" || checkpointRoot.length < 1) {
     throw checkpointError("checkpoint roots: invalid checkpoint input.");
   }
@@ -344,7 +357,9 @@ async function prepareRestorePlan(workspaceRoot, checkpointRoot, manifest) {
   return { manifest: validManifest, snapshots };
 }
 
-async function restoreSandboxCheckpoint({ workspaceRoot, checkpointRoot, manifest, restoredAt }) {
+async function restoreSandboxCheckpoint(options) {
+  assertAllowedKeys(options, new Set(["workspaceRoot", "checkpointRoot", "manifest", "restoredAt"]), "restore request");
+  const { workspaceRoot, checkpointRoot, manifest, restoredAt } = options;
   assertDateTime(restoredAt, "restoredAt");
   if (typeof workspaceRoot !== "string" || workspaceRoot.length < 1 || typeof checkpointRoot !== "string" || checkpointRoot.length < 1) {
     throw checkpointError("checkpoint roots: invalid checkpoint input.");
