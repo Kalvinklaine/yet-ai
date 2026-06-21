@@ -45,6 +45,10 @@ Runtime status payloads must stay sanitized. They must not include raw runtime/s
 - Preserve browser preview-only behavior: browser surfaces may render and test GUI flows, but they must not launch runtimes, mutate workspaces, or apply edits.
 - Preserve JetBrains parity as an explicit risk. A future feature should not be called complete for IDE lifecycle unless both VS Code and JetBrains have equivalent local-first behavior, diagnostics, token handling, restart semantics, and smoke or test evidence, or the difference is clearly documented as deferred.
 
+## Sprint 38 final status
+
+Sprint 38 completed the shared `host.runtimeStatus` lifecycle diagnostics pass for browser preview, VS Code, and JetBrains. The final audit verified that lifecycle status remains metadata-only, `host.ready` remains the only runtime URL/session token carrier, Send stays gated by runtime ping plus model/provider readiness, diagnostics are sanitized, browser preview remains connect-only, JetBrains and VS Code recovery copy is equivalent for local-first recovery, and the sandbox note remains prerequisites-only rather than implementation.
+
 ## Daemon-lite decision criteria
 
 A daemon-lite design may be considered only when at least one of these needs is concrete and accepted:
