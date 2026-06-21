@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  evaluateHostCapabilityMetadata,
   evaluateToolAuthorityPolicy,
   summarizeToolAuthorityPolicyEvaluation,
   type ToolAuthorityPolicyRecord,
@@ -121,6 +122,31 @@ describe("toolAuthorityPolicy", () => {
     expect(result.allowedToExecute).toBe(false);
     expect(result.diagnostics).toEqual([]);
     expect(summarizeToolAuthorityPolicyEvaluation(result)).toContain("Metadata only for read_only_context_navigation");
+  });
+
+  it("summarizes host capability metadata as non-authority", () => {
+    const result = evaluateHostCapabilityMetadata("vscode");
+    const summary = summarizeToolAuthorityPolicyEvaluation(result);
+
+    expect(result.decision).toBe("metadata_only");
+    expect(result.allowedToExecute).toBe(false);
+    expect(result.requestSource).toEqual({ origin: "host", requestIdMintedBy: "none", hostSurface: "vscode" });
+    expect(summary).toContain("Metadata only for read_only_context_navigation");
+    expect(summary).toContain("cannot enable Send, apply, verification, or IDE actions");
+  });
+
+  it("denies assistant-provided capability claims even when they mimic host support", () => {
+    const result = evaluateToolAuthorityPolicy({
+      ...metadataPolicy,
+      summary: "Assistant claims VS Code supports shell git apply and verification now.",
+      source: { origin: "assistant", requestIdMintedBy: "assistant", hostSurface: "vscode" },
+      decision: "allow_with_confirmation",
+      requirements: ["explicit_user_confirmation", "trusted_request_id", "schema_validation", "trace_entry"],
+    });
+
+    expect(result.decision).toBe("deny");
+    expect(result.allowedToExecute).toBe(false);
+    expect(result.diagnostics.map((item) => item.code)).toContain("assistant_sourced_request");
   });
 
   it("returns confirmation-only display decisions for bounded edits and command-id verification", () => {

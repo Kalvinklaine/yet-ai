@@ -21,6 +21,7 @@ import { buildCodingTaskPrompt, type CodingTaskPromptMode } from "./services/cod
 import { buildVerificationFollowupPrompt, type VerificationFollowupPromptMode } from "./services/verificationFollowupPrompt";
 import { createProjectMemory, deleteProjectMemory, listProjectMemory, searchProjectMemory, type ProjectMemoryNote } from "./services/projectMemoryClient";
 import { appendCodingSessionTraceEntry, type CodingSessionTraceDraft, type CodingSessionTraceEntry } from "./services/codingSessionTrace";
+import { evaluateHostCapabilityMetadata } from "./services/toolAuthorityPolicy";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
@@ -2160,6 +2161,7 @@ export function App() {
   );
 
   const hostedWebview = bridgeHost === "vscode" || bridgeHost === "jetbrains";
+  const hostCapabilityEvaluation = useMemo(() => evaluateHostCapabilityMetadata(bridgeHost), [bridgeHost]);
 
   return (
     <main className={`app-shell host-${bridgeHost}`}>
@@ -2186,6 +2188,15 @@ export function App() {
           <span className="subtle">Browser can use the local runtime for chat and GUI-only previews. Open {productName} in VS Code or JetBrains for host actions: applying edits, IDE verification commands, active-file/context requests, and project snippet search.</span>
         </section>
       )}
+
+      {activeRuntimeLifecycle && <section className="readiness-card warn" role="status" aria-label="Host capability metadata authority">
+        <div className="row">
+          <strong>Host capability metadata</strong>
+          <span className="badge warn">metadata only</span>
+          <span className="badge">allowed to execute: {String(hostCapabilityEvaluation.allowedToExecute)}</span>
+        </div>
+        <span className="subtle">Host/plugin support signals are display evidence only; they never enable Send, apply, verification, or IDE actions.</span>
+      </section>}
 
       <CodingSessionTracePanel entries={tracePanelEntries} />
 

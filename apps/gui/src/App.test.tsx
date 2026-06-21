@@ -266,6 +266,27 @@ describe("runtime refresh feedback", () => {
     expect(findButton("Send").disabled).toBe(true);
   });
 
+  it("renders host capability metadata as non-authority and keeps browser actions disabled", async () => {
+    mockRuntimeResponses({ runtimeFailure: true });
+    renderApp();
+    await flushAsync();
+
+    await dispatchRuntimeStatus(runtimeStatusPayload({ lifecycle: "connected", diagnosis: "runtime connected and host supports controlled actions", nextAction: "Use explicit controls when ready." }));
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Host capability metadata");
+    expect(text).toContain("metadata only");
+    expect(text).toContain("allowed to execute: false");
+    expect(text).toContain("Host/plugin support signals are display evidence only; they never enable Send, apply, verification, or IDE actions.");
+    expect(findButton("Send").disabled).toBe(true);
+    expect(findButton("Repository check").disabled).toBe(true);
+    expect(findButton("GUI app tests").disabled).toBe(true);
+    expect(buttonsNamed("Get IDE context")).toHaveLength(0);
+    expect(buttonsNamed("Run read-only IDE action")).toHaveLength(0);
+    expect(buttonsNamed("Apply in VS Code after review")).toHaveLength(0);
+  });
+
   it("renders auth mismatch lifecycle guidance without token leakage", async () => {
     const token = "host-runtime-status-secret-value";
     mockRuntimeResponses({ runtimeFailure: true });

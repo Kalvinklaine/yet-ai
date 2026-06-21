@@ -194,6 +194,27 @@ export function summarizeToolAuthorityPolicyEvaluation(evaluation: ToolAuthority
   return sanitizeBoundedText(`${displayDecisionLabel(evaluation.decision)}${capability}. ${evaluation.summary}${diagnosticSuffix}`, 500, "Authority request denied.");
 }
 
+export function evaluateHostCapabilityMetadata(hostSurface: ToolAuthorityPolicyHostSurface): ToolAuthorityPolicyEvaluation {
+  return evaluateToolAuthorityPolicy({
+    kind: "tool_authority_policy",
+    version: "2026-06-21",
+    mode: "design_gate",
+    defaultDecision: "deny",
+    cloudRequired: false,
+    summary: "Known host/plugin capability metadata is display evidence only. It cannot enable Send, apply, verification, or IDE actions without explicit user action, strict schema validation, trusted GUI/host request correlation, and host policy confirmation.",
+    capability: "read_only_context_navigation",
+    source: {
+      origin: "host",
+      requestIdMintedBy: "none",
+      hostSurface,
+    },
+    risk: ["metadata_only"],
+    requirements: ["schema_validation", "trace_entry", "explicit_user_confirmation", "trusted_request_id"],
+    decision: "metadata_only",
+    traceLabel: "Host capability metadata",
+  } satisfies ToolAuthorityPolicyRecord);
+}
+
 function parseToolAuthorityPolicy(input: unknown, diagnostics: ToolAuthorityPolicyDiagnostic[]): ToolAuthorityPolicyRecord | undefined {
   if (!isPlainObject(input)) {
     diagnostics.push({ code: "malformed_policy", message: "Policy must be an object." });

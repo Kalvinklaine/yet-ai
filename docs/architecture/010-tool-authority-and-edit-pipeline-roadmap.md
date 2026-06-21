@@ -94,6 +94,8 @@ Tool authority belongs behind local runtime and host policy boundaries. The GUI 
 
 Provider capability metadata such as model tool support is informational until a separate contract enables provider tool calling. A model that claims tool capability does not grant Yet AI permission to call provider tools, execute local tools, mutate the workspace, or run verification.
 
+Host and plugin capability/support metadata follows the same rule. `host.runtimeStatus.authority = "metadata_only"`, supported-action lists, bridge version support, installed-host detection, and runtime/provider readiness evidence may be rendered as diagnostics or guidance only. They cannot enable Send, apply, verification, active-file/context requests, project snippet search, or any IDE action by themselves. Each executable path still needs the existing explicit user gesture, strict schema validation, GUI/host-minted request correlation, and host-owned policy/confirmation flow. Assistant-provided capability claims are ignored as authority even when they mention real host capabilities.
+
 ## Roadmap sequencing
 
 The next safe sequence is:
