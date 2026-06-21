@@ -2979,7 +2979,7 @@ describe("active editor attached context", () => {
       ["Draft Find bug prompt", "Bug-finding request", "identify likely bugs"],
       ["Draft Suggest tests prompt", "Test-suggestion request", "suggest focused tests"],
       [`Draft Re${"factor safely"} prompt`, "Safe rework request", "smallest bounded safe rework"],
-      ["Draft Safe edit/proposal prompt", "Safe-edit request", "propose the smallest safe edit"],
+      ["Draft Safe edit/proposal prompt", "Safe-edit request", "propose the smallest bounded manual edit"],
       ["Draft Implementation plan prompt", "Implementation plan request", "draft a concise implementation plan"],
       ["Draft Follow-up prompt", "Follow-up prompt", "suggest the next safe manual step"],
     ];
@@ -3885,7 +3885,7 @@ describe("active editor attached context", () => {
     expect(localSetItem.mock.calls.some((call) => call.some((value) => String(value).includes("src/retry-proposal.ts") || String(value).includes("Reveal the retry proposal range.")))).toBe(false);
   });
 
-  it("compacts valid assistant IDE proposal JSON until explicit inspect", async () => {
+  it("renders valid assistant IDE proposal as review-only card without raw JSON or auto-posting", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
@@ -3899,27 +3899,18 @@ describe("active editor attached context", () => {
     const initialText = container?.textContent ?? "";
     expect(initialText).not.toContain(rawJson);
     expect(initialText).not.toContain('"type":"assistant.ideActionProposal"');
-    expect(initialText).toContain("Proposed a read-only IDE action: Open workspace file. Review the proposal card below. It will not run automatically.");
     expect(initialText).toContain("Read-only IDE action proposal");
     expect(initialText).toContain("Open compact proposal file.");
+    expect(initialText).toContain("Review this assistant-proposed read-only navigation/context action before running.");
+    expect(initialText).toContain("Edit proposal detected but rejected");
+    expect(buttonsNamed("Inspect proposal JSON")).toHaveLength(0);
     expect(findButton("Run read-only IDE action").disabled).toBe(false);
-    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
-    expect(localSetItem).not.toHaveBeenCalled();
-    expect(browserStorageDump()).not.toContain("compact-proposal");
-
-    await act(async () => {
-      findButton("Inspect proposal JSON").click();
-    });
-
-    const inspectedText = container?.textContent ?? "";
-    expect(inspectedText).toContain('"type": "assistant.ideActionProposal"');
-    expect(inspectedText).toContain('"workspaceRelativePath": "src/compact-proposal.ts"');
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("compact-proposal");
   });
 
-  it("renders compact proposal card for persisted assistant proposal with missing status", async () => {
+  it("renders review-only proposal card for persisted assistant proposal with missing status", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
     const proposal = ideActionProposal({ action: "openWorkspaceFile", workspaceRelativePath: "src/statusless-proposal.ts", summary: "Open statusless proposal file." });
@@ -3929,9 +3920,11 @@ describe("active editor attached context", () => {
     await flushAsync();
 
     const text = container?.textContent ?? "";
-    expect(text).toContain("Proposed a read-only IDE action: Open workspace file. Review the proposal card below. It will not run automatically.");
     expect(text).toContain("Read-only IDE action proposal");
     expect(text).toContain("Open statusless proposal file.");
+    expect(text).toContain("Review this assistant-proposed read-only navigation/context action before running.");
+    expect(text).toContain("Edit proposal detected but rejected");
+    expect(buttonsNamed("Inspect proposal JSON")).toHaveLength(0);
     expect(findButton("Run read-only IDE action").disabled).toBe(false);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
   });
@@ -3978,7 +3971,7 @@ describe("active editor attached context", () => {
     expect(findButton("IDE action pending…").disabled).toBe(true);
   });
 
-  it("renders historical copy and no card when a valid proposal is followed by a normal assistant message", async () => {
+  it("renders older proposal as rejected edit-like compact copy and no runnable card when followed by normal assistant message", async () => {
     const valid = ideActionProposal({ action: "getContextSnapshot", summary: "Check current IDE context." });
     mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Normal latest", 2)], chatThreads: {
       "chat-001": chatThread("chat-001", "Normal latest", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(valid)), chatMessage("chat-001", "assistant-2", "assistant", "Normal assistant response.")]),
@@ -3988,9 +3981,9 @@ describe("active editor attached context", () => {
     await flushAsync();
 
     const text = container?.textContent ?? "";
-    expect(text).toContain("Earlier read-only IDE action proposal: Get IDE context. Only the latest valid proposal can be run from the proposal card.");
+    expect(text).toContain("Edit proposal detected but rejected. Review the rejection card below; no apply action is available.");
     expect(text).toContain("Normal assistant response.");
-    expect(text).not.toContain("Review the proposal card below");
+    expect(text).not.toContain("Review this assistant-proposed read-only navigation/context action before running.");
     expect(text).not.toContain("Read-only IDE action proposal");
     expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Run read-only IDE action");
   });
@@ -4004,11 +3997,11 @@ describe("active editor attached context", () => {
     renderApp();
     await flushAsync();
     await flushAsync();
-    expect(container?.textContent ?? "").toContain("Earlier read-only IDE action proposal: Get IDE context. Only the latest valid proposal can be run from the proposal card.");
+    expect(container?.textContent ?? "").toContain("Edit proposal detected but rejected. Review the rejection card below; no apply action is available.");
     expect(container?.textContent ?? "").not.toContain("Read-only IDE action proposal");
   });
 
-  it("resets proposal JSON inspection when the same message receives changed proposal content", async () => {
+  it("updates the review-only proposal card when the same message receives changed proposal content", async () => {
     const first = ideActionProposal({ action: "openWorkspaceFile", workspaceRelativePath: "src/first.ts", summary: "Open first file." });
     const second = ideActionProposal({ action: "openWorkspaceFile", workspaceRelativePath: "src/second.ts", summary: "Open second file." });
     let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
@@ -4031,10 +4024,9 @@ describe("active editor attached context", () => {
     await flushAsync();
     await flushAsync();
 
-    await act(async () => {
-      findButton("Inspect proposal JSON").click();
-    });
-    expect(container?.textContent ?? "").toContain('"workspaceRelativePath": "src/first.ts"');
+    expect(container?.textContent ?? "").toContain("Open first file.");
+    expect(container?.textContent ?? "").not.toContain('"workspaceRelativePath": "src/first.ts"');
+    expect(buttonsNamed("Inspect proposal JSON")).toHaveLength(0);
 
     await act(async () => {
       setTextareaValue(chatInput(), "trigger sse for proposal update");
@@ -4053,11 +4045,12 @@ describe("active editor attached context", () => {
     await flushAsync();
 
     const changedText = container?.textContent ?? "";
-    expect(changedText).toContain("Proposed a read-only IDE action: Open workspace file. Review the proposal card below. It will not run automatically.");
+    expect(changedText).toContain("Read-only IDE action proposal");
     expect(changedText).toContain("Open second file.");
+    expect(changedText).not.toContain("Open first file.");
     expect(changedText).not.toContain('"workspaceRelativePath": "src/first.ts"');
     expect(changedText).not.toContain('"workspaceRelativePath": "src/second.ts"');
-    expect(findButton("Inspect proposal JSON").disabled).toBe(false);
+    expect(buttonsNamed("Inspect proposal JSON")).toHaveLength(0);
   });
 
   it("correlates proposal action host progress and result in Agent activity", async () => {
