@@ -56,6 +56,15 @@ const mappings = [
     "packages/contracts/schemas/engine/experimental-sandbox-session.schema.json"
   ]),
   ...[
+    "bounded-patch-verification-loop-ready.json",
+    "bounded-patch-verification-loop-applied.json",
+    "bounded-patch-verification-loop-verified.json",
+    "bounded-patch-verification-loop-blocked.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/engine/${fileName}`,
+    "packages/contracts/schemas/engine/bounded-patch-verification-loop.schema.json"
+  ]),
+  ...[
     "tool-authority-policy-metadata-only.json",
     "tool-authority-policy-bounded-edit-confirmation.json",
     "tool-authority-policy-shell-deny.json"
@@ -855,6 +864,30 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/experimental-sandbox-session.schema.json"
+  ]),
+  ...[
+    "bounded-patch-verification-loop-missing-checkpoint.json",
+    "bounded-patch-verification-loop-unverified-checkpoint.json",
+    "bounded-patch-verification-loop-assistant-authority.json",
+    "bounded-patch-verification-loop-auto-apply.json",
+    "bounded-patch-verification-loop-auto-run.json",
+    "bounded-patch-verification-loop-auto-rollback.json",
+    "bounded-patch-verification-loop-raw-command.json",
+    "bounded-patch-verification-loop-raw-args.json",
+    "bounded-patch-verification-loop-raw-cwd.json",
+    "bounded-patch-verification-loop-raw-env.json",
+    "bounded-patch-verification-loop-unsafe-path.json",
+    "bounded-patch-verification-loop-secret-like-path.json",
+    "bounded-patch-verification-loop-hidden-path.json",
+    "bounded-patch-verification-loop-raw-diff.json",
+    "bounded-patch-verification-loop-file-body.json",
+    "bounded-patch-verification-loop-stack-trace.json",
+    "bounded-patch-verification-loop-cloud-required.json",
+    "bounded-patch-verification-loop-execution-allowed.json",
+    "bounded-patch-verification-loop-unknown-field.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/bounded-patch-verification-loop.schema.json"
   ]),
   ...[
     "tool-authority-policy-permissive-default.json",

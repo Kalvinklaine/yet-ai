@@ -35,6 +35,7 @@ Additional local evidence templates live under `docs/dogfood/`, including the re
 - `architecture/011-sandbox-agent-prerequisites.md` — conservative prerequisites for any future experimental sandbox-agent mode, including opt-in, checkpoints, rollback, limits, allowlisted verification, and no hidden reads or broad authority.
 - `architecture/012-coding-session-trace.md` — GUI-local read-only coding-session trace model, event families, sanitization rules, in-memory scope, and non-authority boundaries.
   It also records the adjacent Sprint 41 experimental sandbox session metadata boundary: sanitized readiness/checkpoint/rollback status only, with no sandbox agent, bridge command, runtime endpoint, execution authority, or agent loop.
+  It now also records the Sprint 42 bounded patch verification loop metadata boundary for one explicit user-confirmed apply plus one allowlisted verification command, with no autonomous loop or new execution surface.
 
 ## Current login-first milestone status
 
@@ -96,6 +97,14 @@ npm run smoke:sandbox-checkpoint
 ```
 
 The smoke creates only a temporary workspace with the `.yet-ai-disposable-workspace.json` sentinel, checkpoints explicit relative files, mutates and restores them, checks exact byte equality, and verifies fail-closed handling for unsafe paths, symlinks, large files, execution-like metadata, and background scan requests. It is local/disposable evidence only: it does not launch an IDE, call providers or hosted services, execute shell/git/tool commands, use network access, scan a real workspace, or print raw file bodies/private temp roots.
+
+For the Sprint 42 bounded patch verification loop contract and documentation slice, run:
+
+```sh
+npm run validate:contracts && npm run check && git diff --check
+```
+
+This validates only strict schemas, positive fixtures, invalid fixtures, documentation, and diff hygiene. It does not apply patches, run verification commands, add bridge messages, launch runtimes, or start an autonomous loop.
 
 The command runs the repository's local validation bundle: product identity, public hygiene, docs index coverage, IDE surface contract parity, docs validation, and focused self-tests/validators that are safe for the current checkout. It does not run the browser or packaged IDE smoke gates, call providers, require hosted Yet AI services, publish marketplace artifacts, or claim production release status.
 

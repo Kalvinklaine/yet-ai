@@ -1,0 +1,51 @@
+{
+  "kind": "bounded_patch_verification_loop",
+  "version": "2026-06-21",
+  "authority": "metadata_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "status": "ready_for_apply",
+  "loopId": "loop-s42-invalid-base",
+  "sandbox": {
+    "modeStatus": "checkpoint_ready",
+    "checkpointId": "checkpoint-s42-invalid",
+    "checkpointVerified": true,
+    "checkpointHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "checkedAt": "2026-06-21T18:00:00Z",
+    "label": "Verified disposable checkpoint"
+  },
+  "limits": {
+    "maxTouchedFiles": 4,
+    "maxPatchBytes": 12000,
+    "maxSteps": 3,
+    "maxVerificationSeconds": 600
+  },
+  "patch": {
+    "proposalId": "proposal-s42-invalid",
+    "source": "assistant_proposal",
+    "touchedFiles": [
+      "apps/gui/src/App.tsx"
+    ],
+    "editCount": 2,
+    "patchBytes": 1536,
+    "contentHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "summary": "Reviewable bounded patch metadata is ready"
+  },
+  "policy": {
+    "decision": "ready_for_user_apply",
+    "requiresUserConfirmation": true,
+    "reasonCodes": [
+      "explicit_user_confirmation_required",
+      "checkpoint_verified",
+      "bounded_patch_metadata_only"
+    ]
+  },
+  "verification": {
+    "commandId": "repository-check",
+    "status": "not_requested"
+  },
+  "summary": "One reviewed patch can be applied after explicit user confirmation",
+  "providerPayload": {
+    "ok": true
+  }
+}

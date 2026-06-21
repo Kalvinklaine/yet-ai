@@ -1,0 +1,533 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/bounded-patch-verification-loop.schema.json",
+  "title": "Bounded Patch Verification Loop Metadata",
+  "description": "Strict metadata-only state for one explicit user-confirmed bounded patch apply plus one allowlisted verification command cycle. It grants no bridge command, runtime endpoint, shell, git, provider, tool, network, file-body, apply, run, rollback, or autonomous loop authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "authority",
+    "cloudRequired",
+    "executionAllowed",
+    "status",
+    "loopId",
+    "sandbox",
+    "limits",
+    "patch",
+    "policy",
+    "verification"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "const": "bounded_patch_verification_loop"
+    },
+    "version": {
+      "type": "string",
+      "const": "2026-06-21"
+    },
+    "authority": {
+      "type": "string",
+      "const": "metadata_only"
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "executionAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "blocked",
+        "ready_for_apply",
+        "applied",
+        "ready_for_verification",
+        "verified",
+        "verification_failed"
+      ]
+    },
+    "loopId": {
+      "$ref": "#/$defs/safeId"
+    },
+    "sandbox": {
+      "$ref": "#/$defs/sandbox"
+    },
+    "limits": {
+      "$ref": "#/$defs/limits"
+    },
+    "patch": {
+      "$ref": "#/$defs/patch"
+    },
+    "policy": {
+      "$ref": "#/$defs/policy"
+    },
+    "verification": {
+      "$ref": "#/$defs/verification"
+    },
+    "summary": {
+      "$ref": "#/$defs/safeSummary"
+    }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Rr][Aa][Ww][-_ ]?(?:[Ff][Ii][Ll][Ee]|[Pp][Rr][Oo][Mm][Pp][Tt]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Oo][Uu][Tt][Pp][Uu][Ttt]|[Dd][Ii][Ff][Ff])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][-_ ]?(?:[Pp][Aa][Yy][Ll][Oo][Aa][Dd]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee])|[Ss][Tt][Aa][Cc][Kk][-_ ]?[Tt][Rr][Aa][Cc][Ee]|[Cc][Aa][Ll][Ll][Ss][Tt][Aa][Cc][Kk]|[Ss][Hh][Ee][Ll][Ll]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Gg][Ii][Tt]|[Nn][Ee][Tt][Ww][Oo][Rr][Kk]|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Ss][Cc][Aa][Nn]|[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh])|[Aa][Uu][Tt][Oo][-_ ]?(?:[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Rr][Oo][Ll][Ll][Bb][Aa][Cc][Kk])|[Aa][Pp][Pp][Ll][Yy][-_ ]?[Pp][Aa][Tt][Cc][Hh]|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "safeLabel": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      ]
+    },
+    "safeSummary": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        }
+      ]
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "safeHash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^(?!/)(?!~)(?!.*%)(?!.*\\\\)(?!.*:)(?!.*[?#])(?!.*(?:^|/)\\.)(?!.*//)(?!.*\\/$)(?!.*(?:^|/)(?:[Aa][Uu][Tt][Hh]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Cc][Cc][Ee][Ss][Ss][_-]?[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy])(?:[._-]|/|$))(?!.*(?:^|[._-])(?:[Aa][Uu][Tt][Hh]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Cc][Cc][Ee][Ss][Ss][_-]?[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy])(?:[._-]|$))(?!.*(?:^|/)[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,})[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 32
+    },
+    "sandbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modeStatus", "checkpointId", "checkpointVerified"],
+      "properties": {
+        "modeStatus": {
+          "type": "string",
+          "enum": ["blocked", "checkpoint_ready"]
+        },
+        "checkpointId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "checkpointVerified": {
+          "type": "boolean"
+        },
+        "checkpointHash": {
+          "$ref": "#/$defs/safeHash"
+        },
+        "checkedAt": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "label": {
+          "$ref": "#/$defs/safeLabel"
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxTouchedFiles", "maxPatchBytes", "maxSteps"],
+      "properties": {
+        "maxTouchedFiles": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12
+        },
+        "maxPatchBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50000
+        },
+        "maxSteps": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "maxVerificationSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1800
+        }
+      }
+    },
+    "patch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["proposalId", "source", "touchedFiles", "editCount", "patchBytes", "contentHash"],
+      "properties": {
+        "proposalId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["assistant_proposal", "gui_review"]
+        },
+        "touchedFiles": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/safeRelativePath"
+          }
+        },
+        "editCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "patchBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50000
+        },
+        "contentHash": {
+          "$ref": "#/$defs/safeHash"
+        },
+        "summary": {
+          "$ref": "#/$defs/safeSummary"
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision", "requiresUserConfirmation", "reasonCodes"],
+      "properties": {
+        "decision": {
+          "type": "string",
+          "enum": ["blocked", "ready_for_user_apply", "ready_for_user_verification", "completed"]
+        },
+        "requiresUserConfirmation": {
+          "type": "boolean",
+          "const": true
+        },
+        "reasonCodes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "explicit_user_confirmation_required",
+              "checkpoint_required",
+              "checkpoint_verified",
+              "bounded_patch_metadata_only",
+              "allowlisted_verification_command_id",
+              "sanitized_result_metadata_only",
+              "user_apply_result_recorded",
+              "blocked_by_policy"
+            ]
+          }
+        },
+        "blockReason": {
+          "$ref": "#/$defs/safeSummary"
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commandId", "status"],
+      "properties": {
+        "commandId": {
+          "type": "string",
+          "enum": ["repository-check", "gui-app-tests", "engine-chat-tests"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["not_requested", "ready", "succeeded", "failed", "blocked"]
+        },
+        "result": {
+          "$ref": "#/$defs/verificationResult"
+        }
+      }
+    },
+    "verificationResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exitCode", "durationMs", "outputTail", "truncated", "resultHash"],
+      "properties": {
+        "exitCode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1800000
+        },
+        "outputTail": {
+          "$ref": "#/$defs/safeSummary"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "resultHash": {
+          "$ref": "#/$defs/safeHash"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": ["ready_for_apply", "applied", "ready_for_verification", "verified", "verification_failed"]
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "sandbox": {
+            "type": "object",
+            "properties": {
+              "modeStatus": {
+                "const": "checkpoint_ready"
+              },
+              "checkpointVerified": {
+                "const": true
+              }
+            },
+            "required": ["modeStatus", "checkpointVerified"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "blocked"
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "policy": {
+            "type": "object",
+            "properties": {
+              "decision": {
+                "const": "blocked"
+              },
+              "reasonCodes": {
+                "type": "array",
+                "contains": {
+                  "const": "blocked_by_policy"
+                }
+              },
+              "blockReason": {}
+            },
+            "required": ["decision", "reasonCodes", "blockReason"]
+          },
+          "verification": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "blocked"
+              }
+            },
+            "required": ["status"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ready_for_apply"
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "policy": {
+            "type": "object",
+            "properties": {
+              "decision": {
+                "const": "ready_for_user_apply"
+              }
+            },
+            "required": ["decision"]
+          },
+          "verification": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "not_requested"
+              }
+            },
+            "required": ["status"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": ["applied", "ready_for_verification"]
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "policy": {
+            "type": "object",
+            "properties": {
+              "decision": {
+                "const": "ready_for_user_verification"
+              },
+              "reasonCodes": {
+                "type": "array",
+                "contains": {
+                  "const": "user_apply_result_recorded"
+                }
+              }
+            },
+            "required": ["decision", "reasonCodes"]
+          },
+          "verification": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "enum": ["not_requested", "ready"]
+              }
+            },
+            "required": ["status"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": ["verified", "verification_failed"]
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "verification": {
+            "type": "object",
+            "properties": {
+              "result": {}
+            },
+            "required": ["result"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "verified"
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "policy": {
+            "type": "object",
+            "properties": {
+              "decision": {
+                "const": "completed"
+              }
+            },
+            "required": ["decision"]
+          },
+          "verification": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              },
+              "result": {
+                "type": "object",
+                "properties": {
+                  "exitCode": {
+                    "const": 0
+                  }
+                },
+                "required": ["exitCode"]
+              }
+            },
+            "required": ["status", "result"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "verification_failed"
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "policy": {
+            "type": "object",
+            "properties": {
+              "decision": {
+                "const": "ready_for_user_verification"
+              }
+            },
+            "required": ["decision"]
+          },
+          "verification": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "failed"
+              },
+              "result": {}
+            },
+            "required": ["status", "result"]
+          }
+        }
+      }
+    }
+  ]
+}

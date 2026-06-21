@@ -44,6 +44,12 @@ This contract does not add a sandbox agent, event replay protocol, bridge comman
 
 The GUI evaluator for this contract is pure: missing input renders disabled metadata, malformed or unsafe input renders blocked metadata, and every outcome returns `allowedToExecute: false` and `canStartLoop: false`. It rejects non-metadata authority, default-enabled or cloud-required flags, assistant-origin opt-in, execution flags, raw command/cwd/env/network/git/provider/tool fields, unsafe paths, secret markers, stack traces, raw file bodies, unverified checkpoint-ready states, and rollback-ready states without plan metadata. Display summaries and diagnostics are redacted and bounded before they can be added to trace entries.
 
+## Bounded patch verification loop metadata
+
+Sprint 42 adds a separate `bounded_patch_verification_loop` contract for a future display/evaluation layer around one manual edit and verification cycle. It is adjacent to the trace but is not trace storage, bridge transport, host execution, or runtime state. Trace entries may later summarize its sanitized status, ids, counts, safe relative path labels, allowlisted `commandId`, exit code, duration, and bounded result tail only after a separate implementation card wires that display path.
+
+The contract preserves the trace's non-authority rule: it does not contain raw diffs, file bodies, prompts, provider responses, free-form commands, args, cwd, env, stack traces, private paths, secrets, or auto-action flags. It does not add auto-send, auto-apply, auto-run verification, auto-rollback, retry, repair, or an agent loop. Unknown fields and execution-looking metadata must stay blocked rather than normalized into trace details.
+
 ## Maintenance rules
 
 When a future card wires trace entries into UI state, keep the trace in memory only unless a separate architecture decision approves storage. Do not store raw assistant messages, user prompts, provider payloads, file excerpts, verification output, or host diagnostics directly in trace entries. Store only safe labels, counts, enum values, request correlation, durations, exit codes, and short redacted tails.
