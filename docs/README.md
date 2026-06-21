@@ -106,6 +106,14 @@ npm run validate:contracts && npm run check && git diff --check
 
 This validates only strict schemas, positive fixtures, invalid fixtures, documentation, and diff hygiene. It does not apply patches, run verification commands, add bridge messages, launch runtimes, or start an autonomous loop.
 
+For the Sprint 42 disposable bounded patch/checkpoint substrate smoke, run:
+
+```sh
+npm run smoke:bounded-patch-loop
+```
+
+The smoke creates only a sentinel-marked temporary workspace, checkpoints explicit existing relative files, builds a replacement-only bounded patch plan, applies it after checkpoint/hash preflight, evaluates one in-process allowlisted verification command id, restores the checkpoint, and verifies fail-closed handling for unsafe paths, symlinks, binary/oversized files, patch limits, create/delete/rename/move intents, execution-like metadata, unknown verification ids, and background scan requests. It is deterministic local evidence only: it does not spawn shell commands, call git/network/provider/IDE APIs, scan a real workspace, run verification commands, or print raw file bodies/private temp roots.
+
 The command runs the repository's local validation bundle: product identity, public hygiene, docs index coverage, IDE surface contract parity, docs validation, and focused self-tests/validators that are safe for the current checkout. It does not run the browser or packaged IDE smoke gates, call providers, require hosted Yet AI services, publish marketplace artifacts, or claim production release status.
 
 ### Sprint 10 verification matrix
