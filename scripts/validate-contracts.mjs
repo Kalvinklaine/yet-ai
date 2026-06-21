@@ -48,6 +48,14 @@ const mappings = [
   ["packages/contracts/examples/engine/manual-runner-plan-proposal.json", "packages/contracts/schemas/engine/manual-runner-plan-proposal.schema.json"],
   ["packages/contracts/examples/engine/coding-task-session.json", "packages/contracts/schemas/engine/coding-task-session.schema.json"],
   ...[
+    "experimental-sandbox-session-disabled.json",
+    "experimental-sandbox-session-checkpoint-ready.json",
+    "experimental-sandbox-session-rollback-blocked.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/engine/${fileName}`,
+    "packages/contracts/schemas/engine/experimental-sandbox-session.schema.json"
+  ]),
+  ...[
     "tool-authority-policy-metadata-only.json",
     "tool-authority-policy-bounded-edit-confirmation.json",
     "tool-authority-policy-shell-deny.json"
@@ -827,6 +835,26 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/coding-task-session.schema.json"
+  ]),
+  ...[
+    "experimental-sandbox-session-default-enabled.json",
+    "experimental-sandbox-session-missing-opt-in.json",
+    "experimental-sandbox-session-assistant-opt-in.json",
+    "experimental-sandbox-session-cloud-required.json",
+    "experimental-sandbox-session-unsafe-path.json",
+    "experimental-sandbox-session-command-field.json",
+    "experimental-sandbox-session-cwd-env-fields.json",
+    "experimental-sandbox-session-raw-file-body.json",
+    "experimental-sandbox-session-auto-apply-run-rollback.json",
+    "experimental-sandbox-session-hidden-scan.json",
+    "experimental-sandbox-session-stack-trace.json",
+    "experimental-sandbox-session-unknown-field.json",
+    "experimental-sandbox-session-checkpoint-ready-unverified.json",
+    "experimental-sandbox-session-rollback-ready-missing-plan.json",
+    "experimental-sandbox-session-execution-allowed.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/experimental-sandbox-session.schema.json"
   ]),
   ...[
     "tool-authority-policy-permissive-default.json",

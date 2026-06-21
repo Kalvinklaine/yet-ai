@@ -35,6 +35,12 @@ Deterministic Sprint 39 smokes exercise the trace only through local build/brows
 
 These smokes prove that the GUI displays sanitized, bounded, in-memory diagnostics for actions the harness explicitly performs. They do not prove model quality, host IDE behavior, real provider behavior, shell/git/tool execution, auto-apply, auto-run verification, or production release readiness.
 
+## Experimental sandbox session metadata
+
+Sprint 41 adds a separate `experimental_sandbox_session` contract for future sandbox readiness display. It is adjacent to the trace but not part of trace storage, bridge transport, runtime state, or host authority. The payload may describe only sanitized mode status, explicit user opt-in metadata, bounded limits, checkpoint metadata, and rollback plan metadata. It must not contain raw file bodies, diffs, prompts, provider payloads, stack traces, command strings, cwd/env, private paths, secrets, git/network/provider tool fields, hidden scan metadata, auto-action flags, or assistant-origin opt-in.
+
+This contract does not add a sandbox agent, event replay protocol, bridge command, runtime endpoint, tool executor, checkpoint writer, rollback executor, auto-apply behavior, auto-run verification, or agent loop. If future UI reads this metadata, it should render prerequisite status only and continue to treat the coding-session trace as GUI-local read-only diagnostics.
+
 ## Maintenance rules
 
 When a future card wires trace entries into UI state, keep the trace in memory only unless a separate architecture decision approves storage. Do not store raw assistant messages, user prompts, provider payloads, file excerpts, verification output, or host diagnostics directly in trace entries. Store only safe labels, counts, enum values, request correlation, durations, exit codes, and short redacted tails.

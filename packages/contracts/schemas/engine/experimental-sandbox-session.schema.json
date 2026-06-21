@@ -1,0 +1,406 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/experimental-sandbox-session.schema.json",
+  "title": "Experimental Sandbox Session State",
+  "description": "Strict metadata-only state for a future experimental sandbox session, checkpoint readiness, and rollback readiness. It is inert display/prerequisite metadata only and grants no sandbox agent loop, bridge command, runtime endpoint, tool, shell, git, provider, file, network, checkpoint, rollback, auto-apply, auto-run, or execution authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "mode",
+    "defaultEnabled",
+    "cloudRequired",
+    "authority",
+    "executionAllowed",
+    "modeStatus"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "const": "experimental_sandbox_session"
+    },
+    "version": {
+      "type": "string",
+      "const": "2026-06-21"
+    },
+    "mode": {
+      "type": "string",
+      "const": "sandbox_experimental"
+    },
+    "defaultEnabled": {
+      "type": "boolean",
+      "const": false
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "authority": {
+      "type": "string",
+      "const": "metadata_only"
+    },
+    "executionAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "modeStatus": {
+      "type": "string",
+      "enum": [
+        "disabled",
+        "opted_in",
+        "checkpoint_ready",
+        "rollback_ready",
+        "rollback_blocked",
+        "blocked"
+      ]
+    },
+    "userOptIn": {
+      "$ref": "#/$defs/userOptIn"
+    },
+    "limits": {
+      "$ref": "#/$defs/limits"
+    },
+    "checkpoint": {
+      "$ref": "#/$defs/checkpoint"
+    },
+    "rollback": {
+      "$ref": "#/$defs/rollback"
+    },
+    "summary": {
+      "$ref": "#/$defs/safeSummary"
+    }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Rr][Aa][Ww][-_ ]?(?:[Ff][Ii][Ll][Ee]|[Pp][Rr][Oo][Mm][Pp][Tt]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Oo][Uu][Tt][Pp][Uu][Tt])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][-_ ]?(?:[Pp][Aa][Yy][Ll][Oo][Aa][Dd]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee])|[Ss][Tt][Aa][Cc][Kk][-_ ]?[Tt][Rr][Aa][Cc][Ee]|[Cc][Aa][Ll][Ll][Ss][Tt][Aa][Cc][Kk]|[Ss][Hh][Ee][Ll][Ll]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Gg][Ii][Tt]|[Nn][Ee][Tt][Ww][Oo][Rr][Kk]|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Ss][Cc][Aa][Nn]|[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh])|[Aa][Uu][Tt][Oo][-_ ]?(?:[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Rr][Oo][Ll][Ll][Bb][Aa][Cc][Kk])|[Aa][Pp][Pp][Ll][Yy][-_ ]?[Pp][Aa][Tt][Cc][Hh]|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "safeLabel": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      ]
+    },
+    "safeSummary": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        }
+      ]
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "safeHash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^(?!/)(?!~)(?!.*%)(?!.*\\\\)(?!.*:)(?!.*[?#])(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*//)(?!.*\\/$)(?!.*(?:^|/)(?:[Aa][Uu][Tt][Hh]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Cc][Cc][Ee][Ss][Ss][_-]?[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy])(?:[._-]|/|$))(?!.*(?:^|[._-])(?:[Aa][Uu][Tt][Hh]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Cc][Cc][Ee][Ss][Ss][_-]?[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy])(?:[._-]|$))(?!.*(?:^|/)[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,})[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 32
+    },
+    "userOptIn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "origin",
+        "confirmedBy",
+        "confirmedAt",
+        "disposableWorkspaceAcknowledged",
+        "requestIdMintedBy"
+      ],
+      "properties": {
+        "origin": {
+          "type": "string",
+          "const": "user"
+        },
+        "confirmedBy": {
+          "type": "string",
+          "const": "user"
+        },
+        "confirmedAt": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "disposableWorkspaceAcknowledged": {
+          "type": "boolean",
+          "const": true
+        },
+        "requestIdMintedBy": {
+          "type": "string",
+          "enum": ["gui", "host"]
+        },
+        "optInLabel": {
+          "$ref": "#/$defs/safeLabel"
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxSteps",
+        "maxTouchedFiles",
+        "maxPatchBytes",
+        "maxRuntimeSeconds"
+      ],
+      "properties": {
+        "maxSteps": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "maxTouchedFiles": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12
+        },
+        "maxPatchBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50000
+        },
+        "maxRuntimeSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1800
+        },
+        "workspaceRelativePaths": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/safeRelativePath"
+          }
+        }
+      }
+    },
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "checkpointId",
+        "createdAt",
+        "verified",
+        "fileCount",
+        "contentHash"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["missing", "pending", "verified", "failed"]
+        },
+        "checkpointId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "createdAt": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "fileCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200
+        },
+        "contentHash": {
+          "$ref": "#/$defs/safeHash"
+        },
+        "label": {
+          "$ref": "#/$defs/safeLabel"
+        }
+      }
+    },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "planId",
+        "planHash",
+        "affectedFileCount",
+        "requiresUserConfirmation"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["not_ready", "planned", "ready", "blocked"]
+        },
+        "planId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "planHash": {
+          "$ref": "#/$defs/safeHash"
+        },
+        "affectedFileCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200
+        },
+        "requiresUserConfirmation": {
+          "type": "boolean",
+          "const": true
+        },
+        "blockReason": {
+          "$ref": "#/$defs/safeSummary"
+        },
+        "label": {
+          "$ref": "#/$defs/safeLabel"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "modeStatus": {
+            "enum": ["opted_in", "checkpoint_ready", "rollback_ready", "rollback_blocked", "blocked"]
+          }
+        },
+        "required": ["modeStatus"]
+      },
+      "then": {
+        "properties": {
+          "userOptIn": {},
+          "limits": {}
+        },
+        "required": ["userOptIn", "limits"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "modeStatus": {
+            "const": "checkpoint_ready"
+          }
+        },
+        "required": ["modeStatus"]
+      },
+      "then": {
+        "properties": {
+          "checkpoint": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "verified"
+              },
+              "verified": {
+                "const": true
+              }
+            },
+            "required": ["status", "verified"]
+          },
+          "rollback": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "planned"
+              }
+            },
+            "required": ["status"]
+          }
+        },
+        "required": ["checkpoint", "rollback"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "modeStatus": {
+            "const": "rollback_ready"
+          }
+        },
+        "required": ["modeStatus"]
+      },
+      "then": {
+        "properties": {
+          "checkpoint": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "verified"
+              },
+              "verified": {
+                "const": true
+              }
+            },
+            "required": ["status", "verified"]
+          },
+          "rollback": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "ready"
+              }
+            },
+            "required": ["status"]
+          }
+        },
+        "required": ["checkpoint", "rollback"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "modeStatus": {
+            "const": "rollback_blocked"
+          }
+        },
+        "required": ["modeStatus"]
+      },
+      "then": {
+        "properties": {
+          "checkpoint": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "verified"
+              },
+              "verified": {
+                "const": true
+              }
+            },
+            "required": ["status", "verified"]
+          },
+          "rollback": {
+            "type": "object",
+            "required": ["status", "blockReason"],
+            "properties": {
+              "status": {
+                "const": "blocked"
+              },
+              "blockReason": {}
+            }
+          }
+        },
+        "required": ["checkpoint", "rollback"]
+      }
+    }
+  ]
+}

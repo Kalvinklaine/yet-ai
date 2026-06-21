@@ -1,0 +1,30 @@
+{
+  "kind": "experimental_sandbox_session",
+  "version": "2026-06-21",
+  "mode": "sandbox_experimental",
+  "defaultEnabled": false,
+  "cloudRequired": false,
+  "authority": "metadata_only",
+  "executionAllowed": false,
+  "modeStatus": "opted_in",
+  "userOptIn": {
+    "origin": "user",
+    "confirmedBy": "user",
+    "confirmedAt": "2026-06-21T17:00:00Z",
+    "disposableWorkspaceAcknowledged": true,
+    "requestIdMintedBy": "gui",
+    "optInLabel": "User enabled disposable sandbox preview"
+  },
+  "limits": {
+    "maxSteps": 6,
+    "maxTouchedFiles": 4,
+    "maxPatchBytes": 12000,
+    "maxRuntimeSeconds": 600,
+    "workspaceRelativePaths": [
+      "apps/gui/src/App.tsx",
+      "docs/README.md"
+    ]
+  },
+  "summary": "User opted into disposable sandbox preview",
+  "providerTool": "enabled"
+}

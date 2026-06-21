@@ -1,0 +1,11 @@
+{
+  "kind": "experimental_sandbox_session",
+  "version": "2026-06-21",
+  "mode": "sandbox_experimental",
+  "defaultEnabled": false,
+  "cloudRequired": false,
+  "authority": "metadata_only",
+  "executionAllowed": false,
+  "modeStatus": "disabled",
+  "summary": "Sandbox preview is disabled by default"
+}

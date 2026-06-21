@@ -34,6 +34,7 @@ Additional local evidence templates live under `docs/dogfood/`, including the re
 - `architecture/010-tool-authority-and-edit-pipeline-roadmap.md` — current safe-edit proposal baseline and future deny-by-default tool authority/edit-apply policy layers.
 - `architecture/011-sandbox-agent-prerequisites.md` — conservative prerequisites for any future experimental sandbox-agent mode, including opt-in, checkpoints, rollback, limits, allowlisted verification, and no hidden reads or broad authority.
 - `architecture/012-coding-session-trace.md` — GUI-local read-only coding-session trace model, event families, sanitization rules, in-memory scope, and non-authority boundaries.
+  It also records the adjacent Sprint 41 experimental sandbox session metadata boundary: sanitized readiness/checkpoint/rollback status only, with no sandbox agent, bridge command, runtime endpoint, execution authority, or agent loop.
 
 ## Current login-first milestone status
 
