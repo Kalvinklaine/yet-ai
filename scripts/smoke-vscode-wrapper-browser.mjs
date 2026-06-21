@@ -19,6 +19,14 @@ const runtimeToken = `vscode-wrapper-runtime-${randomUUID()}`;
 const providerKey = `sk-vscode-wrapper-${randomUUID()}`;
 const authorizationSentinel = `Authorization: Bearer ${runtimeToken}`;
 const rejectedSecretMessage = `Invalid host result must not render ${providerKey}`;
+const blockedAuthorityLeakMarkers = [
+  "curl https://example.invalid/vscode-smoke",
+  "fetch('https://example.invalid/vscode-smoke')",
+  "provider response raw dump",
+  "raw request body must not render",
+  "stack trace authority dump",
+  "/Users/vscode/private/secret.ts",
+];
 const progressSummary = "IDE action policy check started.";
 const resultMessage = "Context snapshot delivered.";
 const activeContextPath = "src/smoke-active.ts";
@@ -190,6 +198,8 @@ try {
   await expectAttachedText(page, "Provider setup", "VS Code provider setup surface");
   await expectVisibleText(page, "Demo Mode", "VS Code demo-mode setup surface");
   await expectAttachedText(page, "Runtime connected", "VS Code runtime readiness surface");
+
+  await assertBlockedAuthorityHostPayloadsIgnored(page);
 
   const initialChatText = await page.locator("body").innerText();
   if (initialChatText.includes('"type":"assistant.ideActionProposal"') || initialChatText.includes('"type": "assistant.ideActionProposal"')) {
@@ -561,6 +571,48 @@ try {
   await browser?.close().catch(() => undefined);
   await runtimeServer.close();
   await guiServer.close();
+}
+
+async function assertBlockedAuthorityHostPayloadsIgnored(page) {
+  const beforeIdeRequests = await getGuiMessageCount(page, "gui.ideActionRequest");
+  const beforeApplyRequests = await getGuiMessageCount(page, "gui.applyWorkspaceEditRequest");
+  for (const payload of [
+    {
+      status: "succeeded",
+      message: "curl https://example.invalid/vscode-smoke",
+      cloudRequired: true,
+      action: "runVerificationCommand",
+      commandId: "repository-check",
+      outputTail: "provider response raw dump /Users/vscode/private/secret.ts",
+      truncated: false,
+      rawBody: "raw request body must not render",
+      stackTrace: "stack trace authority dump",
+    },
+    {
+      status: "succeeded",
+      message: "fetch('https://example.invalid/vscode-smoke')",
+      cloudRequired: true,
+      action: "searchWorkspaceSnippets",
+      queryLabel: "hidden scan",
+      resultCount: 1,
+      snippets: [{ workspaceRelativePath: "credentials/api_key.ts", languageId: "typescript", range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } }, text: "raw request body must not render" }],
+      truncated: false,
+    },
+  ]) {
+    await dispatchHostMessage(page, {
+      version: bridgeVersion,
+      type: "host.ideActionResult",
+      requestId: "assistant-supplied-authority-id",
+      payload,
+    });
+  }
+  await page.waitForTimeout(150);
+  const afterIdeRequests = await getGuiMessageCount(page, "gui.ideActionRequest");
+  const afterApplyRequests = await getGuiMessageCount(page, "gui.applyWorkspaceEditRequest");
+  if (afterIdeRequests !== beforeIdeRequests || afterApplyRequests !== beforeApplyRequests) failures.push("Blocked host authority payload triggered a GUI bridge request.");
+  for (const marker of blockedAuthorityLeakMarkers) {
+    await expectNoVisibleText(page, marker, `blocked authority marker ${marker}`);
+  }
 }
 
 async function requirePackagedGui() {

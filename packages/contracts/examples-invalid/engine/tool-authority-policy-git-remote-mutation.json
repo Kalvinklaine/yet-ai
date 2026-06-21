@@ -1,0 +1,15 @@
+{
+  "kind": "tool_authority_policy",
+  "version": "2026-06-21",
+  "mode": "design_gate",
+  "defaultDecision": "deny",
+  "cloudRequired": false,
+  "summary": "Git remote mutation and push attempts remain deny only.",
+  "capability": "git",
+  "source": { "origin": "assistant", "requestIdMintedBy": "none", "hostSurface": "engine_runtime" },
+  "risk": ["executes_process", "mutates_workspace", "remote_mutation"],
+  "requirements": ["explicit_user_confirmation", "schema_validation", "trace_entry"],
+  "decision": "allow_with_confirmation",
+  "remoteUrl": "https://example.invalid/repo.git",
+  "gitArgs": ["push", "origin", "main"]
+}

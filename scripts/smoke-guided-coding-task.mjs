@@ -37,6 +37,9 @@ const rawMarkers = [
   "raw prompt",
   "provider response raw dump",
   "/Users/Guided/private/project",
+  "curl https://example.invalid",
+  "fetch('https://example.invalid')",
+  "stack trace authority dump",
 ];
 const failures = [];
 const runtimeRequests = [];
@@ -129,6 +132,24 @@ try {
   await assertNoRequestsOfType(page, "gui.applyWorkspaceEditRequest", "before explicit apply");
   await assertNoIdeAction(page, "runVerificationCommand", "before explicit verification");
   assert(commandCount === 0, "chat command was sent before explicit Send");
+  await dispatchHostMessage(page, {
+    version: "2026-05-15",
+    type: "host.ideActionResult",
+    requestId: "assistant-supplied-authority-id",
+    payload: {
+      status: "succeeded",
+      message: "stack trace authority dump curl https://example.invalid",
+      cloudRequired: true,
+      action: "runVerificationCommand",
+      commandId: "repository-check",
+      outputTail: "provider response raw dump /Users/Guided/private/project",
+      truncated: false,
+    },
+  });
+  await page.waitForTimeout(150);
+  await assertNoVisibleText(page, "stack trace authority dump", "uncorrelated cloud-required host result");
+  await assertNoVisibleText(page, "provider response raw dump", "uncorrelated raw output tail");
+  await assertNoVisibleText(page, "curl https://example.invalid", "uncorrelated network command string");
 
   await page.getByLabel("Task goal (local React state only)").fill(taskGoal);
   await page.getByRole("button", { name: "Draft ask prompt" }).click();
@@ -528,6 +549,11 @@ async function assertVisibleContextSummary(page, labels) {
   for (const label of labels) {
     await expectVisibleText(page, label, `context summary ${label}`, 20_000);
   }
+}
+
+async function assertNoVisibleText(page, text, description) {
+  const visible = await page.getByText(text, { exact: false }).first().isVisible().catch(() => false);
+  assert(!visible, `${description} rendered unexpectedly`);
 }
 
 async function assertNoRawText(page, rawValues, source) {

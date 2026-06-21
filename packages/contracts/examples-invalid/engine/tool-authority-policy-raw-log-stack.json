@@ -1,0 +1,16 @@
+{
+  "kind": "tool_authority_policy",
+  "version": "2026-06-21",
+  "mode": "design_gate",
+  "defaultDecision": "deny",
+  "cloudRequired": false,
+  "summary": "Raw diagnostic payload fields must stay out of authority policy fixtures.",
+  "capability": "read_only_context_navigation",
+  "source": { "origin": "runtime", "requestIdMintedBy": "host", "hostSurface": "engine_runtime" },
+  "risk": ["metadata_only"],
+  "requirements": ["schema_validation", "trace_entry"],
+  "decision": "metadata_only",
+  "rawLog": "provider response raw dump",
+  "responseBody": "file_content payload",
+  "stackTrace": "Error: boom at /Users/example/private/file.ts"
+}

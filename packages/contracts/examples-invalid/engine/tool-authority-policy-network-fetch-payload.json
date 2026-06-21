@@ -1,0 +1,17 @@
+{
+  "kind": "tool_authority_policy",
+  "version": "2026-06-21",
+  "mode": "design_gate",
+  "defaultDecision": "deny",
+  "cloudRequired": false,
+  "summary": "Network fetch and curl style requests are not authority policy data.",
+  "capability": "network",
+  "source": { "origin": "assistant", "requestIdMintedBy": "none", "hostSurface": "engine_runtime" },
+  "risk": ["network", "secrets"],
+  "requirements": ["explicit_user_confirmation", "schema_validation", "trace_entry"],
+  "decision": "deny",
+  "url": "https://example.invalid/api",
+  "method": "POST",
+  "headers": { "Authorization": "Bearer redacted" },
+  "body": "raw request body must not be accepted"
+}

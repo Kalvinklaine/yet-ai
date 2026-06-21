@@ -1978,6 +1978,9 @@ async function assertForbiddenIdeActionMessagesRejected(page, frameLocator) {
       { version, type: "gui.ideActionRequest", requestId: "forbidden-shell", payload: { action: "runShellCommand", command: "pwd" } },
       { version, type: "gui.ideActionRequest", requestId: "forbidden-task", payload: { action: "runTask", task: "build" } },
       { version, type: "gui.ideActionRequest", requestId: "forbidden-provider", payload: { action: "callProvider", providerId: "openai" } },
+      { version, type: "gui.ideActionRequest", requestId: "forbidden-network", payload: { action: "fetch", url: "https://example.invalid/jetbrains-smoke", body: "raw request body must not render" } },
+      { version, type: "gui.ideActionRequest", requestId: "forbidden-cloud-required", payload: { action: "runVerificationCommand", commandId: "repository-check", cloudRequired: true } },
+      { version, type: "gui.ideActionRequest", requestId: "forbidden-raw-stack", payload: { action: "getContextSnapshot", rawLog: "provider response raw dump", stackTrace: "stack trace authority dump" } },
     ];
     for (const message of messages) window.parent.postMessage(message, target);
   }, bridgeVersion);
@@ -1989,6 +1992,10 @@ async function assertForbiddenIdeActionMessagesRejected(page, frameLocator) {
   const afterApply = await page.evaluate(() => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.applyWorkspaceEditRequest").length ?? 0);
   if (afterApply !== beforeApply) {
     failures.push("Wrapper forwarded a malformed iframe-origin apply workspace edit request.");
+  }
+  const bodyText = await frameLocator.locator("body").innerText({ timeout: 5000 }).catch(() => "");
+  for (const marker of ["provider response raw dump", "raw request body must not render", "stack trace authority dump", "https://example.invalid/jetbrains-smoke"]) {
+    if (bodyText.includes(marker)) failures.push(`Forbidden iframe-origin payload marker rendered: ${marker}.`);
   }
 }
 

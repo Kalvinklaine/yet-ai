@@ -843,7 +843,10 @@ const invalidMappings = [
     "tool-authority-policy-hidden-search-metadata.json",
     "tool-authority-policy-unknown-field.json",
     "tool-authority-policy-network-allow.json",
-    "tool-authority-policy-remote-publish-allow.json"
+    "tool-authority-policy-remote-publish-allow.json",
+    "tool-authority-policy-git-remote-mutation.json",
+    "tool-authority-policy-network-fetch-payload.json",
+    "tool-authority-policy-raw-log-stack.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/tool-authority-policy.schema.json"
