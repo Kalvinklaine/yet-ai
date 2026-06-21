@@ -72,4 +72,6 @@ Any future daemon-lite design must document and verify all of these constraints 
 
 ## Compatibility with current roadmap
 
+Future sandbox-agent prerequisites are tracked separately in `011-sandbox-agent-prerequisites.md`. That note is a planning gate only: it does not implement autonomy, daemon behavior, browser runtime launch, file authority, shell/git execution, hidden reads, or auto-apply. Runtime lifecycle readiness remains prerequisite metadata for such work, not authority.
+
 This roadmap aligns with the current target architecture: the local engine remains the runtime authority, the GUI remains a typed local client and review surface, IDE plugins remain thin host/lifecycle bridges, and product identity/storage stay centralized. Future lifecycle status events may improve observability, but they are metadata only until a later architecture note and implementation card define strict schemas, tests, and parity gates.
