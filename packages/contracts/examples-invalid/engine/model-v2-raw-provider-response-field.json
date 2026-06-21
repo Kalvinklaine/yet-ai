@@ -1,0 +1,36 @@
+{
+  "models": [
+    {
+      "id": "gpt-runtime-tested",
+      "displayName": "Runtime Tested GPT",
+      "providerId": "openai-local",
+      "capabilities": {
+        "chat": true,
+        "streaming": true,
+        "tools": false,
+        "reasoning": false
+      },
+      "readiness": {
+        "status": "ready",
+        "provenance": "runtime_tested",
+        "lastTestStatus": "reachable",
+        "lastTestedAt": "2026-06-21T09:15:00Z"
+      },
+      "providerFamily": "openai_compatible",
+      "capabilityProvenance": {
+        "chat": "runtime_tested",
+        "streaming": "runtime_tested",
+        "tools": "provider_declared",
+        "reasoning": "provider_declared"
+      },
+      "localAvailability": {
+        "status": "not_applicable",
+        "checkedAt": "2026-06-21T09:15:00Z",
+        "reason": "Hosted provider checked by local runtime."
+      },
+      "rawProviderResponse": {
+        "body": "upstream details"
+      }
+    }
+  ]
+}

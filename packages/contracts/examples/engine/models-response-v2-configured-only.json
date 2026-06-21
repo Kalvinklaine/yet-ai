@@ -1,0 +1,31 @@
+{
+  "models": [
+    {
+      "id": "gpt-configured",
+      "displayName": "Configured GPT",
+      "providerId": "openai-local",
+      "capabilities": {
+        "chat": true,
+        "streaming": true,
+        "tools": false,
+        "reasoning": false
+      },
+      "readiness": {
+        "status": "ready",
+        "provenance": "configured",
+        "lastTestStatus": "reachable",
+        "lastTestedAt": "2026-06-21T09:00:00Z"
+      },
+      "providerFamily": "openai_compatible",
+      "capabilityProvenance": {
+        "chat": "configured",
+        "streaming": "configured",
+        "tools": "configured",
+        "reasoning": "configured"
+      },
+      "localAvailability": {
+        "status": "not_applicable"
+      }
+    }
+  ]
+}

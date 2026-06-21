@@ -1,0 +1,59 @@
+{
+  "productId": "yet-ai",
+  "protocolVersion": "2026-05-15",
+  "runtime": {
+    "mode": "local",
+    "cloudRequired": false,
+    "providerAccess": "direct"
+  },
+  "capabilities": [
+    "chat",
+    "sse",
+    "bridge"
+  ],
+  "features": {
+    "tools": false,
+    "tasks": false,
+    "knowledge": false
+  },
+  "providers": [
+    {
+      "id": "yet-demo",
+      "displayName": "Yet AI Demo Mode",
+      "enabled": true,
+      "providerFamily": "demo_local",
+      "models": [
+        {
+          "id": "yet-demo-chat",
+          "displayName": "Yet AI Demo Chat",
+          "capabilities": {
+            "chat": true,
+            "streaming": true,
+            "tools": false,
+            "reasoning": false
+          },
+          "capabilityProvenance": {
+            "chat": "local_default",
+            "streaming": "local_default",
+            "tools": "local_default",
+            "reasoning": "local_default"
+          },
+          "readiness": {
+            "status": "ready",
+            "provenance": "local_default"
+          },
+          "localAvailability": {
+            "status": "reachable",
+            "reason": "Demo mode is available in the local runtime."
+          },
+          "providerFamily": "demo_local"
+        }
+      ]
+    }
+  ],
+  "ide": {
+    "bridge": true,
+    "lsp": false,
+    "host": "browser-dev"
+  }
+}

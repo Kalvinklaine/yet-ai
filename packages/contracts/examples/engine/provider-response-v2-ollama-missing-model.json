@@ -1,0 +1,48 @@
+{
+  "id": "ollama-local",
+  "kind": "ollama",
+  "providerFamily": "ollama",
+  "displayName": "Local Ollama",
+  "enabled": true,
+  "baseUrl": "http://127.0.0.1:11434",
+  "auth": {
+    "type": "none",
+    "configured": true
+  },
+  "models": [
+    {
+      "id": "llama3.2",
+      "displayName": "Llama 3.2",
+      "capabilities": {
+        "chat": true,
+        "streaming": true,
+        "tools": false,
+        "reasoning": false
+      },
+      "capabilityProvenance": {
+        "chat": "provider_declared",
+        "streaming": "provider_declared",
+        "tools": "local_default",
+        "reasoning": "local_default"
+      },
+      "readiness": {
+        "status": "missing_model",
+        "reason": "Configured local model is not installed.",
+        "provenance": "runtime_tested",
+        "lastTestStatus": "missing_model",
+        "lastTestedAt": "2026-06-21T09:20:00Z"
+      },
+      "localAvailability": {
+        "status": "missing_model",
+        "checkedAt": "2026-06-21T09:20:00Z",
+        "reason": "Local server is reachable but the model is not installed."
+      },
+      "providerFamily": "ollama"
+    }
+  ],
+  "capabilities": {
+    "chat": true,
+    "completion": false,
+    "embeddings": false
+  }
+}

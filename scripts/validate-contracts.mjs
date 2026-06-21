@@ -10,8 +10,13 @@ function normalizeContractPath(path) {
 const mappings = [
   ["packages/contracts/examples/engine/ping-response.json", "packages/contracts/schemas/engine/ping.schema.json"],
   ["packages/contracts/examples/engine/caps-response.json", "packages/contracts/schemas/engine/caps.schema.json"],
+  ["packages/contracts/examples/engine/caps-response-v2-demo-local.json", "packages/contracts/schemas/engine/caps.schema.json"],
   ["packages/contracts/examples/engine/provider-response.json", "packages/contracts/schemas/engine/provider.schema.json"],
   ["packages/contracts/examples/engine/provider-response-ollama.json", "packages/contracts/schemas/engine/provider.schema.json"],
+  [
+    "packages/contracts/examples/engine/provider-response-v2-ollama-missing-model.json",
+    "packages/contracts/schemas/engine/provider.schema.json"
+  ],
   ["packages/contracts/examples/engine/providers-response.json", "packages/contracts/schemas/engine/providers.schema.json"],
   ["packages/contracts/examples/engine/provider-test-success-response.json", "packages/contracts/schemas/engine/provider-test-response.schema.json"],
   ["packages/contracts/examples/engine/provider-test-failure-response.json", "packages/contracts/schemas/engine/provider-test-response.schema.json"],
@@ -63,6 +68,14 @@ const mappings = [
   ["packages/contracts/examples/engine/planner-pool-complete-next-pool.json", "packages/contracts/schemas/engine/planner-card-pool-status.schema.json"],
   ["packages/contracts/examples/engine/planner-pool-task-board-overflow-recovery.json", "packages/contracts/schemas/engine/planner-card-pool-status.schema.json"],
   ["packages/contracts/examples/engine/models-response.json", "packages/contracts/schemas/engine/models.schema.json"],
+  [
+    "packages/contracts/examples/engine/models-response-v2-configured-only.json",
+    "packages/contracts/schemas/engine/models.schema.json"
+  ],
+  [
+    "packages/contracts/examples/engine/models-response-v2-runtime-tested-ready.json",
+    "packages/contracts/schemas/engine/models.schema.json"
+  ],
   ["packages/contracts/examples/engine/chat-list-response.json", "packages/contracts/schemas/engine/chat-list-response.schema.json"],
   ["packages/contracts/examples/engine/chat-thread-response.json", "packages/contracts/schemas/engine/chat-thread.schema.json"],
   ["packages/contracts/examples/engine/chat-message.json", "packages/contracts/schemas/engine/chat-message.schema.json"],
@@ -604,6 +617,10 @@ const invalidMappings = [
     "packages/contracts/examples-invalid/engine/provider-ollama-unknown-field.json",
     "packages/contracts/schemas/engine/provider.schema.json"
   ],
+  [
+    "packages/contracts/examples-invalid/engine/provider-v2-authority-field.json",
+    "packages/contracts/schemas/engine/provider.schema.json"
+  ],
   ...[
     "provider-auth-start-request-secret-smuggling.json",
     "provider-auth-start-request-unsafe-token-url.json",
@@ -1041,6 +1058,18 @@ const invalidMappings = [
     "packages/contracts/examples-invalid/engine/model-secret-provider-response-field.json",
     "packages/contracts/schemas/engine/models.schema.json"
   ],
+  ...[
+    "model-v2-unknown-provenance.json",
+    "model-v2-bad-timestamp.json",
+    "model-v2-secret-like-local-availability-reason.json",
+    "model-v2-private-path-local-availability-reason.json",
+    "model-v2-raw-provider-response-field.json",
+    "model-v2-unknown-field.json",
+    "model-v2-authority-fields.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/models.schema.json"
+  ]),
   [
     "packages/contracts/examples-invalid/engine/error-sse-event-raw-provider-body.json",
     "packages/contracts/schemas/engine/sse-event.schema.json"

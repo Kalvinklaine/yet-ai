@@ -4,7 +4,16 @@
   "title": "Engine Provider Summary",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "kind", "displayName", "enabled", "baseUrl", "auth", "models", "capabilities"],
+  "required": [
+    "id",
+    "kind",
+    "displayName",
+    "enabled",
+    "baseUrl",
+    "auth",
+    "models",
+    "capabilities"
+  ],
   "properties": {
     "id": {
       "type": "string",
@@ -12,7 +21,11 @@
     },
     "kind": {
       "type": "string",
-      "enum": ["openai-compatible", "ollama", "custom"]
+      "enum": [
+        "openai-compatible",
+        "ollama",
+        "custom"
+      ]
     },
     "displayName": {
       "type": "string",
@@ -28,33 +41,51 @@
     "auth": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "configured"],
+      "required": [
+        "type",
+        "configured"
+      ],
       "allOf": [
         {
           "if": {
             "properties": {
-              "type": { "const": "api_key" },
-              "configured": { "const": true }
+              "type": {
+                "const": "api_key"
+              },
+              "configured": {
+                "const": true
+              }
             },
-            "required": ["type", "configured"]
+            "required": [
+              "type",
+              "configured"
+            ]
           },
           "then": {
             "properties": {
               "redacted": true
             },
-            "required": ["redacted"]
+            "required": [
+              "redacted"
+            ]
           }
         },
         {
           "if": {
             "properties": {
-              "type": { "const": "none" }
+              "type": {
+                "const": "none"
+              }
             },
-            "required": ["type"]
+            "required": [
+              "type"
+            ]
           },
           "then": {
             "not": {
-              "required": ["redacted"]
+              "required": [
+                "redacted"
+              ]
             }
           }
         }
@@ -62,7 +93,10 @@
       "properties": {
         "type": {
           "type": "string",
-          "enum": ["none", "api_key"]
+          "enum": [
+            "none",
+            "api_key"
+          ]
         },
         "configured": {
           "type": "boolean"
@@ -83,13 +117,20 @@
     },
     "capabilities": {
       "$ref": "#/$defs/providerCapabilities"
+    },
+    "providerFamily": {
+      "$ref": "#/$defs/providerFamily"
     }
   },
   "$defs": {
     "providerCapabilities": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["chat", "completion", "embeddings"],
+      "required": [
+        "chat",
+        "completion",
+        "embeddings"
+      ],
       "properties": {
         "chat": {
           "type": "boolean"
@@ -99,6 +140,94 @@
         },
         "embeddings": {
           "type": "boolean"
+        }
+      }
+    },
+    "capabilityProvenanceValue": {
+      "type": "string",
+      "enum": [
+        "configured",
+        "runtime_tested",
+        "provider_declared",
+        "local_default"
+      ]
+    },
+    "providerTestStatus": {
+      "type": "string",
+      "enum": [
+        "reachable",
+        "unsupported_kind",
+        "missing_secret",
+        "missing_model",
+        "bad_url",
+        "unauthorized",
+        "timeout",
+        "unreachable",
+        "upstream_error"
+      ]
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "providerFamily": {
+      "type": "string",
+      "enum": [
+        "openai_compatible",
+        "ollama",
+        "custom",
+        "demo_local"
+      ]
+    },
+    "sanitizedAvailabilityReason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "not": {
+        "pattern": "[Aa][Pp][Ii][_ -]?[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Rr][Aa][Ww][_ -]?[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][_ -]?[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee][_ -]?[Bb][Oo][Dd][Yy]|/[Uu]sers/|/[Hh]ome/|/[Pp]rivate/|/[Tt]mp/|/[Ee]tc/|~[/\\]|[A-Za-z]:\\\\"
+      }
+    },
+    "capabilityProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat": {
+          "$ref": "#/$defs/capabilityProvenanceValue"
+        },
+        "streaming": {
+          "$ref": "#/$defs/capabilityProvenanceValue"
+        },
+        "tools": {
+          "$ref": "#/$defs/capabilityProvenanceValue"
+        },
+        "reasoning": {
+          "$ref": "#/$defs/capabilityProvenanceValue"
+        }
+      }
+    },
+    "localAvailability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "unknown",
+            "not_applicable",
+            "reachable",
+            "unreachable",
+            "missing_model"
+          ]
+        },
+        "checkedAt": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "reason": {
+          "$ref": "#/$defs/sanitizedAvailabilityReason"
         }
       }
     }
