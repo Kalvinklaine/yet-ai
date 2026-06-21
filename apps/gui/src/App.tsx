@@ -5,7 +5,7 @@ import { activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSum
 import { CodingSessionTracePanel } from "./components/CodingSessionTracePanel";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
 import { IdeActionProposalPanel, IdeActionsPanel, VerificationCommandPanel, verificationOutputKey, type IdeActionAttemptState, type VerificationCommand } from "./components/IdeActionsPanel";
-import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
+import { analyzeAssistantIdeActionProposalContent, describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, latestIdeActionProposalReviewFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
 import { chatLifecycleLabels, chatRecoveryCodeForRuntimeError, type ChatLifecycleState } from "./services/chatLifecycle";
 import { runtimeLifecycleDiagnostics, runtimeLifecycleHostCopy, type RuntimeLifecycleDiagnostics } from "./services/runtimeLifecycle";
 import { conversationHistoryStatusLabel, resolveChatAfterList, resolveFallbackChatAfterDelete } from "./services/conversationHistory";
@@ -475,8 +475,10 @@ export function App() {
   const editProposalCandidate = editProposalReview.state === "valid" ? editProposalReview.candidate : null;
   const activeEditProposal = editProposalCandidateIdentityMatches(editProposal, editProposalCandidate) ? editProposal : null;
   const activeRejectedEditProposal = editProposalReview.state === "rejected" ? { sourceMessageId: editProposalReview.sourceMessageId, diagnostic: editProposalReview.diagnostic } : null;
-  const ideActionProposalCandidate = useMemo(() => latestIdeActionProposalCandidateFromMessages(chatView.messages), [chatView.messages]);
+  const ideActionProposalReview = useMemo(() => latestIdeActionProposalReviewFromMessages(chatView.messages), [chatView.messages]);
+  const ideActionProposalCandidate = ideActionProposalReview.state === "valid" ? ideActionProposalReview.candidate : null;
   const activeIdeActionProposal = ideActionProposalMatchesCandidate(ideActionProposal, ideActionProposalCandidate) ? ideActionProposal : null;
+  const activeRejectedIdeActionProposal = ideActionProposalReview.state === "rejected" ? { sourceMessageId: ideActionProposalReview.sourceMessageId, diagnostic: ideActionProposalReview.diagnostic } : null;
   const safeActiveWorkspacePath = currentAttachedContext?.file?.workspaceRelativePath;
   const safeActiveRange = rangeFromContextSelection(currentAttachedContext?.selection);
   const attachedProjectMemoryItems = explicitContextBundleItems.filter((item): item is ProjectMemoryBundleItem => item.kind === "project_memory");
@@ -1780,16 +1782,20 @@ export function App() {
   }, [refreshProjectMemory, runtimeConnected, settingsRevision]);
 
   useEffect(() => {
-    if (!ideActionProposalCandidate) {
+    if (ideActionProposalReview.state !== "valid") {
+      if (ideActionProposalReview.state === "rejected") {
+        appendTrace({ family: "ide.result", title: "IDE action proposal rejected", status: "rejected", summary: ideActionProposalReview.diagnostic.message, details: { sourceMessageId: ideActionProposalReview.sourceMessageId, reason: ideActionProposalReview.diagnostic.reasonCode } });
+      }
       ideActionProposalIdentityRef.current = null;
       setIdeActionProposal(null);
       return;
     }
+    const ideActionProposalCandidate = ideActionProposalReview.candidate;
     const existing = ideActionProposalIdentityRef.current;
     let requestId = ideActionProposalIdentityMatchesCandidate(existing, ideActionProposalCandidate) ? existing.requestId : null;
     if (!requestId) {
       ideActionProposalCounterRef.current += 1;
-      requestId = `gui-ide-proposal-${ideActionProposalCounterRef.current}`;
+      requestId = `gui-ide-proposal-`;
       ideActionProposalIdentityRef.current = {
         requestId,
         sourceMessageId: ideActionProposalCandidate.sourceMessageId,
@@ -1798,7 +1804,7 @@ export function App() {
     }
     const nextProposal = { ...ideActionProposalCandidate, requestId };
     setIdeActionProposal((current) => ideActionProposalMatchesCandidate(current, ideActionProposalCandidate) && current.requestId === requestId ? current : nextProposal);
-  }, [ideActionProposalCandidate]);
+  }, [appendTrace, ideActionProposalReview]);
 
   useEffect(() => {
     const review = latestEditProposalReviewFromMessages(chatView.messages);
@@ -2304,7 +2310,7 @@ export function App() {
             </details>
             <div className="chat-scroll-region" ref={chatScrollRegionRef} aria-label="Chat messages">
               <div className="chat-panel">
-                {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} activeDemoMode={activeSelectedDemoMode} selectedModelDisplayName={selectedModelDisplayName} selectedModelProviderId={selectedModelProviderId} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect()} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeEditProposal={activeEditProposal} rejectedEditProposalSourceMessageId={activeRejectedEditProposal?.sourceMessageId ?? null} activeIdeActionProposal={activeIdeActionProposal} />)}
+                {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} activeDemoMode={activeSelectedDemoMode} selectedModelDisplayName={selectedModelDisplayName} selectedModelProviderId={selectedModelProviderId} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect()} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeEditProposal={activeEditProposal} rejectedEditProposalSourceMessageId={activeRejectedEditProposal?.sourceMessageId ?? null} activeIdeActionProposal={activeIdeActionProposal} rejectedIdeActionProposalSourceMessageId={activeRejectedIdeActionProposal?.sourceMessageId ?? null} />)}
                 <span className={`chat-lifecycle-state ${chatLifecycleState}`}>{chatLifecycleLabel}</span>
                 {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
               </div>
@@ -2696,7 +2702,7 @@ function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, activeDe
   );
 }
 
-function ChatBubble({ message, activeEditProposal, rejectedEditProposalSourceMessageId, activeIdeActionProposal }: { message: ChatViewMessage; activeEditProposal: EditProposalState | null; rejectedEditProposalSourceMessageId: string | null; activeIdeActionProposal: IdeActionProposalState | null }) {
+function ChatBubble({ message, activeEditProposal, rejectedEditProposalSourceMessageId, activeIdeActionProposal, rejectedIdeActionProposalSourceMessageId }: { message: ChatViewMessage; activeEditProposal: EditProposalState | null; rejectedEditProposalSourceMessageId: string | null; activeIdeActionProposal: IdeActionProposalState | null; rejectedIdeActionProposalSourceMessageId: string | null }) {
   const [inspectedProposalPayloadKey, setInspectedProposalPayloadKey] = useState<string | null>(null);
   const [inspectedEditProposalKey, setInspectedEditProposalKey] = useState<string | null>(null);
   const editProposal = message.role === "assistant" && isCompleteAssistantEditProposalStatus(message.status) ? parseEditProposalContent(message.content) : null;
@@ -2710,6 +2716,8 @@ function ChatBubble({ message, activeEditProposal, rejectedEditProposalSourceMes
   const proposalPayloadKey = proposal ? ideActionProposalPayloadKey(proposal) : null;
   const proposalLabel = proposal ? sanitizeDisplayText(describeIdeActionProposal(proposal)) : null;
   const isActiveProposal = Boolean(proposalPayloadKey && activeIdeActionProposal?.sourceMessageId === message.id && activeIdeActionProposal.payloadKey === proposalPayloadKey);
+  const proposalAnalysis = message.role === "assistant" && isCompleteAssistantIdeActionProposalStatus(message.status) ? analyzeAssistantIdeActionProposalContent(message.content) : { state: "none" as const };
+  const isRejectedIdeActionProposal = proposalAnalysis.state === "rejected" && rejectedIdeActionProposalSourceMessageId === message.id;
   // Key-based inspect state: the JSON is only visible when the user has explicitly
   // clicked the toggle AND the inspected key still matches the current proposal.
   // This makes the inspect state a per-(proposal-key) gate instead of a boolean
@@ -2729,6 +2737,10 @@ function ChatBubble({ message, activeEditProposal, rejectedEditProposalSourceMes
       ) : isRejectedEditProposal ? (
         <div className="assistant-proposal-compact stack">
           <span>Edit proposal detected but rejected. Review the rejection card below; no apply action is available.</span>
+        </div>
+      ) : isRejectedIdeActionProposal ? (
+        <div className="assistant-proposal-compact stack">
+          <span>Read-only IDE action proposal detected but rejected. No IDE action is available.</span>
         </div>
       ) : proposal && proposalJson && proposalLabel ? (
         <div className="assistant-proposal-compact stack">

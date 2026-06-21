@@ -6,6 +6,7 @@ import {
   normalizeTraceFamily,
   normalizeTraceStatus,
   sanitizeTraceDetails,
+  summarizeRejectedTraceInput,
 } from "./codingSessionTrace";
 
 const fixedDate = new Date("2026-06-21T12:00:00.000Z");
@@ -132,6 +133,30 @@ describe("codingSessionTrace", () => {
     const details = sanitizeTraceDetails({ fn: () => "raw", sym: Symbol("raw"), ok: true });
 
     expect(details).toEqual({ fn: "[redacted]", sym: "[redacted]", ok: true });
+  });
+
+  it("summarizes rejected unsafe inputs without raw payload leakage", () => {
+    const rawSecret = "access_token=" + "s".repeat(64);
+    const rawPayload = JSON.stringify({ requestId: rawSecret, command: "rm -rf /Users/alice/private", payload: { token: rawSecret, rawPrompt: "PROMPT_BODY" } });
+    const summary = summarizeRejectedTraceInput("assistant_request_id", { payload: rawPayload, action: "shell", privatePath: "/Users/alice/private" });
+    const entry = createCodingSessionTraceEntry({
+      family: "edit.rejected",
+      title: "Rejected unsafe proposal",
+      status: "rejected",
+      summary: summary.summary,
+      details: summary.details,
+    }, fixedOptions());
+    const rendered = JSON.stringify(entry);
+
+    expect(summary.reasonCode).toBe("assistant_request_id");
+    expect(rendered).toContain("Raw payload omitted");
+    expect(rendered).toContain("[redacted]");
+    expect(rendered.length).toBeLessThan(1400);
+    expect(rendered).not.toContain(rawSecret);
+    expect(rendered).not.toContain("access_token");
+    expect(rendered).not.toContain("PROMPT_BODY");
+    expect(rendered).not.toContain("rm -rf");
+    expect(rendered).not.toContain("/Users/alice");
   });
 
   it("uses bounded generated identifiers without persisting state", () => {

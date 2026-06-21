@@ -78,6 +78,12 @@ export type CodingSessionTraceAppendOptions = CodingSessionTraceCreateOptions & 
   maxEntries?: number;
 };
 
+export type CodingSessionRejectedInputSummary = {
+  reasonCode: string;
+  summary: string;
+  details: CodingSessionTraceDetails;
+};
+
 const defaultMaxEntries = 200;
 const maxTitleLength = 120;
 const maxSummaryLength = 1000;
@@ -91,6 +97,16 @@ const maxDetailNodes = 120;
 
 const familySet = new Set<unknown>(codingSessionTraceFamilies);
 const statusSet = new Set<unknown>(codingSessionTraceStatuses);
+
+export function summarizeRejectedTraceInput(reasonCode: unknown, metadata: unknown = {}): CodingSessionRejectedInputSummary {
+  const safeReasonCode = boundedSanitizedText(reasonCode, 80, "rejected_input");
+  const details = sanitizeTraceDetails({ reasonCode: safeReasonCode, metadata: summarizeRejectedMetadata(metadata) }) ?? { reasonCode: safeReasonCode };
+  return {
+    reasonCode: safeReasonCode,
+    summary: `Rejected unsafe input (${safeReasonCode}). Raw payload omitted.`,
+    details,
+  };
+}
 
 export function createCodingSessionTraceEntry(draft: CodingSessionTraceDraft, options: CodingSessionTraceCreateOptions = {}): CodingSessionTraceEntry {
   const entry: CodingSessionTraceEntry = {
@@ -156,6 +172,21 @@ export function normalizeTraceFamily(value: unknown): CodingSessionTraceFamily {
 
 export function normalizeTraceStatus(value: unknown): CodingSessionTraceStatus {
   return statusSet.has(value) ? value as CodingSessionTraceStatus : "info";
+}
+
+function summarizeRejectedMetadata(value: unknown): unknown {
+  if (!isPlainObject(value)) {
+    return undefined;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value).slice(0, maxDetailObjectEntries)) {
+    if (typeof item === "string" && (key === "payload" || key === "rawPayload" || item.trim().startsWith("{") || item.trim().startsWith("["))) {
+      out[key] = "[redacted]";
+    } else {
+      out[key] = item;
+    }
+  }
+  return out;
 }
 
 function sanitizeDetailValue(value: unknown, depth: number, budget: { remaining: number }): CodingSessionTraceDetailValue {

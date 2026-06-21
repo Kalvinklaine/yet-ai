@@ -205,6 +205,31 @@ describe("analyzeEditProposalContent", () => {
     expect(analyzeEditProposalContent("Please apply this workspaceRelativePath edit.")).toEqual({ state: "rejected", diagnostic: { reasonCode: "no_json", message: expect.any(String) } });
   });
 
+  it("reports safe bounded diagnostics for smuggled command tool request ids and multiple JSON", () => {
+    const proposal = safeEditProposalPayload();
+    const rawSecret = "access_token=" + "e".repeat(64);
+    const cases = [
+      JSON.stringify({ ...proposal, command: `npm test ${rawSecret}` }),
+      JSON.stringify({ ...proposal, tool: { name: "apply_patch", token: rawSecret } }),
+      JSON.stringify({ type: "gui.applyWorkspaceEditRequest", version: bridgeVersion, requestId: rawSecret, payload: proposal }),
+      `${JSON.stringify(proposal)} ${JSON.stringify({ ...proposal, summary: `second ${rawSecret}` })}`,
+    ];
+
+    for (const content of cases) {
+      const analysis = analyzeEditProposalContent(content);
+      expect(analysis.state).toBe("rejected");
+      if (analysis.state === "rejected") {
+        const rendered = JSON.stringify(analysis.diagnostic);
+        expect(rendered.length).toBeLessThan(220);
+        expect(rendered).not.toContain(rawSecret);
+        expect(rendered).not.toContain("access_token");
+        expect(rendered).not.toContain("npm test");
+        expect(rendered).not.toContain("apply_patch");
+        expect(rendered).not.toContain("second");
+      }
+    }
+  });
+
   it("returns none for normal assistant text and sanitized diagnostics without raw content", () => {
     const rawPath = "/Users/private/project/src/secret.ts";
     const rawSecret = "sk-" + "x".repeat(40);

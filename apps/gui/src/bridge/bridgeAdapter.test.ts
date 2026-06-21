@@ -1245,6 +1245,27 @@ describe("bridgeAdapter", () => {
     adapter.dispose();
   });
 
+  it("logs rejected host messages with generic summaries without secret-like payload leakage", () => {
+    const rawSecret = "access_token=" + "b".repeat(64);
+    const logs: string[] = [];
+    const messages: unknown[] = [];
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    adapter.subscribe((message) => messages.push(message));
+
+    window.dispatchEvent(new MessageEvent("message", { data: { version: bridgeVersion, type: "host.runtimeStatus", payload: { lifecycle: "failed", tokenState: "present", authority: "metadata_only", cloudRequired: false, diagnosis: `failed ${rawSecret}`, nextAction: "Use token manually" } } }));
+    window.dispatchEvent(new MessageEvent("message", { data: { version: bridgeVersion, type: "host.contextSnapshot", payload: { kind: "active_editor", source: "vscode", file: { workspaceRelativePath: "/Users/alice/project/secret.ts" }, rawPrompt: rawSecret } } }));
+
+    expect(messages).toHaveLength(0);
+    expect(logs.filter((entry) => entry === "Rejected invalid host bridge message")).toHaveLength(2);
+    expect(logs.join("\n")).not.toContain(rawSecret);
+    expect(logs.join("\n")).not.toContain("access_token");
+    expect(logs.join("\n")).not.toContain("/Users/alice");
+    expect(logs.join("\n")).not.toContain("rawPrompt");
+    expect(JSON.stringify(localStorage)).not.toContain(rawSecret);
+    expect(JSON.stringify(sessionStorage)).not.toContain(rawSecret);
+    adapter.dispose();
+  });
+
   it("emits valid host.ready to subscribers without logging the token", () => {
     const token = "hostSessionLocalValue";
     const logs: string[] = [];

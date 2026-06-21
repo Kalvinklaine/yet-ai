@@ -28,6 +28,30 @@ export type IdeActionProposalState = IdeActionProposalCandidate & {
   requestId: string;
 };
 
+export type IdeActionProposalRejectedReasonCode =
+  | "invalid_json"
+  | "invalid_shape"
+  | "unsafe_action"
+  | "assistant_request_id"
+  | "unknown_keys"
+  | "wrong_version"
+  | "invalid_payload";
+
+export type IdeActionProposalRejectedDiagnostic = {
+  reasonCode: IdeActionProposalRejectedReasonCode;
+  message: string;
+};
+
+export type IdeActionProposalAnalysis =
+  | { state: "valid"; proposal: AssistantIdeActionProposal }
+  | { state: "rejected"; diagnostic: IdeActionProposalRejectedDiagnostic }
+  | { state: "none" };
+
+export type IdeActionProposalReview =
+  | { state: "valid"; candidate: IdeActionProposalCandidate }
+  | { state: "rejected"; sourceMessageId: string; diagnostic: IdeActionProposalRejectedDiagnostic }
+  | { state: "none" };
+
 export type IdeActionProposalIdentity = {
   requestId: string;
   sourceMessageId: string;
@@ -36,18 +60,27 @@ export type IdeActionProposalIdentity = {
 
 const proposalVersion = "2026-05-15";
 
-export function parseAssistantIdeActionProposalContent(content: string): AssistantIdeActionProposal | null {
+export function analyzeAssistantIdeActionProposalContent(content: string): IdeActionProposalAnalysis {
   let parsed: unknown;
   try {
     parsed = JSON.parse(content.trim());
   } catch {
-    return null;
+    return looksLikeIdeActionProposalText(content) ? rejected("invalid_json") : { state: "none" };
   }
 
-  if (!isAssistantIdeActionProposal(parsed)) {
-    return null;
+  if (!isPlainObject(parsed)) {
+    return looksLikeIdeActionProposalText(content) ? rejected("invalid_shape") : { state: "none" };
   }
-  return parsed;
+  if (parsed.type !== "assistant.ideActionProposal" && !looksLikeIdeActionProposalObject(parsed)) {
+    return { state: "none" };
+  }
+  const shape = validateAssistantIdeActionProposal(parsed);
+  return shape === true ? { state: "valid", proposal: parsed as AssistantIdeActionProposal } : rejected(shape);
+}
+
+export function parseAssistantIdeActionProposalContent(content: string): AssistantIdeActionProposal | null {
+  const analysis = analyzeAssistantIdeActionProposalContent(content);
+  return analysis.state === "valid" ? analysis.proposal : null;
 }
 
 export function toIdeActionRequestPayload(proposal: AssistantIdeActionProposal): IdeActionRequestPayload {
@@ -111,24 +144,36 @@ export function isCompleteAssistantIdeActionProposalStatus(status: string | unde
   return status === undefined || status === "complete";
 }
 
-export function latestIdeActionProposalCandidateFromMessages(messages: IdeActionProposalSourceMessage[]): IdeActionProposalCandidate | null {
+export function latestIdeActionProposalReviewFromMessages(messages: IdeActionProposalSourceMessage[]): IdeActionProposalReview {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message.role !== "assistant" || !isCompleteAssistantIdeActionProposalStatus(message.status)) {
       continue;
     }
-    const proposal = parseAssistantIdeActionProposalContent(message.content);
-    if (!proposal) {
-      return null;
+    const analysis = analyzeAssistantIdeActionProposalContent(message.content);
+    if (analysis.state === "none") {
+      return { state: "none" };
     }
+    if (analysis.state === "rejected") {
+      return { state: "rejected", sourceMessageId: message.id, diagnostic: analysis.diagnostic };
+    }
+    const proposal = analysis.proposal;
     return {
-      proposal,
-      payload: toIdeActionRequestPayload(proposal),
-      sourceMessageId: message.id,
-      payloadKey: ideActionProposalPayloadKey(proposal),
+      state: "valid",
+      candidate: {
+        proposal,
+        payload: toIdeActionRequestPayload(proposal),
+        sourceMessageId: message.id,
+        payloadKey: ideActionProposalPayloadKey(proposal),
+      },
     };
   }
-  return null;
+  return { state: "none" };
+}
+
+export function latestIdeActionProposalCandidateFromMessages(messages: IdeActionProposalSourceMessage[]): IdeActionProposalCandidate | null {
+  const review = latestIdeActionProposalReviewFromMessages(messages);
+  return review.state === "valid" ? review.candidate : null;
 }
 
 export function ideActionProposalCandidateIdentityMatches(left: Pick<IdeActionProposalCandidate, "sourceMessageId" | "payloadKey"> | null | undefined, right: Pick<IdeActionProposalCandidate, "sourceMessageId" | "payloadKey"> | null | undefined): boolean {
@@ -143,30 +188,68 @@ export function ideActionProposalIdentityMatchesCandidate(identity: IdeActionPro
   return ideActionProposalCandidateIdentityMatches(identity, candidate);
 }
 
-function isAssistantIdeActionProposal(value: unknown): value is AssistantIdeActionProposal {
-  if (!isPlainObject(value) || !hasOnlyKeys(value, ["type", "version", "requiresUserConfirmation", "cloudRequired", "summary", "action", "workspaceRelativePath", "range"])) {
-    return false;
+function validateAssistantIdeActionProposal(value: Record<string, unknown>): true | IdeActionProposalRejectedReasonCode {
+  if (!hasOnlyKeys(value, ["type", "version", "requiresUserConfirmation", "cloudRequired", "summary", "action", "workspaceRelativePath", "range"])) {
+    return "requestId" in value ? "assistant_request_id" : "unknown_keys";
   }
-  if (
-    value.type !== "assistant.ideActionProposal" ||
-    value.version !== proposalVersion ||
-    value.requiresUserConfirmation !== true ||
-    value.cloudRequired !== false ||
-    !safeSummary(value.summary)
-  ) {
-    return false;
+  if (value.type !== "assistant.ideActionProposal") {
+    return "invalid_shape";
+  }
+  if (value.version !== proposalVersion) {
+    return "wrong_version";
+  }
+  if (value.requiresUserConfirmation !== true || value.cloudRequired !== false || !safeSummary(value.summary)) {
+    return "invalid_payload";
+  }
+  if (isUnsafeIdeAction(value.action)) {
+    return "unsafe_action";
   }
 
   if (value.action === "getContextSnapshot") {
-    return hasOnlyKeys(value, ["type", "version", "requiresUserConfirmation", "cloudRequired", "summary", "action"]);
+    return hasOnlyKeys(value, ["type", "version", "requiresUserConfirmation", "cloudRequired", "summary", "action"]) ? true : "unknown_keys";
   }
   if (value.action === "openWorkspaceFile") {
-    return hasOnlyKeys(value, ["type", "version", "requiresUserConfirmation", "cloudRequired", "summary", "action", "workspaceRelativePath"]) && requiredSafeRelativePath(value.workspaceRelativePath);
+    return hasOnlyKeys(value, ["type", "version", "requiresUserConfirmation", "cloudRequired", "summary", "action", "workspaceRelativePath"]) && requiredSafeRelativePath(value.workspaceRelativePath) ? true : "invalid_payload";
   }
   if (value.action === "revealWorkspaceRange") {
-    return hasOnlyKeys(value, ["type", "version", "requiresUserConfirmation", "cloudRequired", "summary", "action", "workspaceRelativePath", "range"]) && requiredSafeRelativePath(value.workspaceRelativePath) && isEditRange(value.range);
+    return hasOnlyKeys(value, ["type", "version", "requiresUserConfirmation", "cloudRequired", "summary", "action", "workspaceRelativePath", "range"]) && requiredSafeRelativePath(value.workspaceRelativePath) && isEditRange(value.range) ? true : "invalid_payload";
   }
-  return false;
+  return "unsafe_action";
+}
+
+function rejected(reasonCode: IdeActionProposalRejectedReasonCode): { state: "rejected"; diagnostic: IdeActionProposalRejectedDiagnostic } {
+  return { state: "rejected", diagnostic: { reasonCode, message: diagnosticMessage(reasonCode) } };
+}
+
+function diagnosticMessage(reasonCode: IdeActionProposalRejectedReasonCode): string {
+  switch (reasonCode) {
+    case "invalid_json":
+      return "The IDE action proposal JSON is not valid.";
+    case "invalid_shape":
+      return "The IDE action proposal shape is invalid.";
+    case "unsafe_action":
+      return "The IDE action proposal requested an unsupported or unsafe action.";
+    case "assistant_request_id":
+      return "The assistant must not supply an IDE action request id.";
+    case "unknown_keys":
+      return "The IDE action proposal contains unsupported fields.";
+    case "wrong_version":
+      return "The IDE action proposal uses an unsupported bridge version.";
+    case "invalid_payload":
+      return "The IDE action proposal payload is invalid or unsafe.";
+  }
+}
+
+function looksLikeIdeActionProposalText(value: string): boolean {
+  return /assistant\.ideActionProposal|gui\.ideActionRequest|workspaceRelativePath|revealWorkspaceRange|openWorkspaceFile|getContextSnapshot|runVerificationCommand|applyWorkspaceEdit|editWorkspaceFile|\b(?:shell|git|task|tool)\b/i.test(value);
+}
+
+function looksLikeIdeActionProposalObject(value: Record<string, unknown>): boolean {
+  return "action" in value || "requiresUserConfirmation" in value || "workspaceRelativePath" in value || "range" in value || "summary" in value;
+}
+
+function isUnsafeIdeAction(value: unknown): boolean {
+  return typeof value === "string" && /^(?:shell|git|task|tool|applyWorkspaceEdit|editWorkspaceFile|getActiveFileExcerpt|runVerificationCommand|searchWorkspaceSnippets)$/.test(value);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

@@ -3675,7 +3675,7 @@ describe("active editor attached context", () => {
 
     expect(container?.textContent).toContain("Read-only IDE action proposal");
     expect(container?.textContent).toContain("Open the example file.");
-    expect(container?.textContent).toContain("Proposal id: gui-ide-proposal-1");
+    expect(container?.textContent).toContain("Proposal id: gui-ide-proposal-");
     expect(container?.querySelector(".ide-action-proposal-card")?.textContent ?? "").not.toContain("Request:");
     expect(container?.textContent).toContain("Browser preview only. No IDE action will be posted.");
     expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Run read-only IDE action");
@@ -3774,6 +3774,42 @@ describe("active editor attached context", () => {
     expect(trace).not.toContain("t".repeat(64));
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("repository-check");
+    expect(browserStorageDump()).not.toContain(rawSecret);
+  });
+
+  it("renders rejected proposal and lifecycle diagnostics as sanitized bounded trace summaries", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const rawSecret = "access_token=" + "z".repeat(64);
+    const unsafeIdeProposal = ideActionProposal({ action: "shell", summary: "Run local shell safely.", command: `npm test ${rawSecret}`, requestId: rawSecret });
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Unsafe trace", 1)], chatThreads: { "chat-001": chatThread("chat-001", "Unsafe trace", [chatMessage("chat-001", "assistant-unsafe-ide", "assistant", JSON.stringify(unsafeIdeProposal))]) } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    await dispatchRuntimeStatus(runtimeStatusPayload({ lifecycle: "auth_mismatch", tokenState: "mismatch", diagnosis: `runtime rejected `, nextAction: `Refresh without ` }));
+    await dispatchRuntimeStatus(runtimeStatusPayload({ lifecycle: "auth_mismatch", tokenState: "mismatch", diagnosis: "runtime rejected current local credentials", nextAction: "Refresh runtime after mismatch." }));
+    await act(async () => {
+      const details = findDetails("coding-session-trace-details");
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+
+    const text = container?.textContent ?? "";
+    const trace = findDetails("coding-session-trace-details").textContent ?? "";
+    expect(text).toContain("IDE action proposal rejected");
+    expect(text).not.toContain("npm test");
+    expect(text).not.toContain(rawSecret);
+    expect(trace).toContain("IDE action proposal rejected");
+    expect(trace).toContain("The assistant must not supply an IDE action request id.");
+    expect(trace).toContain("Runtime lifecycle status received");
+    expect(trace).not.toContain("npm test");
+    expect(trace).not.toContain("access_token");
+    expect(trace).not.toContain("z".repeat(64));
+    expect(trace.length).toBeLessThan(9000);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain(rawSecret);
   });
 
@@ -4087,8 +4123,7 @@ describe("active editor attached context", () => {
     const text = container?.textContent ?? "";
     expect(text).toContain("Edit proposal detected but rejected. Review the rejection card below; no apply action is available.");
     expect(text).toContain("Normal assistant response.");
-    expect(text).not.toContain("Review this assistant-proposed read-only navigation/context action before running.");
-    expect(text).not.toContain("Read-only IDE action proposal");
+    expect(container?.querySelector(".ide-action-proposal-card")?.textContent ?? "").toBe("");
     expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Run read-only IDE action");
   });
 

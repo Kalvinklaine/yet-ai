@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeIdeActionProposal, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, toIdeActionRequestPayload, type IdeActionProposalSourceMessage, type IdeActionProposalState } from "./ideActionProposal";
+import { analyzeAssistantIdeActionProposalContent, describeIdeActionProposal, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, toIdeActionRequestPayload, type IdeActionProposalSourceMessage, type IdeActionProposalState } from "./ideActionProposal";
 
 const base = {
   type: "assistant.ideActionProposal",
@@ -63,6 +63,22 @@ describe("ideActionProposal", () => {
   it("rejects shell, git, task, tool, and edit actions", () => {
     for (const action of ["shell", "git", "task", "tool", "applyWorkspaceEdit", "editWorkspaceFile"]) {
       expect(parseAssistantIdeActionProposalContent(JSON.stringify({ ...base, action }))).toBeNull();
+    }
+  });
+
+  it("reports sanitized diagnostics for rejected shell git task tool edit actions", () => {
+    const rawSecret = "access_token=" + "a".repeat(64);
+    for (const action of ["shell", "git", "task", "tool", "applyWorkspaceEdit", "editWorkspaceFile"]) {
+      const analysis = analyzeAssistantIdeActionProposalContent(JSON.stringify({ ...base, summary: "Review local IDE context.", action, command: `npm test ${rawSecret}`, requestId: rawSecret }));
+      expect(analysis.state).toBe("rejected");
+      if (analysis.state === "rejected") {
+        const rendered = JSON.stringify(analysis.diagnostic);
+        expect(rendered.length).toBeLessThan(220);
+        expect(rendered).not.toContain(action);
+        expect(rendered).not.toContain("npm test");
+        expect(rendered).not.toContain(rawSecret);
+        expect(rendered).not.toContain("access_token");
+      }
     }
   });
 
