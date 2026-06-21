@@ -2,6 +2,7 @@ import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useSta
 import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type HostRuntimeStatusPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type ActiveFileExcerptAttachment, type WorkspaceSnippetSearchResult } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, removeOptimisticUserMessage, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToBundleItem, activeFileExcerptToChatContext, addExplicitContextBundleItem, explicitContextBundleMaxItems, explicitContextBundleToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, projectMemoryToBundleItem, rangeFromContextSelection, summarizeExplicitContextBundleItem, validateWorkspaceSnippetQuery, workspaceSnippetToBundleItem, type ExplicitContextBundleItem, type ProjectMemoryBundleItem, type WorkspaceSnippetBundleItem } from "./services/activeEditorContext";
+import { CodingSessionTracePanel } from "./components/CodingSessionTracePanel";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
 import { IdeActionProposalPanel, IdeActionsPanel, VerificationCommandPanel, verificationOutputKey, type IdeActionAttemptState, type VerificationCommand } from "./components/IdeActionsPanel";
 import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
@@ -19,6 +20,7 @@ import { codingActions, type CodingAction } from "./services/codingActions";
 import { buildCodingTaskPrompt, type CodingTaskPromptMode } from "./services/codingTaskPrompt";
 import { buildVerificationFollowupPrompt, type VerificationFollowupPromptMode } from "./services/verificationFollowupPrompt";
 import { createProjectMemory, deleteProjectMemory, listProjectMemory, searchProjectMemory, type ProjectMemoryNote } from "./services/projectMemoryClient";
+import { appendCodingSessionTraceEntry, type CodingSessionTraceDraft, type CodingSessionTraceEntry } from "./services/codingSessionTrace";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
@@ -317,6 +319,7 @@ export function App() {
   const [chatView, setChatView] = useState(() => createInitialChatViewState("chat-001"));
   const [chatLifecycleState, setChatLifecycleState] = useState<ChatLifecycleState>("idle");
   const [timeline, setTimeline] = useState<string[]>([]);
+  const [codingSessionTrace, setCodingSessionTrace] = useState<CodingSessionTraceEntry[]>([]);
   const [bridgeLog, setBridgeLog] = useState<string[]>([]);
   const [bridgeHost, setBridgeHost] = useState<BridgeHost>("browser");
   const [attachedContext, setAttachedContext] = useState<{ payload: HostContextSnapshotPayload; settingsRevision: number; chatId: string; excerpt?: ActiveFileExcerptAttachment } | null>(null);
@@ -372,6 +375,7 @@ export function App() {
   const editProposalApplyCounterRef = useRef(0);
   const editProposalApplySessionNonceRef = useRef<string>(generateApplyRequestSessionNonce());
   const editProposalIdentityRef = useRef<(EditProposalIdentity & { requestId: string }) | null>(null);
+  const editProposalRejectedTraceKeyRef = useRef<string | null>(null);
   const ideActionProposalCounterRef = useRef(0);
   const ideActionProposalIdentityRef = useRef<{ requestId: string; sourceMessageId: string; payloadKey: string } | null>(null);
   const chatViewMessagesRef = useRef<ChatViewMessage[]>([]);
@@ -505,6 +509,10 @@ export function App() {
     setTimeline((current) => [entry, ...current].slice(0, 80));
   }, []);
 
+  const appendTrace = useCallback((draft: CodingSessionTraceDraft) => {
+    setCodingSessionTrace((current) => appendCodingSessionTraceEntry(current, draft));
+  }, []);
+
   const clearExplicitContextBundle = useCallback((status: string | null = null) => {
     setExplicitContextBundleItems([]);
     setIncludeExplicitContextBundle(true);
@@ -515,6 +523,7 @@ export function App() {
   const clearEditProposalState = useCallback(() => {
     editProposalIdentityRef.current = null;
     pendingApplyRequestIdRef.current = null;
+    editProposalRejectedTraceKeyRef.current = null;
     pendingApplyProposalRequestIdRef.current = null;
     completedApplyRequestChatsRef.current.clear();
     setEditProposal(null);
@@ -642,7 +651,14 @@ export function App() {
     updateRuntimeSettings({ baseUrl: hostRuntimeUrl, token: nextToken });
     runtimeRefreshQueuedRef.current = true;
     setTimeline((current) => ["Host runtime settings received", ...current].slice(0, 80));
-  }, [updateRuntimeSettings]);
+    appendTrace({
+      family: "host.ready",
+      title: "Host runtime settings received",
+      status: "info",
+      summary: "IDE host supplied loopback runtime settings; token value remains hidden in memory.",
+      details: { hasSessionToken: Boolean(payload.sessionToken), runtimeUrl: hostRuntimeUrl },
+    });
+  }, [appendTrace, updateRuntimeSettings]);
 
   useEffect(() => {
     const adapter = createBridgeAdapter((entry) => setBridgeLog((current) => [entry, ...current].slice(0, 20)));
@@ -656,12 +672,14 @@ export function App() {
         const revision = settingsRevisionRef.current;
         setRuntimeLifecycle({ diagnostics: runtimeLifecycleDiagnostics(payload, adapter.host), settingsRevision: revision });
         setTimeline((current) => [`Runtime lifecycle status received: ${payload.lifecycle}`, ...current].slice(0, 80));
+        appendTrace({ family: "host.runtimeStatus", title: "Runtime lifecycle status received", status: payload.lifecycle === "connected" ? "succeeded" : payload.lifecycle === "failed" || payload.lifecycle === "auth_mismatch" ? "failed" : "info", summary: `Host reported runtime ${payload.lifecycle}.`, details: { lifecycle: payload.lifecycle, tokenState: payload.tokenState, authority: payload.authority } });
       } else if (message.type === "host.contextSnapshot") {
         const nextContext = message.payload as HostContextSnapshotPayload;
         setAttachedContext({ payload: nextContext, settingsRevision: settingsRevisionRef.current, chatId: chatIdRef.current });
         setIncludeAttachedContext(hasUsableAttachedContext(nextContext) && !attachedContextRequiresAcknowledgement(nextContext));
         setAttachedContextAcknowledged(false);
         setAttachedContextStatus(null);
+        appendTrace({ family: "context.snapshot", title: "Active editor context received", status: hasUsableAttachedContext(nextContext) ? "succeeded" : "unavailable", summary: attachedContextSummary(nextContext), details: { source: nextContext.source, file: nextContext.file?.workspaceRelativePath ?? nextContext.file?.displayPath, range: formatSelectionRange(nextContext.selection), hasSelection: Boolean(nextContext.selection?.text) } });
       } else if (message.type === "host.applyWorkspaceEditResult") {
         const requestId = message.requestId ?? "unknown";
         const completedChatId = completedApplyRequestChatsRef.current.get(requestId);
@@ -684,6 +702,8 @@ export function App() {
         setPendingApplyRequestId(null);
         setApplyNote(null);
         setApplyResult({ requestId, proposalRequestId, payload: message.payload as ApplyWorkspaceEditResultPayload });
+        const payload = message.payload as ApplyWorkspaceEditResultPayload;
+        appendTrace({ family: "edit.applyResult", title: "Edit apply result received", status: payload.status === "applied" ? "succeeded" : payload.status === "denied" || payload.status === "rejected" ? "rejected" : "failed", summary: payload.message, requestId, details: { status: payload.status, appliedEditCount: payload.appliedEditCount ?? 0, affectedFiles: payload.affectedFiles ?? [] } });
       } else if (message.type === "host.ideActionProgress") {
         const requestId = message.requestId ?? "unknown";
         if (requestId !== pendingIdeActionRequestIdRef.current || pendingIdeActionChatIdRef.current !== chatIdRef.current) {
@@ -694,6 +714,7 @@ export function App() {
         }
         const payload = message.payload as IdeActionProgressPayload;
         setIdeActionNote(null);
+        appendTrace({ family: payload.action === "runVerificationCommand" ? "verification.progress" : "ide.progress", title: payload.action === "runVerificationCommand" ? "Verification progress received" : "IDE action progress received", status: payload.status === "inProgress" ? "in_progress" : payload.status, summary: payload.summary, requestId, details: { action: payload.action, commandId: payload.commandId, workspaceRelativePath: payload.workspaceRelativePath } });
         setIdeActionAttempt((current) => current?.requestId === requestId ? {
           ...current,
           status: payload.status,
@@ -718,6 +739,7 @@ export function App() {
         }
         const payload = message.payload as IdeActionResultPayload;
         rememberCompletedIdeActionRequest(completedIdeActionRequestChatsRef.current, requestId, chatIdRef.current);
+        appendTrace({ family: payload.action === "runVerificationCommand" ? "verification.result" : payload.action === "getActiveFileExcerpt" ? "context.activeExcerpt" : payload.action === "searchWorkspaceSnippets" ? "context.snippets" : "ide.result", title: payload.action === "runVerificationCommand" ? "Verification result received" : "IDE action result received", status: payload.status, summary: payload.message, requestId, details: { action: payload.action, commandId: payload.commandId, exitCode: payload.exitCode, workspaceRelativePath: payload.workspaceRelativePath, resultCount: payload.resultCount } });
         pendingIdeActionRequestIdRef.current = null;
         pendingIdeActionChatIdRef.current = null;
         setIdeActionNote(null);
@@ -747,7 +769,7 @@ export function App() {
       bridgeAdapterRef.current = null;
       adapter.dispose();
     };
-  }, [applyHostReady]);
+  }, [appendTrace, applyHostReady]);
 
   const appendChatError = useCallback((message: string, code?: string) => {
     setChatView((current) => applyChatViewEvent(current, {
@@ -780,6 +802,7 @@ export function App() {
     runtimeRefreshInFlightRef.current = true;
     setRuntimeRefreshInFlight(true);
     setRuntimeRefreshStatus({ state: "checking", attempt, checkedAt, detail: "Checking runtime…" });
+    appendTrace({ family: "runtime.refresh", title: "Runtime refresh started", status: "pending", summary: `Attempt ${attempt} checking local runtime.`, details: { attempt } });
     setConnectionError(null);
     setModelError(null);
     setIdentityWarnings([]);
@@ -840,6 +863,13 @@ export function App() {
         checkedAt: new Date().toLocaleTimeString(),
         detail: lastError ? `Runtime check failed: ${lastError.status} ${sanitizeDisplayText(lastError.message)}` : "Runtime connected",
       });
+      appendTrace({
+        family: "runtime.refresh",
+        title: lastError ? "Runtime refresh failed" : "Runtime refresh connected",
+        status: lastError ? "failed" : "succeeded",
+        summary: lastError ? `Runtime check failed: ${lastError.status} ${lastError.message}` : "Runtime connected.",
+        details: { attempt, ready: nextPing.ok ? nextPing.data.ready : false, modelCount: nextModels.ok ? nextModels.data.models.length : 0 },
+      });
     } catch (error) {
       const runtimeError: RuntimeError = {
         status: "network",
@@ -864,13 +894,14 @@ export function App() {
         checkedAt: new Date().toLocaleTimeString(),
         detail: `Runtime check failed: ${runtimeError.status} ${sanitizeDisplayText(runtimeError.message)}`,
       });
+      appendTrace({ family: "runtime.refresh", title: "Runtime refresh failed", status: "failed", summary: `Runtime check failed: ${runtimeError.status} ${runtimeError.message}`, details: { attempt } });
     } finally {
       if (!keepInFlight) {
         runtimeRefreshInFlightRef.current = false;
         setRuntimeRefreshInFlight(false);
       }
     }
-  }, [isCurrentRefresh]);
+  }, [appendTrace, isCurrentRefresh]);
 
   const refreshProviders = useCallback(async (targetSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
     setProviderError(null);
@@ -1474,6 +1505,7 @@ export function App() {
     activeStreamRef.current = stream;
     setChatLifecycleState("sse_connecting");
     addTimeline(`Opening SSE for ${targetChatId}`);
+    appendTrace({ family: "chat.streamStarted", title: "Opening chat stream", status: "pending", summary: `Opening SSE for ${targetChatId}.`, details: { chatId: targetChatId } });
     void subscribeToChat(
       stream.settings,
       targetChatId,
@@ -1492,6 +1524,15 @@ export function App() {
           } else if (event.type === "error") {
             setChatLifecycleState("failed");
           }
+          if (event.type === "stream_started") {
+            appendTrace({ family: "chat.streamStarted", title: "Chat stream started", status: "in_progress", summary: `Stream event ${event.seq} started.`, details: { seq: event.seq, chatId: event.chatId } });
+          } else if (event.type === "stream_delta") {
+            appendTrace({ family: "chat.streamDelta", title: "Chat stream delta", status: "in_progress", summary: `Stream event ${event.seq} delivered sanitized delta.`, details: { seq: event.seq, chatId: event.chatId } });
+          } else if (event.type === "stream_finished") {
+            appendTrace({ family: "chat.streamFinished", title: "Chat stream finished", status: "succeeded", summary: `Stream event ${event.seq} finished.`, details: { seq: event.seq, chatId: event.chatId, payload: safeEvent.payload } });
+          } else if (event.type === "error") {
+            appendTrace({ family: "chat.streamError", title: "Chat stream error", status: "failed", summary: "SSE error event received.", details: { seq: event.seq, chatId: event.chatId, payload: safeEvent.payload } });
+          }
           addTimeline(sanitizeTimelineText(`${event.seq} ${event.type}\n${JSON.stringify(safeEvent.payload ?? {}, null, 2)}`));
         },
         onError: (error) => {
@@ -1503,6 +1544,7 @@ export function App() {
           setChatLifecycleState("failed");
           appendChatError(error.message, chatRecoveryCodeForRuntimeError(error, "sse"));
           addTimeline(`SSE error: ${sanitizeDisplayText(error.message)}`);
+          appendTrace({ family: "chat.streamError", title: "Chat stream error", status: "failed", summary: error.message, details: { status: error.status } });
         },
       },
       controller.signal,
@@ -1511,7 +1553,7 @@ export function App() {
         activeStreamRef.current = null;
       }
     });
-  }, [addTimeline, appendChatError, chatId]);
+  }, [addTimeline, appendChatError, appendTrace, chatId]);
 
   const stopSse = () => {
     if (!abortActiveStream("SSE stopped and abort requested")) {
@@ -1529,7 +1571,8 @@ export function App() {
     setPendingApplyRequestId(null);
     setApplyNote("Cleared pending apply state in the GUI only. No host-side cancellation was requested.");
     addTimeline(`Edit proposal pending apply cleared ${requestId}`);
-  }, [addTimeline]);
+    appendTrace({ family: "edit.applyRequested", title: "Edit apply request cleared", status: "cancelled", summary: "Pending apply state cleared in GUI only.", requestId });
+  }, [addTimeline, appendTrace]);
 
   const submitEditProposal = useCallback(() => {
     if (!editProposal || (bridgeHost !== "vscode" && bridgeHost !== "jetbrains") || pendingApplyRequestIdRef.current) {
@@ -1553,7 +1596,8 @@ export function App() {
       payload: editProposal.payload,
     });
     addTimeline(`Edit proposal apply requested ${applyRequestId}`);
-  }, [addTimeline, bridgeHost, clearEditProposalState, editProposal]);
+    appendTrace({ family: "edit.applyRequested", title: "Edit apply requested", status: "pending", summary: editProposal.payload.summary, requestId: applyRequestId, details: { proposalRequestId: editProposal.requestId, fileCount: editProposal.payload.edits.length } });
+  }, [addTimeline, appendTrace, bridgeHost, clearEditProposalState, editProposal]);
 
   const requestIdeAction = useCallback((payload: IdeActionRequestPayload, requestIdPrefix = "gui-ide-action") => {
     if ((bridgeHost !== "vscode" && bridgeHost !== "jetbrains") || pendingIdeActionRequestIdRef.current) {
@@ -1581,7 +1625,8 @@ export function App() {
       payload,
     });
     addTimeline(`IDE action requested ${requestId}`);
-  }, [addTimeline, bridgeHost]);
+    appendTrace({ family: payload.action === "runVerificationCommand" ? "verification.runRequested" : "ide.request", title: payload.action === "runVerificationCommand" ? "Verification command requested" : "IDE action requested", status: "pending", summary: `${label} requested.`, requestId, details: { action: payload.action, commandId: "commandId" in payload ? payload.commandId : undefined, workspaceRelativePath: "workspaceRelativePath" in payload ? payload.workspaceRelativePath : undefined } });
+  }, [addTimeline, appendTrace, bridgeHost]);
 
   const searchWorkspaceSnippets = () => {
     const validation = workspaceSnippetQueryValidation;
@@ -1619,6 +1664,7 @@ export function App() {
       setExplicitContextBundleStatus(`Added ${addedCount} project snippet${addedCount === 1 ? "" : "s"} to the one-shot bundle.`);
       setWorkspaceSnippetStatus(`Attached ${addedCount} selected project snippet${addedCount === 1 ? "" : "s"} to the next message context. The bundle is one-shot and clears after accepted Send; use Remove snippet to detach before sending.`);
       setSelectedWorkspaceSnippetKeys([]);
+      appendTrace({ family: "context.snippets", title: "Project snippets attached", status: "succeeded", summary: `Attached ${addedCount} selected project snippet${addedCount === 1 ? "" : "s"} to the next message context.`, details: { addedCount } });
       return next;
     });
   };
@@ -1719,6 +1765,7 @@ export function App() {
       setIncludeExplicitContextBundle(true);
       setExplicitContextBundleStatus(`Added local memory note ${sanitizeDisplayText(note.title)} to the one-shot bundle.`);
       setProjectMemoryStatus(`Attached local memory note ${sanitizeDisplayText(note.title)} to the next message context.`);
+      appendTrace({ family: "context.memory", title: "Project memory attached", status: "succeeded", summary: `Attached local memory note ${note.title} to the next message context.`, details: { noteId: note.id, title: note.title } });
       return next;
     });
   };
@@ -1756,6 +1803,13 @@ export function App() {
   useEffect(() => {
     const review = latestEditProposalReviewFromMessages(chatView.messages);
     if (review.state !== "valid") {
+      if (review.state === "rejected") {
+        const rejectedTraceKey = `${review.sourceMessageId}:${review.diagnostic.reasonCode}`;
+        if (editProposalRejectedTraceKeyRef.current !== rejectedTraceKey) {
+          editProposalRejectedTraceKeyRef.current = rejectedTraceKey;
+          appendTrace({ family: "edit.rejected", title: "Edit proposal rejected", status: "rejected", summary: review.diagnostic.message, details: { sourceMessageId: review.sourceMessageId, reason: review.diagnostic.reasonCode } });
+        }
+      }
       clearEditProposalState();
       return;
     }
@@ -1772,12 +1826,15 @@ export function App() {
         })();
     setEditProposal((current) => current?.requestId === proposal.requestId ? current : proposal);
     setApplyResult((current) => current?.proposalRequestId === proposal.requestId ? current : null);
+    if (!stableRequestId) {
+      appendTrace({ family: "edit.detected", title: "Edit proposal detected", status: "info", summary: candidate.proposal.summary, requestId: proposal.requestId, details: { sourceMessageId: candidate.sourceMessageId, fileCount: candidate.proposal.edits.length } });
+    }
     if (pendingApplyRequestIdRef.current && pendingApplyProposalRequestIdRef.current !== proposal.requestId) {
       pendingApplyRequestIdRef.current = null;
       pendingApplyProposalRequestIdRef.current = null;
       setPendingApplyRequestId(null);
     }
-  }, [chatView.messages, clearEditProposalState]);
+  }, [appendTrace, chatView.messages, clearEditProposalState]);
 
   const applyCodingAction = (action: CodingAction) => {
     if (!currentAttachedContext || !codingActionsCanUseContext) {
@@ -1857,6 +1914,7 @@ export function App() {
     }
     setChatInput(buildVerificationFollowupPrompt(result, mode));
     chatInputRef.current?.focus();
+    appendTrace({ family: "verification.followupPromptDrafted", title: mode === "fix" ? "Verification fix prompt drafted" : "Verification follow-up prompt drafted", status: "info", summary: `Drafted ${mode} prompt from verification result.`, details: { commandId: result.commandId, status: result.status, exitCode: result.exitCode } });
   };
 
   const attachVerificationResultToBundle = (result: IdeActionResultPayload) => {
@@ -1883,6 +1941,7 @@ export function App() {
       setExplicitContextBundleStatus(`Added ${result.commandId} verification output to the one-shot bundle.`);
       setChatInput((current) => current || `Use the attached verification_output from ${result.commandId} to explain the verification result and suggest the next safe step.`);
       chatInputRef.current?.focus();
+      appendTrace({ family: "context.verificationAttachment", title: "Verification output attached", status: "succeeded", summary: `Added ${result.commandId} verification output to the one-shot bundle.`, details: { commandId: result.commandId, status: result.status, exitCode: result.exitCode, truncated: result.truncated } });
       return next;
     });
   };
@@ -1915,6 +1974,7 @@ export function App() {
     const context = submittedExplicitContextBundle ?? (submittedAttachedContext?.excerpt ? activeFileExcerptToChatContext(submittedAttachedContext.excerpt) : submittedAttachedContext?.payload);
     setChatLifecycleState("command_submitting");
     optimisticUserMessageCounterRef.current += 1;
+    appendTrace({ family: "chat.sendAccepted", title: "Send requested", status: "pending", summary: "User message submitted from the GUI.", details: { chatId: targetChatId, hasContext: Boolean(context), contextKind: context?.kind } });
     const optimisticUserMessageId = `${targetChatId}-optimistic-user-${optimisticUserMessageCounterRef.current}`;
     setChatView((current) => addAcceptedUserMessage(current, content, optimisticUserMessageId));
     setChatInput("");
@@ -1925,6 +1985,7 @@ export function App() {
     }
     if (result.ok) {
       addTimeline(`Command accepted ${result.data.requestId}`);
+      appendTrace({ family: "chat.sendAccepted", title: "Send accepted", status: "succeeded", summary: "Runtime accepted user message command.", requestId: result.data.requestId, details: { chatId: targetChatId, hasContext: Boolean(context), contextKind: context?.kind } });
       clearSubmittedAttachedContext(submittedExplicitContextBundle ? null : submittedAttachedContext);
       if (submittedExplicitContextBundle) {
         clearExplicitContextBundle("One-shot explicit context bundle attached to the last accepted message and cleared.");
@@ -1938,6 +1999,7 @@ export function App() {
       setChatView((current) => removeOptimisticUserMessage(current, optimisticUserMessageId));
       appendChatError(result.error.message, chatRecoveryCodeForRuntimeError(result.error, "command"));
       addTimeline(`Command error: ${sanitizeDisplayText(result.error.message)}`);
+      appendTrace({ family: "chat.sendRejected", title: "Send rejected", status: "failed", summary: result.error.message, details: { chatId: targetChatId, status: result.error.status } });
     }
   };
 
@@ -2053,6 +2115,7 @@ export function App() {
         ? "Configure a provider/model or enable Demo Mode before sending."
         : "Connect the local runtime before sending."
     : chatLifecycleLabels[chatLifecycleState];
+  const tracePanelEntries = codingSessionTrace.slice(-12);
   const currentChatTitle = sanitizeDisplayText(activeChatSummary?.title ?? chatId);
   const renderConversationList = (deleteHelpId: string) => (
     <div className="conversation-list" role="list" aria-label="Local conversations list">
@@ -2117,6 +2180,8 @@ export function App() {
           <span className="subtle">Browser can use the local runtime for chat and GUI-only previews. Open {productName} in VS Code or JetBrains for host actions: applying edits, IDE verification commands, active-file/context requests, and project snippet search.</span>
         </section>
       )}
+
+      <CodingSessionTracePanel entries={tracePanelEntries} />
 
       <section className="card stack chat-primary-card">
         <div className="chat-hero-row">

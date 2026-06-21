@@ -3732,6 +3732,51 @@ describe("active editor attached context", () => {
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
   });
 
+  it("renders read-only coding session trace entries without browser storage", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const rawSecret = "access_token=" + "t".repeat(64);
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+
+    await dispatchRuntimeStatus(runtimeStatusPayload({ diagnosis: `connected ${rawSecret}` }));
+    await dispatchHostContextSnapshot({
+      file: { displayPath: "src/trace.ts", workspaceRelativePath: "src/trace.ts", languageId: "typescript" },
+      selection: { startLine: 1, startCharacter: 0, endLine: 1, endCharacter: 5, text: "trace" },
+    });
+    await act(async () => {
+      findButton("Get IDE context").click();
+    });
+    await dispatchHostIdeActionProgress("gui-ide-action-1", { phase: "running", status: "inProgress", summary: `Reading context ${rawSecret}`, cloudRequired: false, action: "getContextSnapshot" });
+    await dispatchHostIdeActionResult("gui-ide-action-1", { status: "succeeded", message: "Context ready.", cloudRequired: false, action: "getContextSnapshot", context: { source: "vscode", hasActiveEditor: true, workspaceFolderCount: 1 } });
+    await act(async () => {
+      findButton("Repository check").click();
+    });
+    await dispatchHostIdeActionProgress("gui-verification-command-2", { phase: "running", status: "inProgress", summary: "Running repository check.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check" });
+    await dispatchHostIdeActionResult("gui-verification-command-2", { status: "succeeded", message: "Repository check passed.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 0, durationMs: 10, outputTail: "passed", truncated: false });
+
+    await act(async () => {
+      const details = findDetails("coding-session-trace-details");
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+
+    const trace = findDetails("coding-session-trace-details").textContent ?? "";
+    expect(trace).toContain("Coding session trace");
+    expect(trace).toContain("read-only");
+    expect(trace).toContain("Active editor context received");
+    expect(trace).toContain("IDE action requested");
+    expect(trace).toContain("IDE action result received");
+    expect(trace).toContain("Verification command requested");
+    expect(trace).toContain("Verification result received");
+    expect(trace).not.toContain("t".repeat(64));
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("repository-check");
+    expect(browserStorageDump()).not.toContain(rawSecret);
+  });
+
   it("renders browser verification commands as preview-only without posting", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     mockRuntimeResponses();
