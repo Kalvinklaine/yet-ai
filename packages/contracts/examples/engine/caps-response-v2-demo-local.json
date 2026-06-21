@@ -43,7 +43,7 @@
             "provenance": "local_default"
           },
           "localAvailability": {
-            "status": "reachable",
+            "status": "not_applicable",
             "reason": "Demo mode is available in the local runtime."
           },
           "providerFamily": "demo_local"

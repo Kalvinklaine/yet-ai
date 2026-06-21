@@ -28,6 +28,30 @@ function provider(overrides: Partial<ProviderSummary> = {}): ProviderSummary {
   };
 }
 
+function expectSanitizedMetadata(texts: string[]): void {
+  const forbidden = [
+    "api_key",
+    "Authorization",
+    "Bearer",
+    "raw-provider-response",
+    "provider response",
+    "/Users/alice",
+    "C:\\Users\\alice",
+    "sk-live",
+    "tok_",
+    "a".repeat(64),
+    "b".repeat(64),
+    "c".repeat(64),
+    "d".repeat(64),
+  ];
+  for (const text of texts) {
+    expect(text).toContain("[redacted]");
+    for (const value of forbidden) {
+      expect(text).not.toContain(value);
+    }
+  }
+}
+
 describe("provider readiness", () => {
   it("resolves the selected runtime model when provider metadata matches", () => {
     const selected = model();
@@ -191,7 +215,7 @@ describe("provider readiness", () => {
       id: "gpt-configured",
       displayName: "Configured GPT",
       providerId: "openai-local",
-      readiness: { status: "ready", provenance: "configured", lastTestStatus: "reachable", lastTestedAt: "2026-06-21T09:00:00Z" },
+      readiness: { status: "ready", provenance: "configured" },
       providerFamily: "openai_compatible",
       capabilityProvenance: { chat: "configured", streaming: "configured", tools: "configured", reasoning: "configured" },
       localAvailability: { status: "not_applicable" },
@@ -201,7 +225,9 @@ describe("provider readiness", () => {
 
     expect(readiness.ready).toBe(true);
     expect(classifyProviderReadinessState(readiness, true)).toBe("openai_compatible_ready");
-    expect(modelStatusText(configuredOnly, configuredProvider)).toContain("provider family OpenAI-compatible BYOK; readiness configured only, last test reachable, tested 2026-06-21T09:00:00Z");
+    expect(modelStatusText(configuredOnly, configuredProvider)).toContain("provider family OpenAI-compatible BYOK; readiness configured only");
+    expect(modelStatusText(configuredOnly, configuredProvider)).not.toContain("last test");
+    expect(modelStatusText(configuredOnly, configuredProvider)).not.toContain("tested 2026");
     expect(modelReadinessEvidenceText(configuredOnly, configuredProvider)).toContain("This metadata is evidence only; Send stays gated by local runtime readiness and required chat/streaming capabilities.");
   });
 
@@ -241,13 +267,44 @@ describe("provider readiness", () => {
   });
 
   it("renders v2 demo-local provider family labels", () => {
-    const demoModel = model({ id: "yet-demo-chat", displayName: "Yet AI Demo Chat", providerId: "yet-demo", providerFamily: "demo_local", readiness: { status: "ready", provenance: "local_default" }, capabilityProvenance: { chat: "local_default", streaming: "local_default", tools: "local_default", reasoning: "local_default" }, localAvailability: { status: "reachable", reason: "Demo mode is available in the local runtime." } });
+    const demoModel = model({ id: "yet-demo-chat", displayName: "Yet AI Demo Chat", providerId: "yet-demo", providerFamily: "demo_local", readiness: { status: "ready", provenance: "local_default" }, capabilityProvenance: { chat: "local_default", streaming: "local_default", tools: "local_default", reasoning: "local_default" }, localAvailability: { status: "not_applicable", reason: "Demo mode is available in the local runtime." } });
     const demoProvider = provider({ id: "yet-demo", kind: "demo-local", displayName: "Yet AI Demo Mode", providerFamily: "demo_local", auth: { type: "none", configured: true }, models: [demoModel] });
     const readiness = resolveProviderModelReadiness([demoModel], [demoProvider], null);
 
     expect(classifyProviderReadinessState(readiness, true)).toBe("demo_mode_ready");
     expect(providerFamilyLabel("demo_local")).toBe("demo-local runtime preview");
     expect(modelStatusText(demoModel, demoProvider)).toContain("provider family demo-local runtime preview");
+  });
+
+  it("sanitizes malicious v2 metadata in visible readiness copy", () => {
+    const token = "tok_" + "a".repeat(64);
+    const unsafeModel = model({
+      id: "unsafe-model",
+      displayName: "Unsafe Model",
+      providerId: "openai-local",
+      readiness: {
+        status: "disabled",
+        reason: `api_key=${token} Authorization: Bearer ${"b".repeat(64)} raw-provider-response at /Users/alice/.yet-ai/providers.json`,
+        provenance: "runtime_tested",
+        lastTestStatus: "unauthorized",
+        lastTestedAt: `2026-06-21T09:25:00Z Authorization: Bearer ${"c".repeat(64)} C:\\Users\\alice\\yet-ai\\state.json`,
+      },
+      providerFamily: "openai_compatible",
+      capabilityProvenance: { chat: "runtime_tested", streaming: "runtime_tested", tools: "provider_declared", reasoning: "provider_declared" },
+      localAvailability: {
+        status: "not_applicable",
+        checkedAt: `2026-06-21T09:25:01Z raw-provider-response ${"d".repeat(64)} C:\\Users\\alice\\yet-ai\\trace.json`,
+        reason: `provider response had api_key=${token} Authorization: Bearer ${"b".repeat(64)} /Users/alice/.yet-ai/raw.json`,
+      },
+    });
+    const unsafeProvider = provider({ id: "openai-local", providerFamily: "openai_compatible", models: [unsafeModel] });
+
+    const status = modelStatusText(unsafeModel, unsafeProvider);
+    const evidence = modelReadinessEvidenceText(unsafeModel, unsafeProvider) ?? "";
+    const unready = modelUnreadyMessage(unsafeModel, unsafeProvider);
+
+    expectSanitizedMetadata([status, evidence, unready]);
+    expect(resolveProviderModelReadiness([unsafeModel], [unsafeProvider], null).ready).toBe(false);
   });
 
   it("keeps status and capability labels stable", () => {

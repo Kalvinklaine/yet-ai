@@ -12,9 +12,7 @@
       },
       "readiness": {
         "status": "ready",
-        "provenance": "configured",
-        "lastTestStatus": "reachable",
-        "lastTestedAt": "2026-06-21T09:00:00Z"
+        "provenance": "configured"
       },
       "providerFamily": "openai_compatible",
       "capabilityProvenance": {
