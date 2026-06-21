@@ -52,8 +52,21 @@ export type ModelCapabilities = {
   reasoning: boolean;
 };
 
+export type ProviderFamily = "openai_compatible" | "ollama" | "custom" | "demo_local";
+export type CapabilityProvenance = "configured" | "runtime_tested" | "provider_declared" | "local_default";
+export type ProviderTestStatus = "reachable" | "unsupported_kind" | "missing_secret" | "missing_model" | "bad_url" | "unauthorized" | "timeout" | "unreachable" | "upstream_error";
+
 export type ModelReadiness = {
   status: "ready" | "disabled" | "missing_credentials" | "missing_model" | "unsupported";
+  reason?: string;
+  provenance?: CapabilityProvenance;
+  lastTestStatus?: ProviderTestStatus;
+  lastTestedAt?: string;
+};
+
+export type ModelLocalAvailability = {
+  status: "unknown" | "not_applicable" | "reachable" | "unreachable" | "missing_model";
+  checkedAt?: string;
   reason?: string;
 };
 
@@ -63,6 +76,9 @@ export type ModelSummary = {
   providerId?: string;
   capabilities?: ModelCapabilities;
   readiness?: ModelReadiness;
+  capabilityProvenance?: Partial<Record<keyof ModelCapabilities, CapabilityProvenance>>;
+  localAvailability?: ModelLocalAvailability;
+  providerFamily?: ProviderFamily;
 };
 
 export type ModelsResponse = {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderSummary } from "./providersClient";
 import type { ModelSummary } from "./runtimeClient";
-import { classifyProviderReadinessState, missingModelMetadataMessage, modelCapabilitySummary, modelProviderMismatchMessage, modelStatusText, modelUnreadyMessage, readinessStatusLabel, resolveProviderModelReadiness, runtimeModelErrorMessage } from "./providerReadiness";
+import { classifyProviderReadinessState, missingModelMetadataMessage, modelCapabilitySummary, modelProviderMismatchMessage, modelReadinessEvidenceText, modelStatusText, modelUnreadyMessage, providerFamilyLabel, readinessStatusLabel, resolveProviderModelReadiness, runtimeModelErrorMessage } from "./providerReadiness";
 
 function model(overrides: Partial<ModelSummary> = {}): ModelSummary {
   return {
@@ -178,6 +178,76 @@ describe("provider readiness", () => {
       expect(text).not.toContain("s".repeat(64));
       expect(text).not.toContain("b".repeat(32));
     }
+  });
+
+  it("keeps old payloads without v2 metadata rendering as before", () => {
+    expect(modelStatusText(model(), provider())).toBe("GPT-4o mini (OpenAI API): ready; chat supported, streaming supported, tools unsupported, reasoning unsupported");
+    expect(modelReadinessEvidenceText(model(), provider())).toBeUndefined();
+    expect(modelUnreadyMessage(model({ readiness: { status: "missing_model", reason: "model id not returned by provider" } }), provider())).toBe("Model GPT-4o mini is not available from the configured provider. Check the saved model id or choose a provider-returned model, then Test provider and Refresh runtime. Runtime detail: model id not returned by provider");
+  });
+
+  it("renders v2 configured-only metadata as evidence without granting authority", () => {
+    const configuredOnly = model({
+      id: "gpt-configured",
+      displayName: "Configured GPT",
+      providerId: "openai-local",
+      readiness: { status: "ready", provenance: "configured", lastTestStatus: "reachable", lastTestedAt: "2026-06-21T09:00:00Z" },
+      providerFamily: "openai_compatible",
+      capabilityProvenance: { chat: "configured", streaming: "configured", tools: "configured", reasoning: "configured" },
+      localAvailability: { status: "not_applicable" },
+    });
+    const configuredProvider = provider({ id: "openai-local", providerFamily: "openai_compatible", models: [configuredOnly] });
+    const readiness = resolveProviderModelReadiness([configuredOnly], [configuredProvider], null);
+
+    expect(readiness.ready).toBe(true);
+    expect(classifyProviderReadinessState(readiness, true)).toBe("openai_compatible_ready");
+    expect(modelStatusText(configuredOnly, configuredProvider)).toContain("provider family OpenAI-compatible BYOK; readiness configured only, last test reachable, tested 2026-06-21T09:00:00Z");
+    expect(modelReadinessEvidenceText(configuredOnly, configuredProvider)).toContain("This metadata is evidence only; Send stays gated by local runtime readiness and required chat/streaming capabilities.");
+  });
+
+  it("renders v2 runtime-tested metadata and local availability details", () => {
+    const runtimeTested = model({
+      id: "gpt-runtime-tested",
+      displayName: "Runtime Tested GPT",
+      providerId: "openai-local",
+      readiness: { status: "ready", provenance: "runtime_tested", lastTestStatus: "reachable", lastTestedAt: "2026-06-21T09:15:00Z" },
+      providerFamily: "openai_compatible",
+      capabilityProvenance: { chat: "runtime_tested", streaming: "runtime_tested", tools: "provider_declared", reasoning: "provider_declared" },
+      localAvailability: { status: "not_applicable", checkedAt: "2026-06-21T09:15:00Z", reason: "Hosted provider checked by local runtime." },
+    });
+    const runtimeProvider = provider({ id: "openai-local", providerFamily: "openai_compatible", models: [runtimeTested] });
+
+    expect(modelStatusText(runtimeTested, runtimeProvider)).toContain("readiness runtime-tested, last test reachable, tested 2026-06-21T09:15:00Z");
+    expect(modelStatusText(runtimeTested, runtimeProvider)).toContain("local availability not applicable, checked 2026-06-21T09:15:00Z, Hosted provider checked by local runtime.");
+    expect(modelReadinessEvidenceText(runtimeTested, runtimeProvider)).not.toContain("Authorization");
+  });
+
+  it("renders v2 Ollama missing-model local availability recovery", () => {
+    const ollamaModel = model({
+      id: "llama3.2",
+      displayName: "Llama 3.2",
+      providerId: "ollama-local",
+      readiness: { status: "missing_model", reason: "Configured local model is not installed.", provenance: "runtime_tested", lastTestStatus: "missing_model", lastTestedAt: "2026-06-21T09:20:00Z" },
+      providerFamily: "ollama",
+      capabilityProvenance: { chat: "provider_declared", streaming: "provider_declared", tools: "local_default", reasoning: "local_default" },
+      localAvailability: { status: "missing_model", checkedAt: "2026-06-21T09:20:00Z", reason: "Local server is reachable but the model is not installed." },
+    });
+    const ollamaProvider = provider({ id: "ollama-local", kind: "ollama", displayName: "Local Ollama", providerFamily: "ollama", models: [ollamaModel] });
+    const readiness = resolveProviderModelReadiness([ollamaModel], [ollamaProvider], null);
+
+    expect(classifyProviderReadinessState(readiness, true)).toBe("local_provider_unready");
+    expect(readiness.message).toContain("Local availability says the server was reached but the model is missing; pull/install the model locally before retrying.");
+    expect(readiness.message).toContain("provider family Ollama/local");
+  });
+
+  it("renders v2 demo-local provider family labels", () => {
+    const demoModel = model({ id: "yet-demo-chat", displayName: "Yet AI Demo Chat", providerId: "yet-demo", providerFamily: "demo_local", readiness: { status: "ready", provenance: "local_default" }, capabilityProvenance: { chat: "local_default", streaming: "local_default", tools: "local_default", reasoning: "local_default" }, localAvailability: { status: "reachable", reason: "Demo mode is available in the local runtime." } });
+    const demoProvider = provider({ id: "yet-demo", kind: "demo-local", displayName: "Yet AI Demo Mode", providerFamily: "demo_local", auth: { type: "none", configured: true }, models: [demoModel] });
+    const readiness = resolveProviderModelReadiness([demoModel], [demoProvider], null);
+
+    expect(classifyProviderReadinessState(readiness, true)).toBe("demo_mode_ready");
+    expect(providerFamilyLabel("demo_local")).toBe("demo-local runtime preview");
+    expect(modelStatusText(demoModel, demoProvider)).toContain("provider family demo-local runtime preview");
   });
 
   it("keeps status and capability labels stable", () => {

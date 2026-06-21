@@ -1,4 +1,4 @@
-import { runtimeFetch, type ModelSummary, type RuntimeResult, type RuntimeSettings } from "./runtimeClient";
+import { runtimeFetch, type ModelSummary, type ProviderFamily, type RuntimeResult, type RuntimeSettings } from "./runtimeClient";
 
 export type ProviderKind = "openai-compatible" | "ollama" | "custom" | "demo-local";
 export type AuthType = "none" | "api_key";
@@ -20,6 +20,7 @@ export type ProviderSummary = {
     completion: boolean;
     embeddings: boolean;
   };
+  providerFamily?: ProviderFamily;
 };
 
 export type ProvidersResponse = {

@@ -1,5 +1,5 @@
 import type { ProviderSummary } from "./providersClient";
-import type { ModelSummary, RuntimeError } from "./runtimeClient";
+import type { CapabilityProvenance, ModelSummary, ProviderFamily, ProviderTestStatus, RuntimeError } from "./runtimeClient";
 import { sanitizeDisplayText } from "./redaction";
 
 export type ProviderModelReadiness = {
@@ -18,10 +18,10 @@ export function classifyProviderReadinessState(readiness: ProviderModelReadiness
     return "runtime_unavailable";
   }
   if (readiness.ready) {
-    if (readiness.provider?.kind === "demo-local") {
+    if (providerFamily(readiness.model, readiness.provider) === "demo_local" || readiness.provider?.kind === "demo-local") {
       return "demo_mode_ready";
     }
-    if (isLocalProviderKind(readiness.provider?.kind)) {
+    if (isLocalProviderKind(readiness.provider?.kind) || isLocalProviderFamily(providerFamily(readiness.model, readiness.provider))) {
       return "local_provider_ready";
     }
     return "openai_compatible_ready";
@@ -36,7 +36,7 @@ export function classifyProviderReadinessState(readiness: ProviderModelReadiness
     return "missing_credentials";
   }
   if (readiness.model?.readiness?.status === "missing_model") {
-    return isLocalProviderKind(readiness.provider?.kind) ? "local_provider_unready" : "missing_model";
+    return isLocalProviderKind(readiness.provider?.kind) || isLocalProviderFamily(providerFamily(readiness.model, readiness.provider)) ? "local_provider_unready" : "missing_model";
   }
   if (readiness.model?.readiness?.status === "unsupported" || (readiness.model && (!readiness.model.capabilities?.chat || !readiness.model.capabilities.streaming))) {
     return "unsupported_model";
@@ -96,23 +96,24 @@ export function modelUnreadyMessage(model: ModelSummary, provider?: ProviderSumm
   const modelName = sanitizeDisplayText(model.displayName || model.id || "selected model");
   const status = model.readiness?.status;
   const reason = model.readiness?.reason ? ` Runtime detail: ${sanitizeDisplayText(model.readiness.reason)}` : "";
+  const evidence = modelReadinessEvidenceSentence(model, provider);
   switch (status) {
     case "missing_credentials":
-      return `Provider credentials are required before ${modelName} can send. Save the provider API key in the local runtime, then Test provider and Refresh runtime.${reason}`;
+      return `Provider credentials are required before ${modelName} can send. Save the provider API key in the local runtime, then Test provider and Refresh runtime.${reason}${evidence}`;
     case "missing_model":
-      if (provider?.kind === "ollama") {
-        return `Local Ollama model ${modelName} is not available yet. Start Ollama, pull or choose the model locally, Test provider, then Refresh runtime.${reason}`;
+      if (provider?.kind === "ollama" || providerFamily(model, provider) === "ollama") {
+        return `Local Ollama model ${modelName} is not available yet. Start Ollama, pull or choose the model locally, Test provider, then Refresh runtime.${reason}${localAvailabilityRecoverySentence(model)}${evidence}`;
       }
-      if (isLocalProviderKind(provider?.kind)) {
-        return `Local provider model ${modelName} is not available yet. Check the local server and saved model id, Test provider, then Refresh runtime.${reason}`;
+      if (isLocalProviderKind(provider?.kind) || isLocalProviderFamily(providerFamily(model, provider))) {
+        return `Local provider model ${modelName} is not available yet. Check the local server and saved model id, Test provider, then Refresh runtime.${reason}${localAvailabilityRecoverySentence(model)}${evidence}`;
       }
-      return `Model ${modelName} is not available from the configured provider. Check the saved model id or choose a provider-returned model, then Test provider and Refresh runtime.${reason}`;
+      return `Model ${modelName} is not available from the configured provider. Check the saved model id or choose a provider-returned model, then Test provider and Refresh runtime.${reason}${evidence}`;
     case "unsupported":
       return modelUnsupportedMessage(model, provider);
     case "disabled":
-      return `Model ${modelName} is disabled for chat. Enable the provider/model locally or choose Demo Mode for a no-key preview before sending.${reason}`;
+      return `Model ${modelName} is disabled for chat. Enable the provider/model locally or choose Demo Mode for a no-key preview before sending.${reason}${evidence}`;
     default:
-      return `Model ${modelName} is not ready for chat streaming: ${sanitizeDisplayText(readinessStatusLabel(status))}.${reason}`;
+      return `Model ${modelName} is not ready for chat streaming: ${sanitizeDisplayText(readinessStatusLabel(status))}.${reason}${evidence}`;
   }
 }
 
@@ -120,7 +121,7 @@ export function modelUnsupportedMessage(model: ModelSummary, provider?: Provider
   const modelName = sanitizeDisplayText(model.displayName || model.id || "selected model");
   const support = modelCapabilitySummary(model);
   const providerHint = provider?.kind === "demo-local" ? " Choose a real BYOK/local provider when you need model capabilities beyond Demo Mode." : " Choose a chat + streaming capable model, then refresh runtime.";
-  return `Model ${modelName} cannot send chat because required capabilities are unavailable: ${support}.${providerHint}`;
+  return `Model ${modelName} cannot send chat because required capabilities are unavailable: ${support}.${providerHint}${modelReadinessEvidenceSentence(model, provider)}`;
 }
 
 export function runtimeModelErrorMessage(error: RuntimeError): string {
@@ -154,6 +155,10 @@ function isLocalProviderKind(kind: ProviderSummary["kind"] | undefined): boolean
   return kind === "ollama" || kind === "custom";
 }
 
+function isLocalProviderFamily(family: ProviderFamily | undefined): boolean {
+  return family === "ollama" || family === "custom";
+}
+
 export function modelStatusText(model: ModelSummary, provider?: ProviderSummary): string {
   const modelName = sanitizeDisplayText(model.displayName || model.id || "selected model");
   const providerName = provider ? sanitizeDisplayText(provider.displayName || provider.id) : model.providerId ? sanitizeDisplayText(model.providerId) : undefined;
@@ -162,7 +167,8 @@ export function modelStatusText(model: ModelSummary, provider?: ProviderSummary)
     return `${modelName}${providerText}: readiness metadata missing`;
   }
   const reason = model.readiness.reason ? `, ${sanitizeDisplayText(model.readiness.reason)}` : "";
-  return `${modelName}${providerText}: ${sanitizeDisplayText(readinessStatusLabel(model.readiness.status))}${reason}; ${modelCapabilitySummary(model)}`;
+  const metadata = modelReadinessMetadataSummary(model, provider);
+  return `${modelName}${providerText}: ${sanitizeDisplayText(readinessStatusLabel(model.readiness.status))}${reason}; ${modelCapabilitySummary(model)}${metadata ? `; ${metadata}` : ""}`;
 }
 
 export function modelCapabilitySummary(model: ModelSummary): string {
@@ -198,4 +204,127 @@ export function modelProviderMismatchMessage(model: ModelSummary, provider?: Pro
   const providerName = provider ? sanitizeDisplayText(provider.displayName || provider.id) : model.providerId ? sanitizeDisplayText(model.providerId) : undefined;
   const detail = providerName ? ` Model ${modelName} is not available on enabled provider ${providerName}.` : ` Model ${modelName} does not map to exactly one enabled provider.`;
   return `Runtime model/provider mismatch. Test the saved provider, fix the provider/model id mapping locally, then Refresh runtime before sending.${detail}`;
+}
+
+export function modelReadinessEvidenceText(model: ModelSummary, provider?: ProviderSummary): string | undefined {
+  const summary = modelReadinessMetadataSummary(model, provider);
+  if (!summary) {
+    return undefined;
+  }
+  return `${summary}. This metadata is evidence only; Send stays gated by local runtime readiness and required chat/streaming capabilities.`;
+}
+
+function modelReadinessEvidenceSentence(model: ModelSummary, provider?: ProviderSummary): string {
+  const text = modelReadinessEvidenceText(model, provider);
+  return text ? ` ${text}` : "";
+}
+
+function modelReadinessMetadataSummary(model: ModelSummary, provider?: ProviderSummary): string | undefined {
+  const parts = [providerFamilySummary(model, provider), readinessProvenanceSummary(model), capabilityProvenanceSummary(model), localAvailabilitySummary(model)].filter((part): part is string => Boolean(part));
+  return parts.length > 0 ? parts.join("; ") : undefined;
+}
+
+function providerFamily(model: ModelSummary | undefined, provider?: ProviderSummary): ProviderFamily | undefined {
+  return model?.providerFamily ?? provider?.providerFamily;
+}
+
+function providerFamilySummary(model: ModelSummary, provider?: ProviderSummary): string | undefined {
+  const family = providerFamily(model, provider);
+  if (!family) {
+    return undefined;
+  }
+  return `provider family ${providerFamilyLabel(family)}`;
+}
+
+export function providerFamilyLabel(family: ProviderFamily): string {
+  switch (family) {
+    case "demo_local":
+      return "demo-local runtime preview";
+    case "ollama":
+      return "Ollama/local";
+    case "openai_compatible":
+      return "OpenAI-compatible BYOK";
+    case "custom":
+      return "custom provider";
+  }
+}
+
+function readinessProvenanceSummary(model: ModelSummary): string | undefined {
+  const readiness = model.readiness;
+  if (!readiness?.provenance && !readiness?.lastTestStatus && !readiness?.lastTestedAt) {
+    return undefined;
+  }
+  const parts = [];
+  if (readiness.provenance) {
+    parts.push(`readiness ${provenanceLabel(readiness.provenance)}`);
+  }
+  if (readiness.lastTestStatus) {
+    parts.push(`last test ${providerTestStatusLabel(readiness.lastTestStatus)}`);
+  }
+  if (readiness.lastTestedAt) {
+    parts.push(`tested ${sanitizeDisplayText(readiness.lastTestedAt)}`);
+  }
+  return parts.join(", ");
+}
+
+function capabilityProvenanceSummary(model: ModelSummary): string | undefined {
+  const provenance = model.capabilityProvenance;
+  if (!provenance) {
+    return undefined;
+  }
+  const entries = ["chat", "streaming", "tools", "reasoning"].flatMap((key) => {
+    const value = provenance[key as keyof typeof provenance];
+    return value ? [`${key} ${provenanceLabel(value)}`] : [];
+  });
+  return entries.length > 0 ? `capability evidence ${entries.join(", ")}` : undefined;
+}
+
+function localAvailabilitySummary(model: ModelSummary): string | undefined {
+  const availability = model.localAvailability;
+  if (!availability) {
+    return undefined;
+  }
+  const parts = [`local availability ${localAvailabilityStatusLabel(availability.status)}`];
+  if (availability.checkedAt) {
+    parts.push(`checked ${sanitizeDisplayText(availability.checkedAt)}`);
+  }
+  if (availability.reason) {
+    parts.push(sanitizeDisplayText(availability.reason));
+  }
+  return parts.join(", ");
+}
+
+function localAvailabilityRecoverySentence(model: ModelSummary): string {
+  const availability = model.localAvailability;
+  if (!availability || availability.status === "reachable" || availability.status === "not_applicable") {
+    return "";
+  }
+  if (availability.status === "missing_model") {
+    return " Local availability says the server was reached but the model is missing; pull/install the model locally before retrying.";
+  }
+  if (availability.status === "unreachable") {
+    return " Local availability says the provider is unreachable; start the local server and check the loopback URL before retrying.";
+  }
+  return " Local availability has not been confirmed; test the provider locally before retrying.";
+}
+
+function provenanceLabel(value: CapabilityProvenance): string {
+  switch (value) {
+    case "configured":
+      return "configured only";
+    case "runtime_tested":
+      return "runtime-tested";
+    case "provider_declared":
+      return "provider-declared";
+    case "local_default":
+      return "local default";
+  }
+}
+
+function providerTestStatusLabel(status: ProviderTestStatus): string {
+  return sanitizeDisplayText(status.replace(/_/g, " "));
+}
+
+function localAvailabilityStatusLabel(status: NonNullable<ModelSummary["localAvailability"]>["status"]): string {
+  return sanitizeDisplayText(status.replace(/_/g, " "));
 }

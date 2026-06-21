@@ -8,7 +8,7 @@ import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, i
 import { chatLifecycleLabels, chatRecoveryCodeForRuntimeError, type ChatLifecycleState } from "./services/chatLifecycle";
 import { conversationHistoryStatusLabel, resolveChatAfterList, resolveFallbackChatAfterDelete } from "./services/conversationHistory";
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
-import { classifyProviderReadinessState, modelStatusText, resolveProviderModelReadiness, type ProviderReadinessState } from "./services/providerReadiness";
+import { classifyProviderReadinessState, modelReadinessEvidenceText, modelStatusText, resolveProviderModelReadiness, type ProviderReadinessState } from "./services/providerReadiness";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
 import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type DemoModeResponse, type ManualRunnerPlanProposal, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
@@ -458,6 +458,7 @@ export function App() {
               ? "Runtime model refresh failed. Refresh runtime again before sending the first message."
               : "Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK provider/model such as local Ollama or OpenAI-compatible for real answers.";
   const chatModelStatus = apiKeyReadiness.model ? modelStatusText(apiKeyReadiness.model, apiKeyReadiness.provider) : null;
+  const chatReadinessEvidence = apiKeyReadiness.model ? modelReadinessEvidenceText(apiKeyReadiness.model, apiKeyReadiness.provider) : null;
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
   const currentAttachedContextState = attachedContext?.settingsRevision === settingsRevision && attachedContext.chatId === chatId ? attachedContext : null;
   const currentAttachedContext = currentAttachedContextState?.payload ?? null;
@@ -2139,6 +2140,7 @@ export function App() {
           </div>
           <div className="stack">
             {chatModelStatus && <span className="subtle">Model status: {chatModelStatus}</span>}
+            {chatReadinessEvidence && <span className="subtle">Readiness evidence: {chatReadinessEvidence}</span>}
             {demoModeEnabled && <span className="subtle">{activeSelectedDemoMode ? "Demo Mode is active in the local runtime. It uses canned responses only, makes no provider calls, requires no API key, and is not model quality." : `Demo Mode is enabled in the local runtime, but the current ready chat path uses ${selectedModelDisplayName ?? "the selected model"}${selectedModelProviderId ? ` (${selectedModelProviderId})` : ""}. Sends may use that configured provider; disable Demo Mode or choose the demo model only when dogfooding canned local responses.`}</span>}
             {activeDemoModeError && <span className="error">Demo Mode status unavailable: {activeDemoModeError.status}: {sanitizeDisplayText(activeDemoModeError.message)}</span>}
             {runtimeConnected && !canSendChat && <span className="subtle">For the quickest real-provider path, choose OpenAI API-key fallback, paste a provider API key once, save, test provider, refresh runtime/model readiness, then send your first message. Demo Mode is only for trying the chat flow without provider calls.</span>}
@@ -2446,6 +2448,7 @@ export function App() {
                 <span>Secret configured: {String(provider.auth.configured)} {provider.auth.redacted ? `(${sanitizeDisplayText(provider.auth.redacted)})` : ""}</span>
                 <span>Models: {provider.models.map((model) => sanitizeDisplayText(model.displayName)).join(", ") || "none"}</span>
                 {provider.models.length > 0 && <span className="subtle">Model readiness: {provider.models.map((model) => modelStatusText(model, provider)).join("; ")}</span>}
+                {provider.models.some((model) => modelReadinessEvidenceText(model, provider)) && <span className="subtle">Readiness metadata: {provider.models.map((model) => modelReadinessEvidenceText(model, provider)).filter(Boolean).join("; ")}</span>}
                 {providerTestState?.providerId === provider.id && <div className={`provider-test-status ${providerTestState.state}`} role="status"><strong>{providerTestState.state === "testing" ? "Provider test running" : providerTestState.state === "success" ? "Provider test succeeded" : "Provider test failed"}</strong><span>{providerTestState.status}: {providerTestState.detail}</span>{providerTestState.state === "success" && <span>The raw API-key field was cleared; Test provider uses the saved local runtime credential. Next: refresh runtime/model readiness, then send when Chat readiness says Send available.</span>}{providerTestState.state === "failed" && <span>{providerTestAction(providerTestState.status)}</span>}</div>}
                 <div className="row">
                   <button type="button" onClick={() => editProvider(provider)}>Edit</button>
