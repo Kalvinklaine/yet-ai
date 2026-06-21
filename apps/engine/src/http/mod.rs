@@ -172,6 +172,8 @@ pub struct ProviderCaps {
     pub id: String,
     pub display_name: String,
     pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_family: Option<providers::ProviderFamily>,
     pub models: Vec<ProviderModelCaps>,
 }
 
@@ -182,6 +184,12 @@ pub struct ProviderModelCaps {
     pub display_name: String,
     pub capabilities: providers::ModelCapabilities,
     pub readiness: providers::ModelReadiness,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_provenance: Option<providers::ModelCapabilityProvenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_availability: Option<providers::LocalAvailability>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_family: Option<providers::ProviderFamily>,
 }
 
 #[derive(Debug, Serialize)]
@@ -222,6 +230,7 @@ async fn caps(_auth: Authenticated, State(state): State<AppState>) -> Response {
                 id: provider.id,
                 display_name: provider.display_name,
                 enabled: provider.enabled,
+                provider_family: provider.provider_family,
                 models: provider
                     .models
                     .into_iter()
@@ -230,6 +239,9 @@ async fn caps(_auth: Authenticated, State(state): State<AppState>) -> Response {
                         display_name: model.display_name,
                         capabilities: model.capabilities,
                         readiness: model.readiness,
+                        capability_provenance: model.capability_provenance,
+                        local_availability: model.local_availability,
+                        provider_family: model.provider_family,
                     })
                     .collect(),
             })

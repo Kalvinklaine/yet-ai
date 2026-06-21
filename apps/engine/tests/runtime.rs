@@ -199,6 +199,9 @@ async fn demo_mode_api_models_and_chat_stream_local_history() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(models["models"][0]["id"], "yet-demo-chat");
     assert_eq!(models["models"][0]["readiness"]["status"], "ready");
+    assert_eq!(models["models"][0]["readiness"]["provenance"], "local_default");
+    assert_eq!(models["models"][0]["providerFamily"], "demo_local");
+    assert_eq!(models["models"][0]["localAvailability"]["status"], "not_applicable");
 
     let command = json!({
         "requestId": "demo-message-1",
@@ -7220,7 +7223,10 @@ async fn provider_model_metadata_defaults_are_exposed_on_models_providers_and_ca
             "reasoning": false
         })
     );
-    assert_eq!(ready["readiness"], json!({ "status": "ready" }));
+    assert_eq!(ready["readiness"]["status"], "ready");
+    assert_eq!(ready["readiness"]["provenance"], "configured");
+    assert_eq!(ready["providerFamily"], "openai_compatible");
+    assert_eq!(ready["localAvailability"]["status"], "not_applicable");
     assert_eq!(
         models["models"][1]["readiness"]["status"],
         "missing_credentials"
@@ -7266,10 +7272,8 @@ async fn provider_model_metadata_defaults_are_exposed_on_models_providers_and_ca
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        provider["models"][0]["readiness"],
-        json!({ "status": "ready" })
-    );
+    assert_eq!(provider["models"][0]["readiness"]["status"], "ready");
+    assert_eq!(provider["models"][0]["readiness"]["provenance"], "configured");
     assert!(!provider.to_string().contains(api_key));
 
     let (status, caps) =
@@ -7283,9 +7287,10 @@ async fn provider_model_metadata_defaults_are_exposed_on_models_providers_and_ca
             "knowledge": false
         })
     );
+    assert_eq!(caps["providers"][0]["models"][0]["readiness"]["status"], "ready");
     assert_eq!(
-        caps["providers"][0]["models"][0]["readiness"],
-        json!({ "status": "ready" })
+        caps["providers"][0]["models"][0]["readiness"]["provenance"],
+        "configured"
     );
     assert_eq!(
         caps["providers"][0]["models"][0]["capabilities"],
@@ -8433,6 +8438,16 @@ fn read_provider_config_text(paths: &StoragePaths, id: &str) -> String {
     .unwrap()
 }
 
+fn read_provider_test_state_text(paths: &StoragePaths, id: &str) -> String {
+    std::fs::read_to_string(
+        paths
+            .config_dir
+            .join("provider-test-state.d")
+            .join(format!("{id}.json")),
+    )
+    .unwrap()
+}
+
 #[tokio::test]
 async fn provider_secret_legacy_inline_key_migrates_to_secret_store() {
     let paths = test_storage_paths();
@@ -8637,7 +8652,8 @@ async fn provider_secret_models_first_access_migrates_inline_key() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["models"][0]["readiness"], json!({ "status": "ready" }));
+    assert_eq!(body["models"][0]["readiness"]["status"], "ready");
+    assert_eq!(body["models"][0]["readiness"]["provenance"], "configured");
     assert!(!body.to_string().contains(api_key));
     let stored = FileSecretStore::new(&paths.config_dir)
         .get_secret("provider-secret-models-migrate", SecretKind::ApiKey)
@@ -8665,9 +8681,10 @@ async fn provider_secret_caps_first_access_migrates_inline_key() {
     let (status, body) =
         json_response_from(app, authed_request(Method::GET, "/v1/caps", Body::empty())).await;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["providers"][0]["models"][0]["readiness"]["status"], "ready");
     assert_eq!(
-        body["providers"][0]["models"][0]["readiness"],
-        json!({ "status": "ready" })
+        body["providers"][0]["models"][0]["readiness"]["provenance"],
+        "configured"
     );
     assert!(!body.to_string().contains(api_key));
     let stored = FileSecretStore::new(&paths.config_dir)
@@ -9337,11 +9354,16 @@ async fn provider_test_openai_compatible_success_uses_loopback_models_and_auth()
     let api_key = "sk-provider-test-secret-abcd";
     let (base_url, auth_receiver) =
         start_mock_models_provider(StatusCode::OK, r#"{"data":[{"id":"gpt-test"}]}"#).await;
-    let app = test_app();
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
     configure_openai_provider(app.clone(), base_url, api_key).await;
 
     let (status, body) = json_response_from(
-        app,
+        app.clone(),
         authed_request(
             Method::POST,
             "/v1/providers/openai-stream/test",
@@ -9362,6 +9384,62 @@ async fn provider_test_openai_compatible_success_uses_loopback_models_and_auth()
         "provider-test success",
     )
     .await;
+
+    let config_text = read_provider_config_text(&paths, "openai-stream");
+    assert!(!config_text.contains(api_key));
+    assert!(!config_text.contains("provider-test-state"));
+    let state_text = read_provider_test_state_text(&paths, "openai-stream");
+    assert!(!state_text.contains(api_key));
+    assert!(!state_text.to_lowercase().contains("authorization"));
+    let state: Value = serde_json::from_str(&state_text).unwrap();
+    assert_eq!(state["status"], "reachable");
+    assert_eq!(state["ok"], true);
+    assert_eq!(state["modelId"], "gpt-test");
+    chrono::DateTime::parse_from_rfc3339(state["lastTestedAt"].as_str().unwrap()).unwrap();
+
+    let (status, models) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/models", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let model = &models["models"][0];
+    assert_eq!(model["readiness"]["provenance"], "runtime_tested");
+    assert_eq!(model["readiness"]["lastTestStatus"], "reachable");
+    assert_eq!(model["readiness"]["lastTestedAt"], state["lastTestedAt"]);
+    assert_eq!(model["capabilityProvenance"]["chat"], "runtime_tested");
+    assert_eq!(model["capabilityProvenance"]["streaming"], "runtime_tested");
+    assert_eq!(model["capabilityProvenance"]["tools"], "provider_declared");
+    assert_eq!(model["providerFamily"], "openai_compatible");
+    assert_eq!(model["localAvailability"]["status"], "not_applicable");
+    assert_eq!(model["localAvailability"]["checkedAt"], state["lastTestedAt"]);
+
+    let (status, providers) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/providers", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(providers["providers"][0]["providerFamily"], "openai_compatible");
+    assert_eq!(
+        providers["providers"][0]["models"][0]["readiness"],
+        model["readiness"]
+    );
+    assert_eq!(
+        providers["providers"][0]["models"][0]["capabilityProvenance"],
+        model["capabilityProvenance"]
+    );
+    assert!(providers["providers"][0]["models"][0].get("providerId").is_none());
+
+    let (status, caps) =
+        json_response_from(app, authed_request(Method::GET, "/v1/caps", Body::empty())).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(caps["providers"][0]["providerFamily"], "openai_compatible");
+    assert_eq!(caps["providers"][0]["models"][0]["readiness"], model["readiness"]);
+    assert_eq!(
+        caps["providers"][0]["models"][0]["capabilityProvenance"],
+        model["capabilityProvenance"]
+    );
 }
 
 #[tokio::test]
@@ -9676,7 +9754,7 @@ async fn provider_test_ollama_success_and_missing_model_use_loopback_without_aut
     )
     .await;
     let (status, body) = json_response_from(
-        app,
+        app.clone(),
         authed_request(
             Method::POST,
             "/v1/providers/ollama-missing-model/test",
@@ -9688,6 +9766,81 @@ async fn provider_test_ollama_success_and_missing_model_use_loopback_without_aut
     assert_eq!(body["ok"], false);
     assert_eq!(body["status"], "missing_model");
     assert_first_request_without_auth_and_no_immediate_extra(missing_auth_receiver).await;
+
+    let (status, providers) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/providers", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let missing = providers["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|provider| provider["id"] == "ollama-missing-model")
+        .unwrap();
+    let tested_at = missing["models"][0]["readiness"]["lastTestedAt"]
+        .as_str()
+        .unwrap();
+    chrono::DateTime::parse_from_rfc3339(tested_at).unwrap();
+    assert_eq!(missing["providerFamily"], "ollama");
+    assert_eq!(missing["models"][0]["providerFamily"], "ollama");
+    assert_eq!(missing["models"][0]["readiness"]["status"], "missing_model");
+    assert_eq!(
+        missing["models"][0]["readiness"]["provenance"],
+        "runtime_tested"
+    );
+    assert_eq!(
+        missing["models"][0]["readiness"]["lastTestStatus"],
+        "missing_model"
+    );
+    assert_eq!(
+        missing["models"][0]["localAvailability"],
+        json!({
+            "status": "missing_model",
+            "checkedAt": tested_at,
+            "reason": "Local server is reachable but the model is not installed."
+        })
+    );
+    assert_eq!(
+        missing["models"][0]["capabilityProvenance"],
+        json!({
+            "chat": "provider_declared",
+            "streaming": "provider_declared",
+            "tools": "local_default",
+            "reasoning": "local_default"
+        })
+    );
+
+    let (status, models) = json_response_from(
+        app.clone(),
+        authed_request(Method::GET, "/v1/models", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let model = models["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|model| model["providerId"] == "ollama-missing-model")
+        .unwrap();
+    assert_eq!(model["readiness"], missing["models"][0]["readiness"]);
+    assert_eq!(
+        model["localAvailability"],
+        missing["models"][0]["localAvailability"]
+    );
+
+    let (status, caps) =
+        json_response_from(app, authed_request(Method::GET, "/v1/caps", Body::empty())).await;
+    assert_eq!(status, StatusCode::OK);
+    let caps_provider = caps["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|provider| provider["id"] == "ollama-missing-model")
+        .unwrap();
+    assert_eq!(caps_provider["providerFamily"], "ollama");
+    assert_eq!(caps_provider["models"][0]["readiness"], model["readiness"]);
 }
 
 #[tokio::test]

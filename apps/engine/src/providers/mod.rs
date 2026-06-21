@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
@@ -68,6 +69,8 @@ pub struct ProviderRegistrySummary {
 pub struct ProviderSummary {
     pub id: String,
     pub kind: ProviderKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_family: Option<ProviderFamily>,
     pub display_name: String,
     pub enabled: bool,
     pub base_url: String,
@@ -103,6 +106,12 @@ pub struct ModelSummary {
     pub capabilities: ModelCapabilities,
     #[serde(default)]
     pub readiness: ModelReadiness,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_provenance: Option<ModelCapabilityProvenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_availability: Option<LocalAvailability>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_family: Option<ProviderFamily>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -131,6 +140,12 @@ pub struct ModelReadiness {
     pub status: ModelReadinessStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<CapabilityProvenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_test_status: Option<ProviderTestStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_tested_at: Option<String>,
 }
 
 impl Default for ModelReadiness {
@@ -138,8 +153,58 @@ impl Default for ModelReadiness {
         Self {
             status: ModelReadinessStatus::Unsupported,
             reason: Some("Provider is not supported for streaming chat.".to_string()),
+            provenance: None,
+            last_test_status: None,
+            last_tested_at: None,
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityProvenance {
+    Configured,
+    RuntimeTested,
+    ProviderDeclared,
+    LocalDefault,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelCapabilityProvenance {
+    pub chat: CapabilityProvenance,
+    pub streaming: CapabilityProvenance,
+    pub tools: CapabilityProvenance,
+    pub reasoning: CapabilityProvenance,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalAvailability {
+    pub status: LocalAvailabilityStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalAvailabilityStatus {
+    Unknown,
+    NotApplicable,
+    Reachable,
+    Unreachable,
+    MissingModel,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderFamily {
+    OpenaiCompatible,
+    Ollama,
+    Custom,
+    DemoLocal,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -203,7 +268,7 @@ pub struct ProviderTestResponse {
     pub cloud_required: bool,
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderTestStatus {
     Reachable,
@@ -215,6 +280,18 @@ pub enum ProviderTestStatus {
     Timeout,
     Unreachable,
     UpstreamError,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderTestState {
+    last_tested_at: String,
+    status: ProviderTestStatus,
+    ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -290,17 +367,7 @@ impl StoredProviderConfig {
     }
 
     fn summary_with_secret(&self, api_key: Option<&str>) -> ProviderSummary {
-        let auth = self.auth.summary_with_secret(api_key);
-        ProviderSummary {
-            id: self.id.clone(),
-            kind: self.kind.clone(),
-            display_name: self.display_name.clone(),
-            enabled: self.enabled,
-            base_url: self.base_url.clone(),
-            models: model_summaries_for_provider(self, auth.configured),
-            auth,
-            capabilities: self.capabilities.clone(),
-        }
+        summary_with_secret_and_test_state(self, api_key, None)
     }
 }
 
@@ -316,6 +383,7 @@ impl StoredAuthConfig {
     }
 }
 
+#[cfg(test)]
 fn model_summaries_for_provider(
     provider: &StoredProviderConfig,
     auth_configured: bool,
@@ -327,42 +395,83 @@ fn model_summaries_for_provider(
         .collect()
 }
 
+#[cfg(test)]
 fn normalized_model_summary(
     provider: &StoredProviderConfig,
     model: &ModelSummary,
     auth_configured: bool,
+) -> ModelSummary {
+    normalized_model_summary_with_test_state(provider, model, auth_configured, None)
+}
+
+fn normalized_model_summary_with_test_state(
+    provider: &StoredProviderConfig,
+    model: &ModelSummary,
+    auth_configured: bool,
+    test_state: Option<&ProviderTestState>,
 ) -> ModelSummary {
     let supports_streaming_chat = matches!(
         provider.kind,
         ProviderKind::OpenAiCompatible | ProviderKind::Ollama
     ) && provider.capabilities.chat
         && !model.id.trim().is_empty();
-    let readiness = if !provider.enabled {
+    let mut readiness = if !provider.enabled {
         ModelReadiness {
             status: ModelReadinessStatus::Disabled,
             reason: Some("Provider is disabled.".to_string()),
+            provenance: None,
+            last_test_status: None,
+            last_tested_at: None,
         }
     } else if model.id.trim().is_empty() {
         ModelReadiness {
             status: ModelReadinessStatus::MissingModel,
             reason: Some("Model id is not configured.".to_string()),
+            provenance: None,
+            last_test_status: None,
+            last_tested_at: None,
         }
     } else if provider.auth.auth_type == AuthType::ApiKey && !auth_configured {
         ModelReadiness {
             status: ModelReadinessStatus::MissingCredentials,
             reason: Some("Provider sign-in is incomplete.".to_string()),
+            provenance: None,
+            last_test_status: None,
+            last_tested_at: None,
         }
     } else if supports_streaming_chat {
         ModelReadiness {
             status: ModelReadinessStatus::Ready,
             reason: None,
+            provenance: None,
+            last_test_status: None,
+            last_tested_at: None,
         }
     } else {
         ModelReadiness {
             status: ModelReadinessStatus::Unsupported,
             reason: Some("Provider is not supported for streaming chat.".to_string()),
+            provenance: None,
+            last_test_status: None,
+            last_tested_at: None,
         }
     };
+    let matching_test_state = test_state.filter(|state| test_state_matches_model(state, model));
+    readiness.provenance = Some(if matching_test_state.is_some() {
+        CapabilityProvenance::RuntimeTested
+    } else {
+        CapabilityProvenance::Configured
+    });
+    if let Some(state) = matching_test_state {
+        readiness.last_test_status = Some(state.status.clone());
+        readiness.last_tested_at = Some(state.last_tested_at.clone());
+        if !state.ok {
+            readiness.status = readiness_status_for_test_status(&state.status);
+            readiness.reason = readiness_reason_for_test_state(state, &provider.kind);
+        }
+    }
+    let capability_provenance = capability_provenance_for(provider, matching_test_state);
+    let local_availability = local_availability_for(provider, matching_test_state);
     ModelSummary {
         id: model.id.clone(),
         display_name: model.display_name.clone(),
@@ -374,6 +483,144 @@ fn normalized_model_summary(
             reasoning: false,
         },
         readiness,
+        capability_provenance: Some(capability_provenance),
+        local_availability: Some(local_availability),
+        provider_family: Some(provider_family(&provider.kind)),
+    }
+}
+
+fn provider_family(kind: &ProviderKind) -> ProviderFamily {
+    match kind {
+        ProviderKind::OpenAiCompatible => ProviderFamily::OpenaiCompatible,
+        ProviderKind::Ollama => ProviderFamily::Ollama,
+        ProviderKind::Custom => ProviderFamily::Custom,
+        ProviderKind::DemoLocal => ProviderFamily::DemoLocal,
+    }
+}
+
+fn test_state_matches_model(state: &ProviderTestState, model: &ModelSummary) -> bool {
+    state
+        .model_id
+        .as_deref()
+        .is_some_and(|model_id| model_id == model.id)
+}
+
+fn readiness_status_for_test_status(status: &ProviderTestStatus) -> ModelReadinessStatus {
+    match status {
+        ProviderTestStatus::MissingSecret => ModelReadinessStatus::MissingCredentials,
+        ProviderTestStatus::MissingModel => ModelReadinessStatus::MissingModel,
+        ProviderTestStatus::UnsupportedKind => ModelReadinessStatus::Unsupported,
+        ProviderTestStatus::Reachable
+        | ProviderTestStatus::BadUrl
+        | ProviderTestStatus::Unauthorized
+        | ProviderTestStatus::Timeout
+        | ProviderTestStatus::Unreachable
+        | ProviderTestStatus::UpstreamError => ModelReadinessStatus::Ready,
+    }
+}
+
+fn readiness_reason_for_test_state(
+    state: &ProviderTestState,
+    kind: &ProviderKind,
+) -> Option<String> {
+    match state.status {
+        ProviderTestStatus::MissingSecret => Some("Provider sign-in is incomplete.".to_string()),
+        ProviderTestStatus::MissingModel if *kind == ProviderKind::Ollama => {
+            Some("Configured local model is not installed.".to_string())
+        }
+        ProviderTestStatus::MissingModel => Some("Model id is not configured.".to_string()),
+        ProviderTestStatus::UnsupportedKind => {
+            Some("Provider is not supported for streaming chat.".to_string())
+        }
+        _ => None,
+    }
+}
+
+fn capability_provenance_for(
+    provider: &StoredProviderConfig,
+    test_state: Option<&ProviderTestState>,
+) -> ModelCapabilityProvenance {
+    let chat_streaming = if test_state.is_some_and(|state| state.ok) {
+        CapabilityProvenance::RuntimeTested
+    } else if provider.kind == ProviderKind::Ollama {
+        CapabilityProvenance::ProviderDeclared
+    } else {
+        CapabilityProvenance::Configured
+    };
+    let tools_reasoning = if provider.kind == ProviderKind::Ollama {
+        CapabilityProvenance::LocalDefault
+    } else if test_state.is_some_and(|state| state.ok) {
+        CapabilityProvenance::ProviderDeclared
+    } else {
+        CapabilityProvenance::Configured
+    };
+    ModelCapabilityProvenance {
+        chat: chat_streaming.clone(),
+        streaming: chat_streaming,
+        tools: tools_reasoning.clone(),
+        reasoning: tools_reasoning,
+    }
+}
+
+fn local_availability_for(
+    provider: &StoredProviderConfig,
+    test_state: Option<&ProviderTestState>,
+) -> LocalAvailability {
+    match provider.kind {
+        ProviderKind::Ollama => match test_state {
+            Some(state) => LocalAvailability {
+                status: local_availability_status_for_test_status(&state.status, true),
+                checked_at: Some(state.last_tested_at.clone()),
+                reason: local_availability_reason_for_test_state(state, &provider.kind),
+            },
+            None => LocalAvailability {
+                status: LocalAvailabilityStatus::Unknown,
+                checked_at: None,
+                reason: None,
+            },
+        },
+        _ => match test_state {
+            Some(state) => LocalAvailability {
+                status: LocalAvailabilityStatus::NotApplicable,
+                checked_at: Some(state.last_tested_at.clone()),
+                reason: Some("Hosted provider checked by local runtime.".to_string()),
+            },
+            None => LocalAvailability {
+                status: LocalAvailabilityStatus::NotApplicable,
+                checked_at: None,
+                reason: None,
+            },
+        },
+    }
+}
+
+fn local_availability_status_for_test_status(
+    status: &ProviderTestStatus,
+    local_provider: bool,
+) -> LocalAvailabilityStatus {
+    if !local_provider {
+        return LocalAvailabilityStatus::NotApplicable;
+    }
+    match status {
+        ProviderTestStatus::Reachable => LocalAvailabilityStatus::Reachable,
+        ProviderTestStatus::MissingModel => LocalAvailabilityStatus::MissingModel,
+        _ => LocalAvailabilityStatus::Unreachable,
+    }
+}
+
+fn local_availability_reason_for_test_state(
+    state: &ProviderTestState,
+    kind: &ProviderKind,
+) -> Option<String> {
+    match (kind, &state.status) {
+        (ProviderKind::Ollama, ProviderTestStatus::Reachable) => {
+            Some("Local server is reachable and the model is installed.".to_string())
+        }
+        (ProviderKind::Ollama, ProviderTestStatus::MissingModel) => {
+            Some("Local server is reachable but the model is not installed.".to_string())
+        }
+        (ProviderKind::Ollama, _) => Some("Local server could not confirm model availability.".to_string()),
+        _ => None,
     }
 }
 
@@ -396,6 +643,15 @@ pub fn validate_provider_id(id: &str) -> Result<(), ProviderError> {
 
 pub fn providers_dir(config_dir: &Path) -> PathBuf {
     config_dir.join("providers.d")
+}
+
+fn provider_test_states_dir(config_dir: &Path) -> PathBuf {
+    config_dir.join("provider-test-state.d")
+}
+
+fn provider_test_state_path(config_dir: &Path, id: &str) -> Result<PathBuf, ProviderError> {
+    validate_provider_id(id)?;
+    Ok(provider_test_states_dir(config_dir).join(format!("{id}.json")))
 }
 
 pub fn provider_config_path(config_dir: &Path, id: &str) -> Result<PathBuf, ProviderError> {
@@ -571,6 +827,7 @@ pub async fn delete_provider_config(config_dir: &Path, id: &str) -> Result<(), P
     provider_secret_store(config_dir)
         .delete_secret(id, SecretKind::ApiKey)
         .await?;
+    let _ = tokio::fs::remove_file(provider_test_state_path(config_dir, id)?).await;
     match tokio::fs::remove_file(path).await {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -605,7 +862,15 @@ pub async fn models(config_dir: &Path) -> Result<ModelListResponse, ProviderErro
     let mut models = Vec::new();
     for provider in list_provider_configs(config_dir).await? {
         let auth_configured = provider_auth_configured(config_dir, &provider).await?;
-        for mut model in model_summaries_for_provider(&provider, auth_configured) {
+        let test_state = load_provider_test_state(config_dir, &provider.id).await?;
+        for mut model in provider.models.iter().map(|model| {
+            normalized_model_summary_with_test_state(
+                &provider,
+                model,
+                auth_configured,
+                test_state.as_ref(),
+            )
+        }) {
             model.provider_id = Some(provider.id.clone());
             models.push(model);
         }
@@ -625,7 +890,7 @@ pub async fn test_provider(
     id: &str,
 ) -> Result<ProviderTestResponse, ProviderError> {
     let provider = get_provider_config_with_secrets(config_dir, id).await?;
-    Ok(match provider.kind {
+    let response = match provider.kind {
         ProviderKind::OpenAiCompatible => test_openai_compatible_provider(&provider).await,
         ProviderKind::Ollama => test_ollama_provider(&provider).await,
         ProviderKind::Custom | ProviderKind::DemoLocal => ProviderTestResponse {
@@ -638,7 +903,9 @@ pub async fn test_provider(
             model_id: None,
             cloud_required: false,
         },
-    })
+    };
+    store_provider_test_state(config_dir, &response).await?;
+    Ok(response)
 }
 
 async fn test_ollama_provider(provider: &StoredProviderConfig) -> ProviderTestResponse {
@@ -887,6 +1154,97 @@ fn provider_test_response(
     }
 }
 
+async fn load_provider_test_state(
+    config_dir: &Path,
+    id: &str,
+) -> Result<Option<ProviderTestState>, ProviderError> {
+    let path = provider_test_state_path(config_dir, id)?;
+    let content = match tokio::fs::read_to_string(path).await {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(ProviderError::Storage),
+    };
+    let state: ProviderTestState =
+        serde_json::from_str(&content).map_err(|_| ProviderError::InvalidConfig)?;
+    Ok(Some(state))
+}
+
+async fn store_provider_test_state(
+    config_dir: &Path,
+    response: &ProviderTestResponse,
+) -> Result<(), ProviderError> {
+    let path = provider_test_state_path(config_dir, &response.provider_id)?;
+    let state = ProviderTestState {
+        last_tested_at: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        status: response.status.clone(),
+        ok: response.ok,
+        model_id: response.model_id.clone().and_then(clean),
+        message: Some(sanitize_provider_test_message(&response.message)),
+    };
+    write_provider_test_state(&path, &state).await
+}
+
+async fn write_provider_test_state(
+    path: &Path,
+    state: &ProviderTestState,
+) -> Result<(), ProviderError> {
+    let dir = path.parent().ok_or(ProviderError::Storage)?;
+    tokio::fs::create_dir_all(dir)
+        .await
+        .map_err(|_| ProviderError::Storage)?;
+    let content = serde_json::to_vec_pretty(state).map_err(|_| ProviderError::Storage)?;
+    let temp_path = temp_provider_config_path(path);
+    let mut options = tokio::fs::OpenOptions::new();
+    options.create_new(true).write(true).truncate(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600);
+    }
+    let result = async {
+        let mut file = options
+            .open(&temp_path)
+            .await
+            .map_err(|_| ProviderError::Storage)?;
+        file.write_all(&content)
+            .await
+            .map_err(|_| ProviderError::Storage)?;
+        file.sync_all().await.map_err(|_| ProviderError::Storage)?;
+        drop(file);
+        set_private_permissions(&temp_path).await?;
+        tokio::fs::rename(&temp_path, path)
+            .await
+            .map_err(|_| ProviderError::Storage)
+    }
+    .await;
+    let cleanup = tokio::fs::remove_file(&temp_path).await;
+    match result {
+        Ok(()) => {
+            set_private_permissions(path).await?;
+            Ok(())
+        }
+        Err(error) => {
+            if cleanup.is_err() {
+                return Err(ProviderError::Storage);
+            }
+            Err(error)
+        }
+    }
+}
+
+fn sanitize_provider_test_message(message: &str) -> String {
+    let safe = message
+        .chars()
+        .filter(|value| !matches!(*value as u32, 0x00..=0x1f | 0x7f..=0x9f))
+        .collect::<String>();
+    let safe = safe.trim();
+    let safe = if safe.is_empty() {
+        "Provider test completed."
+    } else {
+        safe
+    };
+    safe.chars().take(160).collect()
+}
+
 fn models_url(base_url: &str) -> Result<String, ProviderError> {
     validate_provider_base_url(base_url)?;
     let mut url = reqwest::Url::parse(base_url).map_err(|_| ProviderError::InvalidBaseUrl)?;
@@ -976,7 +1334,37 @@ async fn summary_for_config(
     config: &StoredProviderConfig,
 ) -> Result<ProviderSummary, ProviderError> {
     let secret = configured_api_key(config_dir, config).await?;
-    Ok(config.summary_with_secret(secret.as_deref()))
+    let test_state = load_provider_test_state(config_dir, &config.id).await?;
+    Ok(summary_with_secret_and_test_state(
+        config,
+        secret.as_deref(),
+        test_state.as_ref(),
+    ))
+}
+
+fn summary_with_secret_and_test_state(
+    config: &StoredProviderConfig,
+    api_key: Option<&str>,
+    test_state: Option<&ProviderTestState>,
+) -> ProviderSummary {
+    let auth = config.auth.summary_with_secret(api_key);
+    ProviderSummary {
+        id: config.id.clone(),
+        kind: config.kind.clone(),
+        provider_family: Some(provider_family(&config.kind)),
+        display_name: config.display_name.clone(),
+        enabled: config.enabled,
+        base_url: config.base_url.clone(),
+        models: config
+            .models
+            .iter()
+            .map(|model| {
+                normalized_model_summary_with_test_state(config, model, auth.configured, test_state)
+            })
+            .collect(),
+        auth,
+        capabilities: config.capabilities.clone(),
+    }
 }
 
 async fn hydrate_provider_secret(
@@ -1273,7 +1661,22 @@ pub fn demo_model_summary() -> ModelSummary {
         readiness: ModelReadiness {
             status: ModelReadinessStatus::Ready,
             reason: None,
+            provenance: Some(CapabilityProvenance::LocalDefault),
+            last_test_status: None,
+            last_tested_at: None,
         },
+        capability_provenance: Some(ModelCapabilityProvenance {
+            chat: CapabilityProvenance::LocalDefault,
+            streaming: CapabilityProvenance::LocalDefault,
+            tools: CapabilityProvenance::LocalDefault,
+            reasoning: CapabilityProvenance::LocalDefault,
+        }),
+        local_availability: Some(LocalAvailability {
+            status: LocalAvailabilityStatus::NotApplicable,
+            checked_at: None,
+            reason: Some("Demo mode is available in the local runtime.".to_string()),
+        }),
+        provider_family: Some(ProviderFamily::DemoLocal),
     }
 }
 
@@ -1281,6 +1684,7 @@ fn demo_provider_summary() -> ProviderSummary {
     ProviderSummary {
         id: demo_mode::DEMO_PROVIDER_ID.to_string(),
         kind: ProviderKind::DemoLocal,
+        provider_family: Some(ProviderFamily::DemoLocal),
         display_name: demo_mode::DEMO_DISPLAY_NAME.to_string(),
         enabled: true,
         base_url: "local-runtime-demo-mode".to_string(),
@@ -1386,6 +1790,9 @@ mod tests {
                 provider_id: None,
                 capabilities: super::ModelCapabilities::default(),
                 readiness: super::ModelReadiness::default(),
+                capability_provenance: None,
+                local_availability: None,
+                provider_family: None,
             }],
             capabilities: super::ProviderCapabilities::default(),
         };
