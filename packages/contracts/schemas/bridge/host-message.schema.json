@@ -22,7 +22,8 @@
         "host.contextSnapshot",
         "host.ideActionProgress",
         "host.ideActionResult",
-        "host.applyWorkspaceEditResult"
+        "host.applyWorkspaceEditResult",
+        "host.runtimeStatus"
       ]
     },
     "requestId": {
@@ -1247,6 +1248,118 @@
           "$ref": "#/$defs/workspaceSnippetText"
         }
       }
+    },
+    "runtimeLifecycleState": {
+      "type": "string",
+      "enum": [
+        "unknown",
+        "checking",
+        "starting",
+        "connected",
+        "degraded",
+        "disconnected",
+        "restarting",
+        "stopped",
+        "auth_mismatch",
+        "invalid_settings",
+        "failed"
+      ]
+    },
+    "runtimeSurface": {
+      "type": "string",
+      "enum": [
+        "browser",
+        "vscode",
+        "jetbrains"
+      ]
+    },
+    "runtimeStatusPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "surface",
+        "lifecycle",
+        "runtimeOwner",
+        "launchMode",
+        "tokenState",
+        "processState",
+        "diagnosis",
+        "nextAction",
+        "cloudRequired",
+        "authority"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "type": "string",
+          "const": "2026-06-21"
+        },
+        "surface": {
+          "$ref": "#/$defs/runtimeSurface"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/runtimeLifecycleState"
+        },
+        "runtimeOwner": {
+          "type": "string",
+          "enum": [
+            "browser_preview",
+            "ide_host",
+            "external",
+            "user",
+            "test_harness"
+          ]
+        },
+        "launchMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "connect",
+            "launch",
+            "preview",
+            "manual",
+            "unknown"
+          ]
+        },
+        "tokenState": {
+          "type": "string",
+          "enum": [
+            "unknown",
+            "not_required",
+            "absent",
+            "present",
+            "mismatch",
+            "invalid"
+          ]
+        },
+        "processState": {
+          "type": "string",
+          "enum": [
+            "unknown",
+            "not_owned",
+            "checking",
+            "starting",
+            "running",
+            "exited",
+            "stopped",
+            "failed"
+          ]
+        },
+        "diagnosis": {
+          "$ref": "#/$defs/safeMessage"
+        },
+        "nextAction": {
+          "$ref": "#/$defs/safeMessage"
+        },
+        "cloudRequired": {
+          "type": "boolean",
+          "const": false
+        },
+        "authority": {
+          "type": "string",
+          "const": "metadata_only"
+        }
+      }
     }
   },
   "allOf": [
@@ -1299,6 +1412,36 @@
                 "const": false
               }
             }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "host.runtimeStatus"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "not": {
+          "properties": {
+            "requestId": true
+          },
+          "required": [
+            "requestId"
+          ]
+        },
+        "required": [
+          "payload"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/runtimeStatusPayload"
           }
         }
       }

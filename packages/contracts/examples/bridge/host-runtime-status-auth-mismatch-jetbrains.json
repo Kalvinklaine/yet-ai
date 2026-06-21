@@ -1,0 +1,17 @@
+{
+  "version": "2026-05-15",
+  "type": "host.runtimeStatus",
+  "payload": {
+    "protocolVersion": "2026-06-21",
+    "surface": "jetbrains",
+    "lifecycle": "auth_mismatch",
+    "runtimeOwner": "ide_host",
+    "launchMode": "connect",
+    "tokenState": "mismatch",
+    "processState": "not_owned",
+    "diagnosis": "runtime rejected the current local credentials",
+    "nextAction": "Update the local runtime connection or restart the IDE-owned runtime.",
+    "cloudRequired": false,
+    "authority": "metadata_only"
+  }
+}

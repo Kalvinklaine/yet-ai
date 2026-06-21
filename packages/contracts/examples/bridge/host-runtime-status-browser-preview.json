@@ -1,0 +1,17 @@
+{
+  "version": "2026-05-15",
+  "type": "host.runtimeStatus",
+  "payload": {
+    "protocolVersion": "2026-06-21",
+    "surface": "browser",
+    "lifecycle": "checking",
+    "runtimeOwner": "browser_preview",
+    "launchMode": "preview",
+    "tokenState": "not_required",
+    "processState": "not_owned",
+    "diagnosis": "browser preview can only check an existing local runtime",
+    "nextAction": "Start a local runtime outside the browser or use an IDE host.",
+    "cloudRequired": false,
+    "authority": "metadata_only"
+  }
+}

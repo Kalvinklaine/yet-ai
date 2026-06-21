@@ -1,0 +1,18 @@
+{
+  "version": "2026-05-15",
+  "type": "host.runtimeStatus",
+  "payload": {
+    "protocolVersion": "2026-06-21",
+    "surface": "vscode",
+    "lifecycle": "connected",
+    "runtimeOwner": "ide_host",
+    "launchMode": "auto",
+    "tokenState": "present",
+    "processState": "running",
+    "diagnosis": "runtime connected",
+    "nextAction": "Review local runtime status.",
+    "cloudRequired": false,
+    "authority": "metadata_only",
+    "git": "status"
+  }
+}

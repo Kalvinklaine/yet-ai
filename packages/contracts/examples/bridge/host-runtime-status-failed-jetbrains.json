@@ -1,0 +1,17 @@
+{
+  "version": "2026-05-15",
+  "type": "host.runtimeStatus",
+  "payload": {
+    "protocolVersion": "2026-06-21",
+    "surface": "jetbrains",
+    "lifecycle": "failed",
+    "runtimeOwner": "ide_host",
+    "launchMode": "auto",
+    "tokenState": "unknown",
+    "processState": "failed",
+    "diagnosis": "runtime launch failed with sanitized diagnostics",
+    "nextAction": "Check the Yet AI runtime output and retry after fixing local settings.",
+    "cloudRequired": false,
+    "authority": "metadata_only"
+  }
+}

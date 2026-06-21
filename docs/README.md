@@ -30,7 +30,7 @@ Additional local evidence templates live under `docs/dogfood/`, including the re
 - `architecture/006-login-based-gpt-first-message.md` — future mandatory login-based GPT first-message milestone, official/experimental path split, and required gates.
 - `architecture/007-provider-auth-feasibility.md` — provider-auth feasibility decision for OpenAI account-login evaluation, blocking production/default login until an official provider-supported local-app flow is approved.
 - `architecture/008-reference-divergence-guardrails.md` — public-safe guardrails for using reference implementations as architectural signal without copying identity, source, assets, or public wording.
-- `architecture/009-runtime-lifecycle-roadmap.md` — runtime lifecycle ownership, IDE/browser parity matrix, and future daemon-lite decision criteria.
+- `architecture/009-runtime-lifecycle-roadmap.md` — runtime lifecycle ownership, metadata-only `host.runtimeStatus` diagnostics, IDE/browser parity matrix, and future daemon-lite decision criteria.
 - `architecture/010-tool-authority-and-edit-pipeline-roadmap.md` — current safe-edit proposal baseline and future deny-by-default tool authority/edit-apply policy layers.
 
 ## Current login-first milestone status

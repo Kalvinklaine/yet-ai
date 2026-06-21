@@ -16,6 +16,16 @@ The current runtime model is plugin-owned for IDE surfaces and preview-only for 
 
 Current engine HTTP/SSE is direct loopback runtime access. IDE plugins and browser previews call the runtime's authenticated local `/v1` endpoints directly. There is no separate daemon process that owns auth, rewrites routes, multiplexes projects, proxies SSE, or outlives the IDE host.
 
+## Metadata-only runtime status contract
+
+`host.runtimeStatus` is the shared bridge diagnostic message for browser, VS Code, and JetBrains runtime lifecycle visibility. It is intentionally metadata only. The payload reports a strict `protocolVersion`, `surface`, lifecycle state, runtime owner, launch mode, token/process state labels, sanitized `diagnosis`, sanitized `nextAction`, `cloudRequired: false`, and `authority: "metadata_only"`.
+
+The lifecycle vocabulary is shared across surfaces: `unknown`, `checking`, `starting`, `connected`, `degraded`, `disconnected`, `restarting`, `stopped`, `auth_mismatch`, `invalid_settings`, and `failed`. VS Code and JetBrains should map their plugin-owned `auto` / `connect` / `launch` lifecycle into this vocabulary. Browser preview should use the same vocabulary for connect-only diagnostics while continuing to report `runtimeOwner: "browser_preview"` or another non-owning value and no process authority.
+
+`host.runtimeStatus` must never enable Send, launch or restart a runtime, run commands, run tools, apply edits, read workspace files, mutate settings, mint request correlation for privileged actions, or change provider readiness. It does not carry runtime connection material. `host.ready` remains the only bridge message allowed to provide the GUI with the local runtime URL or session token.
+
+Runtime status payloads must stay sanitized. They must not include raw runtime/session tokens, provider API keys, auth headers, cookies, request bodies, response bodies, private absolute paths, provider responses, workspace file content, stack traces, shell/git/tool/apply-patch/run-command fields, or any `authority` value other than `metadata_only`. `/v1/ping` remains health-check only and `/v1/caps` remains capability/readiness oriented; this contract does not add engine HTTP endpoints.
+
 ## Runtime lifecycle and IDE parity matrix
 
 | Surface | Current lifecycle owner | Connect / launch behavior | Token handling | GUI host | Restart and recovery | Boundary |

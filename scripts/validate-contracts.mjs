@@ -118,6 +118,16 @@ const mappings = [
     "packages/contracts/schemas/bridge/assistant-apply-workspace-edit-proposal.schema.json"
   ],
   ["packages/contracts/examples/bridge/host-ready-message.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
+  ...[
+    "host-runtime-status-connected-vscode.json",
+    "host-runtime-status-auth-mismatch-jetbrains.json",
+    "host-runtime-status-invalid-settings-vscode.json",
+    "host-runtime-status-failed-jetbrains.json",
+    "host-runtime-status-browser-preview.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/bridge/${fileName}`,
+    "packages/contracts/schemas/bridge/host-message.schema.json"
+  ]),
   ["packages/contracts/examples/bridge/host-opened-from-command-message.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-context-snapshot-message.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-context-snapshot-file-only.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
@@ -560,7 +570,24 @@ const invalidMappings = [
     "host-ide-action-result-search-workspace-snippets-command-field.json",
     "host-ide-action-result-search-workspace-snippets-provider-field.json",
     "host-ide-action-result-search-workspace-snippets-missing-snippets.json",
-    "host-ide-action-result-search-workspace-snippets-failed-with-snippets.json"
+    "host-ide-action-result-search-workspace-snippets-failed-with-snippets.json",
+    "host-runtime-status-raw-bearer-token.json",
+    "host-runtime-status-api-key.json",
+    "host-runtime-status-auth-headers.json",
+    "host-runtime-status-cookie-header.json",
+    "host-runtime-status-private-path.json",
+    "host-runtime-status-request-body.json",
+    "host-runtime-status-response-body.json",
+    "host-runtime-status-authority-launch.json",
+    "host-runtime-status-unknown-lifecycle.json",
+    "host-runtime-status-unknown-surface.json",
+    "host-runtime-status-shell-field.json",
+    "host-runtime-status-git-field.json",
+    "host-runtime-status-apply-patch-field.json",
+    "host-runtime-status-tools-field.json",
+    "host-runtime-status-run-command-field.json",
+    "host-runtime-status-request-id.json",
+    "host-runtime-status-stack-trace.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/host-message.schema.json"
