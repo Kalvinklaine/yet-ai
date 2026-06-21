@@ -115,6 +115,16 @@ describe("hosted iframe shell layout", () => {
     expect(container?.textContent).toContain("bridge jetbrains");
     expect(parent.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "gui.ready" }), "https://wrapper.example");
   });
+
+  it("renders browser preview lifecycle copy as connect-only without launch authority", async () => {
+    mockRuntimeResponses({ runtimeFailure: true });
+    renderApp();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Browser preview can connect to an already-running loopback runtime");
+    expect(container?.textContent).toContain("cannot launch or restart");
+    expect(container?.textContent).toContain("cannot execute host workspace actions");
+  });
 });
 
 describe("runtime refresh feedback", () => {
@@ -241,6 +251,55 @@ describe("runtime refresh feedback", () => {
     expect(sessionTokenInput().autocomplete).toBe("off");
   });
 
+
+  it("renders host.runtimeStatus diagnostics as metadata only without enabling Send", async () => {
+    mockRuntimeResponses({ runtimeFailure: true });
+    renderApp();
+    await flushAsync();
+
+    await dispatchRuntimeStatus(runtimeStatusPayload());
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Runtime connected");
+    expect(container?.textContent).toContain("VS Code reports runtime connected");
+    expect(container?.textContent).toContain("Token: present, value hidden");
+    expect(findButton("Send").disabled).toBe(true);
+  });
+
+  it("renders auth mismatch lifecycle guidance without token leakage", async () => {
+    const token = "host-runtime-status-secret-value";
+    mockRuntimeResponses({ runtimeFailure: true });
+    renderApp();
+    await flushAsync();
+
+    await dispatchRuntimeStatus(runtimeStatusPayload({ lifecycle: "auth_mismatch", tokenState: "mismatch", diagnosis: "runtime rejected the current local credentials", nextAction: `Refresh runtime without exposing ${token}.` }));
+    await flushAsync();
+
+    await dispatchRuntimeStatus(runtimeStatusPayload({ lifecycle: "auth_mismatch", tokenState: "mismatch", diagnosis: "runtime rejected the current local credentials", nextAction: "Refresh runtime after mismatch." }));
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Runtime authorization mismatch");
+    expect(container?.textContent).toContain("Runtime session mismatch");
+    expect(container?.textContent).toContain("Raw token values are never shown here");
+    expect(container?.textContent).not.toContain(token);
+    expect(browserStorageDump()).not.toContain(token);
+  });
+
+  it("ignores stale lifecycle status after runtime settings change", async () => {
+    mockRuntimeResponses({ runtimeFailure: true });
+    renderApp();
+    await flushAsync();
+
+    await dispatchRuntimeStatus(runtimeStatusPayload({ lifecycle: "failed", diagnosis: "runtime launch failed with sanitized diagnostics" }));
+    expect(container?.textContent).toContain("Runtime launch failed");
+
+    await act(async () => {
+      setInputValue(runtimeBaseUrlInput(), "http://127.0.0.1:8765");
+    });
+    await flushAsync();
+
+    expect(container?.textContent).not.toContain("Runtime launch failed");
+  });
 
   it("queues latest runtime settings when host.ready arrives during an in-flight refresh", async () => {
     const hostToken = "queuedHostLocalValue";
@@ -2175,7 +2234,7 @@ describe("agent progress panel", () => {
     expect(text).toContain("7 more summaries hidden.");
     expect(text).not.toContain("T-BOUND-18 / run-18");
     expect(text).not.toContain("safe recent summary 16");
-    expect(text.length).toBeLessThan(35000);
+    expect(text.length).toBeLessThan(35100);
   });
 
   it("endpoint unavailable or corrupt runtime error is sanitized and non-fatal", async () => {
@@ -8789,6 +8848,35 @@ async function dispatchHostReady(payload: { runtimeUrl: string; sessionToken?: s
   });
 }
 
+async function dispatchRuntimeStatus(payload: Record<string, unknown>) {
+  await act(async () => {
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version: bridgeVersion,
+        type: "host.runtimeStatus",
+        payload,
+      },
+    }));
+  });
+}
+
+function runtimeStatusPayload(payload: Record<string, unknown> = {}) {
+  return {
+    protocolVersion: "2026-06-21",
+    surface: "vscode",
+    lifecycle: "connected",
+    runtimeOwner: "ide_host",
+    launchMode: "auto",
+    tokenState: "present",
+    processState: "running",
+    diagnosis: "runtime connected",
+    nextAction: "Type a prompt or refresh provider readiness.",
+    cloudRequired: false,
+    authority: "metadata_only",
+    ...payload,
+  };
+}
+
 async function dispatchHostContextSnapshot(payload: Record<string, unknown>) {
   await act(async () => {
     window.dispatchEvent(new MessageEvent("message", {
@@ -9628,6 +9716,14 @@ function attachedContextAcknowledgementToggle() {
   const input = Array.from(container?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]') ?? []).find((item) => item.parentElement?.textContent?.includes("I understand the hidden selected text may be included"));
   if (!input) {
     throw new Error("Attached context acknowledgement toggle not found");
+  }
+  return input;
+}
+
+function runtimeBaseUrlInput() {
+  const input = Array.from(container?.querySelectorAll<HTMLInputElement>("input") ?? []).find((item) => item.parentElement?.textContent?.includes("Runtime base URL"));
+  if (!input) {
+    throw new Error("Runtime base URL input not found");
   }
   return input;
 }

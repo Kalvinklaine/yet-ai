@@ -1,11 +1,12 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type ActiveFileExcerptAttachment, type WorkspaceSnippetSearchResult } from "./bridge/bridgeAdapter";
+import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type HostRuntimeStatusPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type ActiveFileExcerptAttachment, type WorkspaceSnippetSearchResult } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, removeOptimisticUserMessage, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToBundleItem, activeFileExcerptToChatContext, addExplicitContextBundleItem, explicitContextBundleMaxItems, explicitContextBundleToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, projectMemoryToBundleItem, rangeFromContextSelection, summarizeExplicitContextBundleItem, validateWorkspaceSnippetQuery, workspaceSnippetToBundleItem, type ExplicitContextBundleItem, type ProjectMemoryBundleItem, type WorkspaceSnippetBundleItem } from "./services/activeEditorContext";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
 import { IdeActionProposalPanel, IdeActionsPanel, VerificationCommandPanel, verificationOutputKey, type IdeActionAttemptState, type VerificationCommand } from "./components/IdeActionsPanel";
 import { describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
 import { chatLifecycleLabels, chatRecoveryCodeForRuntimeError, type ChatLifecycleState } from "./services/chatLifecycle";
+import { runtimeLifecycleDiagnostics, runtimeLifecycleHostCopy, type RuntimeLifecycleDiagnostics } from "./services/runtimeLifecycle";
 import { conversationHistoryStatusLabel, resolveChatAfterList, resolveFallbackChatAfterDelete } from "./services/conversationHistory";
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { classifyProviderReadinessState, modelReadinessEvidenceText, modelStatusText, resolveProviderModelReadiness, type ProviderReadinessState } from "./services/providerReadiness";
@@ -336,6 +337,7 @@ export function App() {
   const [projectMemory, setProjectMemory] = useState<ProjectMemoryState>({ state: "idle", notes: [], error: null });
   const [projectMemoryStatus, setProjectMemoryStatus] = useState<string | null>(null);
   const [runtimeRefreshStatus, setRuntimeRefreshStatus] = useState<{ state: "checking" | "connected" | "failed"; attempt: number; checkedAt: string; detail: string } | null>(null);
+  const [runtimeLifecycle, setRuntimeLifecycle] = useState<{ diagnostics: RuntimeLifecycleDiagnostics; settingsRevision: number } | null>(null);
   const [runtimeRefreshInFlight, setRuntimeRefreshInFlight] = useState(false);
   const [runtimeConnectionSource, setRuntimeConnectionSource] = useState<RuntimeConnectionSource>("manual");
   const [runtimeDetailsOpen, setRuntimeDetailsOpen] = useState(true);
@@ -407,6 +409,7 @@ export function App() {
   const activeDemoModeError = demoModeDataCurrent ? demoModeError : null;
   const activeProviderAuthStatus = providerAuthDataCurrent ? providerAuthStatus : null;
   const activeChatSummaries = chatHistoryCurrent ? chatSummaries : [];
+  const activeRuntimeLifecycle = runtimeLifecycle?.settingsRevision === settingsRevision ? runtimeLifecycle.diagnostics : null;
   const activeChatSummary = activeChatSummaries.find((item) => item.chatId === chatId);
   const activeChatIndex = activeChatSummaries.findIndex((item) => item.chatId === chatId);
   const runtimeConnected = activePing?.ready === true && !activeConnectionError;
@@ -586,6 +589,7 @@ export function App() {
       checkedAt: new Date().toLocaleTimeString(),
       detail: "Runtime settings changed; checking current runtime…",
     });
+    setRuntimeLifecycle(null);
     providerAuthMutationAttemptRef.current += 1;
     setProviderAuthMutation(null);
     setProviderAuthExchangeCode("");
@@ -647,6 +651,11 @@ export function App() {
     adapter.subscribe((message) => {
       if (message.type === "host.ready") {
         applyHostReady(message.payload as HostReadyPayload | undefined);
+      } else if (message.type === "host.runtimeStatus") {
+        const payload = message.payload as HostRuntimeStatusPayload;
+        const revision = settingsRevisionRef.current;
+        setRuntimeLifecycle({ diagnostics: runtimeLifecycleDiagnostics(payload, adapter.host), settingsRevision: revision });
+        setTimeline((current) => [`Runtime lifecycle status received: ${payload.lifecycle}`, ...current].slice(0, 80));
       } else if (message.type === "host.contextSnapshot") {
         const nextContext = message.payload as HostContextSnapshotPayload;
         setAttachedContext({ payload: nextContext, settingsRevision: settingsRevisionRef.current, chatId: chatIdRef.current });
@@ -2288,6 +2297,16 @@ export function App() {
           ? <p className="subtle">Runtime connection is IDE-managed. Trusted host.ready supplied the loopback URL{token ? " and an in-memory Session token" : ""}; there is no visible token to copy, and provider API keys are still configured only in the local runtime.</p>
           : <p className="subtle">In VS Code or JetBrains, the local runtime Session token is normally supplied automatically by the IDE host through trusted host.ready. Paste a token only when connecting to a manually started runtime such as one launched with YET_AI_AUTH_TOKEN=.... This local runtime token authorizes the GUI to the loopback runtime; it is not an OpenAI key or provider API key.</p>}
         {!runtimeConnected && hostedRuntimeConnection && <div className="recovery-card" role="status"><strong>IDE-managed runtime recovery</strong><span>Refresh runtime asks the host-delivered URL/token to reconnect. If the runtime is stale, missing, or unauthorized, use the IDE runtime status/restart command; do not copy raw runtime tokens into chat.</span></div>}
+        <div className={`recovery-card ${activeRuntimeLifecycle ? "" : "subtle"}`} role="status" aria-label="Runtime lifecycle diagnostics">
+          <strong>{activeRuntimeLifecycle ? activeRuntimeLifecycle.title : "Runtime lifecycle diagnostics"}</strong>
+          {activeRuntimeLifecycle ? (
+            <>
+              <span>{activeRuntimeLifecycle.status}</span>
+              <span>{activeRuntimeLifecycle.evidence}</span>
+              <span>{activeRuntimeLifecycle.guidance}</span>
+            </>
+          ) : <span>{runtimeLifecycleHostCopy(bridgeHost)}</span>}
+        </div>
         <div className="row">
           <button onClick={() => void connect()} disabled={runtimeRefreshInFlight}>{runtimeRefreshInFlight ? "Checking runtime…" : "Refresh runtime"}</button>
           <span className="subtle">Authorization header is sent only to validated loopback runtime URLs.</span>

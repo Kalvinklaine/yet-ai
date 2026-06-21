@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createBridgeAdapter, isApplyWorkspaceEditPayload, isApplyWorkspaceEditResultPayload, isGuiMessage, isHostMessage, isIdeActionProgressPayload, isIdeActionRequestPayload, isIdeActionResultPayload } from "./bridgeAdapter";
+import { createBridgeAdapter, isApplyWorkspaceEditPayload, isApplyWorkspaceEditResultPayload, isGuiMessage, isHostMessage, isHostRuntimeStatusPayload, isIdeActionProgressPayload, isIdeActionRequestPayload, isIdeActionResultPayload } from "./bridgeAdapter";
 import guiReadyMessage from "../../../../packages/contracts/examples/bridge/gui-ready-message.json";
 import guiReadyWithFrameNonceMessage from "../../../../packages/contracts/examples/bridge/gui-ready-with-frame-nonce.json";
 import guiUnloadedMessage from "../../../../packages/contracts/examples/bridge/gui-unloaded-message.json";
@@ -9,6 +9,14 @@ import hostReadyMessage from "../../../../packages/contracts/examples/bridge/hos
 import guiApplyWorkspaceEditRequestValidMessage from "../../../../packages/contracts/examples/bridge/gui-apply-workspace-edit-request-message.json";
 import hostApplyWorkspaceEditResultAppliedMessage from "../../../../packages/contracts/examples/bridge/host-apply-workspace-edit-result-applied.json";
 import hostApplyWorkspaceEditResultDeniedMessage from "../../../../packages/contracts/examples/bridge/host-apply-workspace-edit-result-denied.json";
+import hostRuntimeStatusConnectedVscodeMessage from "../../../../packages/contracts/examples/bridge/host-runtime-status-connected-vscode.json";
+import hostRuntimeStatusAuthMismatchJetbrainsMessage from "../../../../packages/contracts/examples/bridge/host-runtime-status-auth-mismatch-jetbrains.json";
+import hostRuntimeStatusBrowserPreviewMessage from "../../../../packages/contracts/examples/bridge/host-runtime-status-browser-preview.json";
+import hostRuntimeStatusRawBearerTokenMessage from "../../../../packages/contracts/examples-invalid/bridge/host-runtime-status-raw-bearer-token.json";
+import hostRuntimeStatusPrivatePathMessage from "../../../../packages/contracts/examples-invalid/bridge/host-runtime-status-private-path.json";
+import hostRuntimeStatusAuthorityLaunchMessage from "../../../../packages/contracts/examples-invalid/bridge/host-runtime-status-authority-launch.json";
+import hostRuntimeStatusRequestIdMessage from "../../../../packages/contracts/examples-invalid/bridge/host-runtime-status-request-id.json";
+import hostRuntimeStatusRunCommandFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-runtime-status-run-command-field.json";
 import guiApplyWorkspaceEditRequestMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-apply-workspace-edit-request-message.json";
 import guiCopyTextMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-copy-text-message.json";
 import guiExecuteIdeToolMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-execute-ide-tool-message.json";
@@ -879,6 +887,28 @@ describe("bridgeAdapter", () => {
     expect(logs.join("\n")).not.toContain(hostReadyMessage.payload.sessionToken);
     expect(logs.join("\n")).not.toContain(hostContextSnapshotMessage.payload.selection.text);
     adapter.dispose();
+  });
+
+  it("accepts sanitized metadata-only host.runtimeStatus fixtures", () => {
+    expect(isHostMessage(hostRuntimeStatusConnectedVscodeMessage)).toBe(true);
+    expect(isHostMessage(hostRuntimeStatusAuthMismatchJetbrainsMessage)).toBe(true);
+    expect(isHostMessage(hostRuntimeStatusBrowserPreviewMessage)).toBe(true);
+    expect(isHostRuntimeStatusPayload(hostRuntimeStatusConnectedVscodeMessage.payload)).toBe(true);
+  });
+
+  it("rejects unsafe or privileged host.runtimeStatus payloads", () => {
+    for (const message of [
+      hostRuntimeStatusRawBearerTokenMessage,
+      hostRuntimeStatusPrivatePathMessage,
+      hostRuntimeStatusAuthorityLaunchMessage,
+      hostRuntimeStatusRequestIdMessage,
+      hostRuntimeStatusRunCommandFieldMessage,
+      { ...hostRuntimeStatusConnectedVscodeMessage, payload: { ...hostRuntimeStatusConnectedVscodeMessage.payload, shell: "npm test" } },
+      { ...hostRuntimeStatusConnectedVscodeMessage, payload: { ...hostRuntimeStatusConnectedVscodeMessage.payload, lifecycle: "launching" } },
+      { ...hostRuntimeStatusConnectedVscodeMessage, payload: { ...hostRuntimeStatusConnectedVscodeMessage.payload, nextAction: "Use token abc123" } },
+    ]) {
+      expect(isHostMessage(message)).toBe(false);
+    }
   });
 
   it("rejects C0 and C1 control characters in runtime bridge summaries and messages", () => {

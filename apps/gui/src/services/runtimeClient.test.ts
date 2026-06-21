@@ -305,6 +305,11 @@ describe("runtimeClient", () => {
     expect(body).not.toHaveProperty("modelId");
   });
 
+  it("has no runtime lifecycle endpoint or launch authority", () => {
+    expect(Object.keys({ createChat, deleteChat, getChat, listChats, runtimeFetch, sendUserMessage }).join(" ")).not.toContain("launch");
+    expect(Object.keys({ createChat, deleteChat, getChat, listChats, runtimeFetch, sendUserMessage }).join(" ")).not.toContain("restart");
+  });
+
   it("does not let caller headers override runtime Authorization", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);

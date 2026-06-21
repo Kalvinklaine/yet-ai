@@ -110,11 +110,27 @@ export type GuiMessage = {
   payload?: Record<string, unknown> | IdeActionRequestPayload | ApplyWorkspaceEditPayload;
 };
 
+export type RuntimeLifecycleState = "unknown" | "checking" | "starting" | "connected" | "degraded" | "disconnected" | "restarting" | "stopped" | "auth_mismatch" | "invalid_settings" | "failed";
+
+export type HostRuntimeStatusPayload = {
+  protocolVersion: "2026-06-21";
+  surface: BridgeHost;
+  lifecycle: RuntimeLifecycleState;
+  runtimeOwner: "browser_preview" | "ide_host" | "external" | "user" | "test_harness";
+  launchMode: "auto" | "connect" | "launch" | "preview" | "manual" | "unknown";
+  tokenState: "unknown" | "not_required" | "absent" | "present" | "mismatch" | "invalid";
+  processState: "unknown" | "not_owned" | "checking" | "starting" | "running" | "exited" | "stopped" | "failed";
+  diagnosis: string;
+  nextAction: string;
+  cloudRequired: false;
+  authority: "metadata_only";
+};
+
 export type HostMessage = {
   version: string;
-  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult";
+  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.runtimeStatus";
   requestId?: string;
-  payload?: Record<string, unknown> | IdeActionProgressPayload | IdeActionResultPayload | ApplyWorkspaceEditResultPayload;
+  payload?: Record<string, unknown> | IdeActionProgressPayload | IdeActionResultPayload | ApplyWorkspaceEditResultPayload | HostRuntimeStatusPayload;
 };
 
 type FrameNonceMessage = {
@@ -179,6 +195,7 @@ const hostMessageTypes = new Set<HostMessage["type"]>([
   "host.ideActionProgress",
   "host.ideActionResult",
   "host.applyWorkspaceEditResult",
+  "host.runtimeStatus",
 ]);
 const guiMessageTypes = new Set<GuiMessage["type"]>([
   "gui.ready",
@@ -389,6 +406,9 @@ export function isHostMessage(value: unknown): value is HostMessage {
   if (value.type === "host.ideActionResult") {
     return typeof value.requestId === "string" && isIdeActionResultPayload(value.payload);
   }
+  if (value.type === "host.runtimeStatus") {
+    return value.requestId === undefined && isHostRuntimeStatusPayload(value.payload);
+  }
   return value.type === "host.openedFromCommand" && value.requestId === undefined && isEmptyPayload(value.payload);
 }
 
@@ -403,6 +423,23 @@ export function isHostReadyPayload(value: unknown): value is HostReadyPayload {
     optionalDisplayName(value.displayName) &&
     (value.cloudRequired === undefined || value.cloudRequired === false)
   );
+}
+
+export function isHostRuntimeStatusPayload(value: unknown): value is HostRuntimeStatusPayload {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["protocolVersion", "surface", "lifecycle", "runtimeOwner", "launchMode", "tokenState", "processState", "diagnosis", "nextAction", "cloudRequired", "authority"])) {
+    return false;
+  }
+  return value.protocolVersion === "2026-06-21" &&
+    optionalRuntimeSurface(value.surface) &&
+    optionalRuntimeLifecycle(value.lifecycle) &&
+    optionalRuntimeOwner(value.runtimeOwner) &&
+    optionalRuntimeLaunchMode(value.launchMode) &&
+    optionalRuntimeTokenState(value.tokenState) &&
+    optionalRuntimeProcessState(value.processState) &&
+    safeMessage(value.diagnosis) &&
+    safeMessage(value.nextAction) &&
+    value.cloudRequired === false &&
+    value.authority === "metadata_only";
 }
 
 export function isHostContextSnapshotPayload(value: unknown): value is HostContextSnapshotPayload {
@@ -645,6 +682,30 @@ function hasRequiredSuccessfulActionMetadata(value: Record<string, unknown>): bo
 
 function optionalIdeActionType(value: unknown): boolean {
   return value === undefined || value === "getContextSnapshot" || value === "getActiveFileExcerpt" || value === "openWorkspaceFile" || value === "revealWorkspaceRange" || value === "runVerificationCommand" || value === "searchWorkspaceSnippets";
+}
+
+function optionalRuntimeLifecycle(value: unknown): value is RuntimeLifecycleState {
+  return value === "unknown" || value === "checking" || value === "starting" || value === "connected" || value === "degraded" || value === "disconnected" || value === "restarting" || value === "stopped" || value === "auth_mismatch" || value === "invalid_settings" || value === "failed";
+}
+
+function optionalRuntimeSurface(value: unknown): value is BridgeHost {
+  return value === "browser" || value === "vscode" || value === "jetbrains";
+}
+
+function optionalRuntimeOwner(value: unknown): boolean {
+  return value === "browser_preview" || value === "ide_host" || value === "external" || value === "user" || value === "test_harness";
+}
+
+function optionalRuntimeLaunchMode(value: unknown): boolean {
+  return value === "auto" || value === "connect" || value === "launch" || value === "preview" || value === "manual" || value === "unknown";
+}
+
+function optionalRuntimeTokenState(value: unknown): boolean {
+  return value === "unknown" || value === "not_required" || value === "absent" || value === "present" || value === "mismatch" || value === "invalid";
+}
+
+function optionalRuntimeProcessState(value: unknown): boolean {
+  return value === "unknown" || value === "not_owned" || value === "checking" || value === "starting" || value === "running" || value === "exited" || value === "stopped" || value === "failed";
 }
 
 function isVerificationCommandId(value: unknown): value is VerificationCommandId {
