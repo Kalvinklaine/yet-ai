@@ -1,0 +1,13 @@
+{
+  "kind": "tool_authority_policy",
+  "version": "2026-06-21",
+  "mode": "sandbox_preview",
+  "defaultDecision": "deny",
+  "cloudRequired": false,
+  "summary": "Shell execution must not be allowed by this design fixture.",
+  "capability": "shell",
+  "source": { "origin": "gui", "requestIdMintedBy": "gui", "hostSurface": "engine_runtime" },
+  "risk": ["executes_process"],
+  "requirements": ["explicit_user_confirmation", "schema_validation", "trace_entry"],
+  "decision": "allow_with_confirmation"
+}

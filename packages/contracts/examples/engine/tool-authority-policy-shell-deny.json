@@ -1,0 +1,18 @@
+{
+  "kind": "tool_authority_policy",
+  "version": "2026-06-21",
+  "mode": "design_gate",
+  "defaultDecision": "deny",
+  "cloudRequired": false,
+  "summary": "Shell execution remains denied until a separate reviewed authority contract exists.",
+  "capability": "shell",
+  "source": {
+    "origin": "assistant",
+    "requestIdMintedBy": "none",
+    "hostSurface": "engine_runtime"
+  },
+  "risk": ["executes_process", "mutates_workspace"],
+  "requirements": ["explicit_user_confirmation", "schema_validation", "trace_entry", "checkpoint_required"],
+  "decision": "deny",
+  "traceLabel": "Shell denied fixture"
+}

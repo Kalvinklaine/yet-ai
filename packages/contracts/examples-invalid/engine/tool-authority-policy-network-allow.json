@@ -1,0 +1,13 @@
+{
+  "kind": "tool_authority_policy",
+  "version": "2026-06-21",
+  "mode": "sandbox_preview",
+  "defaultDecision": "deny",
+  "cloudRequired": false,
+  "summary": "Network access must remain denied by this design fixture.",
+  "capability": "network",
+  "source": { "origin": "runtime", "requestIdMintedBy": "host", "hostSurface": "engine_runtime" },
+  "risk": ["network"],
+  "requirements": ["explicit_user_confirmation", "schema_validation", "trace_entry"],
+  "decision": "allow_with_confirmation"
+}

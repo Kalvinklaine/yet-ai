@@ -1,0 +1,14 @@
+{
+  "kind": "tool_authority_policy",
+  "version": "2026-06-21",
+  "mode": "design_gate",
+  "defaultDecision": "deny",
+  "cloudRequired": false,
+  "summary": "Unknown authority smuggling fields must be rejected.",
+  "capability": "read_only_context_navigation",
+  "source": { "origin": "host", "requestIdMintedBy": "none" },
+  "risk": ["metadata_only"],
+  "requirements": ["schema_validation"],
+  "decision": "metadata_only",
+  "autoExecute": true
+}

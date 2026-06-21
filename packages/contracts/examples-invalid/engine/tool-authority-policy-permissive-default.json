@@ -1,0 +1,13 @@
+{
+  "kind": "tool_authority_policy",
+  "version": "2026-06-21",
+  "mode": "design_gate",
+  "defaultDecision": "allow",
+  "cloudRequired": false,
+  "summary": "Unsafe permissive default.",
+  "capability": "read_only_context_navigation",
+  "source": { "origin": "host", "requestIdMintedBy": "none" },
+  "risk": ["metadata_only"],
+  "requirements": ["schema_validation"],
+  "decision": "metadata_only"
+}

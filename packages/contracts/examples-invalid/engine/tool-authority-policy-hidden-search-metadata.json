@@ -1,0 +1,13 @@
+{
+  "kind": "tool_authority_policy",
+  "version": "2026-06-21",
+  "mode": "sandbox_preview",
+  "defaultDecision": "deny",
+  "cloudRequired": false,
+  "summary": "Hidden indexing cannot be metadata only because it reads unseen workspace data.",
+  "capability": "hidden_read_search_index",
+  "source": { "origin": "runtime", "requestIdMintedBy": "host", "hostSurface": "engine_runtime" },
+  "risk": ["metadata_only", "reads_hidden_data"],
+  "requirements": ["schema_validation", "trace_entry"],
+  "decision": "metadata_only"
+}

@@ -1,0 +1,13 @@
+{
+  "kind": "tool_authority_policy",
+  "version": "2026-06-21",
+  "mode": "design_gate",
+  "defaultDecision": "deny",
+  "cloudRequired": true,
+  "summary": "Authority policy must preserve local first operation.",
+  "capability": "read_only_context_navigation",
+  "source": { "origin": "host", "requestIdMintedBy": "none" },
+  "risk": ["metadata_only"],
+  "requirements": ["schema_validation"],
+  "decision": "metadata_only"
+}

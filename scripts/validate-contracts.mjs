@@ -47,6 +47,14 @@ const mappings = [
   ["packages/contracts/examples/engine/agent-progress-event-manual-runner-verification.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
   ["packages/contracts/examples/engine/manual-runner-plan-proposal.json", "packages/contracts/schemas/engine/manual-runner-plan-proposal.schema.json"],
   ["packages/contracts/examples/engine/coding-task-session.json", "packages/contracts/schemas/engine/coding-task-session.schema.json"],
+  ...[
+    "tool-authority-policy-metadata-only.json",
+    "tool-authority-policy-bounded-edit-confirmation.json",
+    "tool-authority-policy-shell-deny.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/engine/${fileName}`,
+    "packages/contracts/schemas/engine/tool-authority-policy.schema.json"
+  ]),
   ["packages/contracts/examples/engine/assistant-ide-action-proposal-get-context.json", "packages/contracts/schemas/engine/assistant-ide-action-proposal.schema.json"],
   ["packages/contracts/examples/engine/assistant-ide-action-proposal-open-file.json", "packages/contracts/schemas/engine/assistant-ide-action-proposal.schema.json"],
   ["packages/contracts/examples/engine/assistant-ide-action-proposal-reveal-range.json", "packages/contracts/schemas/engine/assistant-ide-action-proposal.schema.json"],
@@ -819,6 +827,26 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/coding-task-session.schema.json"
+  ]),
+  ...[
+    "tool-authority-policy-permissive-default.json",
+    "tool-authority-policy-shell-allow.json",
+    "tool-authority-policy-git-allow.json",
+    "tool-authority-policy-provider-tool-allow.json",
+    "tool-authority-policy-assistant-request-id.json",
+    "tool-authority-policy-cloud-required.json",
+    "tool-authority-policy-raw-command.json",
+    "tool-authority-policy-cwd-env.json",
+    "tool-authority-policy-absolute-path.json",
+    "tool-authority-policy-home-path.json",
+    "tool-authority-policy-secret-marker.json",
+    "tool-authority-policy-hidden-search-metadata.json",
+    "tool-authority-policy-unknown-field.json",
+    "tool-authority-policy-network-allow.json",
+    "tool-authority-policy-remote-publish-allow.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/tool-authority-policy.schema.json"
   ]),
   ...[
     "assistant-ide-action-proposal-shell-action.json",

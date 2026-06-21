@@ -1,0 +1,293 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/tool-authority-policy.schema.json",
+  "title": "Tool Authority Policy Fixture",
+  "description": "Strict metadata-only deny-by-default authority policy fixture for future host/tool action review. This schema describes policy evidence and decisions only; it is not an executable command API and grants no runtime, host, bridge, shell, git, provider, network, file, or publish authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "mode",
+    "defaultDecision",
+    "cloudRequired",
+    "summary",
+    "capability",
+    "source",
+    "risk",
+    "requirements",
+    "decision"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "const": "tool_authority_policy"
+    },
+    "version": {
+      "type": "string",
+      "const": "2026-06-21"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["design_gate", "sandbox_preview"]
+    },
+    "defaultDecision": {
+      "type": "string",
+      "const": "deny"
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "summary": {
+      "$ref": "#/$defs/safeSummary"
+    },
+    "capability": {
+      "$ref": "#/$defs/capability"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "risk": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/risk"
+      }
+    },
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/requirement"
+      }
+    },
+    "decision": {
+      "$ref": "#/$defs/decision"
+    },
+    "workspaceBounds": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/safeRelativePath"
+      }
+    },
+    "allowlistedCommandId": {
+      "type": "string",
+      "enum": ["repository-check", "gui-app-tests", "engine-chat-tests"]
+    },
+    "traceLabel": {
+      "$ref": "#/$defs/safeLabel"
+    }
+  },
+  "$defs": {
+    "capability": {
+      "type": "string",
+      "enum": [
+        "read_only_context_navigation",
+        "bounded_edit_apply",
+        "allowlisted_verification",
+        "workspace_patch",
+        "shell",
+        "git",
+        "provider_tool",
+        "network",
+        "hidden_read_search_index",
+        "home_secret_access",
+        "remote_publish_push"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin", "requestIdMintedBy"],
+      "properties": {
+        "origin": {
+          "type": "string",
+          "enum": ["user", "gui", "assistant", "host", "runtime"]
+        },
+        "requestIdMintedBy": {
+          "type": "string",
+          "enum": ["gui", "host", "none"]
+        },
+        "hostSurface": {
+          "type": "string",
+          "enum": ["browser", "vscode", "jetbrains", "engine_runtime"]
+        }
+      }
+    },
+    "risk": {
+      "type": "string",
+      "enum": [
+        "metadata_only",
+        "touches_files",
+        "mutates_workspace",
+        "executes_process",
+        "reads_hidden_data",
+        "network",
+        "secrets",
+        "remote_mutation"
+      ]
+    },
+    "requirement": {
+      "type": "string",
+      "enum": [
+        "explicit_user_confirmation",
+        "trusted_request_id",
+        "workspace_relative_bounds",
+        "schema_validation",
+        "trace_entry",
+        "checkpoint_required",
+        "allowlisted_command_id",
+        "rollback_required"
+      ]
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["deny", "allow_with_confirmation", "metadata_only"]
+    },
+    "safeLabel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(?!.*[\\u0000-\\u001f\\u007f-\\u009f])(?!.*(?:[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,})).*$"
+    },
+    "safeSummary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 280,
+      "pattern": "^(?!.*[\\u0000-\\u001f\\u007f-\\u009f])(?!.*(?:[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Pp][Aa][Tt][Hh]|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][_-]?[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Rr][Aa][Ww][_-]?[Pp][Rr][Oo][Mm][Pp][Tt]|[Ff][Ii][Ll][Ee][_-]?[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,})).*$"
+    },
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?!~)(?!.*%)(?!.*\\\\)(?!.*:)(?!.*[?#])(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*//)(?!.*\\/$)(?!.*(?:^|/)(?:[Aa][Uu][Tt][Hh]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Cc][Cc][Ee][Ss][Ss][_-]?[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy])(?:[._-]|/|$))(?!.*(?:^|[._-])(?:[Aa][Uu][Tt][Hh]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Cc][Cc][Ee][Ss][Ss][_-]?[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy])(?:[._-]|$))(?!.*(?:^|/)[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,})[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "capability": {
+            "enum": ["shell", "git", "provider_tool", "network", "hidden_read_search_index", "home_secret_access", "remote_publish_push"]
+          }
+        },
+        "required": ["capability"]
+      },
+      "then": {
+        "properties": {
+          "decision": {
+            "const": "deny"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "metadata_only"
+          }
+        },
+        "required": ["decision"]
+      },
+      "then": {
+        "properties": {
+          "risk": {
+            "type": "array",
+            "contains": {
+              "const": "metadata_only"
+            }
+          }
+        },
+        "not": {
+          "properties": {
+            "risk": {
+              "type": "array",
+              "contains": {
+                "enum": ["touches_files", "mutates_workspace", "executes_process", "reads_hidden_data", "network", "secrets", "remote_mutation"]
+              }
+            }
+          },
+          "required": ["risk"]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "allow_with_confirmation"
+          }
+        },
+        "required": ["decision"]
+      },
+      "then": {
+        "properties": {
+          "capability": {
+            "enum": ["read_only_context_navigation", "bounded_edit_apply", "allowlisted_verification"]
+          },
+          "requirements": {
+            "type": "array",
+            "contains": {
+              "const": "explicit_user_confirmation"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "capability": {
+            "const": "allowlisted_verification"
+          }
+        },
+        "required": ["capability"]
+      },
+      "then": {
+        "properties": {
+          "allowlistedCommandId": {
+            "type": "string"
+          },
+          "requirements": {
+            "type": "array",
+            "contains": {
+              "const": "allowlisted_command_id"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "capability": {
+            "enum": ["bounded_edit_apply", "workspace_patch"]
+          }
+        },
+        "required": ["capability"]
+      },
+      "then": {
+        "properties": {
+          "workspaceBounds": {
+            "type": "array"
+          },
+          "requirements": {
+            "type": "array",
+            "contains": {
+              "const": "workspace_relative_bounds"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

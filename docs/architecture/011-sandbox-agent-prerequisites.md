@@ -28,6 +28,8 @@ A sandbox-agent experiment may be considered only after all of these conditions 
 
 The authority model must start closed and open only narrowly documented capabilities. Every capability needs a schema, host support declaration, origin/source check, request correlation minted by trusted GUI or host code, explicit user confirmation where risk exists, sanitized progress/result events, and positive plus invalid fixtures.
 
+The Sprint 40 `tool_authority_policy` contract is the first inert fixture shape for that closed authority model. It records proposed capability, source, risk, requirements, and decision metadata only; it is not a sandbox-agent evaluator and does not let a sandbox run. Its default decision is always `deny`, it preserves `cloudRequired: false`, and it rejects assistant-minted request ids, free-form command/cwd/env material, unsafe paths, secret markers, hidden-read metadata smuggling, and unknown authority fields. High-risk capabilities remain deny-only fixtures until a later reviewed contract and implementation deliberately opens a narrower slice.
+
 Assistant output is never authority. A model may propose a step, edit, or verification intent, but trusted Yet AI code must validate it against policy before display, and the host must still enforce its own policy before execution. Unsupported hosts fail closed. Browser preview remains non-executing for workspace mutation.
 
 ## Safety bounds

@@ -1,0 +1,15 @@
+{
+  "kind": "tool_authority_policy",
+  "version": "2026-06-21",
+  "mode": "design_gate",
+  "defaultDecision": "deny",
+  "cloudRequired": false,
+  "summary": "Raw command strings are authority smuggling.",
+  "capability": "allowlisted_verification",
+  "source": { "origin": "gui", "requestIdMintedBy": "gui", "hostSurface": "vscode" },
+  "risk": ["executes_process"],
+  "requirements": ["explicit_user_confirmation", "allowlisted_command_id", "schema_validation"],
+  "decision": "allow_with_confirmation",
+  "allowlistedCommandId": "repository-check",
+  "command": "npm test"
+}

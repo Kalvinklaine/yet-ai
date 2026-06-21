@@ -1,0 +1,14 @@
+{
+  "kind": "tool_authority_policy",
+  "version": "2026-06-21",
+  "mode": "sandbox_preview",
+  "defaultDecision": "deny",
+  "cloudRequired": false,
+  "summary": "Absolute workspace bounds are not safe policy data.",
+  "capability": "bounded_edit_apply",
+  "source": { "origin": "gui", "requestIdMintedBy": "gui", "hostSurface": "vscode" },
+  "risk": ["touches_files", "mutates_workspace"],
+  "requirements": ["explicit_user_confirmation", "workspace_relative_bounds", "schema_validation"],
+  "decision": "allow_with_confirmation",
+  "workspaceBounds": ["/Users/alice/project/src/example.ts"]
+}

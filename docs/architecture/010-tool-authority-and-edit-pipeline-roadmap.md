@@ -84,6 +84,10 @@ Future expansion requires all of the following before any new privileged behavio
 
 New schemas or examples should be added only in the card that implements or validates that specific boundary. This roadmap intentionally does not add them.
 
+Sprint 40 adds the first contract-only design gate for this boundary: `packages/contracts/schemas/engine/tool-authority-policy.schema.json`. It is policy/evaluation fixture metadata only. It is not a runtime endpoint, bridge message, host command, GUI control, policy engine, or executable command API. A valid fixture starts from `defaultDecision: "deny"`, uses `cloudRequired: false`, records only sanitized source/risk/requirement/decision metadata, and grants no authority by itself.
+
+The policy vocabulary is intentionally broader than today's implementation so unsafe future classes stay named and closed: read-only context/navigation, bounded edit apply, allowlisted verification, workspace patch, shell, git, provider tool, network, hidden read/search/index, home/secret access, and remote publish/push. Shell, git, provider tools, network access, hidden reads/search/indexing, home/secret access, and remote publish/push remain deny-only in the fixture schema. `metadata_only` covers inert host/runtime declarations, and `allow_with_confirmation` is limited to current safe baseline concepts as design fixtures, not as executable permission. Raw command strings, cwd/env, assistant-minted request ids, absolute/private/home paths, secret markers, cloud requirements, and unknown authority-smuggling fields are invalid fixture cases.
+
 ## Product boundaries to preserve
 
 Tool authority belongs behind local runtime and host policy boundaries. The GUI may render proposals and collect explicit user intent, but it must not persist raw provider secrets, execute shell commands, scan the workspace, or bypass host confirmation. IDE hosts may execute only explicitly designed and schema-validated host-owned capabilities. The engine may observe sanitized progress and own provider/runtime policy, but it must not gain broad IDE mutation or shell authority by accident.
