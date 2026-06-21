@@ -122,6 +122,9 @@ try {
   await assertCodingTaskTemplatesVisible(page);
   await expectVisibleText(page, "Explicit context bundle summary", "context summary section before Send", 20_000);
   await expectVisibleText(page, "No explicit bundle items selected", "empty context summary before Send", 20_000);
+  await assertTracePanelCollapsed(page);
+  await openTracePanel(page);
+  await assertTraceEntries(page, ["Coding session trace", "read-only", "Runtime refresh started", "Runtime refresh connected"], "initial runtime trace");
 
   await assertNoRequestsOfType(page, "gui.applyWorkspaceEditRequest", "before Send");
   await assertNoIdeAction(page, "runVerificationCommand", "before Send");
@@ -156,6 +159,7 @@ try {
   await expectVisibleText(page, "Result excerpt: src/dogfood.ts", "mock active editor excerpt", 20_000);
   await page.getByRole("button", { name: "Add to multi-file context bundle" }).click();
   await expectVisibleText(page, "active file excerpt · src/dogfood.ts", "active excerpt in coding task summary", 20_000);
+  await assertTraceEntries(page, ["IDE action requested", "IDE action result received"], "active excerpt trace");
 
   await page.getByLabel("Literal snippet query").fill("dogfoodSnippet");
   await page.getByRole("button", { name: "Search project snippets" }).click();
@@ -191,11 +195,14 @@ try {
   await expectVisibleText(page, "Explicit context bundle: 3 selected · one-shot manual include", "selected context count before Send", 20_000);
   await assertVisibleContextSummary(page, ["active file excerpt · src/dogfood.ts", "project snippet · src/snippet.ts", "project memory · Real coding dogfood memory"]);
   await assertNoRawText(page, [activeFileText, snippetText, memoryNote.text], "sanitized context summary before Send");
+  await assertTraceEntries(page, ["Project snippets attached", "Project memory attached"], "context attachment trace");
+  await assertTraceSanitizedAndBounded(page, [activeFileText, snippetText, memoryNote.text, taskGoal]);
   assert(commandCount === 0, "attaching context auto-sent chat");
 
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(userPrompt);
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expectVisibleText(page, assistantAnswer, "mock coding answer", 20_000);
+  await assertTraceEntries(page, ["Send requested", "Send accepted", "Chat stream finished"], "send and mock response trace");
   assert(commandCount === 1, `expected one explicit chat command, received ${commandCount}`);
   assert(abortCount === 0, "smoke unexpectedly sent abort command");
   assert(lastCommandBody?.payload?.context?.kind === "explicit_context_bundle", "send did not include explicit context bundle");
@@ -209,6 +216,7 @@ try {
   await expectVisibleText(page, "No explicit bundle items selected", "cleared context summary after Send", 20_000);
   await assertNoRequestsOfType(page, "gui.applyWorkspaceEditRequest", "after coding answer");
   await assertNoIdeAction(page, "runVerificationCommand", "after coding answer");
+  await assertTraceSanitizedAndBounded(page, [activeFileText, snippetText, memoryNote.text, taskGoal, userPrompt]);
 
   await assertNoForbiddenBridgeActions(page);
   const pageState = await page.evaluate(() => ({
@@ -403,6 +411,38 @@ async function dispatchHostMessage(page, message) {
   await page.evaluate((hostMessage) => {
     window.dispatchEvent(new MessageEvent("message", { data: hostMessage }));
   }, message);
+}
+
+async function assertTracePanelCollapsed(page) {
+  const traceState = await page.getByTestId("coding-session-trace-details").evaluate((details) => ({ open: details.open, text: details.textContent ?? "" }));
+  assert(traceState.open === false, "coding session trace panel was not collapsed by default");
+  assert(traceState.text.includes("Coding session trace") && traceState.text.includes("read-only"), "coding session trace summary was missing read-only metadata");
+  assert(!traceState.text.includes("Runtime refresh started"), "collapsed trace panel rendered entry details");
+}
+
+async function openTracePanel(page) {
+  const details = page.getByTestId("coding-session-trace-details");
+  if (!(await details.evaluate((node) => node.open))) {
+    await details.locator("summary").click();
+  }
+  await expectVisibleText(page, "Read-only sanitized in-memory trace; no actions, execution, persistence, or auto-run.", "trace read-only disclaimer", 20_000);
+}
+
+async function assertTraceEntries(page, expectedTexts, description) {
+  const traceText = await page.getByTestId("coding-session-trace-details").evaluate((details) => details.textContent ?? "").catch(() => "");
+  for (const text of expectedTexts) {
+    assert(traceText.includes(text), `missing ${description} entry in coding session trace: ${text}`);
+  }
+}
+
+async function assertTraceSanitizedAndBounded(page, forbiddenValues) {
+  const traceText = await page.getByTestId("coding-session-trace-details").evaluate((details) => details.textContent ?? "").catch(() => "");
+  for (const value of forbiddenValues) {
+    assert(!value || !traceText.includes(value), "raw prompt, context, or memory body leaked into coding session trace");
+  }
+  assertNoRawMarkers(traceText, "coding session trace");
+  const entryCount = await page.locator(".coding-session-trace-entry").count();
+  assert(entryCount <= 12, `coding session trace rendered more than the bounded panel slice: ${entryCount}`);
 }
 
 async function expectVisibleText(page, text, description, timeout = 10_000) {

@@ -29,6 +29,12 @@ This foundation does not persist traces to browser storage, engine state, projec
 
 The trace is not an audit log with security guarantees, not a replay protocol, not a task runner, not a tool bus, and not a policy engine. It may support future review UI, but trusted GUI or host code must still validate every action against explicit contracts before anything can run.
 
+## Smoke and dogfood coverage
+
+Deterministic Sprint 39 smokes exercise the trace only through local build/browser/mock runtime harnesses. The guided coding task smoke opens the collapsed panel and checks representative metadata for context attachment, Send, mock response, edit proposal detection, explicit apply request/result, verification request/result, and verification attachment. The real coding task dogfood smoke covers the same read-only trace path for context attachment and manual mock-provider Send without creating any real provider dependency. The general GUI browser smoke checks that the built app renders the collapsed read-only panel and does not persist trace data to browser storage.
+
+These smokes prove that the GUI displays sanitized, bounded, in-memory diagnostics for actions the harness explicitly performs. They do not prove model quality, host IDE behavior, real provider behavior, shell/git/tool execution, auto-apply, auto-run verification, or production release readiness.
+
 ## Maintenance rules
 
 When a future card wires trace entries into UI state, keep the trace in memory only unless a separate architecture decision approves storage. Do not store raw assistant messages, user prompts, provider payloads, file excerpts, verification output, or host diagnostics directly in trace entries. Store only safe labels, counts, enum values, request correlation, durations, exit codes, and short redacted tails.
@@ -36,5 +42,5 @@ When a future card wires trace entries into UI state, keep the trace in memory o
 Verification for this foundation is:
 
 ```bash
-cd apps/gui && npm test -- codingSessionTrace redaction && npm run typecheck && npm run build && cd ../.. && npm run check && git diff --check
+npm run smoke:guided-coding-task && npm run smoke:real-coding-task-dogfood && npm run smoke:gui-browser && npm run check && git diff --check
 ```

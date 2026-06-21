@@ -44,8 +44,10 @@ Keep the completed report in an ignored local evidence location unless a task ex
 15. If an edit proposal appears, inspect it in the GUI before any apply request. Record only whether it was reviewable and bounded; do not paste raw patch bodies or full file contents.
 16. If the user explicitly applies an edit, use only the visible manual apply control and record sanitized status only.
 17. If the user explicitly runs verification, use an allowlisted local command path and record only sanitized status, command family, and non-sensitive outcome.
-18. Confirm browser storage does not contain provider credentials, raw prompts, raw responses, raw file bodies, private paths, memory note text, or context bodies.
-19. Run the report through the relevant local sanitizer/checker if one exists before sharing.
+18. Open the `Coding session trace` panel. Confirm it starts collapsed/read-only, then inspect only sanitized metadata entries for the explicit actions you performed: context attach, Send, response/stream completion, edit proposal review/apply if used, and verification request/result if used.
+19. Confirm the trace remains a bounded in-memory diagnostic view: no action buttons, no auto-send/apply/run controls, no raw prompt, raw provider response, raw file body, memory body, verification body, private path, token, cookie, credential, or bridge payload dump.
+20. Confirm browser storage does not contain provider credentials, raw prompts, raw responses, raw file bodies, private paths, memory note text, context bodies, or coding-session trace entries.
+21. Run the report through the relevant local sanitizer/checker if one exists before sharing.
 
 ## Sanitized report template
 
@@ -83,6 +85,9 @@ Manual local evidence only. This report is not CI evidence, not automation evide
 - Edit proposal reviewed: <reviewable bounded proposal | no proposal | failed with sanitized summary | not run>
 - Manual apply status, if any: <applied by explicit user action | skipped | failed/denied with sanitized summary | not run>
 - Verification status, if any: <user-run sanitized summary | skipped | not run | out of scope for this run>
+- Trace panel default state: <collapsed and read-only | issue found with sanitized summary | not run>
+- Trace entries inspected: <context attach | Send | response/stream finish | edit proposal | apply request/result | verification request/result | verification attachment | none | not run>
+- Trace sanitization/bounds: <sanitized bounded metadata only | issue fixed before sharing | issue found with sanitized summary | not run>
 
 ## Safety checks
 
@@ -93,6 +98,7 @@ Manual local evidence only. This report is not CI evidence, not automation evide
 - Raw file bodies/patch bodies/bridge payloads absent from report: <checked | issue fixed before sharing | not run>
 - Context/memory/verification bodies absent from tracked report unless explicitly approved and sanitized: <checked | issue fixed before sharing | not run>
 - Browser storage checked for sensitive prompt/context/provider data: <checked | issue fixed before sharing | not run>
+- Browser storage checked for trace persistence: <checked; trace absent from storage | issue fixed before sharing | not run>
 - No cloud-required workflow used or claimed: <checked | issue fixed before sharing | not run>
 - No auto-send, auto-apply, auto-run verification, shell/git/tool execution, hidden file reads, or real-provider automation: <checked | issue fixed before sharing | not run>
 - No real-provider CI, publishing, signing, notarization, marketplace, or production release claim: <checked | issue fixed before sharing | not run>

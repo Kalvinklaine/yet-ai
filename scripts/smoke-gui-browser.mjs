@@ -70,6 +70,36 @@ try {
     failures.push(`GUI body text is too short or blank (${bodyText.length} characters).`);
   }
 
+  const traceDetails = page.getByTestId("coding-session-trace-details");
+  const traceState = await traceDetails.evaluate((details) => ({ open: details.open, text: details.textContent ?? "" })).catch(() => null);
+  if (!traceState) {
+    failures.push("Missing coding session trace panel.");
+  } else {
+    if (traceState.open) {
+      failures.push("Coding session trace panel should be collapsed by default.");
+    }
+    if (!traceState.text.includes("Coding session trace") || !traceState.text.includes("read-only")) {
+      failures.push("Coding session trace summary is missing read-only metadata.");
+    }
+    if (/token|secret|authorization|cookie|raw prompt|provider response/i.test(traceState.text)) {
+      failures.push("Coding session trace summary contains sensitive wording.");
+    }
+  }
+
+  const storageText = await page.evaluate(() => JSON.stringify({
+    localStorage: Object.fromEntries(Array.from({ length: localStorage.length }, (_, index) => {
+      const key = localStorage.key(index) ?? "";
+      return [key, localStorage.getItem(key)];
+    })),
+    sessionStorage: Object.fromEntries(Array.from({ length: sessionStorage.length }, (_, index) => {
+      const key = sessionStorage.key(index) ?? "";
+      return [key, sessionStorage.getItem(key)];
+    })),
+  }));
+  if (/codingSessionTrace|coding-session-trace|raw prompt|provider response|secret|authorization|cookie/i.test(storageText)) {
+    failures.push("Browser storage unexpectedly contains trace or sensitive coding-session data.");
+  }
+
   await page.waitForTimeout(250);
 
   if (failures.length > 0) {
@@ -81,7 +111,7 @@ try {
   }
 
   console.log("GUI browser smoke passed.");
-  console.log("Checked built GUI rendering, visible core sections, JavaScript execution, and local JS/CSS asset responses.");
+  console.log("Checked built GUI rendering, visible core sections, collapsed read-only coding-session trace, JavaScript execution, storage hygiene, and local JS/CSS asset responses.");
   console.log("No engine, provider credentials, OpenAI/ChatGPT, hosted Yet AI services, plugin, or JCEF automation were used.");
 } finally {
   await browser?.close().catch(() => undefined);
