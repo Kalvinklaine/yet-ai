@@ -30,6 +30,12 @@ export const codingSessionTraceFamilies = [
   "verification.progress",
   "verification.result",
   "verification.followupPromptDrafted",
+  "sandbox.metadataRecorded",
+  "sandbox.metadataBlocked",
+  "checkpoint.metadataVerified",
+  "checkpoint.metadataBlocked",
+  "rollback.metadataReady",
+  "rollback.metadataBlocked",
 ] as const;
 
 export const codingSessionTraceStatuses = [
@@ -149,7 +155,7 @@ export function appendCodingSessionTraceEntry(
 }
 
 export function sanitizeTraceDetails(value: unknown): CodingSessionTraceDetails | undefined {
-  const sanitizedValue = sanitizeDisplayValue(value);
+  const sanitizedValue = sanitizeTraceUnsafeKeys(sanitizeDisplayValue(value));
   if (!isPlainObject(sanitizedValue)) {
     return undefined;
   }
@@ -172,6 +178,20 @@ export function normalizeTraceFamily(value: unknown): CodingSessionTraceFamily {
 
 export function normalizeTraceStatus(value: unknown): CodingSessionTraceStatus {
   return statusSet.has(value) ? value as CodingSessionTraceStatus : "info";
+}
+
+function sanitizeTraceUnsafeKeys(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeTraceUnsafeKeys(item));
+  }
+  if (isPlainObject(value)) {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => isTraceUnsafeDetailKey(key) ? ["[redacted]", "[redacted]"] : [key, sanitizeTraceUnsafeKeys(item)]));
+  }
+  return value;
+}
+
+function isTraceUnsafeDetailKey(key: string): boolean {
+  return /^(?:rawCommand|raw_command|rawFileBody|raw_file_body|fileBody|file_body|command|cmd|cwd|env|environment|stackTrace|stack_trace|callstack)$/i.test(key);
 }
 
 function summarizeRejectedMetadata(value: unknown): unknown {

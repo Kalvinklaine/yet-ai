@@ -46,6 +46,34 @@ describe("codingSessionTrace", () => {
     });
   });
 
+  it("creates sanitized sandbox metadata-only trace entries", () => {
+    const entry = createCodingSessionTraceEntry({
+      family: "checkpoint.metadataVerified",
+      title: "Checkpoint metadata verified",
+      status: "succeeded",
+      summary: "Verified disposable checkpoint metadata; execution remains disabled",
+      requestId: "sandbox-request-1",
+      details: {
+        displayOnly: true,
+        allowedToExecute: false,
+        canStartLoop: false,
+        checkpointStatus: "verified",
+        rawFileBody: "SECRET_SENTINEL",
+        command: "npm test",
+      },
+    }, fixedOptions());
+    const rendered = JSON.stringify(entry);
+
+    expect(entry.family).toBe("checkpoint.metadataVerified");
+    expect(entry.details?.displayOnly).toBe(true);
+    expect(entry.details?.allowedToExecute).toBe(false);
+    expect(entry.details?.canStartLoop).toBe(false);
+    expect(rendered).toContain("[redacted]");
+    expect(rendered).not.toContain("SECRET_SENTINEL");
+    expect(rendered).not.toContain("npm test");
+    expect(localStorage.length).toBe(0);
+  });
+
   it("normalizes unsafe family and status values at the helper boundary", () => {
     const entry = createCodingSessionTraceEntry({
       family: "tool.shell.execute",
