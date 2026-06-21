@@ -507,15 +507,16 @@ fn test_state_matches_model(state: &ProviderTestState, model: &ModelSummary) -> 
 
 fn readiness_status_for_test_status(status: &ProviderTestStatus) -> ModelReadinessStatus {
     match status {
-        ProviderTestStatus::MissingSecret => ModelReadinessStatus::MissingCredentials,
+        ProviderTestStatus::MissingSecret | ProviderTestStatus::Unauthorized => {
+            ModelReadinessStatus::MissingCredentials
+        }
         ProviderTestStatus::MissingModel => ModelReadinessStatus::MissingModel,
         ProviderTestStatus::UnsupportedKind => ModelReadinessStatus::Unsupported,
-        ProviderTestStatus::Reachable
-        | ProviderTestStatus::BadUrl
-        | ProviderTestStatus::Unauthorized
+        ProviderTestStatus::Reachable => ModelReadinessStatus::Ready,
+        ProviderTestStatus::BadUrl
         | ProviderTestStatus::Timeout
         | ProviderTestStatus::Unreachable
-        | ProviderTestStatus::UpstreamError => ModelReadinessStatus::Ready,
+        | ProviderTestStatus::UpstreamError => ModelReadinessStatus::Unsupported,
     }
 }
 
@@ -524,7 +525,9 @@ fn readiness_reason_for_test_state(
     kind: &ProviderKind,
 ) -> Option<String> {
     match state.status {
-        ProviderTestStatus::MissingSecret => Some("Provider sign-in is incomplete.".to_string()),
+        ProviderTestStatus::MissingSecret | ProviderTestStatus::Unauthorized => {
+            Some("Provider sign-in is incomplete.".to_string())
+        }
         ProviderTestStatus::MissingModel if *kind == ProviderKind::Ollama => {
             Some("Configured local model is not installed.".to_string())
         }
@@ -532,7 +535,12 @@ fn readiness_reason_for_test_state(
         ProviderTestStatus::UnsupportedKind => {
             Some("Provider is not supported for streaming chat.".to_string())
         }
-        _ => None,
+        ProviderTestStatus::BadUrl => Some("Provider endpoint is invalid.".to_string()),
+        ProviderTestStatus::Timeout => Some("Provider reachability check timed out.".to_string()),
+        ProviderTestStatus::Unreachable | ProviderTestStatus::UpstreamError => {
+            Some("Provider reachability could not be confirmed.".to_string())
+        }
+        ProviderTestStatus::Reachable => None,
     }
 }
 
@@ -737,7 +745,7 @@ pub async fn create_provider_config(
         enabled: request.enabled.unwrap_or(true),
         base_url: normalize_base_url(kind, request.base_url)?,
         auth: normalize_auth(request.auth),
-        models: request.models.unwrap_or_default(),
+        models: sanitize_stored_models(request.models.unwrap_or_default()),
         capabilities: request.capabilities.unwrap_or_default(),
     };
     validate_config(&config)?;
@@ -764,23 +772,30 @@ pub async fn update_provider_config(
         }
     }
     let mut config = get_provider_config(config_dir, id).await?;
+    let mut test_state_maybe_stale = false;
     if let Some(kind) = request.kind {
+        test_state_maybe_stale |= config.kind != kind;
         config.kind = kind;
     }
     if let Some(display_name) = request.display_name {
         config.display_name = clean(display_name).ok_or(ProviderError::MissingDisplayName)?;
     }
     if let Some(enabled) = request.enabled {
+        test_state_maybe_stale |= config.enabled != enabled;
         config.enabled = enabled;
     }
     if request.base_url.is_some() || config.kind == ProviderKind::Ollama {
-        config.base_url = normalize_base_url(
+        let base_url = normalize_base_url(
             config.kind.clone(),
-            request.base_url.or(Some(config.base_url)),
+            request.base_url.or(Some(config.base_url.clone())),
         )?;
+        test_state_maybe_stale |= config.base_url != base_url;
+        config.base_url = base_url;
     }
     let secret_change = if let Some(auth) = request.auth {
         let secret_change = secret_change_for_auth_request(&auth);
+        test_state_maybe_stale |= config.auth.auth_type != auth.auth_type
+            || !matches!(secret_change, SecretChange::None);
         config.auth = StoredAuthConfig {
             auth_type: auth.auth_type,
             api_key: None,
@@ -790,9 +805,14 @@ pub async fn update_provider_config(
         SecretChange::None
     };
     if let Some(models) = request.models {
+        let models = sanitize_stored_models(models);
+        test_state_maybe_stale |= !stored_models_equivalent(&config.models, &models);
         config.models = models;
     }
     if let Some(capabilities) = request.capabilities {
+        test_state_maybe_stale |= config.capabilities.chat != capabilities.chat
+            || config.capabilities.completion != capabilities.completion
+            || config.capabilities.embeddings != capabilities.embeddings;
         config.capabilities = capabilities;
     }
     validate_config(&config)?;
@@ -814,6 +834,9 @@ pub async fn update_provider_config(
             rollback_secret(config_dir, id, previous_secret).await?;
         }
         return Err(error);
+    }
+    if test_state_maybe_stale {
+        clear_provider_test_state(config_dir, id).await?;
     }
     if should_rollback_secret {
         get_provider_config_with_secrets(config_dir, id).await
@@ -1094,13 +1117,31 @@ async fn test_openai_compatible_provider(provider: &StoredProviderConfig) -> Pro
         }
     }
     match request.send().await {
-        Ok(response) if response.status().is_success() => provider_test_response(
-            provider,
-            true,
-            ProviderTestStatus::Reachable,
-            "Provider is reachable and accepted the configured credentials.",
-            Some(model.id.clone()),
-        ),
+        Ok(response) if response.status().is_success() => {
+            match openai_models_model_present(response, &model.id).await {
+                Ok(true) => provider_test_response(
+                    provider,
+                    true,
+                    ProviderTestStatus::Reachable,
+                    "Provider is reachable and the configured model is available.",
+                    Some(model.id.clone()),
+                ),
+                Ok(false) => provider_test_response(
+                    provider,
+                    false,
+                    ProviderTestStatus::MissingModel,
+                    "Provider is reachable but the configured model was not listed.",
+                    Some(model.id.clone()),
+                ),
+                Err(error) => provider_test_response(
+                    provider,
+                    false,
+                    error,
+                    "Provider returned an error during the reachability check.",
+                    Some(model.id.clone()),
+                ),
+            }
+        }
         Ok(response)
             if response.status() == reqwest::StatusCode::UNAUTHORIZED
                 || response.status() == reqwest::StatusCode::FORBIDDEN =>
@@ -1137,6 +1178,34 @@ async fn test_openai_compatible_provider(provider: &StoredProviderConfig) -> Pro
     }
 }
 
+async fn openai_models_model_present(
+    response: reqwest::Response,
+    model_id: &str,
+) -> Result<bool, ProviderTestStatus> {
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while body.len() < PROVIDER_TEST_BODY_LIMIT {
+        let Some(chunk) = futures_util::StreamExt::next(&mut stream).await else {
+            break;
+        };
+        let chunk = chunk.map_err(|error| {
+            if error.is_timeout() {
+                ProviderTestStatus::Timeout
+            } else {
+                ProviderTestStatus::UpstreamError
+            }
+        })?;
+        let remaining = PROVIDER_TEST_BODY_LIMIT - body.len();
+        body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+    }
+    let value: serde_json::Value =
+        serde_json::from_slice(&body).map_err(|_| ProviderTestStatus::UpstreamError)?;
+    let models = value["data"]
+        .as_array()
+        .ok_or(ProviderTestStatus::UpstreamError)?;
+    Ok(models.iter().any(|model| model["id"].as_str() == Some(model_id)))
+}
+
 fn provider_test_response(
     provider: &StoredProviderConfig,
     ok: bool,
@@ -1164,9 +1233,19 @@ async fn load_provider_test_state(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(_) => return Err(ProviderError::Storage),
     };
-    let state: ProviderTestState =
-        serde_json::from_str(&content).map_err(|_| ProviderError::InvalidConfig)?;
+    let state: ProviderTestState = match serde_json::from_str(&content) {
+        Ok(state) => state,
+        Err(_) => return Ok(None),
+    };
     Ok(Some(state))
+}
+
+async fn clear_provider_test_state(config_dir: &Path, id: &str) -> Result<(), ProviderError> {
+    match tokio::fs::remove_file(provider_test_state_path(config_dir, id)?).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(ProviderError::Storage),
+    }
 }
 
 async fn store_provider_test_state(
@@ -1632,6 +1711,34 @@ fn normalize_auth(auth: Option<AuthWriteRequest>) -> StoredAuthConfig {
             api_key: None,
         },
     }
+}
+
+fn sanitize_stored_models(models: Vec<ModelSummary>) -> Vec<ModelSummary> {
+    models
+        .into_iter()
+        .filter_map(|model| {
+            let id = clean(model.id)?;
+            let display_name = clean(model.display_name).unwrap_or_else(|| id.clone());
+            Some(ModelSummary {
+                id,
+                display_name,
+                provider_id: None,
+                capabilities: ModelCapabilities::default(),
+                readiness: ModelReadiness::default(),
+                capability_provenance: None,
+                local_availability: None,
+                provider_family: None,
+            })
+        })
+        .collect()
+}
+
+fn stored_models_equivalent(left: &[ModelSummary], right: &[ModelSummary]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right.iter())
+            .all(|(left, right)| left.id == right.id && left.display_name == right.display_name)
 }
 
 fn clean_required(value: Option<String>, error: ProviderError) -> Result<String, ProviderError> {

@@ -8746,7 +8746,7 @@ async fn provider_secret_atomic_migration_does_not_overwrite_newer_secret() {
 async fn provider_secret_test_first_access_uses_stored_key_over_inline_key() {
     let paths = test_storage_paths();
     let (base_url, auth_receiver) =
-        start_mock_models_provider(StatusCode::OK, r#"{\"data\":[{\"id\":\"gpt-test\"}]}"#).await;
+        start_mock_models_provider(StatusCode::OK, r#"{"data":[{"id":"gpt-test"}]}"#).await;
     let app = app(AppState::with_storage_paths(
         ProductIdentity::load().unwrap(),
         AuthToken::new(TEST_TOKEN).unwrap(),
@@ -9030,7 +9030,7 @@ async fn provider_secret_corrupt_store_with_inline_key_fails_safely() {
 async fn provider_secret_corrupt_store_provider_test_does_not_fallback_to_inline() {
     let paths = test_storage_paths();
     let (base_url, auth_receiver) =
-        start_mock_models_provider(StatusCode::OK, r#"{\"data\":[{\"id\":\"gpt-test\"}]}"#).await;
+        start_mock_models_provider(StatusCode::OK, r#"{"data":[{"id":"gpt-test"}]}"#).await;
     let app = app(AppState::with_storage_paths(
         ProductIdentity::load().unwrap(),
         AuthToken::new(TEST_TOKEN).unwrap(),
@@ -9841,6 +9841,343 @@ async fn provider_test_ollama_success_and_missing_model_use_loopback_without_aut
         .unwrap();
     assert_eq!(caps_provider["providerFamily"], "ollama");
     assert_eq!(caps_provider["models"][0]["readiness"], model["readiness"]);
+}
+
+#[tokio::test]
+async fn provider_failed_latest_test_makes_models_providers_caps_not_ready() {
+    let api_key = "sk-provider-failed-ready-secret-abcd";
+    let (base_url, auth_receiver) = start_mock_models_provider(
+        StatusCode::UNAUTHORIZED,
+        "raw-provider-body access_token=secret Bearer should-not-leak",
+    )
+    .await;
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/providers/openai-stream/test",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["status"], "unauthorized");
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer sk-provider-failed-ready-secret-abcd",
+        "provider failed latest test",
+    )
+    .await;
+
+    for (uri, provider_path) in [
+        ("/v1/models", "models"),
+        ("/v1/providers", "providers"),
+        ("/v1/caps", "caps"),
+    ] {
+        let (status, body) = json_response_from(
+            app.clone(),
+            authed_request(Method::GET, uri, Body::empty()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{provider_path}");
+        let model = match provider_path {
+            "models" => &body["models"][0],
+            "providers" => &body["providers"][0]["models"][0],
+            _ => &body["providers"][0]["models"][0],
+        };
+        assert_eq!(model["readiness"]["status"], "missing_credentials");
+        assert_eq!(model["readiness"]["lastTestStatus"], "unauthorized");
+        assert_ne!(model["readiness"]["status"], "ready");
+        let text = body.to_string();
+        assert!(!text.contains(api_key));
+        assert!(!text.contains("should-not-leak"));
+        assert!(!text.contains("access_token"));
+        assert!(!text.contains("Bearer"));
+    }
+}
+
+#[tokio::test]
+async fn provider_update_invalidates_stale_provider_test_state() {
+    let api_key = "sk-provider-update-state-secret-abcd";
+    let (base_url, auth_receiver) =
+        start_mock_models_provider(StatusCode::OK, r#"{"data":[{"id":"gpt-test"}]}"#).await;
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/providers/openai-stream/test",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer sk-provider-update-state-secret-abcd",
+        "provider update invalidation setup",
+    )
+    .await;
+    assert!(paths
+        .config_dir
+        .join("provider-test-state.d/openai-stream.json")
+        .exists());
+
+    let update = json!({
+        "models": [{ "id": "gpt-updated", "displayName": "GPT Updated" }]
+    });
+    let (status, updated) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::PATCH,
+            "/v1/providers/openai-stream",
+            Body::from(update.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["models"][0]["id"], "gpt-updated");
+    assert!(!paths
+        .config_dir
+        .join("provider-test-state.d/openai-stream.json")
+        .exists());
+
+    let (status, models) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/models", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(models["models"][0]["readiness"]["status"], "ready");
+    assert_eq!(models["models"][0]["readiness"]["provenance"], "configured");
+    assert!(models["models"][0]["readiness"].get("lastTestStatus").is_none());
+}
+
+#[tokio::test]
+async fn provider_write_strips_client_supplied_runtime_metadata() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let provider = json!({
+        "id": "metadata-injection-provider",
+        "kind": "openai-compatible",
+        "displayName": "Metadata Injection Provider",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:8080/v1",
+        "auth": { "type": "api_key", "apiKey": "sk-runtime-metadata-secret-abcd" },
+        "models": [{
+            "id": "gpt-runtime",
+            "displayName": "GPT Runtime",
+            "providerId": "evil-provider",
+            "providerFamily": "ollama",
+            "capabilities": { "chat": false, "streaming": false, "tools": true, "reasoning": true },
+            "readiness": {
+                "status": "ready",
+                "reason": "Bearer raw-looking reason /Users/example/api_key",
+                "provenance": "runtime_tested",
+                "lastTestStatus": "reachable",
+                "lastTestedAt": "2026-06-21T10:00:00Z"
+            },
+            "capabilityProvenance": {
+                "chat": "runtime_tested",
+                "streaming": "runtime_tested",
+                "tools": "provider_declared",
+                "reasoning": "provider_declared"
+            },
+            "localAvailability": {
+                "status": "reachable",
+                "checkedAt": "2026-06-21T10:00:00Z",
+                "reason": "raw provider response body"
+            }
+        }]
+    });
+
+    let (status, created) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/providers",
+            Body::from(provider.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(created["models"][0]["readiness"]["provenance"], "configured");
+    assert!(created["models"][0]["readiness"].get("lastTestStatus").is_none());
+    assert_eq!(created["models"][0]["providerFamily"], "openai_compatible");
+    assert_eq!(created["models"][0]["capabilities"]["tools"], false);
+    assert_eq!(created["models"][0]["capabilities"]["reasoning"], false);
+    let text = created.to_string();
+    assert!(!text.contains("raw-looking"));
+    assert!(!text.contains("evil-provider"));
+    assert!(!text.contains("runtime_metadata"));
+    let config_text = read_provider_config_text(&paths, "metadata-injection-provider");
+    assert!(!config_text.contains("providerFamily"));
+    assert!(!config_text.contains("capabilityProvenance"));
+    assert!(!config_text.contains("localAvailability"));
+    assert!(!config_text.contains("lastTestStatus"));
+    assert!(!config_text.contains("lastTestedAt"));
+    assert!(!config_text.contains("raw-looking"));
+    assert!(!config_text.contains("evil-provider"));
+    assert!(!config_text.contains("sk-runtime-metadata-secret"));
+}
+
+#[tokio::test]
+async fn provider_corrupt_test_state_falls_back_to_configured_summary() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    configure_openai_provider_with_id(
+        app.clone(),
+        "corrupt-test-state-provider",
+        "http://127.0.0.1:8080/v1".to_string(),
+        "sk-corrupt-state-secret-abcd",
+        "gpt-test",
+    )
+    .await;
+    let state_dir = paths.config_dir.join("provider-test-state.d");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    std::fs::write(
+        state_dir.join("corrupt-test-state-provider.json"),
+        r#"{"status":"reachable","message":"sk-corrupt-state-secret /Users/example""#,
+    )
+    .unwrap();
+
+    for uri in ["/v1/models", "/v1/providers", "/v1/caps"] {
+        let (status, body) = json_response_from(
+            app.clone(),
+            authed_request(Method::GET, uri, Body::empty()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+        let model = if uri == "/v1/models" {
+            &body["models"][0]
+        } else {
+            &body["providers"][0]["models"][0]
+        };
+        assert_eq!(model["readiness"]["status"], "ready");
+        assert_eq!(model["readiness"]["provenance"], "configured");
+        assert!(model["readiness"].get("lastTestStatus").is_none());
+        assert!(!body.to_string().contains("sk-corrupt-state-secret"));
+    }
+}
+
+#[tokio::test]
+async fn provider_test_openai_compatible_requires_model_verification() {
+    let api_key = "sk-provider-model-verify-secret-abcd";
+    let (base_url, auth_receiver) =
+        start_mock_models_provider(StatusCode::OK, r#"{"data":[{"id":"other-model"}]}"#).await;
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/providers/openai-stream/test",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["status"], "missing_model");
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer sk-provider-model-verify-secret-abcd",
+        "provider model verification",
+    )
+    .await;
+
+    let (status, models) = json_response_from(
+        app,
+        authed_request(Method::GET, "/v1/models", Body::empty()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(models["models"][0]["readiness"]["status"], "missing_model");
+    assert_eq!(models["models"][0]["readiness"]["provenance"], "runtime_tested");
+    assert_eq!(models["models"][0]["capabilityProvenance"]["chat"], "configured");
+}
+
+#[tokio::test]
+async fn provider_failed_latest_test_prevents_chat_selection() {
+    let api_key = "sk-provider-chat-failed-test-abcd";
+    let (base_url, auth_receiver) = start_mock_models_provider(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "raw-provider-body api_key=secret Bearer should-not-leak",
+    )
+    .await;
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    let (status, body) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/providers/openai-stream/test",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["status"], "upstream_error");
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer sk-provider-chat-failed-test-abcd",
+        "provider failed chat setup",
+    )
+    .await;
+
+    let status = send_user_message_with_content(
+        app.clone(),
+        "chat-failed-provider-test",
+        "hello should not call failed provider",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let thread = wait_for_chat_messages(app.clone(), "chat-failed-provider-test", 2).await;
+    assert_eq!(thread["messages"][1]["role"], "error");
+    assert_eq!(
+        thread["messages"][1]["content"],
+        "Configure a chat-ready model for the enabled provider."
+    );
+    assert_sanitized_sse_error(&thread.to_string());
+    assert!(!thread.to_string().contains(api_key));
 }
 
 #[tokio::test]
