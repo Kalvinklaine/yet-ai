@@ -33,6 +33,7 @@ Additional local evidence templates live under `docs/dogfood/`, including the re
 - `architecture/009-runtime-lifecycle-roadmap.md` — runtime lifecycle ownership, metadata-only `host.runtimeStatus` diagnostics, IDE/browser parity matrix, and future daemon-lite decision criteria.
 - `architecture/010-tool-authority-and-edit-pipeline-roadmap.md` — current safe-edit proposal baseline and future deny-by-default tool authority/edit-apply policy layers.
 - `architecture/011-sandbox-agent-prerequisites.md` — conservative prerequisites for any future experimental sandbox-agent mode, including opt-in, checkpoints, rollback, limits, allowlisted verification, and no hidden reads or broad authority.
+- `architecture/012-coding-session-trace.md` — GUI-local read-only coding-session trace model, event families, sanitization rules, in-memory scope, and non-authority boundaries.
 
 ## Current login-first milestone status
 
