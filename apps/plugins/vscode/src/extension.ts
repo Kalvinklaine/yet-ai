@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
-import { clearStoredSessionToken, collectRuntimeDiagnostics, formatRuntimeDiagnostics, prepareEngineConnection, redactRuntimeDiagnosticText, setStoredSessionToken, stopLaunchedEngine } from "./engineConnection";
+import { clearStoredSessionToken, collectRuntimeDiagnostics, formatRuntimeDiagnostics, prepareEngineConnection, redactRuntimeDiagnosticText, runtimeStatusPayloadFromDiagnostics, setStoredSessionToken, stopLaunchedEngine } from "./engineConnection";
 import { assertExtensionIdentity, clearSessionTokenCommand, configurationPrefix, extensionCommand, loadProductIdentity, runtimeStatusCommand, setSessionTokenCommand } from "./identity";
-import { openYetAiWebview } from "./webview";
+import { createRuntimeFailureHostRuntimeStatus, openYetAiWebview } from "./webview";
 import { startYetAiLspClient, stopYetAiLspClient } from "./lspClient";
 
 let engineOutput: vscode.OutputChannel | undefined;
@@ -20,6 +20,7 @@ export function activate(context: vscode.ExtensionContext): void {
     } catch (error) {
       const message = sanitizeCommandError(error, "Unknown Yet AI extension error.");
       void vscode.window.showErrorMessage(message);
+      engineOutput?.appendLine(`host.runtimeStatus ${JSON.stringify(createRuntimeFailureHostRuntimeStatus(error).payload)}`);
       engineOutput?.appendLine(message);
     }
   });
@@ -28,6 +29,7 @@ export function activate(context: vscode.ExtensionContext): void {
     try {
       const diagnostics = await collectRuntimeDiagnostics(context, identity);
       engineOutput?.appendLine(formatRuntimeDiagnostics(diagnostics));
+      engineOutput?.appendLine(`host.runtimeStatus ${JSON.stringify(runtimeStatusPayloadFromDiagnostics(diagnostics))}`);
       engineOutput?.show(true);
       void vscode.window.showInformationMessage(`Yet AI runtime diagnostics: ping ${diagnostics.pingStatus}. See Yet AI Runtime output for details.`);
     } catch (error) {

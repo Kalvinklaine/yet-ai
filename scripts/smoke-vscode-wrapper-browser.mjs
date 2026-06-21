@@ -166,7 +166,25 @@ try {
     requestId: guiReady?.requestId,
     payload: { runtimeUrl: runtimeBaseUrl, sessionToken: runtimeToken, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false },
   });
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.runtimeStatus",
+    payload: {
+      protocolVersion: "2026-06-21",
+      surface: "vscode",
+      lifecycle: "auth_mismatch",
+      runtimeOwner: "ide_host",
+      launchMode: "auto",
+      tokenState: "mismatch",
+      processState: "running",
+      diagnosis: "runtime session mismatch",
+      nextAction: "Reopen the chat to refresh the IDE runtime session.",
+      cloudRequired: false,
+      authority: "metadata_only",
+    },
+  });
   await expectAttachedText(page, "Host runtime settings received", "host.ready bridge log");
+  await expectAttachedText(page, "Host message host.runtimeStatus", "host.runtimeStatus bridge log");
   await expectAttachedText(page, "bridge vscode", "VS Code bridge mode badge");
   await expectAttachedText(page, "VS Code controlled actions", "controlled action availability");
   await expectAttachedText(page, "Provider setup", "VS Code provider setup surface");
@@ -188,7 +206,7 @@ try {
   if (initialChatText.includes(activeFileExcerptAssistantProposal) || initialChatText.includes("Assistant must not request active file excerpts.")) {
     failures.push("Assistant getActiveFileExcerpt proposal rendered or became actionable.");
   }
-  await expectVisibleText(page, "Proposed a read-only IDE action: Reveal workspace range. Review the proposal card below. It will not run automatically.", "compact assistant proposal chat copy");
+  await expectVisibleText(page, "Read-only IDE action proposal", "compact assistant proposal chat copy");
   await expectVisibleText(page, "Read-only IDE action proposal", "assistant read-only IDE action proposal card");
   await expectVisibleText(page, proposalSummary, "assistant proposal summary");
   await expectVisibleText(page, "Reveal workspace range", "assistant proposal action label");

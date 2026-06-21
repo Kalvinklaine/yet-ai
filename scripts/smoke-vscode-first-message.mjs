@@ -102,6 +102,28 @@ try {
 
   await page.goto(`${guiBaseUrl}/index.html`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => window.__yetAiVsCodeMessages?.some((message) => message?.type === "gui.ready"), undefined, { timeout: 10_000 });
+  await page.evaluate(({ version }) => {
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version,
+        type: "host.runtimeStatus",
+        payload: {
+          protocolVersion: "2026-06-21",
+          surface: "vscode",
+          lifecycle: "connected",
+          runtimeOwner: "ide_host",
+          launchMode: "auto",
+          tokenState: "present",
+          processState: "running",
+          diagnosis: "runtime connected",
+          nextAction: "Type a prompt or refresh provider readiness.",
+          cloudRequired: false,
+          authority: "metadata_only",
+        },
+      },
+    }));
+  }, { version: bridgeVersion });
+
   await page.evaluate(({ version, runtimeUrl, token }) => {
     window.dispatchEvent(new MessageEvent("message", {
       data: {
@@ -120,6 +142,7 @@ try {
   }, { version: bridgeVersion, runtimeUrl: runtimeBaseUrl, token: runtimeToken });
 
   await expectAttachedText(page, "Host runtime settings received", "host.ready runtime bootstrap");
+  await expectAttachedText(page, "Host message host.runtimeStatus", "host.runtimeStatus lifecycle metadata");
   await expectVisibleBodyTextAny(page, ["RUNTIME CONNECTED", "Runtime connected — choose the first-message path"], "visible runtime connected state through host.ready", 20_000);
   await expectVisibleBodyText(page, "State: Provider required", "provider-required first-message state", 20_000);
   await expectVisibleBodyText(page, "Provider required for first message", "provider-required guidance", 20_000);

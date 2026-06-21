@@ -194,6 +194,7 @@ try {
     setStoredSessionToken,
     isBridgeSafeSessionToken,
     validateEngineConnectionSettings,
+    runtimeStatusPayloadFromDiagnostics,
     validateLoopbackUrl,
     validateRuntimeLaunchProtocol,
     validateRuntimeUrl,
@@ -215,6 +216,49 @@ try {
   assert.match(hostReadyRuntimeDeliveryStatus({ willLaunch: true, sessionTokenSource: "none" }), /IDE-launched ephemeral runtime token; delivered to the webview by trusted host\.ready/);
   assert.match(hostReadyRuntimeDeliveryStatus({ willLaunch: false, sessionTokenSource: "none" }), /runtime URL only; no token configured/);
   assert.match(hostReadyRuntimeDeliveryStatus({ willLaunch: false, sessionTokenSource: "secretStorage" }), /runtime URL plus SecretStorage token/);
+  const connectedRuntimeStatus = runtimeStatusPayloadFromDiagnostics({
+    runtimeUrl: "http://127.0.0.1:8001/",
+    launchMode: "auto",
+    configuredEngineBinaryPath: true,
+    sessionTokenSource: "secretStorage",
+    hostReadyRuntimeDelivery: "runtime URL plus SecretStorage token; delivered to the webview by trusted host.ready and not printed in diagnostics.",
+    engineBinaryStatus: "found configured binary: yet-lsp",
+    pluginLaunchedProcessStatus: "running",
+    packagedGuiStatus: "present; packaged GUI index.html is available.",
+    pingStatus: "passed",
+    guidance: "safe guidance",
+  });
+  assert.deepEqual(connectedRuntimeStatus, {
+    protocolVersion: "2026-06-21",
+    surface: "vscode",
+    lifecycle: "connected",
+    runtimeOwner: "ide_host",
+    launchMode: "auto",
+    tokenState: "present",
+    processState: "running",
+    diagnosis: "runtime connected",
+    nextAction: "Type a prompt or refresh provider readiness.",
+    cloudRequired: false,
+    authority: "metadata_only",
+  });
+  const authMismatchRuntimeStatus = runtimeStatusPayloadFromDiagnostics({
+    ...connectedRuntimeStatus,
+    runtimeUrl: "http://127.0.0.1:8001/",
+    launchMode: "connect",
+    configuredEngineBinaryPath: false,
+    sessionTokenSource: "secretStorage",
+    hostReadyRuntimeDelivery: "runtime URL plus SecretStorage token; delivered to the webview by trusted host.ready and not printed in diagnostics.",
+    engineBinaryStatus: "not checked in connect mode",
+    pluginLaunchedProcessStatus: "not running",
+    packagedGuiStatus: "present; packaged GUI index.html is available.",
+    pingStatus: "failed: HTTP 401 unauthorized local runtime session token mismatch with local-dev-token",
+    guidance: "safe guidance",
+  });
+  assert.equal(authMismatchRuntimeStatus.lifecycle, "auth_mismatch");
+  assert.equal(authMismatchRuntimeStatus.runtimeOwner, "external");
+  assert.equal(authMismatchRuntimeStatus.tokenState, "mismatch");
+  assert.equal(JSON.stringify(authMismatchRuntimeStatus).includes("local-dev-token"), false);
+  assert.match(authMismatchRuntimeStatus.nextAction, /SecretStorage token|reopen the chat/i);
 
   assert.doesNotThrow(() => validateLoopbackUrl("https://127.0.0.1:5173", "yetai.guiDevUrl"));
   assert.doesNotThrow(() => validateRuntimeUrl("http://127.0.0.1:8001", "yetai.runtimeUrl"));
@@ -341,8 +385,9 @@ try {
   ]) {
     assert.equal(commandRenderedText.includes(forbidden), false, `top-level command error leaked ${forbidden}`);
   }
+  assert.match(commandRenderedText, /host\.runtimeStatus \{"protocolVersion":"2026-06-21","surface":"vscode"/);
   assert.equal(errorMessages.length, 2);
-  assert.equal(outputLines.length, 2);
+  assert.equal(outputLines.length, 3);
 
   const longCommandSecret = "long-command-secret-sentinel";
   const longCommandErrorText = `long command failed Authorization: Bearer ${longCommandSecret}\n${"safe detail\n".repeat(300)}`;
@@ -361,8 +406,12 @@ try {
   const longOutputStart = outputLines.length;
   await registeredCommands.get("yetaicmd.openChat")();
   const longCommandMessages = [...errorMessages.slice(longErrorStart), ...outputLines.slice(longOutputStart)];
-  assert.equal(longCommandMessages.length, 2);
-  for (const message of longCommandMessages) {
+  const longRuntimeStatusMessages = longCommandMessages.filter((message) => message.startsWith("host.runtimeStatus "));
+  assert.equal(longRuntimeStatusMessages.length, 1);
+  assert.equal(longRuntimeStatusMessages[0].includes(longCommandSecret), false, "long runtime status leaked secret");
+  const longCommandErrorMessages = longCommandMessages.filter((message) => !message.startsWith("host.runtimeStatus "));
+  assert.equal(longCommandErrorMessages.length, 2);
+  for (const message of longCommandErrorMessages) {
     assert.equal(message.includes(longCommandSecret), false, "long top-level command error leaked secret");
     assert.equal(message.length, 1000, "long top-level command error was not capped");
     assert.equal(message.endsWith("… [truncated sanitized command error]"), true, "long top-level command error was not marked truncated");
@@ -384,8 +433,12 @@ try {
   const nonErrorOutputStart = outputLines.length;
   await registeredCommands.get("yetaicmd.openChat")();
   const nonErrorMessages = [...errorMessages.slice(nonErrorStart), ...outputLines.slice(nonErrorOutputStart)];
-  assert.equal(nonErrorMessages.length, 2);
-  for (const message of nonErrorMessages) {
+  const nonErrorRuntimeStatusMessages = nonErrorMessages.filter((message) => message.startsWith("host.runtimeStatus "));
+  assert.equal(nonErrorRuntimeStatusMessages.length, 1);
+  assert.equal(nonErrorRuntimeStatusMessages[0].includes(nonErrorSecret), false, "non-Error runtime status leaked secret");
+  const nonErrorCommandMessages = nonErrorMessages.filter((message) => !message.startsWith("host.runtimeStatus "));
+  assert.equal(nonErrorCommandMessages.length, 2);
+  for (const message of nonErrorCommandMessages) {
     assert.match(message, /non-error command failed/);
     assert.equal(message.includes(nonErrorSecret), false, "non-Error top-level command error leaked secret");
     assert.ok(message.length <= 1000, "non-Error top-level command error was not bounded");

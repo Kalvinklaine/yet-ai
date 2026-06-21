@@ -3,13 +3,28 @@ import * as crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { EngineConnection, getLoopbackOrigin, isBridgeSafeSessionToken, validateRuntimeUrl } from "./engineConnection";
+import { EngineConnection, getLoopbackOrigin, isBridgeSafeSessionToken, redactRuntimeDiagnosticText, validateRuntimeUrl } from "./engineConnection";
 import { ProductIdentity, bridgeVersion, configurationPrefix } from "./identity";
 
 export type HostMessage =
   | { version: string; type: "host.ready"; requestId?: string; payload?: Record<string, unknown> }
-  | { version: string; type: "host.openedFromCommand"; requestId?: never; payload?: Record<string, unknown> }
+  | { version: string; type: "host.openedFromCommand" | "host.runtimeStatus"; requestId?: never; payload?: Record<string, unknown> }
   | { version: string; type: "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult"; requestId?: string; payload?: Record<string, unknown> };
+
+type RuntimeStatusLifecycle = "unknown" | "checking" | "starting" | "connected" | "degraded" | "disconnected" | "restarting" | "stopped" | "auth_mismatch" | "invalid_settings" | "failed";
+type RuntimeStatusLaunchMode = "auto" | "connect" | "launch" | "preview" | "manual" | "unknown";
+type RuntimeStatusTokenState = "unknown" | "not_required" | "absent" | "present" | "mismatch" | "invalid";
+type RuntimeStatusProcessState = "unknown" | "not_owned" | "checking" | "starting" | "running" | "exited" | "stopped" | "failed";
+
+type RuntimeStatusInput = {
+  lifecycle: RuntimeStatusLifecycle;
+  launchMode?: RuntimeStatusLaunchMode;
+  runtimeOwner?: "ide_host" | "external" | "user" | "test_harness";
+  tokenState?: RuntimeStatusTokenState;
+  processState?: RuntimeStatusProcessState;
+  diagnosis: string;
+  nextAction: string;
+};
 
 type HostContextPayload = {
   kind: "active_editor";
@@ -211,6 +226,7 @@ export function openYetAiWebview(
     }
     guiReady = true;
     guiReadyRequestId = message.requestId;
+    void panel.webview.postMessage(createConnectedHostRuntimeStatus(connection));
     void panel.webview.postMessage(createHostReady(identity, connection, message.requestId));
     void panel.webview.postMessage({
       version: bridgeVersion,
@@ -253,6 +269,72 @@ export function createHostReady(
       cloudRequired: false,
     },
   };
+}
+
+export function createHostRuntimeStatus(status: RuntimeStatusInput): HostMessage {
+  return {
+    version: bridgeVersion,
+    type: "host.runtimeStatus",
+    payload: {
+      protocolVersion: "2026-06-21",
+      surface: "vscode",
+      lifecycle: status.lifecycle,
+      runtimeOwner: status.runtimeOwner ?? "ide_host",
+      launchMode: status.launchMode ?? "unknown",
+      tokenState: status.tokenState ?? "unknown",
+      processState: status.processState ?? "unknown",
+      diagnosis: sanitizeRuntimeStatusMessage(status.diagnosis, "runtime status changed"),
+      nextAction: sanitizeRuntimeStatusMessage(status.nextAction, "Use Yet AI runtime diagnostics or reopen the chat."),
+      cloudRequired: false,
+      authority: "metadata_only",
+    },
+  };
+}
+
+export function createConnectedHostRuntimeStatus(connection: EngineConnection, launchMode: RuntimeStatusLaunchMode = "unknown"): HostMessage {
+  return createHostRuntimeStatus({
+    lifecycle: "connected",
+    launchMode,
+    tokenState: connection.sessionToken === undefined ? "absent" : "present",
+    processState: "running",
+    diagnosis: "runtime connected",
+    nextAction: "Type a prompt or refresh provider readiness.",
+  });
+}
+
+export function createRuntimeFailureHostRuntimeStatus(error: unknown, launchMode: RuntimeStatusLaunchMode = "unknown"): HostMessage {
+  const rawMessage = error instanceof Error ? error.message : typeof error === "string" ? error : "runtime unavailable";
+  const redactedMessage = redactRuntimeDiagnosticText(rawMessage);
+  const lifecycle = /401|unauthorized|session token mismatch/i.test(redactedMessage) ? "auth_mismatch" : /settings|launchMode|runtimeUrl|engineBinaryPath|must be/i.test(redactedMessage) ? "invalid_settings" : "failed";
+  return createHostRuntimeStatus({
+    lifecycle,
+    launchMode,
+    tokenState: lifecycle === "auth_mismatch" ? "mismatch" : lifecycle === "invalid_settings" ? "invalid" : "unknown",
+    processState: lifecycle === "invalid_settings" ? "failed" : "exited",
+    diagnosis: lifecycle === "auth_mismatch" ? "runtime session mismatch" : lifecycle === "invalid_settings" ? "runtime settings need review" : "runtime unavailable",
+    nextAction: runtimeStatusRecoveryAction(lifecycle, redactedMessage),
+  });
+}
+
+function runtimeStatusRecoveryAction(lifecycle: RuntimeStatusLifecycle, redactedMessage: string): string {
+  if (lifecycle === "auth_mismatch") {
+    return "Reopen the chat to refresh the IDE runtime session, or update the SecretStorage token for connect mode.";
+  }
+  if (lifecycle === "invalid_settings") {
+    return "Open Yet AI settings and choose a valid local launch mode.";
+  }
+  if (/reopen|restart/i.test(redactedMessage)) {
+    return "Reopen the chat or restart the IDE host to recover the local runtime.";
+  }
+  return "Use Yet AI runtime diagnostics, then reopen the chat if the local runtime was restarted.";
+}
+
+function sanitizeRuntimeStatusMessage(value: string, fallback: string): string {
+  const redacted = redactRuntimeDiagnosticText(value).trim();
+  if (redacted.length === 0 || redacted.length > 1000 || hasSecretLikeText(redacted) || hasPrivatePathLikeText(redacted) || hasBinaryLikeText(redacted)) {
+    return fallback;
+  }
+  return redacted;
 }
 
 export function createHostContextSnapshot(requestId: string | undefined): HostMessage {
@@ -1467,7 +1549,9 @@ const isWorkspaceSnippetSearchQuery = (value) => typeof value === "string" && va
 const isStrictIdeActionPayload = (payload) => isPlainObject(payload) && ((Object.keys(payload).every((key) => key === "action") && (payload.action === "getContextSnapshot" || payload.action === "getActiveFileExcerpt")) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath") && payload.action === "openWorkspaceFile" && isStrictSafeRelativePath(payload.workspaceRelativePath)) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath" || key === "range") && payload.action === "revealWorkspaceRange" && isStrictSafeRelativePath(payload.workspaceRelativePath) && isStrictRange(payload.range)) || (Object.keys(payload).every((key) => key === "action" || key === "commandId") && payload.action === "runVerificationCommand" && isVerificationCommandId(payload.commandId)) || (Object.keys(payload).every((key) => key === "action" || key === "query") && payload.action === "searchWorkspaceSnippets" && isWorkspaceSnippetSearchQuery(payload.query)));
 const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && ((message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload)) || (message.type === "gui.ideActionRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)) || (message.type === "gui.applyWorkspaceEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)));
 const isEmptyHostPayload = (payload) => payload === undefined || (isPlainObject(payload) && Object.keys(payload).length === 0);
-const isHostMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && (message.type === "host.openedFromCommand" ? message.requestId === undefined && isEmptyHostPayload(message.payload) : (message.type === "host.ready" || message.type === "host.contextSnapshot" || message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult"));
+const isSafeRuntimeStatusText = (value) => typeof value === "string" && value.length > 0 && value.length <= 1000 && !/[\u0000-\u001f\u007f-\u009f]/.test(value) && !/(?:authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|provider[_-]?response|raw[_-]?prompt|file[_-]?content|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value) && !/(?:\/(?:Users|home|tmp|var|Volumes|Private|etc|opt|mnt)(?=\/|$|[^A-Za-z0-9_])|~[\/\\]|[A-Za-z]:[\/\\])/i.test(value);
+const isHostRuntimeStatusPayload = (payload) => isPlainObject(payload) && Object.keys(payload).every((key) => key === "protocolVersion" || key === "surface" || key === "lifecycle" || key === "runtimeOwner" || key === "launchMode" || key === "tokenState" || key === "processState" || key === "diagnosis" || key === "nextAction" || key === "cloudRequired" || key === "authority") && payload.protocolVersion === "2026-06-21" && payload.surface === "vscode" && ["unknown", "checking", "starting", "connected", "degraded", "disconnected", "restarting", "stopped", "auth_mismatch", "invalid_settings", "failed"].includes(payload.lifecycle) && ["ide_host", "external", "user", "test_harness"].includes(payload.runtimeOwner) && ["auto", "connect", "launch", "preview", "manual", "unknown"].includes(payload.launchMode) && ["unknown", "not_required", "absent", "present", "mismatch", "invalid"].includes(payload.tokenState) && ["unknown", "not_owned", "checking", "starting", "running", "exited", "stopped", "failed"].includes(payload.processState) && isSafeRuntimeStatusText(payload.diagnosis) && isSafeRuntimeStatusText(payload.nextAction) && payload.cloudRequired === false && payload.authority === "metadata_only";
+const isHostMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && (message.type === "host.openedFromCommand" ? message.requestId === undefined && isEmptyHostPayload(message.payload) : message.type === "host.runtimeStatus" ? message.requestId === undefined && isHostRuntimeStatusPayload(message.payload) : (message.type === "host.ready" || message.type === "host.contextSnapshot" || message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult"));
 const sendToFrame = (message) => {
   if (frame && frame.contentWindow && frameTargetOrigin) {
     frame.contentWindow.postMessage(message, frameTargetOrigin);

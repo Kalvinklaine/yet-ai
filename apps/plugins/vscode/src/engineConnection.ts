@@ -25,6 +25,22 @@ export type RuntimeDiagnostics = {
   guidance: string;
 };
 
+export type RuntimeStatusPayload = {
+  protocolVersion: "2026-06-21";
+  surface: "vscode";
+  lifecycle: RuntimeLifecycleState;
+  runtimeOwner: "ide_host" | "external" | "user" | "test_harness";
+  launchMode: LaunchMode | "preview" | "manual" | "unknown";
+  tokenState: "unknown" | "not_required" | "absent" | "present" | "mismatch" | "invalid";
+  processState: "unknown" | "not_owned" | "checking" | "starting" | "running" | "exited" | "stopped" | "failed";
+  diagnosis: string;
+  nextAction: string;
+  cloudRequired: false;
+  authority: "metadata_only";
+};
+
+type RuntimeLifecycleState = "unknown" | "checking" | "starting" | "connected" | "degraded" | "disconnected" | "restarting" | "stopped" | "auth_mismatch" | "invalid_settings" | "failed";
+
 type LaunchMode = "auto" | "connect" | "launch";
 
 export type EngineConnectionSettings = EngineConnection & {
@@ -488,6 +504,97 @@ export function formatRuntimeDiagnostics(diagnostics: RuntimeDiagnostics): strin
     `Last/ping health: ${redactRuntimeDiagnosticText(diagnostics.pingStatus)}`,
     `Guidance: ${redactRuntimeDiagnosticText(diagnostics.guidance)}`,
   ].join("\n");
+}
+
+export function runtimeStatusPayloadFromDiagnostics(diagnostics: RuntimeDiagnostics): RuntimeStatusPayload {
+  const lifecycle = runtimeLifecycleFromDiagnostics(diagnostics);
+  return {
+    protocolVersion: "2026-06-21",
+    surface: "vscode",
+    lifecycle,
+    runtimeOwner: diagnostics.launchMode === "connect" ? "external" : "ide_host",
+    launchMode: diagnostics.launchMode,
+    tokenState: runtimeTokenStateFromDiagnostics(diagnostics, lifecycle),
+    processState: runtimeProcessStateFromDiagnostics(diagnostics, lifecycle),
+    diagnosis: runtimeStatusDiagnosis(lifecycle),
+    nextAction: runtimeStatusNextAction(lifecycle, diagnostics.launchMode),
+    cloudRequired: false,
+    authority: "metadata_only",
+  };
+}
+
+function runtimeLifecycleFromDiagnostics(diagnostics: RuntimeDiagnostics): RuntimeLifecycleState {
+  const pingStatus = diagnostics.pingStatus.toLowerCase();
+  if (pingStatus === "not checked") {
+    return "checking";
+  }
+  if (pingStatus === "passed") {
+    return "connected";
+  }
+  if (pingStatus.includes("401") || pingStatus.includes("unauthorized") || pingStatus.includes("mismatch")) {
+    return "auth_mismatch";
+  }
+  if (pingStatus.startsWith("skipped:") || pingStatus.includes("settings") || pingStatus.includes("must ") || diagnostics.engineBinaryStatus.toLowerCase().includes("not usable")) {
+    return "invalid_settings";
+  }
+  return "failed";
+}
+
+function runtimeTokenStateFromDiagnostics(diagnostics: RuntimeDiagnostics, lifecycle: RuntimeLifecycleState): RuntimeStatusPayload["tokenState"] {
+  if (lifecycle === "auth_mismatch") {
+    return "mismatch";
+  }
+  if (lifecycle === "invalid_settings") {
+    return diagnostics.sessionTokenSource === "none" ? "absent" : "invalid";
+  }
+  return diagnostics.sessionTokenSource === "none" ? "absent" : "present";
+}
+
+function runtimeProcessStateFromDiagnostics(diagnostics: RuntimeDiagnostics, lifecycle: RuntimeLifecycleState): RuntimeStatusPayload["processState"] {
+  if (lifecycle === "checking") {
+    return "checking";
+  }
+  if (lifecycle === "connected") {
+    return diagnostics.pluginLaunchedProcessStatus === "running" ? "running" : "not_owned";
+  }
+  if (lifecycle === "invalid_settings") {
+    return "failed";
+  }
+  return diagnostics.pluginLaunchedProcessStatus === "running" ? "running" : "exited";
+}
+
+function runtimeStatusDiagnosis(lifecycle: RuntimeLifecycleState): string {
+  if (lifecycle === "connected") {
+    return "runtime connected";
+  }
+  if (lifecycle === "checking") {
+    return "runtime status checking";
+  }
+  if (lifecycle === "auth_mismatch") {
+    return "runtime session mismatch";
+  }
+  if (lifecycle === "invalid_settings") {
+    return "runtime settings need review";
+  }
+  return "runtime unavailable";
+}
+
+function runtimeStatusNextAction(lifecycle: RuntimeLifecycleState, launchMode: LaunchMode): string {
+  if (lifecycle === "connected") {
+    return "Type a prompt or refresh provider readiness.";
+  }
+  if (lifecycle === "checking") {
+    return "Wait for the local runtime check to finish.";
+  }
+  if (lifecycle === "auth_mismatch") {
+    return launchMode === "connect"
+      ? "Update the SecretStorage token to match the running local runtime."
+      : "Reopen the chat to refresh the IDE runtime session.";
+  }
+  if (lifecycle === "invalid_settings") {
+    return "Open Yet AI settings and choose a valid local launch mode.";
+  }
+  return "Use Yet AI runtime diagnostics, then reopen the chat if the local runtime was restarted.";
 }
 
 export function formatStartedRuntimeMessage(binaryPath: string): string {

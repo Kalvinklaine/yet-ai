@@ -423,6 +423,8 @@ const fakeVscode = {
   },
 };
 let createHostReady;
+let createConnectedHostRuntimeStatus;
+let createRuntimeFailureHostRuntimeStatus;
 let createHostContextSnapshot;
 let createApplyWorkspaceEditResult;
 let handleApplyWorkspaceEditRequest;
@@ -443,7 +445,7 @@ try {
     }
     return originalLoad.call(this, request, parent, isMain);
   };
-  ({ createHostReady, createHostContextSnapshot, createApplyWorkspaceEditResult, handleApplyWorkspaceEditRequest, handleIdeActionRequest, parseIdeActionRequest, createIdeActionResult, isInvalidApplyWorkspaceEditRequestMessage, isInvalidIdeActionRequestMessage, isGuiMessage, renderWebviewHtml } = await import("../out/webview.js"));
+  ({ createHostReady, createConnectedHostRuntimeStatus, createRuntimeFailureHostRuntimeStatus, createHostContextSnapshot, createApplyWorkspaceEditResult, handleApplyWorkspaceEditRequest, handleIdeActionRequest, parseIdeActionRequest, createIdeActionResult, isInvalidApplyWorkspaceEditRequestMessage, isInvalidIdeActionRequestMessage, isGuiMessage, renderWebviewHtml } = await import("../out/webview.js"));
 } finally {
   Module._load = originalLoad;
 }
@@ -758,6 +760,26 @@ assert.equal(hostReady.requestId, "valid-gui-ready-request");
 assert.equal(hostReady.payload.runtimeUrl, connection.runtimeUrl);
 assert.equal(hostReady.payload.sessionToken, connection.sessionToken);
 assert.equal(hostReady.payload.cloudRequired, false);
+const hostRuntimeStatus = createConnectedHostRuntimeStatus(connection, "auto");
+assert.equal(hostRuntimeStatus.type, "host.runtimeStatus");
+assert.equal(hostRuntimeStatus.requestId, undefined);
+assert.equal(hostRuntimeStatus.payload.protocolVersion, "2026-06-21");
+assert.equal(hostRuntimeStatus.payload.surface, "vscode");
+assert.equal(hostRuntimeStatus.payload.lifecycle, "connected");
+assert.equal(hostRuntimeStatus.payload.runtimeOwner, "ide_host");
+assert.equal(hostRuntimeStatus.payload.launchMode, "auto");
+assert.equal(hostRuntimeStatus.payload.tokenState, "present");
+assert.equal(hostRuntimeStatus.payload.processState, "running");
+assert.equal(hostRuntimeStatus.payload.cloudRequired, false);
+assert.equal(hostRuntimeStatus.payload.authority, "metadata_only");
+assert.equal(JSON.stringify(hostRuntimeStatus).includes(connection.runtimeUrl), false, "runtimeStatus must not carry runtime URL");
+assert.equal(JSON.stringify(hostRuntimeStatus).includes(connection.sessionToken), false, "runtimeStatus must not carry session token");
+const hostRuntimeFailure = createRuntimeFailureHostRuntimeStatus(new Error(`HTTP 401 unauthorized token mismatch ${connection.sessionToken} /Users/private/runtime.sock`), "connect");
+assert.equal(hostRuntimeFailure.type, "host.runtimeStatus");
+assert.equal(hostRuntimeFailure.payload.lifecycle, "auth_mismatch");
+assert.equal(hostRuntimeFailure.payload.tokenState, "mismatch");
+assert.equal(JSON.stringify(hostRuntimeFailure).includes(connection.sessionToken), false, "runtimeStatus failure must redact session token");
+assert.equal(JSON.stringify(hostRuntimeFailure).includes("/Users/private"), false, "runtimeStatus failure must redact private paths");
 assert.throws(
   () => createHostReady(identity, { runtimeUrl: "http://127.0.0.1", sessionToken: connection.sessionToken }, "valid-gui-ready-request"),
   /must include an explicit valid port/,
