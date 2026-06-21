@@ -74,6 +74,44 @@ describe("codingSessionTrace", () => {
     expect(localStorage.length).toBe(0);
   });
 
+  it("creates sanitized bounded loop metadata-only trace entries", () => {
+    const entry = createCodingSessionTraceEntry({
+      family: "boundedLoop.applyReady",
+      title: "Bounded loop apply ready",
+      status: "pending",
+      summary: "Patch metadata is waiting for explicit user action",
+      requestId: "loop-s42-ready",
+      details: {
+        displayOnly: true,
+        allowedToAutoApply: false,
+        allowedToAutoRunVerification: false,
+        allowedToAutoRollback: false,
+        canStartAutonomousLoop: false,
+        touchedFiles: ["apps/gui/src/App.tsx"],
+        command: "npm test",
+        rawDiff: "SECRET_SENTINEL",
+        args: ["--watch"],
+        cwd: "/Users/alice/project",
+        env: { API_KEY: "sk-secret123456789" },
+      },
+    }, fixedOptions());
+    const rendered = JSON.stringify(entry);
+
+    expect(entry.family).toBe("boundedLoop.applyReady");
+    expect(entry.details?.displayOnly).toBe(true);
+    expect(entry.details?.allowedToAutoApply).toBe(false);
+    expect(entry.details?.allowedToAutoRunVerification).toBe(false);
+    expect(entry.details?.allowedToAutoRollback).toBe(false);
+    expect(entry.details?.canStartAutonomousLoop).toBe(false);
+    expect(rendered).toContain("[redacted]");
+    expect(rendered).not.toContain("npm test");
+    expect(rendered).not.toContain("SECRET_SENTINEL");
+    expect(rendered).not.toContain("--watch");
+    expect(rendered).not.toContain("/Users/alice");
+    expect(rendered).not.toContain("sk-secret123456789");
+    expect(localStorage.length).toBe(0);
+  });
+
   it("normalizes unsafe family and status values at the helper boundary", () => {
     const entry = createCodingSessionTraceEntry({
       family: "tool.shell.execute",

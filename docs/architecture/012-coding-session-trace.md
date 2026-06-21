@@ -46,9 +46,15 @@ The GUI evaluator for this contract is pure: missing input renders disabled meta
 
 ## Bounded patch verification loop metadata
 
-Sprint 42 adds a separate `bounded_patch_verification_loop` contract for a future display/evaluation layer around one manual edit and verification cycle. It is adjacent to the trace but is not trace storage, bridge transport, host execution, or runtime state. Trace entries may later summarize its sanitized status, ids, counts, safe relative path labels, allowlisted `commandId`, exit code, duration, and bounded result tail only after a separate implementation card wires that display path.
+Sprint 42 adds a separate `bounded_patch_verification_loop` contract for a future display/evaluation layer around one manual edit and verification cycle. It is adjacent to the trace but is not trace storage, bridge transport, host execution, or runtime state. The GUI evaluator for this contract is pure: it reads unknown metadata, returns a sanitized display summary, and never mutates browser storage, bridge state, runtime state, files, or host capabilities.
 
-The contract preserves the trace's non-authority rule: it does not contain raw diffs, file bodies, prompts, provider responses, free-form commands, args, cwd, env, stack traces, private paths, secrets, or auto-action flags. It does not add auto-send, auto-apply, auto-run verification, auto-rollback, retry, repair, or an agent loop. Unknown fields and execution-looking metadata must stay blocked rather than normalized into trace details.
+Every evaluator result preserves the non-authority invariants `allowedToAutoApply: false`, `allowedToAutoRunVerification: false`, `allowedToAutoRollback: false`, and `canStartAutonomousLoop: false`. Valid metadata can become only an explicit user-action state such as apply ready, verification ready, or verification result review. Missing metadata stays disabled; malformed, unsafe, unverified, unbounded, or authority-looking metadata is blocked.
+
+The evaluator accepts only metadata aligned with the contract: metadata-only authority, no cloud requirement, no execution flag, checkpoint-ready or rollback-ready sandbox metadata, verified checkpoint metadata, safe GUI/host-minted correlation through bounded ids, assistant-authored patch proposals that remain non-authoritative, safe workspace-relative touched paths, bounded file/edit/byte counts, and an allowlisted verification `commandId` from `repository-check`, `gui-app-tests`, or `engine-chat-tests`.
+
+The evaluator rejects raw or execution-looking fields and text, including free-form `command`, `cmd`, `args`, `cwd`, `env`, `shell`, git/network/provider/tool-call metadata, raw diffs, file bodies, prompts, provider responses, stack traces, private paths, secret markers, and auto-action flags. Outputs contain only safe labels, enum values, ids, counts, booleans, allowlisted command ids, exit codes, durations, and bounded redacted output tails.
+
+Trace entries may summarize bounded-loop metadata through deliberately named families such as policy checked/blocked, apply ready/result, and verification ready/result. These trace entries remain GUI-local and read-only. They must not include raw patch bodies, command strings, private paths, unbounded output, or raw result bodies; verification output is limited to bounded redacted tails only.
 
 ## Maintenance rules
 

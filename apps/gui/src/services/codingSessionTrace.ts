@@ -36,6 +36,12 @@ export const codingSessionTraceFamilies = [
   "checkpoint.metadataBlocked",
   "rollback.metadataReady",
   "rollback.metadataBlocked",
+  "boundedLoop.policyChecked",
+  "boundedLoop.policyBlocked",
+  "boundedLoop.applyReady",
+  "boundedLoop.applyResult",
+  "boundedLoop.verificationReady",
+  "boundedLoop.verificationResult",
 ] as const;
 
 export const codingSessionTraceStatuses = [
@@ -191,7 +197,7 @@ function sanitizeTraceUnsafeKeys(value: unknown): unknown {
 }
 
 function isTraceUnsafeDetailKey(key: string): boolean {
-  return /^(?:rawCommand|raw_command|rawFileBody|raw_file_body|fileBody|file_body|command|cmd|cwd|env|environment|stackTrace|stack_trace|callstack)$/i.test(key);
+  return /^(?:rawCommand|raw_command|rawFileBody|raw_file_body|fileBody|file_body|rawDiff|raw_diff|diff|rawOutput|raw_output|command|cmd|args|arguments|cwd|env|environment|shell|git|network|providerTool|provider_tool|toolCall|tool_call|privatePath|private_path|stackTrace|stack_trace|callstack)$/i.test(key);
 }
 
 function summarizeRejectedMetadata(value: unknown): unknown {
