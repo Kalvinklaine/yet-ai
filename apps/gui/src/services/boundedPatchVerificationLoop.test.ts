@@ -248,6 +248,70 @@ describe("evaluateBoundedPatchVerificationLoop", () => {
     expect(rendered).not.toContain("SECRET_SENTINEL");
   });
 
+  it("summarizes explicit apply and commandId-only verification lifecycle in sanitized trace entries", () => {
+    const rawSecret = "access_token=" + "l".repeat(64);
+    const entries = [
+      createCodingSessionTraceEntry({
+        family: "boundedLoop.policyBlocked",
+        title: "Bounded loop policy blocked",
+        status: "rejected",
+        summary: "Checkpoint metadata required before apply.",
+        details: { proposalId: "proposal-s42-ready", reason: "checkpoint_required", rawPatch: `do not show ${rawSecret}` },
+      }),
+      createCodingSessionTraceEntry({
+        family: "boundedLoop.policyChecked",
+        title: "Bounded loop policy checked",
+        status: "succeeded",
+        details: { proposalId: "proposal-s42-ready", checkpointVerified: true, command: "npm test" },
+      }),
+      createCodingSessionTraceEntry({
+        family: "boundedLoop.applyReady",
+        title: "Bounded loop apply ready",
+        status: "pending",
+        requestId: "gui-edit-proposal-apply-loop-1",
+        details: { fileCount: 1, editCount: 1, privatePath: "/Users/alice/project/src/example.ts" },
+      }),
+      createCodingSessionTraceEntry({
+        family: "boundedLoop.applyResult",
+        title: "Bounded loop apply result",
+        status: "succeeded",
+        requestId: "gui-edit-proposal-apply-loop-1",
+        details: { status: "applied", affectedFiles: ["src/example.ts"], rawFileBody: "export const answer = 42;" },
+      }),
+      createCodingSessionTraceEntry({
+        family: "boundedLoop.verificationReady",
+        title: "Bounded loop verification ready",
+        status: "pending",
+        details: { action: "runVerificationCommand", commandId: "repository-check", args: ["--watch"] },
+      }),
+      createCodingSessionTraceEntry({
+        family: "boundedLoop.verificationResult",
+        title: "Bounded loop verification result",
+        status: "succeeded",
+        requestId: "gui-verification-command-loop-1",
+        details: { commandId: "repository-check", exitCode: 0, outputTail: "sanitized verification passed", cwd: "/Users/alice/project" },
+      }),
+    ];
+    const rendered = JSON.stringify(entries);
+
+    expect(entries.map((entry) => entry.family)).toEqual([
+      "boundedLoop.policyBlocked",
+      "boundedLoop.policyChecked",
+      "boundedLoop.applyReady",
+      "boundedLoop.applyResult",
+      "boundedLoop.verificationReady",
+      "boundedLoop.verificationResult",
+    ]);
+    expect(rendered).toContain("runVerificationCommand");
+    expect(rendered).toContain("repository-check");
+    expect(rendered).toContain("[redacted]");
+    expect(rendered).not.toContain("npm test");
+    expect(rendered).not.toContain("--watch");
+    expect(rendered).not.toContain("/Users/alice");
+    expect(rendered).not.toContain("access_token");
+    expect(rendered).not.toContain("export const answer");
+  });
+
   it("does not write browser storage while evaluating metadata", () => {
     localStorage.clear();
     sessionStorage.clear();

@@ -56,6 +56,9 @@ The evaluator rejects raw or execution-looking fields and text, including free-f
 
 Trace entries may summarize bounded-loop metadata through deliberately named families such as policy checked/blocked, apply ready/result, and verification ready/result. These trace entries remain GUI-local and read-only. They must not include raw patch bodies, command strings, private paths, unbounded output, or raw result bodies; verification output is limited to bounded redacted tails only.
 
+The S42 deterministic smoke covers those trace families without persisting them. It records `boundedLoop.policyBlocked`, `boundedLoop.policyChecked`, `boundedLoop.applyReady`, `boundedLoop.applyResult`, `boundedLoop.verificationReady`, and `boundedLoop.verificationResult` entries in memory while modeling explicit user apply and explicit allowlisted verification clicks. The smoke asserts that the trace omits raw file bodies, raw patch bodies, command strings, private temporary paths, and secret markers, and that browser storage remains empty. This is local/mock lifecycle evidence only; it does not add trace transport, storage, bridge messages, IDE execution, or shell-backed verification.
+
+
 ## Maintenance rules
 
 When a future card wires trace entries into UI state, keep the trace in memory only unless a separate architecture decision approves storage. Do not store raw assistant messages, user prompts, provider payloads, file excerpts, verification output, or host diagnostics directly in trace entries. Store only safe labels, counts, enum values, request correlation, durations, exit codes, and short redacted tails.

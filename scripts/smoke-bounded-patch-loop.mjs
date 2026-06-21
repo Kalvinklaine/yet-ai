@@ -72,6 +72,130 @@ async function createValidPlan(workspaceRoot, checkpointRoot, manifest, override
   });
 }
 
+
+function createMockBrowserState() {
+  return {
+    storage: new Map(),
+    networkRequests: [],
+    bridgeMessages: [],
+    hostEvents: [],
+    trace: [],
+    autoSendCount: 0,
+    autoApplyCount: 0,
+    autoVerificationRunCount: 0,
+    autoRollbackCount: 0,
+    proposalVisible: false,
+    readinessVisible: false,
+    applyClicked: false,
+    verificationClicked: false
+  };
+}
+
+function sanitizeTraceDetails(details) {
+  const forbiddenKeys = new Set(["command", "args", "cwd", "env", "shell", "git", "network", "provider", "rawOutput", "rawPatch", "rawFileBody", "privatePath"]);
+  const copy = {};
+  for (const [key, value] of Object.entries(details)) {
+    copy[forbiddenKeys.has(key) ? "redacted" : key] = forbiddenKeys.has(key) ? "redacted" : value;
+  }
+  return copy;
+}
+
+function appendMockTrace(state, family, details = {}) {
+  state.trace.push({ family, details: sanitizeTraceDetails(details) });
+}
+
+function assertCleanMockBrowserState(state, label, tempRoot) {
+  assert.equal(state.autoSendCount, 0, `${label} auto-sent`);
+  assert.equal(state.autoApplyCount, 0, `${label} auto-applied`);
+  assert.equal(state.autoVerificationRunCount, 0, `${label} auto-ran verification`);
+  assert.equal(state.autoRollbackCount, 0, `${label} auto-rollbacked`);
+  assert.equal(state.networkRequests.every((url) => /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::|\/|$)/.test(url)), true, `${label} used non-loopback network`);
+  assert.equal(state.storage.size, 0, `${label} wrote browser storage`);
+  assertNoRawMarkers({ trace: state.trace, hostEvents: state.hostEvents, storage: [...state.storage.entries()] }, label, tempRoot);
+  assert.equal(JSON.stringify(state.bridgeMessages).includes(tempRoot), false, `${label} bridge leaked private path`);
+  assert.equal(JSON.stringify(state.bridgeMessages).includes(SECRET_MARKER), false, `${label} bridge leaked secret marker`);
+}
+
+function visibleBoundedPatchMetadata({ summary, checkpointReady = false, policyReady = false, applied = false, verificationReady = false, verified = false }) {
+  return {
+    proposalVisible: true,
+    readinessVisible: checkpointReady && policyReady,
+    applyEnabled: checkpointReady && policyReady && !applied,
+    verificationEnabled: applied && verificationReady && !verified,
+    summary: summary.proposalId,
+    checkpointId: summary.checkpointId,
+    verificationCommandId: summary.verificationCommandId,
+    touchedFileCount: summary.fileCount,
+    editCount: summary.editCount
+  };
+}
+
+async function runUserVisibleLifecycleSmoke({ tempRoot, workspaceRoot, checkpointRoot, manifest, patchPlan, summary }) {
+  const state = createMockBrowserState();
+  const applyPayload = {
+    requiresUserConfirmation: true,
+    summary: "Replace one visible editor line after user review.",
+    cloudRequired: false,
+    edits: patchPlan.files.map((file) => ({
+      workspaceRelativePath: file.path,
+      textReplacements: file.edits.map((edit) => ({
+        range: { start: { line: 0, character: edit.start }, end: { line: 0, character: edit.end } },
+        replacementText: edit.replacement
+      }))
+    }))
+  };
+
+  const initiallyBlocked = visibleBoundedPatchMetadata({ summary });
+  assert.equal(initiallyBlocked.proposalVisible, true);
+  assert.equal(initiallyBlocked.readinessVisible, false);
+  assert.equal(initiallyBlocked.applyEnabled, false);
+  appendMockTrace(state, "boundedLoop.policyBlocked", { proposalId: summary.proposalId, reason: "checkpoint_required" });
+  assert.equal(state.bridgeMessages.length, 0, "blocked proposal emitted bridge messages");
+
+  const ready = visibleBoundedPatchMetadata({ summary, checkpointReady: true, policyReady: true });
+  assert.equal(ready.readinessVisible, true);
+  assert.equal(ready.applyEnabled, true);
+  appendMockTrace(state, "boundedLoop.policyChecked", { proposalId: summary.proposalId, checkpointId: summary.checkpointId, fileCount: summary.fileCount, editCount: summary.editCount });
+  appendMockTrace(state, "boundedLoop.applyReady", { proposalId: summary.proposalId, checkpointId: summary.checkpointId });
+  assert.equal(state.bridgeMessages.length, 0, "ready proposal auto-applied before click");
+
+  state.applyClicked = true;
+  state.bridgeMessages.push({ type: "gui.applyWorkspaceEditRequest", requestId: "gui-edit-proposal-apply-loop-smoke-1", payload: applyPayload });
+  const applyRequest = state.bridgeMessages.at(-1);
+  assert.equal(applyRequest.type, "gui.applyWorkspaceEditRequest");
+  assert.equal(applyRequest.payload.requiresUserConfirmation, true);
+  assert.deepEqual(Object.keys(applyRequest.payload).sort(), ["cloudRequired", "edits", "requiresUserConfirmation", "summary"].sort());
+  assert.equal(applyRequest.payload.edits.every((file) => !file.workspaceRelativePath.startsWith("/") && !file.workspaceRelativePath.includes("..") && Array.isArray(file.textReplacements)), true);
+  assert.equal(state.autoApplyCount, 0);
+
+  const applied = await applyBoundedPatchPlan({ workspaceRoot, checkpointRoot, checkpointManifest: manifest, patchPlan, appliedAt: APPLIED_AT });
+  state.hostEvents.push({ type: "host.applyWorkspaceEditResult", requestId: applyRequest.requestId, payload: { status: "applied", message: "Patch applied.", cloudRequired: false, appliedEditCount: applied.summary.editCount, affectedFiles: patchPlan.files.map((file) => file.path) } });
+  appendMockTrace(state, "boundedLoop.applyResult", { status: "applied", appliedEditCount: applied.summary.editCount, affectedFiles: patchPlan.files.map((file) => file.path) });
+
+  const verificationReady = await evaluateAllowlistedVerificationRequest({ verificationCommandId: summary.verificationCommandId, checkpointManifest: manifest, patchPlan });
+  appendMockTrace(state, "boundedLoop.verificationReady", { action: verificationReady.action, commandId: verificationReady.commandId, proposalId: summary.proposalId });
+  const afterApply = visibleBoundedPatchMetadata({ summary, checkpointReady: true, policyReady: true, applied: true, verificationReady: true });
+  assert.equal(afterApply.verificationEnabled, true);
+  assert.equal(state.bridgeMessages.filter((message) => message.type === "gui.ideActionRequest").length, 0, "verification auto-ran before click");
+
+  state.verificationClicked = true;
+  state.bridgeMessages.push({ type: "gui.ideActionRequest", requestId: "gui-verification-command-loop-smoke-1", payload: { action: "runVerificationCommand", commandId: verificationReady.commandId } });
+  const verificationRequest = state.bridgeMessages.at(-1);
+  assert.deepEqual(verificationRequest.payload, { action: "runVerificationCommand", commandId: "repository-check" });
+  assert.equal(["command", "args", "cwd", "env", "shell", "git", "network", "provider", "rawOutput"].some((key) => key in verificationRequest.payload), false);
+  assert.equal(state.autoVerificationRunCount, 0);
+
+  state.hostEvents.push({ type: "host.ideActionProgress", requestId: verificationRequest.requestId, payload: { phase: "running", status: "inProgress", summary: "Running repository check.", cloudRequired: false, action: "runVerificationCommand", commandId: verificationReady.commandId } });
+  state.hostEvents.push({ type: "host.ideActionResult", requestId: verificationRequest.requestId, payload: { status: "succeeded", message: "Repository check passed.", cloudRequired: false, action: "runVerificationCommand", commandId: verificationReady.commandId, exitCode: 0, durationMs: 123, outputTail: "sanitized verification passed", truncated: false } });
+  appendMockTrace(state, "boundedLoop.verificationResult", { status: "succeeded", commandId: verificationReady.commandId, exitCode: 0, durationMs: 123, outputTail: "sanitized verification passed" });
+
+  assert.equal(state.applyClicked, true);
+  assert.equal(state.verificationClicked, true);
+  assert.equal(state.autoRollbackCount, 0);
+  assert.deepEqual(state.trace.map((entry) => entry.family), ["boundedLoop.policyBlocked", "boundedLoop.policyChecked", "boundedLoop.applyReady", "boundedLoop.applyResult", "boundedLoop.verificationReady", "boundedLoop.verificationResult"]);
+  assertCleanMockBrowserState(state, "user-visible lifecycle smoke", tempRoot);
+}
+
 async function runSmoke() {
   const tmp = await mkdtemp(join(tmpdir(), "yet-bounded-patch-loop-smoke-"));
   const report = { steps: [], denied: [] };
@@ -91,6 +215,9 @@ async function runSmoke() {
     assertNoRawMarkers(summary, "plan summary", tmp);
     report.steps.push({ name: "planned", summary });
 
+
+    await runUserVisibleLifecycleSmoke({ tempRoot: tmp, workspaceRoot, checkpointRoot, manifest, patchPlan, summary });
+    await restoreSandboxCheckpoint({ workspaceRoot, checkpointRoot, manifest, restoredAt: RESTORED_AT });
     const applied = await applyBoundedPatchPlan({ workspaceRoot, checkpointRoot, checkpointManifest: manifest, patchPlan, appliedAt: APPLIED_AT });
     assert.equal(applied.applied, true);
     assert.equal(await readFile(examplePath, "utf8"), UPDATED);
