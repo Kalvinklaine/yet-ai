@@ -343,6 +343,10 @@ class RuntimeConnectionManagerTest {
 
         assertEquals("second-plugin-token", result.settings.sessionToken)
         assertEquals(null, result.error)
+        assertEquals(RuntimeLifecycle.CONNECTED, result.lifecycleStatus.lifecycle)
+        assertEquals("ide_host", result.lifecycleStatus.runtimeOwner)
+        assertEquals("present", result.lifecycleStatus.tokenState)
+        assertFalse(result.lifecycleStatus.diagnosis.contains("token", ignoreCase = true), result.lifecycleStatus.diagnosis)
         assertEquals(2, healthCalls)
         assertEquals(listOf("first-plugin-token", "second-plugin-token"), launched.map { it.environment.getValue("YET_AI_AUTH_TOKEN") })
         manager.dispose()
@@ -365,6 +369,10 @@ class RuntimeConnectionManagerTest {
         assertEquals(0, launchCalls)
         assertEquals("connect-secret-token", result.settings.sessionToken)
         assertTrue(result.error.orEmpty().contains("HTTP 401"), result.error)
+        assertEquals(RuntimeLifecycle.AUTH_MISMATCH, result.lifecycleStatus.lifecycle)
+        assertEquals("mismatch", result.lifecycleStatus.tokenState)
+        assertEquals("external", result.lifecycleStatus.runtimeOwner)
+        assertFalse(result.lifecycleStatus.diagnosis.contains("token", ignoreCase = true), result.lifecycleStatus.diagnosis)
         assertFalse(result.error.orEmpty().contains("connect-secret-token"), result.error)
         assertTrue(diagnostics.contains("HTTP 401 token mismatch"), diagnostics)
         assertTrue(diagnostics.contains("make the IDE debug/session token match the external runtime"), diagnostics)
@@ -726,6 +734,57 @@ class RuntimeConnectionManagerTest {
         assertTrue(diagnostics.contains("Click Refresh runtime"), diagnostics)
         assertTrue(diagnostics.contains("Yet AI: Restart Runtime"), diagnostics)
         assertTrue(diagnostics.contains("Yet AI: Show Runtime Status"), diagnostics)
+    }
+
+    @Test
+    fun lifecycleStatusClassifiesConnectedAuthInvalidPortConflictAndPingFailure() {
+        val connected = runtimeLifecycleStatusFromDiagnostics(
+            RuntimeDiagnostics("launch", "http://127.0.0.1:8123", false, "bundled plugin runtime binary available", true, "/v1/ping returned 2xx", null),
+        )
+        val authMismatch = runtimeLifecycleStatusFromDiagnostics(
+            RuntimeDiagnostics("connect", "http://127.0.0.1:8123", false, "not used in connect mode", false, "HTTP 401", "Yet AI local runtime connection failed: HTTP 401"),
+        )
+        val invalidSettings = runtimeLifecycleStatusFromDiagnostics(
+            RuntimeDiagnostics("launch", "https://127.0.0.1", true, "configured absolute binary is missing or not executable", false, null, "requires runtime URL with an explicit nonzero port"),
+        )
+        val portConflict = runtimeLifecycleStatusFromDiagnostics(
+            RuntimeDiagnostics("auto", "http://127.0.0.1:8123", false, "bundled plugin runtime binary available", true, null, "address already in use at /Users/alice/private/yet-lsp Authorization: Bearer ${"a".repeat(64)}"),
+        )
+        val pingFailure = runtimeLifecycleStatusFromDiagnostics(
+            RuntimeDiagnostics("auto", "http://127.0.0.1:8123", false, "bundled plugin runtime binary available", true, null, "Yet AI local runtime health check failed at /v1/ping: connection refused"),
+        )
+
+        assertEquals(RuntimeLifecycle.CONNECTED, connected.lifecycle)
+        assertEquals(RuntimeLifecycle.AUTH_MISMATCH, authMismatch.lifecycle)
+        assertEquals(RuntimeLifecycle.INVALID_SETTINGS, invalidSettings.lifecycle)
+        assertEquals(RuntimeLifecycle.FAILED, portConflict.lifecycle)
+        assertEquals(RuntimeLifecycle.FAILED, pingFailure.lifecycle)
+        listOf(connected, authMismatch, invalidSettings, portConflict, pingFailure).forEach { status ->
+            val combined = status.diagnosis + status.nextAction
+            assertFalse(combined.contains("/Users/alice"), combined)
+            assertFalse(combined.contains("Authorization"), combined)
+            assertFalse(combined.contains("Bearer"), combined)
+            assertFalse(combined.contains("token", ignoreCase = true), combined)
+            assertFalse(combined.contains("api key", ignoreCase = true), combined)
+        }
+    }
+
+    @Test
+    fun lifecyclePayloadDoesNotExposeRawConfiguredPathAuthCookieProviderKeyOrSessionToken() {
+        val secret = "runtime-session-token-that-must-not-leak-1234567890"
+        val status = runtimeLifecycleStatus(
+            RuntimeSettings("http://127.0.0.1:8123", null, secret, LaunchMode.LAUNCH, Path.of("/Users/alice/private/yet-lsp")),
+            LaunchMode.LAUNCH,
+            RuntimeLifecycle.FAILED,
+            RuntimeProcessState.FAILED,
+            "Authorization: Bearer $secret Cookie: sid=secret provider API key at /Users/alice/private/yet-lsp",
+            "Restart runtime without token $secret or private path /Users/alice/private/yet-lsp",
+        )
+        val combined = status.toString()
+
+        listOf(secret, "Authorization", "Bearer", "Cookie", "provider API key", "/Users/alice", "alice", "private/yet-lsp", "private path").forEach { privateValue ->
+            assertFalse(combined.contains(privateValue, ignoreCase = true), combined)
+        }
     }
 
     @Test

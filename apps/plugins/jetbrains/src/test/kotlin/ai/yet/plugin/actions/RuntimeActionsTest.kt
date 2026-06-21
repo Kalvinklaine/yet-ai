@@ -97,7 +97,10 @@ class RuntimeActionsTest {
 
         scheduler.runNextUi()
 
-        assertEquals(listOf(Presentation("info", "runtime restarted")), presenter.events)
+        val event = presenter.events.single()
+        assertEquals("info", event.kind)
+        assertContains(event.message, "runtime restarted")
+        assertContains(event.message, "Lifecycle: connected")
     }
 
     @Test
@@ -245,6 +248,38 @@ class RuntimeActionsTest {
         assertContains(message, "plugin-launched process exited")
         assertContains(message, "Refresh runtime")
         assertContains(message, "Yet AI: Restart Runtime")
+        assertFalse(message.contains("Authorization"), message)
+        assertFalse(message.contains("/Users/alice"), message)
+        assertFalse(message.contains("${"a".repeat(64)}"), message)
+        assertFalse(message.contains("${"b".repeat(64)}"), message)
+    }
+
+    @Test
+    fun restartFailureIncludesBoundedSanitizedLifecycleResult() {
+        val scheduler = RecordingStatusActionScheduler()
+        val presenter = RecordingRestartActionPresenter()
+        val runner = RuntimeRestartActionRunner(
+            restartRuntime = {
+                RuntimeConnectionResult(
+                    runtimeSettings(),
+                    null,
+                    "restart failed Authorization: Bearer ${"a".repeat(64)} /Users/alice/private/yet-lsp",
+                )
+            },
+            diagnostics = { "diagnostics ${"x".repeat(5000)} token=${"b".repeat(64)}" },
+            scheduler = scheduler,
+            presenter = presenter,
+        )
+
+        runner.restart(null)
+        scheduler.runNextBackground()
+        scheduler.runNextUi()
+
+        val message = presenter.events.single().message
+        assertContains(message, "Lifecycle: failed")
+        assertContains(message, "Diagnosis:")
+        assertContains(message, "Next action:")
+        assertTrue(message.length <= 4000, message.length.toString())
         assertFalse(message.contains("Authorization"), message)
         assertFalse(message.contains("/Users/alice"), message)
         assertFalse(message.contains("${"a".repeat(64)}"), message)

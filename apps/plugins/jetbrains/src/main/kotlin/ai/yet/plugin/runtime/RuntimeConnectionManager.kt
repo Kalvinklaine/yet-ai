@@ -51,6 +51,14 @@ class RuntimeConnectionManager(
                 RuntimeSettings.safeFallback(),
                 null,
                 lastConnectionError,
+                runtimeLifecycleStatus(
+                    RuntimeSettings.safeFallback(),
+                    LaunchMode.CONNECT,
+                    RuntimeLifecycle.INVALID_SETTINGS,
+                    RuntimeProcessState.NOT_OWNED,
+                    "local runtime settings are invalid",
+                    "Open settings and use an http loopback runtime URL with a supported launch mode.",
+                ),
             )
             if (publishUpdates) publishRuntimeConnectionUpdate(result)
             return result
@@ -79,7 +87,19 @@ class RuntimeConnectionManager(
             healthChecker(connection)
             lastHealthResult = "/v1/ping returned 2xx"
             lastConnectionError = null
-            RuntimeConnectionResult(connection, "Connected to Yet AI local runtime at ${connection.runtimeUrl}.", null)
+            RuntimeConnectionResult(
+                connection,
+                "Connected to Yet AI local runtime at ${connection.runtimeUrl}.",
+                null,
+                runtimeLifecycleStatus(
+                    connection,
+                    settings.launchMode,
+                    RuntimeLifecycle.CONNECTED,
+                    currentProcessState(),
+                    "local runtime is reachable",
+                    "Continue using Yet AI.",
+                ),
+            )
         } catch (error: Exception) {
             if (isHttp401(error) && shouldRetryPluginOwnedRuntime(settings, connection)) {
                 logger.info("Yet AI plugin-launched runtime returned HTTP 401 during health check; restarting once with a fresh session token")
@@ -96,7 +116,19 @@ class RuntimeConnectionManager(
                     healthChecker(connection)
                     lastHealthResult = "/v1/ping returned 2xx after HTTP 401 recovery"
                     lastConnectionError = null
-                    RuntimeConnectionResult(connection, "Connected to Yet AI local runtime at ${connection.runtimeUrl} after refreshing the runtime session token.", null)
+                    RuntimeConnectionResult(
+                        connection,
+                        "Connected to Yet AI local runtime at ${connection.runtimeUrl} after refreshing the runtime session token.",
+                        null,
+                        runtimeLifecycleStatus(
+                            connection,
+                            settings.launchMode,
+                            RuntimeLifecycle.CONNECTED,
+                            currentProcessState(),
+                            "local runtime is reachable after refreshing session credentials",
+                            "Continue using Yet AI.",
+                        ),
+                    )
                 } catch (retryError: Exception) {
                     val result = failedRuntimeConnection(settings, connection, "Yet AI local runtime connection failed after HTTP 401 recovery", retryError)
                     stopLaunchedProcess()
@@ -280,6 +312,13 @@ class RuntimeConnectionManager(
         stopProcess(process)
     }
 
+    @Synchronized
+    private fun currentProcessState(): RuntimeProcessState = when {
+        launchedProcess?.isAlive == true -> RuntimeProcessState.RUNNING
+        lastProcessExit != null -> RuntimeProcessState.EXITED
+        else -> RuntimeProcessState.NOT_OWNED
+    }
+
     override fun dispose() {
         stopLaunchedProcess()
     }
@@ -324,10 +363,23 @@ fun failedRuntimeConnection(
     } else {
         ""
     }
+    val lifecycle = when {
+        isHttp401(error) -> RuntimeLifecycle.AUTH_MISMATCH
+        sanitized.contains("settings", ignoreCase = true) || sanitized.contains("binary", ignoreCase = true) || sanitized.contains("runtime URL", ignoreCase = true) -> RuntimeLifecycle.INVALID_SETTINGS
+        else -> RuntimeLifecycle.FAILED
+    }
     return RuntimeConnectionResult(
         attemptedSettings ?: settings,
         null,
         sanitized + guidance,
+        runtimeLifecycleStatus(
+            attemptedSettings ?: settings,
+            settings.launchMode,
+            lifecycle,
+            if (attemptedSettings != null) RuntimeProcessState.FAILED else RuntimeProcessState.NOT_OWNED,
+            lifecycleDiagnosis(lifecycle),
+            lifecycleNextAction(lifecycle),
+        ),
     )
 }
 
@@ -335,7 +387,115 @@ data class RuntimeConnectionResult(
     val settings: RuntimeSettings,
     val status: String?,
     val error: String?,
+    val lifecycleStatus: RuntimeLifecycleStatus = runtimeLifecycleStatus(settings, settings.launchMode, if (error == null) RuntimeLifecycle.CONNECTED else RuntimeLifecycle.FAILED, RuntimeProcessState.UNKNOWN, status ?: error ?: "runtime status is unknown", "Open Yet AI runtime status for details."),
 )
+
+enum class RuntimeLifecycle(val wireName: String) {
+    CONNECTED("connected"),
+    AUTH_MISMATCH("auth_mismatch"),
+    INVALID_SETTINGS("invalid_settings"),
+    FAILED("failed"),
+    RESTARTING("restarting"),
+    STOPPED("stopped"),
+}
+
+enum class RuntimeProcessState(val wireName: String) {
+    UNKNOWN("unknown"),
+    NOT_OWNED("not_owned"),
+    RUNNING("running"),
+    EXITED("exited"),
+    STOPPED("stopped"),
+    FAILED("failed"),
+}
+
+data class RuntimeLifecycleStatus(
+    val lifecycle: RuntimeLifecycle,
+    val runtimeOwner: String,
+    val launchMode: String,
+    val tokenState: String,
+    val processState: RuntimeProcessState,
+    val diagnosis: String,
+    val nextAction: String,
+)
+
+fun runtimeLifecycleStatus(
+    settings: RuntimeSettings,
+    launchMode: LaunchMode,
+    lifecycle: RuntimeLifecycle,
+    processState: RuntimeProcessState,
+    diagnosis: String,
+    nextAction: String,
+): RuntimeLifecycleStatus = RuntimeLifecycleStatus(
+    lifecycle = lifecycle,
+    runtimeOwner = if (launchMode == LaunchMode.CONNECT) "external" else "ide_host",
+    launchMode = launchMode.name.lowercase(),
+    tokenState = tokenState(settings, lifecycle),
+    processState = processState,
+    diagnosis = safeLifecycleText(diagnosis),
+    nextAction = safeLifecycleText(nextAction),
+)
+
+fun runtimeLifecycleStatusFromDiagnostics(diagnostics: RuntimeDiagnostics): RuntimeLifecycleStatus {
+    val diagnosis = runtimeDiagnosis(diagnostics)
+    val lifecycle = when {
+        diagnosis.contains("token mismatch") -> RuntimeLifecycle.AUTH_MISMATCH
+        diagnosis.contains("launch URL") || diagnosis.contains("engine binary") || diagnosis.contains("no launchable") -> RuntimeLifecycle.INVALID_SETTINGS
+        diagnostics.process?.contains("exited", ignoreCase = true) == true -> RuntimeLifecycle.STOPPED
+        diagnostics.error != null -> RuntimeLifecycle.FAILED
+        diagnostics.health?.contains("2xx") == true -> RuntimeLifecycle.CONNECTED
+        else -> RuntimeLifecycle.FAILED
+    }
+    val processState = when {
+        diagnostics.launchedByPlugin -> RuntimeProcessState.RUNNING
+        diagnostics.process?.contains("exited", ignoreCase = true) == true -> RuntimeProcessState.EXITED
+        diagnostics.process?.contains("stopped", ignoreCase = true) == true -> RuntimeProcessState.STOPPED
+        diagnostics.error != null -> RuntimeProcessState.FAILED
+        else -> RuntimeProcessState.NOT_OWNED
+    }
+    val settings = RuntimeSettings(diagnostics.runtimeUrl, null, null, launchMode = parseLaunchMode(diagnostics.launchMode))
+    return runtimeLifecycleStatus(
+        settings,
+        settings.launchMode,
+        lifecycle,
+        processState,
+        lifecycleDiagnosis(lifecycle),
+        lifecycleNextAction(lifecycle),
+    )
+}
+
+private fun tokenState(settings: RuntimeSettings, lifecycle: RuntimeLifecycle): String = when (lifecycle) {
+    RuntimeLifecycle.AUTH_MISMATCH -> "mismatch"
+    RuntimeLifecycle.INVALID_SETTINGS -> "unknown"
+    else -> if (settings.sessionToken == null) "absent" else "present"
+}
+
+private fun lifecycleDiagnosis(lifecycle: RuntimeLifecycle): String = when (lifecycle) {
+    RuntimeLifecycle.CONNECTED -> "local runtime is reachable"
+    RuntimeLifecycle.AUTH_MISMATCH -> "runtime rejected the current local credentials"
+    RuntimeLifecycle.INVALID_SETTINGS -> "local runtime settings are invalid"
+    RuntimeLifecycle.RESTARTING -> "runtime restart is in progress"
+    RuntimeLifecycle.STOPPED -> "plugin managed runtime is stopped"
+    RuntimeLifecycle.FAILED -> "runtime did not become reachable"
+}
+
+private fun lifecycleNextAction(lifecycle: RuntimeLifecycle): String = when (lifecycle) {
+    RuntimeLifecycle.CONNECTED -> "Continue using Yet AI."
+    RuntimeLifecycle.AUTH_MISMATCH -> "Update the local runtime connection or restart the IDE-owned runtime."
+    RuntimeLifecycle.INVALID_SETTINGS -> "Open settings and use an http loopback runtime URL with a supported launch mode."
+    RuntimeLifecycle.RESTARTING -> "Wait for the restart to finish."
+    RuntimeLifecycle.STOPPED -> "Refresh runtime or run Yet AI Restart Runtime."
+    RuntimeLifecycle.FAILED -> "Refresh runtime or open Yet AI runtime status."
+}
+
+private fun safeLifecycleText(value: String): String = redactLogText(value, "")
+    .replace(Regex("(?i)token"), "credentials")
+    .replace(Regex("(?i)authorization"), "credentials")
+    .replace(Regex("(?i)bearer"), "credentials")
+    .replace(Regex("(?i)api[_-]?key"), "credentials")
+    .replace(Regex("(?i)secret"), "credentials")
+    .replace(Regex("(?i)private[_-]?path"), "local path")
+    .replace(Regex("(?i)private\\s+path"), "local path")
+    .take(1000)
 
 data class EngineLaunchCommand(
     val binaryPath: Path,

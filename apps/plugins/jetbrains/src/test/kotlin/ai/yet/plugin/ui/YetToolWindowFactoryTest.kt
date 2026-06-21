@@ -2,8 +2,8 @@ package ai.yet.plugin.ui
 
 import ai.yet.plugin.bridge.ActiveEditorContext
 import ai.yet.plugin.bridge.ControlledIdeActions
-import com.google.gson.JsonParser
 import ai.yet.plugin.runtime.RuntimeConnectionResult
+import com.google.gson.JsonParser
 import ai.yet.plugin.runtime.RuntimeSettings
 import java.util.concurrent.CompletableFuture
 import kotlin.test.Test
@@ -324,6 +324,9 @@ class YetToolWindowFactoryTest {
         assertContains(html, "!value.includes(\"#\")")
         assertContains(html, "if (message.type === \"host.contextSnapshot\") return isContextSnapshotPayload(message.payload)")
         assertContains(html, "if (message.type === \"host.openedFromCommand\") return message.requestId === undefined && (message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0))")
+        assertContains(html, "if (message.type === \"host.runtimeStatus\") return message.requestId === undefined && isHostRuntimeStatusPayload(message.payload)")
+        assertContains(html, "const isHostRuntimeStatusPayload = (payload) => isPlainObject(payload)")
+        assertContains(html, "payload.authority === \"metadata_only\"")
         assertContains(html, "if (message.type === \"host.ideActionProgress\") return isHostIdeActionProgressPayload(message.payload)")
         assertContains(html, "if (message.type === \"host.ideActionResult\") return isHostIdeActionResultPayload(message.payload)")
         assertContains(html, "const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();")
@@ -538,11 +541,15 @@ class YetToolWindowFactoryTest {
             logContextStatus = { logs.add(it) },
         )
 
-        assertEquals(listOf("host.ready", "host.openedFromCommand", "host.contextSnapshot"), sent.map(::messageType))
+        assertEquals(listOf("host.ready", "host.runtimeStatus", "host.openedFromCommand", "host.contextSnapshot"), sent.map(::messageType))
         assertContains(sent[0], "\"sessionToken\":\"session-token\"")
         assertFalse(JsonParser.parseString(sent[1]).asJsonObject.has("requestId"))
-        assertContains(sent[2], "\"source\":\"jetbrains\"")
-        assertContains(sent[2], "safe text")
+        assertContains(sent[1], "\"type\":\"host.runtimeStatus\"")
+        assertContains(sent[1], "\"authority\":\"metadata_only\"")
+        assertFalse(sent[1].contains("session-token"), sent[1])
+        assertFalse(JsonParser.parseString(sent[2]).asJsonObject.has("requestId"))
+        assertContains(sent[3], "\"source\":\"jetbrains\"")
+        assertContains(sent[3], "safe text")
         assertEquals(emptyList(), logs)
     }
 
@@ -638,7 +645,7 @@ class YetToolWindowFactoryTest {
             logContextStatus = {},
         )
 
-        assertEquals(listOf("host.ready", "host.openedFromCommand"), sent.map(::messageType))
+        assertEquals(listOf("host.ready", "host.runtimeStatus", "host.openedFromCommand"), sent.map(::messageType))
     }
 
     @Test
@@ -675,7 +682,7 @@ class YetToolWindowFactoryTest {
             logContextStatus = {},
         )
 
-        assertEquals(listOf("host.ready", "host.openedFromCommand"), sent.map(::messageType))
+        assertEquals(listOf("host.ready", "host.runtimeStatus", "host.openedFromCommand"), sent.map(::messageType))
     }
 
     @Test
@@ -711,7 +718,7 @@ class YetToolWindowFactoryTest {
             logContextStatus = { logs.add(it) },
         )
 
-        assertEquals(listOf("host.ready", "host.openedFromCommand"), sent.map(::messageType))
+        assertEquals(listOf("host.ready", "host.runtimeStatus", "host.openedFromCommand"), sent.map(::messageType))
         assertEquals(listOf("Yet AI active editor context collection failed"), logs)
         assertFalse(logs.joinToString("\n").contains("raw-selected-text"))
         assertFalse(logs.joinToString("\n").contains("/Users/person/private/File.kt"))

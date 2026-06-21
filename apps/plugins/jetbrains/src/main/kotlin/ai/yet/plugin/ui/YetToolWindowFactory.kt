@@ -7,7 +7,11 @@ import ai.yet.plugin.identity.ProductIdentity
 import ai.yet.plugin.runtime.RuntimeConnectionManager
 import ai.yet.plugin.runtime.RuntimeConnectionListener
 import ai.yet.plugin.runtime.RuntimeConnectionResult
+import ai.yet.plugin.runtime.RuntimeLifecycle
+import ai.yet.plugin.runtime.RuntimeLifecycleStatus
+import ai.yet.plugin.runtime.RuntimeProcessState
 import ai.yet.plugin.runtime.RuntimeSettings
+import ai.yet.plugin.runtime.runtimeLifecycleStatus
 import ai.yet.plugin.runtime.loopbackOrigin
 import com.google.gson.JsonParser
 import com.google.gson.JsonPrimitive
@@ -207,6 +211,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
             guiReadyRequestId = requestId
             acceptedHostReadyRequestId = null
             val latestError = latestConnection.error
+            sendRuntimeStatus(latestConnection.lifecycleStatus)
             if (latestError != null) {
                 sendDiagnostic(latestError)
             } else if (runtimePrepared) {
@@ -265,6 +270,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
     private fun handleRuntimeConnection(connection: RuntimeConnectionResult) {
         latestConnection = connection
         runtimePrepared = connection.error == null
+        sendRuntimeStatus(connection.lifecycleStatus)
         if (connection.error == null) {
             guiReadyRequestId?.let { requestId -> deliverReadyMessages(connection.settings, requestId) }
         } else {
@@ -318,6 +324,10 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
     private fun sendDiagnostic(error: String) {
         if (disposed) return
         browser.cefBrowser.executeJavaScript(delivery.diagnostic(error), browser.cefBrowser.url, 0)
+    }
+
+    private fun sendRuntimeStatus(status: RuntimeLifecycleStatus) {
+        sendToGui(BridgeMessages.runtimeStatus(status))
     }
 
     override fun dispose() {
@@ -484,6 +494,7 @@ object JetBrainsReadyMessageDelivery {
             return false
         }
         send(BridgeMessages.hostReady(settings, requestId))
+        send(BridgeMessages.runtimeStatus(runtimeLifecycleStatus(settings, settings.launchMode, RuntimeLifecycle.CONNECTED, RuntimeProcessState.RUNNING, "local runtime is reachable", "Continue using Yet AI.")))
         send(BridgeMessages.openedFromCommand())
         val snapshot = try {
             contextSupplier()
@@ -690,6 +701,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isActiveFileExcerptAttachment = (attachment) => isPlainObject(attachment) && hasOnlyKeys(attachment, ["kind", "source", "file", "range", "text", "truncated"]) && attachment.kind === "active_file_excerpt" && attachment.source === "jetbrains" && isPlainObject(attachment.file) && hasOnlyKeys(attachment.file, ["displayPath", "workspaceRelativePath", "languageId"]) && safePath(attachment.file.displayPath, 256) && safePath(attachment.file.workspaceRelativePath, 512) && (attachment.file.languageId === undefined || (typeof attachment.file.languageId === "string" && attachment.file.languageId.length > 0 && attachment.file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(attachment.file.languageId))) && isIdeActionRange(attachment.range) && isActiveFileExcerptText(attachment.text) && typeof attachment.truncated === "boolean";
         const isHostIdeActionResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "action", "workspaceRelativePath", "range", "context", "contextAttachment"]) && ["succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512) && (payload.range === undefined || isIdeActionRange(payload.range)) && (payload.context === undefined || isHostIdeActionResultContext(payload.context)) && (payload.contextAttachment === undefined || isActiveFileExcerptAttachment(payload.contextAttachment));
         const isHostApplyWorkspaceEditResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "appliedEditCount", "affectedFiles"]) && ["applied", "denied", "rejected", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.appliedEditCount === undefined || (Number.isInteger(payload.appliedEditCount) && payload.appliedEditCount >= 0 && payload.appliedEditCount <= 64)) && (payload.affectedFiles === undefined || (Array.isArray(payload.affectedFiles) && payload.affectedFiles.length <= 4 && payload.affectedFiles.every((path) => safeRequiredWorkspacePath(path))));
+        const isHostRuntimeStatusPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["protocolVersion", "surface", "lifecycle", "runtimeOwner", "launchMode", "tokenState", "processState", "diagnosis", "nextAction", "cloudRequired", "authority"]) && payload.protocolVersion === "2026-06-21" && payload.surface === "jetbrains" && ["connected", "auth_mismatch", "invalid_settings", "failed", "restarting", "stopped"].includes(payload.lifecycle) && ["ide_host", "external"].includes(payload.runtimeOwner) && ["auto", "connect", "launch"].includes(payload.launchMode) && ["unknown", "not_required", "absent", "present", "mismatch", "invalid"].includes(payload.tokenState) && ["unknown", "not_owned", "running", "exited", "stopped", "failed"].includes(payload.processState) && isSafeStatusMessage(payload.diagnosis) && isSafeStatusMessage(payload.nextAction) && payload.cloudRequired === false && payload.authority === "metadata_only";
         const isHostMessage = (message) => {
           if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion) return false;
           if (message.type === "host.openedFromCommand") return message.requestId === undefined && (message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0));
@@ -699,6 +711,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           if (message.type === "host.ideActionProgress") return isHostIdeActionProgressPayload(message.payload);
           if (message.type === "host.ideActionResult") return isHostIdeActionResultPayload(message.payload);
           if (message.type === "host.applyWorkspaceEditResult") return isHostApplyWorkspaceEditResultPayload(message.payload);
+          if (message.type === "host.runtimeStatus") return message.requestId === undefined && isHostRuntimeStatusPayload(message.payload);
           return false;
         };
         const isGuiIdeActionPayload = (payload) => {
@@ -790,6 +803,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const canDeliverHostMessage = (message) => {
           if (message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
           if (message.type === "host.openedFromCommand") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId() && message.requestId === undefined;
+          if (message.type === "host.runtimeStatus") return frameReady && message.requestId === undefined;
           if (!messageMatchesCurrentReady(message)) return false;
           if (message.type === "host.ready") return true;
           return hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();

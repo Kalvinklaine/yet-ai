@@ -1,6 +1,7 @@
 package ai.yet.plugin.bridge
 
 import ai.yet.plugin.identity.ProductIdentity
+import ai.yet.plugin.runtime.RuntimeLifecycleStatus
 import ai.yet.plugin.runtime.RuntimeSettings
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
@@ -97,6 +98,24 @@ object BridgeMessages {
         }
         return message.toString()
     }
+
+    fun runtimeStatus(status: RuntimeLifecycleStatus): String = JsonObject().apply {
+        addProperty("version", ProductIdentity.bridgeVersion)
+        addProperty("type", "host.runtimeStatus")
+        add("payload", JsonObject().apply {
+            addProperty("protocolVersion", "2026-06-21")
+            addProperty("surface", "jetbrains")
+            addProperty("lifecycle", status.lifecycle.wireName)
+            addProperty("runtimeOwner", status.runtimeOwner)
+            addProperty("launchMode", status.launchMode)
+            addProperty("tokenState", status.tokenState)
+            addProperty("processState", status.processState.wireName)
+            addProperty("diagnosis", status.diagnosis)
+            addProperty("nextAction", status.nextAction)
+            addProperty("cloudRequired", false)
+            addProperty("authority", "metadata_only")
+        })
+    }.toString()
 
     fun openedFromCommand(): String = JsonObject().apply {
         addProperty("version", ProductIdentity.bridgeVersion)
