@@ -10,6 +10,7 @@
     "smoke:agent-progress": "node scripts/smoke-agent-progress.mjs",
     "smoke:sandbox-checkpoint": "node scripts/smoke-sandbox-checkpoint.mjs",
     "smoke:bounded-patch-loop": "node scripts/smoke-bounded-patch-loop.mjs",
+    "smoke:agent-run-state": "node scripts/smoke-agent-run-state.mjs",
     "smoke:agent-progress-endpoint": "node scripts/smoke-agent-progress-endpoint.mjs",
     "smoke:gui-agent-progress": "node scripts/smoke-gui-agent-progress.mjs",
     "check:planner-scheduler": "node scripts/check-planner-scheduler.mjs",

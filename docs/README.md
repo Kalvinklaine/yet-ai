@@ -36,6 +36,7 @@ Additional local evidence templates live under `docs/dogfood/`, including the re
 - `architecture/012-coding-session-trace.md` — GUI-local read-only coding-session trace model, event families, sanitization rules, in-memory scope, and non-authority boundaries.
   It also records the adjacent Sprint 41 experimental sandbox session metadata boundary: sanitized readiness/checkpoint/rollback status only, with no sandbox agent, bridge command, runtime endpoint, execution authority, or agent loop.
   It now also records the Sprint 42 bounded patch verification loop metadata boundary for one explicit user-confirmed apply plus one allowlisted verification command, with no autonomous loop or new execution surface.
+  Sprint 43 deterministic local smoke coverage for the one-step Agent Run shell is available with `npm run smoke:agent-run-state`; it uses mock host events plus disposable checkpoint/patch helpers and must stay free of provider, IDE, network, shell, git, browser-storage, or hidden workspace-scan authority.
 
 ## Current login-first milestone status
 
