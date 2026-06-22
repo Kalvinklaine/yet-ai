@@ -7313,6 +7313,179 @@ describe("edit proposal preview", () => {
     expect(browserStorageDump()).not.toContain(rawSecret);
     expect(browserStorageDump()).not.toContain("Agent Run");
   });
+
+  it("drafts the one-step model proposal prompt into the composer without sending or posting", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+    fetchMock.mockClear();
+    postMessage.mockClear();
+
+    await act(async () => {
+      setTextareaByPlaceholder("Describe the coding task goal", "Replace the visible title safely");
+    });
+    await act(async () => {
+      findButton("Draft one-step safe-edit prompt").click();
+    });
+
+    expect(chatInput().value).toContain("One-step safe-edit model proposal request");
+    expect(chatInput().value).toContain("Goal summary\nReplace the visible title safely");
+    expect(chatInput().value).toContain("Explicit context summary");
+    expect(chatInput().value).toContain("Provider readiness\nGPT-4o mini (openai-api)");
+    expect(document.activeElement).toBe(chatInput());
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("Replace the visible title safely");
+  });
+
+  it("sends a drafted model proposal prompt only after explicit Send and detects a valid proposal", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      sseEvents: [
+        { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
+        { seq: 1, type: "message_added", chatId: "chat-001", payload: { message: chatMessage("chat-001", "assistant-model-proposal-1", "assistant", JSON.stringify(proposal)) } },
+      ],
+    });
+    renderApp();
+    await flushAsync();
+    postMessage.mockClear();
+
+    await act(async () => {
+      setTextareaByPlaceholder("Describe the coding task goal", "Replace the visible title safely");
+    });
+    await act(async () => {
+      findButton("Draft one-step safe-edit prompt").click();
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    const commandCalls = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST");
+    expect(commandCalls).toHaveLength(1);
+    expect(lastUserMessageBody().payload?.content).toContain("One-step safe-edit model proposal request");
+    expect(container?.textContent).toContain("proposal_detected");
+    expect(agentRunPanel().textContent).toContain("Run status: ready_for_apply");
+    expect(agentRunPanel().textContent).toContain("Proposal status: detected and awaiting explicit apply");
+    expect(buttonWithin(agentRunPanel(), "Apply reviewed patch").disabled).toBe(false);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+  });
+
+  it("posts the existing apply bridge message only after explicit Agent Run apply click", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      sseEvents: [
+        { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
+        { seq: 1, type: "message_added", chatId: "chat-001", payload: { message: chatMessage("chat-001", "assistant-model-proposal-1", "assistant", JSON.stringify(proposal)) } },
+      ],
+    });
+    renderApp();
+    await flushAsync();
+    await act(async () => { setTextareaByPlaceholder("Describe the coding task goal", "Replace the visible title safely"); });
+    await act(async () => { findButton("Draft one-step safe-edit prompt").click(); });
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); });
+    await flushAsync();
+    postMessage.mockClear();
+
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Apply reviewed patch").click();
+    });
+
+    const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
+    expect(applyCalls).toHaveLength(1);
+    expect(applyCalls[0]?.[0].payload).toEqual(proposal);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
+  });
+
+  it("renders invalid and normal model proposal responses without enabling Agent Run apply", async () => {
+    const invalidProposal = { ...safeEditProposalPayload(), requestId: "assistant-owned-request" };
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      sseEvents: [
+        { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
+        { seq: 1, type: "message_added", chatId: "chat-001", payload: { message: chatMessage("chat-001", "assistant-invalid-proposal", "assistant", JSON.stringify(invalidProposal)) } },
+      ],
+    });
+    renderApp();
+    await flushAsync();
+    await act(async () => { setTextareaByPlaceholder("Describe the coding task goal", "Replace the visible title safely"); });
+    await act(async () => { findButton("Draft one-step safe-edit prompt").click(); });
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); });
+    await flushAsync();
+
+    expect(container?.textContent).toContain("proposal_rejected");
+    expect(agentRunPanel().textContent).not.toContain("Run status: ready_for_apply");
+    expect(buttonWithin(agentRunPanel(), "Apply reviewed patch").disabled).toBe(true);
+
+    act(() => root?.unmount());
+    root = undefined;
+    container?.remove();
+    container = undefined;
+    fetchMock.mockReset();
+
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      sseEvents: [
+        { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
+        { seq: 1, type: "message_added", chatId: "chat-001", payload: { message: chatMessage("chat-001", "assistant-normal", "assistant", "I need a file excerpt before proposing an edit.") } },
+      ],
+    });
+    renderApp();
+    await flushAsync();
+    await act(async () => { setTextareaByPlaceholder("Describe the coding task goal", "Replace the visible title safely"); });
+    await act(async () => { findButton("Draft one-step safe-edit prompt").click(); });
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); });
+    await flushAsync();
+
+    expect((container as HTMLDivElement | undefined)?.textContent).toContain("normal_response");
+    expect(buttonWithin(agentRunPanel(), "Apply reviewed patch").disabled).toBe(true);
+  });
+
+  it("keeps stale model proposal responses and browser mode inert without storage or raw unsafe DOM", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const rawSecret = "access_token=" + "s".repeat(64);
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Chat A", 0), chatSummary("chat-002", "Chat B", 0)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Chat A", []), "chat-002": chatThread("chat-002", "Chat B", []) },
+      sseEvents: [
+        { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
+        { seq: 1, type: "message_added", chatId: "chat-001", payload: { message: chatMessage("chat-001", "assistant-stale", "assistant", JSON.stringify(safeEditProposalPayload())) } },
+      ],
+    });
+    renderApp();
+    await flushAsync();
+    await act(async () => { setTextareaByPlaceholder("Describe the coding task goal", `Replace title without ${rawSecret} /Users/alice/private/file.ts npm run check`); });
+    await act(async () => { findButton("Draft one-step safe-edit prompt").click(); });
+    expect(chatInput().value).toContain("[redacted]");
+    expect(chatInput().value).not.toContain(rawSecret);
+    expect(chatInput().value).not.toContain("/Users/alice");
+    expect(chatInput().value).not.toContain("npm run check");
+    await act(async () => {
+      setInputValue(chatIdInput(), "chat-002");
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(container?.textContent).toContain("browser preview only");
+    expect(agentRunPanel().textContent).toContain("Run status: blocked");
+    expect(buttonWithin(agentRunPanel(), "Apply reviewed patch").disabled).toBe(true);
+    expect(buttonsNamed("Apply in VS Code after review")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("Replace title");
+    expect(browserStorageDump()).not.toContain(rawSecret);
+  });
   it("does not expose raw secret-like replacement text in DOM or storage before acknowledgement for a redacted proposal", async () => {
     localStorage.setItem("sentinel", "keep");
     const rawToken = "sk-" + "b".repeat(40);

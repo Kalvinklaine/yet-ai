@@ -19,6 +19,8 @@ import { subscribeToChat, type SseEvent } from "./services/sseClient";
 import { analyzeEditProposalContent, editProposalCandidateIdentityMatches, editProposalPayloadKey, isCompleteAssistantEditProposalStatus, latestEditProposalCandidateFromMessages, latestEditProposalReviewFromMessages, parseEditProposalContent, type EditProposalIdentity } from "./services/editProposal";
 import { codingActions, type CodingAction } from "./services/codingActions";
 import { buildCodingTaskPrompt, type CodingTaskPromptMode } from "./services/codingTaskPrompt";
+import { buildOneStepModelProposalPrompt } from "./services/modelProposalPrompt";
+import { evaluateAgentRunModelProposal, type AgentRunModelProposalResult } from "./services/agentRunModelProposal";
 import { buildVerificationFollowupPrompt, type VerificationFollowupPromptMode } from "./services/verificationFollowupPrompt";
 import { createProjectMemory, deleteProjectMemory, listProjectMemory, searchProjectMemory, type ProjectMemoryNote } from "./services/projectMemoryClient";
 import { appendCodingSessionTraceEntry, type CodingSessionTraceDraft, type CodingSessionTraceEntry } from "./services/codingSessionTrace";
@@ -124,6 +126,21 @@ type FirstMessageReadiness = {
 type ActiveFilePromptAction = {
   label: string;
   prompt: string;
+};
+
+type ModelProposalDraftState = {
+  prompt: string;
+  goalSummary: string;
+  contextSummary: string[];
+  safetySummary: string[];
+  draftId: string;
+};
+
+type SubmittedModelProposalPrompt = ModelProposalDraftState & {
+  chatId: string;
+  runtimeSettingsVersion: string;
+  userMessageId: string;
+  commandRequestId: string;
 };
 
 type CodingTaskTemplate = {
@@ -320,6 +337,8 @@ export function App() {
   const [chatInput, setChatInput] = useState("");
   const [manualRunnerDraftPlan, setManualRunnerDraftPlan] = useState("");
   const [codingTaskGoal, setCodingTaskGoal] = useState("");
+  const [modelProposalDraft, setModelProposalDraft] = useState<ModelProposalDraftState | null>(null);
+  const [submittedModelProposalPrompt, setSubmittedModelProposalPrompt] = useState<SubmittedModelProposalPrompt | null>(null);
   const [chatView, setChatView] = useState(() => createInitialChatViewState("chat-001"));
   const [chatLifecycleState, setChatLifecycleState] = useState<ChatLifecycleState>("idle");
   const [timeline, setTimeline] = useState<string[]>([]);
@@ -395,6 +414,7 @@ export function App() {
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const chatScrollRegionRef = useRef<HTMLDivElement | null>(null);
   const optimisticUserMessageCounterRef = useRef(0);
+  const modelProposalDraftCounterRef = useRef(0);
 
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
   settingsRef.current = settings;
@@ -494,7 +514,26 @@ export function App() {
   const showAppliedEditVerificationStep = applyResult?.payload.status === "applied";
   const latestPlanProposal = useMemo(() => latestManualRunnerPlanProposal(agentProgress.response), [agentProgress.response]);
   const verificationAttempt = ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null;
-  const agentRunInput = useMemo(() => buildAgentRunInput(codingTaskGoal, activeEditProposal, applyResult, verificationAttempt), [activeEditProposal, applyResult, codingTaskGoal, verificationAttempt]);
+  const latestModelProposalAssistant = useMemo(() => submittedModelProposalPrompt ? latestAssistantMessageAfterPrompt(chatView.messages, submittedModelProposalPrompt.prompt) : undefined, [chatView.messages, submittedModelProposalPrompt]);
+  const agentRunModelProposal = useMemo<AgentRunModelProposalResult>(() => evaluateAgentRunModelProposal({
+    chatId,
+    goal: codingTaskGoal,
+    submittedPromptRequestId: submittedModelProposalPrompt?.commandRequestId,
+    latestUserMessageId: submittedModelProposalPrompt?.userMessageId,
+    runtimeSettingsVersion: submittedModelProposalPrompt?.runtimeSettingsVersion,
+    latestAssistantMessage: latestModelProposalAssistant && submittedModelProposalPrompt ? {
+      id: latestModelProposalAssistant.id,
+      chatId,
+      role: latestModelProposalAssistant.role,
+      status: latestModelProposalAssistant.status,
+      content: latestModelProposalAssistant.content,
+      responseToRequestId: submittedModelProposalPrompt.commandRequestId,
+      userMessageId: submittedModelProposalPrompt.userMessageId,
+      runtimeSettingsVersion: submittedModelProposalPrompt.runtimeSettingsVersion,
+    } : undefined,
+  }), [chatId, codingTaskGoal, latestModelProposalAssistant, submittedModelProposalPrompt]);
+  const legacyAgentRunInput = useMemo(() => buildAgentRunInput(codingTaskGoal, activeEditProposal, applyResult, verificationAttempt), [activeEditProposal, applyResult, codingTaskGoal, verificationAttempt]);
+  const agentRunInput = submittedModelProposalPrompt || modelProposalDraft ? agentRunModelProposal.proposalPathState === "proposal_detected" && activeEditProposal ? legacyAgentRunInput : agentRunModelProposal.agentRunInput : legacyAgentRunInput;
   const codingTaskPromptDraft = useMemo(() => buildCodingTaskPrompt({ mode: "ask", goal: codingTaskGoal, contextItems: explicitContextBundleItems, providerReadiness: chatReadinessLabel }), [chatReadinessLabel, codingTaskGoal, explicitContextBundleItems]);
   const workspaceSnippetQueryValidation = useMemo(() => validateWorkspaceSnippetQuery(workspaceSnippetQuery), [workspaceSnippetQuery]);
 
@@ -537,6 +576,11 @@ export function App() {
     setApplyResult(null);
     setApplyNote(null);
     setPendingApplyRequestId(null);
+  }, []);
+
+  const clearModelProposalState = useCallback(() => {
+    setModelProposalDraft(null);
+    setSubmittedModelProposalPrompt(null);
   }, []);
 
   const clearIdeActionState = useCallback(() => {
@@ -620,8 +664,9 @@ export function App() {
     setAttachedContextStatus(null);
     clearExplicitContextBundle(null);
     clearEditProposalState();
+    clearModelProposalState();
     clearIdeActionState();
-  }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState]);
+  }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState]);
 
   const updateRuntimeSettings = useCallback((nextSettings: RuntimeSettings) => {
     const changed = settingsRef.current.baseUrl !== nextSettings.baseUrl || settingsRef.current.token !== nextSettings.token;
@@ -1052,13 +1097,14 @@ export function App() {
       setAttachedContextStatus(null);
       clearExplicitContextBundle(null);
       clearEditProposalState();
+      clearModelProposalState();
       clearIdeActionState();
     } else {
       setChatHistoryError(result.error);
       setChatHistoryRevision(targetRevision);
     }
     setChatHistoryLoading(false);
-  }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState, isCurrentRefresh]);
+  }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState, isCurrentRefresh]);
 
   const selectChat = useCallback((nextChatId: string) => {
     setCompactConversationsOpen(false);
@@ -1068,6 +1114,7 @@ export function App() {
     abortActiveStream("SSE stopped and abort requested before switching chats");
     setChatInput("");
     clearEditProposalState();
+    clearModelProposalState();
     clearIdeActionState();
     clearExplicitContextBundle(null);
     setAttachedContextAcknowledged(false);
@@ -1076,7 +1123,7 @@ export function App() {
     setConversationNotice(`Switched to ${sanitizeDisplayText(selectedSummary?.title || nextChatId)}.`);
     setChatView(resetChatViewState(nextChatId));
     void loadChatThread(nextChatId);
-  }, [abortActiveStream, chatSummaries, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState, loadChatThread]);
+  }, [abortActiveStream, chatSummaries, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState, clearModelProposalState, loadChatThread]);
 
   const updateDirectChatId = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const nextChatId = event.target.value;
@@ -1084,12 +1131,13 @@ export function App() {
       abortActiveStream("SSE stopped and abort requested before changing chat id");
       setChatInput("");
       clearEditProposalState();
+      clearModelProposalState();
       clearIdeActionState();
       setAttachedContextAcknowledged(false);
       setChatView(resetChatViewState(nextChatId));
     }
     setChatId(nextChatId);
-  }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState]);
+  }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState]);
 
   const deleteCurrentChat = useCallback(async (targetChatId: string) => {
     const targetSummary = chatSummaries.find((summary) => summary.chatId === targetChatId);
@@ -1480,11 +1528,12 @@ export function App() {
     setAttachedContextStatus(null);
     clearExplicitContextBundle(null);
     clearEditProposalState();
+    clearModelProposalState();
     clearIdeActionState();
     if (activeChatSummary) {
       void loadChatThread(chatId);
     }
-  }, [abortActiveStream, activeChatSummary?.chatId, chatId, clearEditProposalState, clearIdeActionState, loadChatThread]);
+  }, [abortActiveStream, activeChatSummary?.chatId, chatId, clearEditProposalState, clearIdeActionState, clearModelProposalState, loadChatThread]);
 
   useEffect(() => () => {
     abortActiveStream("SSE stopped and abort requested on cleanup", { finalizeStreaming: false, addTimelineEntry: false, reportAbortErrors: false });
@@ -1884,6 +1933,15 @@ export function App() {
     setManualRunnerDraftPlan(buildCodingTaskDraft("implementation_plan"));
   };
 
+  const draftOneStepModelProposalPrompt = () => {
+    const draft = buildOneStepModelProposalPrompt({ mode: "safe_edit", goal: codingTaskGoal, contextItems: explicitContextBundleItems, providerReadiness: chatReadinessLabel });
+    modelProposalDraftCounterRef.current += 1;
+    setModelProposalDraft({ ...draft, draftId: `model-proposal-draft-${modelProposalDraftCounterRef.current}` });
+    setSubmittedModelProposalPrompt(null);
+    setChatInput(draft.prompt);
+    chatInputRef.current?.focus();
+  };
+
   const addActiveFileExcerptToBundle = () => {
     if (!currentActiveFileExcerpt) {
       return;
@@ -1997,6 +2055,11 @@ export function App() {
     if (result.ok) {
       addTimeline(`Command accepted ${result.data.requestId}`);
       appendTrace({ family: "chat.sendAccepted", title: "Send accepted", status: "succeeded", summary: "Runtime accepted user message command.", requestId: result.data.requestId, details: { chatId: targetChatId, hasContext: Boolean(context), contextKind: context?.kind } });
+      if (modelProposalDraft?.prompt === content) {
+        setSubmittedModelProposalPrompt({ ...modelProposalDraft, chatId: targetChatId, runtimeSettingsVersion: String(targetRevision), userMessageId: optimisticUserMessageId, commandRequestId: result.data.requestId });
+      } else {
+        setSubmittedModelProposalPrompt(null);
+      }
       clearSubmittedAttachedContext(submittedExplicitContextBundle ? null : submittedAttachedContext);
       if (submittedExplicitContextBundle) {
         clearExplicitContextBundle("One-shot explicit context bundle attached to the last accepted message and cleared.");
@@ -2335,7 +2398,7 @@ export function App() {
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
                 <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitEditProposal} onRunAllowlistedVerification={(commandId) => requestIdeAction({ action: "runVerificationCommand", commandId }, "gui-agent-run-verification")} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} />
-                <CodingTaskSessionPanel goal={codingTaskGoal} contextItems={explicitContextBundleItems} memoryAttachedCount={attachedProjectMemoryCount} modelStatus={chatReadinessLabel} canSendChat={canSendChat} latestResponseStatus={chatLifecycleLabel} editProposal={activeEditProposal} applyResult={applyResult} verificationAttempt={verificationAttempt} verificationAttached={Boolean(attachedVerificationKey)} draftPrompt={codingTaskPromptDraft} onGoalChange={setCodingTaskGoal} onUseDraftPrompt={useCodingTaskDraftPrompt} onUseDraftPlan={useCodingTaskDraftPlan} onFocusPrompt={focusCodingTaskPrompt} />
+                <CodingTaskSessionPanel goal={codingTaskGoal} contextItems={explicitContextBundleItems} memoryAttachedCount={attachedProjectMemoryCount} modelStatus={chatReadinessLabel} canSendChat={canSendChat} latestResponseStatus={chatLifecycleLabel} editProposal={activeEditProposal} applyResult={applyResult} verificationAttempt={verificationAttempt} verificationAttached={Boolean(attachedVerificationKey)} draftPrompt={codingTaskPromptDraft} modelProposalDraft={modelProposalDraft} modelProposalResult={agentRunModelProposal} onGoalChange={setCodingTaskGoal} onUseDraftPrompt={useCodingTaskDraftPrompt} onUseDraftPlan={useCodingTaskDraftPlan} onDraftOneStepModelProposal={draftOneStepModelProposalPrompt} onFocusPrompt={focusCodingTaskPrompt} />
                 <ManualRunnerPanel host={bridgeHost} draftPlan={manualRunnerDraftPlan} planProposal={latestPlanProposal} hasContext={Boolean((currentAttachedContext && hasUsableAttachedContext(currentAttachedContext)) || explicitContextBundleItems.length > 0)} hasPrompt={Boolean(chatInput.trim())} hasAssistantActivity={chatView.messages.some((message) => message.role === "assistant") || chatLifecycleState !== "idle"} hasEditProposal={Boolean(activeEditProposal)} applyResult={applyResult} verificationAttempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} verificationAttached={Boolean(attachedVerificationKey)} canSendChat={canSendChat} onDraftPlanChange={setManualRunnerDraftPlan} onFocusPrompt={() => chatInputRef.current?.focus()} />
                 <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} promptAction={activeFilePromptAction} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onClearPending={clearPendingIdeActionState} onIncludeChange={setIncludeAttachedContext} onApplyPrompt={applyActiveFilePrompt} onAddToBundle={addActiveFileExcerptToBundle} />
                 <WorkspaceSnippetSearchPanel host={bridgeHost} query={workspaceSnippetQuery} validation={workspaceSnippetQueryValidation} result={workspaceSnippetResult} selectedKeys={selectedWorkspaceSnippetKeys} pending={ideActionAttempt?.action === "searchWorkspaceSnippets" && (ideActionAttempt.status === "pending" || ideActionAttempt.status === "inProgress")} status={workspaceSnippetStatus} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onQueryChange={setWorkspaceSnippetQuery} onSearch={searchWorkspaceSnippets} onClearPending={clearPendingIdeActionState} onSelectionChange={setSelectedWorkspaceSnippetKeys} onAttachSelected={attachSelectedWorkspaceSnippetsToBundle} />
@@ -2579,6 +2642,27 @@ export function App() {
       </section>
     </main>
   );
+}
+
+function latestAssistantMessageAfterPrompt(messages: ChatViewMessage[], prompt: string): ChatViewMessage | undefined {
+  let promptIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "user" && message.content === prompt) {
+      promptIndex = index;
+      break;
+    }
+  }
+  if (promptIndex < 0) {
+    return undefined;
+  }
+  for (let index = messages.length - 1; index > promptIndex; index -= 1) {
+    const message = messages[index];
+    if (message.role === "assistant") {
+      return message;
+    }
+  }
+  return undefined;
 }
 
 function buildAgentRunInput(goal: string, proposal: EditProposalState | null, applyResult: ApplyResultState | null, verificationAttempt: IdeActionAttemptState | null): AgentRunInput | undefined {
@@ -2976,7 +3060,7 @@ function FirstMessageActionButton({ action, runtimeRefreshInFlight, providerTest
   return <button type="button" onClick={onFocusPrompt}>{action.label}</button>;
 }
 
-function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, modelStatus, canSendChat, latestResponseStatus, editProposal, applyResult, verificationAttempt, verificationAttached, draftPrompt, onGoalChange, onUseDraftPrompt, onUseDraftPlan, onFocusPrompt }: { goal: string; contextItems: ExplicitContextBundleItem[]; memoryAttachedCount: number; modelStatus: string; canSendChat: boolean; latestResponseStatus: string; editProposal: EditProposalState | null; applyResult: ApplyResultState | null; verificationAttempt: IdeActionAttemptState | null; verificationAttached: boolean; draftPrompt: string; onGoalChange: (goal: string) => void; onUseDraftPrompt: (mode: CodingTaskPromptMode) => void; onUseDraftPlan: () => void; onFocusPrompt: () => void }) {
+function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, modelStatus, canSendChat, latestResponseStatus, editProposal, applyResult, verificationAttempt, verificationAttached, draftPrompt, modelProposalDraft, modelProposalResult, onGoalChange, onUseDraftPrompt, onUseDraftPlan, onDraftOneStepModelProposal, onFocusPrompt }: { goal: string; contextItems: ExplicitContextBundleItem[]; memoryAttachedCount: number; modelStatus: string; canSendChat: boolean; latestResponseStatus: string; editProposal: EditProposalState | null; applyResult: ApplyResultState | null; verificationAttempt: IdeActionAttemptState | null; verificationAttached: boolean; draftPrompt: string; modelProposalDraft: ModelProposalDraftState | null; modelProposalResult: AgentRunModelProposalResult; onGoalChange: (goal: string) => void; onUseDraftPrompt: (mode: CodingTaskPromptMode) => void; onUseDraftPlan: () => void; onDraftOneStepModelProposal: () => void; onFocusPrompt: () => void }) {
   const contextLabels = contextItems.map((item) => codingTaskContextLabel(item));
   const promptDrafted = draftPrompt.trim().length > 0;
   const goalReady = goal.trim().length > 0;
@@ -2993,6 +3077,7 @@ function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, model
   const sessionStatus = codingTaskSessionStatus(goal, contextItems.length, latestResponseStatus, editProposalStatus, verificationStatus);
   const recoveryCopy = codingTaskRecoveryCopy(modelStatus, latestResponseStatus);
   const nextSafeStep = codingTaskNextSafeStep({ goalReady, contextCount: contextItems.length, canSendChat, verificationStatus, editProposalStatus, latestResponseStatus });
+  const modelProposalDiagnostics = modelProposalResult.diagnostics;
   return (
     <section className={`coding-task-session-card readiness-card ${goalReady || contextItems.length > 0 || editProposal || verificationAttempt ? "ready" : "warn"} stack`} aria-label="Coding task session">
       <div className="row">
@@ -3026,6 +3111,21 @@ function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, model
         <strong>Next safe manual step</strong>
         <span>{nextSafeStep}</span>
       </div>
+      <section className={`readiness-card ${modelProposalResult.proposalPathState === "proposal_detected" ? "ready" : "warn"} stack`} aria-label="One-step model proposal path">
+        <div className="row">
+          <strong>One-step model proposal</strong>
+          <span className="badge">draft only</span>
+          <span className={`badge ${modelProposalResult.proposalPathState === "proposal_detected" ? "ok" : "warn"}`}>{modelProposalResult.proposalPathState}</span>
+        </div>
+        <span className="subtle">Drafts a safe-edit prompt into the composer only. Send remains the only model/runtime call; apply and verification remain explicit future clicks.</span>
+        <span>Goal summary: {goalReady ? sanitizeDisplayText(goal) : "No local goal selected"}</span>
+        <span>Explicit bundle summary: {contextLabels.length === 0 ? "No explicit context selected" : `${contextLabels.length} selected item${contextLabels.length === 1 ? "" : "s"}`}</span>
+        <span>Provider readiness: {sanitizeDisplayText(modelStatus)}</span>
+        <span className="subtle">Production checkpoint/readiness gating remains future work; current Agent Run readiness is display-only metadata until explicit apply/verification controls are clicked.</span>
+        {modelProposalDraft && <span className="subtle">Latest drafted prompt: {modelProposalDraft.goalSummary} · {modelProposalDraft.contextSummary.length} context summary item{modelProposalDraft.contextSummary.length === 1 ? "" : "s"}</span>}
+        {modelProposalDiagnostics.length > 0 && <div className="readiness-card warn" role="status" aria-label="One-step model proposal diagnostics">{modelProposalDiagnostics.map((diagnostic) => <span key={`${diagnostic.code}:${diagnostic.message}`}>{sanitizeDisplayText(diagnostic.code)}: {sanitizeDisplayText(diagnostic.message)}</span>)}</div>}
+        <button type="button" className="secondary-button" onClick={onDraftOneStepModelProposal}>Draft one-step safe-edit prompt</button>
+      </section>
       {recoveryCopy && <div className="readiness-card warn" role="status"><strong>Prompt recovery</strong><span>{recoveryCopy}</span></div>}
       <div className="stack">
         <strong>Task templates</strong>
