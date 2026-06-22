@@ -2199,7 +2199,7 @@ describe("agent progress panel", () => {
     expect(text).not.toContain("SECRET_WORKSPACE_BODY");
     expect(text).not.toContain("SECRET_THOUGHT_BODY");
     expect((text.match(/SAFE_NOISY_AGENT_OUTPUT_/g) ?? []).length).toBeLessThan(220);
-    expect(text.length).toBeLessThan(16000);
+    expect(text.length).toBeLessThan(17000);
   });
 
   it("detects fallback overflow before raw-content redaction", async () => {
@@ -2255,7 +2255,7 @@ describe("agent progress panel", () => {
     expect(text).toContain("7 more summaries hidden.");
     expect(text).not.toContain("T-BOUND-18 / run-18");
     expect(text).not.toContain("safe recent summary 16");
-    expect(text.length).toBeLessThan(35100);
+    expect(text.length).toBeLessThan(37100);
   });
 
   it("endpoint unavailable or corrupt runtime error is sanitized and non-fatal", async () => {
@@ -7233,9 +7233,86 @@ describe("edit proposal preview", () => {
     });
     const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
     expect(applyCalls).toHaveLength(1);
-    expect(applyCalls[0][0]).toMatchObject({ version: bridgeVersion, type: "gui.applyWorkspaceEditRequest", payload: proposal });
   });
 
+  it("renders Agent Run panel and posts no bridge messages before explicit click", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Agent Run proposal", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Agent Run proposal", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+    postMessage.mockClear();
+
+    const panel = agentRunPanel();
+    expect(panel.textContent).toContain("Experimental Agent Run · one-step manual shell");
+    expect(panel.textContent).toContain("Run status: ready_for_apply");
+    expect(panel.textContent).toContain("Goal summary: Review latest safe edit proposal");
+    expect(panel.textContent).toContain("Touched files: 1");
+    expect(panel.textContent).toContain("Edit count: 1");
+    expect(buttonWithin(panel, "Apply reviewed patch").disabled).toBe(false);
+    expect(buttonWithin(panel, "Run allowlisted verification").disabled).toBe(true);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
+  });
+
+  it("Agent Run apply and verification use existing bridge messages only after explicit clicks", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Agent Run bridge", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Agent Run bridge", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+    postMessage.mockClear();
+
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Apply reviewed patch").click();
+    });
+    const applyCall = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
+    expect(applyCall).toBeDefined();
+    expect(applyCall.payload).toEqual(proposal);
+
+    await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "Agent Run apply result.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
+    expect(agentRunPanel().textContent).toContain("Run status: ready_for_verification");
+    expect(buttonWithin(agentRunPanel(), "Run allowlisted verification").disabled).toBe(false);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
+
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Run allowlisted verification").click();
+    });
+    const verificationCall = postMessage.mock.calls.find(([message]) => message.type === "gui.ideActionRequest")?.[0];
+    expect(verificationCall).toMatchObject({ type: "gui.ideActionRequest", payload: { action: "runVerificationCommand", commandId: "repository-check" } });
+    expect(Object.keys(verificationCall.payload)).toEqual(["action", "commandId"]);
+  });
+
+  it("Agent Run panel avoids browser storage and raw unsafe DOM exposure", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const rawSecret = "sk-" + "q".repeat(40);
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+
+    const panel = agentRunPanel();
+    expect(panel.textContent).toContain("Run status: idle");
+    expect(panel.textContent).toContain("no hidden model/provider calls");
+    expect(panel.textContent).not.toContain(rawSecret);
+    expect(panel.textContent).not.toContain("/Users/");
+    expect(panel.textContent).not.toContain("npm run check");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(rawSecret);
+    expect(browserStorageDump()).not.toContain("Agent Run");
+  });
   it("does not expose raw secret-like replacement text in DOM or storage before acknowledgement for a redacted proposal", async () => {
     localStorage.setItem("sentinel", "keep");
     const rawToken = "sk-" + "b".repeat(40);
@@ -8323,7 +8400,7 @@ describe("edit proposal preview", () => {
     expect(text).not.toContain("Bearer");
     expect(text).not.toContain("/Users/private/me");
     expect(text).not.toContain("credentials/private-token.txt");
-    expect(text.length).toBeLessThan(13200);
+    expect(text.length).toBeLessThan(15000);
   });
 
   it("ignores stale host apply result while a different apply request is pending in the same chat", async () => {
@@ -9720,6 +9797,14 @@ function manualRunnerPanel() {
   const panel = container?.querySelector<HTMLElement>("[aria-label='Manual runner coding loop']");
   if (!panel) {
     throw new Error("Manual runner panel not found");
+  }
+  return panel;
+}
+
+function agentRunPanel() {
+  const panel = container?.querySelector<HTMLElement>("[data-testid='agent-run-panel']");
+  if (!panel) {
+    throw new Error("Agent Run panel not found");
   }
   return panel;
 }

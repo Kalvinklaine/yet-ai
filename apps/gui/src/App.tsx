@@ -1,7 +1,8 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type HostRuntimeStatusPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type ActiveFileExcerptAttachment, type WorkspaceSnippetSearchResult } from "./bridge/bridgeAdapter";
+import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type HostRuntimeStatusPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type VerificationCommandId, type ActiveFileExcerptAttachment, type WorkspaceSnippetSearchResult } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, removeOptimisticUserMessage, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToBundleItem, activeFileExcerptToChatContext, addExplicitContextBundleItem, explicitContextBundleMaxItems, explicitContextBundleToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, projectMemoryToBundleItem, rangeFromContextSelection, summarizeExplicitContextBundleItem, validateWorkspaceSnippetQuery, workspaceSnippetToBundleItem, type ExplicitContextBundleItem, type ProjectMemoryBundleItem, type WorkspaceSnippetBundleItem } from "./services/activeEditorContext";
+import { AgentRunPanel } from "./components/AgentRunPanel";
 import { CodingSessionTracePanel } from "./components/CodingSessionTracePanel";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
 import { IdeActionProposalPanel, IdeActionsPanel, VerificationCommandPanel, verificationOutputKey, type IdeActionAttemptState, type VerificationCommand } from "./components/IdeActionsPanel";
@@ -22,6 +23,8 @@ import { buildVerificationFollowupPrompt, type VerificationFollowupPromptMode } 
 import { createProjectMemory, deleteProjectMemory, listProjectMemory, searchProjectMemory, type ProjectMemoryNote } from "./services/projectMemoryClient";
 import { appendCodingSessionTraceEntry, type CodingSessionTraceDraft, type CodingSessionTraceEntry } from "./services/codingSessionTrace";
 import { evaluateHostCapabilityMetadata } from "./services/toolAuthorityPolicy";
+import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPatchVerificationLoop";
+import type { AgentRunInput } from "./services/agentRunState";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
@@ -491,6 +494,7 @@ export function App() {
   const showAppliedEditVerificationStep = applyResult?.payload.status === "applied";
   const latestPlanProposal = useMemo(() => latestManualRunnerPlanProposal(agentProgress.response), [agentProgress.response]);
   const verificationAttempt = ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null;
+  const agentRunInput = useMemo(() => buildAgentRunInput(codingTaskGoal, activeEditProposal, applyResult, verificationAttempt), [activeEditProposal, applyResult, codingTaskGoal, verificationAttempt]);
   const codingTaskPromptDraft = useMemo(() => buildCodingTaskPrompt({ mode: "ask", goal: codingTaskGoal, contextItems: explicitContextBundleItems, providerReadiness: chatReadinessLabel }), [chatReadinessLabel, codingTaskGoal, explicitContextBundleItems]);
   const workspaceSnippetQueryValidation = useMemo(() => validateWorkspaceSnippetQuery(workspaceSnippetQuery), [workspaceSnippetQuery]);
 
@@ -2330,6 +2334,7 @@ export function App() {
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
+                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitEditProposal} onRunAllowlistedVerification={(commandId) => requestIdeAction({ action: "runVerificationCommand", commandId }, "gui-agent-run-verification")} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} />
                 <CodingTaskSessionPanel goal={codingTaskGoal} contextItems={explicitContextBundleItems} memoryAttachedCount={attachedProjectMemoryCount} modelStatus={chatReadinessLabel} canSendChat={canSendChat} latestResponseStatus={chatLifecycleLabel} editProposal={activeEditProposal} applyResult={applyResult} verificationAttempt={verificationAttempt} verificationAttached={Boolean(attachedVerificationKey)} draftPrompt={codingTaskPromptDraft} onGoalChange={setCodingTaskGoal} onUseDraftPrompt={useCodingTaskDraftPrompt} onUseDraftPlan={useCodingTaskDraftPlan} onFocusPrompt={focusCodingTaskPrompt} />
                 <ManualRunnerPanel host={bridgeHost} draftPlan={manualRunnerDraftPlan} planProposal={latestPlanProposal} hasContext={Boolean((currentAttachedContext && hasUsableAttachedContext(currentAttachedContext)) || explicitContextBundleItems.length > 0)} hasPrompt={Boolean(chatInput.trim())} hasAssistantActivity={chatView.messages.some((message) => message.role === "assistant") || chatLifecycleState !== "idle"} hasEditProposal={Boolean(activeEditProposal)} applyResult={applyResult} verificationAttempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} verificationAttached={Boolean(attachedVerificationKey)} canSendChat={canSendChat} onDraftPlanChange={setManualRunnerDraftPlan} onFocusPrompt={() => chatInputRef.current?.focus()} />
                 <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} promptAction={activeFilePromptAction} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onClearPending={clearPendingIdeActionState} onIncludeChange={setIncludeAttachedContext} onApplyPrompt={applyActiveFilePrompt} onAddToBundle={addActiveFileExcerptToBundle} />
@@ -2574,6 +2579,83 @@ export function App() {
       </section>
     </main>
   );
+}
+
+function buildAgentRunInput(goal: string, proposal: EditProposalState | null, applyResult: ApplyResultState | null, verificationAttempt: IdeActionAttemptState | null): AgentRunInput | undefined {
+  const goalText = goal.trim();
+  if (!goalText && !proposal) {
+    return undefined;
+  }
+  const boundedLoop = proposal ? buildAgentRunBoundedLoop(proposal, applyResult, verificationAttempt) : undefined;
+  const input: AgentRunInput = {
+    goal: { id: "local-agent-run-goal", title: goalText || "Review latest safe edit proposal", summary: goalText || proposal?.payload.summary },
+    proposal: proposal ? { id: proposal.requestId, summary: proposal.payload.summary, touchedFiles: proposal.payload.edits.map((edit) => edit.workspaceRelativePath) } : undefined,
+    boundedLoop,
+    rollback: { available: Boolean(applyResult), summary: applyResult ? "Rollback review is available through existing checkpoint surfaces only." : undefined },
+  };
+  if (applyResult) {
+    input.applyRequest = { requested: true, source: "user", requestId: applyResult.requestId };
+    input.applyResult = {
+      status: applyResult.payload.status === "applied" ? "applied" : "failed",
+      summary: applyResult.payload.message,
+      appliedFileCount: applyResult.payload.affectedFiles?.length,
+    };
+  }
+  if (verificationAttempt?.action === "runVerificationCommand") {
+    if (verificationAttempt.status === "pending" || verificationAttempt.status === "inProgress") {
+      input.verificationRequest = { requested: true, source: "user", requestId: verificationAttempt.requestId };
+      input.verificationProgress = { status: verificationAttempt.status === "pending" ? "queued" : "running", summary: verificationAttempt.message };
+    }
+    if (verificationAttempt.result?.action === "runVerificationCommand" && (verificationAttempt.result.status === "succeeded" || verificationAttempt.result.status === "failed")) {
+      input.verificationRequest = { requested: true, source: "user", requestId: verificationAttempt.requestId };
+      input.verificationResult = {
+        status: verificationAttempt.result.status === "succeeded" ? "succeeded" : "failed",
+        exitCode: verificationAttempt.result.exitCode,
+        durationMs: verificationAttempt.result.durationMs,
+        outputTail: verificationAttempt.result.outputTail,
+      };
+    }
+  }
+  return input;
+}
+
+function buildAgentRunBoundedLoop(proposal: EditProposalState, applyResult: ApplyResultState | null, verificationAttempt: IdeActionAttemptState | null): BoundedPatchVerificationLoopMetadata {
+  const editCount = proposal.payload.edits.reduce((count, edit) => count + edit.textReplacements.length, 0);
+  const patchBytes = proposal.payload.edits.reduce((count, edit) => count + edit.textReplacements.reduce((inner, replacement) => inner + replacement.replacementText.length, 0), 0);
+  const verificationResult = verificationAttempt?.result?.action === "runVerificationCommand" && (verificationAttempt.result.status === "succeeded" || verificationAttempt.result.status === "failed") ? verificationAttempt.result : null;
+  const status: BoundedPatchVerificationLoopMetadata["status"] = verificationResult
+    ? verificationResult.status === "succeeded" ? "verified" : "verification_failed"
+    : applyResult?.payload.status === "applied" ? "ready_for_verification" : "ready_for_apply";
+  const policyDecision: BoundedPatchVerificationLoopMetadata["policy"]["decision"] = status === "ready_for_apply" ? "ready_for_user_apply" : status === "verified" ? "completed" : "ready_for_user_verification";
+  const verificationCommandId = verificationCommandIdOrDefault(verificationResult?.commandId ?? verificationAttempt?.progress?.commandId);
+  const verificationStatus: BoundedPatchVerificationLoopMetadata["verification"]["status"] = verificationResult ? verificationResult.status === "succeeded" ? "succeeded" : "failed" : applyResult?.payload.status === "applied" ? "ready" : "not_requested";
+  return {
+    kind: "bounded_patch_verification_loop",
+    version: "2026-06-21",
+    authority: "metadata_only",
+    cloudRequired: false,
+    executionAllowed: false,
+    status,
+    loopId: `guiAgentRun${proposal.requestId.replace(/[^A-Za-z0-9._-]/g, "")}`.slice(0, 80),
+    sandbox: { modeStatus: applyResult ? "rollback_ready" : "checkpoint_ready", checkpointId: "gui-agent-run-checkpoint", checkpointVerified: true, checkpointHash: safeAgentRunHash() },
+    limits: { maxTouchedFiles: 4, maxPatchBytes: 50000, maxSteps: 16, maxVerificationSeconds: 1800 },
+    patch: { proposalId: proposal.requestId, source: "gui_review", touchedFiles: proposal.payload.edits.map((edit) => edit.workspaceRelativePath), editCount, patchBytes: Math.max(1, patchBytes), contentHash: safeAgentRunHash(), summary: proposal.payload.summary },
+    policy: { decision: policyDecision, requiresUserConfirmation: true, reasonCodes: policyDecision === "ready_for_user_apply" ? ["explicit_user_confirmation_required", "checkpoint_verified", "bounded_patch_metadata_only"] : ["explicit_user_confirmation_required", "checkpoint_verified", "bounded_patch_metadata_only", "user_apply_result_recorded"] },
+    verification: {
+      commandId: verificationCommandId,
+      status: verificationStatus,
+      result: verificationResult && verificationResult.exitCode !== undefined && verificationResult.durationMs !== undefined && verificationResult.outputTail !== undefined && verificationResult.truncated !== undefined ? { exitCode: verificationResult.exitCode, durationMs: verificationResult.durationMs, outputTail: verificationResult.outputTail, truncated: verificationResult.truncated, resultHash: safeAgentRunHash() } : undefined,
+    },
+    summary: status === "ready_for_apply" ? "Agent Run is ready for explicit reviewed patch apply." : status === "verified" ? "Agent Run verification succeeded after explicit user request." : status === "verification_failed" ? "Agent Run verification failed after explicit user request." : "Agent Run is ready for explicit allowlisted verification.",
+  };
+}
+
+function verificationCommandIdOrDefault(value: VerificationCommandId | undefined): VerificationCommandId {
+  return value === "gui-app-tests" || value === "engine-chat-tests" || value === "repository-check" ? value : "repository-check";
+}
+
+function safeAgentRunHash(): `sha256:${string}` {
+  return "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 }
 
 function isVerificationOutputResult(result: IdeActionResultPayload): result is IdeActionResultPayload & Omit<VerificationOutputBundleItem, "kind" | "key"> & { action: "runVerificationCommand"; status: "succeeded" | "failed"; commandId: NonNullable<IdeActionResultPayload["commandId"]>; exitCode: number; outputTail: string; truncated: boolean } {
