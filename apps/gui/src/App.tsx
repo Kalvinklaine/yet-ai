@@ -21,6 +21,7 @@ import { codingActions, type CodingAction } from "./services/codingActions";
 import { buildCodingTaskPrompt, type CodingTaskPromptMode } from "./services/codingTaskPrompt";
 import { buildOneStepModelProposalPrompt } from "./services/modelProposalPrompt";
 import { evaluateAgentRunModelProposal, type AgentRunModelProposalResult } from "./services/agentRunModelProposal";
+import { composeAgentRunReadiness, type AgentRunReadinessResult } from "./services/agentRunReadiness";
 import { buildVerificationFollowupPrompt, type VerificationFollowupPromptMode } from "./services/verificationFollowupPrompt";
 import { createProjectMemory, deleteProjectMemory, listProjectMemory, searchProjectMemory, type ProjectMemoryNote } from "./services/projectMemoryClient";
 import { appendCodingSessionTraceEntry, type CodingSessionTraceDraft, type CodingSessionTraceEntry } from "./services/codingSessionTrace";
@@ -533,7 +534,19 @@ export function App() {
     } : undefined,
   }), [chatId, codingTaskGoal, latestModelProposalAssistant, submittedModelProposalPrompt]);
   const legacyAgentRunInput = useMemo(() => buildAgentRunInput(codingTaskGoal, activeEditProposal, applyResult, verificationAttempt), [activeEditProposal, applyResult, codingTaskGoal, verificationAttempt]);
-  const agentRunInput = submittedModelProposalPrompt || modelProposalDraft ? agentRunModelProposal.proposalPathState === "proposal_detected" && activeEditProposal ? legacyAgentRunInput : agentRunModelProposal.agentRunInput : legacyAgentRunInput;
+  const agentRunReadiness = useMemo<AgentRunReadinessResult | null>(() => {
+    if (agentRunModelProposal.proposalPathState !== "proposal_detected") {
+      return null;
+    }
+    const readinessMetadata = activeCaps?.agentRunReadiness;
+    return composeAgentRunReadiness({
+      ...(isRecord(readinessMetadata) ? readinessMetadata : {}),
+      loopId: agentRunReadinessLoopId(agentRunModelProposal.agentRunInput.proposal?.id, submittedModelProposalPrompt?.commandRequestId),
+      goal: agentRunReadinessGoalMetadata(agentRunModelProposal.agentRunInput.goal),
+      proposal: agentRunReadinessProposalMetadata(agentRunModelProposal.agentRunInput.proposal, activeEditProposal),
+    });
+  }, [activeCaps, activeEditProposal, agentRunModelProposal, submittedModelProposalPrompt]);
+  const agentRunInput = submittedModelProposalPrompt || modelProposalDraft ? agentRunModelProposal.proposalPathState === "proposal_detected" && activeEditProposal ? agentRunReadiness ? { ...(legacyAgentRunInput ?? {}), ...agentRunReadiness.agentRunInput, boundedLoop: agentRunReadiness.boundedLoop } : agentRunModelProposal.agentRunInput : agentRunModelProposal.agentRunInput : legacyAgentRunInput;
   const codingTaskPromptDraft = useMemo(() => buildCodingTaskPrompt({ mode: "ask", goal: codingTaskGoal, contextItems: explicitContextBundleItems, providerReadiness: chatReadinessLabel }), [chatReadinessLabel, codingTaskGoal, explicitContextBundleItems]);
   const workspaceSnippetQueryValidation = useMemo(() => validateWorkspaceSnippetQuery(workspaceSnippetQuery), [workspaceSnippetQuery]);
 
@@ -2665,6 +2678,38 @@ function latestAssistantMessageAfterPrompt(messages: ChatViewMessage[], prompt: 
   return undefined;
 }
 
+function agentRunReadinessLoopId(proposalId: string | undefined, requestId: string | undefined): string {
+  const source = proposalId ?? requestId ?? "model-proposal";
+  const safe = source.replace(/[^A-Za-z0-9._-]/g, "");
+  return `agentRun${safe || "proposal"}`.slice(0, 80);
+}
+
+function agentRunReadinessGoalMetadata(goal: AgentRunInput["goal"]) {
+  if (!goal) {
+    return undefined;
+  }
+  return { id: "model-proposal-goal", ...goal };
+}
+
+function agentRunReadinessProposalMetadata(proposal: AgentRunInput["proposal"], editProposal: EditProposalState | null) {
+  if (!proposal) {
+    return undefined;
+  }
+  const editCount = editProposal?.payload.edits.reduce((count, edit) => count + edit.textReplacements.length, 0) ?? Math.max(1, proposal.touchedFiles?.length ?? 1);
+  const patchBytes = editProposal?.payload.edits.reduce((count, edit) => count + edit.textReplacements.reduce((inner, replacement) => inner + replacement.replacementText.length, 0), 0) ?? 1;
+  return {
+    ...proposal,
+    source: "assistant_proposal" as const,
+    editCount,
+    patchBytes: Math.max(1, patchBytes),
+    contentHash: safeAgentRunHash(),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function buildAgentRunInput(goal: string, proposal: EditProposalState | null, applyResult: ApplyResultState | null, verificationAttempt: IdeActionAttemptState | null): AgentRunInput | undefined {
   const goalText = goal.trim();
   if (!goalText && !proposal) {
@@ -3121,7 +3166,7 @@ function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, model
         <span>Goal summary: {goalReady ? sanitizeDisplayText(goal) : "No local goal selected"}</span>
         <span>Explicit bundle summary: {contextLabels.length === 0 ? "No explicit context selected" : `${contextLabels.length} selected item${contextLabels.length === 1 ? "" : "s"}`}</span>
         <span>Provider readiness: {sanitizeDisplayText(modelStatus)}</span>
-        <span className="subtle">Production checkpoint/readiness gating remains future work; current Agent Run readiness is display-only metadata until explicit apply/verification controls are clicked.</span>
+        <span className="subtle">Agent Run apply requires valid proposal correlation plus verified checkpoint and policy-ready readiness metadata; apply and verification still require explicit clicks.</span>
         {modelProposalDraft && <span className="subtle">Latest drafted prompt: {modelProposalDraft.goalSummary} · {modelProposalDraft.contextSummary.length} context summary item{modelProposalDraft.contextSummary.length === 1 ? "" : "s"}</span>}
         {modelProposalDiagnostics.length > 0 && <div className="readiness-card warn" role="status" aria-label="One-step model proposal diagnostics">{modelProposalDiagnostics.map((diagnostic) => <span key={`${diagnostic.code}:${diagnostic.message}`}>{sanitizeDisplayText(diagnostic.code)}: {sanitizeDisplayText(diagnostic.message)}</span>)}</div>}
         <button type="button" className="secondary-button" onClick={onDraftOneStepModelProposal}>Draft one-step safe-edit prompt</button>

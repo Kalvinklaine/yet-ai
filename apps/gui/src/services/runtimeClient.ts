@@ -43,6 +43,7 @@ export type CapsResponse = {
     lsp: boolean;
     host?: string;
   };
+  agentRunReadiness?: unknown;
 };
 
 export type ModelCapabilities = {

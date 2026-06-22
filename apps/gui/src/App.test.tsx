@@ -7342,7 +7342,7 @@ describe("edit proposal preview", () => {
     expect(browserStorageDump()).not.toContain("Replace the visible title safely");
   });
 
-  it("sends a drafted model proposal prompt only after explicit Send and detects a valid proposal", async () => {
+  it("sends a drafted model proposal prompt only after explicit Send and blocks valid proposals without checkpoint readiness", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
     const proposal = safeEditProposalPayload();
@@ -7373,9 +7373,9 @@ describe("edit proposal preview", () => {
     expect(commandCalls).toHaveLength(1);
     expect(lastUserMessageBody().payload?.content).toContain("One-step safe-edit model proposal request");
     expect(container?.textContent).toContain("proposal_detected");
-    expect(agentRunPanel().textContent).toContain("Run status: ready_for_apply");
-    expect(agentRunPanel().textContent).toContain("Proposal status: detected and awaiting explicit apply");
-    expect(buttonWithin(agentRunPanel(), "Apply reviewed patch").disabled).toBe(false);
+    expect(agentRunPanel().textContent).toContain("Run status: prerequisites_blocked");
+    expect(agentRunPanel().textContent).toContain("Proposal status: detected but blocked by prerequisites");
+    expect(buttonWithin(agentRunPanel(), "Apply reviewed patch").disabled).toBe(true);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
 
@@ -7385,6 +7385,7 @@ describe("edit proposal preview", () => {
     const proposal = safeEditProposalPayload();
     mockRuntimeResponses({
       ...readyRuntimeOptions(),
+      capsResponse: capsResponse({ agentRunReadiness: agentRunReadinessMetadata() }),
       sseEvents: [
         { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
         { seq: 1, type: "message_added", chatId: "chat-001", payload: { message: chatMessage("chat-001", "assistant-model-proposal-1", "assistant", JSON.stringify(proposal)) } },
@@ -7396,6 +7397,9 @@ describe("edit proposal preview", () => {
     await act(async () => { findButton("Draft one-step safe-edit prompt").click(); });
     await act(async () => { findButton("Send").click(); await Promise.resolve(); });
     await flushAsync();
+    expect(agentRunPanel().textContent).toContain("Run status: ready_for_apply");
+    expect(agentRunPanel().textContent).toContain("Checkpoint/policy readiness: ready_for_user_apply");
+    expect(buttonWithin(agentRunPanel(), "Apply reviewed patch").disabled).toBe(false);
     postMessage.mockClear();
 
     await act(async () => {
@@ -9394,6 +9398,89 @@ function connectedExperimentalAuthResponse(): ProviderAuthResponse & { success: 
   };
 }
 
+function capsResponse(overrides: Record<string, unknown> = {}) {
+  return {
+    productId: "yet-ai",
+    protocolVersion: "2026-05-15",
+    runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" },
+    capabilities: [],
+    features: {},
+    providers: [],
+    ide: { bridge: true, lsp: false },
+    ...overrides,
+  };
+}
+
+function agentRunReadinessMetadata(overrides: Record<string, unknown> = {}) {
+  return {
+    checkpoint: {
+      checkpointId: "checkpoint-s45-c2",
+      checkpointVerified: true,
+      checkpointHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      checkedAt: "2026-06-22T20:02:00Z",
+    },
+    sandbox: {
+      kind: "experimental_sandbox_session",
+      version: "2026-06-21",
+      mode: "sandbox_experimental",
+      defaultEnabled: false,
+      cloudRequired: false,
+      authority: "metadata_only",
+      executionAllowed: false,
+      modeStatus: "checkpoint_ready",
+      userOptIn: {
+        origin: "user",
+        confirmedBy: "user",
+        confirmedAt: "2026-06-22T20:00:00Z",
+        disposableWorkspaceAcknowledged: true,
+        requestIdMintedBy: "gui",
+      },
+      limits: {
+        maxSteps: 4,
+        maxTouchedFiles: 4,
+        maxPatchBytes: 12000,
+        maxRuntimeSeconds: 600,
+        workspaceRelativePaths: ["src/example.ts"],
+      },
+      checkpoint: {
+        status: "verified",
+        checkpointId: "checkpoint-s45-c2",
+        createdAt: "2026-06-22T20:01:00Z",
+        verified: true,
+        fileCount: 1,
+        contentHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      },
+      rollback: {
+        status: "planned",
+        planId: "rollback-s45-c2",
+        planHash: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        affectedFileCount: 1,
+        requiresUserConfirmation: true,
+      },
+    },
+    policy: {
+      kind: "tool_authority_policy",
+      version: "2026-06-21",
+      mode: "sandbox_preview",
+      defaultDecision: "deny",
+      cloudRequired: false,
+      summary: "Allowlisted verification can be displayed only by command id and explicit confirmation.",
+      capability: "allowlisted_verification",
+      source: {
+        origin: "gui",
+        requestIdMintedBy: "gui",
+        hostSurface: "vscode",
+      },
+      risk: ["metadata_only"],
+      requirements: ["explicit_user_confirmation", "trusted_request_id", "schema_validation", "trace_entry", "allowlisted_command_id"],
+      decision: "allow_with_confirmation",
+      allowlistedCommandId: "repository-check",
+    },
+    verificationCommandId: "repository-check",
+    ...overrides,
+  };
+}
+
 function demoModeResponse(enabled: boolean) {
   return {
     enabled,
@@ -9781,15 +9868,7 @@ function mockRuntimeResponse(input: RequestInfo | URL, init: RequestInit | undef
     if (options.runtimeFailure) {
       return Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1:8001"));
     }
-    return Promise.resolve(jsonResponse(options.capsResponse ?? {
-      productId: "yet-ai",
-      protocolVersion: "2026-05-15",
-      runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" },
-      capabilities: [],
-      features: {},
-      providers: [],
-      ide: { bridge: true, lsp: false },
-    }));
+    return Promise.resolve(jsonResponse(options.capsResponse ?? capsResponse()));
   }
   if (url.endsWith("/v1/models")) {
     if (options.modelsFailure) {
