@@ -75,6 +75,7 @@ describe("codingSessionTrace", () => {
   });
 
   it("creates sanitized bounded loop metadata-only trace entries", () => {
+    localStorage.clear();
     const entry = createCodingSessionTraceEntry({
       family: "boundedLoop.applyReady",
       title: "Bounded loop apply ready",
@@ -110,6 +111,48 @@ describe("codingSessionTrace", () => {
     expect(rendered).not.toContain("/Users/alice");
     expect(rendered).not.toContain("sk-secret123456789");
     expect(localStorage.length).toBe(0);
+  });
+
+  it("creates sanitized agent run trace entries for deliberate S43 families", () => {
+    localStorage.clear();
+    sessionStorage.clear();
+
+    const entry = createCodingSessionTraceEntry({
+      family: "agentRun.verificationResult",
+      title: "Agent Run verification result",
+      status: "failed",
+      summary: "User-confirmed verification failed; no automatic repair started",
+      requestId: "verify-run-1",
+      details: {
+        displayOnly: true,
+        state: "verification_failed",
+        commandId: "repository-check",
+        exitCode: 1,
+        durationMs: 1234,
+        outputTail: "failed with Authorization: Bearer abcdefghijklmnopqrstuvwxyz /Users/alice/private",
+        rawPrompt: "PROMPT_SENTINEL",
+        rawDiff: "DIFF_SENTINEL",
+        command: "npm test -- --watch",
+        cwd: "/Users/alice/project",
+      },
+    }, fixedOptions());
+    const rendered = JSON.stringify(entry);
+
+    expect(entry.family).toBe("agentRun.verificationResult");
+    expect(normalizeTraceFamily("agentRun.goalReady")).toBe("agentRun.goalReady");
+    expect(normalizeTraceFamily("agentRun.rollbackAvailable")).toBe("agentRun.rollbackAvailable");
+    expect(entry.details?.displayOnly).toBe(true);
+    expect(entry.details?.commandId).toBe("repository-check");
+    expect(entry.details?.exitCode).toBe(1);
+    expect(rendered).toContain("[redacted]");
+    expect(rendered).not.toContain("PROMPT_SENTINEL");
+    expect(rendered).not.toContain("DIFF_SENTINEL");
+    expect(rendered).not.toContain("npm test");
+    expect(rendered).not.toContain("--watch");
+    expect(rendered).not.toContain("/Users/alice");
+    expect(rendered).not.toContain("abcdefghijklmnopqrstuvwxyz");
+    expect(localStorage.length).toBe(0);
+    expect(sessionStorage.length).toBe(0);
   });
 
   it("normalizes unsafe family and status values at the helper boundary", () => {

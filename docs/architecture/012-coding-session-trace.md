@@ -59,6 +59,16 @@ Trace entries may summarize bounded-loop metadata through deliberately named fam
 The S42 deterministic smoke covers those trace families without persisting them. It records `boundedLoop.policyBlocked`, `boundedLoop.policyChecked`, `boundedLoop.applyReady`, `boundedLoop.applyResult`, `boundedLoop.verificationReady`, and `boundedLoop.verificationResult` entries in memory while modeling explicit user apply and explicit allowlisted verification clicks. The smoke asserts that the trace omits raw file bodies, raw patch bodies, command strings, private temporary paths, and secret markers, and that browser storage remains empty. This is local/mock lifecycle evidence only; it does not add trace transport, storage, bridge messages, IDE execution, or shell-backed verification.
 
 
+## One-step Agent Run trace and report metadata
+
+Sprint 43 adds a GUI-local Agent Run lifecycle shell on top of the bounded patch verification metadata. Its trace families are deliberately named `agentRun.goalReady`, `agentRun.proposalDetected`, `agentRun.prerequisitesBlocked`, `agentRun.applyReady`, `agentRun.applyRequested`, `agentRun.applyResult`, `agentRun.verificationReady`, `agentRun.verificationRequested`, `agentRun.verificationProgress`, `agentRun.verificationResult`, `agentRun.rollbackAvailable`, `agentRun.completed`, and `agentRun.blocked`.
+
+Agent Run report helpers are pure in-memory formatters over caller-provided metadata and the Agent Run state evaluator. They do not read files, call providers or runtimes, send bridge messages, create commands, mutate browser storage, write telemetry, or persist reports. Reports are display summaries only; they distinguish successful user-confirmed runs, failed user-confirmed verification, blocked prerequisites, blocked unsafe metadata, and rollback-available states.
+
+Allowed Agent Run trace/report details are bounded ids, enum states, GUI or host request ids, file counts, edit counts, an allowlisted verification `commandId`, exit code, duration, rollback availability, explicit user-confirmation markers, and short sanitized summaries or output tails. Reports must continue to say that apply, verification, and rollback are manual or user-confirmed steps, and must not imply an autonomous loop, automatic repair, automatic verification, automatic apply, or automatic rollback.
+
+Forbidden data remains out of both trace and report helpers: raw prompts, raw model responses, raw patches or diffs, file bodies, command strings, args, cwd, env, shell snippets, git or network metadata, provider payloads, private absolute paths, secrets, stack traces, raw output bodies, and unbounded logs. Unsafe arbitrary fields are dropped or redacted at helper boundaries; output is still bounded after shared redaction.
+
 ## Maintenance rules
 
 When a future card wires trace entries into UI state, keep the trace in memory only unless a separate architecture decision approves storage. Do not store raw assistant messages, user prompts, provider payloads, file excerpts, verification output, or host diagnostics directly in trace entries. Store only safe labels, counts, enum values, request correlation, durations, exit codes, and short redacted tails.

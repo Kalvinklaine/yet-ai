@@ -42,6 +42,19 @@ export const codingSessionTraceFamilies = [
   "boundedLoop.applyResult",
   "boundedLoop.verificationReady",
   "boundedLoop.verificationResult",
+  "agentRun.goalReady",
+  "agentRun.proposalDetected",
+  "agentRun.prerequisitesBlocked",
+  "agentRun.applyReady",
+  "agentRun.applyRequested",
+  "agentRun.applyResult",
+  "agentRun.verificationReady",
+  "agentRun.verificationRequested",
+  "agentRun.verificationProgress",
+  "agentRun.verificationResult",
+  "agentRun.rollbackAvailable",
+  "agentRun.completed",
+  "agentRun.blocked",
 ] as const;
 
 export const codingSessionTraceStatuses = [
