@@ -160,7 +160,7 @@ function safeGoal(value: string): NonNullable<AgentRunInput["goal"]> | undefined
 }
 
 function proposalRejectedDiagnostic(rejected: EditProposalRejectedDiagnostic): SanitizedDiagnostic {
-  return diagnostic("proposal_rejected", `${rejected.message} Return exactly one strict safe-edit JSON proposal/envelope, omit requestId, and include no command, tool, shell, git, search, storage, execution, raw diff, or private path fields.`);
+  return diagnostic("proposal_rejected", `${rejected.message} Return exactly one strict safe-edit JSON proposal/envelope, omit requestId, and include no execution, tool, shell, git, search, storage, diff-body, file-body, or private-path fields.`);
 }
 
 function unsafeCorrelationInput(input: AgentRunModelProposalInput): string[] {
