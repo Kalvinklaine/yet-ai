@@ -7252,12 +7252,12 @@ describe("edit proposal preview", () => {
 
     const panel = agentRunPanel();
     expect(panel.textContent).toContain("Experimental Agent Run · one-step manual shell");
-    expect(panel.textContent).toContain("Run status: ready_for_apply");
+    expect(panel.textContent).toContain("Manual state: Ready for manual apply");
     expect(panel.textContent).toContain("Goal summary: Review latest safe edit proposal");
     expect(panel.textContent).toContain("Touched files: 1");
     expect(panel.textContent).toContain("Edit count: 1");
-    expect(buttonWithin(panel, "Apply reviewed patch").disabled).toBe(false);
-    expect(buttonWithin(panel, "Run allowlisted verification").disabled).toBe(true);
+    expect(buttonWithin(panel, "Manually apply reviewed patch").disabled).toBe(false);
+    expect(buttonWithin(panel, "Manually run allowlisted verification").disabled).toBe(true);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
   });
 
@@ -7277,19 +7277,19 @@ describe("edit proposal preview", () => {
     postMessage.mockClear();
 
     await act(async () => {
-      buttonWithin(agentRunPanel(), "Apply reviewed patch").click();
+      buttonWithin(agentRunPanel(), "Manually apply reviewed patch").click();
     });
     const applyCall = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
     expect(applyCall).toBeDefined();
     expect(applyCall.payload).toEqual(proposal);
 
     await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "Agent Run apply result.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
-    expect(agentRunPanel().textContent).toContain("Run status: ready_for_verification");
-    expect(buttonWithin(agentRunPanel(), "Run allowlisted verification").disabled).toBe(false);
+    expect(agentRunPanel().textContent).toContain("Manual state: Ready for manual verification");
+    expect(buttonWithin(agentRunPanel(), "Manually run allowlisted verification").disabled).toBe(false);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
 
     await act(async () => {
-      buttonWithin(agentRunPanel(), "Run allowlisted verification").click();
+      buttonWithin(agentRunPanel(), "Manually run allowlisted verification").click();
     });
     const verificationCall = postMessage.mock.calls.find(([message]) => message.type === "gui.ideActionRequest")?.[0];
     expect(verificationCall).toMatchObject({ type: "gui.ideActionRequest", payload: { action: "runVerificationCommand", commandId: "repository-check" } });
@@ -7297,12 +7297,12 @@ describe("edit proposal preview", () => {
     expect(Object.keys(verificationCall.payload)).toEqual(["action", "commandId"]);
 
     await dispatchHostIdeActionProgress(verificationCall.requestId, { phase: "running", status: "inProgress", summary: "Running repository check.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check" });
-    expect(agentRunPanel().textContent).toContain("Run status: verification_running");
-    expect(agentRunPanel().textContent).toContain("Verification status/result: running");
+    expect(agentRunPanel().textContent).toContain("Manual state: Verification running");
+    expect(agentRunPanel().textContent).toContain("Verification status/result: Verification running");
 
     await dispatchHostIdeActionResult(verificationCall.requestId, { status: "succeeded", message: "Repository check passed.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 0, durationMs: 25, outputTail: "Repository validation passed", truncated: false });
-    expect(agentRunPanel().textContent).toContain("Run status: verified");
-    expect(agentRunPanel().textContent).toContain("Verification status/result: succeeded · exit 0 · sanitized result available");
+    expect(agentRunPanel().textContent).toContain("Manual state: Verified");
+    expect(agentRunPanel().textContent).toContain("Verification status/result: Verified · exit 0 · sanitized result available");
   });
 
   it("Agent Run failed verification stops without auto repair", async () => {
@@ -7321,21 +7321,21 @@ describe("edit proposal preview", () => {
     postMessage.mockClear();
 
     await act(async () => {
-      buttonWithin(agentRunPanel(), "Apply reviewed patch").click();
+      buttonWithin(agentRunPanel(), "Manually apply reviewed patch").click();
     });
     const applyCall = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
     await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "Agent Run apply result.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
     await act(async () => {
-      buttonWithin(agentRunPanel(), "Run allowlisted verification").click();
+      buttonWithin(agentRunPanel(), "Manually run allowlisted verification").click();
     });
     const verificationCall = postMessage.mock.calls.find(([message]) => message.type === "gui.ideActionRequest")?.[0];
 
     await dispatchHostIdeActionResult(verificationCall.requestId, { status: "failed", message: "Repository check failed.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 1, durationMs: 50, outputTail: "Repository validation failed", truncated: false });
 
     const panel = agentRunPanel();
-    expect(panel.textContent).toContain("Run status: verification_failed");
-    expect(panel.textContent).toContain("Verification status/result: failed · exit 1 · sanitized result available");
-    expect(buttonWithin(panel, "Run allowlisted verification").disabled).toBe(true);
+    expect(panel.textContent).toContain("Manual state: Verification failed");
+    expect(panel.textContent).toContain("Verification status/result: Verification failed · exit 1 · sanitized result available");
+    expect(buttonWithin(panel, "Manually run allowlisted verification").disabled).toBe(true);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(1);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(1);
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
@@ -7360,11 +7360,11 @@ describe("edit proposal preview", () => {
     postMessage.mockClear();
 
     await act(async () => {
-      buttonWithin(agentRunPanel(), "Apply reviewed patch").click();
+      buttonWithin(agentRunPanel(), "Manually apply reviewed patch").click();
     });
     const applyCall = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
     await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "Agent Run apply result.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
-    expect(buttonWithin(agentRunPanel(), "Run allowlisted verification").disabled).toBe(false);
+    expect(buttonWithin(agentRunPanel(), "Manually run allowlisted verification").disabled).toBe(false);
 
     await act(async () => {
       setInputValue(chatIdInput(), "chat-002");
@@ -7374,9 +7374,9 @@ describe("edit proposal preview", () => {
     await dispatchHostIdeActionResult("gui-agent-run-verification-1", { status: "succeeded", message: "Stale verification should not render.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 0, durationMs: 1, outputTail: "stale", truncated: false });
 
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")).toHaveLength(0);
-    expect(agentRunPanel().textContent).toContain("Run status: idle");
-    expect(agentRunPanel().textContent).not.toContain("verification_running");
-    expect(agentRunPanel().textContent).not.toContain("verified");
+    expect(agentRunPanel().textContent).toContain("Manual state: idle");
+    expect(agentRunPanel().textContent).not.toContain("Verification running");
+    expect(agentRunPanel().textContent).not.toContain("Verified");
     expect(container?.textContent).not.toContain("Stale verification should not render.");
   });
 
@@ -7388,7 +7388,7 @@ describe("edit proposal preview", () => {
     await flushAsync();
 
     const panel = agentRunPanel();
-    expect(panel.textContent).toContain("Run status: idle");
+    expect(panel.textContent).toContain("Manual state: idle");
     expect(panel.textContent).toContain("no hidden model/provider calls");
     expect(panel.textContent).not.toContain(rawSecret);
     expect(panel.textContent).not.toContain("/Users/");
@@ -7457,9 +7457,9 @@ describe("edit proposal preview", () => {
     expect(commandCalls).toHaveLength(1);
     expect(lastUserMessageBody().payload?.content).toContain("One-step safe-edit model proposal request");
     expect(container?.textContent).toContain("proposal_detected");
-    expect(agentRunPanel().textContent).toContain("Run status: prerequisites_blocked");
+    expect(agentRunPanel().textContent).toContain("Manual state: Checkpoint required");
     expect(agentRunPanel().textContent).toContain("Proposal status: detected but checkpoint metadata is missing");
-    expect(buttonWithin(agentRunPanel(), "Apply reviewed patch").disabled).toBe(true);
+    expect(buttonWithin(agentRunPanel(), "Manually apply reviewed patch").disabled).toBe(true);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
 
@@ -7481,13 +7481,13 @@ describe("edit proposal preview", () => {
     await act(async () => { findButton("Draft one-step safe-edit prompt").click(); });
     await act(async () => { findButton("Send").click(); await Promise.resolve(); });
     await flushAsync();
-    expect(agentRunPanel().textContent).toContain("Run status: ready_for_apply");
+    expect(agentRunPanel().textContent).toContain("Manual state: Ready for manual apply");
     expect(agentRunPanel().textContent).toContain("Checkpoint/policy readiness: verified · ready_for_user_apply");
-    expect(buttonWithin(agentRunPanel(), "Apply reviewed patch").disabled).toBe(false);
+    expect(buttonWithin(agentRunPanel(), "Manually apply reviewed patch").disabled).toBe(false);
     postMessage.mockClear();
 
     await act(async () => {
-      buttonWithin(agentRunPanel(), "Apply reviewed patch").click();
+      buttonWithin(agentRunPanel(), "Manually apply reviewed patch").click();
     });
 
     const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
@@ -7517,8 +7517,8 @@ describe("edit proposal preview", () => {
     postMessage.mockClear();
 
     await act(async () => {
-      buttonWithin(agentRunPanel(), "Apply reviewed patch").click();
-      buttonWithin(agentRunPanel(), "Apply reviewed patch").click();
+      buttonWithin(agentRunPanel(), "Manually apply reviewed patch").click();
+      buttonWithin(agentRunPanel(), "Manually apply reviewed patch").click();
     });
 
     const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
@@ -7527,8 +7527,8 @@ describe("edit proposal preview", () => {
     expect(applyCall.requestId).toMatch(/^gui-agent-run-apply-/);
     expect(JSON.stringify(applyCall.payload)).not.toMatch(/"(?:command|cmd|args|cwd|env|tool)"/);
     expect(Object.keys(applyCall.payload)).toEqual(["requiresUserConfirmation", "summary", "cloudRequired", "edits"]);
-    expect(buttonWithin(agentRunPanel(), "Apply reviewed patch").disabled).toBe(true);
-    expect(agentRunPanel().textContent).toContain("Run status: apply_requested");
+    expect(buttonWithin(agentRunPanel(), "Manually apply reviewed patch").disabled).toBe(true);
+    expect(agentRunPanel().textContent).toContain("Manual state: Apply pending");
   });
 
   it("renders invalid and normal model proposal responses without enabling Agent Run apply", async () => {
@@ -7548,8 +7548,8 @@ describe("edit proposal preview", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("proposal_rejected");
-    expect(agentRunPanel().textContent).not.toContain("Run status: ready_for_apply");
-    expect(buttonWithin(agentRunPanel(), "Apply reviewed patch").disabled).toBe(true);
+    expect(agentRunPanel().textContent).not.toContain("Manual state: Ready for manual apply");
+    expect(buttonWithin(agentRunPanel(), "Manually apply reviewed patch").disabled).toBe(true);
 
     act(() => root?.unmount());
     root = undefined;
@@ -7572,7 +7572,7 @@ describe("edit proposal preview", () => {
     await flushAsync();
 
     expect((container as HTMLDivElement | undefined)?.textContent).toContain("normal_response");
-    expect(buttonWithin(agentRunPanel(), "Apply reviewed patch").disabled).toBe(true);
+    expect(buttonWithin(agentRunPanel(), "Manually apply reviewed patch").disabled).toBe(true);
   });
 
   it("keeps stale model proposal responses and browser mode inert without storage or raw unsafe DOM", async () => {
@@ -7602,8 +7602,8 @@ describe("edit proposal preview", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("browser preview only");
-    expect(agentRunPanel().textContent).toContain("Run status: blocked");
-    expect(buttonWithin(agentRunPanel(), "Apply reviewed patch").disabled).toBe(true);
+    expect(agentRunPanel().textContent).toContain("Manual state: Checkpoint required");
+    expect(buttonWithin(agentRunPanel(), "Manually apply reviewed patch").disabled).toBe(true);
     expect(buttonsNamed("Apply in VS Code after review")).toHaveLength(0);
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("Replace title");
