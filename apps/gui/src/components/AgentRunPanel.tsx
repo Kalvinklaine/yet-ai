@@ -22,6 +22,8 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const canReviewRollback = view.rollbackAvailable || view.nextUserAction === "review_rollback";
   const touchedFileCount = numberDetail(details.touchedFileCount) ?? stringArrayDetail(details.touchedFiles).length;
   const editCount = numberDetail(details.editCount);
+  const checkpointStatusLabel = checkpointStatus(details);
+  const policyDecisionLabel = policyDecision(details);
   const safetyItems = [
     "Experimental manual shell only: no autonomy, no auto-clicks, and no hidden model/provider calls.",
     "Apply and verification use existing IDE bridge messages only after your explicit click.",
@@ -38,11 +40,14 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
         <span className={`badge ${view.stopped ? "warn" : view.enabled ? "ok" : ""}`}>{sanitizeDisplayText(view.state)}</span>
       </div>
       <span>{sanitizeDisplayText(view.summary)}</span>
+      <strong>{readinessExplanation(view.state, details)}</strong>
       <div className="agent-progress-grid" aria-label="Agent Run status fields">
         <span>Run status: {sanitizeDisplayText(view.state)}</span>
         <span>Goal summary: {textDetail(details.goalTitle) || textDetail(details.goalSummary) || "No local goal selected"}</span>
         <span>Proposal status: {proposalStatus(view.state, details)}</span>
-        <span>Checkpoint/policy readiness: {checkpointPolicyStatus(details)}</span>
+        <span>Checkpoint status: {checkpointStatusLabel}</span>
+        <span>Policy decision: {policyDecisionLabel}</span>
+        <span>Checkpoint/policy readiness: {checkpointPolicyStatus(checkpointStatusLabel, policyDecisionLabel)}</span>
         <span>Touched files: {touchedFileCount}</span>
         <span>Edit count: {editCount ?? 0}</span>
         <span>Apply status: {textDetail(details.applyStatus) || (details.applyRequested === true ? "requested" : "not requested")}</span>
@@ -87,26 +92,67 @@ function verificationCommandIdFromDetails(value: unknown): VerificationCommandId
   return value === "repository-check" || value === "gui-app-tests" || value === "engine-chat-tests" ? value : null;
 }
 
+function readinessExplanation(state: string, details: Record<string, string | number | boolean | string[]>): string {
+  if (state === "goal_ready") {
+    return "Goal is ready. Draft or send a model proposal request before Apply can unlock.";
+  }
+  if (hasProposal(details) && (state === "proposal_detected" || state === "prerequisites_blocked") && !hasCheckpointEvidence(details)) {
+    return "Proposal detected, but checkpoint readiness metadata is missing. Apply stays disabled.";
+  }
+  if (state === "prerequisites_blocked" || state === "blocked") {
+    return "Checkpoint or policy prerequisites are blocked. Apply stays disabled until runtime metadata is ready.";
+  }
+  if (state === "ready_for_apply") {
+    return "Verified checkpoint and policy metadata are ready. Apply is still manual and waits for your click.";
+  }
+  if (state === "ready_for_verification") {
+    return "Patch apply metadata is recorded. Verification is manual and uses the allowlisted command id only.";
+  }
+  return "Manual Agent Run status is display-only until an explicit user action is available.";
+}
+
 function proposalStatus(state: string, details: Record<string, string | number | boolean | string[]>): string {
-  if (!details.proposalId && !details.proposalSummary) {
+  if (!hasProposal(details)) {
     return "not detected";
   }
   if (state === "ready_for_apply" || state === "apply_requested") {
-    return "detected and awaiting explicit apply";
+    return "detected with verified checkpoint metadata";
   }
-  if (state === "prerequisites_blocked" || state === "blocked") {
-    return "detected but blocked by prerequisites";
+  if (state === "proposal_detected" || state === "prerequisites_blocked" || state === "blocked") {
+    return hasCheckpointEvidence(details) ? "detected but checkpoint or policy is blocked" : "detected but checkpoint metadata is missing";
   }
   return "detected";
 }
 
-function checkpointPolicyStatus(details: Record<string, string | number | boolean | string[]>): string {
-  const loopState = textDetail(details.boundedLoopState);
-  const policy = textDetail(details.boundedPolicyDecision);
-  if (!loopState && !policy) {
-    return "not ready";
+function checkpointStatus(details: Record<string, string | number | boolean | string[]>): string {
+  const mode = textDetail(details.sandboxModeStatus) || textDetail(details.sandboxState) || textDetail(details.boundedLoopState);
+  const policy = policyDecision(details);
+  if (details.checkpointVerified === true || policy === "ready_for_user_apply" || policy === "ready_for_user_verification") {
+    return mode ? "verified · " + mode : "verified";
   }
-  return [loopState, policy].filter(Boolean).join(" · ");
+  if (details.checkpointVerified === false || policy === "blocked") {
+    return mode ? "not verified · " + mode : "not verified";
+  }
+  return mode || "missing";
+}
+
+function policyDecision(details: Record<string, string | number | boolean | string[]>): string {
+  return textDetail(details.boundedPolicyDecision) || textDetail(details.policyDecision) || "missing";
+}
+
+function checkpointPolicyStatus(checkpoint: string, policy: string): string {
+  if (checkpoint === "missing" && policy === "missing") {
+    return "missing";
+  }
+  return checkpoint + " · " + policy;
+}
+
+function hasProposal(details: Record<string, string | number | boolean | string[]>): boolean {
+  return Boolean(details.proposalId || details.proposalSummary);
+}
+
+function hasCheckpointEvidence(details: Record<string, string | number | boolean | string[]>): boolean {
+  return details.checkpointVerified !== undefined || Boolean(details.sandboxModeStatus || details.sandboxState || details.boundedLoopState || details.boundedPolicyDecision || details.policyDecision);
 }
 
 function verificationStatus(details: Record<string, string | number | boolean | string[]>): string {

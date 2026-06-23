@@ -53,6 +53,27 @@ describe("AgentRunPanel", () => {
     expect(findButton("Review rollback").disabled).toBe(true);
   });
 
+  it("renders goal ready state before a proposal", () => {
+    renderPanel({ goal: { id: "goal-1", title: "Add safe panel" } }, { host: "vscode" });
+
+    expect(panelText()).toContain("Run status: goal_ready");
+    expect(panelText()).toContain("Goal is ready. Draft or send a model proposal request before Apply can unlock.");
+    expect(panelText()).toContain("Proposal status: not detected");
+    expect(panelText()).toContain("Checkpoint status: missing");
+    expect(findButton("Apply reviewed patch").disabled).toBe(true);
+  });
+
+  it("renders proposal detected with missing checkpoint prerequisites", () => {
+    renderPanel({ goal: readyInput.goal, proposal: readyInput.proposal }, { host: "vscode" });
+
+    expect(panelText()).toContain("Run status: prerequisites_blocked");
+    expect(panelText()).toContain("Proposal detected, but checkpoint readiness metadata is missing. Apply stays disabled.");
+    expect(panelText()).toContain("Proposal status: detected but checkpoint metadata is missing");
+    expect(panelText()).toContain("Checkpoint status: missing");
+    expect(panelText()).toContain("Policy decision: missing");
+    expect(findButton("Apply reviewed patch").disabled).toBe(true);
+  });
+
   it("renders prerequisites blocked state", () => {
     renderPanel({
       ...readyInput,
@@ -65,7 +86,10 @@ describe("AgentRunPanel", () => {
     });
 
     expect(panelText()).toContain("Run status: prerequisites_blocked");
-    expect(panelText()).toContain("Checkpoint/policy readiness: blocked");
+    expect(panelText()).toContain("Checkpoint or policy prerequisites are blocked. Apply stays disabled until runtime metadata is ready.");
+    expect(panelText()).toContain("Checkpoint status: not verified");
+    expect(panelText()).toContain("Policy decision: blocked");
+    expect(panelText()).toContain("Checkpoint/policy readiness: not verified · blocked");
     expect(panelText()).toContain("Safety diagnostics");
     expect(findButton("Apply reviewed patch").disabled).toBe(true);
   });
@@ -75,7 +99,11 @@ describe("AgentRunPanel", () => {
 
     expect(panelText()).toContain("Run status: ready_for_apply");
     expect(panelText()).toContain("Goal summary: Add safe panel");
-    expect(panelText()).toContain("Proposal status: detected and awaiting explicit apply");
+    expect(panelText()).toContain("Verified checkpoint and policy metadata are ready. Apply is still manual and waits for your click.");
+    expect(panelText()).toContain("Proposal status: detected with verified checkpoint metadata");
+    expect(panelText()).toContain("Checkpoint status: verified");
+    expect(panelText()).toContain("Policy decision: ready_for_user_apply");
+    expect(panelText()).toContain("Verification command id: repository-check");
     expect(panelText()).toContain("Touched files: 1");
     expect(panelText()).toContain("Edit count: 1");
     expect(findButton("Apply reviewed patch").disabled).toBe(false);
