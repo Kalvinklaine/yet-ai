@@ -22,6 +22,8 @@ describe("buildVerificationFollowupPrompt", () => {
     const prompt = buildVerificationFollowupPrompt(verificationResult(`failed /Users/alice/private/repo ${rawSecret}\nraw prompt: PROMPT_BODY\n${oversized}`), "followup");
 
     expect(prompt).toContain("Verification follow-up prompt");
+    expect(prompt).toContain("Draft-only handoff");
+    expect(prompt).toContain("It does not send chat, run commands, apply edits, attach context, save memory, or start repair automatically.");
     expect(prompt).toContain("Command id: gui-app-tests");
     expect(prompt).toContain("Status: failed");
     expect(prompt).toContain("Exit code: 1");

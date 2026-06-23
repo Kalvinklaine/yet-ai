@@ -28,6 +28,9 @@ export function buildVerificationFollowupPrompt(result: VerificationResultForPro
   return [
     title,
     "",
+    "Draft-only handoff",
+    "This text was placed in the composer only. It does not send chat, run commands, apply edits, attach context, save memory, or start repair automatically.",
+    "",
     "Verification result metadata",
     `Command id: ${commandId}`,
     `Status: ${status}`,

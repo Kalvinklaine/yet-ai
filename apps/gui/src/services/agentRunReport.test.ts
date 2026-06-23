@@ -82,6 +82,13 @@ describe("createAgentRunReport", () => {
     expect(report.details.verificationExitCode).toBe(0);
     expect(report.details.touchedFileCount).toBe(2);
     expect(report.details.editCount).toBe(2);
+    expect(createAgentRunTraceDetails(run)).toMatchObject({
+      reportKind: "success",
+      reportStatus: "succeeded",
+      state: "verified",
+      verificationStatus: "succeeded",
+      verificationExitCode: 0,
+    });
   });
 
   it("creates a failed verification report with bounded sanitized output tail", () => {
@@ -99,6 +106,13 @@ describe("createAgentRunReport", () => {
     expect(report.summary).toContain("no automatic repair");
     expect(report.details.verificationExitCode).toBe(1);
     expect(report.details.verificationOutputTail).toContain("bounded output tail");
+    expect(createAgentRunTraceDetails(run)).toMatchObject({
+      reportKind: "failed_verification",
+      reportStatus: "failed",
+      state: "verification_failed",
+      verificationStatus: "failed",
+      verificationExitCode: 1,
+    });
   });
 
   it("creates a failed apply report with only sanitized bounded apply metadata", () => {

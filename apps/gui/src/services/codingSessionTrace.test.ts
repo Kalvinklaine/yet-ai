@@ -155,6 +155,41 @@ describe("codingSessionTrace", () => {
     expect(sessionStorage.length).toBe(0);
   });
 
+  it("creates safe Agent Run completed handoff trace entries", () => {
+    const entry = createCodingSessionTraceEntry({
+      family: "agentRun.completed",
+      title: "Agent Run completed after user-confirmed verification",
+      status: "succeeded",
+      summary: "Completed after user-confirmed verification. Manual apply and verification metadata are complete; no autonomous follow-up was started.",
+      requestId: "verify-run-2",
+      details: {
+        displayOnly: true,
+        reportKind: "success",
+        reportStatus: "succeeded",
+        state: "verified",
+        verificationStatus: "succeeded",
+        verificationExitCode: 0,
+        rawOutput: "OUTPUT_SENTINEL",
+        command: "npm test -- --watch",
+        cwd: "/Users/alice/project",
+        env: { API_KEY: "sk-secret123456789" },
+      },
+    }, fixedOptions());
+    const rendered = JSON.stringify(entry);
+
+    expect(entry.family).toBe("agentRun.completed");
+    expect(entry.status).toBe("succeeded");
+    expect(entry.summary).toContain("no autonomous follow-up");
+    expect(entry.details?.reportKind).toBe("success");
+    expect(entry.details?.verificationStatus).toBe("succeeded");
+    expect(rendered).toContain("[redacted]");
+    expect(rendered).not.toContain("OUTPUT_SENTINEL");
+    expect(rendered).not.toContain("npm test");
+    expect(rendered).not.toContain("--watch");
+    expect(rendered).not.toContain("/Users/alice");
+    expect(rendered).not.toContain("sk-secret123456789");
+  });
+
   it("creates sanitized Agent Run apply requested and result trace entries", () => {
     const requested = createCodingSessionTraceEntry({
       family: "agentRun.applyRequested",

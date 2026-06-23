@@ -23,6 +23,7 @@ import { buildOneStepModelProposalPrompt } from "./services/modelProposalPrompt"
 import { evaluateAgentRunModelProposal, type AgentRunModelProposalResult } from "./services/agentRunModelProposal";
 import { normalizeAgentRunApplyRequest, correlateAgentRunApplyResult, type AgentRunApplyCorrelationMetadata } from "./services/agentRunApply";
 import { normalizeAgentRunVerificationRequest, correlateAgentRunVerificationProgress, correlateAgentRunVerificationResult, type AgentRunVerificationCorrelationMetadata } from "./services/agentRunVerification";
+import { createAgentRunReport, createAgentRunTraceDetails } from "./services/agentRunReport";
 import { composeAgentRunReadiness, type AgentRunReadinessResult } from "./services/agentRunReadiness";
 import { buildVerificationFollowupPrompt, type VerificationFollowupPromptMode } from "./services/verificationFollowupPrompt";
 import { createProjectMemory, deleteProjectMemory, listProjectMemory, searchProjectMemory, type ProjectMemoryNote } from "./services/projectMemoryClient";
@@ -412,6 +413,7 @@ export function App() {
   const agentRunVerificationCorrelationRef = useRef<AgentRunVerificationCorrelationMetadata | null>(null);
   const agentRunVerificationChatIdRef = useRef<string | null>(null);
   const agentRunVerificationResultRef = useRef<AgentRunInput["verificationResult"] | null>(null);
+  const agentRunInputRef = useRef<AgentRunInput | null>(null);
   const editProposalRejectedTraceKeyRef = useRef<string | null>(null);
   const ideActionProposalCounterRef = useRef(0);
   const ideActionProposalIdentityRef = useRef<{ requestId: string; sourceMessageId: string; payloadKey: string } | null>(null);
@@ -560,6 +562,7 @@ export function App() {
     });
   }, [activeCaps, activeEditProposal, agentRunModelProposal, submittedModelProposalPrompt]);
   const agentRunInput = submittedModelProposalPrompt || modelProposalDraft ? agentRunModelProposal.proposalPathState === "proposal_detected" && activeEditProposal ? agentRunReadiness ? { ...(legacyAgentRunInput ?? {}), ...agentRunReadiness.agentRunInput, boundedLoop: agentRunReadiness.boundedLoop, applyRequest: agentRunApplyRequest ?? legacyAgentRunInput?.applyRequest, applyResult: legacyAgentRunInput?.applyResult, verificationRequest: agentRunVerificationRequest ?? legacyAgentRunInput?.verificationRequest, verificationProgress: agentRunVerificationProgress ?? legacyAgentRunInput?.verificationProgress, verificationResult: agentRunVerificationResult ?? legacyAgentRunInput?.verificationResult, rollback: agentRunVerificationResult ? undefined : legacyAgentRunInput?.rollback } : agentRunModelProposal.agentRunInput : agentRunModelProposal.agentRunInput : legacyAgentRunInput;
+  agentRunInputRef.current = agentRunInput ?? null;
   const codingTaskPromptDraft = useMemo(() => buildCodingTaskPrompt({ mode: "ask", goal: codingTaskGoal, contextItems: explicitContextBundleItems, providerReadiness: chatReadinessLabel }), [chatReadinessLabel, codingTaskGoal, explicitContextBundleItems]);
   const workspaceSnippetQueryValidation = useMemo(() => validateWorkspaceSnippetQuery(workspaceSnippetQuery), [workspaceSnippetQuery]);
 
@@ -862,7 +865,9 @@ export function App() {
             agentRunVerificationResultRef.current = correlation.verificationResult;
             setAgentRunVerificationResult(correlation.verificationResult);
             setAgentRunVerificationProgress(null);
-            appendTrace({ family: "agentRun.verificationResult", title: "Agent Run verification result received", status: correlation.verificationResult.status === "succeeded" ? "succeeded" : "failed", summary: correlation.verificationResult.outputTail ?? "Agent Run verification result received.", requestId, details: correlation.details });
+            const reportInput = { ...(agentRunInputRef.current ?? {}), verificationResult: correlation.verificationResult, verificationProgress: undefined };
+            const report = createAgentRunReport(reportInput);
+            appendTrace({ family: correlation.verificationResult.status === "succeeded" ? "agentRun.completed" : "agentRun.verificationResult", title: report.title, status: report.status === "succeeded" ? "succeeded" : "failed", summary: report.summary, requestId, details: createAgentRunTraceDetails(reportInput) });
           } else if (correlation.state === "blocked") {
             setIdeActionNote(correlation.diagnostics[0]?.message ?? "Agent Run verification result was blocked.");
           }
