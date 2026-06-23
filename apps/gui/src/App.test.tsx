@@ -7412,6 +7412,41 @@ describe("edit proposal preview", () => {
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
   });
 
+  it("Agent Run apply payload contains no execution authority and pending apply blocks duplicates", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      capsResponse: capsResponse({ agentRunReadiness: agentRunReadinessMetadata() }),
+      sseEvents: [
+        { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
+        { seq: 1, type: "message_added", chatId: "chat-001", payload: { message: chatMessage("chat-001", "assistant-model-proposal-1", "assistant", JSON.stringify(proposal)) } },
+      ],
+    });
+    renderApp();
+    await flushAsync();
+    await act(async () => { setTextareaByPlaceholder("Describe the coding task goal", "Replace the visible title safely"); });
+    await act(async () => { findButton("Draft one-step safe-edit prompt").click(); });
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); });
+    await flushAsync();
+    postMessage.mockClear();
+
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Apply reviewed patch").click();
+      buttonWithin(agentRunPanel(), "Apply reviewed patch").click();
+    });
+
+    const applyCalls = postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest");
+    expect(applyCalls).toHaveLength(1);
+    const applyCall = applyCalls[0]?.[0];
+    expect(applyCall.requestId).toMatch(/^gui-agent-run-apply-/);
+    expect(JSON.stringify(applyCall.payload)).not.toMatch(/"(?:command|cmd|args|cwd|env|tool)"/);
+    expect(Object.keys(applyCall.payload)).toEqual(["requiresUserConfirmation", "summary", "cloudRequired", "edits"]);
+    expect(buttonWithin(agentRunPanel(), "Apply reviewed patch").disabled).toBe(true);
+    expect(agentRunPanel().textContent).toContain("Run status: apply_requested");
+  });
+
   it("renders invalid and normal model proposal responses without enabling Agent Run apply", async () => {
     const invalidProposal = { ...safeEditProposalPayload(), requestId: "assistant-owned-request" };
     mockRuntimeResponses({

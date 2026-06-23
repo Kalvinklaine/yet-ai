@@ -21,6 +21,7 @@ import { codingActions, type CodingAction } from "./services/codingActions";
 import { buildCodingTaskPrompt, type CodingTaskPromptMode } from "./services/codingTaskPrompt";
 import { buildOneStepModelProposalPrompt } from "./services/modelProposalPrompt";
 import { evaluateAgentRunModelProposal, type AgentRunModelProposalResult } from "./services/agentRunModelProposal";
+import { normalizeAgentRunApplyRequest, correlateAgentRunApplyResult, type AgentRunApplyCorrelationMetadata } from "./services/agentRunApply";
 import { composeAgentRunReadiness, type AgentRunReadinessResult } from "./services/agentRunReadiness";
 import { buildVerificationFollowupPrompt, type VerificationFollowupPromptMode } from "./services/verificationFollowupPrompt";
 import { createProjectMemory, deleteProjectMemory, listProjectMemory, searchProjectMemory, type ProjectMemoryNote } from "./services/projectMemoryClient";
@@ -389,6 +390,7 @@ export function App() {
   const [editProposal, setEditProposal] = useState<EditProposalState | null>(null);
   const [applyResult, setApplyResult] = useState<ApplyResultState | null>(null);
   const [pendingApplyRequestId, setPendingApplyRequestId] = useState<string | null>(null);
+  const [agentRunApplyRequest, setAgentRunApplyRequest] = useState<AgentRunInput["applyRequest"] | null>(null);
   const [applyNote, setApplyNote] = useState<string | null>(null);
   const [ideActionAttempt, setIdeActionAttempt] = useState<IdeActionAttemptState | null>(null);
   const [ideActionNote, setIdeActionNote] = useState<string | null>(null);
@@ -399,6 +401,9 @@ export function App() {
   const editProposalApplyCounterRef = useRef(0);
   const editProposalApplySessionNonceRef = useRef<string>(generateApplyRequestSessionNonce());
   const editProposalIdentityRef = useRef<(EditProposalIdentity & { requestId: string }) | null>(null);
+  const agentRunApplyCounterRef = useRef(0);
+  const agentRunApplyCorrelationRef = useRef<AgentRunApplyCorrelationMetadata | null>(null);
+  const agentRunApplyChatIdRef = useRef<string | null>(null);
   const editProposalRejectedTraceKeyRef = useRef<string | null>(null);
   const ideActionProposalCounterRef = useRef(0);
   const ideActionProposalIdentityRef = useRef<{ requestId: string; sourceMessageId: string; payloadKey: string } | null>(null);
@@ -546,7 +551,7 @@ export function App() {
       proposal: agentRunReadinessProposalMetadata(agentRunModelProposal.agentRunInput.proposal, activeEditProposal),
     });
   }, [activeCaps, activeEditProposal, agentRunModelProposal, submittedModelProposalPrompt]);
-  const agentRunInput = submittedModelProposalPrompt || modelProposalDraft ? agentRunModelProposal.proposalPathState === "proposal_detected" && activeEditProposal ? agentRunReadiness ? { ...(legacyAgentRunInput ?? {}), ...agentRunReadiness.agentRunInput, boundedLoop: agentRunReadiness.boundedLoop } : agentRunModelProposal.agentRunInput : agentRunModelProposal.agentRunInput : legacyAgentRunInput;
+  const agentRunInput = submittedModelProposalPrompt || modelProposalDraft ? agentRunModelProposal.proposalPathState === "proposal_detected" && activeEditProposal ? agentRunReadiness ? { ...(legacyAgentRunInput ?? {}), ...agentRunReadiness.agentRunInput, boundedLoop: agentRunReadiness.boundedLoop, applyRequest: agentRunApplyRequest ?? legacyAgentRunInput?.applyRequest, applyResult: legacyAgentRunInput?.applyResult } : agentRunModelProposal.agentRunInput : agentRunModelProposal.agentRunInput : legacyAgentRunInput;
   const codingTaskPromptDraft = useMemo(() => buildCodingTaskPrompt({ mode: "ask", goal: codingTaskGoal, contextItems: explicitContextBundleItems, providerReadiness: chatReadinessLabel }), [chatReadinessLabel, codingTaskGoal, explicitContextBundleItems]);
   const workspaceSnippetQueryValidation = useMemo(() => validateWorkspaceSnippetQuery(workspaceSnippetQuery), [workspaceSnippetQuery]);
 
@@ -583,10 +588,13 @@ export function App() {
     editProposalIdentityRef.current = null;
     pendingApplyRequestIdRef.current = null;
     editProposalRejectedTraceKeyRef.current = null;
+    agentRunApplyCorrelationRef.current = null;
+    agentRunApplyChatIdRef.current = null;
     pendingApplyProposalRequestIdRef.current = null;
     completedApplyRequestChatsRef.current.clear();
     setEditProposal(null);
     setApplyResult(null);
+    setAgentRunApplyRequest(null);
     setApplyNote(null);
     setPendingApplyRequestId(null);
   }, []);
@@ -758,6 +766,24 @@ export function App() {
           if (pendingApplyRequestIdRef.current && pendingApplyRequestIdRef.current !== requestId) {
             setApplyNote(ignoredStaleApplyResultNote);
           }
+          return;
+        }
+        const agentRunCorrelation = agentRunApplyCorrelationRef.current;
+        if (agentRunCorrelation && agentRunApplyChatIdRef.current === chatIdRef.current) {
+          const correlation = correlateAgentRunApplyResult({ current: agentRunCorrelation, hostMessage: message });
+          if (correlation.state !== "accepted" || !correlation.applyResult) {
+            setApplyNote(correlation.diagnostics[0]?.message ?? "Agent Run apply result was blocked.");
+            return;
+          }
+          rememberCompletedApplyRequest(completedApplyRequestChatsRef.current, requestId, chatIdRef.current);
+          pendingApplyRequestIdRef.current = null;
+          pendingApplyProposalRequestIdRef.current = null;
+          agentRunApplyCorrelationRef.current = null;
+          agentRunApplyChatIdRef.current = null;
+          setPendingApplyRequestId(null);
+          setApplyNote(null);
+          setApplyResult({ requestId, proposalRequestId: agentRunCorrelation.proposalId, payload: message.payload as ApplyWorkspaceEditResultPayload });
+          appendTrace({ family: "edit.applyResult", title: "Agent Run apply result received", status: correlation.applyResult.status === "applied" ? "succeeded" : "failed", summary: correlation.applyResult.summary ?? "Agent Run apply result received.", requestId, details: { status: correlation.applyResult.status, appliedFileCount: correlation.applyResult.appliedFileCount ?? 0 } });
           return;
         }
         const proposalRequestId = pendingApplyProposalRequestIdRef.current;
@@ -1668,6 +1694,46 @@ export function App() {
     appendTrace({ family: "edit.applyRequested", title: "Edit apply requested", status: "pending", summary: editProposal.payload.summary, requestId: applyRequestId, details: { proposalRequestId: editProposal.requestId, fileCount: editProposal.payload.edits.length } });
   }, [addTimeline, appendTrace, bridgeHost, clearEditProposalState, editProposal]);
 
+  const submitAgentRunApply = useCallback(() => {
+    if (!activeEditProposal || !agentRunInput || (bridgeHost !== "vscode" && bridgeHost !== "jetbrains") || pendingApplyRequestIdRef.current) {
+      return;
+    }
+    if (!editProposalCandidateIdentityMatches(activeEditProposal, latestEditProposalCandidateFromMessages(chatViewMessagesRef.current))) {
+      clearEditProposalState();
+      return;
+    }
+    agentRunApplyCounterRef.current += 1;
+    const applyRequestId = `gui-agent-run-apply-${editProposalApplySessionNonceRef.current}-${agentRunApplyCounterRef.current}`;
+    const normalized = normalizeAgentRunApplyRequest({
+      source: "user",
+      requestId: applyRequestId,
+      requestIdMintedBy: "gui",
+      runId: agentRunRunId(agentRunInput),
+      proposalId: activeEditProposal.requestId,
+      agentRunInput,
+    });
+    if (normalized.state !== "ready" || !normalized.correlation || !normalized.applyRequest) {
+      setApplyNote(normalized.diagnostics[0]?.message ?? "Agent Run apply request was blocked.");
+      return;
+    }
+    pendingApplyRequestIdRef.current = applyRequestId;
+    pendingApplyProposalRequestIdRef.current = activeEditProposal.requestId;
+    agentRunApplyCorrelationRef.current = normalized.correlation;
+    agentRunApplyChatIdRef.current = chatIdRef.current;
+    setPendingApplyRequestId(applyRequestId);
+    setAgentRunApplyRequest(normalized.applyRequest);
+    setApplyResult(null);
+    setApplyNote(null);
+    bridgeAdapterRef.current?.post({
+      version: "2026-05-15",
+      type: "gui.applyWorkspaceEditRequest",
+      requestId: applyRequestId,
+      payload: activeEditProposal.payload,
+    });
+    addTimeline(`Agent Run apply requested ${applyRequestId}`);
+    appendTrace({ family: "edit.applyRequested", title: "Agent Run apply requested", status: "pending", summary: activeEditProposal.payload.summary, requestId: applyRequestId, details: { proposalRequestId: activeEditProposal.requestId, fileCount: activeEditProposal.payload.edits.length, runId: normalized.correlation.runId } });
+  }, [activeEditProposal, addTimeline, agentRunInput, appendTrace, bridgeHost, clearEditProposalState]);
+
   const requestIdeAction = useCallback((payload: IdeActionRequestPayload, requestIdPrefix = "gui-ide-action") => {
     if ((bridgeHost !== "vscode" && bridgeHost !== "jetbrains") || pendingIdeActionRequestIdRef.current) {
       return;
@@ -2410,7 +2476,7 @@ export function App() {
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
-                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitEditProposal} onRunAllowlistedVerification={(commandId) => requestIdeAction({ action: "runVerificationCommand", commandId }, "gui-agent-run-verification")} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} />
+                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={(commandId) => requestIdeAction({ action: "runVerificationCommand", commandId }, "gui-agent-run-verification")} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} />
                 <CodingTaskSessionPanel goal={codingTaskGoal} contextItems={explicitContextBundleItems} memoryAttachedCount={attachedProjectMemoryCount} modelStatus={chatReadinessLabel} canSendChat={canSendChat} latestResponseStatus={chatLifecycleLabel} editProposal={activeEditProposal} applyResult={applyResult} verificationAttempt={verificationAttempt} verificationAttached={Boolean(attachedVerificationKey)} draftPrompt={codingTaskPromptDraft} modelProposalDraft={modelProposalDraft} modelProposalResult={agentRunModelProposal} onGoalChange={setCodingTaskGoal} onUseDraftPrompt={useCodingTaskDraftPrompt} onUseDraftPlan={useCodingTaskDraftPlan} onDraftOneStepModelProposal={draftOneStepModelProposalPrompt} onFocusPrompt={focusCodingTaskPrompt} />
                 <ManualRunnerPanel host={bridgeHost} draftPlan={manualRunnerDraftPlan} planProposal={latestPlanProposal} hasContext={Boolean((currentAttachedContext && hasUsableAttachedContext(currentAttachedContext)) || explicitContextBundleItems.length > 0)} hasPrompt={Boolean(chatInput.trim())} hasAssistantActivity={chatView.messages.some((message) => message.role === "assistant") || chatLifecycleState !== "idle"} hasEditProposal={Boolean(activeEditProposal)} applyResult={applyResult} verificationAttempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} verificationAttached={Boolean(attachedVerificationKey)} canSendChat={canSendChat} onDraftPlanChange={setManualRunnerDraftPlan} onFocusPrompt={() => chatInputRef.current?.focus()} />
                 <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} promptAction={activeFilePromptAction} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onClearPending={clearPendingIdeActionState} onIncludeChange={setIncludeAttachedContext} onApplyPrompt={applyActiveFilePrompt} onAddToBundle={addActiveFileExcerptToBundle} />
@@ -2655,6 +2721,13 @@ export function App() {
       </section>
     </main>
   );
+}
+
+function agentRunRunId(input: AgentRunInput): string {
+  const loopId = isRecord(input.boundedLoop) && typeof input.boundedLoop.loopId === "string" ? input.boundedLoop.loopId : undefined;
+  const proposalId = input.proposal?.id;
+  const goalId = input.goal?.id;
+  return (loopId ?? proposalId ?? goalId ?? "agent-run").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 128) || "agent-run";
 }
 
 function latestAssistantMessageAfterPrompt(messages: ChatViewMessage[], prompt: string): ChatViewMessage | undefined {
