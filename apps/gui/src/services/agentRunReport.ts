@@ -1,7 +1,7 @@
 import { evaluateAgentRunState, type AgentRunInput, type AgentRunState, type AgentRunViewModel } from "./agentRunState";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./redaction";
 
-export type AgentRunReportKind = "success" | "failed_verification" | "blocked_prerequisites" | "rollback_available" | "blocked" | "in_progress";
+export type AgentRunReportKind = "success" | "failed_apply" | "failed_verification" | "blocked_prerequisites" | "rollback_available" | "blocked" | "in_progress";
 export type AgentRunReportStatus = "succeeded" | "failed" | "blocked" | "pending";
 export type AgentRunReportDetailValue = string | number | boolean | string[];
 
@@ -30,7 +30,7 @@ type PlainRecord = Record<string, unknown>;
 export function createAgentRunReport(input: unknown): AgentRunReport {
   const view = evaluateAgentRunState(input);
   const metadata = isPlainObject(input) ? input as Partial<AgentRunInput> : {};
-  const kind = reportKind(view);
+  const kind = reportKind(view, metadata);
   const details = buildReportDetails(view, metadata);
   const diagnostics = view.diagnostics.map((item) => safeText(item.message, 220)).slice(0, 12);
 
@@ -59,9 +59,12 @@ export function createAgentRunTraceDetails(input: unknown): Record<string, Agent
   });
 }
 
-function reportKind(view: AgentRunViewModel): AgentRunReportKind {
+function reportKind(view: AgentRunViewModel, metadata: Partial<AgentRunInput>): AgentRunReportKind {
   if (view.rollbackAvailable || view.state === "rollback_available") {
     return "rollback_available";
+  }
+  if (metadata.applyResult?.status === "failed") {
+    return "failed_apply";
   }
   if (view.state === "verified" || view.state === "completed") {
     return "success";
@@ -82,6 +85,9 @@ function reportStatus(kind: AgentRunReportKind): AgentRunReportStatus {
   if (kind === "success") {
     return "succeeded";
   }
+  if (kind === "failed_apply") {
+    return "failed";
+  }
   if (kind === "failed_verification") {
     return "failed";
   }
@@ -95,6 +101,8 @@ function titleForKind(kind: AgentRunReportKind): string {
   switch (kind) {
     case "success":
       return "Agent Run completed after user-confirmed verification";
+    case "failed_apply":
+      return "Agent Run apply failed after user confirmation";
     case "failed_verification":
       return "Agent Run verification failed after user confirmation";
     case "blocked_prerequisites":
@@ -113,6 +121,8 @@ function summaryForKind(kind: AgentRunReportKind, summary: string): string {
   switch (kind) {
     case "success":
       return `${safe} Manual apply and verification metadata are complete; no autonomous follow-up was started.`;
+    case "failed_apply":
+      return `${safe} Apply failed after an explicit user request; no automatic repair or retry was started.`;
     case "failed_verification":
       return `${safe} Verification failed after an explicit user request; no automatic repair was started.`;
     case "blocked_prerequisites":
@@ -131,7 +141,7 @@ function userConfirmedSteps(metadata: Partial<AgentRunInput>): string[] {
   if (metadata.applyRequest?.requested === true && metadata.applyRequest.source === "user") {
     steps.push("apply_requested_by_user");
   }
-  if (metadata.applyResult?.status === "applied") {
+  if (metadata.applyResult?.status === "applied" || metadata.applyResult?.status === "failed") {
     steps.push("apply_result_recorded");
   }
   if (metadata.verificationRequest?.requested === true && metadata.verificationRequest.source === "user") {
@@ -164,6 +174,7 @@ function buildReportDetails(view: AgentRunViewModel, metadata: Partial<AgentRunI
     applyRequested: metadata.applyRequest?.requested === true,
     applyRequestSource: safeEnum(metadata.applyRequest?.source, ["user", "assistant", "system"]),
     applyStatus: safeEnum(metadata.applyResult?.status, ["applied", "failed"]),
+    applySummary: safeText(metadata.applyResult?.summary, 240),
     appliedFileCount: boundedCount(metadata.applyResult?.appliedFileCount, 0, 200),
     verificationRequestId: safeId(metadata.verificationRequest?.requestId),
     verificationRequested: metadata.verificationRequest?.requested === true,

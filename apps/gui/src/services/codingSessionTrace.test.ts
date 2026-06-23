@@ -155,6 +155,63 @@ describe("codingSessionTrace", () => {
     expect(sessionStorage.length).toBe(0);
   });
 
+  it("creates sanitized Agent Run apply requested and result trace entries", () => {
+    const requested = createCodingSessionTraceEntry({
+      family: "agentRun.applyRequested",
+      title: "Agent Run apply requested",
+      status: "pending",
+      summary: "User requested Agent Run apply through the existing workspace-edit bridge.",
+      requestId: "gui-agent-run-apply-1",
+      details: {
+        displayOnly: true,
+        requestId: "gui-agent-run-apply-1",
+        runId: "agent-run-loop-1",
+        proposalId: "proposal-1",
+        applyRequested: true,
+        rawDiff: "DIFF_SENTINEL",
+        fileBody: "FILE_BODY_SENTINEL",
+        privatePath: "/Users/alice/private/project.ts",
+      },
+    }, fixedOptions());
+    const result = createCodingSessionTraceEntry({
+      family: "agentRun.applyResult",
+      title: "Agent Run apply result received",
+      status: "failed",
+      summary: "Host declined apply after explicit user confirmation",
+      requestId: "gui-agent-run-apply-1",
+      details: {
+        displayOnly: true,
+        requestId: "gui-agent-run-apply-1",
+        hostRequestId: "gui-agent-run-apply-1",
+        runId: "agent-run-loop-1",
+        proposalId: "proposal-1",
+        applyStatus: "failed",
+        appliedFileCount: 0,
+        affectedFiles: ["apps/gui/src/App.tsx"],
+        rawOutput: "OUTPUT_SENTINEL",
+        env: { API_KEY: "sk-secret123456789" },
+      },
+    }, fixedOptions());
+    const rendered = JSON.stringify({ requested, result });
+
+    expect(requested.family).toBe("agentRun.applyRequested");
+    expect(result.family).toBe("agentRun.applyResult");
+    expect(normalizeTraceFamily("agentRun.applyRequested")).toBe("agentRun.applyRequested");
+    expect(normalizeTraceFamily("agentRun.applyResult")).toBe("agentRun.applyResult");
+    expect(requested.details?.displayOnly).toBe(true);
+    expect(requested.details?.applyRequested).toBe(true);
+    expect(result.details?.applyStatus).toBe("failed");
+    expect(result.details?.appliedFileCount).toBe(0);
+    expect(rendered).toContain("[redacted]");
+    expect(rendered.length).toBeLessThan(1800);
+    expect(rendered).not.toContain("DIFF_SENTINEL");
+    expect(rendered).not.toContain("FILE_BODY_SENTINEL");
+    expect(rendered).not.toContain("OUTPUT_SENTINEL");
+    expect(rendered).not.toContain("apps/gui/src/App.tsx");
+    expect(rendered).not.toContain("/Users/alice");
+    expect(rendered).not.toContain("sk-secret123456789");
+  });
+
   it("normalizes unsafe family and status values at the helper boundary", () => {
     const entry = createCodingSessionTraceEntry({
       family: "tool.shell.execute",

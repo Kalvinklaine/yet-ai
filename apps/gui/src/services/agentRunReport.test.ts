@@ -101,6 +101,28 @@ describe("createAgentRunReport", () => {
     expect(report.details.verificationOutputTail).toContain("bounded output tail");
   });
 
+  it("creates a failed apply report with only sanitized bounded apply metadata", () => {
+    const run = cloneRun();
+    run.applyRequest = { requested: true, source: "user", requestId: "apply-report-failed" };
+    run.applyResult = { status: "failed", summary: "Host declined apply after user confirmation", appliedFileCount: 9999 };
+
+    const report = createAgentRunReport(run);
+    const traceDetails = createAgentRunTraceDetails(run);
+    const rendered = JSON.stringify({ report, traceDetails });
+
+    expect(report.kind).toBe("failed_apply");
+    expect(report.status).toBe("failed");
+    expect(report.state).toBe("blocked");
+    expect(report.summary).toContain("no automatic repair or retry");
+    expect(report.userConfirmedSteps).toEqual(["apply_requested_by_user", "apply_result_recorded"]);
+    expect(report.details.applyRequestId).toBe("apply-report-failed");
+    expect(report.details.applyStatus).toBe("failed");
+    expect(report.details.applySummary).toBe("Host declined apply after user confirmation");
+    expect(report.details.appliedFileCount).toBeUndefined();
+    expect(traceDetails.applyStatus).toBe("failed");
+    expect(rendered).not.toContain("apps/gui/src/App.tsx");
+  });
+
   it("distinguishes rollback-available state as user-reviewable only", () => {
     const run = cloneRun();
     run.applyResult = { status: "applied", appliedFileCount: 2 };

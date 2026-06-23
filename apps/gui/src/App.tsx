@@ -783,7 +783,7 @@ export function App() {
           setPendingApplyRequestId(null);
           setApplyNote(null);
           setApplyResult({ requestId, proposalRequestId: agentRunCorrelation.proposalId, payload: message.payload as ApplyWorkspaceEditResultPayload });
-          appendTrace({ family: "edit.applyResult", title: "Agent Run apply result received", status: correlation.applyResult.status === "applied" ? "succeeded" : "failed", summary: correlation.applyResult.summary ?? "Agent Run apply result received.", requestId, details: { status: correlation.applyResult.status, appliedFileCount: correlation.applyResult.appliedFileCount ?? 0 } });
+          appendTrace({ family: "agentRun.applyResult", title: "Agent Run apply result received", status: correlation.applyResult.status === "applied" ? "succeeded" : "failed", summary: correlation.applyResult.summary ?? "Agent Run apply result received.", requestId, details: correlation.details });
           return;
         }
         const proposalRequestId = pendingApplyProposalRequestIdRef.current;
@@ -1731,7 +1731,7 @@ export function App() {
       payload: activeEditProposal.payload,
     });
     addTimeline(`Agent Run apply requested ${applyRequestId}`);
-    appendTrace({ family: "edit.applyRequested", title: "Agent Run apply requested", status: "pending", summary: activeEditProposal.payload.summary, requestId: applyRequestId, details: { proposalRequestId: activeEditProposal.requestId, fileCount: activeEditProposal.payload.edits.length, runId: normalized.correlation.runId } });
+    appendTrace({ family: "agentRun.applyRequested", title: "Agent Run apply requested", status: "pending", summary: "User requested Agent Run apply through the existing workspace-edit bridge.", requestId: applyRequestId, details: normalized.details });
   }, [activeEditProposal, addTimeline, agentRunInput, appendTrace, bridgeHost, clearEditProposalState]);
 
   const requestIdeAction = useCallback((payload: IdeActionRequestPayload, requestIdPrefix = "gui-ide-action") => {
