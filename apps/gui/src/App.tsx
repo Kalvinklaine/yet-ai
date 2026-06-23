@@ -865,7 +865,7 @@ export function App() {
             agentRunVerificationResultRef.current = correlation.verificationResult;
             setAgentRunVerificationResult(correlation.verificationResult);
             setAgentRunVerificationProgress(null);
-            const reportInput = { ...(agentRunInputRef.current ?? {}), verificationResult: correlation.verificationResult, verificationProgress: undefined };
+            const reportInput = { ...(agentRunInputRef.current ?? {}), verificationResult: correlation.verificationResult, verificationProgress: undefined, rollback: undefined };
             const report = createAgentRunReport(reportInput);
             appendTrace({ family: correlation.verificationResult.status === "succeeded" ? "agentRun.completed" : "agentRun.verificationResult", title: report.title, status: report.status === "succeeded" ? "succeeded" : "failed", summary: report.summary, requestId, details: createAgentRunTraceDetails(reportInput) });
           } else if (correlation.state === "blocked") {
