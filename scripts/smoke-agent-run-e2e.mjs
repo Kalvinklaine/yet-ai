@@ -132,7 +132,7 @@ try {
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(sentPrompt);
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expectVisibleText(page, "Proposed a safe edit. Review the proposal card below. It will not apply automatically.", "assistant safe edit proposal", 20_000);
-  await expectVisibleText(page, "Run status: ready_for_apply", "Agent Run ready for apply", 20_000);
+  await expectVisibleText(page, "Manual state: Ready for manual apply", "Agent Run ready for apply", 20_000);
   await expectVisibleText(page, "Checkpoint status: verified", "Agent Run verified checkpoint", 20_000);
   await expectVisibleText(page, "Policy decision: ready_for_user_apply", "Agent Run policy readiness", 20_000);
   await expectVisibleText(page, "One-step model proposal", "one-step model proposal panel", 20_000);
@@ -151,7 +151,7 @@ try {
   assert.equal(applyRequest.payload?.requiresUserConfirmation, true, "apply request did not require user confirmation");
   assert.equal(applyRequest.payload?.cloudRequired, false, "apply request was not cloudRequired false");
   await dispatchHostMessage(page, agentRunBuiltGuiApplyResult(applyRequest.requestId));
-  await expectVisibleText(page, "Run status: ready_for_verification", "Agent Run ready for verification", 20_000);
+  await expectVisibleText(page, "Manual state: Ready for manual verification", "Agent Run ready for verification", 20_000);
   await expectVisibleText(page, "Apply status: applied", "Agent Run apply result", 20_000);
   await assertTraceEntries(page, ["Agent Run apply requested", "Agent Run apply result received"], "Agent Run apply lifecycle trace");
   await assertNoIdeAction(page, "runVerificationCommand", "after apply before verification click");
@@ -160,10 +160,10 @@ try {
   const verificationRequest = await waitForBridgeMessage(page, (message) => message?.type === "gui.ideActionRequest" && message?.payload?.action === "runVerificationCommand");
   assert.deepEqual(verificationRequest.payload, { action: "runVerificationCommand", commandId: fixture.commandId }, "verification request must contain commandId only");
   await dispatchHostMessage(page, agentRunBuiltGuiVerificationProgress(verificationRequest.requestId));
-  await expectVisibleText(page, "Verification status/result: running", "Agent Run verification progress", 20_000);
+  await expectVisibleText(page, "Verification status/result: Verification running", "Agent Run verification progress", 20_000);
   await dispatchHostMessage(page, agentRunBuiltGuiVerificationResult(verificationRequest.requestId));
-  await expectVisibleText(page, "Run status: verified", "Agent Run verified status", 20_000);
-  await expectVisibleText(page, "Verification status/result: succeeded · exit 0 · sanitized result available", "Agent Run verification result", 20_000);
+  await expectVisibleText(page, "Manual state: Verified", "Agent Run verified status", 20_000);
+  await expectVisibleText(page, "Verification status/result: Verified · exit 0 · sanitized result available", "Agent Run verification result", 20_000);
   await expectVisibleText(page, "Agent Run completed after user-confirmed verification", "final Agent Run report title", 20_000);
   await assertNoVisibleText(page, "Agent Run has a user-reviewable rollback option", "successful final report should not be rollback report");
   await assertTraceEntries(page, ["Agent Run verification requested", "Agent Run verification progress received", "Agent Run completed after user-confirmed verification"], "Agent Run verification trace");
@@ -345,7 +345,7 @@ async function runMissingCheckpointScenario(guiBaseUrl) {
   delete readiness.agentRunReadiness.sandbox.checkpoint;
   readiness.agentRunReadiness.sandbox.modeStatus = "blocked";
   const { page } = await prepareModelProposalPage(guiBaseUrl, { capsResponse: readiness });
-  await expectVisibleText(page, "Run status: prerequisites_blocked", "missing checkpoint blocked status", 20_000);
+  await expectVisibleText(page, "Manual state: Checkpoint required", "missing checkpoint blocked status", 20_000);
   await expectVisibleText(page, "Proposal status: detected but checkpoint metadata is missing", "missing checkpoint proposal status", 20_000);
   await expectVisibleText(page, "Checkpoint status: missing", "missing checkpoint status", 20_000);
   await assertButtonDisabled(page, "Apply reviewed patch", "missing checkpoint apply button");
@@ -356,16 +356,16 @@ async function runMissingCheckpointScenario(guiBaseUrl) {
 
 async function runFailedVerificationScenario(guiBaseUrl) {
   const { page } = await prepareLegacyProposalPage(guiBaseUrl);
-  await expectVisibleText(page, "Run status: ready_for_apply", "failed verification scenario ready for apply", 20_000);
+  await expectVisibleText(page, "Manual state: Ready for manual apply", "failed verification scenario ready for apply", 20_000);
   await page.getByRole("button", { name: "Apply reviewed patch" }).click();
   const applyRequest = await waitForBridgeMessage(page, (message) => message?.type === "gui.applyWorkspaceEditRequest");
   await dispatchHostMessage(page, agentRunBuiltGuiApplyResult(applyRequest.requestId));
-  await expectVisibleText(page, "Run status: ready_for_verification", "failed verification scenario ready for verification", 20_000);
+  await expectVisibleText(page, "Manual state: Ready for manual verification", "failed verification scenario ready for verification", 20_000);
   await page.getByRole("button", { name: "Run allowlisted verification" }).click();
   const verificationRequest = await waitForBridgeMessage(page, (message) => message?.type === "gui.ideActionRequest" && message?.payload?.action === "runVerificationCommand");
   await dispatchHostMessage(page, agentRunBuiltGuiVerificationResult(verificationRequest.requestId, { status: "failed", exitCode: 1, outputTail: "Repository fixture check failed." }));
-  await expectVisibleText(page, "Run status: verification_failed", "failed verification status", 20_000);
-  await expectVisibleText(page, "Verification status/result: failed · exit 1 · sanitized result available", "failed verification result", 20_000);
+  await expectVisibleText(page, "Manual state: Verification failed", "failed verification status", 20_000);
+  await expectVisibleText(page, "Verification status/result: Verification failed · exit 1 · sanitized result available", "failed verification result", 20_000);
   await expectVisibleText(page, "Repository fixture check failed.", "failed verification sanitized output", 20_000);
   await assertButtonDisabled(page, "Run allowlisted verification", "failed verification run button");
   const messages = await page.evaluate(() => window.__yetAiVsCodeMessages ?? []);
@@ -377,7 +377,7 @@ async function runStaleResponseScenario(guiBaseUrl) {
   const { page } = await prepareModelProposalPage(guiBaseUrl, { sseChatId: "chat-stale-after-change" });
   await page.waitForTimeout(300);
   await assertNoVisibleText(page, "Proposed a safe edit.", "stale response safe edit proposal");
-  await assertNoVisibleText(page, "Run status: ready_for_apply", "stale response Agent Run readiness");
+  await assertNoVisibleText(page, "Manual state: Ready for manual apply", "stale response Agent Run readiness");
   await assertNoRequestsOfType(page, "gui.applyWorkspaceEditRequest", "after stale response");
   await assertNoIdeAction(page, "runVerificationCommand", "after stale response");
   await page.close();
