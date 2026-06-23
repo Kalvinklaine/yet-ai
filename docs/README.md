@@ -152,6 +152,16 @@ npm run smoke:agent-run-verification
 
 The smoke transpiles and imports the pure GUI services locally, starts from mock proposal plus applied Agent Run metadata, proves `ready_for_verification`, proves no verification request is emitted before the explicit user click, sends exactly one existing `gui.ideActionRequest` bridge message on click with only `{ action: "runVerificationCommand", commandId: "repository-check" }`, correlates mock progress and result metadata into verified/completed report state, and covers failed verification as stopped with no automatic repair while rollback remains user-review only when metadata exists. It is deterministic local/mock evidence only: it does not launch an IDE, call providers, perform network requests, execute shell/git/tools, scan hidden workspace files, write browser storage, add a bridge message, leak raw command/path/secret output, auto-run verification, auto-repair, auto-retry, or auto-rollback.
 
+For the Sprint 48 built-GUI one-step Agent Run E2E path, run:
+
+```sh
+npm run smoke:agent-run-e2e
+```
+
+The smoke builds the GUI, serves the built assets from loopback, and drives Playwright against deterministic mock runtime/SSE/provider/bridge/host data. It proves the manual one-step Agent Run journey at the rendered UI boundary: local goal entry, explicit context attachment, prompt draft, manual Send, no automatic apply or verification, explicit Apply through the existing reviewed edit bridge request, explicit allowlisted Verify through the existing `gui.ideActionRequest` with `commandId` only, sanitized final report rendering, malformed proposal rejection, missing checkpoint prerequisite blocking, failed verification stopping without repair, and stale assistant response rejection after correlation changes. It is mock/loopback-only evidence: it does not launch a real IDE, call providers or hosted Yet AI services, use real credentials, scan hidden workspace files, execute shell/git/tool endpoints, use non-loopback network, persist browser-storage secrets/context, auto-send, auto-apply, auto-run verification, auto-repair, auto-retry, auto-rollback, or claim production autonomy.
+
+Keep this smoke as an explicit verification gate rather than part of `npm run check` unless a future card approves browser/build smoke expansion for the default local validation bundle. It builds the GUI and launches Playwright, while `npm run check` remains the focused repository validation bundle for docs, identity, contracts, deterministic local validators, and safe self-tests that do not run browser or packaged IDE smoke gates.
+
 The command runs the repository's local validation bundle: product identity, public hygiene, docs index coverage, IDE surface contract parity, docs validation, and focused self-tests/validators that are safe for the current checkout. It does not run the browser or packaged IDE smoke gates, call providers, require hosted Yet AI services, publish marketplace artifacts, or claim production release status.
 
 ### Sprint 10 verification matrix
