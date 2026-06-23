@@ -40,6 +40,7 @@ Additional local evidence templates live under `docs/dogfood/`, including the re
   Sprint 44 deterministic model-proposal coverage is available with `npm run smoke:model-proposal-agent-run`; it exercises the pure one-step prompt/proposal services with valid and rejected mock assistant responses, proves prompt explicit-context-only wording, strict safe-edit recognition, fail-closed malformed/unsafe proposal handling, sanitized repair guidance, no browser storage, and no auto apply or auto verification.
   Sprint 45 deterministic checkpoint-readiness coverage is available with `npm run smoke:agent-run-checkpoint-readiness`; it composes the model-proposal, real disposable checkpoint, readiness, bounded-loop, and Agent Run state services to prove verified checkpoint metadata can reach `ready_for_apply`, while missing or unverified checkpoint metadata remains prerequisites-blocked with no apply or verification.
   Sprint 46 deterministic explicit-apply coverage is available with `npm run smoke:agent-run-apply`; it exercises the pure Agent Run apply/state/report/trace services to prove verified readiness reaches `ready_for_apply`, no apply request is emitted before an explicit click, the click uses the existing `gui.applyWorkspaceEditRequest` bridge request, a mock host apply result reaches `ready_for_verification`, and rejected/failed apply results stop with rollback metadata and no automatic retry.
+  Sprint 47 deterministic explicit-verification coverage is available with `npm run smoke:agent-run-verification`; it exercises the pure Agent Run verification/state/report/trace services to prove applied metadata reaches `ready_for_verification`, no verification request is emitted before an explicit click, the click uses the existing `gui.ideActionRequest` bridge request with `commandId` only, mock progress/result metadata reaches verified/completed report state, and failed verification stops without automatic repair while rollback remains user-review only when metadata exists.
 
 ## Current login-first milestone status
 
@@ -141,6 +142,14 @@ npm run smoke:agent-run-apply
 ```
 
 The smoke transpiles and imports the pure GUI services locally, starts from mock proposal plus verified checkpoint readiness metadata, proves `ready_for_apply`, proves no apply request is emitted before the explicit user click, sends exactly one existing `gui.applyWorkspaceEditRequest` bridge message on click, correlates the mock host apply result into `ready_for_verification`, and covers rejected/failed apply results as stopped with rollback metadata and no automatic retry. It is deterministic local/mock evidence only: it does not launch an IDE, call providers, perform network requests, execute shell/git/tools, scan hidden workspace files, write browser storage, add a bridge message, leak raw command/path/secret output, auto-apply edits, auto-run verification, auto-retry, or auto-rollback.
+
+For the Sprint 47 explicit Agent Run verification path, run:
+
+```sh
+npm run smoke:agent-run-verification
+```
+
+The smoke transpiles and imports the pure GUI services locally, starts from mock proposal plus applied Agent Run metadata, proves `ready_for_verification`, proves no verification request is emitted before the explicit user click, sends exactly one existing `gui.ideActionRequest` bridge message on click with only `{ action: "runVerificationCommand", commandId: "repository-check" }`, correlates mock progress and result metadata into verified/completed report state, and covers failed verification as stopped with no automatic repair while rollback remains user-review only when metadata exists. It is deterministic local/mock evidence only: it does not launch an IDE, call providers, perform network requests, execute shell/git/tools, scan hidden workspace files, write browser storage, add a bridge message, leak raw command/path/secret output, auto-run verification, auto-repair, auto-retry, or auto-rollback.
 
 The command runs the repository's local validation bundle: product identity, public hygiene, docs index coverage, IDE surface contract parity, docs validation, and focused self-tests/validators that are safe for the current checkout. It does not run the browser or packaged IDE smoke gates, call providers, require hosted Yet AI services, publish marketplace artifacts, or claim production release status.
 

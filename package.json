@@ -14,6 +14,7 @@
     "smoke:model-proposal-agent-run": "node scripts/smoke-model-proposal-agent-run.mjs",
     "smoke:agent-run-checkpoint-readiness": "node scripts/smoke-agent-run-checkpoint-readiness.mjs",
     "smoke:agent-run-apply": "node scripts/smoke-agent-run-apply.mjs",
+    "smoke:agent-run-verification": "node scripts/smoke-agent-run-verification.mjs",
     "smoke:agent-progress-endpoint": "node scripts/smoke-agent-progress-endpoint.mjs",
     "smoke:gui-agent-progress": "node scripts/smoke-gui-agent-progress.mjs",
     "check:planner-scheduler": "node scripts/check-planner-scheduler.mjs",
