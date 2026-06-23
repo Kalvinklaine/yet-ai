@@ -38,6 +38,7 @@ Additional local evidence templates live under `docs/dogfood/`, including the re
   It now also records the Sprint 42 bounded patch verification loop metadata boundary for one explicit user-confirmed apply plus one allowlisted verification command, with no autonomous loop or new execution surface.
   Sprint 43 deterministic local smoke coverage for the one-step Agent Run shell is available with `npm run smoke:agent-run-state`; it uses mock host events plus disposable checkpoint/patch helpers and must stay free of provider, IDE, network, shell, git, browser-storage, or hidden workspace-scan authority.
   Sprint 44 deterministic model-proposal coverage is available with `npm run smoke:model-proposal-agent-run`; it exercises the pure one-step prompt/proposal services with valid and rejected mock assistant responses, proves prompt explicit-context-only wording, strict safe-edit recognition, fail-closed malformed/unsafe proposal handling, sanitized repair guidance, no browser storage, and no auto apply or auto verification.
+  Sprint 45 deterministic checkpoint-readiness coverage is available with `npm run smoke:agent-run-checkpoint-readiness`; it composes the model-proposal, real disposable checkpoint, readiness, bounded-loop, and Agent Run state services to prove verified checkpoint metadata can reach `ready_for_apply`, while missing or unverified checkpoint metadata remains prerequisites-blocked with no apply or verification.
 
 ## Current login-first milestone status
 
@@ -123,6 +124,14 @@ npm run smoke:model-proposal-agent-run
 ```
 
 The smoke transpiles and imports the pure GUI services locally, drafts a one-step safe-edit prompt from explicit attached context only, feeds mock assistant safe-edit responses into proposal correlation, and evaluates Agent Run readiness metadata. It covers both a valid strict safe-edit proposal and malformed/unsafe proposal rejection with sanitized repair guidance. It is deterministic local/mock evidence only: it does not launch an IDE, call providers, perform network requests, execute shell/git/tools, scan hidden workspace files, write browser storage, auto-apply edits, or auto-run verification.
+
+For the Sprint 45 model proposal plus real checkpoint readiness path, run:
+
+```sh
+npm run smoke:agent-run-checkpoint-readiness
+```
+
+The smoke transpiles and imports the pure GUI services locally, drafts a one-step safe-edit prompt from explicit attached context only, feeds a mock safe-edit proposal through proposal correlation, creates and verifies a disposable checkpoint for an explicit relative file, composes readiness metadata, and evaluates the Agent Run state. It covers the verified-checkpoint success path through `ready_for_apply` and the missing/unverified checkpoint failure path through `prerequisites_blocked`. It is deterministic local/mock evidence only: it does not launch an IDE, call providers, perform network requests, execute shell/git/tools, scan hidden workspace files, write browser storage, auto-apply edits, or auto-run verification.
 
 The command runs the repository's local validation bundle: product identity, public hygiene, docs index coverage, IDE surface contract parity, docs validation, and focused self-tests/validators that are safe for the current checkout. It does not run the browser or packaged IDE smoke gates, call providers, require hosted Yet AI services, publish marketplace artifacts, or claim production release status.
 
