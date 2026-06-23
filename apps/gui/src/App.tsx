@@ -22,6 +22,7 @@ import { buildCodingTaskPrompt, type CodingTaskPromptMode } from "./services/cod
 import { buildOneStepModelProposalPrompt } from "./services/modelProposalPrompt";
 import { evaluateAgentRunModelProposal, type AgentRunModelProposalResult } from "./services/agentRunModelProposal";
 import { normalizeAgentRunApplyRequest, correlateAgentRunApplyResult, type AgentRunApplyCorrelationMetadata } from "./services/agentRunApply";
+import { normalizeAgentRunVerificationRequest, correlateAgentRunVerificationProgress, correlateAgentRunVerificationResult, type AgentRunVerificationCorrelationMetadata } from "./services/agentRunVerification";
 import { composeAgentRunReadiness, type AgentRunReadinessResult } from "./services/agentRunReadiness";
 import { buildVerificationFollowupPrompt, type VerificationFollowupPromptMode } from "./services/verificationFollowupPrompt";
 import { createProjectMemory, deleteProjectMemory, listProjectMemory, searchProjectMemory, type ProjectMemoryNote } from "./services/projectMemoryClient";
@@ -391,6 +392,9 @@ export function App() {
   const [applyResult, setApplyResult] = useState<ApplyResultState | null>(null);
   const [pendingApplyRequestId, setPendingApplyRequestId] = useState<string | null>(null);
   const [agentRunApplyRequest, setAgentRunApplyRequest] = useState<AgentRunInput["applyRequest"] | null>(null);
+  const [agentRunVerificationRequest, setAgentRunVerificationRequest] = useState<AgentRunInput["verificationRequest"] | null>(null);
+  const [agentRunVerificationProgress, setAgentRunVerificationProgress] = useState<AgentRunInput["verificationProgress"] | null>(null);
+  const [agentRunVerificationResult, setAgentRunVerificationResult] = useState<AgentRunInput["verificationResult"] | null>(null);
   const [applyNote, setApplyNote] = useState<string | null>(null);
   const [ideActionAttempt, setIdeActionAttempt] = useState<IdeActionAttemptState | null>(null);
   const [ideActionNote, setIdeActionNote] = useState<string | null>(null);
@@ -404,6 +408,10 @@ export function App() {
   const agentRunApplyCounterRef = useRef(0);
   const agentRunApplyCorrelationRef = useRef<AgentRunApplyCorrelationMetadata | null>(null);
   const agentRunApplyChatIdRef = useRef<string | null>(null);
+  const agentRunVerificationCounterRef = useRef(0);
+  const agentRunVerificationCorrelationRef = useRef<AgentRunVerificationCorrelationMetadata | null>(null);
+  const agentRunVerificationChatIdRef = useRef<string | null>(null);
+  const agentRunVerificationResultRef = useRef<AgentRunInput["verificationResult"] | null>(null);
   const editProposalRejectedTraceKeyRef = useRef<string | null>(null);
   const ideActionProposalCounterRef = useRef(0);
   const ideActionProposalIdentityRef = useRef<{ requestId: string; sourceMessageId: string; payloadKey: string } | null>(null);
@@ -551,7 +559,7 @@ export function App() {
       proposal: agentRunReadinessProposalMetadata(agentRunModelProposal.agentRunInput.proposal, activeEditProposal),
     });
   }, [activeCaps, activeEditProposal, agentRunModelProposal, submittedModelProposalPrompt]);
-  const agentRunInput = submittedModelProposalPrompt || modelProposalDraft ? agentRunModelProposal.proposalPathState === "proposal_detected" && activeEditProposal ? agentRunReadiness ? { ...(legacyAgentRunInput ?? {}), ...agentRunReadiness.agentRunInput, boundedLoop: agentRunReadiness.boundedLoop, applyRequest: agentRunApplyRequest ?? legacyAgentRunInput?.applyRequest, applyResult: legacyAgentRunInput?.applyResult } : agentRunModelProposal.agentRunInput : agentRunModelProposal.agentRunInput : legacyAgentRunInput;
+  const agentRunInput = submittedModelProposalPrompt || modelProposalDraft ? agentRunModelProposal.proposalPathState === "proposal_detected" && activeEditProposal ? agentRunReadiness ? { ...(legacyAgentRunInput ?? {}), ...agentRunReadiness.agentRunInput, boundedLoop: agentRunReadiness.boundedLoop, applyRequest: agentRunApplyRequest ?? legacyAgentRunInput?.applyRequest, applyResult: legacyAgentRunInput?.applyResult, verificationRequest: agentRunVerificationRequest ?? legacyAgentRunInput?.verificationRequest, verificationProgress: agentRunVerificationProgress ?? legacyAgentRunInput?.verificationProgress, verificationResult: agentRunVerificationResult ?? legacyAgentRunInput?.verificationResult, rollback: agentRunVerificationResult ? undefined : legacyAgentRunInput?.rollback } : agentRunModelProposal.agentRunInput : agentRunModelProposal.agentRunInput : legacyAgentRunInput;
   const codingTaskPromptDraft = useMemo(() => buildCodingTaskPrompt({ mode: "ask", goal: codingTaskGoal, contextItems: explicitContextBundleItems, providerReadiness: chatReadinessLabel }), [chatReadinessLabel, codingTaskGoal, explicitContextBundleItems]);
   const workspaceSnippetQueryValidation = useMemo(() => validateWorkspaceSnippetQuery(workspaceSnippetQuery), [workspaceSnippetQuery]);
 
@@ -590,11 +598,17 @@ export function App() {
     editProposalRejectedTraceKeyRef.current = null;
     agentRunApplyCorrelationRef.current = null;
     agentRunApplyChatIdRef.current = null;
+    agentRunVerificationCorrelationRef.current = null;
+    agentRunVerificationChatIdRef.current = null;
     pendingApplyProposalRequestIdRef.current = null;
     completedApplyRequestChatsRef.current.clear();
     setEditProposal(null);
     setApplyResult(null);
     setAgentRunApplyRequest(null);
+    setAgentRunVerificationRequest(null);
+    setAgentRunVerificationProgress(null);
+    agentRunVerificationResultRef.current = null;
+    setAgentRunVerificationResult(null);
     setApplyNote(null);
     setPendingApplyRequestId(null);
   }, []);
@@ -806,6 +820,16 @@ export function App() {
         const payload = message.payload as IdeActionProgressPayload;
         setIdeActionNote(null);
         appendTrace({ family: payload.action === "runVerificationCommand" ? "verification.progress" : "ide.progress", title: payload.action === "runVerificationCommand" ? "Verification progress received" : "IDE action progress received", status: payload.status === "inProgress" ? "in_progress" : payload.status, summary: payload.summary, requestId, details: { action: payload.action, commandId: payload.commandId, workspaceRelativePath: payload.workspaceRelativePath } });
+        const agentRunCorrelation = agentRunVerificationCorrelationRef.current;
+        if (payload.action === "runVerificationCommand" && agentRunCorrelation && agentRunVerificationChatIdRef.current === chatIdRef.current) {
+          const correlation = correlateAgentRunVerificationProgress({ current: agentRunCorrelation, hostMessage: message });
+          if (correlation.state === "accepted" && correlation.verificationProgress) {
+            setAgentRunVerificationProgress(correlation.verificationProgress);
+            appendTrace({ family: "agentRun.verificationProgress", title: "Agent Run verification progress received", status: correlation.verificationProgress.status === "running" ? "in_progress" : "pending", summary: correlation.verificationProgress.summary ?? "Agent Run verification progress received.", requestId, details: correlation.details });
+          } else if (correlation.state === "blocked") {
+            setIdeActionNote(correlation.diagnostics[0]?.message ?? "Agent Run verification progress was blocked.");
+          }
+        }
         setIdeActionAttempt((current) => current?.requestId === requestId ? {
           ...current,
           status: payload.status,
@@ -831,6 +855,20 @@ export function App() {
         const payload = message.payload as IdeActionResultPayload;
         rememberCompletedIdeActionRequest(completedIdeActionRequestChatsRef.current, requestId, chatIdRef.current);
         appendTrace({ family: payload.action === "runVerificationCommand" ? "verification.result" : payload.action === "getActiveFileExcerpt" ? "context.activeExcerpt" : payload.action === "searchWorkspaceSnippets" ? "context.snippets" : "ide.result", title: payload.action === "runVerificationCommand" ? "Verification result received" : "IDE action result received", status: payload.status, summary: payload.message, requestId, details: { action: payload.action, commandId: payload.commandId, exitCode: payload.exitCode, workspaceRelativePath: payload.workspaceRelativePath, resultCount: payload.resultCount } });
+        const agentRunCorrelation = agentRunVerificationCorrelationRef.current;
+        if (payload.action === "runVerificationCommand" && agentRunCorrelation && agentRunVerificationChatIdRef.current === chatIdRef.current) {
+          const correlation = correlateAgentRunVerificationResult({ current: agentRunCorrelation, hostMessage: message, existingResult: agentRunVerificationResultRef.current ?? undefined });
+          if ((correlation.state === "accepted" || correlation.state === "duplicate") && correlation.verificationResult) {
+            agentRunVerificationResultRef.current = correlation.verificationResult;
+            setAgentRunVerificationResult(correlation.verificationResult);
+            setAgentRunVerificationProgress(null);
+            appendTrace({ family: "agentRun.verificationResult", title: "Agent Run verification result received", status: correlation.verificationResult.status === "succeeded" ? "succeeded" : "failed", summary: correlation.verificationResult.outputTail ?? "Agent Run verification result received.", requestId, details: correlation.details });
+          } else if (correlation.state === "blocked") {
+            setIdeActionNote(correlation.diagnostics[0]?.message ?? "Agent Run verification result was blocked.");
+          }
+          agentRunVerificationCorrelationRef.current = null;
+          agentRunVerificationChatIdRef.current = null;
+        }
         pendingIdeActionRequestIdRef.current = null;
         pendingIdeActionChatIdRef.current = null;
         setIdeActionNote(null);
@@ -1724,6 +1762,10 @@ export function App() {
     setAgentRunApplyRequest(normalized.applyRequest);
     setApplyResult(null);
     setApplyNote(null);
+    setAgentRunVerificationRequest(null);
+    setAgentRunVerificationProgress(null);
+    agentRunVerificationResultRef.current = null;
+    setAgentRunVerificationResult(null);
     bridgeAdapterRef.current?.post({
       version: "2026-05-15",
       type: "gui.applyWorkspaceEditRequest",
@@ -1733,6 +1775,54 @@ export function App() {
     addTimeline(`Agent Run apply requested ${applyRequestId}`);
     appendTrace({ family: "agentRun.applyRequested", title: "Agent Run apply requested", status: "pending", summary: "User requested Agent Run apply through the existing workspace-edit bridge.", requestId: applyRequestId, details: normalized.details });
   }, [activeEditProposal, addTimeline, agentRunInput, appendTrace, bridgeHost, clearEditProposalState]);
+
+  const submitAgentRunVerification = useCallback((commandId: VerificationCommandId) => {
+    if (!agentRunInput || !activeEditProposal || applyResult?.proposalRequestId !== activeEditProposal.requestId || (bridgeHost !== "vscode" && bridgeHost !== "jetbrains") || pendingIdeActionRequestIdRef.current) {
+      return;
+    }
+    if (!editProposalCandidateIdentityMatches(activeEditProposal, latestEditProposalCandidateFromMessages(chatViewMessagesRef.current))) {
+      clearEditProposalState();
+      return;
+    }
+    agentRunVerificationCounterRef.current += 1;
+    const requestId = `gui-agent-run-verification-${agentRunVerificationCounterRef.current}`;
+    const normalized = normalizeAgentRunVerificationRequest({
+      source: "user",
+      requestId,
+      requestIdMintedBy: "gui",
+      runId: agentRunRunId(agentRunInput),
+      commandId,
+    });
+    if (normalized.state !== "ready" || !normalized.correlation || !normalized.verificationRequest || !normalized.ideActionRequest) {
+      setIdeActionNote(normalized.diagnostics[0]?.message ?? "Agent Run verification request was blocked.");
+      return;
+    }
+    const label = ideActionLabel(normalized.ideActionRequest.action);
+    pendingIdeActionRequestIdRef.current = requestId;
+    pendingIdeActionChatIdRef.current = chatIdRef.current;
+    agentRunVerificationCorrelationRef.current = normalized.correlation;
+    agentRunVerificationChatIdRef.current = chatIdRef.current;
+    agentRunVerificationResultRef.current = null;
+    setAgentRunVerificationRequest(normalized.verificationRequest);
+    setAgentRunVerificationProgress(null);
+    setAgentRunVerificationResult(null);
+    setIdeActionNote(null);
+    setIdeActionAttempt({
+      requestId,
+      action: normalized.ideActionRequest.action,
+      label,
+      status: "pending",
+      message: `${label} requested.`,
+    });
+    bridgeAdapterRef.current?.post({
+      version: "2026-05-15",
+      type: "gui.ideActionRequest",
+      requestId,
+      payload: normalized.ideActionRequest,
+    });
+    addTimeline(`Agent Run verification requested ${requestId}`);
+    appendTrace({ family: "agentRun.verificationRequested", title: "Agent Run verification requested", status: "pending", summary: "User requested Agent Run verification through the existing IDE action bridge.", requestId, details: normalized.details });
+  }, [activeEditProposal, addTimeline, agentRunInput, appendTrace, applyResult, bridgeHost, clearEditProposalState]);
 
   const requestIdeAction = useCallback((payload: IdeActionRequestPayload, requestIdPrefix = "gui-ide-action") => {
     if ((bridgeHost !== "vscode" && bridgeHost !== "jetbrains") || pendingIdeActionRequestIdRef.current) {
@@ -2476,7 +2566,7 @@ export function App() {
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
-                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={(commandId) => requestIdeAction({ action: "runVerificationCommand", commandId }, "gui-agent-run-verification")} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} />
+                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} />
                 <CodingTaskSessionPanel goal={codingTaskGoal} contextItems={explicitContextBundleItems} memoryAttachedCount={attachedProjectMemoryCount} modelStatus={chatReadinessLabel} canSendChat={canSendChat} latestResponseStatus={chatLifecycleLabel} editProposal={activeEditProposal} applyResult={applyResult} verificationAttempt={verificationAttempt} verificationAttached={Boolean(attachedVerificationKey)} draftPrompt={codingTaskPromptDraft} modelProposalDraft={modelProposalDraft} modelProposalResult={agentRunModelProposal} onGoalChange={setCodingTaskGoal} onUseDraftPrompt={useCodingTaskDraftPrompt} onUseDraftPlan={useCodingTaskDraftPlan} onDraftOneStepModelProposal={draftOneStepModelProposalPrompt} onFocusPrompt={focusCodingTaskPrompt} />
                 <ManualRunnerPanel host={bridgeHost} draftPlan={manualRunnerDraftPlan} planProposal={latestPlanProposal} hasContext={Boolean((currentAttachedContext && hasUsableAttachedContext(currentAttachedContext)) || explicitContextBundleItems.length > 0)} hasPrompt={Boolean(chatInput.trim())} hasAssistantActivity={chatView.messages.some((message) => message.role === "assistant") || chatLifecycleState !== "idle"} hasEditProposal={Boolean(activeEditProposal)} applyResult={applyResult} verificationAttempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} verificationAttached={Boolean(attachedVerificationKey)} canSendChat={canSendChat} onDraftPlanChange={setManualRunnerDraftPlan} onFocusPrompt={() => chatInputRef.current?.focus()} />
                 <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} promptAction={activeFilePromptAction} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onClearPending={clearPendingIdeActionState} onIncludeChange={setIncludeAttachedContext} onApplyPrompt={applyActiveFilePrompt} onAddToBundle={addActiveFileExcerptToBundle} />
@@ -2793,7 +2883,7 @@ function buildAgentRunInput(goal: string, proposal: EditProposalState | null, ap
     goal: { id: "local-agent-run-goal", title: goalText || "Review latest safe edit proposal", summary: goalText || proposal?.payload.summary },
     proposal: proposal ? { id: proposal.requestId, summary: proposal.payload.summary, touchedFiles: proposal.payload.edits.map((edit) => edit.workspaceRelativePath) } : undefined,
     boundedLoop,
-    rollback: { available: Boolean(applyResult), summary: applyResult ? "Rollback review is available through existing checkpoint surfaces only." : undefined },
+    rollback: { available: Boolean(applyResult) && !(verificationAttempt?.result?.action === "runVerificationCommand"), summary: applyResult && !(verificationAttempt?.result?.action === "runVerificationCommand") ? "Rollback review is available through existing checkpoint surfaces only." : undefined },
   };
   if (applyResult) {
     input.applyRequest = { requested: true, source: "user", requestId: applyResult.requestId };

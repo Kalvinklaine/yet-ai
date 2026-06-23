@@ -7293,7 +7293,91 @@ describe("edit proposal preview", () => {
     });
     const verificationCall = postMessage.mock.calls.find(([message]) => message.type === "gui.ideActionRequest")?.[0];
     expect(verificationCall).toMatchObject({ type: "gui.ideActionRequest", payload: { action: "runVerificationCommand", commandId: "repository-check" } });
+    expect(verificationCall.requestId).toBe("gui-agent-run-verification-1");
     expect(Object.keys(verificationCall.payload)).toEqual(["action", "commandId"]);
+
+    await dispatchHostIdeActionProgress(verificationCall.requestId, { phase: "running", status: "inProgress", summary: "Running repository check.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check" });
+    expect(agentRunPanel().textContent).toContain("Run status: verification_running");
+    expect(agentRunPanel().textContent).toContain("Verification status/result: running");
+
+    await dispatchHostIdeActionResult(verificationCall.requestId, { status: "succeeded", message: "Repository check passed.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 0, durationMs: 25, outputTail: "Repository validation passed", truncated: false });
+    expect(agentRunPanel().textContent).toContain("Run status: verified");
+    expect(agentRunPanel().textContent).toContain("Verification status/result: succeeded · exit 0 · sanitized result available");
+  });
+
+  it("Agent Run failed verification stops without auto repair", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Agent Run failed verify", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Agent Run failed verify", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+    postMessage.mockClear();
+
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Apply reviewed patch").click();
+    });
+    const applyCall = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
+    await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "Agent Run apply result.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Run allowlisted verification").click();
+    });
+    const verificationCall = postMessage.mock.calls.find(([message]) => message.type === "gui.ideActionRequest")?.[0];
+
+    await dispatchHostIdeActionResult(verificationCall.requestId, { status: "failed", message: "Repository check failed.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 1, durationMs: 50, outputTail: "Repository validation failed", truncated: false });
+
+    const panel = agentRunPanel();
+    expect(panel.textContent).toContain("Run status: verification_failed");
+    expect(panel.textContent).toContain("Verification status/result: failed · exit 1 · sanitized result available");
+    expect(buttonWithin(panel, "Run allowlisted verification").disabled).toBe(true);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(1);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
+  });
+
+  it("Agent Run stale chat change prevents verification request", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Agent Run stale chat", 1), chatSummary("chat-002", "Other chat", 0)],
+      chatThreads: {
+        "chat-001": chatThread("chat-001", "Agent Run stale chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]),
+        "chat-002": chatThread("chat-002", "Other chat", []),
+      },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+    postMessage.mockClear();
+
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Apply reviewed patch").click();
+    });
+    const applyCall = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
+    await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "Agent Run apply result.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
+    expect(buttonWithin(agentRunPanel(), "Run allowlisted verification").disabled).toBe(false);
+
+    await act(async () => {
+      setInputValue(chatIdInput(), "chat-002");
+      await Promise.resolve();
+    });
+    await dispatchHostIdeActionProgress("gui-agent-run-verification-1", { phase: "running", status: "inProgress", summary: "Stale verification should not start.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check" });
+    await dispatchHostIdeActionResult("gui-agent-run-verification-1", { status: "succeeded", message: "Stale verification should not render.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 0, durationMs: 1, outputTail: "stale", truncated: false });
+
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")).toHaveLength(0);
+    expect(agentRunPanel().textContent).toContain("Run status: idle");
+    expect(agentRunPanel().textContent).not.toContain("verification_running");
+    expect(agentRunPanel().textContent).not.toContain("verified");
+    expect(container?.textContent).not.toContain("Stale verification should not render.");
   });
 
   it("Agent Run panel avoids browser storage and raw unsafe DOM exposure", async () => {
