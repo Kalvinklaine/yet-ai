@@ -10,7 +10,7 @@ docs/
   architecture/         # architecture baselines, decisions, contracts, roadmaps
 ```
 
-Additional local evidence templates live under `docs/dogfood/`, including the real-provider active-file chat report and the manual real coding task dogfood checklist.
+Additional local evidence templates live under `docs/dogfood/`, including the real-provider active-file chat report, the manual real coding task dogfood checklist, and the one-step Agent Run dogfood checklist.
 
 ## Where to add documents
 
@@ -218,6 +218,8 @@ Use `npm run dogfood:ide-report -- --template` for local safe-share installed fi
 Use `npm run dogfood:real-provider-report -- --template` for manual real BYOK active-file coding chat evidence. Validate any completed local report with `npm run dogfood:real-provider-report -- --check path/to/local-report.md` before sharing. This helper is a sanitizer/template checker only: it does not call providers, launch runtimes, use real credentials, create CI evidence, or prove production release readiness. The checklist records commit/artifact, runtime launch mode, IDE/browser surface, non-secret provider/model ID, active-file excerpt attached/omitted status, first streaming answer result, no-secret checks, and known issues.
 
 Use `docs/dogfood/real-coding-task.md` for manual guided coding task dogfood runs with a real local BYOK provider or local model runtime. The path requires a connected local runtime, locally configured/tested provider, drafted task goal, explicit context/snippet/memory attachments, reviewed prompt draft, manual Send click, and reviewed response. Its report template is sanitized: provider kind and non-secret model family/id only, no API keys or tokens, no production/default account login, no raw private paths, no raw prompts/provider responses, and no raw file bodies except bounded reviewed excerpts. This is manual local dogfood only; guided coding task CI remains mock/loopback-only and must not use real providers, hosted Yet AI services, cloud workspaces, production logins, publishing, signing, or release workflows.
+
+Use `docs/dogfood/one-step-agent-run.md` for manual one-step Agent Run dogfood runs with a real local BYOK provider or local model runtime. The checklist records commit or artifact, host/browser surface, provider family/model id without secrets, context attached or omitted, prompt drafted/reviewed, manual Send, proposal detected or rejected, checkpoint readiness, manual Apply, manual Verification, final result, and known issues. Its report template forbids raw provider responses, raw prompts, raw file bodies, raw diffs or patch bodies, private paths, credentials, command strings, cwd/env values, browser-storage dumps, and bridge payload dumps. This is manual local evidence only; Agent Run CI and smokes remain mock/loopback-only and must not claim autonomy or use real providers, hosted Yet AI services, cloud workspaces, production logins, publishing, signing, or release workflows.
 
 ### Chat response refresh verification bundle
 
