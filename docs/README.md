@@ -42,6 +42,7 @@ Additional local evidence templates live under `docs/dogfood/`, including the re
   Sprint 46 deterministic explicit-apply coverage is available with `npm run smoke:agent-run-apply`; it exercises the pure Agent Run apply/state/report/trace services to prove verified readiness reaches `ready_for_apply`, no apply request is emitted before an explicit click, the click uses the existing `gui.applyWorkspaceEditRequest` bridge request, a mock host apply result reaches `ready_for_verification`, and rejected/failed apply results stop with rollback metadata and no automatic retry.
   Sprint 47 deterministic explicit-verification coverage is available with `npm run smoke:agent-run-verification`; it exercises the pure Agent Run verification/state/report/trace services to prove applied metadata reaches `ready_for_verification`, no verification request is emitted before an explicit click, the click uses the existing `gui.ideActionRequest` bridge request with `commandId` only, mock progress/result metadata reaches verified/completed report state, and failed verification stops without automatic repair while rollback remains user-review only when metadata exists.
   Sprint 48 built-GUI one-step Agent Run coverage is available with `npm run smoke:agent-run-e2e`; it builds and loads the GUI with mock runtime/provider/bridge/host data, drafts the one-step safe-edit prompt, sends only after manual Send, confirms no automatic apply or verification, then clicks explicit Apply and explicit allowlisted Verify before asserting a sanitized final report. It also covers failure paths for malformed proposal rejection with no apply, missing checkpoint prerequisites blocked with no apply, failed verification stopping without automatic repair, and stale assistant responses ignored after runtime/chat correlation changes.
+  The Agent Run safety regression bundle is currently documented as a manual command sequence rather than a root npm script because the built-GUI E2E gate is slower and can fail independently of the pure safety regressions. Keep this bundle explicit and failure-preserving: it is a local/mock safety regression gate for Agent Run boundaries, not part of `npm run check`, and it must not be described as real-provider, production autonomy, marketplace, or hosted-service evidence.
 
 ## Current login-first milestone status
 
@@ -161,6 +162,19 @@ npm run smoke:agent-run-e2e
 The smoke builds the GUI, serves the built assets from loopback, and drives Playwright against deterministic mock runtime/SSE/provider/bridge/host data. It proves the manual one-step Agent Run journey at the rendered UI boundary: local goal entry, explicit context attachment, prompt draft, manual Send, no automatic apply or verification, explicit Apply through the existing reviewed edit bridge request, explicit allowlisted Verify through the existing `gui.ideActionRequest` with `commandId` only, sanitized final report rendering, malformed proposal rejection, missing checkpoint prerequisite blocking, failed verification stopping without repair, and stale assistant response rejection after correlation changes. It is mock/loopback-only evidence: it does not launch a real IDE, call providers or hosted Yet AI services, use real credentials, scan hidden workspace files, execute shell/git/tool endpoints, use non-loopback network, persist browser-storage secrets/context, auto-send, auto-apply, auto-run verification, auto-repair, auto-retry, auto-rollback, or claim production autonomy.
 
 Keep this smoke as an explicit verification gate rather than part of `npm run check` unless a future card approves browser/build smoke expansion for the default local validation bundle. It builds the GUI and launches Playwright, while `npm run check` remains the focused repository validation bundle for docs, identity, contracts, deterministic local validators, and safe self-tests that do not run browser or packaged IDE smoke gates.
+
+For the Sprint 49 Agent Run safety regression bundle, run:
+
+```sh
+npm run smoke:model-proposal-agent-run && \
+npm run smoke:agent-run-checkpoint-readiness && \
+npm run smoke:agent-run-apply && \
+npm run smoke:agent-run-verification && \
+npm run smoke:agent-run-built-gui-fixtures && \
+npm run smoke:agent-run-e2e
+```
+
+The manual bundle intentionally uses shell `&&` semantics so the first failing safety smoke stops the run. It is local/mock-only and failure-preserving: it does not hide failures, launch a real IDE, call providers or hosted Yet AI services, use credentials, scan hidden workspace files, execute shell/git/tool endpoints, use non-loopback network, persist browser-storage secrets/context, auto-send, auto-apply, auto-run verification, auto-repair, auto-retry, or auto-rollback.
 
 The command runs the repository's local validation bundle: product identity, public hygiene, docs index coverage, IDE surface contract parity, docs validation, and focused self-tests/validators that are safe for the current checkout. It does not run the browser or packaged IDE smoke gates, call providers, require hosted Yet AI services, publish marketplace artifacts, or claim production release status.
 
