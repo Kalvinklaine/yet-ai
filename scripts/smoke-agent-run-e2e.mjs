@@ -6,7 +6,7 @@ import http from "node:http";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { agentRunBuiltGuiApplyResult, agentRunBuiltGuiCapsResponse, agentRunBuiltGuiChatThread, agentRunBuiltGuiFixture, agentRunBuiltGuiProviderSummary, agentRunBuiltGuiSseEvents, agentRunBuiltGuiVerificationProgress, agentRunBuiltGuiVerificationResult, assertAgentRunBuiltGuiFixtureSafe } from "./lib/agent-run-built-gui-fixtures.mjs";
+import { agentRunBuiltGuiApplyResult, agentRunBuiltGuiAssistantMessage, agentRunBuiltGuiCapsResponse, agentRunBuiltGuiChatThread, agentRunBuiltGuiFixture, agentRunBuiltGuiProviderSummary, agentRunBuiltGuiVerificationProgress, agentRunBuiltGuiVerificationResult, assertAgentRunBuiltGuiFixtureSafe } from "./lib/agent-run-built-gui-fixtures.mjs";
 import { npmRunInvocation } from "./lib/npm-spawn.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -46,6 +46,25 @@ let lastCommandBody;
 let commandCount = 0;
 let sentPrompt = "";
 let abortCount = 0;
+let currentScenario = builtGuiScenario();
+
+function builtGuiScenario(overrides = {}) {
+  return {
+    capsResponse: agentRunBuiltGuiCapsResponse(),
+    assistantMessage: agentRunBuiltGuiAssistantMessage(),
+    sseChatId: activeChatId,
+    ...overrides,
+  };
+}
+
+function resetScenario(overrides = {}) {
+  currentScenario = builtGuiScenario(overrides);
+  lastCommandBody = undefined;
+  commandCount = 0;
+  sentPrompt = "";
+  abortCount = 0;
+  runtimeRequests.length = 0;
+}
 
 await buildGui();
 await requireBuiltGui();
@@ -55,69 +74,8 @@ try {
   server = await startStaticServer(distRoot);
   const guiBaseUrl = `http://127.0.0.1:${server.port}`;
   browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
-
-  await page.addInitScript(() => {
-    window.__yetAiVsCodeMessages = [];
-    window.acquireVsCodeApi = () => ({
-      postMessage(message) {
-        window.__yetAiVsCodeMessages.push(message);
-      },
-    });
-  });
-
-  page.on("console", (message) => {
-    const text = message.text();
-    assertNoRawMarkers(text, "browser console");
-    if (message.type() === "error" && !isExpectedFetchConsoleError(text)) {
-      failures.push(`Browser console error: ${redactSecrets(text)}`);
-    }
-  });
-  page.on("pageerror", (error) => {
-    assertNoRawMarkers(error.message, "page error");
-    failures.push(`Page JavaScript error: ${redactSecrets(error.message)}`);
-  });
-  page.on("request", (request) => {
-    if (!isAllowedNetworkUrl(request.url(), guiBaseUrl)) {
-      failures.push(`Unexpected network request: ${request.method()} ${redactUrl(request.url())}`);
-    }
-  });
-  page.on("requestfailed", (request) => {
-    if (isStaticServerAsset(request.url(), guiBaseUrl) && isJsOrCssAssetRequest(request.url(), request.resourceType())) {
-      failures.push(`Failed JS/CSS asset request: ${request.method()} ${redactUrl(request.url())} (${request.failure()?.errorText ?? "unknown failure"})`);
-    }
-  });
-  page.on("response", (response) => {
-    if (isStaticServerAsset(response.url(), guiBaseUrl) && response.status() >= 400) {
-      failures.push(`Broken local asset response: ${response.status()} ${redactUrl(response.url())}`);
-    }
-  });
-
-  await page.route("**/*", async (route) => {
-    const request = route.request();
-    const url = request.url();
-    if (isRuntimeOriginUrl(url)) {
-      runtimeRequests.push({ method: request.method(), url: redactUrl(url) });
-      const response = await mockRuntimeResponse(url, request.method(), request.postData() ?? "");
-      if (!response) {
-        failures.push(`Unexpected runtime request: ${request.method()} ${redactUrl(url)}`);
-        await route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "unexpected local mock endpoint" }) });
-        return;
-      }
-      await route.fulfill(response);
-      return;
-    }
-    if (isStaticServerAsset(url, guiBaseUrl)) {
-      await route.continue();
-      return;
-    }
-    failures.push(`Unexpected network request blocked: ${request.method()} ${redactUrl(url)}`);
-    await route.abort("blockedbyclient");
-  });
-
-  await page.goto(`${guiBaseUrl}/index.html`, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
-  await waitForGuiMessage(page, "gui.ready");
+  resetScenario();
+  const page = await createSmokePage(guiBaseUrl);
   await expectVisibleText(page, "Coding task session", "coding task session", 20_000);
   await expectVisibleText(page, `Ready to send using ${fixture.modelId} through the local runtime.`, "mock model readiness", 20_000);
   await expectVisibleText(page, "Experimental Agent Run · one-step manual shell", "Agent Run panel", 20_000);
@@ -233,12 +191,18 @@ try {
   assertNoRawMarkers(sanitizeDomForEvidence(pageState.body), "DOM sanitized final report evidence");
   assertAgentRunBuiltGuiFixtureSafe({ lastCommandBody, messages: sanitizeBridgeMessagesForEvidence(messages), runtimeRequests }, "Agent Run built-GUI E2E evidence");
 
+  await page.close();
+  await runMalformedProposalScenario(guiBaseUrl);
+  await runMissingCheckpointScenario(guiBaseUrl);
+  await runFailedVerificationScenario(guiBaseUrl);
+  await runStaleResponseScenario(guiBaseUrl);
+
   if (failures.length > 0) {
     throw new Error(`Agent Run built-GUI E2E smoke failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
   }
 
   console.log("Agent Run built-GUI E2E smoke passed.");
-  console.log("Verified successful manual one-step Agent Run through built GUI: goal, draft prompt, explicit context, manual Send, no auto apply/verify, explicit apply, explicit allowlisted verification, sanitized final report, mock-only loopback runtime/bridge/host, and no browser-storage persistence.");
+  console.log("Verified successful and failed manual one-step Agent Run paths through built GUI: success, malformed proposal rejection, missing checkpoint block, failed verification stop, stale response ignore, sanitized mock-only loopback runtime/bridge/host, and no browser-storage persistence.");
 } catch (error) {
   console.error(redactSecrets(messageOf(error)));
   process.exit(1);
@@ -247,6 +211,176 @@ try {
   if (server) {
     await server.close().catch(() => undefined);
   }
+}
+
+async function createSmokePage(guiBaseUrl) {
+  const page = await browser.newPage();
+  await page.addInitScript(() => {
+    window.__yetAiVsCodeMessages = [];
+    window.acquireVsCodeApi = () => ({
+      postMessage(message) {
+        window.__yetAiVsCodeMessages.push(message);
+      },
+    });
+  });
+  page.on("console", (message) => {
+    const text = message.text();
+    assertNoRawMarkers(text, "browser console");
+    if (message.type() === "error" && !isExpectedFetchConsoleError(text)) {
+      failures.push(`Browser console error: ${redactSecrets(text)}`);
+    }
+  });
+  page.on("pageerror", (error) => {
+    assertNoRawMarkers(error.message, "page error");
+    failures.push(`Page JavaScript error: ${redactSecrets(error.message)}`);
+  });
+  page.on("request", (request) => {
+    if (!isAllowedNetworkUrl(request.url(), guiBaseUrl)) {
+      failures.push(`Unexpected network request: ${request.method()} ${redactUrl(request.url())}`);
+    }
+  });
+  page.on("requestfailed", (request) => {
+    if (isStaticServerAsset(request.url(), guiBaseUrl) && isJsOrCssAssetRequest(request.url(), request.resourceType())) {
+      failures.push(`Failed JS/CSS asset request: ${request.method()} ${redactUrl(request.url())} (${request.failure()?.errorText ?? "unknown failure"})`);
+    }
+  });
+  page.on("response", (response) => {
+    if (isStaticServerAsset(response.url(), guiBaseUrl) && response.status() >= 400) {
+      failures.push(`Broken local asset response: ${response.status()} ${redactUrl(response.url())}`);
+    }
+  });
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    const url = request.url();
+    if (isRuntimeOriginUrl(url)) {
+      runtimeRequests.push({ method: request.method(), url: redactUrl(url) });
+      const response = await mockRuntimeResponse(url, request.method(), request.postData() ?? "");
+      if (!response) {
+        failures.push(`Unexpected runtime request: ${request.method()} ${redactUrl(url)}`);
+        await route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "unexpected local mock endpoint" }) });
+        return;
+      }
+      await route.fulfill(response);
+      return;
+    }
+    if (isStaticServerAsset(url, guiBaseUrl)) {
+      await route.continue();
+      return;
+    }
+    failures.push(`Unexpected network request blocked: ${request.method()} ${redactUrl(url)}`);
+    await route.abort("blockedbyclient");
+  });
+  await page.goto(`${guiBaseUrl}/index.html`, { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
+  await waitForGuiMessage(page, "gui.ready");
+  return page;
+}
+
+async function prepareModelProposalPage(guiBaseUrl, scenarioOverrides = {}) {
+  resetScenario(scenarioOverrides);
+  const page = await createSmokePage(guiBaseUrl);
+  await expectVisibleText(page, "Coding task session", "coding task session", 20_000);
+  await expectVisibleText(page, `Ready to send using ${fixture.modelId} through the local runtime.`, "mock model readiness", 20_000);
+  await page.getByLabel("Task goal (local React state only)").fill(fixture.goal);
+  await page.getByRole("button", { name: "Draft one-step safe-edit prompt" }).click();
+  const prompt = await firstTextareaValueContaining(page, "One-step safe-edit model proposal request", "one-step model proposal prompt");
+  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(prompt);
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  return { page, prompt };
+}
+
+async function prepareLegacyProposalPage(guiBaseUrl) {
+  resetScenario();
+  const page = await createSmokePage(guiBaseUrl);
+  await expectVisibleText(page, "Coding task session", "coding task session", 20_000);
+  await expectVisibleText(page, `Ready to send using ${fixture.modelId} through the local runtime.`, "mock model readiness", 20_000);
+  await page.getByLabel("Task goal (local React state only)").fill(fixture.goal);
+  await page.getByRole("button", { name: "Attach active file excerpt" }).click();
+  const excerptRequest = await waitForBridgeMessage(page, (message) => message?.type === "gui.ideActionRequest" && message?.payload?.action === "getActiveFileExcerpt");
+  await dispatchHostMessage(page, {
+    version: fixture.bridgeVersion,
+    type: "host.ideActionResult",
+    requestId: excerptRequest.requestId,
+    payload: {
+      status: "succeeded",
+      message: "Returned one Agent Run fixture excerpt.",
+      cloudRequired: false,
+      action: "getActiveFileExcerpt",
+      contextAttachment: {
+        kind: "active_file_excerpt",
+        source: fixture.explicitContext.source,
+        file: fixture.explicitContext.file,
+        range: {
+          start: { line: fixture.explicitContext.selection.startLine, character: fixture.explicitContext.selection.startCharacter },
+          end: { line: fixture.explicitContext.selection.endLine, character: fixture.explicitContext.selection.endCharacter },
+        },
+        text: fixture.explicitContext.selection.text,
+        truncated: false,
+      },
+    },
+  });
+  await expectVisibleText(page, "Result excerpt: src/agentRunFixture.ts", "mock active editor excerpt", 20_000);
+  await page.getByRole("button", { name: "Add to multi-file context bundle" }).click();
+  await page.getByRole("button", { name: "Draft Safe edit/proposal prompt" }).click();
+  const prompt = await firstTextareaValueContaining(page, "Safe-edit request", "safe-edit proposal prompt");
+  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(prompt);
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  return { page, prompt };
+}
+
+async function runMalformedProposalScenario(guiBaseUrl) {
+  const { page } = await prepareModelProposalPage(guiBaseUrl, {
+    assistantMessage: agentRunBuiltGuiAssistantMessage({ id: "assistantAgentRunMalformedProposal", content: "{ \"summary\": \"Broken proposal\", \"edits\": [" }),
+  });
+  await expectVisibleText(page, "Edit proposal detected but rejected", "malformed proposal rejection", 20_000);
+  await expectVisibleText(page, "The edit proposal JSON is not valid.", "malformed proposal diagnostic", 20_000);
+  await assertNoRequestsOfType(page, "gui.applyWorkspaceEditRequest", "after malformed proposal rejection");
+  await assertNoIdeAction(page, "runVerificationCommand", "after malformed proposal rejection");
+  await page.close();
+}
+
+async function runMissingCheckpointScenario(guiBaseUrl) {
+  const readiness = agentRunBuiltGuiCapsResponse();
+  delete readiness.agentRunReadiness.checkpoint;
+  delete readiness.agentRunReadiness.sandbox.checkpoint;
+  readiness.agentRunReadiness.sandbox.modeStatus = "blocked";
+  const { page } = await prepareModelProposalPage(guiBaseUrl, { capsResponse: readiness });
+  await expectVisibleText(page, "Run status: prerequisites_blocked", "missing checkpoint blocked status", 20_000);
+  await expectVisibleText(page, "Proposal status: detected but checkpoint metadata is missing", "missing checkpoint proposal status", 20_000);
+  await expectVisibleText(page, "Checkpoint status: missing", "missing checkpoint status", 20_000);
+  await assertButtonDisabled(page, "Apply reviewed patch", "missing checkpoint apply button");
+  await assertNoRequestsOfType(page, "gui.applyWorkspaceEditRequest", "with missing checkpoint prerequisites");
+  await assertNoIdeAction(page, "runVerificationCommand", "with missing checkpoint prerequisites");
+  await page.close();
+}
+
+async function runFailedVerificationScenario(guiBaseUrl) {
+  const { page } = await prepareLegacyProposalPage(guiBaseUrl);
+  await expectVisibleText(page, "Run status: ready_for_apply", "failed verification scenario ready for apply", 20_000);
+  await page.getByRole("button", { name: "Apply reviewed patch" }).click();
+  const applyRequest = await waitForBridgeMessage(page, (message) => message?.type === "gui.applyWorkspaceEditRequest");
+  await dispatchHostMessage(page, agentRunBuiltGuiApplyResult(applyRequest.requestId));
+  await expectVisibleText(page, "Run status: ready_for_verification", "failed verification scenario ready for verification", 20_000);
+  await page.getByRole("button", { name: "Run allowlisted verification" }).click();
+  const verificationRequest = await waitForBridgeMessage(page, (message) => message?.type === "gui.ideActionRequest" && message?.payload?.action === "runVerificationCommand");
+  await dispatchHostMessage(page, agentRunBuiltGuiVerificationResult(verificationRequest.requestId, { status: "failed", exitCode: 1, outputTail: "Repository fixture check failed." }));
+  await expectVisibleText(page, "Run status: verification_failed", "failed verification status", 20_000);
+  await expectVisibleText(page, "Verification status/result: failed · exit 1 · sanitized result available", "failed verification result", 20_000);
+  await expectVisibleText(page, "Repository fixture check failed.", "failed verification sanitized output", 20_000);
+  await assertButtonDisabled(page, "Run allowlisted verification", "failed verification run button");
+  const messages = await page.evaluate(() => window.__yetAiVsCodeMessages ?? []);
+  assert.equal(messages.filter((message) => message?.type === "gui.ideActionRequest" && message?.payload?.action === "runVerificationCommand").length, 1, "failed verification scenario emitted more than one verification request");
+  await page.close();
+}
+
+async function runStaleResponseScenario(guiBaseUrl) {
+  const { page } = await prepareModelProposalPage(guiBaseUrl, { sseChatId: "chat-stale-after-change" });
+  await page.waitForTimeout(300);
+  await assertNoVisibleText(page, "Proposed a safe edit.", "stale response safe edit proposal");
+  await assertNoVisibleText(page, "Run status: ready_for_apply", "stale response Agent Run readiness");
+  await assertNoRequestsOfType(page, "gui.applyWorkspaceEditRequest", "after stale response");
+  await assertNoIdeAction(page, "runVerificationCommand", "after stale response");
+  await page.close();
 }
 
 async function buildGui() {
@@ -291,7 +425,7 @@ async function mockRuntimeResponse(value, method, body) {
     return json({ productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: fixture.checkpoint.checkedAt });
   }
   if (method === "GET" && url.pathname === "/v1/caps") {
-    return json(agentRunBuiltGuiCapsResponse());
+    return json(currentScenario.capsResponse);
   }
   if (method === "GET" && url.pathname === "/v1/models") {
     return json({ models: [agentRunBuiltGuiProviderSummary().models[0]] });
@@ -347,17 +481,17 @@ function chatThread(messages) {
 }
 
 function sseEvents() {
-  return agentRunBuiltGuiSseEvents().map((event) => ({
-    ...event,
-    chatId: activeChatId,
-    payload: event.payload?.message ? { ...event.payload, message: normalizeChatMessage(event.payload.message) } : event.payload,
-  }));
+  return [
+    { seq: 0, type: "snapshot", chatId: currentScenario.sseChatId, payload: { messages: [] } },
+    { seq: 1, type: "message_added", chatId: currentScenario.sseChatId, payload: { message: normalizeChatMessage(currentScenario.assistantMessage, currentScenario.sseChatId) } },
+    { seq: 2, type: "stream_finished", chatId: currentScenario.sseChatId, payload: {} },
+  ];
 }
 
-function normalizeChatMessage(message) {
+function normalizeChatMessage(message, chatId = activeChatId) {
   return {
     ...message,
-    chatId: activeChatId,
+    chatId,
     responseToRequestId: message.role === "assistant" ? submittedRequestId : message.responseToRequestId,
     userMessageId: message.role === "assistant" ? optimisticUserMessageId : message.userMessageId,
     runtimeSettingsVersion: message.role === "assistant" ? "0" : message.runtimeSettingsVersion,
@@ -434,10 +568,6 @@ async function assertNoVisibleText(page, text, description) {
   assert.equal(visible, false, `${description} rendered unexpectedly`);
 }
 
-async function expectTextareaValue(page, text, description) {
-  await firstTextareaValueContaining(page, text, description);
-}
-
 async function firstTextareaValueContaining(page, text, description = "textarea value") {
   const matched = await page.locator("textarea").evaluateAll((textareas, expected) => textareas.find((textarea) => textarea.value.includes(expected))?.value ?? null, text);
   if (matched) {
@@ -464,6 +594,11 @@ async function assertNoForbiddenBridgeActions(page) {
   const forbiddenIdeActions = ideActions.filter((action) => !allowed.has(action));
   assert.deepEqual(forbiddenIdeActions, [], `unexpected IDE action request(s): ${forbiddenIdeActions.join(",")}`);
   assert.equal(runtimeRequests.some((request) => /git|shell|tool|exec|command-runner/i.test(request.url)), false, "runtime shell/git/tool-like endpoint was requested");
+}
+
+async function assertButtonDisabled(page, name, description) {
+  const disabled = await page.getByRole("button", { name }).first().evaluate((button) => button.disabled).catch(() => false);
+  assert.equal(disabled, true, `${description} was not disabled`);
 }
 
 async function startStaticServer(staticRoot) {
