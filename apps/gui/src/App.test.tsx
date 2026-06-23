@@ -7374,7 +7374,7 @@ describe("edit proposal preview", () => {
     expect(lastUserMessageBody().payload?.content).toContain("One-step safe-edit model proposal request");
     expect(container?.textContent).toContain("proposal_detected");
     expect(agentRunPanel().textContent).toContain("Run status: prerequisites_blocked");
-    expect(agentRunPanel().textContent).toContain("Proposal status: detected but blocked by prerequisites");
+    expect(agentRunPanel().textContent).toContain("Proposal status: detected but checkpoint metadata is missing");
     expect(buttonWithin(agentRunPanel(), "Apply reviewed patch").disabled).toBe(true);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
@@ -7398,7 +7398,7 @@ describe("edit proposal preview", () => {
     await act(async () => { findButton("Send").click(); await Promise.resolve(); });
     await flushAsync();
     expect(agentRunPanel().textContent).toContain("Run status: ready_for_apply");
-    expect(agentRunPanel().textContent).toContain("Checkpoint/policy readiness: ready_for_user_apply");
+    expect(agentRunPanel().textContent).toContain("Checkpoint/policy readiness: verified · ready_for_user_apply");
     expect(buttonWithin(agentRunPanel(), "Apply reviewed patch").disabled).toBe(false);
     postMessage.mockClear();
 
