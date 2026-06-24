@@ -24,11 +24,10 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const editCount = numberDetail(details.editCount);
   const checkpointStatusLabel = checkpointStatus(details);
   const policyDecisionLabel = policyDecision(details);
+  const nextStepCopy = nextManualStep(view.state, details, supported);
   const safetyItems = [
     "Manual: no autonomy, no auto-clicks, no hidden model/provider calls.",
-    "Apply and verification use existing IDE bridge messages only after your explicit click.",
-    "Verification sends an allowlisted command id only; raw command, args, cwd, env, private paths, patch text, and file bodies are not shown here.",
-    "Browser preview is inert. Open the IDE webview to request apply or verification.",
+    "No raw commands, files, diffs, model output, or verification output shown by default.",
   ];
 
   return (
@@ -41,6 +40,10 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
       </div>
       <span>{sanitizeDisplayText(view.summary)}</span>
       <strong>{readinessExplanation(view.state, details)}</strong>
+      <div className={`readiness-card ${view.nextUserAction === "confirm_apply" || view.nextUserAction === "confirm_verification" || view.state === "verified" ? "ready" : "warn"}`} role="status" aria-label="Agent Run next manual step">
+        <strong>Next manual step</strong>
+        <span>{nextStepCopy}</span>
+      </div>
       <div className="agent-progress-grid" aria-label="Agent Run status fields">
         <span>Manual state: {agentRunStateLabel(view.state, details)}</span>
         <span>Goal summary: {textDetail(details.goalTitle) || textDetail(details.goalSummary) || "No local goal selected"}</span>
@@ -93,6 +96,9 @@ function verificationCommandIdFromDetails(value: unknown): VerificationCommandId
 }
 
 function agentRunStateLabel(state: string, details: Record<string, string | number | boolean | string[]>): string {
+  if (textDetail(details.applyStatus) === "failed") {
+    return "Apply failed";
+  }
   if (state === "goal_ready") {
     return "Goal ready";
   }
@@ -115,10 +121,13 @@ function agentRunStateLabel(state: string, details: Record<string, string | numb
     return "Verification running";
   }
   if (state === "verified") {
-    return "Verified";
+    return "Ready for follow-up";
   }
   if (state === "verification_failed") {
     return "Verification failed";
+  }
+  if (state === "rollback_available") {
+    return "Rollback review available";
   }
   return sanitizeDisplayText(state);
 }
@@ -132,14 +141,17 @@ function applyStatusLabel(details: Record<string, string | number | boolean | st
 }
 
 function readinessExplanation(state: string, details: Record<string, string | number | boolean | string[]>): string {
+  if (textDetail(details.applyStatus) === "failed") {
+    return "Apply failed after an explicit request. Recovery: review the sanitized apply result and rollback option; no retry, repair, or rollback is started automatically.";
+  }
   if (state === "goal_ready") {
-    return "Goal ready. Draft or send a model proposal request manually; no apply or verification action is available yet.";
+    return "Goal ready, but no safe proposal is available yet. Recovery: add explicit context if needed, confirm provider readiness in Chat readiness, then send or draft a model proposal manually.";
   }
   if (hasProposal(details) && (state === "proposal_detected" || state === "prerequisites_blocked") && !hasCheckpointEvidence(details)) {
-    return "Proposal detected, but checkpoint readiness metadata is missing. Recovery: refresh runtime/checkpoint readiness, then review again before any manual apply.";
+    return "Safe proposal detected, but checkpoint readiness metadata is missing. Recovery: refresh runtime/checkpoint readiness, then review again before any manual apply.";
   }
   if (state === "prerequisites_blocked" || state === "blocked") {
-    return "Checkpoint required. Recovery: resolve checkpoint or policy readiness first; manual apply stays disabled until runtime metadata is ready.";
+    return hasProposal(details) ? "Checkpoint or policy is not ready. Recovery: resolve checkpoint/policy readiness first; manual apply stays disabled until runtime metadata is ready." : "No safe proposal is available yet. Recovery: add explicit context if needed and request a bounded safe-edit proposal manually.";
   }
   if (state === "ready_for_apply") {
     return "Ready for manual apply. Review the proposal and click Manually apply reviewed patch only when you choose to continue.";
@@ -154,7 +166,7 @@ function readinessExplanation(state: string, details: Record<string, string | nu
     return "Verification running. Wait for the allowlisted command result; no repair, retry, or rollback starts automatically.";
   }
   if (state === "verified") {
-    return "Verified. The manual apply and verification path completed; review the sanitized result before any follow-up.";
+    return "Ready for follow-up. The manual apply and verification path completed; review the sanitized result before drafting any follow-up.";
   }
   if (state === "verification_failed") {
     return "Verification failed. Recovery: review the sanitized result, then manually draft a follow-up or review rollback; no automatic repair is started.";
@@ -163,6 +175,49 @@ function readinessExplanation(state: string, details: Record<string, string | nu
     return "Rollback review is available. Recovery remains manual through existing checkpoint surfaces; no rollback request was posted.";
   }
   return "Manual Agent Run status is display-only until an explicit user action is available.";
+}
+
+function nextManualStep(state: string, details: Record<string, string | number | boolean | string[]>, supported: boolean): string {
+  if (textDetail(details.applyStatus) === "failed") {
+    return "Review the sanitized apply failure, then manually review rollback or revise the proposal in chat; no automatic retry is available.";
+  }
+  if (!hasProposal(details)) {
+    return "Attach context if needed, confirm provider readiness, then manually draft/send a safe-edit proposal request.";
+  }
+  if ((state === "proposal_detected" || state === "prerequisites_blocked" || state === "blocked") && !hasCheckpointEvidence(details)) {
+    return "Checkpoint metadata is not ready. Refresh runtime/checkpoint readiness; apply remains disabled until verified metadata arrives.";
+  }
+  if (!supported) {
+    return "Open the IDE webview for apply or verification controls. Browser preview stays inert and posts no privileged action.";
+  }
+  if (!details.goalTitle && !details.goalSummary) {
+    return "Write a task goal in Coding task session before asking for a proposal. If Send is disabled, use Chat readiness to fix provider readiness first.";
+  }
+  if (state === "prerequisites_blocked" || state === "blocked") {
+    return "Checkpoint or policy blocked this proposal. Fix readiness metadata or request a new safe proposal; no workspace change was posted.";
+  }
+  if (state === "ready_for_apply") {
+    return "Review the sanitized proposal summary; apply only if you choose to continue.";
+  }
+  if (state === "apply_requested") {
+    return "Wait for the host apply result. Duplicate apply requests are disabled while this explicit request is pending.";
+  }
+  if (state === "ready_for_verification") {
+    return "Run the selected allowlisted verification command only when ready; the GUI sends commandId metadata, not raw shell text.";
+  }
+  if (state === "verification_requested" || state === "verification_running") {
+    return "Wait for verification to finish, then review the sanitized result before any follow-up.";
+  }
+  if (state === "verification_failed") {
+    return "Review the sanitized verification failure, then manually draft a fix follow-up or review rollback. Nothing repairs itself, how polite.";
+  }
+  if (state === "verified") {
+    return "Review the sanitized verification result, then manually draft a follow-up or close the run.";
+  }
+  if (state === "rollback_available") {
+    return "Review rollback through existing checkpoint surfaces if needed; no rollback request was posted from this panel.";
+  }
+  return "Use the visible chat, context, provider, and proposal controls manually; this panel is status-only until a safe next click appears.";
 }
 
 function proposalStatus(state: string, details: Record<string, string | number | boolean | string[]>): string {

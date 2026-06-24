@@ -7256,6 +7256,8 @@ describe("edit proposal preview", () => {
     const panel = agentRunPanel();
     expect(panel.textContent).toContain("Experimental Agent Run · one-step manual shell");
     expect(panel.textContent).toContain("Manual state: Ready for manual apply");
+    expect(panel.textContent).toContain("Next manual step");
+    expect(panel.textContent).toContain("Review the sanitized proposal summary; apply only if you choose to continue.");
     expect(panel.textContent).toContain("Goal summary: Review latest safe edit proposal");
     expect(panel.textContent).toContain("Touched files: 1");
     expect(panel.textContent).toContain("Edit count: 1");
@@ -7304,8 +7306,42 @@ describe("edit proposal preview", () => {
     expect(agentRunPanel().textContent).toContain("Verification status/result: Verification running");
 
     await dispatchHostIdeActionResult(verificationCall.requestId, { status: "succeeded", message: "Repository check passed.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 0, durationMs: 25, outputTail: "Repository validation passed", truncated: false });
-    expect(agentRunPanel().textContent).toContain("Manual state: Verified");
+    expect(agentRunPanel().textContent).toContain("Manual state: Ready for follow-up");
+    expect(agentRunPanel().textContent).toContain("Ready for follow-up. The manual apply and verification path completed; review the sanitized result before drafting any follow-up.");
+    expect(agentRunPanel().textContent).toContain("Review the sanitized verification result, then manually draft a follow-up or close the run.");
     expect(agentRunPanel().textContent).toContain("Verification status/result: Verified · exit 0 · sanitized result available");
+  });
+
+  it("Agent Run apply failure is actionable and does not auto retry", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Agent Run apply failed", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Agent Run apply failed", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+    postMessage.mockClear();
+
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Manually apply reviewed patch").click();
+    });
+    const applyCall = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
+    await dispatchHostApplyResult(applyCall.requestId, { status: "failed", message: "Patch could not apply cleanly.", cloudRequired: false, appliedEditCount: 0, affectedFiles: ["src/example.ts"] });
+
+    const panel = agentRunPanel();
+    expect(panel.textContent).toContain("Manual state: Apply failed");
+    expect(panel.textContent).toContain("Apply failed after an explicit request. Recovery: review the sanitized apply result and rollback option; no retry, repair, or rollback is started automatically.");
+    expect(panel.textContent).toContain("Review the sanitized apply failure, then manually review rollback or revise the proposal in chat; no automatic retry is available.");
+    expect(buttonWithin(panel, "Manually apply reviewed patch").disabled).toBe(true);
+    expect(buttonWithin(panel, "Manually run allowlisted verification").disabled).toBe(true);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(1);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
   });
 
   it("Agent Run failed verification stops without auto repair", async () => {
@@ -7338,6 +7374,7 @@ describe("edit proposal preview", () => {
     const panel = agentRunPanel();
     expect(panel.textContent).toContain("Manual state: Verification failed");
     expect(panel.textContent).toContain("Verification status/result: Verification failed · exit 1 · sanitized result available");
+    expect(panel.textContent).toContain("Review the sanitized verification failure, then manually draft a fix follow-up or review rollback. Nothing repairs itself, how polite.");
     expect(buttonWithin(panel, "Manually run allowlisted verification").disabled).toBe(true);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(1);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(1);
@@ -7392,6 +7429,7 @@ describe("edit proposal preview", () => {
 
     const panel = agentRunPanel();
     expect(panel.textContent).toContain("Manual state: idle");
+    expect(panel.textContent).toContain("Attach context if needed, confirm provider readiness, then manually draft/send a safe-edit proposal request.");
     expect(panel.textContent).toContain("no hidden model/provider calls");
     expect(panel.textContent).not.toContain(rawSecret);
     expect(panel.textContent).not.toContain("/Users/");
@@ -7462,6 +7500,7 @@ describe("edit proposal preview", () => {
     expect(container?.textContent).toContain("proposal_detected");
     expect(agentRunPanel().textContent).toContain("Manual state: Checkpoint required");
     expect(agentRunPanel().textContent).toContain("Proposal status: detected but checkpoint metadata is missing");
+    expect(agentRunPanel().textContent).toContain("Checkpoint metadata is not ready. Refresh runtime/checkpoint readiness; apply remains disabled until verified metadata arrives.");
     expect(buttonWithin(agentRunPanel(), "Manually apply reviewed patch").disabled).toBe(true);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });

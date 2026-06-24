@@ -80,7 +80,8 @@ describe("AgentRunPanel", () => {
     renderPanel({ goal: { id: "goal-1", title: "Add safe panel" } }, { host: "vscode" });
 
     expect(panelText()).toContain("Manual state: Goal ready");
-    expect(panelText()).toContain("Goal ready. Draft or send a model proposal request manually; no apply or verification action is available yet.");
+    expect(panelText()).toContain("Goal ready, but no safe proposal is available yet. Recovery: add explicit context if needed, confirm provider readiness in Chat readiness, then send or draft a model proposal manually.");
+    expect(panelText()).toContain("Attach context if needed, confirm provider readiness, then manually draft/send a safe-edit proposal request.");
     expect(panelText()).toContain("Proposal status: not detected");
     expect(panelText()).toContain("Checkpoint status: missing");
     expect(findButton("Manually apply reviewed patch").disabled).toBe(true);
@@ -90,7 +91,8 @@ describe("AgentRunPanel", () => {
     renderPanel({ goal: readyInput.goal, proposal: readyInput.proposal }, { host: "vscode" });
 
     expect(panelText()).toContain("Manual state: Checkpoint required");
-    expect(panelText()).toContain("Proposal detected, but checkpoint readiness metadata is missing. Recovery: refresh runtime/checkpoint readiness, then review again before any manual apply.");
+    expect(panelText()).toContain("Safe proposal detected, but checkpoint readiness metadata is missing. Recovery: refresh runtime/checkpoint readiness, then review again before any manual apply.");
+    expect(panelText()).toContain("Checkpoint metadata is not ready. Refresh runtime/checkpoint readiness; apply remains disabled until verified metadata arrives.");
     expect(panelText()).toContain("Proposal status: detected but checkpoint metadata is missing");
     expect(panelText()).toContain("Checkpoint status: missing");
     expect(panelText()).toContain("Policy decision: missing");
@@ -106,10 +108,11 @@ describe("AgentRunPanel", () => {
         sandbox: { ...baseLoop.sandbox, modeStatus: "blocked", checkpointVerified: false },
         policy: { decision: "blocked", requiresUserConfirmation: true, reasonCodes: ["explicit_user_confirmation_required", "blocked_by_policy"], blockReason: "Checkpoint is not ready." },
       },
-    });
+    }, { host: "vscode" });
 
     expect(panelText()).toContain("Manual state: Checkpoint required");
-    expect(panelText()).toContain("Checkpoint required. Recovery: resolve checkpoint or policy readiness first; manual apply stays disabled until runtime metadata is ready.");
+    expect(panelText()).toContain("Checkpoint or policy is not ready. Recovery: resolve checkpoint/policy readiness first; manual apply stays disabled until runtime metadata is ready.");
+    expect(panelText()).toContain("Checkpoint or policy blocked this proposal. Fix readiness metadata or request a new safe proposal; no workspace change was posted.");
     expect(panelText()).toContain("Checkpoint status: not verified");
     expect(panelText()).toContain("Policy decision: blocked");
     expect(panelText()).toContain("Checkpoint/policy readiness: not verified · blocked");
@@ -123,6 +126,7 @@ describe("AgentRunPanel", () => {
     expect(panelText()).toContain("Manual state: Ready for manual apply");
     expect(panelText()).toContain("Goal summary: Add safe panel");
     expect(panelText()).toContain("Ready for manual apply. Review the proposal and click Manually apply reviewed patch only when you choose to continue.");
+    expect(panelText()).toContain("Review the sanitized proposal summary; apply only if you choose to continue.");
     expect(panelText()).toContain("Proposal status: detected with verified checkpoint metadata");
     expect(panelText()).toContain("Checkpoint status: verified");
     expect(panelText()).toContain("Policy decision: ready_for_user_apply");
@@ -200,7 +204,8 @@ describe("AgentRunPanel", () => {
       boundedLoop: verifiedLoop,
     }, { host: "vscode" });
 
-    expect(panelText()).toContain("Manual state: Verified");
+    expect(panelText()).toContain("Manual state: Ready for follow-up");
+    expect(panelText()).toContain("Review the sanitized verification result, then manually draft a follow-up or close the run.");
     expect(panelText()).toContain("Verification status/result: Verified · exit 0 · sanitized result available");
 
     renderPanel({
@@ -212,6 +217,7 @@ describe("AgentRunPanel", () => {
 
     expect(panelText()).toContain("Manual state: Verification failed");
     expect(panelText()).toContain("Verification failed. Recovery: review the sanitized result, then manually draft a follow-up or review rollback; no automatic repair is started.");
+    expect(panelText()).toContain("Review the sanitized verification failure, then manually draft a fix follow-up or review rollback. Nothing repairs itself, how polite.");
     expect(panelText()).toContain("Verification status/result: Verification failed · exit 1 · sanitized result available");
   });
 
