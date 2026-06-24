@@ -26,6 +26,19 @@ function envelope(payload = proposal()): string {
   return JSON.stringify({ type: "gui.applyWorkspaceEditRequest", version: "2026-05-15", payload });
 }
 
+function planToPatchEnvelope(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    version: "2026-06-24",
+    type: "agent_run.plan_to_patch_proposal",
+    summary: "Replace one visible label after review.",
+    plan: ["Review the visible proposal", "Apply only after user confirmation"],
+    risks: [],
+    editProposal: proposal(),
+    verificationSuggestions: [{ commandId: "gui-app-tests", label: "GUI app tests" }],
+    ...overrides,
+  });
+}
+
 function input(content: string, overrides: Partial<AgentRunModelProposalInput> = {}): AgentRunModelProposalInput {
   return {
     chatId: "chat-1",
@@ -64,6 +77,14 @@ describe("evaluateAgentRunModelProposal", () => {
 
     expect(result.proposalPathState).toBe("proposal_detected");
     expect(result.agentRunInput.proposal?.touchedFiles).toEqual(["src/example.ts"]);
+  });
+
+  it("detects a valid plan-to-patch proposal envelope", () => {
+    const result = evaluateAgentRunModelProposal(input(planToPatchEnvelope()));
+
+    expect(result.proposalPathState).toBe("proposal_detected");
+    expect(result.diagnostics).toEqual([]);
+    expect(result.agentRunInput.proposal).toEqual({ id: "assistant-1", summary: "Replace one visible line after manual review.", touchedFiles: ["src/example.ts"] });
   });
 
   it("treats normal prose as a non-authoritative normal response", () => {
@@ -111,6 +132,24 @@ describe("evaluateAgentRunModelProposal", () => {
     expect(unsafePath.agentRunInput.proposal).toBeUndefined();
     expect(commandField.agentRunInput.proposal).toBeUndefined();
     expect(toolField.agentRunInput.proposal).toBeUndefined();
+  });
+
+  it.each([
+    ["unsupported verification", { verificationSuggestions: [{ commandId: "npm-test", label: "npm test" }] }, "unsupported verification"],
+    ["missing confirmation", { editProposal: { ...proposal(), requiresUserConfirmation: false } }, "explicit user confirmation"],
+    ["unsafe path", { editProposal: proposal("/Users/alice/project/src/example.ts") }, "unsafe workspace path"],
+    ["oversized content", { editProposal: proposal("src/example.ts", "Replace one visible line after manual review.") }, "too large"],
+  ])("surfaces sanitized plan-to-patch diagnostics for %s", (_label, overrides, expected) => {
+    const nextOverrides = _label === "oversized content"
+      ? { editProposal: { ...proposal(), edits: [{ ...proposal().edits[0], textReplacements: [{ ...proposal().edits[0].textReplacements[0], replacementText: "x".repeat(8193) }] }] } }
+      : overrides;
+    const result = evaluateAgentRunModelProposal(input(planToPatchEnvelope(nextOverrides as Record<string, unknown>)));
+
+    expect(result.proposalPathState).toBe("proposal_rejected");
+    expect(result.agentRunInput.proposal).toBeUndefined();
+    expect(result.diagnostics[0]?.message).toContain(expected);
+    expect(JSON.stringify(result)).not.toContain("/Users/alice");
+    expect(JSON.stringify(result)).not.toContain("npm test");
   });
 
   it("ignores stale chat responses", () => {

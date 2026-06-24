@@ -36,6 +36,23 @@ function safeEditProposalPayload(): ApplyWorkspaceEditPayload {
   };
 }
 
+function safeEditProposalPayloadWith(overrides: Partial<ApplyWorkspaceEditPayload>): Record<string, unknown> {
+  return { ...safeEditProposalPayload(), ...overrides } as Record<string, unknown>;
+}
+
+function planToPatchEnvelope(overrides: Record<string, unknown> = {}) {
+  return {
+    version: "2026-06-24",
+    type: "agent_run.plan_to_patch_proposal",
+    summary: "Replace one visible editor label after manual review.",
+    plan: ["Review the visible proposal metadata", "Apply only after explicit user confirmation"],
+    risks: ["Small UI copy change may need focused review"],
+    editProposal: safeEditProposalPayload(),
+    verificationSuggestions: [{ commandId: "gui-app-tests", label: "GUI app tests" }],
+    ...overrides,
+  };
+}
+
 function assistantMessage(id: string, content: string, status: EditProposalSourceMessage["status"] = "complete"): EditProposalSourceMessage {
   return { id, role: "assistant", status, content };
 }
@@ -65,6 +82,36 @@ describe("parseEditProposalContent", () => {
     const proposal = safeEditProposalPayload();
     const envelope = { type: "gui.applyWorkspaceEditRequest", version: bridgeVersion, payload: proposal };
     expect(parseEditProposalContent(`Review this safe edit:\n\n\`\`\`json\n${JSON.stringify(envelope, null, 2)}\n\`\`\`\n\nNothing is applied automatically.`)).toEqual(proposal);
+  });
+
+  it("accepts a strict plan-to-patch proposal envelope and extracts the nested safe edit proposal", () => {
+    const proposal = safeEditProposalPayload();
+    const envelope = planToPatchEnvelope({ editProposal: proposal });
+
+    expect(parseEditProposalContent(JSON.stringify(envelope))).toEqual(proposal);
+    expect(analyzeEditProposalContent(JSON.stringify(envelope))).toEqual({ state: "valid", proposal });
+  });
+
+  it("accepts a fenced strict plan-to-patch proposal envelope", () => {
+    const proposal = safeEditProposalPayload();
+    const envelope = planToPatchEnvelope({ editProposal: proposal });
+
+    expect(parseEditProposalContent(`\`\`\`json\n${JSON.stringify(envelope, null, 2)}\n\`\`\``)).toEqual(proposal);
+  });
+
+  it.each([
+    ["assistant_request_id", { requestId: "assistant-minted-id" }, "assistant_request_id"],
+    ["unsafe_path", { editProposal: safeEditProposalPayloadWith({ edits: [{ ...safeEditProposalPayload().edits[0], workspaceRelativePath: "/Users/alice/project/src/example.ts" }] }) }, "unsafe_path"],
+    ["missing_confirmation", { editProposal: { ...safeEditProposalPayload(), requiresUserConfirmation: false } }, "missing_confirmation"],
+    ["oversized_content", { editProposal: safeEditProposalPayloadWith({ edits: [{ ...safeEditProposalPayload().edits[0], textReplacements: [{ ...safeEditProposalPayload().edits[0].textReplacements[0], replacementText: "x".repeat(8193) }] }] }) }, "oversized_content"],
+    ["unsupported_verification", { verificationSuggestions: [{ commandId: "shell", label: "npm test" }] }, "unsupported_verification"],
+    ["command_tool_smuggling", { editProposal: { ...safeEditProposalPayload(), toolCall: { name: "apply_patch" } } }, "command_tool_smuggling"],
+  ] as Array<[string, Record<string, unknown>, string]>)("rejects unsafe plan-to-patch proposals with %s diagnostics", (_label, overrides, reasonCode) => {
+    const result = analyzeEditProposalContent(JSON.stringify(planToPatchEnvelope(overrides)));
+
+    expect(result.state).toBe("rejected");
+    expect(result.state === "rejected" ? result.diagnostic.reasonCode : undefined).toBe(reasonCode);
+    expect(parseEditProposalContent(JSON.stringify(planToPatchEnvelope(overrides)))).toBeNull();
   });
 
   it("rejects fenced json direct payloads and non-json fences", () => {

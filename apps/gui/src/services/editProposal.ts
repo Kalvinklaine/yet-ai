@@ -2,6 +2,8 @@ import { isApplyWorkspaceEditPayload, type ApplyWorkspaceEditPayload } from "../
 
 const bridgeVersion = "2026-05-15";
 const applyEditRequestType = "gui.applyWorkspaceEditRequest";
+const planToPatchProposalType = "agent_run.plan_to_patch_proposal";
+const planToPatchProposalVersion = "2026-06-24";
 
 export type EditProposalSourceMessage = {
   id: string;
@@ -35,6 +37,10 @@ export type EditProposalRejectedReasonCode =
   | "unknown_keys"
   | "envelope_like_direct_payload"
   | "command_tool_smuggling"
+  | "unsafe_path"
+  | "missing_confirmation"
+  | "oversized_content"
+  | "unsupported_verification"
   | "invalid_payload"
   | "proposal_like_rejected";
 
@@ -54,6 +60,7 @@ export type EditProposalReview =
   | { state: "none" };
 
 const envelopeKeys = ["type", "version", "payload"] as const;
+const planToPatchEnvelopeKeys = ["version", "type", "summary", "plan", "risks", "editProposal", "verificationSuggestions"] as const;
 const maxContentLength = 50000;
 
 export function analyzeEditProposalContent(content: string): EditProposalAnalysis {
@@ -95,6 +102,10 @@ export function analyzeEditProposalContent(content: string): EditProposalAnalysi
       return rejected("command_tool_smuggling");
     }
     return isApplyWorkspaceEditPayload(parsed.payload) ? { state: "valid", proposal: parsed.payload } : rejected("invalid_payload");
+  }
+
+  if (parsed.type === planToPatchProposalType) {
+    return analyzePlanToPatchProposal(parsed);
   }
 
   if (candidate.requireEnvelope) {
@@ -276,6 +287,14 @@ function diagnosticMessage(reasonCode: EditProposalRejectedReasonCode): string {
       return "Direct edit proposal payloads must not include envelope fields.";
     case "command_tool_smuggling":
       return "The edit proposal must not include commands or tool calls.";
+    case "unsafe_path":
+      return "The edit proposal contains an unsafe workspace path.";
+    case "missing_confirmation":
+      return "The edit proposal must require explicit user confirmation.";
+    case "oversized_content":
+      return "The edit proposal content is too large to review safely.";
+    case "unsupported_verification":
+      return "The plan-to-patch proposal includes unsupported verification.";
     case "invalid_payload":
       return "The edit proposal payload is invalid or unsafe.";
     case "proposal_like_rejected":
@@ -290,8 +309,132 @@ function isProposalLikeParsedValue(value: unknown): boolean {
   return "requiresUserConfirmation" in value || "edits" in value || "summary" in value || "cloudRequired" in value || "workspaceRelativePath" in value || "textReplacements" in value;
 }
 
+function analyzePlanToPatchProposal(value: Record<string, unknown>): EditProposalAnalysis {
+  if ("requestId" in value) {
+    return rejected("assistant_request_id");
+  }
+  if (!hasOnlyKeys(value, planToPatchEnvelopeKeys)) {
+    return rejected("unknown_keys");
+  }
+  if (value.version !== planToPatchProposalVersion) {
+    return rejected("wrong_version");
+  }
+  if (!safePlanText(value.summary, 400) || !isSafePlanTextArray(value.plan, 1, 6, 180) || !isSafePlanTextArray(value.risks, 0, 6, 220)) {
+    return rejected("invalid_envelope");
+  }
+  if (!isVerificationSuggestions(value.verificationSuggestions)) {
+    return rejected("unsupported_verification");
+  }
+  if (!isPlainObject(value.editProposal)) {
+    return rejected("invalid_payload");
+  }
+  const editProposal = value.editProposal;
+  if ("requestId" in editProposal) {
+    return rejected("assistant_request_id");
+  }
+  const classified = classifyUnsafeEditProposal(editProposal);
+  if (classified) {
+    return rejected(classified);
+  }
+  return isApplyWorkspaceEditPayload(editProposal) ? { state: "valid", proposal: editProposal } : rejected("invalid_payload");
+}
+
+function classifyUnsafeEditProposal(value: Record<string, unknown>): EditProposalRejectedReasonCode | null {
+  if (hasCommandToolSmugglingDeep(value)) {
+    return "command_tool_smuggling";
+  }
+  if (value.requiresUserConfirmation !== true) {
+    return "missing_confirmation";
+  }
+  if (hasUnsafeWorkspacePath(value)) {
+    return "unsafe_path";
+  }
+  if (hasOversizedEditContent(value)) {
+    return "oversized_content";
+  }
+  return null;
+}
+
+function isVerificationSuggestions(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 3) {
+    return false;
+  }
+  return value.every((item) => {
+    if (!isPlainObject(item) || !hasOnlyKeys(item, ["commandId", "label"])) {
+      return false;
+    }
+    return (item.commandId === "repository-check" && item.label === "Repository check") ||
+      (item.commandId === "gui-app-tests" && item.label === "GUI app tests") ||
+      (item.commandId === "engine-chat-tests" && item.label === "Engine chat tests");
+  });
+}
+
+function isSafePlanTextArray(value: unknown, minLength: number, maxLength: number, maxTextLength: number): boolean {
+  return Array.isArray(value) && value.length >= minLength && value.length <= maxLength && value.every((item) => safePlanText(item, maxTextLength));
+}
+
+function safePlanText(value: unknown, maxLength: number): boolean {
+  return typeof value === "string" && value.length > 0 && value.length <= maxLength && !hasControlCharacters(value) && !unsafePlanText(value);
+}
+
+function hasCommandToolSmugglingDeep(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => hasCommandToolSmugglingDeep(item));
+  }
+  if (!isPlainObject(value)) {
+    return false;
+  }
+  if (hasCommandToolSmuggling(value)) {
+    return true;
+  }
+  return Object.values(value).some((item) => hasCommandToolSmugglingDeep(item));
+}
+
+function hasUnsafeWorkspacePath(value: Record<string, unknown>): boolean {
+  const edits = value.edits;
+  if (!Array.isArray(edits)) {
+    return false;
+  }
+  return edits.some((edit) => isPlainObject(edit) && typeof edit.workspaceRelativePath === "string" && !safeWorkspaceRelativePath(edit.workspaceRelativePath));
+}
+
+function hasOversizedEditContent(value: Record<string, unknown>): boolean {
+  const edits = value.edits;
+  if (!Array.isArray(edits)) {
+    return false;
+  }
+  let total = 0;
+  for (const edit of edits) {
+    if (!isPlainObject(edit) || !Array.isArray(edit.textReplacements)) {
+      continue;
+    }
+    for (const replacement of edit.textReplacements) {
+      if (!isPlainObject(replacement) || typeof replacement.replacementText !== "string") {
+        continue;
+      }
+      total += replacement.replacementText.length;
+      if (replacement.replacementText.length > 8192 || total > 32768) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function safeWorkspaceRelativePath(value: string): boolean {
+  return value.length > 0 && value.length <= 512 && !value.startsWith("/") && !value.startsWith("~") && !value.includes("%") && !value.includes("\\") && !value.includes(":") && !value.includes("?") && !value.includes("#") && !hasControlCharacters(value) && value.split("/").every((part) => part.length > 0 && part !== "." && part !== ".." && !/^(?:auth|authorization|bearer|cookie|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:\.|-|_|$)/i.test(part) && !/(?:^|[._-])(?:auth|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:[._-]|$)/i.test(part) && !/^sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(part));
+}
+
+function hasControlCharacters(value: string): boolean {
+  return /[\u0000-\u001F\u007F-\u009F]/u.test(value);
+}
+
+function unsafePlanText(value: string): boolean {
+  return /api[-_ ]?key|authorization|bearer|cookie|token|secret|password|pkce|refresh|access[-_ ]?token|auth[-_ ]?code|chain[-_ ]?of[-_ ]?thought|raw[-_ ]?(?:prompt|command|dump|output|file|workspace|secret)|provider[-_ ]?(?:response|body|tool|call)|tool[-_ ]?(?:call|use|name)|file[-_ ]?(?:body|content)|workspace[-_ ]?(?:file|content)|shell|git|cwd|env|args|arguments|exec|cmd|command|npm\s+run|cargo\s+(?:check|test)|apply[-_ ]?patch|auto[-_ ]?(?:apply|run|verify|fix|repair)|hidden[-_ ]?(?:read|search|scan)|index[-_ ]?workspace|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}|\/(?:Users|home|tmp|var|Volumes|Private|etc|opt|mnt)(?=\/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:\/|\\)|~(?:\/|\\)|\.codex\/auth\.json|(?:auth|credentials?)\.json|begin [A-Za-z ]*private key/i.test(value);
+}
+
 function looksLikeEditProposalText(text: string): boolean {
-  return /gui.applyWorkspaceEditRequest|requiresUserConfirmation|workspaceRelativePath|textReplacements|cloudRequired|requestId|\bedits\b/i.test(text) || (/\b(?:tool|command)\b/i.test(text) && /\b(?:apply|edit|proposal|workspace)\b/i.test(text));
+  return /agent_run\.plan_to_patch_proposal|editProposal|verificationSuggestions|gui.applyWorkspaceEditRequest|requiresUserConfirmation|workspaceRelativePath|textReplacements|cloudRequired|requestId|\bedits\b/i.test(text) || (/\b(?:tool|command)\b/i.test(text) && /\b(?:apply|edit|proposal|workspace)\b/i.test(text));
 }
 
 function hasCommandToolSmuggling(value: Record<string, unknown>): boolean {
