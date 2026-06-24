@@ -11,33 +11,29 @@
     "The label may need follow-up copy review."
   ],
   "editProposal": {
-    "version": "2026-05-15",
-    "type": "gui.applyWorkspaceEditRequest",
-    "payload": {
-      "requiresUserConfirmation": true,
-      "summary": "Replace one visible status label after user review.",
-      "cloudRequired": false,
-      "edits": [
-        {
-          "workspaceRelativePath": "src/status.ts",
-          "textReplacements": [
-            {
-              "range": {
-                "start": {
-                  "line": 7,
-                  "character": 10
-                },
-                "end": {
-                  "line": 7,
-                  "character": 29
-                }
+    "requiresUserConfirmation": true,
+    "summary": "Replace one visible status label after user review.",
+    "cloudRequired": false,
+    "edits": [
+      {
+        "workspaceRelativePath": "src/status.ts",
+        "textReplacements": [
+          {
+            "range": {
+              "start": {
+                "line": 7,
+                "character": 10
               },
-              "replacementText": "Ready for manual apply"
-            }
-          ]
-        }
-      ]
-    }
+              "end": {
+                "line": 7,
+                "character": 29
+              }
+            },
+            "replacementText": "Ready for manual apply"
+          }
+        ]
+      }
+    ]
   },
   "verificationSuggestions": [
     {

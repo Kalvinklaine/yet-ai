@@ -2,32 +2,39 @@
   "version": "2026-06-24",
   "type": "agent_run.plan_to_patch_proposal",
   "summary": "Update a status label for manual review.",
-  "plan": ["Perform a hidden read of nearby files before changing the label."],
+  "plan": [
+    "Perform a hidden read of nearby files before changing the label."
+  ],
   "risks": [],
   "editProposal": {
-    "version": "2026-05-15",
-    "type": "gui.applyWorkspaceEditRequest",
-    "payload": {
-      "requiresUserConfirmation": true,
-      "summary": "Replace one visible status label after user review.",
-      "cloudRequired": false,
-      "edits": [
-        {
-          "workspaceRelativePath": "src/status.ts",
-          "textReplacements": [
-            {
-              "range": {
-                "start": { "line": 1, "character": 0 },
-                "end": { "line": 1, "character": 8 }
+    "requiresUserConfirmation": true,
+    "summary": "Replace one visible status label after user review.",
+    "cloudRequired": false,
+    "edits": [
+      {
+        "workspaceRelativePath": "src/status.ts",
+        "textReplacements": [
+          {
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 0
               },
-              "replacementText": "Ready"
-            }
-          ]
-        }
-      ]
-    }
+              "end": {
+                "line": 1,
+                "character": 8
+              }
+            },
+            "replacementText": "Ready"
+          }
+        ]
+      }
+    ]
   },
   "verificationSuggestions": [
-    { "commandId": "repository-check", "label": "Repository check" }
+    {
+      "commandId": "repository-check",
+      "label": "Repository check"
+    }
   ]
 }

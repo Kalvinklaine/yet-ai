@@ -53,6 +53,17 @@ const readyInput: AgentRunInput = {
   boundedLoop: baseLoop,
 };
 
+const readyInputWithPlanMetadata: AgentRunInput = {
+  ...readyInput,
+  proposal: {
+    ...readyInput.proposal,
+    planSummary: "Update the visible status label for manual review.",
+    planSteps: ["Review the visible proposal", "Apply only after user confirmation"],
+    risks: ["Copy may need follow-up review"],
+    verificationSuggestions: ["GUI app tests (gui-app-tests)"],
+  },
+};
+
 afterEach(() => {
   if (root) {
     act(() => root?.unmount());
@@ -135,6 +146,16 @@ describe("AgentRunPanel", () => {
     expect(panelText()).toContain("Edit count: 1");
     expect(findButton("Manually apply reviewed patch").disabled).toBe(false);
     expect(findButton("Manually run allowlisted verification").disabled).toBe(true);
+  });
+
+  it("renders sanitized plan-to-patch metadata as display-only review context", () => {
+    renderPanel(readyInputWithPlanMetadata, { host: "vscode" });
+
+    expect(panelText()).toContain("Proposal review metadata");
+    expect(panelText()).toContain("Plan summary: Update the visible status label for manual review.");
+    expect(panelText()).toContain("Plan: Review the visible proposal · Apply only after user confirmation");
+    expect(panelText()).toContain("Risks: Copy may need follow-up review");
+    expect(panelText()).toContain("Verification suggestions (display-only command IDs): GUI app tests (gui-app-tests)");
   });
 
   it("does not call bridge callbacks before click and applies only after explicit click", () => {

@@ -29,6 +29,10 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
     "Manual: no autonomy, no auto-clicks, no hidden model/provider calls.",
     "No raw commands, files, diffs, model output, or verification output shown by default.",
   ];
+  const proposalPlanSteps = stringArrayDetail(details.proposalPlanSteps);
+  const proposalRisks = stringArrayDetail(details.proposalRisks);
+  const proposalVerificationSuggestions = stringArrayDetail(details.proposalVerificationSuggestions);
+  const showProposalReviewMetadata = Boolean(textDetail(details.proposalPlanSummary) || proposalPlanSteps.length > 0 || proposalRisks.length > 0 || proposalVerificationSuggestions.length > 0);
 
   return (
     <section className={`readiness-card ${view.enabled ? "ready" : "warn"} agent-run-panel stack`} aria-label="Experimental Agent Run" data-testid="agent-run-panel">
@@ -62,6 +66,15 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
         <div className="readiness-card warn" role="status" aria-label="Agent Run diagnostics">
           <strong>Safety diagnostics</strong>
           {view.diagnostics.map((item) => <span key={`${item.code}:${item.message}`}>{sanitizeDisplayText(item.code)}: {sanitizeDisplayText(item.message)}</span>)}
+        </div>
+      )}
+      {showProposalReviewMetadata && (
+        <div className="readiness-card" role="status" aria-label="Agent Run proposal review metadata">
+          <strong>Proposal review metadata</strong>
+          {textDetail(details.proposalPlanSummary) && <span>Plan summary: {textDetail(details.proposalPlanSummary)}</span>}
+          {proposalPlanSteps.length > 0 && <span>Plan: {proposalPlanSteps.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
+          {proposalRisks.length > 0 && <span>Risks: {proposalRisks.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
+          {proposalVerificationSuggestions.length > 0 && <span>Verification suggestions (display-only command IDs): {proposalVerificationSuggestions.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
         </div>
       )}
       <div className="readiness-card warn" role="status" aria-label="Agent Run safety copy">

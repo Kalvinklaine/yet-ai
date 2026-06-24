@@ -1,5 +1,5 @@
 import type { ApplyWorkspaceEditPayload, ApplyWorkspaceEditResultPayload } from "../bridge/bridgeAdapter";
-import { analyzeEditProposalContent, editProposalPayloadKey, type EditProposalRejectedDiagnostic } from "./editProposal";
+import { analyzeEditProposalContent, editProposalPayloadKey, type EditProposalRejectedDiagnostic, type PlanToPatchProposalMetadata } from "./editProposal";
 import type { AgentRunApplyResultMetadata, AgentRunInput, AgentRunVerificationResultMetadata } from "./agentRunState";
 import { sanitizeDisplayText, sanitizeTimelineText } from "./redaction";
 
@@ -89,7 +89,7 @@ export function evaluateAgentRunModelProposal(input: AgentRunModelProposalInput)
     return result(baseAgentRunInput, "proposal_rejected", diagnostics);
   }
 
-  const proposal = proposalMetadata(assistant.id, analysis.proposal);
+  const proposal = proposalMetadata(assistant.id, analysis.proposal, analysis.planToPatchMetadata);
   const agentRunInput: AgentRunInput = {
     ...baseAgentRunInput,
     proposal,
@@ -129,12 +129,22 @@ function staleAssistantReason(input: AgentRunModelProposalInput, assistant: Agen
   return undefined;
 }
 
-function proposalMetadata(sourceMessageId: string, proposal: ApplyWorkspaceEditPayload): NonNullable<AgentRunInput["proposal"]> {
-  return {
+function proposalMetadata(sourceMessageId: string, proposal: ApplyWorkspaceEditPayload, planToPatchMetadata: PlanToPatchProposalMetadata | undefined): NonNullable<AgentRunInput["proposal"]> {
+  const base = {
     id: safeOptionalId(sourceMessageId) ?? editProposalPayloadKey(proposal).slice(0, 120),
     summary: sanitizeLine(proposal.summary, "Safe-edit proposal is ready for manual review."),
     touchedFiles: proposal.edits.map((edit) => sanitizeLine(edit.workspaceRelativePath, "[redacted]")).slice(0, 4),
   };
+  if (!planToPatchMetadata) {
+    return base;
+  }
+  return stripUndefined({
+    ...base,
+    planSummary: sanitizeLine(planToPatchMetadata.summary, "Plan-to-patch summary is ready for manual review."),
+    planSteps: planToPatchMetadata.plan.map((item) => sanitizeLine(item, "[redacted]")).slice(0, 6),
+    risks: planToPatchMetadata.risks.map((item) => sanitizeLine(item, "[redacted]")).slice(0, 6),
+    verificationSuggestions: planToPatchMetadata.verificationSuggestions.map((item) => sanitizeLine(`${item.label} (${item.commandId})`, "[redacted]")).slice(0, 3),
+  });
 }
 
 function normalizeApplyResult(value: AgentRunModelProposalInput["applyResult"]): AgentRunApplyResultMetadata | undefined {

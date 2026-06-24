@@ -14,6 +14,7 @@ import {
   type EditProposalIdentity,
   type EditProposalSourceMessage,
 } from "./editProposal";
+import planToPatchContractFixture from "../../../../packages/contracts/examples/engine/agent-run-plan-to-patch-proposal.json";
 
 const bridgeVersion = "2026-05-15";
 
@@ -89,7 +90,31 @@ describe("parseEditProposalContent", () => {
     const envelope = planToPatchEnvelope({ editProposal: proposal });
 
     expect(parseEditProposalContent(JSON.stringify(envelope))).toEqual(proposal);
-    expect(analyzeEditProposalContent(JSON.stringify(envelope))).toEqual({ state: "valid", proposal });
+    expect(analyzeEditProposalContent(JSON.stringify(envelope))).toEqual({
+      state: "valid",
+      proposal,
+      planToPatchMetadata: {
+        summary: "Replace one visible editor label after manual review.",
+        plan: ["Review the visible proposal metadata", "Apply only after explicit user confirmation"],
+        risks: ["Small UI copy change may need focused review"],
+        verificationSuggestions: [{ commandId: "gui-app-tests", label: "GUI app tests" }],
+      },
+    });
+  });
+
+  it("accepts the positive contract fixture through the parser", () => {
+    const analysis = analyzeEditProposalContent(JSON.stringify(planToPatchContractFixture));
+
+    expect(analysis.state).toBe("valid");
+    if (analysis.state === "valid") {
+      expect(analysis.proposal).toEqual(planToPatchContractFixture.editProposal);
+      expect(analysis.planToPatchMetadata).toEqual({
+        summary: planToPatchContractFixture.summary,
+        plan: planToPatchContractFixture.plan,
+        risks: planToPatchContractFixture.risks,
+        verificationSuggestions: planToPatchContractFixture.verificationSuggestions,
+      });
+    }
   });
 
   it("accepts a fenced strict plan-to-patch proposal envelope", () => {
@@ -106,6 +131,8 @@ describe("parseEditProposalContent", () => {
     ["oversized_content", { editProposal: safeEditProposalPayloadWith({ edits: [{ ...safeEditProposalPayload().edits[0], textReplacements: [{ ...safeEditProposalPayload().edits[0].textReplacements[0], replacementText: "x".repeat(8193) }] }] }) }, "oversized_content"],
     ["unsupported_verification", { verificationSuggestions: [{ commandId: "shell", label: "npm test" }] }, "unsupported_verification"],
     ["command_tool_smuggling", { editProposal: { ...safeEditProposalPayload(), toolCall: { name: "apply_patch" } } }, "command_tool_smuggling"],
+    ["unknown_keys", { extra: "unsupported" }, "unknown_keys"],
+    ["wrong_version", { version: "2026-01-01" }, "wrong_version"],
   ] as Array<[string, Record<string, unknown>, string]>)("rejects unsafe plan-to-patch proposals with %s diagnostics", (_label, overrides, reasonCode) => {
     const result = analyzeEditProposalContent(JSON.stringify(planToPatchEnvelope(overrides)));
 

@@ -1,4 +1,4 @@
-import { isApplyWorkspaceEditPayload, type ApplyWorkspaceEditPayload } from "../bridge/bridgeAdapter";
+import { isApplyWorkspaceEditPayload, type ApplyWorkspaceEditPayload, type VerificationCommandId } from "../bridge/bridgeAdapter";
 
 const bridgeVersion = "2026-05-15";
 const applyEditRequestType = "gui.applyWorkspaceEditRequest";
@@ -16,6 +16,19 @@ export type EditProposalCandidate = {
   proposal: ApplyWorkspaceEditPayload;
   sourceMessageId: string;
   payloadKey: string;
+  planToPatchMetadata?: PlanToPatchProposalMetadata;
+};
+
+export type PlanToPatchVerificationSuggestion = {
+  commandId: VerificationCommandId;
+  label: string;
+};
+
+export type PlanToPatchProposalMetadata = {
+  summary: string;
+  plan: string[];
+  risks: string[];
+  verificationSuggestions: PlanToPatchVerificationSuggestion[];
 };
 
 export type EditProposalIdentity = {
@@ -50,7 +63,7 @@ export type EditProposalRejectedDiagnostic = {
 };
 
 export type EditProposalAnalysis =
-  | { state: "valid"; proposal: ApplyWorkspaceEditPayload }
+  | { state: "valid"; proposal: ApplyWorkspaceEditPayload; planToPatchMetadata?: PlanToPatchProposalMetadata }
   | { state: "rejected"; diagnostic: EditProposalRejectedDiagnostic }
   | { state: "none" };
 
@@ -165,6 +178,7 @@ export function latestEditProposalReviewFromMessages(messages: EditProposalSourc
       proposal: analysis.proposal,
       sourceMessageId: message.id,
       payloadKey: editProposalPayloadKey(analysis.proposal),
+      planToPatchMetadata: analysis.planToPatchMetadata,
     };
     return { state: "valid", candidate };
   }
@@ -336,7 +350,23 @@ function analyzePlanToPatchProposal(value: Record<string, unknown>): EditProposa
   if (classified) {
     return rejected(classified);
   }
-  return isApplyWorkspaceEditPayload(editProposal) ? { state: "valid", proposal: editProposal } : rejected("invalid_payload");
+  if (!isApplyWorkspaceEditPayload(editProposal)) {
+    return rejected("invalid_payload");
+  }
+  const summary = value.summary;
+  const plan = value.plan;
+  const risks = value.risks;
+  const verificationSuggestions = value.verificationSuggestions;
+  return {
+    state: "valid",
+    proposal: editProposal,
+    planToPatchMetadata: {
+      summary,
+      plan,
+      risks,
+      verificationSuggestions,
+    },
+  };
 }
 
 function classifyUnsafeEditProposal(value: Record<string, unknown>): EditProposalRejectedReasonCode | null {
@@ -355,7 +385,7 @@ function classifyUnsafeEditProposal(value: Record<string, unknown>): EditProposa
   return null;
 }
 
-function isVerificationSuggestions(value: unknown): boolean {
+function isVerificationSuggestions(value: unknown): value is PlanToPatchVerificationSuggestion[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > 3) {
     return false;
   }
@@ -369,11 +399,11 @@ function isVerificationSuggestions(value: unknown): boolean {
   });
 }
 
-function isSafePlanTextArray(value: unknown, minLength: number, maxLength: number, maxTextLength: number): boolean {
+function isSafePlanTextArray(value: unknown, minLength: number, maxLength: number, maxTextLength: number): value is string[] {
   return Array.isArray(value) && value.length >= minLength && value.length <= maxLength && value.every((item) => safePlanText(item, maxTextLength));
 }
 
-function safePlanText(value: unknown, maxLength: number): boolean {
+function safePlanText(value: unknown, maxLength: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= maxLength && !hasControlCharacters(value) && !unsafePlanText(value);
 }
 

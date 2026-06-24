@@ -84,7 +84,15 @@ describe("evaluateAgentRunModelProposal", () => {
 
     expect(result.proposalPathState).toBe("proposal_detected");
     expect(result.diagnostics).toEqual([]);
-    expect(result.agentRunInput.proposal).toEqual({ id: "assistant-1", summary: "Replace one visible line after manual review.", touchedFiles: ["src/example.ts"] });
+    expect(result.agentRunInput.proposal).toEqual({
+      id: "assistant-1",
+      summary: "Replace one visible line after manual review.",
+      touchedFiles: ["src/example.ts"],
+      planSummary: "Replace one visible label after review.",
+      planSteps: ["Review the visible proposal", "Apply only after user confirmation"],
+      risks: [],
+      verificationSuggestions: ["GUI app tests (gui-app-tests)"],
+    });
   });
 
   it("treats normal prose as a non-authoritative normal response", () => {

@@ -38,6 +38,10 @@ export type AgentRunProposalMetadata = {
   id?: string;
   summary?: string;
   touchedFiles?: string[];
+  planSummary?: string;
+  planSteps?: string[];
+  risks?: string[];
+  verificationSuggestions?: string[];
 };
 
 export type AgentRunExplicitRequestMetadata = {
@@ -217,6 +221,10 @@ function buildDetails(metadata: AgentRunInput, boundedDetails: Record<string, st
     goalTitle: metadata.goal?.title,
     proposalId: safeOptionalId(metadata.proposal?.id),
     proposalSummary: metadata.proposal?.summary,
+    proposalPlanSummary: metadata.proposal?.planSummary,
+    proposalPlanSteps: metadata.proposal?.planSteps,
+    proposalRisks: metadata.proposal?.risks,
+    proposalVerificationSuggestions: metadata.proposal?.verificationSuggestions,
     touchedFiles: sanitizeTouchedFiles(metadata.proposal?.touchedFiles),
     boundedLoopState: boundedDetails?.state,
     boundedPolicyDecision: boundedDetails?.policyDecision,
