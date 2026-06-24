@@ -3950,6 +3950,9 @@ describe("active editor attached context", () => {
       findButton("Attach verification result to next message").click();
     });
     expect(container?.textContent).toContain("Verification output is attached as explicit one-shot context.");
+    expect(codingTaskSessionPanel().textContent).toContain("Context budget summary");
+    expect(codingTaskSessionPanel().textContent).toContain("Explicit context bundle: included · 1 item");
+    expect(codingTaskSessionPanel().textContent).toContain("Included: 1 item");
   });
 
   it("rejects unsafe verification output before rendering or storing it", async () => {
