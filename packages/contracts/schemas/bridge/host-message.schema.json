@@ -455,6 +455,7 @@
               "context": false,
               "contextAttachment": false,
               "commandId": false,
+              "preset": false,
               "exitCode": false,
               "durationMs": false,
               "outputTail": false
@@ -724,6 +725,7 @@
           "then": {
             "required": [
               "commandId",
+              "preset",
               "exitCode",
               "durationMs",
               "outputTail",
@@ -732,6 +734,9 @@
             "properties": {
               "commandId": {
                 "$ref": "#/$defs/verificationCommandId"
+              },
+              "preset": {
+                "$ref": "#/$defs/verificationPresetMetadata"
               },
               "exitCode": {
                 "type": "integer",
@@ -749,7 +754,23 @@
               "truncated": {
                 "type": "boolean"
               }
-            }
+            },
+            "allOf": [
+              {
+                "properties": {
+                  "preset": {
+                    "type": "object",
+                    "properties": {
+                      "commandId": {
+                        "const": {
+                          "$data": "2/commandId"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
           }
         }
       ],
@@ -810,6 +831,9 @@
         },
         "commandId": {
           "$ref": "#/$defs/verificationCommandId"
+        },
+        "preset": {
+          "$ref": "#/$defs/verificationPresetMetadata"
         },
         "exitCode": {
           "type": "integer",
@@ -1065,10 +1089,30 @@
               "context": false,
               "commandId": {
                 "$ref": "#/$defs/verificationCommandId"
+              },
+              "preset": {
+                "$ref": "#/$defs/verificationPresetMetadata"
               }
             },
             "required": [
-              "commandId"
+              "commandId",
+              "preset"
+            ],
+            "allOf": [
+              {
+                "properties": {
+                  "preset": {
+                    "type": "object",
+                    "properties": {
+                      "commandId": {
+                        "const": {
+                          "$data": "2/commandId"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
             ]
           }
         },
@@ -1088,7 +1132,8 @@
               "workspaceRelativePath": false,
               "range": false,
               "context": false,
-              "commandId": false
+              "commandId": false,
+              "preset": false
             }
           }
         }
@@ -1132,6 +1177,9 @@
         },
         "commandId": {
           "$ref": "#/$defs/verificationCommandId"
+        },
+        "preset": {
+          "$ref": "#/$defs/verificationPresetMetadata"
         }
       }
     },
@@ -1200,6 +1248,161 @@
         "repository-check",
         "gui-app-tests",
         "engine-chat-tests"
+      ]
+    },
+    "verificationPresetLabel": {
+      "type": "string",
+      "enum": [
+        "Repository check",
+        "GUI app tests",
+        "Engine chat tests"
+      ]
+    },
+    "verificationPresetDescription": {
+      "type": "string",
+      "enum": [
+        "Run the repository validation gate.",
+        "Run the focused GUI application test gate.",
+        "Run the focused engine chat test gate."
+      ]
+    },
+    "verificationPresetRiskLevel": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium"
+      ]
+    },
+    "verificationPresetExpectedDuration": {
+      "type": "string",
+      "enum": [
+        "Usually under 1 minute",
+        "Usually 1 to 5 minutes",
+        "Usually 5 to 10 minutes"
+      ]
+    },
+    "verificationPresetCwdPolicyLabel": {
+      "type": "string",
+      "const": "Repository root"
+    },
+    "verificationPresetOutputBoundLabel": {
+      "type": "string",
+      "const": "Sanitized tail only"
+    },
+    "verificationPresetMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commandId",
+        "label",
+        "description",
+        "riskLevel",
+        "expectedDuration",
+        "cwdPolicyLabel",
+        "outputBoundLabel"
+      ],
+      "properties": {
+        "commandId": {
+          "$ref": "#/$defs/verificationCommandId"
+        },
+        "label": {
+          "$ref": "#/$defs/verificationPresetLabel"
+        },
+        "description": {
+          "$ref": "#/$defs/verificationPresetDescription"
+        },
+        "riskLevel": {
+          "$ref": "#/$defs/verificationPresetRiskLevel"
+        },
+        "expectedDuration": {
+          "$ref": "#/$defs/verificationPresetExpectedDuration"
+        },
+        "cwdPolicyLabel": {
+          "$ref": "#/$defs/verificationPresetCwdPolicyLabel"
+        },
+        "outputBoundLabel": {
+          "$ref": "#/$defs/verificationPresetOutputBoundLabel"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "commandId": {
+                "const": "repository-check"
+              }
+            },
+            "required": ["commandId"]
+          },
+          "then": {
+            "properties": {
+              "label": {
+                "const": "Repository check"
+              },
+              "description": {
+                "const": "Run the repository validation gate."
+              },
+              "riskLevel": {
+                "const": "medium"
+              },
+              "expectedDuration": {
+                "const": "Usually 1 to 5 minutes"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "commandId": {
+                "const": "gui-app-tests"
+              }
+            },
+            "required": ["commandId"]
+          },
+          "then": {
+            "properties": {
+              "label": {
+                "const": "GUI app tests"
+              },
+              "description": {
+                "const": "Run the focused GUI application test gate."
+              },
+              "riskLevel": {
+                "const": "medium"
+              },
+              "expectedDuration": {
+                "const": "Usually 5 to 10 minutes"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "commandId": {
+                "const": "engine-chat-tests"
+              }
+            },
+            "required": ["commandId"]
+          },
+          "then": {
+            "properties": {
+              "label": {
+                "const": "Engine chat tests"
+              },
+              "description": {
+                "const": "Run the focused engine chat test gate."
+              },
+              "riskLevel": {
+                "const": "low"
+              },
+              "expectedDuration": {
+                "const": "Usually under 1 minute"
+              }
+            }
+          }
+        }
       ]
     },
     "verificationOutputTail": {

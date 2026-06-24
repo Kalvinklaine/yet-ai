@@ -38,7 +38,12 @@
   "verificationSuggestions": [
     {
       "commandId": "repository-check",
-      "label": "Repository check"
+      "label": "Repository check",
+      "description": "Run the repository validation gate.",
+      "riskLevel": "medium",
+      "expectedDuration": "Usually 1 to 5 minutes",
+      "cwdPolicyLabel": "Repository root",
+      "outputBoundLabel": "Sanitized tail only"
     }
   ]
 }

@@ -48,7 +48,7 @@
     },
     "verificationSuggestions": {
       "type": "array",
-      "description": "Allowlisted command IDs and display labels only. No command strings, args, cwd, env, or shell material are accepted.",
+      "description": "Allowlisted user-facing preset metadata only. No command strings, args, cwd, env, or shell material are accepted.",
       "minItems": 1,
       "maxItems": 3,
       "items": {
@@ -97,29 +97,86 @@
         }
       ]
     },
+    "verificationCommandId": {
+      "type": "string",
+      "enum": [
+        "repository-check",
+        "gui-app-tests",
+        "engine-chat-tests"
+      ]
+    },
+    "verificationPresetLabel": {
+      "type": "string",
+      "enum": [
+        "Repository check",
+        "GUI app tests",
+        "Engine chat tests"
+      ]
+    },
+    "verificationPresetDescription": {
+      "type": "string",
+      "enum": [
+        "Run the repository validation gate.",
+        "Run the focused GUI application test gate.",
+        "Run the focused engine chat test gate."
+      ]
+    },
+    "verificationPresetRiskLevel": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium"
+      ]
+    },
+    "verificationPresetExpectedDuration": {
+      "type": "string",
+      "enum": [
+        "Usually under 1 minute",
+        "Usually 1 to 5 minutes",
+        "Usually 5 to 10 minutes"
+      ]
+    },
+    "verificationPresetCwdPolicyLabel": {
+      "type": "string",
+      "const": "Repository root"
+    },
+    "verificationPresetOutputBoundLabel": {
+      "type": "string",
+      "const": "Sanitized tail only"
+    },
     "verificationSuggestion": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "commandId",
-        "label"
+        "label",
+        "description",
+        "riskLevel",
+        "expectedDuration",
+        "cwdPolicyLabel",
+        "outputBoundLabel"
       ],
       "properties": {
         "commandId": {
-          "type": "string",
-          "enum": [
-            "repository-check",
-            "gui-app-tests",
-            "engine-chat-tests"
-          ]
+          "$ref": "#/$defs/verificationCommandId"
         },
         "label": {
-          "type": "string",
-          "enum": [
-            "Repository check",
-            "GUI app tests",
-            "Engine chat tests"
-          ]
+          "$ref": "#/$defs/verificationPresetLabel"
+        },
+        "description": {
+          "$ref": "#/$defs/verificationPresetDescription"
+        },
+        "riskLevel": {
+          "$ref": "#/$defs/verificationPresetRiskLevel"
+        },
+        "expectedDuration": {
+          "$ref": "#/$defs/verificationPresetExpectedDuration"
+        },
+        "cwdPolicyLabel": {
+          "$ref": "#/$defs/verificationPresetCwdPolicyLabel"
+        },
+        "outputBoundLabel": {
+          "$ref": "#/$defs/verificationPresetOutputBoundLabel"
         }
       },
       "allOf": [
@@ -136,9 +193,17 @@
             "properties": {
               "label": {
                 "const": "Repository check"
+              },
+              "description": {
+                "const": "Run the repository validation gate."
+              },
+              "riskLevel": {
+                "const": "medium"
+              },
+              "expectedDuration": {
+                "const": "Usually 1 to 5 minutes"
               }
-            },
-            "required": ["label"]
+            }
           }
         },
         {
@@ -154,9 +219,17 @@
             "properties": {
               "label": {
                 "const": "GUI app tests"
+              },
+              "description": {
+                "const": "Run the focused GUI application test gate."
+              },
+              "riskLevel": {
+                "const": "medium"
+              },
+              "expectedDuration": {
+                "const": "Usually 5 to 10 minutes"
               }
-            },
-            "required": ["label"]
+            }
           }
         },
         {
@@ -172,9 +245,17 @@
             "properties": {
               "label": {
                 "const": "Engine chat tests"
+              },
+              "description": {
+                "const": "Run the focused engine chat test gate."
+              },
+              "riskLevel": {
+                "const": "low"
+              },
+              "expectedDuration": {
+                "const": "Usually under 1 minute"
               }
-            },
-            "required": ["label"]
+            }
           }
         }
       ]
