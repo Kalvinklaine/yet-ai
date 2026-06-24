@@ -10,7 +10,7 @@ docs/
   architecture/         # architecture baselines, decisions, contracts, roadmaps
 ```
 
-Additional local evidence templates live under `docs/dogfood/`, including the real-provider active-file chat report, the manual real coding task dogfood checklist, the historical one-step Agent Run dogfood checklist, and the safe-share Agent Run one-step report template.
+Additional local evidence templates live under `docs/dogfood/`, including the real-provider active-file chat report, the manual real coding task dogfood checklist, the historical one-step Agent Run dogfood checklist, and the safe-share Agent Run one-step report template. The deterministic mock-only built-GUI validation for the safe-share Agent Run path is `npm run smoke:agent-run-dogfood`; it uses loopback-only runtime/host mocks and sanitized evidence, not real-provider CI.
 
 ## Where to add documents
 
