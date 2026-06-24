@@ -1,0 +1,48 @@
+{
+  "version": "2026-06-24",
+  "type": "agent_run.plan_to_patch_proposal",
+  "summary": "Update the visible status label and keep the change ready for manual review.",
+  "plan": [
+    "Adjust the status label copy in the existing view.",
+    "Keep the replacement bounded to one existing file.",
+    "Suggest one allowlisted verification option for the user."
+  ],
+  "risks": [
+    "The label may need follow-up copy review."
+  ],
+  "editProposal": {
+    "version": "2026-05-15",
+    "type": "gui.applyWorkspaceEditRequest",
+    "payload": {
+      "requiresUserConfirmation": true,
+      "summary": "Replace one visible status label after user review.",
+      "cloudRequired": false,
+      "edits": [
+        {
+          "workspaceRelativePath": "src/status.ts",
+          "textReplacements": [
+            {
+              "range": {
+                "start": {
+                  "line": 7,
+                  "character": 10
+                },
+                "end": {
+                  "line": 7,
+                  "character": 29
+                }
+              },
+              "replacementText": "Ready for manual apply"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "verificationSuggestions": [
+    {
+      "commandId": "repository-check",
+      "label": "Repository check"
+    }
+  ]
+}

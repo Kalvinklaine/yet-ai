@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/agent-run-plan-to-patch-proposal.schema.json",
+  "title": "Agent Run Plan-to-Patch Proposal",
+  "description": "Strict assistant-authored one-step Agent Run proposal response envelope. It is requestId-free, confirmation-only, local-first, and limited to bounded plan text, an existing safe edit proposal shape, and allowlisted verification command IDs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "type",
+    "summary",
+    "plan",
+    "risks",
+    "editProposal",
+    "verificationSuggestions"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "2026-06-24"
+    },
+    "type": {
+      "type": "string",
+      "const": "agent_run.plan_to_patch_proposal"
+    },
+    "summary": {
+      "$ref": "#/$defs/safeSummary"
+    },
+    "plan": {
+      "type": "array",
+      "description": "One to six bounded user-visible plan steps only; these are not executable instructions or hidden reads.",
+      "minItems": 1,
+      "maxItems": 6,
+      "items": {
+        "$ref": "#/$defs/safePlanStep"
+      }
+    },
+    "risks": {
+      "type": "array",
+      "description": "Bounded user-visible risks only; empty is allowed when no specific risk is known.",
+      "maxItems": 6,
+      "items": {
+        "$ref": "#/$defs/safeRisk"
+      }
+    },
+    "editProposal": {
+      "$ref": "https://schemas.yet-ai.example/contracts/bridge/assistant-apply-workspace-edit-proposal.schema.json"
+    },
+    "verificationSuggestions": {
+      "type": "array",
+      "description": "Allowlisted command IDs and display labels only. No command strings, args, cwd, env, or shell material are accepted.",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "$ref": "#/$defs/verificationSuggestion"
+      }
+    }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Kk][Cc][Ee]|[Rr][Ee][Ff][Rr][Ee][Ss][Hh]|[Aa][Cc][Cc][Ee][Ss][Ss][-_ ]?[Tt][Oo][Kk][Ee][Nn]|[Aa][Uu][Tt][Hh][-_ ]?[Cc][Oo][Dd][Ee]|[Cc][Hh][Aa][Ii][Nn][-_ ]?[Oo][Ff][-_ ]?[Tt][Hh][Oo][Uu][Gg][Hh][Tt]|[Rr][Aa][Ww][-_ ]?(?:[Pp][Rr][Oo][Mm][Pp][Tt]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Dd][Uu][Mm][Pp]|[Oo][Uu][Tt][Pp][Uu][Tt]|[Ff][Ii][Ll][Ee]|[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee]|[Ss][Ee][Cc][Rr][Ee][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][-_ ]?(?:[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Bb][Oo][Dd][Yy]|[Tt][Oo][Oo][Ll]|[Cc][Aa][Ll][Ll])|[Tt][Oo][Oo][Ll][-_ ]?(?:[Cc][Aa][Ll][Ll]|[Uu][Ss][Ee]|[Nn][Aa][Mm][Ee])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee][-_ ]?(?:[Ff][Ii][Ll][Ee]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Ss][Hh][Ee][Ll][Ll]|[Gg][Ii][Tt]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Aa][Rr][Gg][Ss]|[Aa][Rr][Gg][Uu][Mm][Ee][Nn][Tt][Ss]|[Ee][Xx][Ee][Cc]|[Cc][Mm][Dd]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Nn][Pp][Mm]\\s+[Rr][Uu][Nn]|[Cc][Aa][Rr][Gg][Oo]\\s+(?:[Cc][Hh][Ee][Cc][Kk]|[Tt][Ee][Ss][Tt])|[Aa][Pp][Pp][Ll][Yy][-_ ]?[Pp][Aa][Tt][Cc][Hh]|[Aa][Uu][Tt][Oo][-_ ]?(?:[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Vv][Ee][Rr][Ii][Ff][Yy]|[Ff][Ii][Xx]|[Rr][Ee][Pp][Aa][Ii][Rr])|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh]|[Ss][Cc][Aa][Nn])|[Ii][Nn][Dd][Ee][Xx][-_ ]?[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee]|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|\\.[Cc][Oo][Dd][Ee][Xx]/[Aa][Uu][Tt][Hh]\\.json|(?:[Aa][Uu][Tt][Hh]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?)\\.json|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "safeSummary": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400
+        }
+      ]
+    },
+    "safePlanStep": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        }
+      ]
+    },
+    "safeRisk": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 220
+        }
+      ]
+    },
+    "verificationSuggestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commandId",
+        "label"
+      ],
+      "properties": {
+        "commandId": {
+          "type": "string",
+          "enum": [
+            "repository-check",
+            "gui-app-tests",
+            "engine-chat-tests"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "enum": [
+            "Repository check",
+            "GUI app tests",
+            "Engine chat tests"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "commandId": {
+                "const": "repository-check"
+              }
+            },
+            "required": ["commandId"]
+          },
+          "then": {
+            "properties": {
+              "label": {
+                "const": "Repository check"
+              }
+            },
+            "required": ["label"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "commandId": {
+                "const": "gui-app-tests"
+              }
+            },
+            "required": ["commandId"]
+          },
+          "then": {
+            "properties": {
+              "label": {
+                "const": "GUI app tests"
+              }
+            },
+            "required": ["label"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "commandId": {
+                "const": "engine-chat-tests"
+              }
+            },
+            "required": ["commandId"]
+          },
+          "then": {
+            "properties": {
+              "label": {
+                "const": "Engine chat tests"
+              }
+            },
+            "required": ["label"]
+          }
+        }
+      ]
+    }
+  }
+}

@@ -46,6 +46,7 @@ const mappings = [
   ["packages/contracts/examples/engine/agent-progress-event-manual-runner.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
   ["packages/contracts/examples/engine/agent-progress-event-manual-runner-verification.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
   ["packages/contracts/examples/engine/manual-runner-plan-proposal.json", "packages/contracts/schemas/engine/manual-runner-plan-proposal.schema.json"],
+  ["packages/contracts/examples/engine/agent-run-plan-to-patch-proposal.json", "packages/contracts/schemas/engine/agent-run-plan-to-patch-proposal.schema.json"],
   ["packages/contracts/examples/engine/coding-task-session.json", "packages/contracts/schemas/engine/coding-task-session.schema.json"],
   ...[
     "experimental-sandbox-session-disabled.json",
@@ -835,6 +836,20 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/manual-runner-plan-proposal.schema.json"
+  ]),
+  ...[
+    "agent-run-plan-to-patch-proposal-request-id.json",
+    "agent-run-plan-to-patch-proposal-secret.json",
+    "agent-run-plan-to-patch-proposal-private-path.json",
+    "agent-run-plan-to-patch-proposal-shell-command.json",
+    "agent-run-plan-to-patch-proposal-freeform-command.json",
+    "agent-run-plan-to-patch-proposal-provider-tool.json",
+    "agent-run-plan-to-patch-proposal-hidden-read.json",
+    "agent-run-plan-to-patch-proposal-autonomy.json",
+    "agent-run-plan-to-patch-proposal-unknown-command-id.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/agent-run-plan-to-patch-proposal.schema.json"
   ]),
   ...[
     "coding-task-session-unknown-field.json",
