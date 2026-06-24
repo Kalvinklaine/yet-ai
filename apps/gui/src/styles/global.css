@@ -741,6 +741,45 @@ pre,
   gap: 8px;
 }
 
+.what-will-be-sent-card {
+  padding: 10px 12px;
+}
+
+.what-will-be-sent-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.what-will-be-sent-totals span,
+.what-will-be-sent-list li {
+  border: 1px solid #dfe6f3;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 8px 10px;
+}
+
+.what-will-be-sent-list,
+.what-will-be-sent-labels {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.what-will-be-sent-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.what-will-be-sent-labels li {
+  color: #45546c;
+  font-size: 13px;
+}
+
 .coding-task-template-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));

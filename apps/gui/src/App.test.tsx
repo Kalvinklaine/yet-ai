@@ -2990,6 +2990,8 @@ describe("active editor attached context", () => {
     renderApp();
     await flushAsync();
 
+    expect(whatWillBeSentPanelOptional()).toBeUndefined();
+
     const panel = codingTaskSessionPanel();
     expect(panel.textContent).toContain("Coding task session");
     expect(panel.textContent).toContain("local draft");
@@ -3022,6 +3024,53 @@ describe("active editor attached context", () => {
     expect(panel.textContent).toContain("No explicit bundle items selected");
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("Coding task session");
+    expect(browserStorageDump()).not.toContain("What will be sent");
+  });
+
+  it("renders what-will-be-sent labels and budget status without raw body or storage leaks", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const rawSnippetBody = "function previewBodyMarker() { return 'do not show'; }";
+    const verificationBody = "failed assertion output sentinel";
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      setTextareaByPlaceholder("Describe the coding task goal", "Fix context budget UX");
+      setTextareaValue(chatInput(), "Please review selected context.");
+    });
+    await act(async () => {
+      findButton("Attach active file excerpt").click();
+    });
+    await dispatchHostIdeActionResult("gui-active-file-excerpt-1", activeFileExcerptResultPayload({ text: rawSnippetBody }));
+    await flushAsync();
+    await act(async () => {
+      findButton("GUI app tests").click();
+    });
+    await dispatchHostIdeActionResult("gui-verification-command-2", { status: "failed", message: "GUI tests failed.", cloudRequired: false, action: "runVerificationCommand", commandId: "gui-app-tests", exitCode: 1, durationMs: 12, outputTail: verificationBody, truncated: false });
+    await act(async () => {
+      findButton("Attach verification result to next message").click();
+    });
+
+    const sentPanel = whatWillBeSentPanel();
+    expect(sentPanel.textContent).toContain("What will be sent");
+    expect(sentPanel.textContent).toContain("Draft prompt: 31 chars");
+    expect(sentPanel.textContent).toContain("Included context: 3 items");
+    expect(sentPanel.textContent).toContain("Task goal");
+    expect(sentPanel.textContent).toContain("Explicit context bundle: included · 1 item");
+    expect(sentPanel.textContent).toContain("vscode src/editor.ts");
+    expect(sentPanel.textContent).toContain("gui-app-tests");
+    expect(sentPanel.textContent).toContain("One-shot next-Send preview");
+    expect(sentPanel.textContent).not.toContain(rawSnippetBody);
+    expect(sentPanel.textContent).not.toContain(verificationBody);
+    expect(sentPanel.textContent).not.toContain("Please review selected context.");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(rawSnippetBody);
+    expect(browserStorageDump()).not.toContain(verificationBody);
+    expect(browserStorageDump()).not.toContain("Fix context budget UX");
+    expect(browserStorageDump()).not.toContain("Please review selected context.");
   });
 
   it("shows coding task recovery copy when provider is not ready", async () => {
@@ -10228,6 +10277,18 @@ function codingTaskSessionPanel() {
     throw new Error("Coding task session panel not found");
   }
   return panel;
+}
+
+function whatWillBeSentPanel() {
+  const panel = whatWillBeSentPanelOptional();
+  if (!panel) {
+    throw new Error("What will be sent panel not found");
+  }
+  return panel;
+}
+
+function whatWillBeSentPanelOptional() {
+  return container?.querySelector<HTMLElement>("[aria-label='What will be sent']") ?? undefined;
 }
 
 function manualRunnerDraftTextarea() {

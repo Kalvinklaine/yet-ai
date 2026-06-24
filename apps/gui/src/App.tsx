@@ -576,6 +576,7 @@ export function App() {
       ...(activeEditProposal ? [{ label: `Edit proposal metadata · ${activeEditProposal.payload.summary}`, charCount: activeEditProposal.payload.summary.length, itemCount: activeEditProposal.payload.edits.length }] : []),
     ],
   }), [activeEditProposal, codingTaskGoal, currentActiveFileExcerpt, explicitContextBundleItems, includeAttachedContext, includeExplicitContextBundle, modelProposalDraft]);
+  const showWhatWillBeSentPanel = chatInput.trim().length > 0 || contextBudgetSummary.sources.some((source) => source.kind !== "proposal_metadata" && (source.itemCount > 0 || source.charCount > 0)) || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
   const workspaceSnippetQueryValidation = useMemo(() => validateWorkspaceSnippetQuery(workspaceSnippetQuery), [workspaceSnippetQuery]);
 
   useEffect(() => {
@@ -2584,6 +2585,7 @@ export function App() {
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
                 <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} />
+                {showWhatWillBeSentPanel && <WhatWillBeSentPanel summary={contextBudgetSummary} draftPromptCharacters={chatInput.trim().length} />}
                 <CodingTaskSessionPanel goal={codingTaskGoal} contextItems={explicitContextBundleItems} memoryAttachedCount={attachedProjectMemoryCount} modelStatus={chatReadinessLabel} canSendChat={canSendChat} latestResponseStatus={chatLifecycleLabel} editProposal={activeEditProposal} applyResult={applyResult} verificationAttempt={verificationAttempt} verificationAttached={Boolean(attachedVerificationKey)} draftPrompt={codingTaskPromptDraft} contextBudgetSummary={contextBudgetSummary} modelProposalDraft={modelProposalDraft} modelProposalResult={agentRunModelProposal} onGoalChange={setCodingTaskGoal} onUseDraftPrompt={useCodingTaskDraftPrompt} onUseDraftPlan={useCodingTaskDraftPlan} onDraftOneStepModelProposal={draftOneStepModelProposalPrompt} onFocusPrompt={focusCodingTaskPrompt} />
                 <ManualRunnerPanel host={bridgeHost} draftPlan={manualRunnerDraftPlan} planProposal={latestPlanProposal} hasContext={Boolean((currentAttachedContext && hasUsableAttachedContext(currentAttachedContext)) || explicitContextBundleItems.length > 0)} hasPrompt={Boolean(chatInput.trim())} hasAssistantActivity={chatView.messages.some((message) => message.role === "assistant") || chatLifecycleState !== "idle"} hasEditProposal={Boolean(activeEditProposal)} applyResult={applyResult} verificationAttempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} verificationAttached={Boolean(attachedVerificationKey)} canSendChat={canSendChat} onDraftPlanChange={setManualRunnerDraftPlan} onFocusPrompt={() => chatInputRef.current?.focus()} />
                 <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} promptAction={activeFilePromptAction} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onClearPending={clearPendingIdeActionState} onIncludeChange={setIncludeAttachedContext} onApplyPrompt={applyActiveFilePrompt} onAddToBundle={addActiveFileExcerptToBundle} />
@@ -3283,6 +3285,41 @@ function FirstMessageActionButton({ action, runtimeRefreshInFlight, providerTest
     return <button type="button" onClick={() => onTestProvider(action.providerId)} disabled={testing}>{testing ? "Testing provider…" : action.label}</button>;
   }
   return <button type="button" onClick={onFocusPrompt}>{action.label}</button>;
+}
+
+function WhatWillBeSentPanel({ summary, draftPromptCharacters }: { summary: ContextBudgetSummary; draftPromptCharacters: number }) {
+  const visibleSources = summary.sources.filter((source) => source.itemCount > 0 || source.charCount > 0);
+  const visibleLabels = summary.labels.slice(0, 6);
+  const included = summary.totalIncludedItems;
+  const omitted = summary.omittedItemCount;
+  const tone = summary.warnings.length > 0 ? "warn" : included > 0 || draftPromptCharacters > 0 ? "ready" : "warn";
+  return (
+    <section className={`what-will-be-sent-card readiness-card ${tone} stack`} aria-label="What will be sent">
+      <div className="row">
+        <strong>What will be sent</strong>
+        <span className="badge">preview labels only</span>
+        <span className={summary.warnings.length === 0 ? "badge ok" : "badge warn"}>{summary.warnings.length} warning{summary.warnings.length === 1 ? "" : "s"}</span>
+      </div>
+      <div className="what-will-be-sent-totals" aria-label="What will be sent totals">
+        <span>Draft prompt: {draftPromptCharacters} chars</span>
+        <span>Included context: {included} item{included === 1 ? "" : "s"} · {summary.totalIncludedCharacters} chars</span>
+        <span>Omitted: {omitted} · Excluded: {summary.excludedItemCount}</span>
+      </div>
+      <span className="subtle">{visibleSources.length === 0 && draftPromptCharacters === 0 ? "One-shot labels only; no raw bodies or browser storage." : "One-shot next-Send preview: labels, status, and approximate chars only; no raw prompt dump, context bodies, or browser storage."}</span>
+      {visibleSources.length === 0 ? <span className="subtle">No extra context labels selected.</span> : (
+        <ul className="what-will-be-sent-list" aria-label="What will be sent labels">
+          {visibleSources.map((source) => (
+            <li key={`${source.kind}:${source.label}`}>
+              <span className={source.included ? "badge ok" : "badge warn"}>{source.included ? "included" : "omitted"}</span>
+              <span>{sanitizeDisplayText(source.label)}: {source.included ? "included" : "omitted"} · {source.itemCount} item{source.itemCount === 1 ? "" : "s"} · {source.charCount} chars</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {visibleLabels.length > 0 && <ul className="what-will-be-sent-labels" aria-label="What will be sent item labels">{visibleLabels.map((label) => <li key={label}>{label}</li>)}</ul>}
+      {summary.warnings.length > 0 && <ul className="first-message-steps">{summary.warnings.map((warning) => <li key={`${warning.code}:${warning.message}`}>{sanitizeDisplayText(warning.message)}</li>)}</ul>}
+    </section>
+  );
 }
 
 function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, modelStatus, canSendChat, latestResponseStatus, editProposal, applyResult, verificationAttempt, verificationAttached, draftPrompt, contextBudgetSummary, modelProposalDraft, modelProposalResult, onGoalChange, onUseDraftPrompt, onUseDraftPlan, onDraftOneStepModelProposal, onFocusPrompt }: { goal: string; contextItems: ExplicitContextBundleItem[]; memoryAttachedCount: number; modelStatus: string; canSendChat: boolean; latestResponseStatus: string; editProposal: EditProposalState | null; applyResult: ApplyResultState | null; verificationAttempt: IdeActionAttemptState | null; verificationAttached: boolean; draftPrompt: string; contextBudgetSummary: ContextBudgetSummary; modelProposalDraft: ModelProposalDraftState | null; modelProposalResult: AgentRunModelProposalResult; onGoalChange: (goal: string) => void; onUseDraftPrompt: (mode: CodingTaskPromptMode) => void; onUseDraftPlan: () => void; onDraftOneStepModelProposal: () => void; onFocusPrompt: () => void }) {
