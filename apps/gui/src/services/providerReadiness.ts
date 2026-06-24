@@ -99,19 +99,19 @@ export function modelUnreadyMessage(model: ModelSummary, provider?: ProviderSumm
   const evidence = modelReadinessEvidenceSentence(model, provider);
   switch (status) {
     case "missing_credentials":
-      return `Provider credentials are required before ${modelName} can send. Save the provider API key in the local runtime, then Test provider and Refresh runtime.${reason}${evidence}`;
+      return `Provider credentials are required before ${modelName} can send. Save the provider API key or local credential in the local runtime, then Test provider and Refresh runtime. If the provider rejected the key, replace the provider key there; do not use the runtime Session token.${reason}${evidence}`;
     case "missing_model":
       if (provider?.kind === "ollama" || providerFamily(model, provider) === "ollama") {
-        return `Local Ollama model ${modelName} is not available yet. Start Ollama, pull or choose the model locally, Test provider, then Refresh runtime.${reason}${localAvailabilityRecoverySentence(model)}${evidence}`;
+        return `Local Ollama model ${modelName} is not available yet. Start Ollama at the saved loopback URL, run ollama pull for this model or choose an installed local model, Test provider, then Refresh runtime.${reason}${localAvailabilityRecoverySentence(model)}${evidence}`;
       }
       if (isLocalProviderKind(provider?.kind) || isLocalProviderFamily(providerFamily(model, provider))) {
-        return `Local provider model ${modelName} is not available yet. Check the local server and saved model id, Test provider, then Refresh runtime.${reason}${localAvailabilityRecoverySentence(model)}${evidence}`;
+        return `Local provider model ${modelName} is not available yet. Start the local server, verify the saved loopback/base URL and model id, Test provider, then Refresh runtime.${reason}${localAvailabilityRecoverySentence(model)}${evidence}`;
       }
-      return `Model ${modelName} is not available from the configured provider. Check the saved model id or choose a provider-returned model, then Test provider and Refresh runtime.${reason}${evidence}`;
+      return `Model ${modelName} is not available from the configured provider. Check the saved model id, choose a provider-returned model, or confirm the OpenAI-compatible base URL points to the right provider, then Test provider and Refresh runtime.${reason}${evidence}`;
     case "unsupported":
       return modelUnsupportedMessage(model, provider);
     case "disabled":
-      return `Model ${modelName} is disabled for chat. Enable the provider/model locally or choose Demo Mode for a no-key preview before sending.${reason}${evidence}`;
+      return `Model ${modelName} is disabled for chat. Enable the provider/model locally, choose another send-ready model, or choose Demo Mode for a no-key local canned preview before sending.${reason}${evidence}`;
     default:
       return `Model ${modelName} is not ready for chat streaming: ${sanitizeDisplayText(readinessStatusLabel(status))}.${reason}${evidence}`;
   }
@@ -128,15 +128,15 @@ export function runtimeModelErrorMessage(error: RuntimeError): string {
   const detail = sanitizeDisplayText(error.message);
   switch (error.status) {
     case 401:
-      return `Runtime rejected the model/provider refresh as unauthorized. Refresh runtime with the correct local Session token; provider API keys are separate. Detail: ${detail}`;
+      return `Runtime rejected the model/provider refresh as unauthorized. If the local runtime returned 401, refresh with the correct local Session token; if the provider test returned unauthorized, replace the saved provider API key/local credential. These secrets are separate. Detail: ${detail}`;
     case 429:
       return `Provider or runtime rate limit was reported while refreshing models. Wait, then Test provider or Refresh runtime. Detail: ${detail}`;
     case 404:
       return `Runtime or provider model endpoint was not found. Check the local runtime version, provider base URL, and saved model id, then Refresh runtime. Detail: ${detail}`;
     case "timeout":
-      return `Model/provider readiness timed out. Check the local runtime or local provider server, reduce load if needed, then Refresh runtime. Detail: ${detail}`;
+      return `Model/provider readiness timed out. Check the local runtime and provider server; for Ollama/local providers, confirm the loopback server is running and the model is pulled. Reduce load if needed, then Test provider and Refresh runtime. Detail: ${detail}`;
     case "network":
-      return `Model/provider readiness could not reach the local runtime or provider through it. Inspect the local runtime and provider server, then Refresh runtime. Detail: ${detail}`;
+      return `Model/provider readiness could not reach the local runtime or provider through it. Inspect the local runtime, provider base URL, and local server state; for Ollama, start the Ollama service on the saved loopback URL. Then Test provider and Refresh runtime. Detail: ${detail}`;
     default:
       return `Runtime model refresh failed before a send-ready model was selected. Refresh runtime, Test provider, or inspect local runtime logs. Detail: ${detail}`;
   }

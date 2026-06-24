@@ -492,7 +492,7 @@ export function App() {
     ? "Runtime is not connected yet. Refresh runtime or start the IDE-managed local runtime, then return here to send."
     : apiKeyChatReady
       ? activeSelectedDemoMode
-        ? "Demo Mode is ready: send a prompt to try the chat flow with local canned responses. No provider call or API key is used."
+        ? "Demo Mode is ready: send a prompt to try the chat flow with runtime-owned local canned responses. No provider call, provider API key, account, hosted Yet AI backend, cloud workspace, or credit balance is used."
         : activeSelectedLocalProvider
           ? `Ready to send using ${selectedModelDisplayName ?? "the default model"} through the local runtime directly to your local provider.`
           : `Ready to send using ${selectedModelDisplayName ?? "the default model"} through the local runtime.`
@@ -503,8 +503,8 @@ export function App() {
           : experimentalOauthChatReady
             ? "Experimental Codex-like OpenAI account chat is connected through the local runtime. This private-endpoint path is high-risk, not official public OAuth support, and not production-ready."
             : activeModelError
-              ? "Runtime model refresh failed. Refresh runtime again before sending the first message."
-              : "Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK provider/model such as local Ollama or OpenAI-compatible for real answers.";
+              ? "Runtime model refresh failed. Check the local runtime/provider details shown here, Test provider if one is saved, then Refresh runtime again before sending the first message."
+              : "Provider required: choose Demo Mode for a no-key local canned trial, or configure a BYOK provider/model such as local Ollama or OpenAI-compatible for real answers. No production account login is required.";
   const chatModelStatus = apiKeyReadiness.model ? modelStatusText(apiKeyReadiness.model, apiKeyReadiness.provider) : null;
   const chatReadinessEvidence = apiKeyReadiness.model ? modelReadinessEvidenceText(apiKeyReadiness.model, apiKeyReadiness.provider) : null;
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
@@ -2361,7 +2361,7 @@ export function App() {
       title: enabledProviders.length > 0 ? "Provider model required" : "Provider required for first message",
       reason: activeModelError
         ? "Runtime model refresh failed, so no send-ready model can be selected."
-        : "No enabled local Ollama, OpenAI-compatible, or custom provider/model is ready for chat streaming.",
+        : "No enabled local Ollama, OpenAI-compatible, or custom provider/model is ready for chat streaming. Demo Mode remains available only as a local canned-response trial.",
       nextAction: "For local answers without a provider key, choose Ollama local, confirm http://127.0.0.1:11434 and a pulled model id, save, test provider, refresh runtime/model readiness, then send. For hosted OpenAI-compatible answers, use the API-key fallback. Choose Demo Mode only to try the chat flow without provider calls.",
       actions: [{ kind: "enable_demo_mode", label: demoModeToggleLabel }, { kind: "api_key_fallback", label: "Use OpenAI API key fallback" }, { kind: "refresh_runtime", label: "Refresh runtime" }],
       notes,
@@ -4516,12 +4516,12 @@ function providerTestAction(status: ProviderTestState["status"]): string {
       return "Local runtime reached the provider. For Ollama, missing model errors mean the model id was not pulled locally yet.";
     case "unauthorized":
     case 401:
-      return "Check that the provider API key was saved in the local runtime and belongs to this provider; do not paste the runtime Session token here.";
+      return "Provider rejected the saved credential. Replace the provider API key/local credential in the local runtime, Test provider again, then Refresh runtime; do not paste the runtime Session token here.";
     case 429:
       return "Provider rate limit or quota reached. Wait, check provider billing/quota, or try another configured model.";
     case "missing_model":
     case 404:
-      return "Model unavailable. Check the saved model id or choose a model returned by your OpenAI-compatible provider.";
+      return "Model unavailable. Check the saved model id, choose a model returned by your provider, or pull/install it locally for Ollama/local servers.";
     case "missing_secret":
       return "Provider API key is missing in the local runtime. Paste the provider key once and save again.";
     case "timeout":
@@ -4529,7 +4529,7 @@ function providerTestAction(status: ProviderTestState["status"]): string {
     case "bad_url":
     case "upstream_error":
     case "network":
-      return "Provider could not be reached through the local runtime. Check the provider base URL, local server, network, or runtime connection.";
+      return "Provider could not be reached through the local runtime. Check the provider base URL, local server, network, or runtime connection; for Ollama, start the local service at the saved loopback URL.";
     default:
       return "Review the saved provider settings and try Refresh runtime. Hosted Yet AI is not required for this check.";
   }

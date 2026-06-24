@@ -1590,7 +1590,7 @@ describe("provider secret boundary", () => {
 
     expect(container?.textContent).toContain("Provider test failed");
     expect(container?.textContent).toContain("unauthorized: Provider authentication failed [redacted]");
-    expect(container?.textContent).toContain("Check that the provider API key was saved in the local runtime");
+    expect(container?.textContent).toContain("Provider rejected the saved credential");
     expect(container?.textContent).toContain("do not paste the runtime Session token here");
     expect(container?.textContent).not.toContain(secret);
     expect(container?.textContent).not.toContain("session-secret");
@@ -1600,8 +1600,8 @@ describe("provider secret boundary", () => {
   it.each([
     [429, "Provider rate limit or quota reached."],
     [404, "Model unavailable. Check the saved model id"],
-    ["missing_model", "Model unavailable. Check the saved model id"],
-    ["unreachable", "Provider could not be reached through the local runtime."],
+    ["missing_model", "pull/install it locally for Ollama/local servers"],
+    ["unreachable", "for Ollama, start the local service at the saved loopback URL"],
   ] as Array<[number | string, string]>)("renders actionable provider test failure copy for %s", async (status, actionCopy) => {
     mockRuntimeResponses({
       ...readyRuntimeOptions(),
@@ -2411,7 +2411,7 @@ describe("host.ready runtime bootstrap", () => {
     expect(text).toContain("Runtime connected — choose the first-message path");
     expect(text).toContain("Provider setup");
     expect(text).toContain("State: Provider required");
-    expect(text).toContain("Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK provider/model such as local Ollama or OpenAI-compatible for real answers.");
+    expect(text).toContain("Provider required: choose Demo Mode for a no-key local canned trial, or configure a BYOK provider/model such as local Ollama or OpenAI-compatible for real answers. No production account login is required.");
     expect(text).toContain("Choose how this first chat should answer.");
     expect(text).toContain("Provider or Demo Mode needed");
     expect(text).toContain("Runtimeconnected");
@@ -5666,7 +5666,7 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("Local provider: choose Ollama local for a direct engine call to http://127.0.0.1:11434, no API key, no hosted Yet AI service, no account, and no cloud workspace.");
     expect(container?.textContent).toContain("OpenAI API-key fallback is the current safe/default real-provider path for first-message GPT; provider setup stays local-first BYOK with no Yet AI hosted backend, account, cloud workspace, or credit balance required.");
     expect(container?.textContent).toContain("State: Provider required");
-    expect(container?.textContent).toContain("Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK provider/model such as local Ollama or OpenAI-compatible for real answers.");
+    expect(container?.textContent).toContain("Provider required: choose Demo Mode for a no-key local canned trial, or configure a BYOK provider/model such as local Ollama or OpenAI-compatible for real answers. No production account login is required.");
     expect(container?.textContent).toContain("For the quickest real-provider path, choose OpenAI API-key fallback, paste a provider API key once, save, test provider, refresh runtime/model readiness");
     expect(container?.textContent).toContain("Provider required for first message");
     expect(container?.textContent).toContain("Why: No enabled local Ollama, OpenAI-compatible, or custom provider/model is ready for chat streaming.");
@@ -5968,7 +5968,7 @@ describe("chat panel", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("State: Provider required");
-    expect(container?.textContent).toContain("Provider required: choose Demo Mode for a no-key local trial, or configure a BYOK provider/model such as local Ollama or OpenAI-compatible for real answers.");
+    expect(container?.textContent).toContain("Provider required: choose Demo Mode for a no-key local canned trial, or configure a BYOK provider/model such as local Ollama or OpenAI-compatible for real answers. No production account login is required.");
     expect(findButton("Send").disabled).toBe(true);
   });
 
@@ -6076,7 +6076,7 @@ describe("chat panel", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("Local Ollama model llama3.2 is not available yet. Start Ollama, pull or choose the model locally, Test provider, then Refresh runtime. Runtime detail: Run ollama pull llama3.2 before sending.");
+    expect(container?.textContent).toContain("Local Ollama model llama3.2 is not available yet. Start Ollama at the saved loopback URL, run ollama pull for this model or choose an installed local model, Test provider, then Refresh runtime. Runtime detail: Run ollama pull llama3.2 before sending.");
     expect(container?.textContent).toContain("Model is not ready yet");
     expect(findButton("Send").disabled).toBe(true);
 
@@ -6113,7 +6113,7 @@ describe("chat panel", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("Provider credentials are required before GPT-4o mini can send. Save the provider API key in the local runtime, then Test provider and Refresh runtime. Runtime detail: Provider login failed [redacted]");
+    expect(container?.textContent).toContain("Provider credentials are required before GPT-4o mini can send. Save the provider API key or local credential in the local runtime, then Test provider and Refresh runtime. If the provider rejected the key, replace the provider key there; do not use the runtime Session token. Runtime detail: Provider login failed [redacted]");
     expect(container?.textContent).toContain("Model status: GPT-4o mini (OpenAI API): missing credentials, Provider login failed [redacted]");
     expect(container?.textContent).toContain("Model is not ready yet");
     expect(container?.textContent).toContain("Next safest action: Test the provider, fix credentials/model readiness locally, then refresh runtime.");
