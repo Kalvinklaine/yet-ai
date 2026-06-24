@@ -147,6 +147,7 @@ try {
   await expectVisibleText(page, "One-shot explicit context bundle attached to the last accepted message and cleared.", "bundle clear after send", 20_000);
   await assertNoRequestsOfType(page, "gui.applyWorkspaceEditRequest", "after proposal before apply click");
   await assertNoIdeAction(page, "runVerificationCommand", "after proposal before verification click");
+  const seenApplyBeforeClick = await hasBridgeMessage(page, (message) => message?.type === "gui.applyWorkspaceEditRequest");
 
   await page.getByRole("button", { name: "Apply reviewed patch" }).click();
   const applyRequest = await waitForBridgeMessage(page, (message) => message?.type === "gui.applyWorkspaceEditRequest");
@@ -157,6 +158,7 @@ try {
   await expectVisibleText(page, "Apply status: applied", "Agent Run apply result", 20_000);
   await assertTraceEntries(page, ["Agent Run apply requested", "Agent Run apply result received"], "Agent Run apply lifecycle trace");
   await assertNoIdeAction(page, "runVerificationCommand", "after apply before verification click");
+  const seenVerificationBeforeClick = await hasBridgeMessage(page, (message) => message?.type === "gui.ideActionRequest" && message?.payload?.action === "runVerificationCommand");
 
   await page.getByRole("button", { name: "Run allowlisted verification" }).click();
   const verificationRequest = await waitForBridgeMessage(page, (message) => message?.type === "gui.ideActionRequest" && message?.payload?.action === "runVerificationCommand");
@@ -192,12 +194,14 @@ try {
   assert.equal(storageText.includes(fixture.explicitContext.selection.text), false, "Agent Run raw context persisted in browser storage");
   assertNoRawMarkers(JSON.stringify({ localStorage: pageState.localStorage, sessionStorage: pageState.sessionStorage }), "browser storage");
   assertNoRawMarkers(sanitizeDomForEvidence(pageState.body), "DOM sanitized final report evidence");
-  const dogfoodReport = createSanitizedDogfoodReport({ storageText, bridgeEvidence, runtimeRequests });
+  const dogfoodReport = createSanitizedDogfoodReport({ storageText, bridgeEvidence, runtimeRequests, seenApplyBeforeClick, seenVerificationBeforeClick });
   assertSanitizedDogfoodReport(dogfoodReport);
   assert.equal(dogfoodReport.flow.manualSequence.join(" > "), "context_selected > prompt_sent > proposal_reviewed > apply_clicked > apply_result_recorded > verification_clicked > verification_result_recorded");
   assert.equal(dogfoodReport.safety.networkLoopbackOnly, true);
   assert.equal(dogfoodReport.safety.noAutoApply, true);
   assert.equal(dogfoodReport.safety.noAutoVerification, true);
+  assert.equal(dogfoodReport.evidence.seenApplyBeforeClick, false);
+  assert.equal(dogfoodReport.evidence.seenVerificationBeforeClick, false);
   assert.equal(dogfoodReport.safety.browserStorageContainsReport, false);
   assert.equal(dogfoodReport.evidence.verificationOutput, "sanitized status only");
   assertAgentRunBuiltGuiFixtureSafe({ lastCommandBody, messages: bridgeEvidence, runtimeRequests, dogfoodReport }, "Agent Run dogfood evidence");
@@ -537,6 +541,13 @@ async function waitForBridgeMessage(page, predicate) {
   }, predicate.toString());
 }
 
+async function hasBridgeMessage(page, predicate) {
+  return await page.evaluate((predicateText) => {
+    const matcher = new Function("message", `return (${predicateText})(message);`);
+    return (window.__yetAiVsCodeMessages ?? []).some((message) => matcher(message));
+  }, predicate.toString());
+}
+
 async function dispatchHostMessage(page, message) {
   await page.evaluate((hostMessage) => {
     window.dispatchEvent(new MessageEvent("message", { data: hostMessage }));
@@ -705,7 +716,7 @@ function redactUrl(value) {
   }
 }
 
-function createSanitizedDogfoodReport({ storageText, bridgeEvidence, runtimeRequests }) {
+function createSanitizedDogfoodReport({ storageText, bridgeEvidence, runtimeRequests, seenApplyBeforeClick, seenVerificationBeforeClick }) {
   const applyRequests = bridgeEvidence.filter((message) => message.type === "gui.applyWorkspaceEditRequest");
   const verificationRequests = bridgeEvidence.filter((message) => message.type === "gui.ideActionRequest" && message.action === "runVerificationCommand");
   return {
@@ -731,8 +742,8 @@ function createSanitizedDogfoodReport({ storageText, bridgeEvidence, runtimeRequ
     },
     safety: {
       networkLoopbackOnly: runtimeRequests.every((request) => request.url.startsWith("http://127.0.0.1:")),
-      noAutoApply: applyRequests.length === 1,
-      noAutoVerification: verificationRequests.length === 1,
+      noAutoApply: !seenApplyBeforeClick,
+      noAutoVerification: !seenVerificationBeforeClick,
       commandIdOnlyVerification: verificationRequests.every((message) => message.commandId === fixture.commandId && !message.workspaceRelativePath),
       browserStorageContainsReport: storageText.includes("agent_run_one_step_dogfood_report"),
       rawPromptsAbsent: true,
@@ -746,6 +757,8 @@ function createSanitizedDogfoodReport({ storageText, bridgeEvidence, runtimeRequ
       bridgeMessageCount: bridgeEvidence.length,
       applyRequestCount: applyRequests.length,
       verificationRequestCount: verificationRequests.length,
+      seenApplyBeforeClick,
+      seenVerificationBeforeClick,
       contextEvidence: "explicit active-file excerpt label only",
       proposalEvidence: "safe-edit metadata only",
       applyEvidence: "status and affected-file label only",
