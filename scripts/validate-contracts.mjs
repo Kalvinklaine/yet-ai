@@ -236,11 +236,23 @@ const invalidMappings = [
     "packages/contracts/schemas/engine/project-memory-create-request.schema.json"
   ],
   [
+    "packages/contracts/examples-invalid/engine/project-memory-create-request-task-label-raw-prompt.json",
+    "packages/contracts/schemas/engine/project-memory-create-request.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/project-memory-create-request-session-label-private-path.json",
+    "packages/contracts/schemas/engine/project-memory-create-request.schema.json"
+  ],
+  [
     "packages/contracts/examples-invalid/engine/project-memory-note-private-path.json",
     "packages/contracts/schemas/engine/project-memory-note.schema.json"
   ],
   [
     "packages/contracts/examples-invalid/engine/project-memory-note-oversized-text.json",
+    "packages/contracts/schemas/engine/project-memory-note.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/project-memory-note-task-label-secret.json",
     "packages/contracts/schemas/engine/project-memory-note.schema.json"
   ],
   [
@@ -281,6 +293,10 @@ const invalidMappings = [
   ],
   [
     "packages/contracts/examples-invalid/engine/project-memory-select-context-response-browser-storage.json",
+    "packages/contracts/schemas/engine/project-memory-select-context-response.schema.json"
+  ],
+  [
+    "packages/contracts/examples-invalid/engine/project-memory-select-context-response-attach-trace-provider-response.json",
     "packages/contracts/schemas/engine/project-memory-select-context-response.schema.json"
   ],
   [

@@ -1,0 +1,10 @@
+{
+  "protocolVersion": "2026-06-17",
+  "title": "Task note",
+  "text": "Keep this as a curated local reminder.",
+  "tags": [
+    "architecture"
+  ],
+  "source": "manual",
+  "taskLabel": "raw prompt from coding task"
+}

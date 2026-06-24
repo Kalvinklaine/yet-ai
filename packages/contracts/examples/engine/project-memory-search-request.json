@@ -4,5 +4,7 @@
   "tags": [
     "architecture"
   ],
-  "limit": 5
+  "limit": 5,
+  "taskLabel": "S55 task linked memory",
+  "sessionLabel": "guided coding task T248"
 }

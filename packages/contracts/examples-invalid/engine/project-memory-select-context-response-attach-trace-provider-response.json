@@ -8,11 +8,9 @@
       {
         "noteId": "mem_architecture_notes_1",
         "title": "Architecture decision reminders",
-        "text": "Keep provider setup local first and describe user selected notes as optional prompt context only.",
+        "text": "Keep provider setup local first.",
         "truncated": false,
-        "taskLabel": "S55 task linked memory",
-        "sessionLabel": "guided coding task T248",
-        "attachTraceLabel": "explicit user selected memory note"
+        "attachTraceLabel": "provider response selected automatically"
       }
     ]
   }

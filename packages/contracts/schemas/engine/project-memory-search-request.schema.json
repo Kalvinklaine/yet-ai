@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.yet-ai.example/contracts/engine/project-memory-search-request.schema.json",
   "title": "Project Memory Search Request",
-  "description": "Engine-owned local project memory contract. Notes are user-created sanitized bounded text only; no raw provider responses, secrets, private paths, file bodies, embeddings, background index, workspace scan, assistant-triggered save, browser storage persistence, or cloud sync.",
+  "description": "Engine-owned local project memory contract. Notes are user-created sanitized bounded text only; no raw provider responses, secrets, private paths, file bodies, embeddings, background index, workspace scan, assistant-triggered save, browser storage persistence, automatic attachment, or cloud sync.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -23,6 +23,12 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 20
+    },
+    "taskLabel": {
+      "$ref": "#/$defs/taskLabel"
+    },
+    "sessionLabel": {
+      "$ref": "#/$defs/sessionLabel"
     }
   },
   "$defs": {
@@ -143,8 +149,50 @@
         },
         "updatedAt": {
           "$ref": "#/$defs/timestamp"
+        },
+        "taskLabel": {
+          "$ref": "#/$defs/taskLabel"
+        },
+        "sessionLabel": {
+          "$ref": "#/$defs/sessionLabel"
         }
       }
+    },
+    "taskLabel": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      ]
+    },
+    "sessionLabel": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      ]
+    },
+    "attachTraceLabel": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      ]
     }
   }
 }

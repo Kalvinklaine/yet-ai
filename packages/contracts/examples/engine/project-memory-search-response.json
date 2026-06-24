@@ -15,7 +15,9 @@
         ],
         "source": "manual",
         "createdAt": "2026-06-17T12:00:00Z",
-        "updatedAt": "2026-06-17T12:05:00Z"
+        "updatedAt": "2026-06-17T12:05:00Z",
+        "taskLabel": "S55 task linked memory",
+        "sessionLabel": "guided coding task T248"
       },
       "scoreLabel": "text"
     }

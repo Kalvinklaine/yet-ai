@@ -6,5 +6,7 @@
     "architecture",
     "local-first"
   ],
-  "source": "manual"
+  "source": "manual",
+  "taskLabel": "S55 task linked memory",
+  "sessionLabel": "guided coding task T248"
 }
