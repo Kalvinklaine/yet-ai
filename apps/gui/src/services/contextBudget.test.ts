@@ -59,21 +59,21 @@ describe("contextBudget service", () => {
       proposalMetadata: [{ label: "Edit proposal metadata · Update panel", charCount: 19, itemCount: 2 }],
     });
 
-    expect(summary.totalIncludedItems).toBe(8);
-    expect(summary.totalIncludedCharacters).toBe(205);
+    expect(summary.totalIncludedItems).toBe(7);
+    expect(summary.totalIncludedCharacters).toBe(178);
     expect(summary.sources.map((source) => source.kind)).toEqual(["goal", "active_file_excerpt", "explicit_context_bundle", "proposal_metadata"]);
     expect(summary.labels).toEqual(expect.arrayContaining([
-      expect.stringContaining("vscode src/active.ts"),
       expect.stringContaining("project snippet · apps/gui/src/App.tsx"),
       expect.stringContaining("project memory · Architecture note [redacted]"),
       expect.stringContaining("verification output · gui-app-tests · failed"),
-      expect.stringContaining("Edit proposal metadata · Update panel"),
     ]));
+    expect(summary.labels.join("\n")).not.toContain("vscode src/active.ts");
+    expect(summary.labels.join("\n")).not.toContain("Edit proposal metadata · Update panel");
     expect(summary.labels.join("\n")).not.toContain("expected true to be false");
     expect(summary.labels.join("\n")).not.toContain("Keep provider settings local only");
     expect(summary.labels.join("\n")).not.toContain("function App() { return null; }");
     expect(summary.labels.join("\n")).not.toContain("access_token");
-    expect(summary.warnings.map((warning) => warning.code)).toContain("too_many_items");
+    expect(summary.warnings.map((warning) => warning.code)).not.toContain("too_many_items");
   });
 
   it("warns for large context omitted and excluded items", () => {
@@ -95,6 +95,58 @@ describe("contextBudget service", () => {
       expect.objectContaining({ code: "omitted_context" }),
       expect.objectContaining({ code: "excluded_context" }),
     ]));
+  });
+
+  it("matches send precedence when explicit bundle and standalone active excerpt are both selected", () => {
+    const summary = buildContextBudgetSummary({
+      goal: "Fix send precedence",
+      activeFileExcerpt: activeExcerpt,
+      includeActiveFileExcerpt: true,
+      explicitContextItems: [snippetItem],
+      includeExplicitContextBundle: true,
+    });
+
+    expect(summary.totalIncludedItems).toBe(2);
+    expect(summary.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "active_file_excerpt", included: false }),
+      expect.objectContaining({ kind: "explicit_context_bundle", included: true, itemCount: 1 }),
+    ]));
+    expect(summary.omittedItemCount).toBe(1);
+    expect(summary.labels.join("\n")).toContain("project snippet · apps/gui/src/App.tsx");
+    expect(summary.labels.join("\n")).not.toContain("src/active.ts");
+    expect(summary.warnings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "omitted_context" })]));
+  });
+
+  it("does not list omitted bundle or active excerpt labels as sent", () => {
+    const summary = buildContextBudgetSummary({
+      goal: "Review context",
+      activeFileExcerpt: activeExcerpt,
+      includeActiveFileExcerpt: false,
+      explicitContextItems: [snippetItem],
+      includeExplicitContextBundle: false,
+    });
+
+    expect(summary.totalIncludedItems).toBe(1);
+    expect(summary.omittedItemCount).toBe(2);
+    expect(summary.labels).toEqual([]);
+    expect(summary.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "active_file_excerpt", included: false }),
+      expect.objectContaining({ kind: "explicit_context_bundle", included: false }),
+    ]));
+  });
+
+  it("warns on actual context item count without counting goal or proposal metadata", () => {
+    const summary = buildContextBudgetSummary({
+      goal: "Task goal should not count toward context max",
+      explicitContextItems: [activeItem, snippetItem, memoryItem, verificationItem],
+      includeExplicitContextBundle: true,
+      proposalMetadata: [{ label: "Edit proposal metadata · four edits", itemCount: 4, charCount: 40 }],
+      maxItems: 4,
+    });
+
+    expect(summary.totalIncludedItems).toBe(9);
+    expect(summary.labels).toHaveLength(4);
+    expect(summary.warnings.map((warning) => warning.code)).not.toContain("too_many_items");
   });
 
   it("keeps computation deterministic and local for empty context", () => {

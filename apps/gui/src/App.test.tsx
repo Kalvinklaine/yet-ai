@@ -3057,7 +3057,8 @@ describe("active editor attached context", () => {
     const sentPanel = whatWillBeSentPanel();
     expect(sentPanel.textContent).toContain("What will be sent");
     expect(sentPanel.textContent).toContain("Draft prompt: 31 chars");
-    expect(sentPanel.textContent).toContain("Included context: 3 items");
+    expect(sentPanel.textContent).toContain("Included context: 2 items");
+    expect(sentPanel.textContent).toContain("Omitted: 1");
     expect(sentPanel.textContent).toContain("Task goal");
     expect(sentPanel.textContent).toContain("Explicit context bundle: included · 1 item");
     expect(sentPanel.textContent).toContain("vscode src/editor.ts");
@@ -3071,6 +3072,45 @@ describe("active editor attached context", () => {
     expect(browserStorageDump()).not.toContain(verificationBody);
     expect(browserStorageDump()).not.toContain("Fix context budget UX");
     expect(browserStorageDump()).not.toContain("Please review selected context.");
+  });
+
+  it("previews explicit bundle precedence over standalone active excerpt before send", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      setTextareaByPlaceholder("Describe the coding task goal", "Fix context precedence");
+      setTextareaValue(chatInput(), "Send the selected bundle.");
+    });
+    await act(async () => {
+      findButton("Attach active file excerpt").click();
+    });
+    await dispatchHostIdeActionResult("gui-active-file-excerpt-1", activeFileExcerptResultPayload({ path: "src/standalone.ts", text: "standalone excerpt body" }));
+    await act(async () => {
+      findButton("GUI app tests").click();
+    });
+    await dispatchHostIdeActionResult("gui-verification-command-2", { status: "failed", message: "GUI tests failed.", cloudRequired: false, action: "runVerificationCommand", commandId: "gui-app-tests", exitCode: 1, durationMs: 12, outputTail: "verification output body", truncated: false });
+    await act(async () => {
+      findButton("Attach verification result to next message").click();
+    });
+
+    const sentPanel = whatWillBeSentPanel();
+    expect(sentPanel.textContent).toContain("vscode src/standalone.ts");
+    expect(sentPanel.textContent).toContain("omitted · 1 item");
+    expect(sentPanel.textContent).toContain("Explicit context bundle: included · 1 item");
+    expect(sentPanel.textContent).toContain("verification output · gui-app-tests");
+    expect(sentPanel.textContent).not.toContain("What will be sent item labelssrc/standalone.ts");
+
+    fetchMock.mockClear();
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+
+    expect(lastUserMessageBody().payload?.context).toMatchObject({ kind: "explicit_context_bundle", items: [{ kind: "verification_output", commandId: "gui-app-tests" }] });
   });
 
   it("shows coding task recovery copy when provider is not ready", async () => {

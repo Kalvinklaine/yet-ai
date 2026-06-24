@@ -1,5 +1,5 @@
 import type { ActiveFileExcerptAttachment } from "../bridge/bridgeAdapter";
-import { activeFileExcerptSummary, explicitContextBundleItemTextLength, explicitContextBundleMaxItems, explicitContextBundleMaxTextCharacters, summarizeExplicitContextBundleItem, type ExplicitContextBundleItem } from "./activeEditorContext";
+import { activeFileExcerptSummary, activeFileExcerptToBundleItem, explicitContextBundleItemTextLength, explicitContextBundleMaxItems, explicitContextBundleMaxTextCharacters, summarizeExplicitContextBundleItem, type ExplicitContextBundleItem } from "./activeEditorContext";
 import { sanitizeDisplayText } from "./redaction";
 
 export type ContextBudgetSourceKind = "goal" | "active_file_excerpt" | "explicit_context_bundle" | "proposal_metadata";
@@ -54,6 +54,10 @@ export function buildContextBudgetSummary(input: ContextBudgetInput): ContextBud
   const largeContextWarningCharacters = input.largeContextWarningCharacters ?? defaultLargeContextWarningCharacters;
   const goalCharacters = input.goal.trim().length;
   const goalIncluded = goalCharacters > 0;
+  const explicitBundleIncluded = input.includeExplicitContextBundle && input.explicitContextItems.length > 0;
+  const activeFileExcerptRepresentedInBundle = Boolean(input.activeFileExcerpt && explicitBundleIncluded && input.explicitContextItems.some((item) => item.key === activeFileExcerptToBundleItem(input.activeFileExcerpt as ActiveFileExcerptAttachment).key));
+  const standaloneActiveFileExcerptIncluded = Boolean(input.activeFileExcerpt && input.includeActiveFileExcerpt === true && !explicitBundleIncluded);
+  const activeFileExcerptOmitted = Boolean(input.activeFileExcerpt && !standaloneActiveFileExcerptIncluded && !activeFileExcerptRepresentedInBundle);
   const sources: ContextBudgetSourceSummary[] = [
     {
       kind: "goal",
@@ -64,13 +68,13 @@ export function buildContextBudgetSummary(input: ContextBudgetInput): ContextBud
     },
   ];
 
-  if (input.activeFileExcerpt) {
+  if (input.activeFileExcerpt && !activeFileExcerptRepresentedInBundle) {
     sources.push({
       kind: "active_file_excerpt",
       label: activeFileExcerptSummary(input.activeFileExcerpt),
       itemCount: 1,
       charCount: input.activeFileExcerpt.text.length,
-      included: input.includeActiveFileExcerpt === true,
+      included: standaloneActiveFileExcerptIncluded,
     });
   }
 
@@ -80,7 +84,7 @@ export function buildContextBudgetSummary(input: ContextBudgetInput): ContextBud
       label: "Explicit context bundle",
       itemCount: input.explicitContextItems.length,
       charCount: input.explicitContextItems.reduce((total, item) => total + explicitContextBundleItemTextLength(item), 0),
-      included: input.includeExplicitContextBundle,
+      included: explicitBundleIncluded,
     });
   }
 
@@ -98,25 +102,21 @@ export function buildContextBudgetSummary(input: ContextBudgetInput): ContextBud
     });
   }
 
-  const labels = input.explicitContextItems.map((item) => summarizeExplicitContextBundleItem(item).line);
-  if (input.activeFileExcerpt) {
+  const labels = explicitBundleIncluded ? input.explicitContextItems.map((item) => summarizeExplicitContextBundleItem(item).line) : [];
+  if (standaloneActiveFileExcerptIncluded && input.activeFileExcerpt) {
     labels.unshift(activeFileExcerptSummary(input.activeFileExcerpt));
-  }
-  for (const metadata of input.proposalMetadata ?? []) {
-    if (metadata.label.trim()) {
-      labels.push(sanitizeDisplayText(metadata.label));
-    }
   }
 
   const includedSources = sources.filter((source) => source.included);
   const totalIncludedItems = includedSources.reduce((total, source) => total + source.itemCount, 0);
   const totalIncludedCharacters = includedSources.reduce((total, source) => total + source.charCount, 0);
-  const omittedItemCount = sources.filter((source) => !source.included).reduce((total, source) => total + source.itemCount, 0);
+  const omittedItemCount = sources.filter((source) => !source.included).reduce((total, source) => total + source.itemCount, 0) + (activeFileExcerptOmitted && !sources.some((source) => source.kind === "active_file_excerpt") ? 1 : 0);
   const excludedItemCount = Math.max(0, input.excludedItemCount ?? 0);
   const warnings: ContextBudgetWarning[] = [];
+  const includedContextItems = sources.filter((source) => source.included && (source.kind === "active_file_excerpt" || source.kind === "explicit_context_bundle")).reduce((total, source) => total + source.itemCount, 0);
 
-  if (totalIncludedItems > maxItems) {
-    warnings.push({ code: "too_many_items", message: `Context has ${totalIncludedItems} included items; keep it to ${maxItems} or fewer before Send.` });
+  if (includedContextItems > maxItems) {
+    warnings.push({ code: "too_many_items", message: `Context has ${includedContextItems} included context items; keep it to ${maxItems} or fewer before Send.` });
   }
   if (totalIncludedCharacters > largeContextWarningCharacters) {
     warnings.push({ code: "large_context", message: `Context has ${totalIncludedCharacters} included characters; narrow it before Send if the model reports context pressure.` });
