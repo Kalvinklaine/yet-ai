@@ -1,0 +1,445 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/agent-run-trace-export.schema.json",
+  "title": "Agent Run Trace Export",
+  "description": "Sanitized local one-step Agent Run trace export/report. It is metadata-only and records lifecycle transitions, counts, booleans, labels, timings, command IDs, and apply/verification statuses without raw prompts, provider responses, file bodies, diffs, verification output, secrets, command strings, cwd/env, or private paths.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "type",
+    "runId",
+    "generatedAt",
+    "cloudRequired",
+    "providerAccess",
+    "stateTransitions",
+    "summary",
+    "context",
+    "proposal",
+    "apply",
+    "verification",
+    "safetyReview"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "2026-06-24"
+    },
+    "type": {
+      "type": "string",
+      "const": "agent_run.trace_export"
+    },
+    "runId": {
+      "$ref": "#/$defs/safeId"
+    },
+    "generatedAt": {
+      "$ref": "#/$defs/utcTimestamp"
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "providerAccess": {
+      "type": "string",
+      "const": "direct"
+    },
+    "hostSurface": {
+      "$ref": "#/$defs/safeLabel"
+    },
+    "modelLabel": {
+      "$ref": "#/$defs/safeLabel"
+    },
+    "stateTransitions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": {
+        "$ref": "#/$defs/stateTransition"
+      }
+    },
+    "summary": {
+      "$ref": "#/$defs/runSummary"
+    },
+    "context": {
+      "$ref": "#/$defs/contextSummary"
+    },
+    "proposal": {
+      "$ref": "#/$defs/proposalSummary"
+    },
+    "apply": {
+      "$ref": "#/$defs/applySummary"
+    },
+    "verification": {
+      "$ref": "#/$defs/verificationSummary"
+    },
+    "safetyReview": {
+      "$ref": "#/$defs/safetyReview"
+    }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Kk][Cc][Ee]|[Rr][Ee][Ff][Rr][Ee][Ss][Hh]|[Aa][Cc][Cc][Ee][Ss][Ss][-_ ]?[Tt][Oo][Kk][Ee][Nn]|[Aa][Uu][Tt][Hh][-_ ]?[Cc][Oo][Dd][Ee]|[Cc][Hh][Aa][Ii][Nn][-_ ]?[Oo][Ff][-_ ]?[Tt][Hh][Oo][Uu][Gg][Hh][Tt]|[Rr][Aa][Ww][-_ ]?(?:[Pp][Rr][Oo][Mm][Pp][Tt]|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Oo][Uu][Tt][Pp][Uu][Tt]|[Ff][Ii][Ll][Ee]|[Dd][Ii][Ff][Ff]|[Pp][Aa][Tt][Cc][Hh]|[Ll][Oo][Gg])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][-_ ]?(?:[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Bb][Oo][Dd][Yy]|[Tt][Oo][Oo][Ll]|[Cc][Aa][Ll][Ll])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee][-_ ]?(?:[Ff][Ii][Ll][Ee]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Dd][Ii][Ff][Ff]|[Pp][Aa][Tt][Cc][Hh]|[Ss][Hh][Ee][Ll][Ll]|[Gg][Ii][Tt]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Aa][Rr][Gg][Ss]|[Ee][Xx][Ee][Cc]|[Cc][Mm][Dd]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Nn][Pp][Mm]\\s+[Rr][Uu][Nn]|[Cc][Aa][Rr][Gg][Oo]\\s+(?:[Cc][Hh][Ee][Cc][Kk]|[Tt][Ee][Ss][Tt])|[Aa][Pp][Pp][Ll][Yy][-_ ]?[Pp][Aa][Tt][Cc][Hh]|[Aa][Uu][Tt][Oo][-_ ]?(?:[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Vv][Ee][Rr][Ii][Ff][Yy]|[Ff][Ii][Xx]|[Rr][Ee][Pp][Aa][Ii][Rr])|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh]|[Ss][Cc][Aa][Nn])|[Ii][Nn][Dd][Ee][Xx][-_ ]?[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee]|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|(?:[Aa][Uu][Tt][Hh]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?)\\.json|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "safeLabel": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[^\\r\\n\\t\\u0000-\\u001f\\u007f]+$"
+        }
+      ]
+    },
+    "safeMessage": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        }
+      ]
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "durationMs": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 86400000
+    },
+    "boundedCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000
+    },
+    "stateTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "at",
+        "from",
+        "to",
+        "durationMs",
+        "label"
+      ],
+      "properties": {
+        "at": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "from": {
+          "$ref": "#/$defs/runState"
+        },
+        "to": {
+          "$ref": "#/$defs/runState"
+        },
+        "durationMs": {
+          "$ref": "#/$defs/durationMs"
+        },
+        "label": {
+          "$ref": "#/$defs/safeLabel"
+        }
+      }
+    },
+    "runState": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "context_ready",
+        "sent",
+        "response_visible",
+        "proposal_visible",
+        "apply_ready",
+        "applied",
+        "verification_ready",
+        "verification_visible",
+        "summarized",
+        "blocked",
+        "failed"
+      ]
+    },
+    "runSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "finalState",
+        "totalDurationMs",
+        "manualSendConfirmed",
+        "manualApplyConfirmed",
+        "manualVerificationConfirmed",
+        "resultLabel"
+      ],
+      "properties": {
+        "finalState": {
+          "$ref": "#/$defs/runState"
+        },
+        "totalDurationMs": {
+          "$ref": "#/$defs/durationMs"
+        },
+        "manualSendConfirmed": {
+          "type": "boolean"
+        },
+        "manualApplyConfirmed": {
+          "type": "boolean"
+        },
+        "manualVerificationConfirmed": {
+          "type": "boolean"
+        },
+        "resultLabel": {
+          "$ref": "#/$defs/safeLabel"
+        },
+        "failureLabel": {
+          "$ref": "#/$defs/safeMessage"
+        }
+      }
+    },
+    "contextSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "explicitContextAttached",
+        "contextItemCount",
+        "contextLabels",
+        "oneShotContextCleared"
+      ],
+      "properties": {
+        "explicitContextAttached": {
+          "type": "boolean"
+        },
+        "contextItemCount": {
+          "$ref": "#/$defs/boundedCount"
+        },
+        "contextLabels": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/contextLabel"
+          }
+        },
+        "oneShotContextCleared": {
+          "type": "boolean"
+        },
+        "previewTokenEstimate": {
+          "$ref": "#/$defs/boundedCount"
+        }
+      }
+    },
+    "contextLabel": {
+      "type": "string",
+      "enum": [
+        "active-file-excerpt",
+        "workspace-snippet",
+        "memory-note",
+        "verification-summary",
+        "manual-note",
+        "intentionally-omitted"
+      ]
+    },
+    "proposalSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "reviewable",
+        "planStepCount",
+        "riskCount",
+        "touchedFileCount",
+        "editCount"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "not_requested",
+            "detected",
+            "reviewable",
+            "rejected",
+            "absent",
+            "failed"
+          ]
+        },
+        "reviewable": {
+          "type": "boolean"
+        },
+        "planStepCount": {
+          "$ref": "#/$defs/boundedCount"
+        },
+        "riskCount": {
+          "$ref": "#/$defs/boundedCount"
+        },
+        "touchedFileCount": {
+          "$ref": "#/$defs/boundedCount"
+        },
+        "editCount": {
+          "$ref": "#/$defs/boundedCount"
+        },
+        "rejectionReason": {
+          "type": "string",
+          "enum": [
+            "malformed",
+            "unsafe_metadata",
+            "unsafe_edit_payload",
+            "stale_correlation",
+            "wrong_chat",
+            "settings_changed",
+            "none"
+          ]
+        }
+      }
+    },
+    "applySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "checkpointStatus",
+        "requestIdLabel",
+        "durationMs"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "not_started",
+            "blocked",
+            "applied",
+            "denied",
+            "rejected",
+            "failed",
+            "skipped"
+          ]
+        },
+        "checkpointStatus": {
+          "type": "string",
+          "enum": [
+            "verified",
+            "missing",
+            "stale",
+            "blocked",
+            "not_needed"
+          ]
+        },
+        "requestIdLabel": {
+          "$ref": "#/$defs/safeLabel"
+        },
+        "durationMs": {
+          "$ref": "#/$defs/durationMs"
+        }
+      }
+    },
+    "verificationSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "commandId",
+        "exitCode",
+        "durationMs",
+        "truncated"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "not_started",
+            "running",
+            "passed",
+            "failed",
+            "blocked",
+            "skipped"
+          ]
+        },
+        "commandId": {
+          "type": "string",
+          "enum": [
+            "repository-check",
+            "gui-app-tests",
+            "engine-chat-tests",
+            "none"
+          ]
+        },
+        "exitCode": {
+          "type": "integer",
+          "minimum": -1,
+          "maximum": 255
+        },
+        "durationMs": {
+          "$ref": "#/$defs/durationMs"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "resultLabel": {
+          "$ref": "#/$defs/safeLabel"
+        }
+      }
+    },
+    "safetyReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rawPromptsIncluded",
+        "rawProviderResponsesIncluded",
+        "fileBodiesIncluded",
+        "diffsIncluded",
+        "verificationOutputIncluded",
+        "secretsIncluded",
+        "privatePathsIncluded",
+        "commandStringsIncluded",
+        "safeToShare"
+      ],
+      "properties": {
+        "rawPromptsIncluded": {
+          "type": "boolean",
+          "const": false
+        },
+        "rawProviderResponsesIncluded": {
+          "type": "boolean",
+          "const": false
+        },
+        "fileBodiesIncluded": {
+          "type": "boolean",
+          "const": false
+        },
+        "diffsIncluded": {
+          "type": "boolean",
+          "const": false
+        },
+        "verificationOutputIncluded": {
+          "type": "boolean",
+          "const": false
+        },
+        "secretsIncluded": {
+          "type": "boolean",
+          "const": false
+        },
+        "privatePathsIncluded": {
+          "type": "boolean",
+          "const": false
+        },
+        "commandStringsIncluded": {
+          "type": "boolean",
+          "const": false
+        },
+        "safeToShare": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

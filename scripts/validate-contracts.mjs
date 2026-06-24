@@ -47,6 +47,7 @@ const mappings = [
   ["packages/contracts/examples/engine/agent-progress-event-manual-runner-verification.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
   ["packages/contracts/examples/engine/manual-runner-plan-proposal.json", "packages/contracts/schemas/engine/manual-runner-plan-proposal.schema.json"],
   ["packages/contracts/examples/engine/agent-run-plan-to-patch-proposal.json", "packages/contracts/schemas/engine/agent-run-plan-to-patch-proposal.schema.json"],
+  ["packages/contracts/examples/engine/agent-run-trace-export.json", "packages/contracts/schemas/engine/agent-run-trace-export.schema.json"],
   ["packages/contracts/examples/engine/coding-task-session.json", "packages/contracts/schemas/engine/coding-task-session.schema.json"],
   ...[
     "experimental-sandbox-session-disabled.json",
@@ -866,6 +867,14 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/agent-run-plan-to-patch-proposal.schema.json"
+  ]),
+  ...[
+    "agent-run-trace-export-raw-prompt.json",
+    "agent-run-trace-export-private-path.json",
+    "agent-run-trace-export-command-string.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/agent-run-trace-export.schema.json"
   ]),
   ...[
     "coding-task-session-unknown-field.json",

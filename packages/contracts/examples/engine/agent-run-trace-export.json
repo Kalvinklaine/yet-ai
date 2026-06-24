@@ -1,0 +1,92 @@
+{
+  "version": "2026-06-24",
+  "type": "agent_run.trace_export",
+  "runId": "agent-run-local-001",
+  "generatedAt": "2026-06-24T16:20:00Z",
+  "cloudRequired": false,
+  "providerAccess": "direct",
+  "hostSurface": "browser dev surface",
+  "modelLabel": "local model family",
+  "stateTransitions": [
+    {
+      "at": "2026-06-24T16:10:00Z",
+      "from": "draft",
+      "to": "context_ready",
+      "durationMs": 1200,
+      "label": "Context summary prepared"
+    },
+    {
+      "at": "2026-06-24T16:11:00Z",
+      "from": "context_ready",
+      "to": "sent",
+      "durationMs": 500,
+      "label": "User confirmed send"
+    },
+    {
+      "at": "2026-06-24T16:14:00Z",
+      "from": "proposal_visible",
+      "to": "applied",
+      "durationMs": 2300,
+      "label": "User confirmed apply"
+    },
+    {
+      "at": "2026-06-24T16:18:00Z",
+      "from": "verification_visible",
+      "to": "summarized",
+      "durationMs": 800,
+      "label": "Result summarized"
+    }
+  ],
+  "summary": {
+    "finalState": "summarized",
+    "totalDurationMs": 480000,
+    "manualSendConfirmed": true,
+    "manualApplyConfirmed": true,
+    "manualVerificationConfirmed": true,
+    "resultLabel": "Completed with sanitized metadata"
+  },
+  "context": {
+    "explicitContextAttached": true,
+    "contextItemCount": 2,
+    "contextLabels": [
+      "active-file-excerpt",
+      "memory-note"
+    ],
+    "oneShotContextCleared": true,
+    "previewTokenEstimate": 540
+  },
+  "proposal": {
+    "status": "reviewable",
+    "reviewable": true,
+    "planStepCount": 3,
+    "riskCount": 1,
+    "touchedFileCount": 2,
+    "editCount": 4,
+    "rejectionReason": "none"
+  },
+  "apply": {
+    "status": "applied",
+    "checkpointStatus": "verified",
+    "requestIdLabel": "apply-request-1",
+    "durationMs": 1800
+  },
+  "verification": {
+    "status": "passed",
+    "commandId": "repository-check",
+    "exitCode": 0,
+    "durationMs": 42000,
+    "truncated": false,
+    "resultLabel": "Passed with short status only"
+  },
+  "safetyReview": {
+    "rawPromptsIncluded": false,
+    "rawProviderResponsesIncluded": false,
+    "fileBodiesIncluded": false,
+    "diffsIncluded": false,
+    "verificationOutputIncluded": false,
+    "secretsIncluded": false,
+    "privatePathsIncluded": false,
+    "commandStringsIncluded": false,
+    "safeToShare": true
+  }
+}

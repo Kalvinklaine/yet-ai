@@ -1,0 +1,65 @@
+{
+  "version": "2026-06-24",
+  "type": "agent_run.trace_export",
+  "runId": "agent-run-local-private-path",
+  "generatedAt": "2026-06-24T16:20:00Z",
+  "cloudRequired": false,
+  "providerAccess": "direct",
+  "stateTransitions": [
+    {
+      "at": "2026-06-24T16:10:00Z",
+      "from": "draft",
+      "to": "context_ready",
+      "durationMs": 1200,
+      "label": "Saved screenshot at /Users/example/private.png"
+    }
+  ],
+  "summary": {
+    "finalState": "failed",
+    "totalDurationMs": 1200,
+    "manualSendConfirmed": false,
+    "manualApplyConfirmed": false,
+    "manualVerificationConfirmed": false,
+    "resultLabel": "Unsafe export"
+  },
+  "context": {
+    "explicitContextAttached": false,
+    "contextItemCount": 0,
+    "contextLabels": [
+      "intentionally-omitted"
+    ],
+    "oneShotContextCleared": false
+  },
+  "proposal": {
+    "status": "absent",
+    "reviewable": false,
+    "planStepCount": 0,
+    "riskCount": 0,
+    "touchedFileCount": 0,
+    "editCount": 0
+  },
+  "apply": {
+    "status": "skipped",
+    "checkpointStatus": "not_needed",
+    "requestIdLabel": "none",
+    "durationMs": 0
+  },
+  "verification": {
+    "status": "skipped",
+    "commandId": "none",
+    "exitCode": -1,
+    "durationMs": 0,
+    "truncated": false
+  },
+  "safetyReview": {
+    "rawPromptsIncluded": false,
+    "rawProviderResponsesIncluded": false,
+    "fileBodiesIncluded": false,
+    "diffsIncluded": false,
+    "verificationOutputIncluded": false,
+    "secretsIncluded": false,
+    "privatePathsIncluded": true,
+    "commandStringsIncluded": false,
+    "safeToShare": false
+  }
+}

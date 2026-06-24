@@ -32,6 +32,12 @@ Do not paste or preserve any of these values in tracked docs or shared reports:
 
 Prefer short summaries, sanitized labels, relative/ignored evidence paths, redacted IDs, hashes/checksums of generated artifacts, and bounded status fields. A report that says less but leaks nothing is doing the quiet heroic work.
 
+## Sanitized trace export contract
+
+The local trace export/report contract for one-step Agent Run dogfood is `agent_run.trace_export` in `packages/contracts/schemas/engine/agent-run-trace-export.schema.json`. It is safe-share metadata only. It may contain lifecycle state transitions, manual-action booleans, bounded counts, sanitized labels, timings, allowlisted verification command IDs, apply statuses, verification statuses, and explicit safety-review booleans.
+
+It must not contain raw prompts, raw provider requests or responses, model traces, chain-of-thought, file bodies, diffs, patch bodies, full verification output, command strings, cwd/env values, private absolute paths, screenshot paths, account identifiers, runtime tokens, provider credentials, secrets, bridge payload dumps, browser-storage dumps, or authority-looking auto-run/apply fields. Store any richer local evidence only in ignored local paths and summarize it before sharing. Tiny paw rule: if it helps someone rerun a command or reconstruct private content, it does not belong in the export.
+
 ## Manual dogfood checklist
 
 Keep completed reports in ignored local evidence locations unless a task explicitly asks for a sanitized tracked excerpt.
