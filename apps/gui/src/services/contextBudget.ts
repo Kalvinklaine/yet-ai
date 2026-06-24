@@ -25,6 +25,13 @@ export type ContextBudgetProposalMetadata = {
   included?: boolean;
 };
 
+export type ContextBudgetLocalReviewMetadata = {
+  label: string;
+  itemCount: number;
+  charCount: number;
+  sent: false;
+};
+
 export type ContextBudgetInput = {
   goal: string;
   activeFileExcerpt?: ActiveFileExcerptAttachment | null;
@@ -43,6 +50,7 @@ export type ContextBudgetSummary = {
   omittedItemCount: number;
   excludedItemCount: number;
   sources: ContextBudgetSourceSummary[];
+  localReviewMetadata: ContextBudgetLocalReviewMetadata[];
   labels: string[];
   warnings: ContextBudgetWarning[];
 };
@@ -88,17 +96,17 @@ export function buildContextBudgetSummary(input: ContextBudgetInput): ContextBud
     });
   }
 
+  const localReviewMetadata: ContextBudgetLocalReviewMetadata[] = [];
   for (const metadata of input.proposalMetadata ?? []) {
     const label = sanitizeDisplayText(metadata.label).trim();
     if (!label) {
       continue;
     }
-    sources.push({
-      kind: "proposal_metadata",
+    localReviewMetadata.push({
       label,
       itemCount: Math.max(0, metadata.itemCount ?? 1),
       charCount: Math.max(0, metadata.charCount ?? label.length),
-      included: metadata.included !== false,
+      sent: false,
     });
   }
 
@@ -137,6 +145,7 @@ export function buildContextBudgetSummary(input: ContextBudgetInput): ContextBud
     omittedItemCount,
     excludedItemCount,
     sources,
+    localReviewMetadata,
     labels: labels.map((label) => sanitizeDisplayText(label)),
     warnings,
   };

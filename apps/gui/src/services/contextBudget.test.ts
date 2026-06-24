@@ -49,7 +49,7 @@ const verificationItem: ExplicitContextBundleItem = {
 };
 
 describe("contextBudget service", () => {
-  it("summarizes goal active file snippet memory verification and proposal metadata without raw bodies", () => {
+  it("summarizes goal active file snippet memory verification and display-only proposal metadata without raw bodies", () => {
     const summary = buildContextBudgetSummary({
       goal: "Fix the guided context panel",
       activeFileExcerpt: activeExcerpt,
@@ -59,9 +59,10 @@ describe("contextBudget service", () => {
       proposalMetadata: [{ label: "Edit proposal metadata · Update panel", charCount: 19, itemCount: 2 }],
     });
 
-    expect(summary.totalIncludedItems).toBe(7);
-    expect(summary.totalIncludedCharacters).toBe(178);
-    expect(summary.sources.map((source) => source.kind)).toEqual(["goal", "active_file_excerpt", "explicit_context_bundle", "proposal_metadata"]);
+    expect(summary.totalIncludedItems).toBe(5);
+    expect(summary.totalIncludedCharacters).toBe(159);
+    expect(summary.sources.map((source) => source.kind)).toEqual(["goal", "active_file_excerpt", "explicit_context_bundle"]);
+    expect(summary.localReviewMetadata).toEqual([{ label: "Edit proposal metadata · Update panel", charCount: 19, itemCount: 2, sent: false }]);
     expect(summary.labels).toEqual(expect.arrayContaining([
       expect.stringContaining("project snippet · apps/gui/src/App.tsx"),
       expect.stringContaining("project memory · Architecture note [redacted]"),
@@ -144,8 +145,11 @@ describe("contextBudget service", () => {
       maxItems: 4,
     });
 
-    expect(summary.totalIncludedItems).toBe(9);
+    expect(summary.totalIncludedItems).toBe(5);
+    expect(summary.totalIncludedCharacters).toBe(176);
+    expect(summary.localReviewMetadata).toEqual([{ label: "Edit proposal metadata · four edits", itemCount: 4, charCount: 40, sent: false }]);
     expect(summary.labels).toHaveLength(4);
+    expect(summary.labels.join("\n")).not.toContain("Edit proposal metadata · four edits");
     expect(summary.warnings.map((warning) => warning.code)).not.toContain("too_many_items");
   });
 
@@ -160,6 +164,7 @@ describe("contextBudget service", () => {
       omittedItemCount: 0,
       excludedItemCount: 0,
       sources: [{ kind: "goal", label: "Task goal", itemCount: 0, charCount: 0, included: false }],
+      localReviewMetadata: [],
       labels: [],
       warnings: [],
     });

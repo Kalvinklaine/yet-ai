@@ -576,7 +576,7 @@ export function App() {
       ...(activeEditProposal ? [{ label: `Edit proposal metadata · ${activeEditProposal.payload.summary}`, charCount: activeEditProposal.payload.summary.length, itemCount: activeEditProposal.payload.edits.length }] : []),
     ],
   }), [activeEditProposal, codingTaskGoal, currentActiveFileExcerpt, explicitContextBundleItems, includeAttachedContext, includeExplicitContextBundle, modelProposalDraft]);
-  const showWhatWillBeSentPanel = chatInput.trim().length > 0 || contextBudgetSummary.sources.some((source) => source.kind !== "proposal_metadata" && (source.itemCount > 0 || source.charCount > 0)) || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
+  const showWhatWillBeSentPanel = chatInput.trim().length > 0 || contextBudgetSummary.sources.some((source) => source.itemCount > 0 || source.charCount > 0) || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
   const workspaceSnippetQueryValidation = useMemo(() => validateWorkspaceSnippetQuery(workspaceSnippetQuery), [workspaceSnippetQuery]);
 
   useEffect(() => {
@@ -3289,6 +3289,7 @@ function FirstMessageActionButton({ action, runtimeRefreshInFlight, providerTest
 
 function WhatWillBeSentPanel({ summary, draftPromptCharacters }: { summary: ContextBudgetSummary; draftPromptCharacters: number }) {
   const visibleSources = summary.sources.filter((source) => source.itemCount > 0 || source.charCount > 0);
+  const visibleLocalReviewMetadata = summary.localReviewMetadata.slice(0, 4);
   const visibleLabels = summary.labels.slice(0, 6);
   const included = summary.totalIncludedItems;
   const omitted = summary.omittedItemCount;
@@ -3316,6 +3317,12 @@ function WhatWillBeSentPanel({ summary, draftPromptCharacters }: { summary: Cont
           ))}
         </ul>
       )}
+      {visibleLocalReviewMetadata.length > 0 && <ul className="what-will-be-sent-list" aria-label="Local review metadata not sent">{visibleLocalReviewMetadata.map((metadata) => (
+        <li key={`${metadata.label}:${metadata.itemCount}:${metadata.charCount}`}>
+          <span className="badge warn">not sent</span>
+          <span>{sanitizeDisplayText(metadata.label)}: local review metadata only · not sent · {metadata.itemCount} item{metadata.itemCount === 1 ? "" : "s"} · {metadata.charCount} chars</span>
+        </li>
+      ))}</ul>}
       {visibleLabels.length > 0 && <ul className="what-will-be-sent-labels" aria-label="What will be sent item labels">{visibleLabels.map((label) => <li key={label}>{label}</li>)}</ul>}
       {summary.warnings.length > 0 && <ul className="first-message-steps">{summary.warnings.map((warning) => <li key={`${warning.code}:${warning.message}`}>{sanitizeDisplayText(warning.message)}</li>)}</ul>}
     </section>
@@ -3410,6 +3417,7 @@ function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, model
         <span className="subtle">Pure local estimate using character counts and item counts only. Raw context bodies are not shown, persisted, logged, tokenized, or sent to a provider by this summary.</span>
         <div className="agent-progress-grid" aria-label="Context budget source counts">
           {contextBudgetSummary.sources.map((source) => <span key={`${source.kind}:${source.label}`}>{source.label}: {source.included ? "included" : "omitted"} · {source.itemCount} item{source.itemCount === 1 ? "" : "s"} · {source.charCount} chars</span>)}
+          {contextBudgetSummary.localReviewMetadata.map((metadata) => <span key={`local-review:${metadata.label}`}>{metadata.label}: local review metadata only · not sent · {metadata.itemCount} item{metadata.itemCount === 1 ? "" : "s"} · {metadata.charCount} chars</span>)}
         </div>
         {contextBudgetSummary.warnings.length > 0 ? <ul className="first-message-steps">{contextBudgetSummary.warnings.map((warning) => <li key={`${warning.code}:${warning.message}`}>{warning.message}</li>)}</ul> : <span className="subtle">No budget warnings for the selected context.</span>}
       </section>}

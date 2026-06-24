@@ -7185,6 +7185,41 @@ describe("edit proposal preview", () => {
     expect(browserStorageDump()).not.toContain("Replace one visible editor line");
   });
 
+  it("marks proposal metadata as local review only without counting it as sent context", async () => {
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Display-only metadata", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Display-only metadata", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+    await act(async () => {
+      setTextareaByPlaceholder("Describe the coding task goal", "Review proposal metadata only");
+      setTextareaValue(chatInput(), "Review the visible safe edit proposal.");
+    });
+
+    const sentPanel = whatWillBeSentPanel();
+    expect(sentPanel.textContent).toContain("Included context: 1 item · 29 chars");
+    expect(sentPanel.textContent).toContain("Edit proposal metadata · Replace one visible editor line after user review.: local review metadata only · not sent · 1 item · 50 chars");
+    expect(sentPanel.textContent).not.toContain("Included context: 2 items");
+    expect(sentPanel.textContent).not.toContain("omitted · 1 item");
+
+    const sessionPanel = codingTaskSessionPanel();
+    expect(sessionPanel.textContent).toContain("Included: 1 item · 29 chars");
+    expect(sessionPanel.textContent).toContain("Edit proposal metadata · Replace one visible editor line after user review.: local review metadata only · not sent · 1 item · 50 chars");
+
+    fetchMock.mockClear();
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    expect(lastUserMessageBody().payload).toEqual({ content: "Review the visible safe edit proposal." });
+    expect(browserStorageDump()).not.toContain("Replace one visible editor line");
+  });
+
   it("does not leak secret-like replacement text into DOM or storage, and shows redaction warning", async () => {
     localStorage.setItem("sentinel", "keep");
     const rawToken = "sk-" + "x".repeat(40);
