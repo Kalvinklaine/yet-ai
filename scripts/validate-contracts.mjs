@@ -47,7 +47,18 @@ const mappings = [
   ["packages/contracts/examples/engine/agent-progress-event-manual-runner-verification.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
   ["packages/contracts/examples/engine/manual-runner-plan-proposal.json", "packages/contracts/schemas/engine/manual-runner-plan-proposal.schema.json"],
   ["packages/contracts/examples/engine/agent-run-plan-to-patch-proposal.json", "packages/contracts/schemas/engine/agent-run-plan-to-patch-proposal.schema.json"],
-  ["packages/contracts/examples/engine/agent-run-trace-export.json", "packages/contracts/schemas/engine/agent-run-trace-export.schema.json"],
+["packages/contracts/examples/engine/agent-run-trace-export.json", "packages/contracts/schemas/engine/agent-run-trace-export.schema.json"],
+  ...[
+    "agent-run-checkpoint-readiness.json",
+    "agent-run-checkpoint-created.json",
+    "agent-run-rollback-available.json",
+    "agent-run-rollback-blocked.json",
+    "agent-run-rollback-completed.json",
+    "agent-run-rollback-failed.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/engine/${fileName}`,
+    "packages/contracts/schemas/engine/agent-run-checkpoint-rollback-state.schema.json"
+  ]),
   ["packages/contracts/examples/engine/coding-task-session.json", "packages/contracts/schemas/engine/coding-task-session.schema.json"],
   ...[
     "experimental-sandbox-session-disabled.json",
@@ -869,12 +880,21 @@ const invalidMappings = [
     "packages/contracts/schemas/engine/agent-run-plan-to-patch-proposal.schema.json"
   ]),
   ...[
-    "agent-run-trace-export-raw-prompt.json",
+"agent-run-trace-export-raw-prompt.json",
     "agent-run-trace-export-private-path.json",
     "agent-run-trace-export-command-string.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/agent-run-trace-export.schema.json"
+  ]),
+  ...[
+    "agent-run-checkpoint-rollback-raw-diff.json",
+    "agent-run-checkpoint-rollback-private-path.json",
+    "agent-run-checkpoint-rollback-auto-rollback.json",
+    "agent-run-checkpoint-rollback-freeform-command.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/agent-run-checkpoint-rollback-state.schema.json"
   ]),
   ...[
     "coding-task-session-unknown-field.json",

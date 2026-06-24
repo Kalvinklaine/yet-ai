@@ -1,0 +1,26 @@
+{
+  "kind": "agent_run_checkpoint_rollback_state",
+  "version": "2026-06-24",
+  "authority": "display_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "stateId": "agent-run-rollback-private-path",
+  "displayState": "rollback_blocked",
+  "checkpoint": {
+    "status": "verified",
+    "label": "Checkpoint at /Users/example/project",
+    "observedAt": "2026-06-24T18:12:00Z"
+  },
+  "rollback": {
+    "status": "blocked",
+    "label": "Rollback blocked",
+    "observedAt": "2026-06-24T18:13:00Z"
+  },
+  "rollbackAction": {
+    "trigger": "user",
+    "owner": "host",
+    "automatic": false,
+    "label": "User may request rollback"
+  },
+  "summary": "Private path leaked in label"
+}

@@ -1,0 +1,26 @@
+{
+  "kind": "agent_run_checkpoint_rollback_state",
+  "version": "2026-06-24",
+  "authority": "display_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "stateId": "agent-run-rollback-blocked",
+  "displayState": "rollback_blocked",
+  "checkpoint": {
+    "status": "verified",
+    "label": "Checkpoint metadata verified",
+    "observedAt": "2026-06-24T18:04:00Z"
+  },
+  "rollback": {
+    "status": "blocked",
+    "label": "Rollback blocked pending host review",
+    "observedAt": "2026-06-24T18:05:00Z"
+  },
+  "rollbackAction": {
+    "trigger": "user",
+    "owner": "host",
+    "automatic": false,
+    "label": "User action required after host review"
+  },
+  "summary": "Rollback is blocked and shown as status only"
+}

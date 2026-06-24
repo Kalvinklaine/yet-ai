@@ -1,0 +1,26 @@
+{
+  "kind": "agent_run_checkpoint_rollback_state",
+  "version": "2026-06-24",
+  "authority": "display_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "stateId": "agent-run-auto-rollback",
+  "displayState": "rollback_available",
+  "checkpoint": {
+    "status": "verified",
+    "label": "Checkpoint verified",
+    "observedAt": "2026-06-24T18:14:00Z"
+  },
+  "rollback": {
+    "status": "available",
+    "label": "Restore option shown",
+    "observedAt": "2026-06-24T18:15:00Z"
+  },
+  "rollbackAction": {
+    "trigger": "user",
+    "owner": "host",
+    "automatic": true,
+    "label": "Rollback runs without user action"
+  },
+  "summary": "Rollback is automatic"
+}

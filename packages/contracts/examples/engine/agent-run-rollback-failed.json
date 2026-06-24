@@ -1,0 +1,27 @@
+{
+  "kind": "agent_run_checkpoint_rollback_state",
+  "version": "2026-06-24",
+  "authority": "display_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "stateId": "agent-run-rollback-failed",
+  "displayState": "rollback_failed",
+  "checkpoint": {
+    "status": "verified",
+    "label": "Checkpoint metadata still available",
+    "observedAt": "2026-06-24T18:08:00Z"
+  },
+  "rollback": {
+    "status": "failed",
+    "label": "Rollback failed with sanitized status",
+    "observedAt": "2026-06-24T18:09:00Z",
+    "failedAt": "2026-06-24T18:09:00Z"
+  },
+  "rollbackAction": {
+    "trigger": "user",
+    "owner": "host",
+    "automatic": false,
+    "label": "User can review host guidance"
+  },
+  "summary": "Rollback failure is display metadata only"
+}

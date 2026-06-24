@@ -1,0 +1,27 @@
+{
+  "kind": "agent_run_checkpoint_rollback_state",
+  "version": "2026-06-24",
+  "authority": "display_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "stateId": "agent-run-rollback-unsafe-diff",
+  "displayState": "rollback_available",
+  "checkpoint": {
+    "status": "verified",
+    "label": "Checkpoint verified",
+    "observedAt": "2026-06-24T18:10:00Z"
+  },
+  "rollback": {
+    "status": "available",
+    "label": "Restore option shown",
+    "observedAt": "2026-06-24T18:11:00Z",
+    "rawDiff": "diff --git a/app.ts b/app.ts"
+  },
+  "rollbackAction": {
+    "trigger": "user",
+    "owner": "host",
+    "automatic": false,
+    "label": "User may request rollback"
+  },
+  "summary": "Rollback state includes raw diff"
+}

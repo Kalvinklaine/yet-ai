@@ -1,0 +1,27 @@
+{
+  "kind": "agent_run_checkpoint_rollback_state",
+  "version": "2026-06-24",
+  "authority": "display_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "stateId": "agent-run-rollback-completed",
+  "displayState": "rollback_completed",
+  "checkpoint": {
+    "status": "verified",
+    "label": "Checkpoint restored by host",
+    "observedAt": "2026-06-24T18:06:00Z"
+  },
+  "rollback": {
+    "status": "completed",
+    "label": "Restore completed after user request",
+    "observedAt": "2026-06-24T18:07:00Z",
+    "completedAt": "2026-06-24T18:07:00Z"
+  },
+  "rollbackAction": {
+    "trigger": "user",
+    "owner": "host",
+    "automatic": false,
+    "label": "Completed rollback was user triggered"
+  },
+  "summary": "Rollback completion is reported with sanitized status"
+}

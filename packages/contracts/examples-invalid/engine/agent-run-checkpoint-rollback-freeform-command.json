@@ -1,0 +1,27 @@
+{
+  "kind": "agent_run_checkpoint_rollback_state",
+  "version": "2026-06-24",
+  "authority": "display_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "stateId": "agent-run-rollback-command",
+  "displayState": "rollback_available",
+  "checkpoint": {
+    "status": "verified",
+    "label": "Checkpoint verified",
+    "observedAt": "2026-06-24T18:16:00Z"
+  },
+  "rollback": {
+    "status": "available",
+    "label": "Restore option shown",
+    "observedAt": "2026-06-24T18:17:00Z"
+  },
+  "rollbackAction": {
+    "trigger": "user",
+    "owner": "host",
+    "automatic": false,
+    "label": "User may request rollback",
+    "command": "git checkout -- ."
+  },
+  "summary": "Rollback state includes command material"
+}

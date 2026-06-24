@@ -1,0 +1,21 @@
+{
+  "kind": "agent_run_checkpoint_rollback_state",
+  "version": "2026-06-24",
+  "authority": "display_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "stateId": "agent-run-checkpoint-readiness",
+  "displayState": "checkpoint_readiness",
+  "checkpoint": {
+    "status": "ready",
+    "label": "Checkpoint readiness confirmed",
+    "observedAt": "2026-06-24T18:00:00Z"
+  },
+  "rollbackAction": {
+    "trigger": "user",
+    "owner": "host",
+    "automatic": false,
+    "label": "Rollback stays a user action"
+  },
+  "summary": "Checkpoint prerequisites are ready for display"
+}

@@ -1,0 +1,343 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/agent-run-checkpoint-rollback-state.schema.json",
+  "title": "Agent Run Checkpoint Rollback UX State",
+  "description": "Strict display-only Agent Run checkpoint and rollback UX state. It carries sanitized labels, statuses, and UTC timestamps only; rollback remains user-triggered and host-owned, with no automatic rollback or execution authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "authority",
+    "cloudRequired",
+    "executionAllowed",
+    "stateId",
+    "displayState",
+    "checkpoint",
+    "rollbackAction",
+    "summary"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "const": "agent_run_checkpoint_rollback_state"
+    },
+    "version": {
+      "type": "string",
+      "const": "2026-06-24"
+    },
+    "authority": {
+      "type": "string",
+      "const": "display_only"
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "executionAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "stateId": {
+      "$ref": "#/$defs/safeId"
+    },
+    "displayState": {
+      "type": "string",
+      "enum": [
+        "checkpoint_readiness",
+        "checkpoint_created",
+        "rollback_available",
+        "rollback_blocked",
+        "rollback_completed",
+        "rollback_failed"
+      ]
+    },
+    "checkpoint": {
+      "$ref": "#/$defs/checkpointDisplay"
+    },
+    "rollback": {
+      "$ref": "#/$defs/rollbackDisplay"
+    },
+    "rollbackAction": {
+      "$ref": "#/$defs/rollbackAction"
+    },
+    "summary": {
+      "$ref": "#/$defs/safeSummary"
+    }
+  },
+  "$defs": {
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$"
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Kk][Cc][Ee]|[Rr][Ee][Ff][Rr][Ee][Ss][Hh]|[Aa][Cc][Cc][Ee][Ss][Ss][-_ ]?[Tt][Oo][Kk][Ee][Nn]|[Aa][Uu][Tt][Hh][-_ ]?[Cc][Oo][Dd][Ee]|[Cc][Hh][Aa][Ii][Nn][-_ ]?[Oo][Ff][-_ ]?[Tt][Hh][Oo][Uu][Gg][Hh][Tt]|[Rr][Aa][Ww][-_ ]?(?:[Pp][Rr][Oo][Mm][Pp][Tt]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Dd][Ii][Ff][Ff]|[Dd][Uu][Mm][Pp]|[Oo][Uu][Tt][Pp][Uu][Tt]|[Ff][Ii][Ll][Ee]|[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee]|[Ss][Ee][Cc][Rr][Ee][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][-_ ]?(?:[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Bb][Oo][Dd][Yy]|[Tt][Oo][Oo][Ll]|[Cc][Aa][Ll][Ll])|[Tt][Oo][Oo][Ll][-_ ]?(?:[Cc][Aa][Ll][Ll]|[Uu][Ss][Ee]|[Nn][Aa][Mm][Ee])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee][-_ ]?(?:[Ff][Ii][Ll][Ee]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Dd][Ii][Ff][Ff]|[Pp][Aa][Tt][Cc][Hh][-_ ]?[Bb][Oo][Dd][Yy]|[Ss][Hh][Ee][Ll][Ll]|[Gg][Ii][Tt]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Aa][Rr][Gg][Ss]|[Aa][Rr][Gg][Uu][Mm][Ee][Nn][Tt][Ss]|[Ee][Xx][Ee][Cc]|[Cc][Mm][Dd]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Nn][Pp][Mm]\\s+[Rr][Uu][Nn]|[Cc][Aa][Rr][Gg][Oo]\\s+(?:[Cc][Hh][Ee][Cc][Kk]|[Tt][Ee][Ss][Tt])|[Aa][Pp][Pp][Ll][Yy][-_ ]?[Pp][Aa][Tt][Cc][Hh]|[Aa][Uu][Tt][Oo][-_ ]?(?:[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Vv][Ee][Rr][Ii][Ff][Yy]|[Ff][Ii][Xx]|[Rr][Ee][Pp][Aa][Ii][Rr]|[Rr][Oo][Ll][Ll][Bb][Aa][Cc][Kk])|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh]|[Ss][Cc][Aa][Nn])|[Ii][Nn][Dd][Ee][Xx][-_ ]?[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee]|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|\\.[Cc][Oo][Dd][Ee][Xx]/[Aa][Uu][Tt][Hh]\\.json|(?:[Aa][Uu][Tt][Hh]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?)\\.json|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "safeLabel": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      ]
+    },
+    "safeSummary": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        }
+      ]
+    },
+    "checkpointDisplay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "label",
+        "observedAt"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "not_ready",
+            "ready",
+            "created",
+            "verified",
+            "unavailable",
+            "blocked"
+          ]
+        },
+        "label": {
+          "$ref": "#/$defs/safeLabel"
+        },
+        "observedAt": {
+          "$ref": "#/$defs/utcTimestamp"
+        }
+      }
+    },
+    "rollbackDisplay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "label",
+        "observedAt"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "unavailable",
+            "available",
+            "blocked",
+            "completed",
+            "failed"
+          ]
+        },
+        "label": {
+          "$ref": "#/$defs/safeLabel"
+        },
+        "observedAt": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "completedAt": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "failedAt": {
+          "$ref": "#/$defs/utcTimestamp"
+        }
+      }
+    },
+    "rollbackAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trigger",
+        "owner",
+        "automatic",
+        "label"
+      ],
+      "properties": {
+        "trigger": {
+          "type": "string",
+          "const": "user"
+        },
+        "owner": {
+          "type": "string",
+          "const": "host"
+        },
+        "automatic": {
+          "type": "boolean",
+          "const": false
+        },
+        "label": {
+          "$ref": "#/$defs/safeLabel"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "displayState": {
+            "const": "checkpoint_readiness"
+          }
+        },
+        "required": ["displayState"]
+      },
+      "then": {
+        "properties": {
+          "checkpoint": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "enum": ["ready", "not_ready", "blocked"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "displayState": {
+            "const": "checkpoint_created"
+          }
+        },
+        "required": ["displayState"]
+      },
+      "then": {
+        "properties": {
+          "checkpoint": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "enum": ["created", "verified"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "displayState": {
+            "const": "rollback_available"
+          }
+        },
+        "required": ["displayState"]
+      },
+      "then": {
+        "required": ["rollback"],
+        "properties": {
+          "rollback": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "available"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "displayState": {
+            "const": "rollback_blocked"
+          }
+        },
+        "required": ["displayState"]
+      },
+      "then": {
+        "required": ["rollback"],
+        "properties": {
+          "rollback": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "blocked"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "displayState": {
+            "const": "rollback_completed"
+          }
+        },
+        "required": ["displayState"]
+      },
+      "then": {
+        "required": ["rollback"],
+        "properties": {
+          "rollback": {
+            "type": "object",
+            "required": ["completedAt"],
+            "properties": {
+              "status": {
+                "const": "completed"
+              },
+              "completedAt": {
+                "$ref": "#/$defs/utcTimestamp"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "displayState": {
+            "const": "rollback_failed"
+          }
+        },
+        "required": ["displayState"]
+      },
+      "then": {
+        "required": ["rollback"],
+        "properties": {
+          "rollback": {
+            "type": "object",
+            "required": ["failedAt"],
+            "properties": {
+              "status": {
+                "const": "failed"
+              },
+              "failedAt": {
+                "$ref": "#/$defs/utcTimestamp"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

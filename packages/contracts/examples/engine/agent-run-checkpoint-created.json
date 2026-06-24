@@ -1,0 +1,21 @@
+{
+  "kind": "agent_run_checkpoint_rollback_state",
+  "version": "2026-06-24",
+  "authority": "display_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "stateId": "agent-run-checkpoint-created",
+  "displayState": "checkpoint_created",
+  "checkpoint": {
+    "status": "created",
+    "label": "Checkpoint created by host",
+    "observedAt": "2026-06-24T18:01:00Z"
+  },
+  "rollbackAction": {
+    "trigger": "user",
+    "owner": "host",
+    "automatic": false,
+    "label": "Host can present rollback after user request"
+  },
+  "summary": "Checkpoint creation is visible as sanitized status"
+}
