@@ -56,6 +56,38 @@ for (const surface of surfaces) {
   }
 }
 
+const agentRunManualControls = surfaces.find((surface) => surface.id === "agent-run-manual-controls");
+assert(agentRunManualControls?.vscode?.status === "supported" && agentRunManualControls?.jetbrains?.status === "supported", "Agent Run manual controls must have VS Code and JetBrains hosted-GUI parity evidence.");
+assert(agentRunManualControls?.jetbrains?.smoke?.includes("npm run smoke:jetbrains-wrapper-browser"), "JetBrains Agent Run manual controls must be covered by wrapper-browser smoke.");
+for (const ide of ["vscode", "jetbrains"]) {
+  const reason = agentRunManualControls?.[ide]?.reason ?? "";
+  for (const [pattern, message] of [
+    [/display-only Agent Run state/i, `${ide} Agent Run reason must state display-only Agent Run state.`],
+    [/explicit user clicks/i, `${ide} Agent Run reason must require explicit user clicks.`],
+    [/existing bridge messages/i, `${ide} Agent Run reason must use existing bridge messages only.`],
+    [/no auto-run/i, `${ide} Agent Run reason must forbid auto-run.`],
+    [/background execution/i, `${ide} Agent Run reason must forbid background execution.`],
+  ]) {
+    assert(pattern.test(reason), message);
+  }
+}
+
+const contextBudgetPreview = surfaces.find((surface) => surface.id === "context-budget-preview");
+assert(contextBudgetPreview?.vscode?.status === "supported" && contextBudgetPreview?.jetbrains?.status === "supported", "Context budget preview must have VS Code and JetBrains hosted-GUI parity evidence.");
+assert(contextBudgetPreview?.jetbrains?.smoke?.includes("npm run smoke:jetbrains-wrapper-browser"), "JetBrains context budget preview must be covered by wrapper-browser smoke.");
+for (const ide of ["vscode", "jetbrains"]) {
+  const reason = contextBudgetPreview?.[ide]?.reason ?? "";
+  for (const [pattern, message] of [
+    [/next-Send preview labels/i, `${ide} context budget reason must state next-Send preview labels.`],
+    [/approximate character counts/i, `${ide} context budget reason must state approximate character counts.`],
+    [/omitted\/excluded counts/i, `${ide} context budget reason must state omitted/excluded counts.`],
+    [/local review metadata marked not sent/i, `${ide} context budget reason must keep local review metadata marked not sent.`],
+    [/raw bodies are not persisted or sent/i, `${ide} context budget reason must forbid persisting or sending raw bodies by preview.`],
+  ]) {
+    assert(pattern.test(reason), message);
+  }
+}
+
 const browserPreview = surfaces.find((surface) => surface.id === "confirmed-edit-preview");
 assert(browserPreview?.vscode?.status === "supported", "VS Code confirmed edit preview must remain supported.");
 assert(browserPreview?.jetbrains?.status === "supported", "JetBrains confirmed edit preview must be supported when apply is dev-preview.");

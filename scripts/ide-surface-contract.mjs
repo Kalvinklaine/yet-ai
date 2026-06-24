@@ -76,6 +76,20 @@ export const ideSurfaceContract = Object.freeze({
       vscode: "Contract-only preview: GUI/user-confirmed runVerificationCommand uses only allowlisted command ids and GUI-minted request ids; browser remains preview-only and no free-form shell, args, cwd, env, git, package install, network, provider, model, or API-key authority is granted.",
       jetbrains: "Contract-only preview: GUI/user-confirmed runVerificationCommand uses only allowlisted command ids and GUI-minted request ids; browser remains preview-only and no free-form shell, args, cwd, env, git, package install, network, provider, model, or API-key authority is granted.",
     }),
+    surface("agent-run-manual-controls", "Agent Run manual controls", "supported", "supported", {
+      vscode: ["npm run smoke:agent-run-dogfood"],
+      jetbrains: ["npm run smoke:jetbrains-wrapper-browser"],
+    }, {
+      vscode: "Hosted GUI evidence covers display-only Agent Run state plus explicit user clicks for apply and allowlisted verification through existing bridge messages; no auto-run or background execution is granted.",
+      jetbrains: "Hosted GUI evidence covers display-only Agent Run state plus explicit user clicks for apply and allowlisted verification through existing bridge messages; no auto-run or background execution is granted.",
+    }),
+    surface("context-budget-preview", "Context budget preview", "supported", "supported", {
+      vscode: ["npm run smoke:agent-run-dogfood"],
+      jetbrains: ["npm run smoke:jetbrains-wrapper-browser"],
+    }, {
+      vscode: "Hosted GUI evidence covers next-Send preview labels, approximate character counts, omitted/excluded counts, and local review metadata marked not sent; raw bodies are not persisted or sent by the preview.",
+      jetbrains: "Hosted GUI evidence covers next-Send preview labels, approximate character counts, omitted/excluded counts, and local review metadata marked not sent; raw bodies are not persisted or sent by the preview.",
+    }),
     surface("confirmed-edit-preview", "Confirmed edit proposal preview", "supported", "supported", {
       vscode: ["npm run smoke:vscode-edit-proposal"],
       jetbrains: ["npm run smoke:jetbrains-edit-proposal"],

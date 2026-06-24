@@ -288,6 +288,9 @@ The coherent manual preview path is intentionally install-from-file/development-
 
 Manual preview reports are safe-share evidence surfaces. They may include IDE version, OS/architecture, launch mode `auto`/`launch`/`connect`, artifact path family, checksum match status, packaged GUI vs placeholder outcome, sanitized runtime diagnostics, sanitized provider status, active-context attach/omit choice, and first-message success/failure category. They must never include provider API keys, local runtime session tokens, bearer or Authorization values, auth codes, OAuth access or refresh tokens, PKCE verifiers, cookies, query values, fragment values, private absolute paths, raw provider responses, raw bridge payloads, request bodies, browser storage dumps, or screenshots showing secrets.
 
+JetBrains Agent Run parity is currently cheap hosted-GUI evidence, not real IDE automation. `npm run smoke:jetbrains-wrapper-browser` serves the packaged GUI through a JetBrains-like wrapper and asserts that the hosted iframe renders Agent Run manual controls, next-Send context budget preview labels, context budget summary copy, and the existing confirmed-edit and verification bridge boundaries. The smoke also checks that these surfaces do not emit apply or verification bridge messages before explicit user clicks. This evidence covers packaged GUI/JCEF-like rendering and wrapper bridge policy only; it does not launch IntelliJ, execute real verification commands, apply real workspace edits, run shell/git/tasks/tools, call providers, read/index workspaces, or add new authority. JetBrains Agent Run remains manual-only: apply uses the existing `gui.applyWorkspaceEditRequest` / `host.applyWorkspaceEditResult` path after GUI review plus IDE/user confirmation, and verification remains the preview-only allowlisted `runVerificationCommand` request with GUI-minted ids and sanitized results.
+
+
 ### `apps/plugins/jetbrains`
 
 The JetBrains plugin should own:

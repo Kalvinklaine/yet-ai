@@ -522,6 +522,7 @@ try {
   }
 
   await frameLocator.getByText("Ready to send.", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show compact ready-to-send status for the experimental account path."));
+  await assertJetBrainsAgentRunAndContextBudgetSurfaces(page, frameLocator);
   if (failures.length > 0) {
     reportFailures();
   }
@@ -726,6 +727,8 @@ function assertJetBrainsParityContract() {
   assertSurface("active-context", "supported", "active editor context");
   assertSurface("first-message-flow", "supported", "chat first-message flow");
   assertSurface("read-only-ide-actions", "supported", "read-only IDE actions");
+  assertSurface("agent-run-manual-controls", "supported", "Agent Run manual controls");
+  assertSurface("context-budget-preview", "supported", "context budget preview");
   assertSurface("confirmed-edit-preview", "supported", "confirmed edit proposal preview");
   assertSurface("confirmed-edit-apply", "dev-preview", "confirmed edit proposal apply");
   assertSurface("workspace-snippet-search", "preview-only", "workspace snippet search");
@@ -759,6 +762,58 @@ function assertJetBrainsParityContract() {
   const verificationReason = surfaces.get("verification-command-bridge")?.jetbrains?.reason ?? "";
   if (!/preview-only/i.test(verificationReason) || !/no free-form shell/i.test(verificationReason) || !/GUI-minted request ids/i.test(verificationReason)) {
     failures.push("JetBrains verification command bridge contract must stay preview-only, non-shell, and GUI-request bounded.");
+  }
+  const agentRunReason = surfaces.get("agent-run-manual-controls")?.jetbrains?.reason ?? "";
+  if (!/display-only Agent Run state/i.test(agentRunReason) || !/explicit user clicks/i.test(agentRunReason) || !/existing bridge messages/i.test(agentRunReason) || !/no auto-run/i.test(agentRunReason) || !/background execution/i.test(agentRunReason)) {
+    failures.push("JetBrains Agent Run contract must remain display-only, explicit-click, and no-auto-run/no-background-execution.");
+  }
+  const contextBudgetReason = surfaces.get("context-budget-preview")?.jetbrains?.reason ?? "";
+  if (!/next-Send preview labels/i.test(contextBudgetReason) || !/local review metadata marked not sent/i.test(contextBudgetReason) || !/raw bodies are not persisted or sent/i.test(contextBudgetReason)) {
+    failures.push("JetBrains context budget contract must stay next-Send labels only with local review metadata not sent.");
+  }
+}
+
+async function assertJetBrainsAgentRunAndContextBudgetSurfaces(page, frameLocator) {
+  const beforeMessages = await page.evaluate(() => window.__yetAiBridgeMessages?.length ?? 0);
+  await frameLocator.getByText("Experimental Agent Run · one-step manual shell", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Hosted JetBrains GUI did not render the Agent Run manual shell."));
+  await frameLocator.getByText("manual only", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Hosted JetBrains Agent Run shell did not show manual-only state."));
+  await frameLocator.getByRole("group", { name: "Agent Run explicit actions" }).first().waitFor({ state: "attached", timeout: 5000 })
+    .catch(() => failures.push("Hosted JetBrains Agent Run shell did not expose explicit action controls."));
+  await frameLocator.getByText("Manually apply reviewed patch", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 })
+    .catch(() => failures.push("Hosted JetBrains Agent Run shell did not show explicit apply control."));
+  await frameLocator.getByText("Manually run allowlisted verification", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 })
+    .catch(() => failures.push("Hosted JetBrains Agent Run shell did not show explicit verification control."));
+  await frameLocator.getByText("Safety copy", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Hosted JetBrains Agent Run shell did not render safety copy."));
+
+  await frameLocator.getByPlaceholder("Describe the coding task goal before choosing context and asking the model.").fill("JetBrains context budget parity smoke.");
+  await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill("Preview JetBrains context budget labels only.");
+  await frameLocator.getByText("What will be sent", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Hosted JetBrains GUI did not render the next-Send context budget preview."));
+  await frameLocator.getByText("preview labels only", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Hosted JetBrains context budget preview did not show labels-only badge."));
+  await frameLocator.getByText("Task goal: included", { exact: false }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Hosted JetBrains context budget preview did not show included task-goal label."));
+  await frameLocator.getByText("One-shot next-Send preview", { exact: false }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Hosted JetBrains context budget preview did not show one-shot next-Send copy."));
+  await frameLocator.getByText("Context budget summary", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Hosted JetBrains GUI did not render context budget summary."));
+  await frameLocator.getByText("Pure local estimate using character counts and item counts only.", { exact: false }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Hosted JetBrains context budget summary did not show local-estimate/no-raw-body copy."));
+  const agentRunApplyRequests = await page.evaluate(() => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.applyWorkspaceEditRequest").length ?? 0);
+  const verificationRequests = await page.evaluate(() => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.ideActionRequest" && message?.payload?.action === "runVerificationCommand").length ?? 0);
+  const afterMessages = await page.evaluate(() => window.__yetAiBridgeMessages?.length ?? 0);
+  if (agentRunApplyRequests !== 0) {
+    failures.push(`Hosted JetBrains Agent Run surface emitted ${agentRunApplyRequests} apply request(s) before explicit apply click.`);
+  }
+  if (verificationRequests !== 0) {
+    failures.push(`Hosted JetBrains Agent Run surface emitted ${verificationRequests} verification request(s) before explicit verification click.`);
+  }
+  if (afterMessages !== beforeMessages) {
+    const unexpected = await page.evaluate((count) => window.__yetAiBridgeMessages?.slice(count).map((message) => message?.type).join(", ") ?? "", beforeMessages);
+    failures.push(`Hosted JetBrains Agent Run/context budget surface changed bridge messages without explicit apply/verification: ${unexpected}.`);
   }
 }
 
