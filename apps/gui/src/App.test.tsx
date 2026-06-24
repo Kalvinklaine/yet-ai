@@ -2907,10 +2907,11 @@ describe("active editor attached context", () => {
     expect(container?.textContent).toContain("1 local memory note matched engine.");
 
     await act(async () => {
-      findButton("Attach memory to next message").click();
+      findButton("Attach task-linked memory to next message").click();
     });
-    expect(container?.textContent).toContain("Attached local memory note Architecture decision [redacted] to the next message context.");
-    expect(container?.textContent).toContain("attached to next message");
+    expect(container?.textContent).toContain("Attached task-linked local memory note Architecture decision [redacted] to the next message context. Trace label: memory-attach-chat-001-mem-001.");
+    expect(container?.textContent).toContain("task-linked attached to next message");
+    expect(container?.textContent).toContain("Task link: Task-linked on attach · Session: Current chat on attach · Attach trace minted only after explicit click.");
     expect(findButton("Detach memory from next message")).toBeDefined();
     expect(container?.textContent).toContain("Project memory");
     expect(browserStorageDump()).not.toContain("Use engine-owned local memory only.");
@@ -2920,10 +2921,10 @@ describe("active editor attached context", () => {
     });
 
     expect(container?.textContent).toContain("Detached local memory note Architecture decision [redacted] from the next message context.");
-    expect(findButton("Attach memory to next message")).toBeDefined();
+    expect(findButton("Attach task-linked memory to next message")).toBeDefined();
 
     await act(async () => {
-      findButton("Attach memory to next message").click();
+      findButton("Attach task-linked memory to next message").click();
     });
     await act(async () => {
       findButton("Clear bundle").click();
@@ -2932,7 +2933,7 @@ describe("active editor attached context", () => {
     expect(container?.textContent).toContain("empty");
 
     await act(async () => {
-      findButton("Attach memory to next message").click();
+      findButton("Attach task-linked memory to next message").click();
     });
     fetchMock.mockClear();
     await act(async () => {

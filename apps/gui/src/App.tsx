@@ -1998,7 +1998,10 @@ export function App() {
   };
 
   const attachProjectMemoryNote = (note: ProjectMemoryNote) => {
-    const item = projectMemoryToBundleItem({ kind: "project_memory", noteId: note.id, title: note.title, text: note.text, tags: note.tags });
+    const taskLabel = taskLinkedMemoryTaskLabel(note, codingTaskGoal);
+    const sessionLabel = taskLinkedMemorySessionLabel(note, chatId);
+    const attachTraceLabel = taskLinkedMemoryAttachTraceLabel(chatId, note.id);
+    const item = projectMemoryToBundleItem({ kind: "project_memory", noteId: note.id, title: note.title, text: note.text, tags: note.tags, taskLabel, sessionLabel, attachTraceLabel });
     setExplicitContextBundleItems((current) => {
       const next = addExplicitContextBundleItem(current, item);
       if (next === current) {
@@ -2006,9 +2009,9 @@ export function App() {
         return current;
       }
       setIncludeExplicitContextBundle(true);
-      setExplicitContextBundleStatus(`Added local memory note ${sanitizeDisplayText(note.title)} to the one-shot bundle.`);
-      setProjectMemoryStatus(`Attached local memory note ${sanitizeDisplayText(note.title)} to the next message context.`);
-      appendTrace({ family: "context.memory", title: "Project memory attached", status: "succeeded", summary: `Attached local memory note ${note.title} to the next message context.`, details: { noteId: note.id, title: note.title } });
+      setExplicitContextBundleStatus(`Added task-linked local memory note ${sanitizeDisplayText(note.title)} to the one-shot bundle. Trace label: ${attachTraceLabel}.`);
+      setProjectMemoryStatus(`Attached task-linked local memory note ${sanitizeDisplayText(note.title)} to the next message context. Trace label: ${attachTraceLabel}.`);
+      appendTrace({ family: "context.memory", title: "Task-linked project memory attached", status: "succeeded", summary: `Attached task-linked local memory note ${note.title} to the next message context.`, details: { noteId: note.id, title: note.title, taskLabel, sessionLabel, attachTraceLabel } });
       return next;
     });
   };
@@ -3028,6 +3031,32 @@ function ideActionLabel(action: IdeActionType): string {
   }
 }
 
+function taskLinkedMemoryTaskLabel(note: Pick<ProjectMemoryNote, "taskLabel">, goal: string): string {
+  const existing = note.taskLabel ? sanitizeDisplayText(note.taskLabel).trim() : "";
+  if (existing) {
+    return existing.slice(0, 80);
+  }
+  const sanitizedGoal = sanitizeDisplayText(goal).trim();
+  if (sanitizedGoal && sanitizedGoal === goal.trim()) {
+    return sanitizedGoal.slice(0, 80);
+  }
+  return "Task-linked memory attach";
+}
+
+function taskLinkedMemorySessionLabel(note: Pick<ProjectMemoryNote, "sessionLabel">, chatId: string): string {
+  const existing = note.sessionLabel ? sanitizeDisplayText(note.sessionLabel).trim() : "";
+  if (existing) {
+    return existing.slice(0, 80);
+  }
+  return `Chat ${sanitizeDisplayText(chatId).slice(0, 60)}`;
+}
+
+function taskLinkedMemoryAttachTraceLabel(chatId: string, noteId: string): string {
+  const safeChatId = sanitizeDisplayText(chatId).replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 24) || "chat";
+  const safeNoteId = sanitizeDisplayText(noteId).replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 24) || "memory";
+  return `memory-attach-${safeChatId}-${safeNoteId}`.slice(0, 80);
+}
+
 export function rememberCompletedIdeActionRequest(completedRequests: Map<string, string>, requestId: string, chatId: string, limit = completedIdeActionRequestChatsLimit) {
   if (limit <= 0) {
     completedRequests.clear();
@@ -3732,7 +3761,7 @@ function ProjectMemoryPanel({ notes, state, error, title, text, tags, query, sta
         <span className={`badge ${busy ? "warn" : "ok"}`}>{stateLabel}</span>
         <span className="badge">{attachedCount} attached</span>
       </div>
-      <span className="subtle">Manual bounded notes only. The GUI does not write notes to browser storage, auto-save model output, auto-attach memory, scan the workspace, or expose raw secrets. Attach is explicit one-shot prompt context and clears after accepted Send.</span>
+      <span className="subtle">Manual bounded notes only. The GUI does not write notes to browser storage, auto-save model output, auto-attach memory, scan the workspace, or expose raw secrets. Task-linked Attach is explicit one-shot prompt context with a trace label and clears after accepted Send.</span>
       <div className="form-grid">
         <label>
           Memory title
@@ -3767,20 +3796,23 @@ function ProjectMemoryPanel({ notes, state, error, title, text, tags, query, sta
         const preview = classifyBoundedContextPreview(note.text);
         const attached = attachedNoteIds.has(note.id);
         const sourceLabel = sanitizeDisplayText(note.source || "manual");
+        const taskLabel = note.taskLabel ? sanitizeDisplayText(note.taskLabel) : "Task-linked on attach";
+        const sessionLabel = note.sessionLabel ? sanitizeDisplayText(note.sessionLabel) : "Current chat on attach";
         const safeTags = note.tags.map((tag) => sanitizeDisplayText(tag));
         return (
           <div className={`provider-item stack ${attached ? "ready" : ""}`} key={note.id}>
             <div className="row">
               <strong>{sanitizeDisplayText(note.title)}</strong>
               <span className="badge ok">source {sourceLabel}</span>
-              {attached && <span className="badge ok">attached to next message</span>}
+              {attached && <span className="badge ok">task-linked attached to next message</span>}
               {safeTags.length === 0 ? <span className="badge">no tags</span> : safeTags.map((tag) => <span className="badge" key={tag}>{tag}</span>)}
             </div>
             <span className="subtle">Updated {sanitizeDisplayText(note.updatedAt)} · {note.text.length} chars · tags {safeTags.join(", ") || "none"}</span>
+            <span className="subtle">Task link: {taskLabel} · Session: {sessionLabel} · Attach trace minted only after explicit click.</span>
             <div className="attached-context-preview"><strong>Sanitized bounded preview</strong><pre>{preview.text}</pre></div>
             {(preview.redacted || preview.truncated) && <span className="subtle">Preview metadata: {preview.redacted ? "redacted" : "not redacted"}, {preview.truncated ? "preview shortened" : "preview complete"}.</span>}
             <div className="row">
-              {attached ? <button type="button" className="secondary-button" onClick={() => onDetach(note.id, note.title)}>Detach memory from next message</button> : <button type="button" onClick={() => onAttach(note)} disabled={!canAddToBundle}>{canAddToBundle ? "Attach memory to next message" : `Bundle full (${explicitContextBundleMaxItems} max)`}</button>}
+              {attached ? <button type="button" className="secondary-button" onClick={() => onDetach(note.id, note.title)}>Detach memory from next message</button> : <button type="button" onClick={() => onAttach(note)} disabled={!canAddToBundle}>{canAddToBundle ? "Attach task-linked memory to next message" : `Bundle full (${explicitContextBundleMaxItems} max)`}</button>}
               <button type="button" className="danger-button" onClick={() => onDelete(note)} disabled={busy}>Delete memory</button>
             </div>
           </div>

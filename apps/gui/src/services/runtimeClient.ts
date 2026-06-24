@@ -139,6 +139,9 @@ export type ProjectMemoryContext = {
   title: string;
   text: string;
   tags: string[];
+  taskLabel?: string;
+  sessionLabel?: string;
+  attachTraceLabel?: string;
 };
 
 export type ExplicitContextBundleItem = ActiveEditorChatContext | VerificationOutputContext | WorkspaceSnippetContext | ProjectMemoryContext;

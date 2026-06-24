@@ -140,6 +140,9 @@ describe("activeEditorContext", () => {
       title: "Architecture note",
       text: "Local memory body with access_token=" + "x".repeat(64),
       tags: ["architecture"],
+      taskLabel: "Task ABC",
+      sessionLabel: "Session 123",
+      attachTraceLabel: "memory-attach-chat-001-mem-1",
     });
     const verification = {
       kind: "verification_output" as const,
@@ -153,7 +156,7 @@ describe("activeEditorContext", () => {
 
     expect(summarizeExplicitContextBundleItem(active).line).toContain("active file excerpt · src/editor.ts · vscode · typescript · range 3:1-4:2 · 23 chars · preview complete · redacted no");
     expect(summarizeExplicitContextBundleItem(snippet).line).toContain("project snippet · apps/gui/src/App.tsx · tsx · range 10:0-12:2 · 31 chars · preview complete · redacted no");
-    expect(summarizeExplicitContextBundleItem(memory).line).toContain("project memory · Architecture note · note mem-1 · 100 chars · tags architecture · preview complete · redacted yes");
+    expect(summarizeExplicitContextBundleItem(memory).line).toContain("project memory · Architecture note · note mem-1 · task Task ABC · session Session 123 · trace memory-attach-chat-001-mem-1 · 100 chars · tags architecture · preview complete · redacted yes");
     expect(summarizeExplicitContextBundleItem(verification).line).toContain("verification output · repository-check · failed · exit 1 · 89 chars · host truncated yes · preview complete · redacted yes");
     expect(summarizeExplicitContextBundleItem(memory).line).not.toContain("access_token");
     expect(summarizeExplicitContextBundleItem(verification).line).not.toContain("access_token");

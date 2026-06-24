@@ -204,7 +204,7 @@ export function projectMemoryToBundleItem(note: ProjectMemoryContext): ProjectMe
 }
 
 export function projectMemoryBundleItemKey(item: ProjectMemoryContext): string {
-  return ["project_memory", item.noteId, textHash(item.title), textHash(item.text)].join("|");
+  return ["project_memory", item.noteId, textHash(item.title), textHash(item.text), textHash(item.taskLabel ?? ""), textHash(item.sessionLabel ?? ""), textHash(item.attachTraceLabel ?? "")].join("|");
 }
 
 export function explicitContextBundleItemKey(item: ActiveEditorChatContext): string {
@@ -275,7 +275,10 @@ export function summarizeExplicitContextBundleItem(item: ExplicitContextBundleIt
   if (item.kind === "project_memory") {
     const preview = classifyBoundedContextPreview(item.text);
     const tagLabel = item.tags.map((tag) => sanitizeDisplayText(tag)).join(", ") || "none";
-    const metadata = [`note ${sanitizeDisplayText(item.noteId)}`, `${item.text.length} chars`, `tags ${tagLabel}`, `preview ${preview.truncated ? "shortened" : "complete"}`, `redacted ${preview.redacted ? "yes" : "no"}`];
+    const taskLabel = item.taskLabel ? `task ${sanitizeDisplayText(item.taskLabel)}` : "task-linked manual attach";
+    const sessionLabel = item.sessionLabel ? `session ${sanitizeDisplayText(item.sessionLabel)}` : undefined;
+    const traceLabel = item.attachTraceLabel ? `trace ${sanitizeDisplayText(item.attachTraceLabel)}` : undefined;
+    const metadata = [`note ${sanitizeDisplayText(item.noteId)}`, taskLabel, ...(sessionLabel ? [sessionLabel] : []), ...(traceLabel ? [traceLabel] : []), `${item.text.length} chars`, `tags ${tagLabel}`, `preview ${preview.truncated ? "shortened" : "complete"}`, `redacted ${preview.redacted ? "yes" : "no"}`];
     return {
       typeLabel: "project memory",
       label: sanitizeDisplayText(item.title),
@@ -315,7 +318,14 @@ export function explicitContextBundleToChatContext(items: ExplicitContextBundleI
   }
   return {
     kind: "explicit_context_bundle",
-    items: items.map(({ key: _key, ...item }) => item),
+    items: items.map((item) => {
+      if (item.kind === "project_memory") {
+        const { key: _key, taskLabel: _taskLabel, sessionLabel: _sessionLabel, attachTraceLabel: _attachTraceLabel, ...context } = item;
+        return context;
+      }
+      const { key: _key, ...context } = item;
+      return context;
+    }),
   };
 }
 

@@ -8,6 +8,8 @@ export type ProjectMemoryNote = {
   source: "manual";
   createdAt: string;
   updatedAt: string;
+  taskLabel?: string;
+  sessionLabel?: string;
 };
 
 export type ProjectMemoryListResponse = {
@@ -26,6 +28,8 @@ export type ProjectMemoryCreateRequest = {
   text: string;
   tags: string[];
   source: "manual";
+  taskLabel?: string;
+  sessionLabel?: string;
 };
 
 export function listProjectMemory(settings: RuntimeSettings): Promise<RuntimeResult<ProjectMemoryListResponse>> {

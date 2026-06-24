@@ -135,8 +135,9 @@ try {
   await expectVisibleText(page, "1 local memory note matched", "memory search result", 20_000);
   await expectVisibleText(page, noteTitle, "searched memory title", 20_000);
 
-  await page.getByRole("button", { name: "Attach memory to next message" }).click();
-  await expectVisibleText(page, `Attached local memory note ${noteTitle} to the next message context.`, "memory attach status", 20_000);
+  await page.getByRole("button", { name: "Attach task-linked memory to next message" }).click();
+  await expectVisibleText(page, `Attached task-linked local memory note ${noteTitle} to the next message context.`, "memory attach status", 20_000);
+  await expectVisibleText(page, "Trace label: memory-attach-", "memory attach trace label", 20_000);
   await expectVisibleText(page, "Project memory", "project memory bundle item", 20_000);
   assert(providerHits === 0, "memory attach unexpectedly called mock provider");
 
