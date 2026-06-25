@@ -1,11 +1,12 @@
 import type { ApplyWorkspaceEditPayload, ApplyWorkspaceEditResultPayload } from "../bridge/bridgeAdapter";
 import { analyzeEditProposalContent, editProposalPayloadKey, type EditProposalRejectedDiagnostic, type PlanToPatchProposalMetadata } from "./editProposal";
 import type { AgentRunApplyResultMetadata, AgentRunInput, AgentRunVerificationResultMetadata } from "./agentRunState";
+import { evaluateAgentRunPlanProposal, type AgentRunPlanPreviewMetadata } from "./agentRunPlanProposal";
 import { sanitizeDisplayText, sanitizeTimelineText } from "./redaction";
 
-export type AgentRunModelProposalPathState = "idle" | "prompt_ready" | "awaiting_model_response" | "proposal_detected" | "proposal_rejected" | "normal_response" | "stale_response" | "blocked";
+export type AgentRunModelProposalPathState = "idle" | "prompt_ready" | "awaiting_model_response" | "proposal_detected" | "proposal_rejected" | "plan_detected" | "plan_rejected" | "normal_response" | "stale_response" | "blocked";
 
-export type AgentRunModelProposalDiagnosticCode = "missing_goal" | "awaiting_model_response" | "normal_response" | "stale_response" | "proposal_rejected" | "unsafe_metadata" | "malformed_input";
+export type AgentRunModelProposalDiagnosticCode = "missing_goal" | "awaiting_model_response" | "normal_response" | "stale_response" | "proposal_rejected" | "plan_rejected" | "unsafe_metadata" | "malformed_input";
 
 export type SanitizedDiagnostic = {
   code: AgentRunModelProposalDiagnosticCode;
@@ -28,6 +29,11 @@ export type AgentRunModelProposalEditProposalState = {
   payloadKey: string;
 };
 
+export type AgentRunModelPlanPreviewState = {
+  sourceMessageId: string;
+  plan: AgentRunPlanPreviewMetadata;
+};
+
 export type AgentRunModelProposalInput = {
   chatId: string;
   goal: string;
@@ -36,6 +42,7 @@ export type AgentRunModelProposalInput = {
   runtimeSettingsVersion?: string;
   latestAssistantMessage?: AgentRunModelProposalAssistantMessage;
   editProposalState?: AgentRunModelProposalEditProposalState;
+  planPreviewState?: AgentRunModelPlanPreviewState;
   applyResult?: ApplyWorkspaceEditResultPayload | AgentRunApplyResultMetadata;
   verificationResult?: AgentRunVerificationResultMetadata;
 };
@@ -43,6 +50,7 @@ export type AgentRunModelProposalInput = {
 export type AgentRunModelProposalResult = {
   agentRunInput: AgentRunInput;
   proposalPathState: AgentRunModelProposalPathState;
+  planPreview?: AgentRunModelPlanPreviewState;
   diagnostics: SanitizedDiagnostic[];
 };
 
@@ -79,6 +87,16 @@ export function evaluateAgentRunModelProposal(input: AgentRunModelProposalInput)
     return result(baseAgentRunInput, "stale_response", diagnostics);
   }
 
+  const planAnalysis = evaluateAgentRunPlanProposal(assistant.content);
+  if (planAnalysis.state === "plan_detected") {
+    return result(baseAgentRunInput, "plan_detected", diagnostics, { sourceMessageId: assistant.id, plan: planAnalysis.plan });
+  }
+  if (planAnalysis.state === "plan_rejected" || planAnalysis.state === "blocked") {
+    const code = planAnalysis.state === "blocked" ? "unsafe_metadata" : "plan_rejected";
+    diagnostics.push(...planAnalysis.diagnostics.map((item) => diagnostic(code, item.message)));
+    return result(baseAgentRunInput, planAnalysis.state, diagnostics);
+  }
+
   const analysis = analyzeEditProposalContent(assistant.content);
   if (analysis.state === "none") {
     diagnostics.push(diagnostic("normal_response", "The latest assistant response did not contain a strict safe-edit proposal."));
@@ -99,12 +117,13 @@ export function evaluateAgentRunModelProposal(input: AgentRunModelProposalInput)
   return result(agentRunInput, "proposal_detected", diagnostics);
 }
 
-function result(agentRunInput: AgentRunInput, proposalPathState: AgentRunModelProposalPathState, diagnostics: SanitizedDiagnostic[]): AgentRunModelProposalResult {
-  return {
+function result(agentRunInput: AgentRunInput, proposalPathState: AgentRunModelProposalPathState, diagnostics: SanitizedDiagnostic[], planPreview?: AgentRunModelPlanPreviewState): AgentRunModelProposalResult {
+  return stripUndefined({
     agentRunInput: stripUndefined(agentRunInput),
     proposalPathState,
+    planPreview,
     diagnostics: diagnostics.slice(0, 12),
-  };
+  });
 }
 
 function staleAssistantReason(input: AgentRunModelProposalInput, assistant: AgentRunModelProposalAssistantMessage): string | undefined {

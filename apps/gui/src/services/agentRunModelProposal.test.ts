@@ -39,6 +39,27 @@ function planToPatchEnvelope(overrides: Record<string, unknown> = {}): string {
   });
 }
 
+function multistepPlan(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    version: "2026-06-25",
+    kind: "agent_run.multistep_plan",
+    authority: "metadata_only",
+    cloudRequired: false,
+    executionAllowed: false,
+    title: "Review a manual multi-step plan",
+    summary: "Preview bounded steps before the user chooses the next action.",
+    steps: [
+      { id: "step-1", title: "Inspect visible state", summary: "Review already visible context only.", status: "preview_only", expectedTouchedFiles: ["apps/gui/src/services/agentRunPlanProposal.ts"], riskLabels: [] },
+      { id: "step-2", title: "Show plan metadata", summary: "Render display metadata without apply authority.", status: "preview_only", expectedTouchedFiles: [], riskLabels: ["Manual review remains required"] },
+    ],
+    risks: ["Manual confirmation remains required"],
+    expectedTouchedFiles: ["apps/gui/src/services/agentRunPlanProposal.ts"],
+    verificationSuggestions: [{ commandId: "gui-app-tests", label: "GUI app tests", description: "Run the focused GUI application test gate after explicit user selection.", riskLevel: "medium", expectedDuration: "Usually 5 to 10 minutes", cwdPolicyLabel: "Repository root selected by host", outputBoundLabel: "Sanitized tail only" }],
+    manualActionPolicy: { noAutoSend: true, noAutoApply: true, noAutoVerification: true, noAutoRollback: true, noHiddenReads: true, requiresExplicitUserAction: true },
+    ...overrides,
+  });
+}
+
 function input(content: string, overrides: Partial<AgentRunModelProposalInput> = {}): AgentRunModelProposalInput {
   return {
     chatId: "chat-1",
@@ -92,6 +113,24 @@ describe("evaluateAgentRunModelProposal", () => {
       planSteps: ["Review the visible proposal", "Apply only after user confirmation"],
       risks: [],
       verificationSuggestions: ["GUI app tests (gui-app-tests)"],
+    });
+  });
+
+  it("detects an inert multi-step plan without creating edit proposal authority", () => {
+    const result = evaluateAgentRunModelProposal(input(multistepPlan()));
+
+    expect(result.proposalPathState).toBe("plan_detected");
+    expect(result.diagnostics).toEqual([]);
+    expect(result.agentRunInput.proposal).toBeUndefined();
+    expect(result.agentRunInput.applyRequest).toBeUndefined();
+    expect(result.agentRunInput.verificationRequest).toBeUndefined();
+    expect(result.planPreview).toEqual({
+      sourceMessageId: "assistant-1",
+      plan: expect.objectContaining({
+        kind: "agent_run.multistep_plan",
+        title: "Review a manual multi-step plan",
+        verificationSuggestions: [{ commandId: "gui-app-tests", label: "GUI app tests" }],
+      }),
     });
   });
 
