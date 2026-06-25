@@ -1,19 +1,10 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { createReadStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
-import http from "node:http";
-import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
 import { agentRunBuiltGuiApplyResult, agentRunBuiltGuiAssistantMessage, agentRunBuiltGuiCapsResponse, agentRunBuiltGuiChatThread, agentRunBuiltGuiFixture, agentRunBuiltGuiProviderSummary, agentRunBuiltGuiVerificationProgress, agentRunBuiltGuiVerificationResult, assertAgentRunBuiltGuiFixtureSafe } from "./lib/agent-run-built-gui-fixtures.mjs";
-import { npmRunInvocation } from "./lib/npm-spawn.mjs";
+import { agentRunBuiltGuiDistRoot, buildAgentRunBuiltGui, isAgentRunAllowedNetworkUrl, isAgentRunJsOrCssAssetRequest, isAgentRunRuntimeOriginUrl, isAgentRunStaticServerAsset, isExpectedAgentRunFetchConsoleError, messageOf, redactAgentRunUrl, requireAgentRunBuiltGui, requireAgentRunChromium, startAgentRunStaticServer } from "./lib/agent-run-built-gui-smoke-bootstrap.mjs";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const guiRoot = path.join(root, "apps", "gui");
-const distRoot = path.join(guiRoot, "dist");
-const indexPath = path.join(distRoot, "index.html");
-const runtimeOrigin = "http://127.0.0.1:8001";
+const smokeName = "Agent Run follow-up loop smoke";
+const smokeCommand = "smoke:agent-run-followup-loop";
 const fixture = agentRunBuiltGuiFixture;
 const activeChatId = "chat-001";
 const submittedRequestId = "agent-run-followup-loop-request-1";
@@ -64,12 +55,12 @@ function resetScenario(overrides = {}) {
   runtimeRequests.length = 0;
 }
 
-await buildGui();
-await requireBuiltGui();
-const { chromium } = await requireChromium();
+await buildAgentRunBuiltGui({ smokeName, smokeCommand, redact: redactSecrets });
+await requireAgentRunBuiltGui({ smokeName, failures, redact: redactSecrets });
+const { chromium } = await requireAgentRunChromium({ smokeName, redact: redactSecrets });
 
 try {
-  server = await startStaticServer(distRoot);
+  server = await startAgentRunStaticServer(agentRunBuiltGuiDistRoot);
   const guiBaseUrl = `http://127.0.0.1:${server.port}`;
   browser = await chromium.launch({ headless: true });
 
@@ -213,7 +204,7 @@ async function createSmokePage(guiBaseUrl) {
   page.on("console", (message) => {
     const text = message.text();
     assertNoRawMarkers(text, "browser console");
-    if (message.type() === "error" && !isExpectedFetchConsoleError(text)) {
+    if (message.type() === "error" && !isExpectedAgentRunFetchConsoleError(text)) {
       failures.push(`Browser console error: ${redactSecrets(text)}`);
     }
   });
@@ -222,81 +213,45 @@ async function createSmokePage(guiBaseUrl) {
     failures.push(`Page JavaScript error: ${redactSecrets(error.message)}`);
   });
   page.on("request", (request) => {
-    if (!isAllowedNetworkUrl(request.url(), guiBaseUrl)) {
-      failures.push(`Unexpected network request: ${request.method()} ${redactUrl(request.url())}`);
+    if (!isAgentRunAllowedNetworkUrl(request.url(), guiBaseUrl)) {
+      failures.push(`Unexpected network request: ${request.method()} ${redactAgentRunUrl(request.url(), redactSecrets)}`);
     }
   });
   page.on("requestfailed", (request) => {
-    if (isStaticServerAsset(request.url(), guiBaseUrl) && isJsOrCssAssetRequest(request.url(), request.resourceType())) {
-      failures.push(`Failed JS/CSS asset request: ${request.method()} ${redactUrl(request.url())} (${request.failure()?.errorText ?? "unknown failure"})`);
+    if (isAgentRunStaticServerAsset(request.url(), guiBaseUrl) && isAgentRunJsOrCssAssetRequest(request.url(), request.resourceType())) {
+      failures.push(`Failed JS/CSS asset request: ${request.method()} ${redactAgentRunUrl(request.url(), redactSecrets)} (${request.failure()?.errorText ?? "unknown failure"})`);
     }
   });
   page.on("response", (response) => {
-    if (isStaticServerAsset(response.url(), guiBaseUrl) && response.status() >= 400) {
-      failures.push(`Broken local asset response: ${response.status()} ${redactUrl(response.url())}`);
+    if (isAgentRunStaticServerAsset(response.url(), guiBaseUrl) && response.status() >= 400) {
+      failures.push(`Broken local asset response: ${response.status()} ${redactAgentRunUrl(response.url(), redactSecrets)}`);
     }
   });
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = request.url();
-    if (isRuntimeOriginUrl(url)) {
-      runtimeRequests.push({ method: request.method(), url: redactUrl(url) });
+    if (isAgentRunRuntimeOriginUrl(url)) {
+      runtimeRequests.push({ method: request.method(), url: redactAgentRunUrl(url, redactSecrets) });
       const response = await mockRuntimeResponse(url, request.method(), request.postData() ?? "");
       if (!response) {
-        failures.push(`Unexpected runtime request: ${request.method()} ${redactUrl(url)}`);
+        failures.push(`Unexpected runtime request: ${request.method()} ${redactAgentRunUrl(url, redactSecrets)}`);
         await route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "unexpected local mock endpoint" }) });
         return;
       }
       await route.fulfill(response);
       return;
     }
-    if (isStaticServerAsset(url, guiBaseUrl)) {
+    if (isAgentRunStaticServerAsset(url, guiBaseUrl)) {
       await route.continue();
       return;
     }
-    failures.push(`Unexpected network request blocked: ${request.method()} ${redactUrl(url)}`);
+    failures.push(`Unexpected network request blocked: ${request.method()} ${redactAgentRunUrl(url, redactSecrets)}`);
     await route.abort("blockedbyclient");
   });
   await page.goto(`${guiBaseUrl}/index.html`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
   await waitForGuiMessage(page, "gui.ready");
   return page;
-}
-
-async function buildGui() {
-  const env = { ...process.env, NO_PROXY: "127.0.0.1,localhost,::1", no_proxy: "127.0.0.1,localhost,::1" };
-  const { command, args } = npmRunInvocation("build", [], { env });
-  const result = spawnSync(command, args, { cwd: guiRoot, stdio: "inherit", env });
-  if (result.status !== 0) {
-    failActionable("GUI build failed.", ["Run `cd apps/gui && npm install` if dependencies are missing, then retry `npm run smoke:agent-run-followup-loop`."]);
-  }
-}
-
-async function requireBuiltGui() {
-  try {
-    const fileStat = await stat(indexPath);
-    if (!fileStat.isFile()) {
-      throw new Error("not a file");
-    }
-    const html = await readFile(indexPath, "utf8");
-    if (!html.includes("/assets/") && !html.includes("./assets/")) {
-      failures.push("Built GUI index.html does not reference Vite assets.");
-    }
-  } catch {
-    failActionable("built GUI is missing after build.", [`Expected file: ${path.relative(root, indexPath)}`]);
-  }
-}
-
-async function requireChromium() {
-  try {
-    return await import("playwright");
-  } catch (error) {
-    failActionable("Playwright is not installed or cannot be loaded.", [
-      "Run `npm install` from the repository root.",
-      "Run `npx playwright install chromium` if Chromium is not installed yet.",
-      `Load error: ${messageOf(error)}`,
-    ]);
-  }
 }
 
 async function mockRuntimeResponse(value, method, body) {
@@ -511,99 +466,6 @@ async function sanitizedMessages(page) {
   return messages.map((message) => ({ type: message?.type, requestId: message?.requestId, action: message?.payload?.action, commandId: message?.payload?.commandId }));
 }
 
-async function startStaticServer(staticRoot) {
-  const server = http.createServer(async (request, response) => {
-    let pathname;
-    try {
-      const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
-      pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
-    } catch {
-      response.writeHead(400).end("Bad request");
-      return;
-    }
-    const requestedPath = path.normalize(path.join(staticRoot, pathname));
-    if (!requestedPath.startsWith(staticRoot + path.sep) && requestedPath !== staticRoot) {
-      response.writeHead(403).end("Forbidden");
-      return;
-    }
-    try {
-      const fileStat = await stat(requestedPath);
-      if (!fileStat.isFile()) {
-        response.writeHead(404).end("Not found");
-        return;
-      }
-      response.writeHead(200, { "content-type": contentType(requestedPath) });
-      createReadStream(requestedPath).pipe(response);
-    } catch {
-      response.writeHead(404).end("Not found");
-    }
-  });
-  await listen(server, "127.0.0.1", 0);
-  const address = server.address();
-  return { port: address.port, close: () => closeServer(server) };
-}
-
-function listen(server, host, port) {
-  return new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, host, () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
-}
-
-function closeServer(server) {
-  return new Promise((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-}
-
-function contentType(filePath) {
-  if (filePath.endsWith(".html")) return "text/html; charset=utf-8";
-  if (filePath.endsWith(".js")) return "text/javascript; charset=utf-8";
-  if (filePath.endsWith(".css")) return "text/css; charset=utf-8";
-  if (filePath.endsWith(".svg")) return "image/svg+xml";
-  return "application/octet-stream";
-}
-
-function isAllowedNetworkUrl(value, guiBaseUrl) {
-  return isStaticServerAsset(value, guiBaseUrl) || isRuntimeOriginUrl(value);
-}
-
-function isRuntimeOriginUrl(value) {
-  try {
-    return new URL(value).origin === runtimeOrigin;
-  } catch {
-    return false;
-  }
-}
-
-function isStaticServerAsset(url, guiBaseUrl) {
-  return url.startsWith(`${guiBaseUrl}/`);
-}
-
-function isJsOrCssAssetRequest(url, resourceType) {
-  return resourceType === "script" || resourceType === "stylesheet" || new URL(url).pathname.endsWith(".js") || new URL(url).pathname.endsWith(".css");
-}
-
-function isExpectedFetchConsoleError(text) {
-  return /^Failed to load resource: (net::ERR_CONNECTION_REFUSED|the server responded with a status of (401 \(Unauthorized\)|404 \(Not Found\)))$/.test(text);
-}
-
-function redactUrl(value) {
-  try {
-    const url = new URL(value);
-    url.username = "";
-    url.password = "";
-    url.search = "";
-    url.hash = "";
-    return url.toString();
-  } catch {
-    return redactSecrets(value);
-  }
-}
-
 function assertNoRawMarkers(value, source) {
   const text = String(value).toLowerCase();
   for (const [index, marker] of rawMarkers.entries()) {
@@ -630,18 +492,4 @@ function redactSecrets(value) {
     .replace(/authorization:\s*bearer[^\n]*/gi, "authorization: bearer [redacted]")
     .replace(/cookie:\s*[^\n]+/gi, "cookie: [redacted]")
     .replace(/\/Users\/[^\n]+/g, "/Users/[redacted]");
-}
-
-function failActionable(summary, lines) {
-  console.error(`Agent Run follow-up loop smoke failed: ${summary}`);
-  for (const line of lines) {
-    if (line) {
-      console.error(redactSecrets(line));
-    }
-  }
-  process.exit(1);
-}
-
-function messageOf(error) {
-  return error instanceof Error ? error.message : String(error);
 }
