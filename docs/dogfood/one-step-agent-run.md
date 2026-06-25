@@ -10,6 +10,8 @@ Sprint 62 may draft a second-step follow-up prompt after the user explicitly run
 
 Sprint 62 final audit status: this is bounded prompt drafting, not multi-step execution. The service, UI CTA, and smoke evidence are expected to preserve composer/focus-only behavior with no auto-send, apply, verification, repair, rollback, retry, context attachment, hidden reads, browser-storage persistence, provider/tool calls, shell/git execution, or new runtime/bridge authority. The focused local/mock verification gate is `npm run validate:contracts && cd apps/gui && npm test -- verificationFollowupPrompt AgentRunPanel App && npm run build && cd ../.. && npm run smoke:agent-run-followup-loop && npm run check && git diff --check`.
 
+Sprint 63 hardening keeps those gates stable rather than broadening authority. For manual dogfood prep, treat `npm run check` as the docs/identity validation gate and the S61/S62 focused commands as behavior gates for Agent Run changes. The built-GUI smokes are local/mock-only and require local root dependencies, `apps/gui` dependencies, and Playwright/Chromium; missing GUI deps or Chromium are setup issues, not product readiness failures. Vite chunk-size warnings during GUI build are currently non-failing warnings only and must not be reported as release readiness or production autonomy evidence.
+
 
 CI and smoke automation for Agent Run remain mock/loopback-only. Do not put real provider credentials, production accounts, hosted Yet AI services, managed gateways, cloud workspaces, provider account-login flows, real apply actions, or real verification commands into CI.
 

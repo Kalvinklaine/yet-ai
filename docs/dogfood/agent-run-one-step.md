@@ -8,6 +8,8 @@ Sprint 61 adds an optional inert multi-step plan preview for manual review. The 
 
 Sprint 62 adds an optional second-step follow-up/fix prompt draft after explicit user-run verification. The draft is safe-share composer text only: sanitized verification status, allowlisted command id, exit code, truncation flag, short bounded result summary, safe prior proposal labels, safe plan/proposal summary labels, touched file labels, and explicit user intent. It is not sent until the user reviews it and clicks Send manually. It is not automatic repair, retry, rollback, verification, provider execution, shell/git/tool execution, hidden context gathering, browser-storage persistence, workspace mutation, or production autonomy. If a report mentions it, record only whether the draft appeared, whether it stayed unsent until manual Send, and whether its content stayed sanitized.
 
+Sprint 63 stabilizes the verification matrix around those manual-only surfaces. Use `npm run check` for this template/docs validation, the focused S61/S62 gates when Agent Run behavior or contract claims change, and the heavier one-step safety bundle only for broad optional safety review. Built-GUI smokes remain local/mock-only Playwright runs against loopback static assets and deterministic fixtures; they need local root dependencies, `apps/gui` dependencies, and Playwright/Chromium, but they do not need real providers, hosted Yet AI services, production accounts, marketplace artifacts, signing, or release workflows. If `apps/gui` build prints Vite chunk-size warnings, record them only as non-failing local build warnings, not as a product readiness claim.
+
 ## Boundaries
 
 In scope:

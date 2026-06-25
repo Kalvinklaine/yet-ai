@@ -99,6 +99,24 @@ Run the root validation command after documentation or identity changes:
 npm run check
 ```
 
+### S63 Agent Run stability and verification guidance
+
+S63 keeps the Agent Run verification story focused on the manual-only S61/S62 surfaces instead of turning browser smokes into default release gates. For documentation-only or identity-only changes, `npm run check` remains the required root validation command. For Agent Run behavior changes, use the focused gates documented below for the changed surface first, then add built-GUI smokes only when the rendered manual flow is affected.
+
+The focused Agent Run gates are:
+
+- S61 inert plan preview: contracts, `agentRunPlanProposal`/`AgentRunPanel`/`App` GUI tests, GUI build, `smoke:agent-run-multistep-plan`, `npm run check`, and diff hygiene.
+- S62 follow-up/fix drafting: contracts, `verificationFollowupPrompt`/`AgentRunPanel`/`App` GUI tests, GUI build, `smoke:agent-run-followup-loop`, `npm run check`, and diff hygiene.
+- S63 stability docs or matrix updates: `npm run check`; run the S61/S62 focused gate only if the edited docs change an Agent Run contract, GUI behavior claim, or smoke boundary.
+
+The built-GUI smokes (`npm run smoke:agent-run-multistep-plan`, `npm run smoke:agent-run-followup-loop`, and the older one-step smokes) are local/mock-only Playwright checks. They build `apps/gui`, serve static assets from loopback, and use deterministic runtime/SSE/provider/bridge/host fixtures. They do not launch real IDEs, call real providers, use credentials, contact hosted Yet AI services, mutate workspaces, run shell/git/tool endpoints, or prove production autonomy.
+
+The heavier Agent Run safety regression bundle remains optional and explicit. Use it when reviewing broad Agent Run safety changes or before a larger manual audit, not as a replacement for the narrower S61/S62 gates and not as part of `npm run check`. Keep its shell `&&` behavior failure-preserving so the first broken boundary stops the run.
+
+Dependency prerequisites for the built-GUI smokes are local Node/npm dependencies at the repository root, `apps/gui` dependencies, and Playwright with a compatible Chromium browser installed for the current machine. If `apps/gui/node_modules` is absent or a broken local symlink, restore/install the local GUI dependencies before running the smoke. If Chromium is missing, install it through the local Playwright dependency workflow. These prerequisites are developer-machine setup only; they are not hosted-service, provider, account, marketplace, signing, or release requirements.
+
+Vite may print chunk-size warnings during `apps/gui` builds. Those warnings are currently non-failing build warnings for local verification. Treat them as a prompt to review future bundle splitting if needed, not as a production-readiness claim and not as evidence that release packaging, marketplace publication, signing, notarization, installer work, or autonomous Agent Run behavior is complete.
+
 For the Sprint 41 sandbox checkpoint/rollback substrate, run the focused disposable-workspace smoke:
 
 ```sh
