@@ -18,6 +18,7 @@
     "smoke:agent-run-built-gui-fixtures": "node scripts/smoke-agent-run-built-gui-fixtures.mjs",
     "smoke:agent-run-e2e": "node scripts/smoke-agent-run-e2e.mjs",
     "smoke:agent-run-dogfood": "node scripts/smoke-agent-run-dogfood.mjs",
+    "smoke:agent-run-multistep-plan": "node scripts/smoke-agent-run-multistep-plan.mjs",
     "smoke:agent-progress-endpoint": "node scripts/smoke-agent-progress-endpoint.mjs",
     "smoke:gui-agent-progress": "node scripts/smoke-gui-agent-progress.mjs",
     "check:planner-scheduler": "node scripts/check-planner-scheduler.mjs",

@@ -10,7 +10,7 @@ docs/
   architecture/         # architecture baselines, decisions, contracts, roadmaps
 ```
 
-Additional local evidence templates live under `docs/dogfood/`, including the real-provider active-file chat report, the manual real coding task dogfood checklist, the historical one-step Agent Run dogfood checklist, and the safe-share Agent Run one-step report template. The deterministic mock-only built-GUI validation for the safe-share Agent Run path is `npm run smoke:agent-run-dogfood`; it uses loopback-only runtime/host mocks and sanitized evidence, not real-provider CI.
+Additional local evidence templates live under `docs/dogfood/`, including the real-provider active-file chat report, the manual real coding task dogfood checklist, the historical one-step Agent Run dogfood checklist, and the safe-share Agent Run one-step report template. The deterministic mock-only built-GUI validation for the safe-share Agent Run path is `npm run smoke:agent-run-dogfood`; it uses loopback-only runtime/host mocks and sanitized evidence, not real-provider CI. The inert multi-step Agent Run plan preview smoke is `npm run smoke:agent-run-multistep-plan`; it covers valid and rejected preview metadata with no automatic apply or verification bridge messages and no browser-storage leakage.
 
 ## Where to add documents
 
@@ -164,6 +164,14 @@ npm run smoke:agent-run-e2e
 The smoke builds the GUI, serves the built assets from loopback, and drives Playwright against deterministic mock runtime/SSE/provider/bridge/host data. It proves the manual one-step Agent Run journey at the rendered UI boundary: local goal entry, explicit context attachment, prompt draft, manual Send, no automatic apply or verification, explicit Apply through the existing reviewed edit bridge request, explicit allowlisted Verify through the existing `gui.ideActionRequest` with `commandId` only, sanitized final report rendering, malformed proposal rejection, missing checkpoint prerequisite blocking, failed verification stopping without repair, and stale assistant response rejection after correlation changes. It is mock/loopback-only evidence: it does not launch a real IDE, call providers or hosted Yet AI services, use real credentials, scan hidden workspace files, execute shell/git/tool endpoints, use non-loopback network, persist browser-storage secrets/context, auto-send, auto-apply, auto-run verification, auto-repair, auto-retry, auto-rollback, or claim production autonomy.
 
 Keep this smoke as an explicit verification gate rather than part of `npm run check` unless a future card approves browser/build smoke expansion for the default local validation bundle. It builds the GUI and launches Playwright, while `npm run check` remains the focused repository validation bundle for docs, identity, contracts, deterministic local validators, and safe self-tests that do not run browser or packaged IDE smoke gates.
+
+For the S61 inert multi-step Agent Run plan preview path, run:
+
+```sh
+npm run smoke:agent-run-multistep-plan
+```
+
+The smoke builds the GUI, serves the built assets from loopback, and drives Playwright with deterministic mock runtime/SSE/provider/bridge data. It covers a valid `agent_run.multistep_plan` preview and an unsafe rejected preview, asserts the preview remains review-only metadata, checks no automatic `gui.applyWorkspaceEditRequest` or `runVerificationCommand` bridge messages are emitted before explicit user clicks, and verifies browser storage does not persist raw prompts, diffs, file bodies, secrets, commands, or private paths. It is mock/loopback-only evidence: it does not call real providers, launch real IDEs, require hosted services, run shell/git/tool actions through the product, or grant execution authority.
 
 For the Sprint 49 Agent Run safety regression bundle, run:
 
