@@ -49,7 +49,7 @@ export type VerificationFollowupPromptDraft = {
   metadata: VerificationFollowupPromptDraftMetadata;
 };
 
-const outputSummaryLimit = 1200;
+const outputSummaryLimit = 1000;
 const promptLimit = 2400;
 const safeIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/;
 const safeRelativePathPattern = /^(?!\/)(?!~)(?!.*%)(?!.*\\)(?!.*:)(?!.*[?#])(?!.*(?:^|\/)\.\.?(?:\/|$))(?!.*\/\/)(?!.*\/$)[^\u0000-\u001f\u007f-\u009f]+$/;
@@ -95,6 +95,7 @@ export function buildVerificationFollowupPromptDraft(result: VerificationResultF
     "",
     "Draft-only handoff",
     "This text was placed in the composer only. It does not send chat, run commands, apply edits, attach context, save memory, or start repair automatically.",
+    "Review this draft, edit it if needed, then click Send manually only if you choose.",
     "",
     "Verification result metadata",
     `Command id: ${commandId}`,

@@ -10,9 +10,11 @@ export type AgentRunPanelProps = {
   onApplyReviewedPatch: () => void;
   onRunAllowlistedVerification: (commandId: VerificationCommandId) => void;
   onReviewRollback: () => void;
+  onDraftVerificationFollowup: () => void;
+  onDraftVerificationFix: () => void;
 };
 
-export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback }: AgentRunPanelProps) {
+export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix }: AgentRunPanelProps) {
   const view = evaluateAgentRunState(input);
   const details = view.details;
   const supported = host === "vscode" || host === "jetbrains";
@@ -20,6 +22,8 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const canApply = supported && !pendingApply && view.nextUserAction === "confirm_apply";
   const canVerify = supported && !pendingVerification && view.nextUserAction === "confirm_verification" && verificationCommandId !== null;
   const canReviewRollback = view.rollbackAvailable || view.nextUserAction === "review_rollback";
+  const canDraftFollowup = view.state === "verified";
+  const canDraftFix = view.state === "verification_failed";
   const touchedFileCount = numberDetail(details.touchedFileCount) ?? stringArrayDetail(details.touchedFiles).length;
   const editCount = numberDetail(details.editCount);
   const checkpointStatusLabel = checkpointStatus(details);
@@ -110,6 +114,17 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           {proposalPlanSteps.length > 0 && <span>Plan: {proposalPlanSteps.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
           {proposalRisks.length > 0 && <span>Risks: {proposalRisks.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
           {proposalVerificationSuggestions.length > 0 && <span>Verification suggestions (display-only command IDs): {proposalVerificationSuggestions.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
+        </div>
+      )}
+      {(canDraftFollowup || canDraftFix) && (
+        <div className="readiness-card ready stack" role="status" aria-label="Agent Run verification follow-up draft">
+          <strong>{canDraftFix ? "Manual fix draft available" : "Manual follow-up draft available"}</strong>
+          <span>{canDraftFix ? "Verification failed after your explicit run. Draft a sanitized fix prompt into the composer, review it, then click Send manually if you choose." : "Verification succeeded after your explicit run. Draft a sanitized follow-up prompt into the composer, review it, then click Send manually if you choose."}</span>
+          <div className="row" role="group" aria-label="Agent Run verification follow-up actions">
+            {canDraftFollowup && <button type="button" className="secondary-button" onClick={onDraftVerificationFollowup}>Draft Agent Run follow-up prompt</button>}
+            {canDraftFix && <button type="button" className="secondary-button" onClick={onDraftVerificationFix}>Draft Agent Run fix prompt</button>}
+          </div>
+          <span className="subtle">Drafting only writes the composer and focuses it. It never sends, applies, runs verification, attaches context, saves memory, changes readiness, or stores browser data.</span>
         </div>
       )}
       <span className="subtle">no hidden model/provider calls</span>

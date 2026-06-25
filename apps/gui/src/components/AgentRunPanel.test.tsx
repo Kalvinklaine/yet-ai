@@ -373,6 +373,9 @@ describe("AgentRunPanel", () => {
     expect(panelText()).toContain("Manual state: Ready for follow-up");
     expect(panelText()).toContain("Review the sanitized verification result, then manually draft a follow-up or close the run.");
     expect(panelText()).toContain("Verification status/result: Verified · exit 0 · sanitized result available");
+    expect(panelText()).toContain("Manual follow-up draft available");
+    expect(panelText()).toContain("review it, then click Send manually");
+    expect(findButton("Draft Agent Run follow-up prompt").disabled).toBe(false);
 
     renderPanel({
       ...readyInput,
@@ -385,6 +388,41 @@ describe("AgentRunPanel", () => {
     expect(panelText()).toContain("Verification failed. Recovery: review the sanitized result, then manually draft a follow-up or review rollback; no automatic repair is started.");
     expect(panelText()).toContain("Review the sanitized verification failure, then manually draft a fix follow-up or review rollback. Nothing repairs itself, how polite.");
     expect(panelText()).toContain("Verification status/result: Verification failed · exit 1 · sanitized result available");
+    expect(panelText()).toContain("Manual fix draft available");
+    expect(panelText()).toContain("Draft a sanitized fix prompt into the composer");
+    expect(findButton("Draft Agent Run fix prompt").disabled).toBe(false);
+  });
+
+  it("draft follow-up CTAs call only explicit draft callbacks", () => {
+    const onDraftVerificationFollowup = vi.fn();
+    const onDraftVerificationFix = vi.fn();
+    renderPanel({
+      ...readyInput,
+      applyResult: { status: "applied", summary: "Applied.", appliedFileCount: 1 },
+      verificationResult: { status: "succeeded", exitCode: 0, outputTail: "passed" },
+      boundedLoop: verifiedLoop,
+    }, { host: "vscode", onDraftVerificationFollowup, onDraftVerificationFix });
+
+    act(() => {
+      findButton("Draft Agent Run follow-up prompt").click();
+    });
+
+    expect(onDraftVerificationFollowup).toHaveBeenCalledTimes(1);
+    expect(onDraftVerificationFix).not.toHaveBeenCalled();
+
+    renderPanel({
+      ...readyInput,
+      applyResult: { status: "applied", summary: "Applied.", appliedFileCount: 1 },
+      verificationResult: { status: "failed", exitCode: 1, outputTail: "failed" },
+      boundedLoop: failedVerificationLoop,
+    }, { host: "vscode", onDraftVerificationFollowup, onDraftVerificationFix });
+
+    act(() => {
+      findButton("Draft Agent Run fix prompt").click();
+    });
+
+    expect(onDraftVerificationFollowup).toHaveBeenCalledTimes(1);
+    expect(onDraftVerificationFix).toHaveBeenCalledTimes(1);
   });
 
   it("does not persist run internals or expose raw unsafe data", () => {
@@ -412,6 +450,8 @@ type PanelTestProps = {
   onApplyReviewedPatch?: () => void;
   onRunAllowlistedVerification?: (commandId: VerificationCommandId) => void;
   onReviewRollback?: () => void;
+  onDraftVerificationFollowup?: () => void;
+  onDraftVerificationFix?: () => void;
 };
 
 function renderPanel(input: unknown, props: PanelTestProps = {}) {
@@ -433,6 +473,8 @@ function renderPanel(input: unknown, props: PanelTestProps = {}) {
         onApplyReviewedPatch={props.onApplyReviewedPatch ?? vi.fn()}
         onRunAllowlistedVerification={props.onRunAllowlistedVerification ?? vi.fn()}
         onReviewRollback={props.onReviewRollback ?? vi.fn()}
+        onDraftVerificationFollowup={props.onDraftVerificationFollowup ?? vi.fn()}
+        onDraftVerificationFix={props.onDraftVerificationFix ?? vi.fn()}
       />,
     );
   });

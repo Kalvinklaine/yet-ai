@@ -7441,6 +7441,28 @@ describe("edit proposal preview", () => {
     expect(agentRunPanel().textContent).toContain("Ready for follow-up. The manual apply and verification path completed; review the sanitized result before drafting any follow-up.");
     expect(agentRunPanel().textContent).toContain("Review the sanitized verification result, then manually draft a follow-up or close the run.");
     expect(agentRunPanel().textContent).toContain("Verification status/result: Verified · exit 0 · sanitized result available");
+    expect(agentRunPanel().textContent).toContain("Manual follow-up draft available");
+    expect(buttonWithin(agentRunPanel(), "Draft Agent Run follow-up prompt").disabled).toBe(false);
+    fetchMock.mockClear();
+    postMessage.mockClear();
+
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Draft Agent Run follow-up prompt").click();
+    });
+
+    expect(chatInput().value).toContain("Verification follow-up prompt");
+    expect(chatInput().value).toContain("Command id: repository-check");
+    expect(chatInput().value).toContain("Status: succeeded");
+    expect(chatInput().value).toContain("Exit code: 0");
+    expect(chatInput().value).toContain("passed");
+    expect(chatInput().value).toContain("Previous proposal id: gui-edit-proposal-1");
+    expect(chatInput().value).toContain("Touched file labels: src/example.ts");
+    expect(chatInput().value).toContain("Review this draft, edit it if needed, then click Send manually");
+    expect(chatInput().value).toContain("Do not apply edits, run commands, attach context, save memory, or send anything automatically.");
+    expect(document.activeElement).toBe(chatInput());
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+    expect(browserStorageDump()).not.toContain("passed");
   });
 
   it("Agent Run apply failure is actionable and does not auto retry", async () => {
@@ -7506,9 +7528,29 @@ describe("edit proposal preview", () => {
     expect(panel.textContent).toContain("Manual state: Verification failed");
     expect(panel.textContent).toContain("Verification status/result: Verification failed · exit 1 · sanitized result available");
     expect(panel.textContent).toContain("Review the sanitized verification failure, then manually draft a fix follow-up or review rollback. Nothing repairs itself, how polite.");
+    expect(panel.textContent).toContain("Manual fix draft available");
+    expect(buttonWithin(panel, "Draft Agent Run fix prompt").disabled).toBe(false);
+    fetchMock.mockClear();
+    postMessage.mockClear();
+
+    await act(async () => {
+      buttonWithin(panel, "Draft Agent Run fix prompt").click();
+    });
+
+    expect(chatInput().value).toContain("Verification fix prompt");
+    expect(chatInput().value).toContain("Command id: repository-check");
+    expect(chatInput().value).toContain("Status: failed");
+    expect(chatInput().value).toContain("Exit code: 1");
+    expect(chatInput().value).toContain("Repository validation failed");
+    expect(chatInput().value).toContain("Suggest the smallest safe fix plan");
+    expect(chatInput().value).toContain("Review this draft, edit it if needed, then click Send manually");
+    expect(document.activeElement).toBe(chatInput());
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
+    expect(browserStorageDump()).not.toContain("Repository validation failed");
     expect(buttonWithin(panel, "Manually run allowlisted verification").disabled).toBe(true);
-    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(1);
-    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(1);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
   });
 

@@ -26,7 +26,7 @@ import { normalizeAgentRunApplyRequest, correlateAgentRunApplyResult, type Agent
 import { normalizeAgentRunVerificationRequest, correlateAgentRunVerificationProgress, correlateAgentRunVerificationResult, type AgentRunVerificationCorrelationMetadata } from "./services/agentRunVerification";
 import { createAgentRunReport, createAgentRunTraceDetails } from "./services/agentRunReport";
 import { composeAgentRunReadiness, type AgentRunReadinessResult } from "./services/agentRunReadiness";
-import { buildVerificationFollowupPrompt, type VerificationFollowupPromptMode } from "./services/verificationFollowupPrompt";
+import { buildVerificationFollowupPrompt, type VerificationFollowupPromptMode, type VerificationResultForPrompt } from "./services/verificationFollowupPrompt";
 import { createProjectMemory, deleteProjectMemory, listProjectMemory, searchProjectMemory, type ProjectMemoryNote } from "./services/projectMemoryClient";
 import { appendCodingSessionTraceEntry, type CodingSessionTraceDraft, type CodingSessionTraceEntry } from "./services/codingSessionTrace";
 import { evaluateHostCapabilityMetadata } from "./services/toolAuthorityPolicy";
@@ -2191,6 +2191,21 @@ export function App() {
     appendTrace({ family: "verification.followupPromptDrafted", title: mode === "fix" ? "Verification fix prompt drafted" : "Verification follow-up prompt drafted", status: "info", summary: `Drafted ${mode} prompt from verification result.`, details: { commandId: result.commandId, status: result.status, exitCode: result.exitCode } });
   };
 
+  const useAgentRunVerificationFollowupDraft = (mode: VerificationFollowupPromptMode) => {
+    const result = agentRunVerificationPromptResult(agentRunInput, mode);
+    if (!result) {
+      chatInputRef.current?.focus();
+      return;
+    }
+    setChatInput(buildVerificationFollowupPrompt(result, mode, {
+      priorProposal: agentRunInput?.proposal,
+      planPreview: agentRunInput?.planPreview,
+      touchedFiles: agentRunInput?.proposal?.touchedFiles ?? agentRunInput?.planPreview?.expectedTouchedFiles,
+    }));
+    chatInputRef.current?.focus();
+    appendTrace({ family: "agentRun.followupPromptDrafted", title: mode === "fix" ? "Agent Run verification fix prompt drafted" : "Agent Run verification follow-up prompt drafted", status: "info", summary: `Drafted Agent Run ${mode} prompt from sanitized verification metadata.`, details: { commandId: result.commandId, status: result.status, exitCode: result.exitCode } });
+  };
+
   const attachVerificationResultToBundle = (result: IdeActionResultPayload) => {
     if (!isVerificationOutputResult(result)) {
       return;
@@ -2603,7 +2618,7 @@ export function App() {
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
-                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} />
+                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} />
                 {showWhatWillBeSentPanel && <WhatWillBeSentPanel summary={contextBudgetSummary} draftPromptCharacters={chatInput.trim().length} />}
                 <CodingTaskSessionPanel goal={codingTaskGoal} contextItems={explicitContextBundleItems} memoryAttachedCount={attachedProjectMemoryCount} modelStatus={chatReadinessLabel} canSendChat={canSendChat} latestResponseStatus={chatLifecycleLabel} editProposal={activeEditProposal} applyResult={applyResult} verificationAttempt={verificationAttempt} verificationAttached={Boolean(attachedVerificationKey)} draftPrompt={codingTaskPromptDraft} contextBudgetSummary={contextBudgetSummary} modelProposalDraft={modelProposalDraft} modelProposalResult={agentRunModelProposal} onGoalChange={setCodingTaskGoal} onUseDraftPrompt={useCodingTaskDraftPrompt} onUseDraftPlan={useCodingTaskDraftPlan} onDraftOneStepModelProposal={draftOneStepModelProposalPrompt} onFocusPrompt={focusCodingTaskPrompt} />
                 <ManualRunnerPanel host={bridgeHost} draftPlan={manualRunnerDraftPlan} planProposal={latestPlanProposal} hasContext={Boolean((currentAttachedContext && hasUsableAttachedContext(currentAttachedContext)) || explicitContextBundleItems.length > 0)} hasPrompt={Boolean(chatInput.trim())} hasAssistantActivity={chatView.messages.some((message) => message.role === "assistant") || chatLifecycleState !== "idle"} hasEditProposal={Boolean(activeEditProposal)} applyResult={applyResult} verificationAttempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} verificationAttached={Boolean(attachedVerificationKey)} canSendChat={canSendChat} onDraftPlanChange={setManualRunnerDraftPlan} onFocusPrompt={() => chatInputRef.current?.focus()} />
@@ -2997,12 +3012,38 @@ function verificationCommandIdOrDefault(value: VerificationCommandId | undefined
   return value === "gui-app-tests" || value === "engine-chat-tests" || value === "repository-check" ? value : "repository-check";
 }
 
+function verificationCommandIdOrUndefined(value: unknown): VerificationCommandId | undefined {
+  return value === "gui-app-tests" || value === "engine-chat-tests" || value === "repository-check" ? value : undefined;
+}
+
 function safeAgentRunHash(): `sha256:${string}` {
   return "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 }
 
 function isVerificationOutputResult(result: IdeActionResultPayload): result is IdeActionResultPayload & Omit<VerificationOutputBundleItem, "kind" | "key"> & { action: "runVerificationCommand"; status: "succeeded" | "failed"; commandId: NonNullable<IdeActionResultPayload["commandId"]>; exitCode: number; outputTail: string; truncated: boolean } {
   return result.action === "runVerificationCommand" && (result.status === "succeeded" || result.status === "failed") && result.commandId !== undefined && result.exitCode !== undefined && result.outputTail !== undefined && result.truncated !== undefined;
+}
+
+function agentRunVerificationPromptResult(input: AgentRunInput | undefined, mode: VerificationFollowupPromptMode): VerificationResultForPrompt | null {
+  const result = input?.verificationResult;
+  if (!result || (mode === "followup" && result.status !== "succeeded") || (mode === "fix" && result.status !== "failed")) {
+    return null;
+  }
+  const boundedLoop = isRecord(input?.boundedLoop) ? input.boundedLoop : undefined;
+  const verification = isRecord(boundedLoop?.verification) ? boundedLoop.verification : undefined;
+  const nestedResult = isRecord(verification?.result) ? verification.result : undefined;
+  const commandId = verificationCommandIdOrDefault(verificationCommandIdOrUndefined(verification?.commandId));
+  return {
+    status: result.status,
+    message: result.status === "succeeded" ? "Agent Run verification succeeded." : "Agent Run verification failed.",
+    cloudRequired: false as const,
+    action: "runVerificationCommand" as const,
+    commandId,
+    exitCode: result.exitCode ?? (result.status === "succeeded" ? 0 : 1),
+    durationMs: result.durationMs,
+    outputTail: result.outputTail ?? "Agent Run verification result metadata is available without raw output.",
+    truncated: typeof nestedResult?.truncated === "boolean" ? nestedResult.truncated : false,
+  };
 }
 
 function isVerificationOutputBundleItem(item: ExplicitContextBundleItem): item is VerificationOutputBundleItem {
