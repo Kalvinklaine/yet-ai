@@ -113,6 +113,12 @@ Sprint 66 proposal history and comparison remains an experimental manual-only di
 
 The focused local smoke is `npm run smoke:proposal-history`. It is deterministic local/mock evidence only: it transpiles the pure GUI service and asserts metadata-only authority, conservative no-authority flags, bounded output, redaction, and no raw payload leakage. It is not real-provider CI, production autonomy, proposal storage, marketplace/release evidence, or proof that multi-step execution exists.
 
+## Sprint 66 final audit status
+
+Sprint 66 is closed as a proposal history and comparison metadata milestone after the focused final local verification pass. The audit found no high or critical safety issue in the S66 scope: proposal history remains display-only sanitized metadata, the smoke remains explicit local/mock evidence, and no new bridge message, runtime endpoint, browser-storage persistence, hidden read, shell/git/tool/provider authority, auto-send, auto-attach, auto-apply, auto-verification, auto-repair, auto-retry, auto-rollback, proposal persistence, guided fix loop, raw payload leakage, or controlled-autonomy behavior was introduced.
+
+This completion status is local/mock verification evidence only. It confirms that S66 helps compare proposal lineage without expanding Agent Run authority; it does not approve production release, marketplace readiness, real-provider CI, multi-step execution, controlled autonomy, provider/tool calling, shell/git/tool authority, hidden workspace reads, or autonomous recovery.
+
 ## Verification
 
 For this documentation milestone, run:
