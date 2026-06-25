@@ -10,6 +10,8 @@ Sprint 62 adds an optional second-step follow-up/fix prompt draft after explicit
 
 Sprint 63 stabilizes the verification matrix around those manual-only surfaces. Use `npm run check` for this template/docs validation, the focused S61/S62 gates when Agent Run behavior or contract claims change, and the heavier one-step safety bundle only for broad optional safety review. Built-GUI smokes remain local/mock-only Playwright runs against loopback static assets and deterministic fixtures; they need local root dependencies, `apps/gui` dependencies, and Playwright/Chromium, but they do not need real providers, hosted Yet AI services, production accounts, marketplace artifacts, signing, or release workflows. If `apps/gui` build prints Vite chunk-size warnings, record them only as non-failing local build warnings, not as a product readiness claim.
 
+Sprint 64 records the current readiness status in [`../architecture/013-agent-readiness-milestone.md`](../architecture/013-agent-readiness-milestone.md): one-step Agent Run is manual local dogfood/dev-preview evidence only, while S61 plan previews and S62 follow-up/fix drafts are experimental manual-only adjuncts. S64 classifies browser, VS Code, JetBrains, smoke, and blocked capability status; it does not enable autonomy, production readiness, marketplace readiness, real-provider CI, hidden reads, provider/tool calling, or automatic execution.
+
 ## Boundaries
 
 In scope:

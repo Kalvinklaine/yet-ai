@@ -12,6 +12,7 @@ Sprint 62 final audit status: this is bounded prompt drafting, not multi-step ex
 
 Sprint 63 hardening keeps those gates stable rather than broadening authority. For manual dogfood prep, treat `npm run check` as the docs/identity validation gate and the S61/S62 focused commands as behavior gates for Agent Run changes. The built-GUI smokes are local/mock-only and require local root dependencies, `apps/gui` dependencies, and Playwright/Chromium; missing GUI deps or Chromium are setup issues, not product readiness failures. Vite chunk-size warnings during GUI build are currently non-failing warnings only and must not be reported as release readiness or production autonomy evidence.
 
+Sprint 64 status is recorded in [`../architecture/013-agent-readiness-milestone.md`](../architecture/013-agent-readiness-milestone.md). Use it as the canonical readiness taxonomy: current one-step Agent Run is manual local dogfood/dev-preview evidence, S61 plan preview and S62 follow-up/fix drafts are experimental manual-only adjuncts, and S64 classification does not enable autonomy, production readiness, marketplace readiness, real-provider CI, hidden reads, provider/tool calling, or automatic execution.
 
 CI and smoke automation for Agent Run remain mock/loopback-only. Do not put real provider credentials, production accounts, hosted Yet AI services, managed gateways, cloud workspaces, provider account-login flows, real apply actions, or real verification commands into CI.
 
