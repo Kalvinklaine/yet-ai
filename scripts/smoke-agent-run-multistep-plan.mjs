@@ -129,7 +129,7 @@ async function preparePlanPromptPage(guiBaseUrl) {
   const page = await createSmokePage(guiBaseUrl);
   await expectVisibleText(page, "Coding task session", "coding task session", 20_000);
   await expectVisibleText(page, `Ready to send using ${fixture.modelId} through the local runtime.`, "mock model readiness", 20_000);
-  await expectVisibleText(page, "Experimental Agent Run · one-step manual shell", "Agent Run panel", 20_000);
+  await expectVisibleText(page, "Agent Run · dev-preview, not autonomy", "Agent Run panel", 20_000);
   await assertNoRequestsOfType(page, "gui.applyWorkspaceEditRequest", "before explicit Send");
   await assertNoIdeAction(page, "runVerificationCommand", "before explicit Send");
   assert.equal(commandCount, 0, "chat command was sent before explicit Send");

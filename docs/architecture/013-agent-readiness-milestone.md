@@ -93,6 +93,12 @@ Do not use language such as:
 - browser, VS Code, or JetBrains Agent Run is production-ready;
 - current artifacts have completed signing, publication, notarization, marketplace publication, or release publication.
 
+## Sprint 64 final audit status
+
+Sprint 64 is closed as a status and readiness audit milestone after the final local verification pass. The audit found no high or critical Agent Run safety issue in the S64 scope: no new bridge message, runtime endpoint, hidden read, background indexing, search authority, auto-send, auto-apply, auto-verification, auto-repair, auto-retry, or auto-rollback behavior was introduced.
+
+This completion status is documentation and local/mock verification evidence only. It confirms that the current manual Agent Run boundaries remain accurately described for browser, VS Code, and JetBrains dev-preview surfaces; it does not approve production release, marketplace readiness, real-provider CI, multi-step execution, controlled autonomy, provider/tool calling, shell/git/tool authority, hidden workspace reads, or autonomous recovery.
+
 ## Verification
 
 For this documentation milestone, run:
