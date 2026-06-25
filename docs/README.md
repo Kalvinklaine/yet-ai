@@ -10,7 +10,7 @@ docs/
   architecture/         # architecture baselines, decisions, contracts, roadmaps
 ```
 
-Additional local evidence templates live under `docs/dogfood/`, including the real-provider active-file chat report, the manual real coding task dogfood checklist, the historical one-step Agent Run dogfood checklist, and the safe-share Agent Run one-step report template. The deterministic mock-only built-GUI validation for the safe-share Agent Run path is `npm run smoke:agent-run-dogfood`; it uses loopback-only runtime/host mocks and sanitized evidence, not real-provider CI. The inert multi-step Agent Run plan preview smoke is `npm run smoke:agent-run-multistep-plan`; it covers valid and rejected preview metadata with no automatic apply or verification bridge messages and no browser-storage leakage. The bounded Agent Run second-step follow-up loop smoke is `npm run smoke:agent-run-followup-loop`; it covers failed-verification fix drafts and successful-verification follow-up drafts as composer/focus-only actions with no automatic send, apply, verification, repair, rollback, attachment, or browser-storage persistence.
+Additional local evidence templates live under `docs/dogfood/`, including the real-provider active-file chat report, the manual real coding task dogfood checklist, the historical one-step Agent Run dogfood checklist, and the safe-share Agent Run one-step report template. The deterministic mock-only built-GUI validation for the safe-share Agent Run path is `npm run smoke:agent-run-dogfood`; it uses loopback-only runtime/host mocks and sanitized evidence, not real-provider CI. The inert multi-step Agent Run plan preview smoke is `npm run smoke:agent-run-multistep-plan`; it covers valid and rejected preview metadata with no automatic apply or verification bridge messages and no browser-storage leakage. The bounded Agent Run second-step follow-up loop smoke is `npm run smoke:agent-run-followup-loop`; it covers failed-verification fix drafts and successful-verification follow-up drafts as composer/focus-only actions with no automatic send, apply, verification, repair, rollback, attachment, or browser-storage persistence. The focused heavier safety regression bundle is `npm run smoke:agent-run-safety-bundle`; run it before merging Agent Run safety-boundary changes when you need the curated model proposal, checkpoint readiness, apply, verification, S61 plan preview, and S62 follow-up-loop gates in one fail-fast pass.
 
 ## Where to add documents
 
@@ -199,18 +199,13 @@ npm run validate:contracts && cd apps/gui && npm test -- verificationFollowupPro
 
 This focused gate validates contracts, prompt-building tests, Agent Run panel/App CTA behavior, GUI build, built-GUI follow-up loop smoke, repository docs/identity/hygiene checks, and diff hygiene. It is local/mock-only and should not be treated as real-provider, production autonomy, marketplace, hosted-service, or release evidence.
 
-For the Sprint 49 Agent Run safety regression bundle, run:
+For the focused Agent Run safety regression bundle, run:
 
 ```sh
-npm run smoke:model-proposal-agent-run && \
-npm run smoke:agent-run-checkpoint-readiness && \
-npm run smoke:agent-run-apply && \
-npm run smoke:agent-run-verification && \
-npm run smoke:agent-run-built-gui-fixtures && \
-npm run smoke:agent-run-e2e
+npm run smoke:agent-run-safety-bundle
 ```
 
-The manual bundle intentionally uses shell `&&` semantics so the first failing safety smoke stops the run. It is local/mock-only and failure-preserving: it does not hide failures, launch a real IDE, call providers or hosted Yet AI services, use credentials, scan hidden workspace files, execute shell/git/tool endpoints, use non-loopback network, persist browser-storage secrets/context, auto-send, auto-apply, auto-run verification, auto-repair, auto-retry, or auto-rollback.
+Run this heavier explicit gate before merging changes that touch the manual-only Agent Run safety boundaries, especially model proposal parsing, checkpoint readiness, apply, verification, S61 multi-step plan preview, or S62 follow-up prompt drafting. It is not part of `npm run check`. The bundle is fail-fast, prints the failing step label, and preserves each independent smoke command's output. It is local/mock-only and failure-preserving: it does not hide failures, launch a real IDE, call providers or hosted Yet AI services, use credentials, scan hidden workspace files, execute shell/git/tool endpoints through the product, use non-loopback network, persist browser-storage secrets/context, auto-send, auto-apply, auto-run verification, auto-repair, auto-retry, or auto-rollback. If a dependency is missing, the bundle prints setup guidance for root Node dependencies, GUI dependencies, and Playwright Chromium.
 
 The command runs the repository's local validation bundle: product identity, public hygiene, docs index coverage, IDE surface contract parity, docs validation, and focused self-tests/validators that are safe for the current checkout. It does not run the browser or packaged IDE smoke gates, call providers, require hosted Yet AI services, publish marketplace artifacts, or claim production release status.
 
