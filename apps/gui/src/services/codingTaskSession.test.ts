@@ -223,6 +223,93 @@ describe("createCodingTaskSessionSnapshot", () => {
     expect(snapshot.trace.labels).toEqual(expect.arrayContaining([expect.stringContaining("agentRun.applyResult · succeeded · Apply result reviewed")]));
   });
 
+  it("includes an empty proposal history summary when no history is provided", () => {
+    const snapshot = createCodingTaskSessionSnapshot({ goal: "Review history later" });
+
+    expect(snapshot.proposalHistory).toMatchObject({
+      kind: "proposal_history_comparison",
+      authority: "metadata_only",
+      totalCount: 0,
+      latestStatus: "none",
+      latestSummary: "none",
+      touchedFileLabels: [],
+      comparisonLabels: [],
+    });
+    expect(snapshot.statuses.proposal).toBe("not_detected");
+  });
+
+  it("includes sanitized proposal history labels without granting readiness", () => {
+    const snapshot = createCodingTaskSessionSnapshot({
+      goal: "Compare safe proposals",
+      proposalHistory: [
+        { id: "proposal-1", source: "assistant-1", kind: "original", summary: "Change the visible heading.", touchedFiles: ["apps/gui/src/App.tsx"] },
+        { id: "proposal-2", source: "assistant-2", kind: "follow_up", summary: "Use calmer button copy.", touchedFiles: ["apps/gui/src/App.tsx", "apps/gui/src/main.tsx"] },
+      ],
+    });
+
+    expect(snapshot.proposalHistory).toMatchObject({
+      totalCount: 2,
+      visibleCount: 2,
+      latestStatus: "detected",
+      latestSummary: "Use calmer button copy.",
+      touchedFileCount: 2,
+    });
+    expect(snapshot.proposalHistory.touchedFileLabels).toEqual(["apps/gui/src/App.tsx", "apps/gui/src/main.tsx"]);
+    expect(snapshot.proposalHistory.comparisonLabels).toEqual(expect.arrayContaining([expect.stringContaining("detected · follow_up · Use calmer button copy.")]));
+    expect(snapshot.statuses.apply).toBe("not_requested");
+    expect(snapshot.statuses.verification).toBe("not_requested");
+    expect(snapshot.nextSafeManualStep).toContain("Review the goal");
+  });
+
+  it("summarizes rejected applied and verified proposal history as display metadata only", () => {
+    const snapshot = createCodingTaskSessionSnapshot({
+      goal: "Review prior proposals",
+      proposalHistory: [
+        { id: "proposal-rejected", source: "assistant-1", kind: "rejected", status: "rejected", summary: "Rejected because manual confirmation was missing." },
+        { id: "proposal-applied", source: "assistant-2", kind: "applied", status: "applied", applyStatus: "applied", summary: "Applied after explicit user action." },
+        { id: "proposal-verified", source: "assistant-2", kind: "verification", status: "verification_succeeded", verificationStatus: "succeeded", summary: "Verification metadata succeeded." },
+      ],
+    });
+
+    expect(snapshot.proposalHistory.rejectedCount).toBe(1);
+    expect(snapshot.proposalHistory.appliedCount).toBe(1);
+    expect(snapshot.proposalHistory.verificationSucceededCount).toBe(1);
+    expect(snapshot.proposalHistory.latestStatus).toBe("verification_succeeded");
+    expect(snapshot.statuses.apply).toBe("not_requested");
+    expect(snapshot.statuses.verification).toBe("not_requested");
+    expect(snapshot.policy.canAutoApply).toBe(false);
+    expect(snapshot.policy.canAutoRunVerification).toBe(false);
+    expect(snapshot.proposalHistory.policy.canRequestApply).toBe(false);
+    expect(snapshot.proposalHistory.policy.canRequestVerification).toBe(false);
+  });
+
+  it("redacts unsafe proposal history input before adding it to the session snapshot", () => {
+    const secret = "access_token=" + "p".repeat(64);
+    const snapshot = createCodingTaskSessionSnapshot({
+      proposalHistory: [
+        {
+          id: "proposal-/Users/alice/secret",
+          source: "assistant-/Users/alice/private",
+          kind: "original",
+          summary: `raw diff with ${secret}`,
+          touchedFiles: ["/Users/alice/project/private.ts", "apps/gui/src/App.tsx"],
+          diagnostic: "command npm test cwd /Users/alice/project",
+        },
+      ],
+    });
+    const output = rendered(snapshot);
+
+    expect(snapshot.proposalHistory.latestSummary).toBe("[redacted]");
+    expect(snapshot.proposalHistory.latestSource).toBe("assistant");
+    expect(snapshot.proposalHistory.touchedFileLabels).toEqual(["apps/gui/src/App.tsx"]);
+    expect(snapshot.proposalHistory.diagnostics.length).toBeGreaterThan(0);
+    expect(output).not.toContain(secret);
+    expect(output).not.toContain("access_token");
+    expect(output).not.toContain("/Users/alice");
+    expect(output).not.toContain("npm test");
+    expect(output).not.toContain("raw diff");
+  });
+
   it("redacts unsafe values and reports diagnostics", () => {
     const secret = "access_token=" + "x".repeat(64);
     const snapshot = createCodingTaskSessionSnapshot({
@@ -300,6 +387,27 @@ describe("createCodingTaskSessionSnapshot", () => {
     expect(snapshot.diagnostics).toHaveLength(24);
     for (const label of [...snapshot.context.labels, ...snapshot.memory.labels, ...snapshot.trace.labels, ...snapshot.diagnostics]) {
       expect(label.length).toBeLessThanOrEqual(161);
+    }
+  });
+
+  it("bounds proposal history output inside the session snapshot", () => {
+    const snapshot = createCodingTaskSessionSnapshot({
+      proposalHistory: Array.from({ length: 20 }, (_, index) => ({
+        id: `proposal-${index}`,
+        source: `assistant-${index}`,
+        kind: "follow_up" as const,
+        summary: `Proposal ${index} ${"z".repeat(300)}`,
+        touchedFiles: Array.from({ length: 12 }, (_unused, fileIndex) => `apps/gui/src/proposal-${index}-${fileIndex}.ts`),
+      })),
+    });
+
+    expect(snapshot.proposalHistory.totalCount).toBe(12);
+    expect(snapshot.proposalHistory.comparisonLabels).toHaveLength(12);
+    expect(snapshot.proposalHistory.touchedFileLabels).toHaveLength(8);
+    expect(snapshot.proposalHistory.diagnostics.length).toBeLessThanOrEqual(12);
+    expect(snapshot.proposalHistory.latestSummary.length).toBeLessThanOrEqual(241);
+    for (const label of [...snapshot.proposalHistory.comparisonLabels, ...snapshot.proposalHistory.touchedFileLabels, ...snapshot.proposalHistory.diagnostics]) {
+      expect(label.length).toBeLessThanOrEqual(181);
     }
   });
 

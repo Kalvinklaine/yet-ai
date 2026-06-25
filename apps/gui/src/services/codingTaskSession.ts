@@ -2,6 +2,7 @@ import type { ExplicitContextBundleItem } from "./activeEditorContext";
 import { summarizeExplicitContextBundleItem } from "./activeEditorContext";
 import { evaluateAgentRunState, type AgentRunViewModel } from "./agentRunState";
 import type { CodingSessionTraceEntry, CodingSessionTraceFamily, CodingSessionTraceStatus } from "./codingSessionTrace";
+import { createProposalHistoryComparisonSummary, type ProposalHistory, type ProposalHistoryComparisonSummary, type ProposalHistoryEntryInput } from "./proposalHistory";
 import { redactSecrets, sanitizeDisplayText, sanitizeTimelineText } from "./redaction";
 
 export type CodingTaskSessionInput = {
@@ -10,6 +11,7 @@ export type CodingTaskSessionInput = {
   memoryItems?: readonly ExplicitContextBundleItem[];
   agentRun?: unknown;
   traceEntries?: readonly CodingSessionTraceEntry[];
+  proposalHistory?: ProposalHistory | readonly ProposalHistoryEntryInput[];
   diagnostics?: readonly unknown[];
 };
 
@@ -57,6 +59,7 @@ export type CodingTaskSessionSnapshot = {
     families: Array<{ family: string; count: number; latestStatus: string }>;
     labels: string[];
   };
+  proposalHistory: ProposalHistoryComparisonSummary;
   nextSafeManualStep: string;
   diagnostics: string[];
   policy: CodingTaskSessionPolicy;
@@ -98,6 +101,7 @@ export function createCodingTaskSessionSnapshot(input: CodingTaskSessionInput = 
     memory: summarizeMemory(memoryItems),
     statuses: summarizeStatuses(run),
     trace: summarizeTrace(traceEntries),
+    proposalHistory: createProposalHistoryComparisonSummary(input.proposalHistory),
     nextSafeManualStep: nextSafeManualStep(run),
     diagnostics: uniqueStrings(diagnostics).slice(0, maxDiagnostics),
     policy: conservativePolicy(),

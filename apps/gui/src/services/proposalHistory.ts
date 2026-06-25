@@ -70,8 +70,10 @@ export type ProposalHistoryComparisonSummary = {
   planPreviewCount: number;
   latestStatus: string;
   latestSource: string;
+  latestSummary: string;
   touchedFileLabels: string[];
   touchedFileCount: number;
+  comparisonLabels: string[];
   diagnostics: string[];
   policy: ProposalHistoryAuthorityPolicy;
 };
@@ -107,20 +109,24 @@ export function appendProposalHistoryEntry(history: ProposalHistory | readonly P
     return buildHistory(current.entries, diagnostics, maxEntries);
   }
 
-  const duplicateIndex = current.entries.findIndex((entry) => sameEntryIdentity(entry, sanitized.entry));
+  const nextEntry = sanitized.entry;
+  const duplicateIndex = current.entries.findIndex((entry) => sameEntryIdentity(entry, nextEntry));
   if (duplicateIndex >= 0) {
     const existing = current.entries[duplicateIndex];
-    if (isStale(existing, sanitized.entry)) {
+    if (!existing) {
+      return buildHistory(current.entries, diagnostics, maxEntries);
+    }
+    if (isStale(existing, nextEntry)) {
       diagnostics.push(diagnostic("stale_entry", "Stale proposal history metadata was ignored."));
       return buildHistory(current.entries, diagnostics, maxEntries);
     }
     diagnostics.push(diagnostic("duplicate_entry", "Duplicate proposal history metadata was replaced."));
     const nextEntries = current.entries.slice();
-    nextEntries[duplicateIndex] = mergeEntry(existing, sanitized.entry);
+    nextEntries[duplicateIndex] = mergeEntry(existing, nextEntry);
     return buildHistory(nextEntries, diagnostics, maxEntries);
   }
 
-  return buildHistory([...current.entries, sanitized.entry], diagnostics, maxEntries);
+  return buildHistory([...current.entries, nextEntry], diagnostics, maxEntries);
 }
 
 export function updateProposalHistoryEntry(history: ProposalHistory | readonly ProposalHistoryEntryInput[] | undefined, identity: Pick<ProposalHistoryEntryInput, "id" | "source">, patch: Partial<ProposalHistoryEntryInput>, maxEntries = defaultMaxEntries): ProposalHistory {
@@ -162,27 +168,38 @@ export function createProposalHistoryComparisonSummary(history: ProposalHistory 
     planPreviewCount: entries.filter((entry) => entry.kind === "plan_preview").length,
     latestStatus: latest?.status ?? "none",
     latestSource: latest?.source ?? "none",
+    latestSummary: latest?.summary ?? "none",
     touchedFileLabels,
     touchedFileCount: touchedFileLabels.length,
+    comparisonLabels: entries.slice(-defaultMaxEntries).map((entry) => comparisonLabel(entry)).filter(Boolean),
     diagnostics: current.diagnostics.map((item) => item.message).slice(0, maxDiagnostics),
     policy: conservativePolicy(),
   };
+}
+
+function comparisonLabel(entry: ProposalHistoryEntry): string {
+  const summary = entry.summary && entry.summary !== "[redacted]" ? ` · ${entry.summary}` : "";
+  return safeText(`${entry.status} · ${entry.kind}${summary}`, 180, [], "comparison") ?? "";
 }
 
 function normalizeHistory(history: ProposalHistory | readonly ProposalHistoryEntryInput[] | undefined): ProposalHistory {
   if (!history) {
     return emptyProposalHistory();
   }
-  if (Array.isArray(history)) {
-    return createProposalHistory(history);
+  if (isProposalHistory(history)) {
+    return {
+      kind: "proposal_history",
+      authority: "metadata_only",
+      entries: history.entries.slice(0, defaultMaxEntries),
+      diagnostics: history.diagnostics.slice(0, maxDiagnostics),
+      policy: conservativePolicy(),
+    };
   }
-  return {
-    kind: "proposal_history",
-    authority: "metadata_only",
-    entries: history.entries.slice(0, defaultMaxEntries),
-    diagnostics: history.diagnostics.slice(0, maxDiagnostics),
-    policy: conservativePolicy(),
-  };
+  return createProposalHistory(history);
+}
+
+function isProposalHistory(history: ProposalHistory | readonly ProposalHistoryEntryInput[]): history is ProposalHistory {
+  return typeof history === "object" && history !== null && "kind" in history && history.kind === "proposal_history";
 }
 
 function sanitizeEntry(input: ProposalHistoryEntryInput): { entry?: ProposalHistoryEntry; diagnostics: ProposalHistoryDiagnostic[] } {
