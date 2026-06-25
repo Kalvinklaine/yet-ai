@@ -29,6 +29,7 @@ import { composeAgentRunReadiness, type AgentRunReadinessResult } from "./servic
 import { buildVerificationFollowupPrompt, type VerificationFollowupPromptMode, type VerificationResultForPrompt } from "./services/verificationFollowupPrompt";
 import { createProjectMemory, deleteProjectMemory, listProjectMemory, searchProjectMemory, type ProjectMemoryNote } from "./services/projectMemoryClient";
 import { appendCodingSessionTraceEntry, type CodingSessionTraceDraft, type CodingSessionTraceEntry } from "./services/codingSessionTrace";
+import { createCodingTaskSessionSnapshot, type CodingTaskSessionSnapshot } from "./services/codingTaskSession";
 import { evaluateHostCapabilityMetadata } from "./services/toolAuthorityPolicy";
 import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPatchVerificationLoop";
 import type { AgentRunInput } from "./services/agentRunState";
@@ -591,6 +592,17 @@ export function App() {
       ...(activeEditProposal ? [{ label: `Edit proposal metadata · ${activeEditProposal.payload.summary}`, charCount: activeEditProposal.payload.summary.length, itemCount: activeEditProposal.payload.edits.length }] : []),
     ],
   }), [activeEditProposal, codingTaskGoal, currentActiveFileExcerpt, explicitContextBundleItems, includeAttachedContext, includeExplicitContextBundle, modelProposalDraft]);
+  const codingTaskSession = useMemo(() => createCodingTaskSessionSnapshot({
+    goal: codingTaskGoal,
+    contextItems: explicitContextBundleItems,
+    memoryItems: attachedProjectMemoryItems,
+    agentRun: agentRunInput,
+    traceEntries: codingSessionTrace,
+    diagnostics: [
+      ...(activeRejectedEditProposal ? [`edit proposal rejected: ${activeRejectedEditProposal.diagnostic.reasonCode}`] : []),
+      ...(activeRejectedIdeActionProposal ? [`IDE action proposal rejected: ${activeRejectedIdeActionProposal.diagnostic.reasonCode}`] : []),
+    ],
+  }), [activeRejectedEditProposal, activeRejectedIdeActionProposal, agentRunInput, attachedProjectMemoryItems, codingSessionTrace, codingTaskGoal, explicitContextBundleItems]);
   const showWhatWillBeSentPanel = chatInput.trim().length > 0 || contextBudgetSummary.sources.some((source) => source.itemCount > 0 || source.charCount > 0) || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
   const workspaceSnippetQueryValidation = useMemo(() => validateWorkspaceSnippetQuery(workspaceSnippetQuery), [workspaceSnippetQuery]);
 
@@ -2620,7 +2632,7 @@ export function App() {
               <div className="composer-tools">
                 <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} />
                 {showWhatWillBeSentPanel && <WhatWillBeSentPanel summary={contextBudgetSummary} draftPromptCharacters={chatInput.trim().length} />}
-                <CodingTaskSessionPanel goal={codingTaskGoal} contextItems={explicitContextBundleItems} memoryAttachedCount={attachedProjectMemoryCount} modelStatus={chatReadinessLabel} canSendChat={canSendChat} latestResponseStatus={chatLifecycleLabel} editProposal={activeEditProposal} applyResult={applyResult} verificationAttempt={verificationAttempt} verificationAttached={Boolean(attachedVerificationKey)} draftPrompt={codingTaskPromptDraft} contextBudgetSummary={contextBudgetSummary} modelProposalDraft={modelProposalDraft} modelProposalResult={agentRunModelProposal} onGoalChange={setCodingTaskGoal} onUseDraftPrompt={useCodingTaskDraftPrompt} onUseDraftPlan={useCodingTaskDraftPlan} onDraftOneStepModelProposal={draftOneStepModelProposalPrompt} onFocusPrompt={focusCodingTaskPrompt} />
+                <CodingTaskSessionPanel session={codingTaskSession} goal={codingTaskGoal} contextItems={explicitContextBundleItems} memoryAttachedCount={attachedProjectMemoryCount} modelStatus={chatReadinessLabel} canSendChat={canSendChat} latestResponseStatus={chatLifecycleLabel} editProposal={activeEditProposal} applyResult={applyResult} verificationAttempt={verificationAttempt} verificationAttached={Boolean(attachedVerificationKey)} draftPrompt={codingTaskPromptDraft} contextBudgetSummary={contextBudgetSummary} modelProposalDraft={modelProposalDraft} modelProposalResult={agentRunModelProposal} onGoalChange={setCodingTaskGoal} onUseDraftPrompt={useCodingTaskDraftPrompt} onUseDraftPlan={useCodingTaskDraftPlan} onDraftOneStepModelProposal={draftOneStepModelProposalPrompt} onFocusPrompt={focusCodingTaskPrompt} />
                 <ManualRunnerPanel host={bridgeHost} draftPlan={manualRunnerDraftPlan} planProposal={latestPlanProposal} hasContext={Boolean((currentAttachedContext && hasUsableAttachedContext(currentAttachedContext)) || explicitContextBundleItems.length > 0)} hasPrompt={Boolean(chatInput.trim())} hasAssistantActivity={chatView.messages.some((message) => message.role === "assistant") || chatLifecycleState !== "idle"} hasEditProposal={Boolean(activeEditProposal)} applyResult={applyResult} verificationAttempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} verificationAttached={Boolean(attachedVerificationKey)} canSendChat={canSendChat} onDraftPlanChange={setManualRunnerDraftPlan} onFocusPrompt={() => chatInputRef.current?.focus()} />
                 <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} promptAction={activeFilePromptAction} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onClearPending={clearPendingIdeActionState} onIncludeChange={setIncludeAttachedContext} onApplyPrompt={applyActiveFilePrompt} onAddToBundle={addActiveFileExcerptToBundle} />
                 <WorkspaceSnippetSearchPanel host={bridgeHost} query={workspaceSnippetQuery} validation={workspaceSnippetQueryValidation} result={workspaceSnippetResult} selectedKeys={selectedWorkspaceSnippetKeys} pending={ideActionAttempt?.action === "searchWorkspaceSnippets" && (ideActionAttempt.status === "pending" || ideActionAttempt.status === "inProgress")} status={workspaceSnippetStatus} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onQueryChange={setWorkspaceSnippetQuery} onSearch={searchWorkspaceSnippets} onClearPending={clearPendingIdeActionState} onSelectionChange={setSelectedWorkspaceSnippetKeys} onAttachSelected={attachSelectedWorkspaceSnippetsToBundle} />
@@ -3428,23 +3440,16 @@ function WhatWillBeSentPanel({ summary, draftPromptCharacters }: { summary: Cont
   );
 }
 
-function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, modelStatus, canSendChat, latestResponseStatus, editProposal, applyResult, verificationAttempt, verificationAttached, draftPrompt, contextBudgetSummary, modelProposalDraft, modelProposalResult, onGoalChange, onUseDraftPrompt, onUseDraftPlan, onDraftOneStepModelProposal, onFocusPrompt }: { goal: string; contextItems: ExplicitContextBundleItem[]; memoryAttachedCount: number; modelStatus: string; canSendChat: boolean; latestResponseStatus: string; editProposal: EditProposalState | null; applyResult: ApplyResultState | null; verificationAttempt: IdeActionAttemptState | null; verificationAttached: boolean; draftPrompt: string; contextBudgetSummary: ContextBudgetSummary; modelProposalDraft: ModelProposalDraftState | null; modelProposalResult: AgentRunModelProposalResult; onGoalChange: (goal: string) => void; onUseDraftPrompt: (mode: CodingTaskPromptMode) => void; onUseDraftPlan: () => void; onDraftOneStepModelProposal: () => void; onFocusPrompt: () => void }) {
-  const contextLabels = contextItems.map((item) => codingTaskContextLabel(item));
+function CodingTaskSessionPanel({ session, goal, contextItems, modelStatus, canSendChat, latestResponseStatus, editProposal, verificationAttempt, verificationAttached, draftPrompt, contextBudgetSummary, modelProposalDraft, modelProposalResult, onGoalChange, onUseDraftPrompt, onUseDraftPlan, onDraftOneStepModelProposal, onFocusPrompt }: { session: CodingTaskSessionSnapshot; goal: string; contextItems: ExplicitContextBundleItem[]; memoryAttachedCount: number; modelStatus: string; canSendChat: boolean; latestResponseStatus: string; editProposal: EditProposalState | null; applyResult: ApplyResultState | null; verificationAttempt: IdeActionAttemptState | null; verificationAttached: boolean; draftPrompt: string; contextBudgetSummary: ContextBudgetSummary; modelProposalDraft: ModelProposalDraftState | null; modelProposalResult: AgentRunModelProposalResult; onGoalChange: (goal: string) => void; onUseDraftPrompt: (mode: CodingTaskPromptMode) => void; onUseDraftPlan: () => void; onDraftOneStepModelProposal: () => void; onFocusPrompt: () => void }) {
+  const contextLabels = session.context.labels;
+  const memoryLabels = session.memory.labels;
   const promptDrafted = draftPrompt.trim().length > 0;
-  const goalReady = goal.trim().length > 0;
-  const verificationStatus = verificationAttempt?.result?.action === "runVerificationCommand"
-    ? `${verificationAttempt.result.commandId}: ${verificationAttempt.result.status}`
-    : verificationAttempt
-      ? `${verificationAttempt.label}: ${verificationAttempt.status}`
-      : "not requested";
-  const editProposalStatus = applyResult?.payload.status
-    ? `apply result: ${applyResult.payload.status}`
-    : editProposal
-      ? "proposal visible for review"
-      : "none";
-  const sessionStatus = codingTaskSessionStatus(goal, contextItems.length, latestResponseStatus, editProposalStatus, verificationStatus);
+  const goalReady = session.goal.present;
+  const editProposalStatus = session.statuses.agentRunState === "idle" ? "none" : session.statuses.apply !== "not_requested" ? session.statuses.apply : session.statuses.proposal !== "not_detected" ? session.statuses.proposal : "none";
+  const displaySessionStatus = session.statuses.agentRunState === "idle" ? "draft not started" : session.statuses.agentRunState;
+  const displayVerificationStatus = session.statuses.verification.replace(/_/g, " ");
   const recoveryCopy = codingTaskRecoveryCopy(modelStatus, latestResponseStatus);
-  const nextSafeStep = codingTaskNextSafeStep({ goalReady, contextCount: contextItems.length, canSendChat, verificationStatus, editProposalStatus, latestResponseStatus });
+  const nextSafeStep = canSendChat && !goalReady ? "Write the task goal, choose a template, review any explicit context, then click Send yourself when ready." : canSendChat ? session.nextSafeManualStep : "Connect runtime and choose Demo Mode or a local/BYOK provider before sending; templates can still draft locally.";
   const modelProposalDiagnostics = modelProposalResult.diagnostics;
   const showContextBudgetSummary = goalReady || contextItems.length > 0 || contextBudgetSummary.sources.some((source) => source.kind === "active_file_excerpt") || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
   return (
@@ -3461,20 +3466,18 @@ function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, model
         <textarea value={goal} onChange={(event) => onGoalChange(event.target.value)} placeholder="Describe the coding task goal before choosing context and asking the model." />
       </label>
       <div className="agent-progress-grid" aria-label="Coding task session status">
-        <span>Session: {sessionStatus}</span>
-        <span>Goal: {goalReady ? "written" : "not written"}</span>
-        <span>Context selected: {contextItems.length > 0 ? `${contextItems.length} explicit item${contextItems.length === 1 ? "" : "s"}` : "none"}</span>
-        <span>Explicit context bundle: {contextItems.length > 0 ? `${contextItems.length} selected · one-shot manual include` : "empty · add context manually if needed"}</span>
+        <span>Session: {displaySessionStatus}</span>
+        <span>Goal: {session.goal.present ? session.goal.label : "not written"}</span>
+        <span>Context selected: {session.context.selectedCount > 0 ? `${session.context.selectedCount} explicit item${session.context.selectedCount === 1 ? "" : "s"}` : "none"}</span>
+        <span>Explicit context bundle: {session.context.selectedCount > 0 ? `${session.context.selectedCount} selected · one-shot manual include` : "empty · add context manually if needed"}</span>
         <span>Prompt drafted: {promptDrafted ? "ready" : "available"}</span>
         <span>Response lifecycle: {latestResponseStatus}</span>
-        <span>Response received: {latestResponseStatus}</span>
+        <span>Proposal lifecycle: {session.statuses.proposal}</span>
+        <span>Apply lifecycle: {session.statuses.apply}</span>
         <span>Edit lifecycle: {editProposalStatus}</span>
-        <span>Edit proposed/applied: {editProposalStatus}</span>
-        <span>Verification lifecycle: {verificationStatus}{verificationAttached ? " · attached for follow-up" : " · draft or attach manually"}</span>
-        <span>Verification/follow-up: {verificationStatus}{verificationAttached ? " · attached for follow-up" : " · draft or attach manually"}</span>
+        <span>Verification lifecycle: {displayVerificationStatus}{verificationAttached ? " · attached for follow-up" : " · draft or attach manually"}</span>
         <span>Provider/model readiness: {canSendChat ? `ready · ${modelStatus}` : `blocked · ${modelStatus}`}</span>
-        <span>Model/send: {canSendChat ? `ready · ${modelStatus}` : `blocked · ${modelStatus}`}</span>
-        <span>Memory attachments: {memoryAttachedCount}</span>
+        <span>Memory attachments: {session.memory.count}</span>
       </div>
       <div className={`readiness-card ${canSendChat ? "ready" : "warn"}`} role="status" aria-label="Coding task next safe step">
         <strong>Next safe manual step</strong>
@@ -3487,8 +3490,8 @@ function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, model
           <span className={`badge ${modelProposalResult.proposalPathState === "proposal_detected" ? "ok" : "warn"}`}>{modelProposalResult.proposalPathState}</span>
         </div>
         <span className="subtle">Drafts a safe-edit prompt into the composer only. Send remains the only model/runtime call; apply and verification remain explicit future clicks.</span>
-        <span>Goal summary: {goalReady ? sanitizeDisplayText(goal) : "No local goal selected"}</span>
-        <span>Explicit bundle summary: {contextLabels.length === 0 ? "No explicit context selected" : `${contextLabels.length} selected item${contextLabels.length === 1 ? "" : "s"}`}</span>
+        <span>Goal summary: {session.goal.present ? session.goal.label : "No local goal selected"}</span>
+        <span>Explicit bundle summary: {contextLabels.length === 0 ? "No explicit context selected" : `${session.context.selectedCount} selected item${session.context.selectedCount === 1 ? "" : "s"}`}</span>
         <span>Provider readiness: {sanitizeDisplayText(modelStatus)}</span>
         <span className="subtle">Agent Run apply requires valid proposal correlation plus verified checkpoint and policy-ready readiness metadata; apply and verification still require explicit clicks.</span>
         {modelProposalDraft && <span className="subtle">Latest drafted prompt: {modelProposalDraft.goalSummary} · {modelProposalDraft.contextSummary.length} context summary item{modelProposalDraft.contextSummary.length === 1 ? "" : "s"}</span>}
@@ -3496,6 +3499,15 @@ function CodingTaskSessionPanel({ goal, contextItems, memoryAttachedCount, model
         <button type="button" className="secondary-button" onClick={onDraftOneStepModelProposal}>Draft one-step safe-edit prompt</button>
       </section>
       {recoveryCopy && <div className="readiness-card warn" role="status"><strong>Prompt recovery</strong><span>{recoveryCopy}</span></div>}
+      {(memoryLabels.length > 0 || session.diagnostics.length > 0) && <section className="readiness-card ready stack" aria-label="Unified session metadata">
+        <div className="row">
+          <strong>Unified session metadata</strong>
+          <span className="badge">{session.authority}</span>
+          <span className="badge">execution allowed {String(session.executionAllowed)}</span>
+        </div>
+        {memoryLabels.length > 0 && <div className="stack"><strong>Memory metadata</strong><ul className="first-message-steps">{memoryLabels.map((label) => <li key={label}>{label}</li>)}</ul></div>}
+        {session.diagnostics.length > 0 && <div className="stack"><strong>Session diagnostics</strong><ul className="first-message-steps">{session.diagnostics.map((diagnostic) => <li key={diagnostic}>{diagnostic}</li>)}</ul></div>}
+      </section>}
       <div className="stack">
         <strong>Task templates</strong>
         <span className="subtle">Choose a template to draft the chat prompt only. Send remains your explicit action.</span>

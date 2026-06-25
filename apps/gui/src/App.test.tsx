@@ -3002,10 +3002,14 @@ describe("active editor attached context", () => {
     expect(panel.textContent).toContain("Explicit context bundle: empty · add context manually if needed");
     expect(panel.textContent).toContain("Prompt drafted: ready");
     expect(panel.textContent).toContain("Response lifecycle: Ready to send.");
+    expect(panel.textContent).toContain("Proposal lifecycle: detected");
+    expect(panel.textContent).toContain("Apply lifecycle: not_requested");
     expect(panel.textContent).toContain("Edit lifecycle: none");
     expect(panel.textContent).toContain("Verification lifecycle: not requested · draft or attach manually");
     expect(panel.textContent).toContain("Provider/model readiness: ready · GPT-4o mini (openai-api)");
     expect(panel.textContent).toContain("Memory attachments: 0");
+    expect(panel.textContent).toContain("One-step model proposal");
+    expect(panel.textContent).toContain("Goal summary: No local goal selected");
     expect(panel.textContent).toContain("Next safe manual step");
     expect(panel.textContent).toContain("Write the task goal, choose a template, review any explicit context, then click Send yourself when ready.");
     expect(panel.textContent).toContain("One-shot context is not browser-stored or auto-attached; selected explicit context clears only after an accepted Send and remains available if Send fails.");
