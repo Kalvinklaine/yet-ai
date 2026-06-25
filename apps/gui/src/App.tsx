@@ -29,7 +29,7 @@ import { composeAgentRunReadiness, type AgentRunReadinessResult } from "./servic
 import { buildVerificationFollowupPrompt, type VerificationFollowupPromptMode, type VerificationResultForPrompt } from "./services/verificationFollowupPrompt";
 import { createProjectMemory, deleteProjectMemory, listProjectMemory, searchProjectMemory, type ProjectMemoryNote } from "./services/projectMemoryClient";
 import { appendCodingSessionTraceEntry, type CodingSessionTraceDraft, type CodingSessionTraceEntry } from "./services/codingSessionTrace";
-import { createCodingTaskSessionSnapshot, type CodingTaskSessionSnapshot } from "./services/codingTaskSession";
+import { createCodingTaskSessionSnapshot, createLinkedMemoryAttachTraceLabel, createSessionMemoryLabel, createTaskMemoryLabel, type CodingTaskSessionSnapshot } from "./services/codingTaskSession";
 import { evaluateHostCapabilityMetadata } from "./services/toolAuthorityPolicy";
 import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPatchVerificationLoop";
 import type { AgentRunInput } from "./services/agentRunState";
@@ -2025,9 +2025,9 @@ export function App() {
   };
 
   const attachProjectMemoryNote = (note: ProjectMemoryNote) => {
-    const taskLabel = taskLinkedMemoryTaskLabel(note, codingTaskGoal);
-    const sessionLabel = taskLinkedMemorySessionLabel(note, chatId);
-    const attachTraceLabel = taskLinkedMemoryAttachTraceLabel(chatId, note.id);
+    const taskLabel = createTaskMemoryLabel(note.taskLabel, codingTaskGoal);
+    const sessionLabel = createSessionMemoryLabel(note.sessionLabel, chatId);
+    const attachTraceLabel = createLinkedMemoryAttachTraceLabel(chatId, note.id);
     const item = projectMemoryToBundleItem({ kind: "project_memory", noteId: note.id, title: note.title, text: note.text, tags: note.tags, taskLabel, sessionLabel, attachTraceLabel });
     setExplicitContextBundleItems((current) => {
       const next = addExplicitContextBundleItem(current, item);
@@ -2038,7 +2038,7 @@ export function App() {
       setIncludeExplicitContextBundle(true);
       setExplicitContextBundleStatus(`Added task-linked local memory note ${sanitizeDisplayText(note.title)} to the one-shot bundle. Trace label: ${attachTraceLabel}.`);
       setProjectMemoryStatus(`Attached task-linked local memory note ${sanitizeDisplayText(note.title)} to the next message context. Trace label: ${attachTraceLabel}.`);
-      appendTrace({ family: "context.memory", title: "Task-linked project memory attached", status: "succeeded", summary: `Attached task-linked local memory note ${note.title} to the next message context.`, details: { noteId: note.id, title: note.title, taskLabel, sessionLabel, attachTraceLabel } });
+      appendTrace({ family: "context.memory", title: "Task-linked project memory attached", status: "succeeded", summary: `Attached task-linked local memory note ${sanitizeDisplayText(note.title)} to the next message context.`, details: { memoryLabel: sanitizeDisplayText(note.title), taskLabel, sessionLabel, attachTraceLabel, attachedMemoryCount: attachedProjectMemoryCount + 1 } });
       return next;
     });
   };
@@ -2636,7 +2636,7 @@ export function App() {
                 <ManualRunnerPanel host={bridgeHost} draftPlan={manualRunnerDraftPlan} planProposal={latestPlanProposal} hasContext={Boolean((currentAttachedContext && hasUsableAttachedContext(currentAttachedContext)) || explicitContextBundleItems.length > 0)} hasPrompt={Boolean(chatInput.trim())} hasAssistantActivity={chatView.messages.some((message) => message.role === "assistant") || chatLifecycleState !== "idle"} hasEditProposal={Boolean(activeEditProposal)} applyResult={applyResult} verificationAttempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} verificationAttached={Boolean(attachedVerificationKey)} canSendChat={canSendChat} onDraftPlanChange={setManualRunnerDraftPlan} onFocusPrompt={() => chatInputRef.current?.focus()} />
                 <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} promptAction={activeFilePromptAction} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onClearPending={clearPendingIdeActionState} onIncludeChange={setIncludeAttachedContext} onApplyPrompt={applyActiveFilePrompt} onAddToBundle={addActiveFileExcerptToBundle} />
                 <WorkspaceSnippetSearchPanel host={bridgeHost} query={workspaceSnippetQuery} validation={workspaceSnippetQueryValidation} result={workspaceSnippetResult} selectedKeys={selectedWorkspaceSnippetKeys} pending={ideActionAttempt?.action === "searchWorkspaceSnippets" && (ideActionAttempt.status === "pending" || ideActionAttempt.status === "inProgress")} status={workspaceSnippetStatus} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onQueryChange={setWorkspaceSnippetQuery} onSearch={searchWorkspaceSnippets} onClearPending={clearPendingIdeActionState} onSelectionChange={setSelectedWorkspaceSnippetKeys} onAttachSelected={attachSelectedWorkspaceSnippetsToBundle} />
-                <ProjectMemoryPanel notes={projectMemory.notes} state={projectMemory.state} error={projectMemory.error} title={projectMemoryTitle} text={projectMemoryText} tags={projectMemoryTags} query={projectMemoryQuery} status={projectMemoryStatus} attachedCount={attachedProjectMemoryCount} attachedNoteIds={attachedProjectMemoryNoteIds} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onTitleChange={setProjectMemoryTitle} onTextChange={setProjectMemoryText} onTagsChange={setProjectMemoryTags} onQueryChange={setProjectMemoryQuery} onCreate={() => void createProjectMemoryNote()} onSearch={() => void searchProjectMemoryNotes()} onRefresh={() => void refreshProjectMemory()} onAttach={attachProjectMemoryNote} onDetach={detachProjectMemoryNote} onDelete={(note) => void deleteProjectMemoryNote(note)} />
+                <ProjectMemoryPanel notes={projectMemory.notes} state={projectMemory.state} error={projectMemory.error} title={projectMemoryTitle} text={projectMemoryText} tags={projectMemoryTags} query={projectMemoryQuery} status={projectMemoryStatus} attachedCount={attachedProjectMemoryCount} attachedNoteIds={attachedProjectMemoryNoteIds} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} taskGoal={codingTaskGoal} chatId={chatId} onTitleChange={setProjectMemoryTitle} onTextChange={setProjectMemoryText} onTagsChange={setProjectMemoryTags} onQueryChange={setProjectMemoryQuery} onCreate={() => void createProjectMemoryNote()} onSearch={() => void searchProjectMemoryNotes()} onRefresh={() => void refreshProjectMemory()} onAttach={attachProjectMemoryNote} onDetach={detachProjectMemoryNote} onDelete={(note) => void deleteProjectMemoryNote(note)} />
                 <ExplicitContextBundlePanel items={explicitContextBundleItems} include={includeExplicitContextBundle} status={explicitContextBundleStatus} onIncludeChange={setIncludeExplicitContextBundle} onRemove={(key) => removeExplicitContextBundleItem(key)} onClear={() => clearExplicitContextBundle("Cleared the one-shot explicit context bundle.")} />
                 <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} acknowledged={attachedContextAcknowledged} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} onAcknowledgeChange={setAttachedContextAcknowledged} />
                 <CodingActionsPanel canUseContext={codingActionsCanUseContext} context={currentAttachedContext} onAction={applyCodingAction} />
@@ -3113,31 +3113,6 @@ function ideActionLabel(action: IdeActionType): string {
   }
 }
 
-function taskLinkedMemoryTaskLabel(note: Pick<ProjectMemoryNote, "taskLabel">, goal: string): string {
-  const existing = note.taskLabel ? sanitizeDisplayText(note.taskLabel).trim() : "";
-  if (existing) {
-    return existing.slice(0, 80);
-  }
-  const sanitizedGoal = sanitizeDisplayText(goal).trim();
-  if (sanitizedGoal && sanitizedGoal === goal.trim()) {
-    return sanitizedGoal.slice(0, 80);
-  }
-  return "Task-linked memory attach";
-}
-
-function taskLinkedMemorySessionLabel(note: Pick<ProjectMemoryNote, "sessionLabel">, chatId: string): string {
-  const existing = note.sessionLabel ? sanitizeDisplayText(note.sessionLabel).trim() : "";
-  if (existing) {
-    return existing.slice(0, 80);
-  }
-  return `Chat ${sanitizeDisplayText(chatId).slice(0, 60)}`;
-}
-
-function taskLinkedMemoryAttachTraceLabel(chatId: string, noteId: string): string {
-  const safeChatId = sanitizeDisplayText(chatId).replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 24) || "chat";
-  const safeNoteId = sanitizeDisplayText(noteId).replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 24) || "memory";
-  return `memory-attach-${safeChatId}-${safeNoteId}`.slice(0, 80);
-}
 
 export function rememberCompletedIdeActionRequest(completedRequests: Map<string, string>, requestId: string, chatId: string, limit = completedIdeActionRequestChatsLimit) {
   if (limit <= 0) {
@@ -3822,7 +3797,7 @@ function WorkspaceSnippetSearchPanel({ host, query, validation, result, selected
   );
 }
 
-function ProjectMemoryPanel({ notes, state, error, title, text, tags, query, status, attachedCount, attachedNoteIds, canAddToBundle, onTitleChange, onTextChange, onTagsChange, onQueryChange, onCreate, onSearch, onRefresh, onAttach, onDetach, onDelete }: { notes: ProjectMemoryNote[]; state: ProjectMemoryState["state"]; error: RuntimeError | null; title: string; text: string; tags: string; query: string; status: string | null; attachedCount: number; attachedNoteIds: Set<string>; canAddToBundle: boolean; onTitleChange: (value: string) => void; onTextChange: (value: string) => void; onTagsChange: (value: string) => void; onQueryChange: (value: string) => void; onCreate: () => void; onSearch: () => void; onRefresh: () => void; onAttach: (note: ProjectMemoryNote) => void; onDetach: (noteId: string, title: string) => void; onDelete: (note: ProjectMemoryNote) => void }) {
+function ProjectMemoryPanel({ notes, state, error, title, text, tags, query, status, attachedCount, attachedNoteIds, canAddToBundle, taskGoal, chatId, onTitleChange, onTextChange, onTagsChange, onQueryChange, onCreate, onSearch, onRefresh, onAttach, onDetach, onDelete }: { notes: ProjectMemoryNote[]; state: ProjectMemoryState["state"]; error: RuntimeError | null; title: string; text: string; tags: string; query: string; status: string | null; attachedCount: number; attachedNoteIds: Set<string>; canAddToBundle: boolean; taskGoal: string; chatId: string; onTitleChange: (value: string) => void; onTextChange: (value: string) => void; onTagsChange: (value: string) => void; onQueryChange: (value: string) => void; onCreate: () => void; onSearch: () => void; onRefresh: () => void; onAttach: (note: ProjectMemoryNote) => void; onDetach: (noteId: string, title: string) => void; onDelete: (note: ProjectMemoryNote) => void }) {
   const busy = state === "loading" || state === "saving" || state === "searching" || state === "deleting";
   const stateLabel = state === "idle" ? "ready" : state;
   const emptyCopy = query.trim() ? "No local memory notes matched this search. Try a narrower literal query or list all memory again." : "No local memory notes are listed. Create one manually or refresh from the engine-owned local store.";
@@ -3878,8 +3853,8 @@ function ProjectMemoryPanel({ notes, state, error, title, text, tags, query, sta
         const preview = classifyBoundedContextPreview(note.text);
         const attached = attachedNoteIds.has(note.id);
         const sourceLabel = sanitizeDisplayText(note.source || "manual");
-        const taskLabel = note.taskLabel ? sanitizeDisplayText(note.taskLabel) : "Task-linked on attach";
-        const sessionLabel = note.sessionLabel ? sanitizeDisplayText(note.sessionLabel) : "Current chat on attach";
+        const taskLabel = createTaskMemoryLabel(note.taskLabel, taskGoal);
+        const sessionLabel = createSessionMemoryLabel(note.sessionLabel, chatId);
         const safeTags = note.tags.map((tag) => sanitizeDisplayText(tag));
         return (
           <div className={`provider-item stack ${attached ? "ready" : ""}`} key={note.id}>

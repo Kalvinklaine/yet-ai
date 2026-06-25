@@ -116,6 +116,30 @@ export function createMemoryAttachTraceLabel(memoryLabel: unknown): string {
   return attachTraceLabel("memory", memoryLabel);
 }
 
+export function createTaskMemoryLabel(existingLabel: unknown, goal: unknown): string {
+  const existing = safeMemoryDisplayLabel(existingLabel, 80);
+  if (existing) {
+    return existing;
+  }
+  const label = safeMemoryDisplayLabel(goalLabel(goal), 80);
+  return label || "Task-linked memory attach";
+}
+
+export function createSessionMemoryLabel(existingLabel: unknown, chatId: unknown): string {
+  const existing = safeMemoryDisplayLabel(existingLabel, 80);
+  if (existing) {
+    return existing;
+  }
+  const safeChatId = safeIdSegment(chatId, 60);
+  return `Chat ${safeChatId || "current"}`;
+}
+
+export function createLinkedMemoryAttachTraceLabel(chatId: unknown, memoryId: unknown): string {
+  const safeChatId = safeIdSegment(chatId, 24) || "chat";
+  const safeMemoryId = safeIdSegment(memoryId, 24) || "memory";
+  return safeLabel(`memory-attach-${safeChatId}-${safeMemoryId}`, 80);
+}
+
 function summarizeGoal(goal: unknown, run: AgentRunViewModel): CodingTaskSessionSnapshot["goal"] {
   const label = goalLabel(goal) ?? run.details.goalTitle ?? run.summary;
   const safe = safeLabel(label, goalLimit);
@@ -243,6 +267,26 @@ function goalLabel(goal: unknown): string | undefined {
 function attachTraceLabel(prefix: string, value: unknown): string {
   const label = safeLabel(value, 96) || "unlabeled";
   return safeLabel(`${prefix}:${label}`, 120);
+}
+
+function safeMemoryDisplayLabel(value: unknown, limit: number): string {
+  const label = safeLabel(value, limit);
+  if (!label || label.includes("[redacted]")) {
+    return "";
+  }
+  return label;
+}
+
+function safeIdSegment(value: unknown, limit: number): string {
+  if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+    return "";
+  }
+  const sanitized = sanitizeDisplayText(String(value)).trim();
+  if (!sanitized || sanitized.includes("[redacted]") || sanitized.includes("..") || /[\\/]/.test(sanitized) || isUnsafeString(sanitized)) {
+    return "";
+  }
+  const compact = sanitized.replace(/[^A-Za-z0-9_.-]/g, "");
+  return compact.slice(0, limit);
 }
 
 function safeLabel(value: unknown, limit: number): string {

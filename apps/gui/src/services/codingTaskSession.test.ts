@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ExplicitContextBundleItem } from "./activeEditorContext";
 import type { BoundedPatchVerificationLoopMetadata } from "./boundedPatchVerificationLoop";
 import type { CodingSessionTraceEntry } from "./codingSessionTrace";
-import { createCodingTaskSessionSnapshot, createMemoryAttachTraceLabel, createSessionAttachTraceLabel, createTaskAttachTraceLabel } from "./codingTaskSession";
+import { createCodingTaskSessionSnapshot, createLinkedMemoryAttachTraceLabel, createMemoryAttachTraceLabel, createSessionAttachTraceLabel, createSessionMemoryLabel, createTaskAttachTraceLabel, createTaskMemoryLabel } from "./codingTaskSession";
 
 const readyLoop: BoundedPatchVerificationLoopMetadata = {
   kind: "bounded_patch_verification_loop",
@@ -170,6 +170,19 @@ describe("createCodingTaskSessionSnapshot", () => {
     expect(createSessionAttachTraceLabel("Manual Session")).toBe("session:Manual Session");
     expect(createMemoryAttachTraceLabel("Architecture note")).toBe("memory:Architecture note");
     expect(rendered(snapshot)).not.toContain("Long memory body");
+  });
+
+  it("creates safe memory linkage labels without leaking unsafe ids", () => {
+    const secret = "access_token=" + "l".repeat(64);
+
+    expect(createTaskMemoryLabel("Existing Task", "Fallback Goal")).toBe("Existing Task");
+    expect(createTaskMemoryLabel(undefined, "Fix the memory trace labels")).toBe("Fix the memory trace labels");
+    expect(createTaskMemoryLabel(`raw prompt ${secret}`, `private path /Users/alice/task ${secret}`)).toBe("Task-linked memory attach");
+    expect(createSessionMemoryLabel("Session Label", "chat-001")).toBe("Session Label");
+    expect(createSessionMemoryLabel(undefined, "chat-001")).toBe("Chat chat-001");
+    expect(createSessionMemoryLabel(undefined, `chat/../../secret-${secret}`)).toBe("Chat current");
+    expect(createLinkedMemoryAttachTraceLabel("chat-001", "mem-001")).toBe("memory-attach-chat-001-mem-001");
+    expect(createLinkedMemoryAttachTraceLabel(`chat-${secret}`, "/Users/alice/mem-001")).toBe("memory-attach-chat-memory");
   });
 
   it("summarizes proposal and apply readiness from Agent Run state", () => {

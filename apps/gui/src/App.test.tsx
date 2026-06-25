@@ -2841,6 +2841,7 @@ describe("active editor attached context", () => {
   it("creates searches attaches clears and deletes local project memory without browser storage", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     const rawSecret = "access_token=" + "m".repeat(64);
+    const traceDetailsText = () => findDetails("coding-session-trace-details").textContent ?? "";
     const note = projectMemoryNote({ title: "Architecture decision " + rawSecret, text: "Use engine-owned local memory only. " + rawSecret, tags: ["architecture", rawSecret], updatedAt: "2026-06-17T12:00:00Z " + rawSecret });
     let notes: unknown[] = [];
     mockRuntimeResponses({ ...readyRuntimeOptions(), projectMemoryNotes: notes });
@@ -2908,10 +2909,20 @@ describe("active editor attached context", () => {
     });
     expect(container?.textContent).toContain("Attached task-linked local memory note Architecture decision [redacted] to the next message context. Trace label: memory-attach-chat-001-mem-001.");
     expect(container?.textContent).toContain("task-linked attached to next message");
-    expect(container?.textContent).toContain("Task link: Task-linked on attach · Session: Current chat on attach · Attach trace minted only after explicit click.");
+    expect(container?.textContent).toContain("Task link: Task-linked memory attach · Session: Chat chat-001 · Attach trace minted only after explicit click.");
     expect(findButton("Detach memory from next message")).toBeDefined();
     expect(container?.textContent).toContain("Project memory");
     expect(browserStorageDump()).not.toContain("Use engine-owned local memory only.");
+    await act(async () => {
+      const details = findDetails("coding-session-trace-details");
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+    expect(traceDetailsText()).toContain("Task-linked project memory attached");
+    expect(traceDetailsText()).toContain("memory-attach-chat-001-mem-001");
+    expect(traceDetailsText()).toContain("attachedMemoryCount");
+    expect(traceDetailsText()).not.toContain("Use engine-owned local memory only");
+    expect(traceDetailsText()).not.toContain("noteId");
 
     await act(async () => {
       findButton("Detach memory from next message").click();
@@ -2961,6 +2972,44 @@ describe("active editor attached context", () => {
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("Use engine-owned local memory only.");
     expect(browserStorageDump()).not.toContain(rawSecret);
+  });
+
+  it("uses session helper labels for memory attach across chat changes without unsafe id leaks", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const rawSecret = "access_token=" + "n".repeat(64);
+    const safeNote = projectMemoryNote({ id: "mem-safe", title: "Safe session note", text: "Remember manual label only.", taskLabel: "Roadmap S65", sessionLabel: "Session Alpha" });
+    const unsafeNote = projectMemoryNote({ id: `mem/${rawSecret}`, title: "Unsafe id note", text: "Unsafe id body must stay out of labels.", taskLabel: `task ${rawSecret}`, sessionLabel: `/Users/alice/private/chat ${rawSecret}` });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Alpha", 0), chatSummary("chat-beta", "Beta", 0)], chatThreads: { "chat-001": chatThread("chat-001", "Alpha", []), "chat-beta": chatThread("chat-beta", "Beta", []) }, projectMemoryNotes: [safeNote, unsafeNote] });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Attach task-linked memory to next message").click();
+    });
+    expect(container?.textContent).toContain("Task link: Roadmap S65 · Session: Session Alpha · Attach trace minted only after explicit click.");
+    expect(container?.textContent).toContain("Trace label: memory-attach-chat-001-mem-safe.");
+
+    await act(async () => {
+      findButton("Detach memory from next message").click();
+    });
+    await act(async () => {
+      findConversationButton(/Open conversation: Beta/).click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+    await act(async () => {
+      buttonsNamed("Attach task-linked memory to next message")[1].click();
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Trace label: memory-attach-chat-beta-memory.");
+    expect(text).toContain("Task link: Task-linked memory attach · Session: Chat chat-beta · Attach trace minted only after explicit click.");
+    expect(text).not.toContain("access_token");
+    expect(text).not.toContain("/Users/alice");
+    expect(text).not.toContain("n".repeat(64));
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("Unsafe id body");
   });
 
   it("renders manual runner panel as progress-only browser preview without auto actions or storage", async () => {
