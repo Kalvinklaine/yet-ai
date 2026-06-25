@@ -98,6 +98,23 @@ const readyInputWithPlanMetadata: AgentRunInput = {
     verificationSuggestions: ["GUI app tests (gui-app-tests)"],
   },
 };
+const readyInputWithInertPlanPreview: AgentRunInput = {
+  goal: { id: "goal-1", title: "Preview a safe multi-step plan", summary: "Preview a safe multi-step plan" },
+  planPreview: {
+    title: "Review settings panel plan",
+    summary: "Preview the plan before any manual future action.",
+    steps: ["Inspect current panel: Review labels only", "Update tests later: User must request edits explicitly"],
+    risks: ["Copy may need owner review"],
+    expectedTouchedFiles: ["apps/gui/src/components/AgentRunPanel.tsx", "apps/gui/src/App.test.tsx"],
+    verificationSuggestions: ["GUI app tests (gui-app-tests)"],
+  },
+};
+
+const readyInputWithRejectedPlan: AgentRunInput = {
+  goal: { id: "goal-1", title: "Preview rejected plan", summary: "Preview rejected plan" },
+  planDiagnostics: ["unsafe_metadata: The multi-step plan preview contains assistant-minted authority or execution metadata."],
+};
+
 
 afterEach(() => {
   if (root) {
@@ -251,6 +268,39 @@ describe("AgentRunPanel", () => {
     expect(panelText()).toContain("Plan: Review the visible proposal · Apply only after user confirmation");
     expect(panelText()).toContain("Risks: Copy may need follow-up review");
     expect(panelText()).toContain("Verification suggestions (display-only command IDs): GUI app tests (gui-app-tests)");
+  });
+
+  it("renders valid inert multi-step plan preview without granting readiness", () => {
+    const onApply = vi.fn();
+    const onVerify = vi.fn();
+    renderPanel(readyInputWithInertPlanPreview, { host: "vscode", onApplyReviewedPatch: onApply, onRunAllowlistedVerification: onVerify });
+
+    expect(panelText()).toContain("Multi-step plan preview · Review only");
+    expect(panelText()).toContain("inert");
+    expect(panelText()).toContain("metadata only");
+    expect(panelText()).toContain("This plan preview cannot send chat, apply edits, run verification, read files, call providers, or mutate the workspace. Future send, apply, and verification remain explicit user actions.");
+    expect(panelText()).toContain("Title: Review settings panel plan");
+    expect(panelText()).toContain("Steps: Inspect current panel: Review labels only · Update tests later: User must request edits explicitly");
+    expect(panelText()).toContain("Expected file labels: apps/gui/src/components/AgentRunPanel.tsx · apps/gui/src/App.test.tsx");
+    expect(panelText()).toContain("Verification suggestions (display-only command IDs): GUI app tests (gui-app-tests)");
+    expect(panelText()).toContain("Manual state: Goal ready");
+    expect(panelText()).toContain("Proposal status: not detected");
+    expect(findButton("Manually apply reviewed patch").disabled).toBe(true);
+    expect(findButton("Manually run allowlisted verification").disabled).toBe(true);
+    expect(onApply).not.toHaveBeenCalled();
+    expect(onVerify).not.toHaveBeenCalled();
+  });
+
+  it("renders rejected unsafe plan diagnostics without readiness", () => {
+    renderPanel(readyInputWithRejectedPlan, { host: "vscode" });
+
+    expect(panelText()).toContain("Rejected multi-step plan preview");
+    expect(panelText()).toContain("Unsafe or malformed plan preview metadata was rejected. No apply, verification, read, send, or readiness state was created.");
+    expect(panelText()).toContain("unsafe_metadata: The multi-step plan preview contains assistant-minted authority or execution metadata.");
+    expect(panelText()).toContain("Manual state: Goal ready");
+    expect(panelText()).toContain("Proposal status: not detected");
+    expect(findButton("Manually apply reviewed patch").disabled).toBe(true);
+    expect(findButton("Manually run allowlisted verification").disabled).toBe(true);
   });
 
   it("does not call bridge callbacks before click and applies only after explicit click", () => {

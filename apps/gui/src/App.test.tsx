@@ -7598,6 +7598,98 @@ describe("edit proposal preview", () => {
     expect(browserStorageDump()).not.toContain("Replace the visible title safely");
   });
 
+  it("renders inert multi-step model plan preview without auto bridge calls or sent context", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const plan = agentRunMultiStepPlanPreview();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      sseEvents: [
+        { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
+        { seq: 1, type: "message_added", chatId: "chat-001", payload: { message: chatMessage("chat-001", "assistant-plan-preview-1", "assistant", JSON.stringify(plan)) } },
+      ],
+    });
+    renderApp();
+    await flushAsync();
+    postMessage.mockClear();
+
+    await act(async () => {
+      setTextareaByPlaceholder("Describe the coding task goal", "Preview the safe multi-step implementation plan");
+    });
+    await act(async () => {
+      findButton("Draft one-step safe-edit prompt").click();
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    const panel = agentRunPanel();
+    expect(panel.textContent).toContain("Multi-step plan preview · Review only");
+    expect(panel.textContent).toContain("inert");
+    expect(panel.textContent).toContain("This plan preview cannot send chat, apply edits, run verification, read files, call providers, or mutate the workspace. Future send, apply, and verification remain explicit user actions.");
+    expect(panel.textContent).toContain("Title: Review Agent Run plan preview");
+    expect(panel.textContent).toContain("Steps: Inspect current UI: Confirm the review-only state · Add focused tests: Cover safe rendering without workspace changes");
+    expect(panel.textContent).toContain("Expected file labels: apps/gui/src/components/AgentRunPanel.tsx · apps/gui/src/App.test.tsx");
+    expect(panel.textContent).toContain("Verification suggestions (display-only command IDs): GUI app tests (gui-app-tests)");
+    expect(panel.textContent).toContain("Manual state: Goal ready");
+    expect(panel.textContent).toContain("Proposal status: not detected");
+    expect(buttonWithin(panel, "Manually apply reviewed patch").disabled).toBe(true);
+    expect(buttonWithin(panel, "Manually run allowlisted verification").disabled).toBe(true);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(1);
+    expect(lastUserMessageBody().payload?.content).toContain("One-step safe-edit model proposal request");
+    expect(browserStorageDump()).not.toContain("Review Agent Run plan preview");
+    expect(localSetItem).not.toHaveBeenCalled();
+  });
+
+  it("renders rejected unsafe multi-step plan diagnostics without Agent Run readiness", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const rawPrivatePath = "/Users/alice/private.ts";
+    const unsafePlan = { ...agentRunMultiStepPlanPreview(), autoApply: true, expectedTouchedFiles: [rawPrivatePath] };
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      sseEvents: [
+        { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
+        { seq: 1, type: "message_added", chatId: "chat-001", payload: { message: chatMessage("chat-001", "assistant-plan-preview-unsafe", "assistant", JSON.stringify(unsafePlan)) } },
+      ],
+    });
+    renderApp();
+    await flushAsync();
+    postMessage.mockClear();
+
+    await act(async () => {
+      setTextareaByPlaceholder("Describe the coding task goal", "Preview rejected plan safely");
+    });
+    await act(async () => {
+      findButton("Draft one-step safe-edit prompt").click();
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    const panel = agentRunPanel();
+    expect(panel.textContent).toContain("Rejected multi-step plan preview");
+    expect(panel.textContent).toContain("Unsafe or malformed plan preview metadata was rejected. No apply, verification, read, send, or readiness state was created.");
+    expect(panel.textContent).toContain("plan_rejected");
+    expect(panel.textContent).toContain("Plan preview metadata was rejected safely.");
+    expect(panel.textContent).toContain("Manual state: Goal ready");
+    expect(panel.textContent).toContain("Proposal status: not detected");
+    expect(panel.textContent).not.toContain(rawPrivatePath);
+    expect(buttonWithin(panel, "Manually apply reviewed patch").disabled).toBe(true);
+    expect(buttonWithin(panel, "Manually run allowlisted verification").disabled).toBe(true);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("autoApply");
+    expect(browserStorageDump()).not.toContain(rawPrivatePath);
+  });
+
   it("sends a drafted model proposal prompt only after explicit Send and blocks valid proposals without checkpoint readiness", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
@@ -9885,6 +9977,57 @@ function safeEditProposalPayload() {
         ],
       },
     ],
+  };
+}
+
+function agentRunMultiStepPlanPreview() {
+  return {
+    version: "2026-06-25",
+    kind: "agent_run.multistep_plan",
+    authority: "metadata_only",
+    cloudRequired: false,
+    executionAllowed: false,
+    title: "Review Agent Run plan preview",
+    summary: "Display a safe inert plan preview before future manual actions.",
+    steps: [
+      {
+        id: "step-1",
+        title: "Inspect current UI",
+        summary: "Confirm the review-only state",
+        status: "preview_only",
+        expectedTouchedFiles: ["apps/gui/src/components/AgentRunPanel.tsx"],
+        riskLabels: ["copy review"],
+      },
+      {
+        id: "step-2",
+        title: "Add focused tests",
+        summary: "Cover safe rendering without workspace changes",
+        status: "preview_only",
+        expectedTouchedFiles: ["apps/gui/src/App.test.tsx"],
+        riskLabels: ["test stability"],
+      },
+    ],
+    risks: ["Copy may need owner review"],
+    expectedTouchedFiles: ["apps/gui/src/components/AgentRunPanel.tsx", "apps/gui/src/App.test.tsx"],
+    verificationSuggestions: [
+      {
+        commandId: "gui-app-tests",
+        label: "GUI app tests",
+        description: "Run the focused GUI application test gate after explicit user selection.",
+        riskLevel: "medium",
+        expectedDuration: "Usually 5 to 10 minutes",
+        cwdPolicyLabel: "Repository root selected by host",
+        outputBoundLabel: "Sanitized tail only",
+      },
+    ],
+    manualActionPolicy: {
+      noAutoSend: true,
+      noAutoApply: true,
+      noAutoVerification: true,
+      noAutoRollback: true,
+      noHiddenReads: true,
+      requiresExplicitUserAction: true,
+    },
   };
 }
 

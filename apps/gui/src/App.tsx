@@ -562,7 +562,22 @@ export function App() {
       proposal: agentRunReadinessProposalMetadata(agentRunModelProposal.agentRunInput.proposal, activeEditProposal),
     });
   }, [activeCaps, activeEditProposal, agentRunModelProposal, submittedModelProposalPrompt]);
-  const agentRunInput = submittedModelProposalPrompt || modelProposalDraft ? agentRunModelProposal.proposalPathState === "proposal_detected" && activeEditProposal ? agentRunReadiness ? { ...(legacyAgentRunInput ?? {}), ...agentRunReadiness.agentRunInput, boundedLoop: agentRunReadiness.boundedLoop, applyRequest: agentRunApplyRequest ?? legacyAgentRunInput?.applyRequest, applyResult: legacyAgentRunInput?.applyResult, verificationRequest: agentRunVerificationRequest ?? legacyAgentRunInput?.verificationRequest, verificationProgress: agentRunVerificationProgress ?? legacyAgentRunInput?.verificationProgress, verificationResult: agentRunVerificationResult ?? legacyAgentRunInput?.verificationResult, rollback: agentRunVerificationResult ? undefined : legacyAgentRunInput?.rollback } : agentRunModelProposal.agentRunInput : agentRunModelProposal.agentRunInput : legacyAgentRunInput;
+  const agentRunInput = useMemo<AgentRunInput | undefined>(() => {
+    const baseInput = submittedModelProposalPrompt || modelProposalDraft ? agentRunModelProposal.proposalPathState === "proposal_detected" && activeEditProposal ? agentRunReadiness ? { ...(legacyAgentRunInput ?? {}), ...agentRunReadiness.agentRunInput, boundedLoop: agentRunReadiness.boundedLoop, applyRequest: agentRunApplyRequest ?? legacyAgentRunInput?.applyRequest, applyResult: legacyAgentRunInput?.applyResult, verificationRequest: agentRunVerificationRequest ?? legacyAgentRunInput?.verificationRequest, verificationProgress: agentRunVerificationProgress ?? legacyAgentRunInput?.verificationProgress, verificationResult: agentRunVerificationResult ?? legacyAgentRunInput?.verificationResult, rollback: agentRunVerificationResult ? undefined : legacyAgentRunInput?.rollback } : agentRunModelProposal.agentRunInput : agentRunModelProposal.agentRunInput : legacyAgentRunInput;
+    if (agentRunModelProposal.planPreview) {
+      return {
+        ...(baseInput ?? agentRunModelProposal.agentRunInput),
+        planPreview: agentRunPlanPreviewInput(agentRunModelProposal.planPreview.plan),
+      };
+    }
+    if (agentRunModelProposal.proposalPathState === "plan_rejected" || agentRunModelProposal.proposalPathState === "blocked") {
+      return {
+        ...(baseInput ?? agentRunModelProposal.agentRunInput),
+        planDiagnostics: agentRunModelProposal.diagnostics.map((item) => `${item.code}: Plan preview metadata was rejected safely.`),
+      };
+    }
+    return baseInput;
+  }, [activeEditProposal, agentRunApplyRequest, agentRunModelProposal, agentRunReadiness, agentRunVerificationProgress, agentRunVerificationRequest, agentRunVerificationResult, legacyAgentRunInput, modelProposalDraft, submittedModelProposalPrompt]);
   agentRunInputRef.current = agentRunInput ?? null;
   const codingTaskPromptDraft = useMemo(() => buildCodingTaskPrompt({ mode: "ask", goal: codingTaskGoal, contextItems: explicitContextBundleItems, providerReadiness: chatReadinessLabel }), [chatReadinessLabel, codingTaskGoal, explicitContextBundleItems]);
   const contextBudgetSummary = useMemo(() => buildContextBudgetSummary({
@@ -2836,6 +2851,17 @@ export function App() {
       </section>
     </main>
   );
+}
+
+function agentRunPlanPreviewInput(plan: NonNullable<AgentRunModelProposalResult["planPreview"]>["plan"]): NonNullable<AgentRunInput["planPreview"]> {
+  return {
+    title: plan.title,
+    summary: plan.summary,
+    steps: plan.steps.map((step) => `${step.title}: ${step.summary}`),
+    risks: plan.risks,
+    expectedTouchedFiles: plan.expectedTouchedFiles,
+    verificationSuggestions: plan.verificationSuggestions.map((item) => `${item.label} (${item.commandId})`),
+  };
 }
 
 function agentRunRunId(input: AgentRunInput): string {

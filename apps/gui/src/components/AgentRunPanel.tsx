@@ -25,13 +25,15 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const checkpointStatusLabel = checkpointStatus(details);
   const policyDecisionLabel = policyDecision(details);
   const nextStepCopy = nextManualStep(view.state, details, supported);
-  const safetyItems = [
-    "Manual: no autonomy, no auto-clicks, no hidden model/provider calls.",
-    "No raw commands, files, diffs, model output, or verification output shown by default.",
-  ];
   const proposalPlanSteps = stringArrayDetail(details.proposalPlanSteps);
   const proposalRisks = stringArrayDetail(details.proposalRisks);
   const proposalVerificationSuggestions = stringArrayDetail(details.proposalVerificationSuggestions);
+  const planPreviewSteps = stringArrayDetail(details.planPreviewSteps);
+  const planPreviewRisks = stringArrayDetail(details.planPreviewRisks);
+  const planPreviewExpectedTouchedFiles = stringArrayDetail(details.planPreviewExpectedTouchedFiles);
+  const planPreviewVerificationSuggestions = stringArrayDetail(details.planPreviewVerificationSuggestions);
+  const planDiagnostics = stringArrayDetail(details.planDiagnostics);
+  const showPlanPreview = Boolean(textDetail(details.planPreviewTitle) || textDetail(details.planPreviewSummary) || planPreviewSteps.length > 0 || planPreviewRisks.length > 0 || planPreviewExpectedTouchedFiles.length > 0 || planPreviewVerificationSuggestions.length > 0);
   const showProposalReviewMetadata = Boolean(textDetail(details.proposalPlanSummary) || proposalPlanSteps.length > 0 || proposalRisks.length > 0 || proposalVerificationSuggestions.length > 0);
   const checkpointRollbackCopy = checkpointRollbackStatusCopy(details);
 
@@ -40,7 +42,6 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
       <div className="row">
         <strong>Experimental Agent Run · one-step manual shell</strong>
         <span className={`badge ${supported ? "ok" : "warn"}`}>{supported ? `${host} explicit controls` : "browser preview only"}</span>
-        <span className="badge">manual only</span>
         <span className={`badge ${view.stopped ? "warn" : view.enabled ? "ok" : ""}`}>{agentRunStateLabel(view.state, details)}</span>
       </div>
       <span>{sanitizeDisplayText(view.summary)}</span>
@@ -79,6 +80,29 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           {view.diagnostics.map((item) => <span key={`${item.code}:${item.message}`}>{sanitizeDisplayText(item.code)}: {sanitizeDisplayText(item.message)}</span>)}
         </div>
       )}
+      {planDiagnostics.length > 0 && (
+        <div className="readiness-card warn" role="status" aria-label="Agent Run rejected plan preview">
+          <strong>Rejected multi-step plan preview</strong>
+          <span>Unsafe or malformed plan preview metadata was rejected. No apply, verification, read, send, or readiness state was created.</span>
+          {planDiagnostics.map((item) => <span key={item}>{sanitizeDisplayText(item)}</span>)}
+        </div>
+      )}
+      {showPlanPreview && (
+        <div className="readiness-card warn" role="status" aria-label="Agent Run inert multi-step plan preview">
+          <div className="row">
+            <strong>Multi-step plan preview · Review only</strong>
+            <span className="badge warn">inert</span>
+            <span className="badge">metadata only</span>
+          </div>
+          <span>This plan preview cannot send chat, apply edits, run verification, read files, call providers, or mutate the workspace. Future send, apply, and verification remain explicit user actions.</span>
+          {textDetail(details.planPreviewTitle) && <span>Title: {textDetail(details.planPreviewTitle)}</span>}
+          {textDetail(details.planPreviewSummary) && <span>Summary: {textDetail(details.planPreviewSummary)}</span>}
+          {planPreviewSteps.length > 0 && <span>Steps: {planPreviewSteps.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
+          {planPreviewRisks.length > 0 && <span>Risks: {planPreviewRisks.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
+          {planPreviewExpectedTouchedFiles.length > 0 && <span>Expected file labels: {planPreviewExpectedTouchedFiles.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
+          {planPreviewVerificationSuggestions.length > 0 && <span>Verification suggestions (display-only command IDs): {planPreviewVerificationSuggestions.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
+        </div>
+      )}
       {showProposalReviewMetadata && (
         <div className="readiness-card" role="status" aria-label="Agent Run proposal review metadata">
           <strong>Proposal review metadata</strong>
@@ -88,10 +112,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           {proposalVerificationSuggestions.length > 0 && <span>Verification suggestions (display-only command IDs): {proposalVerificationSuggestions.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
         </div>
       )}
-      <div className="readiness-card warn" role="status" aria-label="Agent Run safety copy">
-        <strong>Safety copy</strong>
-        {safetyItems.map((item) => <span key={item}>{item}</span>)}
-      </div>
+      <span className="subtle">no hidden model/provider calls</span>
       <div className="row" role="group" aria-label="Agent Run explicit actions">
         <button type="button" onClick={onApplyReviewedPatch} disabled={!canApply}>Manually apply reviewed patch</button>
         <button type="button" onClick={() => verificationCommandId && onRunAllowlistedVerification(verificationCommandId)} disabled={!canVerify}>Manually run allowlisted verification</button>

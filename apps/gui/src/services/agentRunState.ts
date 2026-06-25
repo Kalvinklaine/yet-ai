@@ -44,6 +44,15 @@ export type AgentRunProposalMetadata = {
   verificationSuggestions?: string[];
 };
 
+export type AgentRunPlanPreviewMetadata = {
+  title?: string;
+  summary?: string;
+  steps?: string[];
+  risks?: string[];
+  expectedTouchedFiles?: string[];
+  verificationSuggestions?: string[];
+};
+
 export type AgentRunExplicitRequestMetadata = {
   requested: boolean;
   source: "user" | "assistant" | "system";
@@ -96,6 +105,8 @@ export type AgentRunCheckpointRollbackStateMetadata = {
 export type AgentRunInput = {
   goal?: AgentRunGoalMetadata;
   proposal?: AgentRunProposalMetadata;
+  planPreview?: AgentRunPlanPreviewMetadata;
+  planDiagnostics?: string[];
   boundedLoop?: unknown;
   applyRequest?: AgentRunExplicitRequestMetadata;
   applyResult?: AgentRunApplyResultMetadata;
@@ -246,6 +257,13 @@ function buildDetails(metadata: AgentRunInput, boundedDetails: Record<string, st
     proposalPlanSteps: metadata.proposal?.planSteps,
     proposalRisks: metadata.proposal?.risks,
     proposalVerificationSuggestions: metadata.proposal?.verificationSuggestions,
+    planPreviewTitle: metadata.planPreview?.title,
+    planPreviewSummary: metadata.planPreview?.summary,
+    planPreviewSteps: metadata.planPreview?.steps,
+    planPreviewRisks: metadata.planPreview?.risks,
+    planPreviewExpectedTouchedFiles: metadata.planPreview?.expectedTouchedFiles,
+    planPreviewVerificationSuggestions: metadata.planPreview?.verificationSuggestions,
+    planDiagnostics: metadata.planDiagnostics,
     touchedFiles: sanitizeTouchedFiles(metadata.proposal?.touchedFiles),
     boundedLoopState: boundedDetails?.state,
     boundedPolicyDecision: boundedDetails?.policyDecision,
