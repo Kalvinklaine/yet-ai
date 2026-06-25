@@ -6,6 +6,8 @@ The flow is intentionally manual. The user configures or selects a local provide
 
 Sprint 61 adds an optional inert multi-step plan preview for manual review. The preview is safe-share metadata only: bounded title, summary, step labels, risks, expected file labels, and allowlisted verification command-id suggestions. It is not multi-step execution, not a safe-edit proposal, not an apply request, not a verification request, not rollback authority, not a hidden read, and not production autonomy. If a report mentions it, record only whether the preview was detected or rejected and whether it stayed review-only; do not treat it as executed work.
 
+Sprint 62 adds an optional second-step follow-up/fix prompt draft after explicit user-run verification. The draft is safe-share composer text only: sanitized verification status, allowlisted command id, exit code, truncation flag, short bounded result summary, safe prior proposal labels, safe plan/proposal summary labels, touched file labels, and explicit user intent. It is not sent until the user reviews it and clicks Send manually. It is not automatic repair, retry, rollback, verification, provider execution, shell/git/tool execution, hidden context gathering, browser-storage persistence, workspace mutation, or production autonomy. If a report mentions it, record only whether the draft appeared, whether it stayed unsent until manual Send, and whether its content stayed sanitized.
+
 ## Boundaries
 
 In scope:
@@ -23,6 +25,7 @@ Out of scope:
 
 - Hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, cloud workspace, or cloud-required task execution.
 - Production/default account login remains unavailable/blocked; production autonomy, background agent execution, automatic repair, automatic retry, automatic rollback, marketplace publication, signing, notarization, and release readiness are not claimed.
+- Second-step follow-up/fix drafts are not multi-step execution and do not grant auto-send, auto-apply, auto-verification, auto-repair, auto-retry, auto-rollback, provider/tool calls, shell/git execution, hidden reads, or new runtime/bridge authority.
 - Real-provider CI, automated provider calls, real apply actions in CI, or real verification commands in CI.
 
 ## Browser-first standalone dogfood path
@@ -83,11 +86,12 @@ Keep completed reports in ignored local evidence locations unless a task explici
 22. Confirm verification uses command-id-only allowlisted routing; record command label, sanitized status, exit code when safe, duration when safe, and short outcome only.
 23. Confirm no verification request occurred before the explicit Verification click.
 24. If Verification fails, record sanitized failure state and confirm no automatic repair/retry/rollback occurred.
-25. If Verification passes, record the sanitized final result summary.
-26. Capture screenshots only when useful; store them in ignored local evidence paths and record sanitized relative labels or redacted paths.
-27. Check the coding-session trace/report panel for sanitized metadata only: context, Send, proposal, checkpoint, apply, verification, final result, and failures.
-28. Confirm browser storage does not contain provider credentials, raw prompts, raw responses, raw context, raw file bodies, raw diffs, Agent Run reports, trace entries, or secrets.
-29. Review the completed report against the forbidden-data list before sharing.
+25. If a follow-up or fix prompt draft appears after verification, confirm it only writes the composer and focuses it, uses sanitized metadata only, emits no Send/apply/verification/repair/rollback/attach request, and remains unsent until a separate manual Send click.
+26. If Verification passes, record the sanitized final result summary.
+27. Capture screenshots only when useful; store them in ignored local evidence paths and record sanitized relative labels or redacted paths.
+28. Check the coding-session trace/report panel for sanitized metadata only: context, Send, proposal, checkpoint, apply, verification, follow-up draft if present, final result, and failures.
+29. Confirm browser storage does not contain provider credentials, raw prompts, raw responses, raw context, raw file bodies, raw diffs, follow-up drafts, Agent Run reports, trace entries, or secrets.
+30. Review the completed report against the forbidden-data list before sharing.
 
 ## Safe-share report template
 
@@ -133,6 +137,9 @@ Manual local evidence only. This report is not CI evidence, not automation evide
 - Verification command label: <repository-check | gui-app-tests | engine-chat-tests | other approved command id label | skipped | not run>
 - Verification result summary: <exit code/duration/non-sensitive tail summary | failed with sanitized summary | skipped | not run>
 - Verification safety/correlation: <no verification before explicit click; command-id-only request; correlated result accepted | issue found with sanitized summary | skipped | not run>
+- Follow-up/fix prompt draft: <drafted into composer only after explicit verification | not drafted | issue found with sanitized summary | not run>
+- Follow-up/fix draft safety: <sanitized metadata only; no auto-send/apply/verify/repair/rollback/attach/storage | issue found with sanitized summary | skipped | not run>
+- Follow-up/fix Send: <user clicked Send explicitly | left as draft | skipped | not run>
 - Final result: <completed after user-confirmed verification | stopped after proposal rejection | stopped before apply | stopped after failed apply | stopped after failed verification | not run>
 
 ## Failure states and issues
@@ -151,6 +158,7 @@ Manual local evidence only. This report is not CI evidence, not automation evide
 - Raw file bodies/diffs/patch bodies absent: <checked | fixed before sharing | not run>
 - Private paths/private repo names absent or redacted: <checked | fixed before sharing | not run>
 - Full verification output/command strings/cwd/env absent: <checked | fixed before sharing | not run>
+- Follow-up drafts and reports omit raw output/prompts/diffs/file bodies/private paths/secrets: <checked | fixed before sharing | not run>
 - Browser-storage dumps/bridge payloads/raw trace entries absent: <checked | fixed before sharing | not run>
 - Screenshot paths are ignored/redacted and screenshots contain no secrets: <checked | fixed before sharing | none | not run>
 - Report stays local-first and safe-share only: <checked | fixed before sharing | not run>

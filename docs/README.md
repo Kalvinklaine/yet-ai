@@ -189,6 +189,16 @@ npm run smoke:agent-run-followup-loop
 
 The smoke builds the GUI, serves built assets from loopback, and drives Playwright with deterministic mock runtime/SSE/provider/bridge/host data. It covers both terminal verification outcomes after the explicit one-step Agent Run apply/verify path: failed verification drafts a sanitized fix prompt, and successful verification drafts a sanitized follow-up prompt. The draft action is intentionally bounded to writing the composer and focusing it; the smoke asserts no automatic chat send, apply request, verification request, repair, rollback, retry, context attachment, runtime execution-like endpoint, non-loopback network call, or browser-storage persistence of raw prompts, diffs, file bodies, secrets, command details, private paths, or follow-up drafts.
 
+Sprint 62 final status: the second-step follow-up/fix loop is bounded prompt drafting only. It is not multi-step execution, automatic repair, automatic retry, automatic verification, automatic rollback, production autonomy, or a new bridge/runtime/tool authority surface. The GUI service and CTA path may use only sanitized verification metadata plus safe proposal/plan labels and user intent to place a draft in the composer; the user must review it and click Send manually for any model call. The local-first BYOK boundary remains unchanged: this path requires no hosted Yet AI backend, Yet AI account, managed gateway, product credit balance, cloud workspace, real-provider CI, publishing, signing, or release workflow.
+
+For the S62 final safety/product audit gate, run:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm test -- verificationFollowupPrompt AgentRunPanel App && npm run build && cd ../.. && npm run smoke:agent-run-followup-loop && npm run check && git diff --check
+```
+
+This focused gate validates contracts, prompt-building tests, Agent Run panel/App CTA behavior, GUI build, built-GUI follow-up loop smoke, repository docs/identity/hygiene checks, and diff hygiene. It is local/mock-only and should not be treated as real-provider, production autonomy, marketplace, hosted-service, or release evidence.
+
 For the Sprint 49 Agent Run safety regression bundle, run:
 
 ```sh
