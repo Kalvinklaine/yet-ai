@@ -15,7 +15,7 @@ Use these statuses when describing Agent Run surfaces:
 - **Blocked/deferred**: not implemented as a supported capability. It may be documented as a future direction or prerequisite, but users and agents must not claim it works.
 - **Future eligibility gate**: criteria that must be satisfied before a blocked/deferred capability can be designed, enabled, dogfooded, or considered for production. A gate is not an implementation.
 
-Avoid softer wording such as ready, supported, autonomous, production-ready, marketplace-ready, or release-ready unless a future document explicitly defines and verifies that stronger status.
+Avoid softer wording that implies implementation, autonomy, production publication, marketplace publication, or release publication unless a future document explicitly defines and verifies that stronger status.
 
 ## Current Agent Run status matrix
 
@@ -86,12 +86,12 @@ Do not use language such as:
 
 - autonomous Agent Run is ready;
 - multi-step execution is implemented;
-- automatic repair or rollback is supported;
+- automatic repair or rollback works today;
 - Yet AI can index/read the workspace in the background for Agent Run;
 - provider tools, shell, git, or arbitrary commands are available to the agent;
 - real-provider CI proves Agent Run;
 - browser, VS Code, or JetBrains Agent Run is production-ready;
-- current artifacts are signed, published, notarized, marketplace-ready, or release-ready.
+- current artifacts have completed signing, publication, notarization, marketplace publication, or release publication.
 
 ## Verification
 
