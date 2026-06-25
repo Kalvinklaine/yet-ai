@@ -4,6 +4,8 @@ Use this checklist for a manual one-step Agent Run dogfood run with a real local
 
 The one-step Agent Run path stays manual-only: the user drafts the goal, reviews the prompt, clicks Send, reviews or rejects the proposal, confirms checkpoint readiness, clicks Apply if appropriate, and clicks Verification if appropriate. Do not treat a completed report as proof of autonomous execution.
 
+Sprint 61 may show an inert multi-step plan preview before any later user decision. Treat that preview as review-only display metadata, not as multi-step execution. It may summarize steps, risks, expected file labels, and allowlisted verification command-id suggestions, but it must not be reported as having sent chat, read files, applied edits, run verification, repaired, retried, rolled back, called providers, or mutated the workspace. Any future action still needs the separate visible manual control and existing confirmation boundary.
+
 CI and smoke automation for Agent Run remain mock/loopback-only. Do not put real provider credentials, production accounts, hosted Yet AI services, managed gateways, cloud workspaces, provider account-login flows, real apply actions, or real verification commands into CI.
 
 ## Scope and boundaries

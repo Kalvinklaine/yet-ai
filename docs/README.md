@@ -165,11 +165,19 @@ The smoke builds the GUI, serves the built assets from loopback, and drives Play
 
 Keep this smoke as an explicit verification gate rather than part of `npm run check` unless a future card approves browser/build smoke expansion for the default local validation bundle. It builds the GUI and launches Playwright, while `npm run check` remains the focused repository validation bundle for docs, identity, contracts, deterministic local validators, and safe self-tests that do not run browser or packaged IDE smoke gates.
 
-For the S61 inert multi-step Agent Run plan preview path, run:
+For the S61 inert multi-step Agent Run plan preview path, the focused final gate is:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm test -- agentRunPlanProposal AgentRunPanel App && npm run build && cd ../.. && npm run smoke:agent-run-multistep-plan && npm run check && git diff --check
+```
+
+The S61 smoke itself is still available as:
 
 ```sh
 npm run smoke:agent-run-multistep-plan
 ```
+
+Sprint 61 status: the multi-step Agent Run plan preview is implemented only as inert/manual review metadata. It is not multi-step execution, not an autonomous runner, not a production agent loop, and not a new bridge/runtime/tool surface. The contract requires `agent_run.multistep_plan`, `authority: "metadata_only"`, `cloudRequired: false`, `executionAllowed: false`, and manual-action policy flags that prohibit auto-send, auto-apply, auto-verification, auto-rollback, and hidden reads. The GUI parser maps accepted plans to `planPreview` display metadata only; it does not create safe-edit proposals, bounded-loop metadata, apply requests, verification requests, rollback requests, provider calls, hidden file reads, or scheduler instructions.
 
 The smoke builds the GUI, serves the built assets from loopback, and drives Playwright with deterministic mock runtime/SSE/provider/bridge data. It covers a valid `agent_run.multistep_plan` preview and an unsafe rejected preview, asserts the preview remains review-only metadata, checks no automatic `gui.applyWorkspaceEditRequest` or `runVerificationCommand` bridge messages are emitted before explicit user clicks, and verifies browser storage does not persist raw prompts, diffs, file bodies, secrets, commands, or private paths. It is mock/loopback-only evidence: it does not call real providers, launch real IDEs, require hosted services, run shell/git/tool actions through the product, or grant execution authority.
 

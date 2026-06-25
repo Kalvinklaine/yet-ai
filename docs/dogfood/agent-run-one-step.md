@@ -4,6 +4,8 @@ Use this safe-share template for a manual one-step Agent Run dogfood run with a 
 
 The flow is intentionally manual. The user configures or selects a local provider path, attaches explicit context, reviews the drafted task, clicks Send, reviews the model safe-edit proposal, clicks Apply only after checkpoint readiness, clicks Verification only after apply, and records a sanitized result.
 
+Sprint 61 adds an optional inert multi-step plan preview for manual review. The preview is safe-share metadata only: bounded title, summary, step labels, risks, expected file labels, and allowlisted verification command-id suggestions. It is not multi-step execution, not a safe-edit proposal, not an apply request, not a verification request, not rollback authority, not a hidden read, and not production autonomy. If a report mentions it, record only whether the preview was detected or rejected and whether it stayed review-only; do not treat it as executed work.
+
 ## Boundaries
 
 In scope:
