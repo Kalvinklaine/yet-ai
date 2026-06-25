@@ -7381,7 +7381,8 @@ describe("edit proposal preview", () => {
     postMessage.mockClear();
 
     const panel = agentRunPanel();
-    expect(panel.textContent).toContain("Experimental Agent Run · one-step manual shell");
+    expect(panel.textContent).toContain("Agent Run · dev-preview, not autonomy");
+    expect(panel.textContent).toContain("no hidden model/provider calls; manual");
     expect(panel.textContent).toContain("Manual state: Ready for manual apply");
     expect(panel.textContent).toContain("Next manual step");
     expect(panel.textContent).toContain("Review the sanitized proposal summary; apply only if you choose to continue.");

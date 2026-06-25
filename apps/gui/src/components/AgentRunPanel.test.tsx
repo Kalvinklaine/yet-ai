@@ -131,7 +131,8 @@ describe("AgentRunPanel", () => {
   it("renders idle state", () => {
     renderPanel(undefined);
 
-    expect(panelText()).toContain("Experimental Agent Run · one-step manual shell");
+    expect(panelText()).toContain("Agent Run · dev-preview, not autonomy");
+    expect(panelText()).toContain("no hidden model/provider calls; manual");
     expect(panelText()).toContain("Manual state: idle");
     expect(panelText()).toContain("Goal summary: No local goal selected");
     expect(findButton("Manually apply reviewed patch").disabled).toBe(true);

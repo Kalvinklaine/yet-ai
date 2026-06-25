@@ -44,7 +44,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   return (
     <section className={`readiness-card ${view.enabled ? "ready" : "warn"} agent-run-panel stack`} aria-label="Experimental Agent Run" data-testid="agent-run-panel">
       <div className="row">
-        <strong>Experimental Agent Run · one-step manual shell</strong>
+        <strong>Agent Run · dev-preview, not autonomy</strong>
         <span className={`badge ${supported ? "ok" : "warn"}`}>{supported ? `${host} explicit controls` : "browser preview only"}</span>
         <span className={`badge ${view.stopped ? "warn" : view.enabled ? "ok" : ""}`}>{agentRunStateLabel(view.state, details)}</span>
       </div>
@@ -127,7 +127,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           <span className="subtle">Drafting only writes the composer and focuses it. It never sends, applies, runs verification, attaches context, saves memory, changes readiness, or stores browser data.</span>
         </div>
       )}
-      <span className="subtle">no hidden model/provider calls</span>
+      <span className="subtle">no hidden model/provider calls; manual</span>
       <div className="row" role="group" aria-label="Agent Run explicit actions">
         <button type="button" onClick={onApplyReviewedPatch} disabled={!canApply}>Manually apply reviewed patch</button>
         <button type="button" onClick={() => verificationCommandId && onRunAllowlistedVerification(verificationCommandId)} disabled={!canVerify}>Manually run allowlisted verification</button>
