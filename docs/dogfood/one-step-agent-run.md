@@ -6,6 +6,9 @@ The one-step Agent Run path stays manual-only: the user drafts the goal, reviews
 
 Sprint 61 may show an inert multi-step plan preview before any later user decision. Treat that preview as review-only display metadata, not as multi-step execution. It may summarize steps, risks, expected file labels, and allowlisted verification command-id suggestions, but it must not be reported as having sent chat, read files, applied edits, run verification, repaired, retried, rolled back, called providers, or mutated the workspace. Any future action still needs the separate visible manual control and existing confirmation boundary.
 
+Sprint 62 may draft a second-step follow-up prompt after the user explicitly runs verification. Treat that draft as local reviewed prompt text plus metadata only: it may reference sanitized verification status, allowlisted command id, exit code, duration, short bounded result summary, prior proposal labels or ids, plan/proposal summary labels, and the user's explicit `followup` or `fix` intent. It is not sent until the user reviews it and clicks Send. Do not report it as automatic repair, automatic retry, automatic verification, automatic rollback, provider execution, shell/git/tool execution, or workspace mutation. Raw verification output, command strings, cwd/env values, raw prompts, raw diffs, file bodies, private paths, credentials, provider/tool/git fields, and hidden context must not be copied into the draft or report unless the user intentionally attaches sanitized one-shot context for that send.
+
+
 CI and smoke automation for Agent Run remain mock/loopback-only. Do not put real provider credentials, production accounts, hosted Yet AI services, managed gateways, cloud workspaces, provider account-login flows, real apply actions, or real verification commands into CI.
 
 ## Scope and boundaries
@@ -28,7 +31,7 @@ Out of scope:
 - Production/default account login is unavailable/blocked; provider web-session reuse, browser profile import, and private provider endpoints are out of scope.
 - Hosted Yet AI backend requirements, Yet AI accounts, managed model gateways, product credit balances, cloud workspaces, cloud sync, or cloud-required task execution.
 - Auto-send, auto-apply, auto-run verification, automatic repair, automatic retry, automatic rollback, shell/git/tool execution outside the explicit allowlisted verification bridge, workspace indexing, hidden file reads, background autonomy, publishing, signing, notarization, marketplace release, or real-provider CI.
-- Raw provider credentials, runtime tokens, auth codes, cookies, request bodies, raw provider responses, raw prompts, raw file bodies, raw diffs, raw patch bodies, private absolute paths, command strings, cwd/env values, bridge payload dumps, or browser-storage dumps in tracked docs or shareable reports.
+- Raw provider credentials, runtime tokens, auth codes, cookies, request bodies, raw provider responses, raw prompts, raw verification output dumps, raw file bodies, raw diffs, raw patch bodies, private absolute paths, command strings, cwd/env values, bridge payload dumps, or browser-storage dumps in tracked docs, follow-up prompt drafts, or shareable reports.
 
 ## Manual run checklist
 
@@ -59,11 +62,11 @@ Keep the completed report in an ignored local evidence location unless a task ex
 23. If apply succeeds, click allowlisted Verification manually only through the visible verification control.
 24. Confirm the verification request uses the command-id-only allowlisted verification path. Record only command family or command id label, sanitized status, exit code when safe, duration when safe, and non-sensitive outcome.
 25. Confirm no verification request was emitted before the explicit manual Verification click.
-26. If verification fails, confirm the run stops without automatic repair, retry, or rollback.
-27. If verification succeeds, confirm the final Agent Run report renders a sanitized completed result.
-28. Open the `Coding session trace` panel. Confirm it starts collapsed/read-only, then inspect only sanitized metadata entries for explicit actions you performed: context attach or omit, Send, response/stream finish, proposal detection/rejection, checkpoint readiness, apply request/result, verification request/progress/result, and final report.
-29. Confirm the trace remains a bounded in-memory diagnostic view: no action buttons, no auto-send/apply/run controls, no raw prompt, raw provider response, raw file body, raw diff, memory body, verification body, private path, token, cookie, credential, or bridge payload dump.
-30. Confirm browser storage does not contain provider credentials, raw prompts, raw responses, raw file bodies, raw diffs, private paths, memory note text, context bodies, verification bodies, Agent Run reports, or coding-session trace entries.
+26. If verification fails, confirm the run stops without automatic repair, retry, or rollback. If a follow-up prompt draft appears, confirm it is draft-only, uses only sanitized verification metadata or explicit one-shot context, and waits for the user's separate Send click.
+27. If verification succeeds, confirm the final Agent Run report renders a sanitized completed result. If a follow-up prompt draft appears for additional work, confirm it remains unsent until explicit user Send.
+28. Open the `Coding session trace` panel. Confirm it starts collapsed/read-only, then inspect only sanitized metadata entries for explicit actions you performed: context attach or omit, Send, response/stream finish, proposal detection/rejection, checkpoint readiness, apply request/result, verification request/progress/result, follow-up prompt drafted if present, and final report.
+29. Confirm the trace remains a bounded in-memory diagnostic view: no action buttons, no auto-send/apply/run controls, no raw prompt, raw provider response, raw verification output dump, raw file body, raw diff, memory body, verification body, private path, token, cookie, credential, or bridge payload dump.
+30. Confirm browser storage does not contain provider credentials, raw prompts, raw responses, raw verification output, raw file bodies, raw diffs, private paths, memory note text, context bodies, verification bodies, follow-up prompt drafts, Agent Run reports, or coding-session trace entries.
 31. Run the report through the relevant local sanitizer/checker if one exists before sharing.
 
 ## Sanitized report template
@@ -106,6 +109,8 @@ Manual local evidence only. This report is not CI evidence, not automation evide
 - Manual verification status: <user-run sanitized summary | skipped | failed with sanitized summary | not run | out of scope for this run>
 - Verification command label: <repository-check | gui-app-tests | engine-chat-tests | other approved command id label | skipped | not run>
 - Verification correlation: <no verification before explicit click; command-id-only request; correlated result accepted | issue found with sanitized summary | skipped | not run>
+- Follow-up prompt draft: <drafted after explicit verification with sanitized metadata only | not drafted | issue found with sanitized summary | not run>
+- Follow-up Send: <user clicked Send explicitly | left as draft | skipped | not run>
 - Final result: <completed after user-confirmed verification | stopped after proposal rejection | stopped before apply | stopped after failed apply | stopped after failed verification | not run>
 - Trace panel default state: <collapsed and read-only | issue found with sanitized summary | not run>
 - Trace entries inspected: <context attach/omit | Send | response/stream finish | proposal detection/rejection | checkpoint readiness | apply request/result | verification request/progress/result | final report | none | not run>
@@ -123,7 +128,7 @@ Manual local evidence only. This report is not CI evidence, not automation evide
 - Browser storage checked for sensitive prompt/context/provider data: <checked | issue fixed before sharing | not run>
 - Browser storage checked for Agent Run report and trace persistence: <checked; absent from storage | issue fixed before sharing | not run>
 - No cloud-required workflow used or claimed: <checked | issue fixed before sharing | not run>
-- No auto-send, auto-apply, auto-run verification, automatic repair, automatic retry, automatic rollback, shell/git/tool execution, hidden file reads, or real-provider automation: <checked | issue fixed before sharing | not run>
+- No auto-send, auto-apply, auto-run verification, automatic repair, automatic retry, automatic rollback, shell/git/tool execution, hidden file reads, or real-provider automation; follow-up prompts stay draft-only until explicit Send: <checked | issue fixed before sharing | not run>
 - No real-provider CI, publishing, signing, notarization, marketplace, or production release claim: <checked | issue fixed before sharing | not run>
 
 ## Known issues

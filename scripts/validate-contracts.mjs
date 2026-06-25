@@ -48,7 +48,8 @@ const mappings = [
   ["packages/contracts/examples/engine/manual-runner-plan-proposal.json", "packages/contracts/schemas/engine/manual-runner-plan-proposal.schema.json"],
   ["packages/contracts/examples/engine/agent-run-plan-to-patch-proposal.json", "packages/contracts/schemas/engine/agent-run-plan-to-patch-proposal.schema.json"],
   ["packages/contracts/examples/engine/agent-run-multistep-plan-valid.json", "packages/contracts/schemas/engine/agent-run-multistep-plan.schema.json"],
-["packages/contracts/examples/engine/agent-run-trace-export.json", "packages/contracts/schemas/engine/agent-run-trace-export.schema.json"],
+  ["packages/contracts/examples/engine/agent-run-followup-prompt-draft-valid.json", "packages/contracts/schemas/engine/agent-run-followup-prompt-draft.schema.json"],
+  ["packages/contracts/examples/engine/agent-run-trace-export.json", "packages/contracts/schemas/engine/agent-run-trace-export.schema.json"],
   ...[
     "agent-run-checkpoint-readiness.json",
     "agent-run-checkpoint-created.json",
@@ -894,6 +895,13 @@ const invalidMappings = [
     "packages/contracts/examples-invalid/engine/agent-run-multistep-plan-unsafe-command.json",
     "packages/contracts/schemas/engine/agent-run-multistep-plan.schema.json"
   ],
+  ...[
+    "agent-run-followup-prompt-draft-unsafe-raw-output.json",
+    "agent-run-followup-prompt-draft-auto-send.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/agent-run-followup-prompt-draft.schema.json"
+  ]),
   ...[
 "agent-run-trace-export-raw-prompt.json",
     "agent-run-trace-export-private-path.json",

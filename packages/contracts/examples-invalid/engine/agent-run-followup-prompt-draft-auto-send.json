@@ -1,0 +1,45 @@
+{
+  "version": "2026-06-25",
+  "kind": "agent_run.followup_prompt_draft",
+  "authority": "metadata_only",
+  "cloudRequired": false,
+  "executionAllowed": true,
+  "draftStatus": "draft_only_until_user_send",
+  "intent": "followup",
+  "verification": {
+    "status": "succeeded",
+    "commandId": "repository-check",
+    "exitCode": 0,
+    "durationMs": 30000,
+    "resultSummary": "Repository check passed after the user selected verification.",
+    "outputPolicy": "sanitized_bounded_metadata_or_explicit_one_shot_context_only"
+  },
+  "priorProposal": {
+    "proposalId": "proposal:settings-copy-1",
+    "label": "Settings copy proposal",
+    "status": "applied"
+  },
+  "planSummary": {
+    "planId": "plan:settings-polish-1",
+    "title": "Manual settings polish plan",
+    "stepLabels": ["Suggest a review gate"]
+  },
+  "userIntentSummary": "Prepare a follow-up summary for review.",
+  "contextPolicy": {
+    "allowedSources": ["sanitized_verification_metadata", "explicit_user_intent"],
+    "forbidRawPrompt": true,
+    "forbidRawOutput": true,
+    "forbidRawDiffsOrFileBodies": true,
+    "forbidPrivatePathsAndSecrets": true
+  },
+  "manualActionPolicy": {
+    "requiresExplicitUserSendClick": false,
+    "noAutoSend": false,
+    "noAutoApply": true,
+    "noAutoVerification": true,
+    "noAutoRepair": true,
+    "noAutoRollback": true,
+    "noExecutionAuthority": true
+  },
+  "autoSend": true
+}

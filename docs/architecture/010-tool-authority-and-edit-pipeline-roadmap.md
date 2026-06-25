@@ -112,6 +112,17 @@ Every later action remains a separate explicit user action through an already-de
 
 The invalid fixture `packages/contracts/examples-invalid/engine/agent-run-multistep-plan-unsafe-command.json` proves command/execution metadata fails closed by smuggling command-like text, raw `command` and `cwd` fields, and a non-manual verification policy. This Sprint 61 contract does not claim multi-step execution is implemented; it only names the inert review shape before later manual-only UI work.
 
+## Sprint 62 follow-up prompt draft metadata
+
+Sprint 62 adds `packages/contracts/schemas/engine/agent-run-followup-prompt-draft.schema.json`. This contract defines `agent_run.followup_prompt_draft` as a metadata-only, user-reviewed draft for a second Agent Run model prompt after the user has explicitly run verification. The draft may summarize only sanitized verification result metadata, prior proposal labels or ids, plan preview or proposal summaries, and explicit user intent with `intent: "followup"` or `intent: "fix"`. It may also refer to explicit one-shot context when the user deliberately attaches it for this send.
+
+The follow-up draft is not automatic repair. It cannot send itself, cannot call a provider, cannot apply a proposal, cannot run verification, cannot retry a failed step, and cannot roll back a checkpoint. A valid payload keeps `authority: "metadata_only"`, `cloudRequired: false`, `executionAllowed: false`, `draftStatus: "draft_only_until_user_send"`, and manual-action policy fields that require an explicit user Send click while forbidding auto-send, auto-apply, automatic verification, automatic repair, and automatic rollback.
+
+The draft must not carry raw command strings, args, cwd, env, shell snippets, git metadata, tool or provider fields, raw verification output dumps, raw prompts, raw diffs, file bodies, stack traces, secrets, private absolute paths, assistant-minted request ids, hidden read/search/index hints, or execution flags. Verification output can enter only as bounded sanitized metadata or as explicit one-shot context selected by the user for that send. Invalid fixtures cover raw-output smuggling and auto-send/execution flags so the contract fails closed.
+
+This preserves the local-first BYOK and manual-only Agent Run boundary. S62 does not implement multi-step execution, autonomous repair, a task runner, a shell/git/tool executor, a new bridge message, or a hosted Yet AI backend requirement; it only defines the safe draft shape for a possible user-confirmed second prompt.
+
+
 ## Product boundaries to preserve
 
 Tool authority belongs behind local runtime and host policy boundaries. The GUI may render proposals and collect explicit user intent, but it must not persist raw provider secrets, execute shell commands, scan the workspace, or bypass host confirmation. IDE hosts may execute only explicitly designed and schema-validated host-owned capabilities. The engine may observe sanitized progress and own provider/runtime policy, but it must not gain broad IDE mutation or shell authority by accident.

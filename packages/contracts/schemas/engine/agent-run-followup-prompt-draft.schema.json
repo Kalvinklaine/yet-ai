@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/agent-run-followup-prompt-draft.schema.json",
+  "title": "Agent Run Follow-up Prompt Draft",
+  "description": "Strict metadata-only contract for a second-step Agent Run follow-up prompt draft after explicit user-run verification. It is draft-only until the user explicitly clicks Send and grants no send, bridge command, runtime endpoint, provider call, shell, git, tool, file read, edit, apply, verification, rollback, repair, retry, or autonomous-loop authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "kind",
+    "authority",
+    "cloudRequired",
+    "executionAllowed",
+    "draftStatus",
+    "intent",
+    "verification",
+    "priorProposal",
+    "planSummary",
+    "userIntentSummary",
+    "contextPolicy",
+    "manualActionPolicy"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "2026-06-25"
+    },
+    "kind": {
+      "type": "string",
+      "const": "agent_run.followup_prompt_draft"
+    },
+    "authority": {
+      "type": "string",
+      "const": "metadata_only"
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "executionAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "draftStatus": {
+      "type": "string",
+      "const": "draft_only_until_user_send"
+    },
+    "intent": {
+      "type": "string",
+      "enum": ["followup", "fix"]
+    },
+    "verification": {
+      "$ref": "#/$defs/sanitizedVerificationMetadata"
+    },
+    "priorProposal": {
+      "$ref": "#/$defs/priorProposalMetadata"
+    },
+    "planSummary": {
+      "$ref": "#/$defs/planSummaryMetadata"
+    },
+    "userIntentSummary": {
+      "$ref": "#/$defs/safeSummary"
+    },
+    "contextPolicy": {
+      "$ref": "#/$defs/contextPolicy"
+    },
+    "manualActionPolicy": {
+      "$ref": "#/$defs/manualActionPolicy"
+    }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Rr][Aa][Ww][-_ ]?(?:[Pp][Rr][Oo][Mm][Pp][Tt]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Dd][Ii][Ff][Ff]|[Oo][Uu][Tt][Pp][Uu][Tt]|[Ff][Ii][Ll][Ee])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][-_ ]?(?:[Pp][Aa][Yy][Ll][Oo][Aa][Dd]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Tt][Oo][Oo][Ll]|[Cc][Aa][Ll][Ll])|[Tt][Oo][Oo][Ll][-_ ]?(?:[Cc][Aa][Ll][Ll]|[Uu][Ss][Ee]|[Nn][Aa][Mm][Ee])|[Ss][Hh][Ee][Ll][Ll]|[Gg][Ii][Tt]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Aa][Rr][Gg][Ss]|[Ee][Xx][Ee][Cc]|[Cc][Mm][Dd]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Nn][Pp][Mm]\\s+[Rr][Uu][Nn]|[Cc][Aa][Rr][Gg][Oo]\\s+(?:[Cc][Hh][Ee][Cc][Kk]|[Tt][Ee][Ss][Tt])|[Aa][Uu][Tt][Oo][-_ ]?(?:[Ss][Ee][Nn][Dd]|[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Vv][Ee][Rr][Ii][Ff][Yy]|[Ff][Ii][Xx]|[Rr][Ee][Pp][Aa][Ii][Rr]|[Rr][Oo][Ll][Ll][Bb][Aa][Cc][Kk])|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh]|[Ss][Cc][Aa][Nn])|[Ii][Nn][Dd][Ee][Xx][-_ ]?[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee]|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)))[\\s\\S]*$"
+    },
+    "safeId": {
+      "allOf": [
+        { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$" },
+        { "$ref": "#/$defs/safeText" }
+      ]
+    },
+    "safeLabel": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 160 }
+      ]
+    },
+    "safeSummary": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 360 }
+      ]
+    },
+    "verificationCommandId": {
+      "type": "string",
+      "enum": ["repository-check", "gui-app-tests", "engine-chat-tests"]
+    },
+    "sanitizedVerificationMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "commandId", "exitCode", "durationMs", "resultSummary", "outputPolicy"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["succeeded", "failed", "blocked", "skipped"]
+        },
+        "commandId": {
+          "$ref": "#/$defs/verificationCommandId"
+        },
+        "exitCode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3600000
+        },
+        "resultSummary": {
+          "$ref": "#/$defs/safeSummary"
+        },
+        "outputPolicy": {
+          "type": "string",
+          "const": "sanitized_bounded_metadata_or_explicit_one_shot_context_only"
+        }
+      }
+    },
+    "priorProposalMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["proposalId", "label", "status"],
+      "properties": {
+        "proposalId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "label": {
+          "$ref": "#/$defs/safeLabel"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["detected", "applied", "rejected", "not_applied"]
+        }
+      }
+    },
+    "planSummaryMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planId", "title", "stepLabels"],
+      "properties": {
+        "planId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "title": {
+          "$ref": "#/$defs/safeLabel"
+        },
+        "stepLabels": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/safeLabel"
+          }
+        }
+      }
+    },
+    "contextPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowedSources", "forbidRawPrompt", "forbidRawOutput", "forbidRawDiffsOrFileBodies", "forbidPrivatePathsAndSecrets"],
+      "properties": {
+        "allowedSources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "type": "string",
+            "enum": ["sanitized_verification_metadata", "prior_proposal_labels", "plan_preview_summary", "explicit_user_intent", "explicit_one_shot_context"]
+          }
+        },
+        "forbidRawPrompt": { "type": "boolean", "const": true },
+        "forbidRawOutput": { "type": "boolean", "const": true },
+        "forbidRawDiffsOrFileBodies": { "type": "boolean", "const": true },
+        "forbidPrivatePathsAndSecrets": { "type": "boolean", "const": true }
+      }
+    },
+    "manualActionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiresExplicitUserSendClick", "noAutoSend", "noAutoApply", "noAutoVerification", "noAutoRepair", "noAutoRollback", "noExecutionAuthority"],
+      "properties": {
+        "requiresExplicitUserSendClick": { "type": "boolean", "const": true },
+        "noAutoSend": { "type": "boolean", "const": true },
+        "noAutoApply": { "type": "boolean", "const": true },
+        "noAutoVerification": { "type": "boolean", "const": true },
+        "noAutoRepair": { "type": "boolean", "const": true },
+        "noAutoRollback": { "type": "boolean", "const": true },
+        "noExecutionAuthority": { "type": "boolean", "const": true }
+      }
+    }
+  }
+}

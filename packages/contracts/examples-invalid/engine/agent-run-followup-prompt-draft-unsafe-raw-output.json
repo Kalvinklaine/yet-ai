@@ -1,0 +1,45 @@
+{
+  "version": "2026-06-25",
+  "kind": "agent_run.followup_prompt_draft",
+  "authority": "metadata_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "draftStatus": "draft_only_until_user_send",
+  "intent": "fix",
+  "verification": {
+    "status": "failed",
+    "commandId": "repository-check",
+    "exitCode": 1,
+    "durationMs": 42000,
+    "resultSummary": "Raw output: failure log from /Users/example/project with stack details",
+    "outputPolicy": "sanitized_bounded_metadata_or_explicit_one_shot_context_only",
+    "rawOutput": "failure log dump"
+  },
+  "priorProposal": {
+    "proposalId": "proposal:settings-copy-1",
+    "label": "Settings copy proposal",
+    "status": "applied"
+  },
+  "planSummary": {
+    "planId": "plan:settings-polish-1",
+    "title": "Manual settings polish plan",
+    "stepLabels": ["Review visible settings labels"]
+  },
+  "userIntentSummary": "Ask the model to repair this automatically.",
+  "contextPolicy": {
+    "allowedSources": ["sanitized_verification_metadata", "explicit_user_intent"],
+    "forbidRawPrompt": true,
+    "forbidRawOutput": false,
+    "forbidRawDiffsOrFileBodies": true,
+    "forbidPrivatePathsAndSecrets": true
+  },
+  "manualActionPolicy": {
+    "requiresExplicitUserSendClick": true,
+    "noAutoSend": true,
+    "noAutoApply": true,
+    "noAutoVerification": true,
+    "noAutoRepair": true,
+    "noAutoRollback": true,
+    "noExecutionAuthority": true
+  }
+}

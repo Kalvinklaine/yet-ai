@@ -119,6 +119,14 @@ The preview must stay inert. It must not include raw prompts, raw model response
 
 Trace/report copy for this preview must say that no auto-send, auto-apply, automatic verification, automatic repair, automatic rollback, or hidden reads are enabled. Any later Send, Apply, Verify, or Rollback remains a separate explicit user action with its own existing contract and host policy. Sprint 61 does not implement multi-step execution, an autonomous loop, a task runner, a shell/git/tool executor, or a new provider/runtime capability; it only provides sanitized review metadata while preserving local-first BYOK behavior.
 
+## Follow-up prompt draft metadata
+
+Sprint 62 adds `agent_run.followup_prompt_draft` as a separate metadata contract for drafting a second Agent Run model prompt after explicit user-run verification. It is adjacent to trace and report metadata only; it is not trace storage, bridge transport, runtime state, host execution, provider execution, automatic repair, or workspace authority.
+
+If future UI records trace entries for this draft, entries should summarize only bounded ids, the `followup` or `fix` intent, prior proposal labels, plan or proposal summary labels, allowlisted verification `commandId`, exit code, duration, sanitized status, and short redacted result summaries. Verification output must enter only as sanitized bounded metadata or as explicit one-shot context the user chooses for that send. Trace entries must not include raw command strings, cwd/env, shell snippets, raw verification output dumps, raw prompts, raw model responses, raw diffs, patch bodies, file bodies, provider/tool/git fields, secrets, private absolute paths, stack traces, request authority, or hidden read/search/index hints.
+
+The draft remains idle until the user explicitly reviews it and clicks Send. Trace/report copy must distinguish this from automatic repair: no auto-send, auto-apply, automatic verification, automatic repair, automatic rollback, retry loop, hidden reads, or execution authority is enabled. Any later Send, Apply, Verify, or Rollback remains a separate explicit user action with its own existing contract and host policy. Sprint 62 does not claim multi-step execution or autonomy, and it preserves the local-first BYOK/no-hosted-backend invariant.
+
 ## Maintenance rules
 
 When a future card wires trace entries into UI state, keep the trace in memory only unless a separate architecture decision approves storage. Do not store raw assistant messages, user prompts, provider payloads, file excerpts, verification output, or host diagnostics directly in trace entries. Store only safe labels, counts, enum values, request correlation, durations, exit codes, and short redacted tails.
