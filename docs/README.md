@@ -10,7 +10,7 @@ docs/
   architecture/         # architecture baselines, decisions, contracts, roadmaps
 ```
 
-Additional local evidence templates live under `docs/dogfood/`, including the real-provider active-file chat report, the manual real coding task dogfood checklist, the historical one-step Agent Run dogfood checklist, and the safe-share Agent Run one-step report template. The deterministic mock-only built-GUI validation for the safe-share Agent Run path is `npm run smoke:agent-run-dogfood`; it uses loopback-only runtime/host mocks and sanitized evidence, not real-provider CI. The inert multi-step Agent Run plan preview smoke is `npm run smoke:agent-run-multistep-plan`; it covers valid and rejected preview metadata with no automatic apply or verification bridge messages and no browser-storage leakage.
+Additional local evidence templates live under `docs/dogfood/`, including the real-provider active-file chat report, the manual real coding task dogfood checklist, the historical one-step Agent Run dogfood checklist, and the safe-share Agent Run one-step report template. The deterministic mock-only built-GUI validation for the safe-share Agent Run path is `npm run smoke:agent-run-dogfood`; it uses loopback-only runtime/host mocks and sanitized evidence, not real-provider CI. The inert multi-step Agent Run plan preview smoke is `npm run smoke:agent-run-multistep-plan`; it covers valid and rejected preview metadata with no automatic apply or verification bridge messages and no browser-storage leakage. The bounded Agent Run second-step follow-up loop smoke is `npm run smoke:agent-run-followup-loop`; it covers failed-verification fix drafts and successful-verification follow-up drafts as composer/focus-only actions with no automatic send, apply, verification, repair, rollback, attachment, or browser-storage persistence.
 
 ## Where to add documents
 
@@ -180,6 +180,14 @@ npm run smoke:agent-run-multistep-plan
 Sprint 61 status: the multi-step Agent Run plan preview is implemented only as inert/manual review metadata. It is not multi-step execution, not an autonomous runner, not a production agent loop, and not a new bridge/runtime/tool surface. The contract requires `agent_run.multistep_plan`, `authority: "metadata_only"`, `cloudRequired: false`, `executionAllowed: false`, and manual-action policy flags that prohibit auto-send, auto-apply, auto-verification, auto-rollback, and hidden reads. The GUI parser maps accepted plans to `planPreview` display metadata only; it does not create safe-edit proposals, bounded-loop metadata, apply requests, verification requests, rollback requests, provider calls, hidden file reads, or scheduler instructions.
 
 The smoke builds the GUI, serves the built assets from loopback, and drives Playwright with deterministic mock runtime/SSE/provider/bridge data. It covers a valid `agent_run.multistep_plan` preview and an unsafe rejected preview, asserts the preview remains review-only metadata, checks no automatic `gui.applyWorkspaceEditRequest` or `runVerificationCommand` bridge messages are emitted before explicit user clicks, and verifies browser storage does not persist raw prompts, diffs, file bodies, secrets, commands, or private paths. It is mock/loopback-only evidence: it does not call real providers, launch real IDEs, require hosted services, run shell/git/tool actions through the product, or grant execution authority.
+
+For the S62 bounded Agent Run second-step follow-up loop, run:
+
+```sh
+npm run smoke:agent-run-followup-loop
+```
+
+The smoke builds the GUI, serves built assets from loopback, and drives Playwright with deterministic mock runtime/SSE/provider/bridge/host data. It covers both terminal verification outcomes after the explicit one-step Agent Run apply/verify path: failed verification drafts a sanitized fix prompt, and successful verification drafts a sanitized follow-up prompt. The draft action is intentionally bounded to writing the composer and focusing it; the smoke asserts no automatic chat send, apply request, verification request, repair, rollback, retry, context attachment, runtime execution-like endpoint, non-loopback network call, or browser-storage persistence of raw prompts, diffs, file bodies, secrets, command details, private paths, or follow-up drafts.
 
 For the Sprint 49 Agent Run safety regression bundle, run:
 
