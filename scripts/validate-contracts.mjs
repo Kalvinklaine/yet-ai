@@ -47,6 +47,7 @@ const mappings = [
   ["packages/contracts/examples/engine/agent-progress-event-manual-runner-verification.json", "packages/contracts/schemas/engine/agent-progress-event.schema.json"],
   ["packages/contracts/examples/engine/manual-runner-plan-proposal.json", "packages/contracts/schemas/engine/manual-runner-plan-proposal.schema.json"],
   ["packages/contracts/examples/engine/agent-run-plan-to-patch-proposal.json", "packages/contracts/schemas/engine/agent-run-plan-to-patch-proposal.schema.json"],
+  ["packages/contracts/examples/engine/agent-run-multistep-plan-valid.json", "packages/contracts/schemas/engine/agent-run-multistep-plan.schema.json"],
 ["packages/contracts/examples/engine/agent-run-trace-export.json", "packages/contracts/schemas/engine/agent-run-trace-export.schema.json"],
   ...[
     "agent-run-checkpoint-readiness.json",
@@ -889,6 +890,10 @@ const invalidMappings = [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/agent-run-plan-to-patch-proposal.schema.json"
   ]),
+  [
+    "packages/contracts/examples-invalid/engine/agent-run-multistep-plan-unsafe-command.json",
+    "packages/contracts/schemas/engine/agent-run-multistep-plan.schema.json"
+  ],
   ...[
 "agent-run-trace-export-raw-prompt.json",
     "agent-run-trace-export-private-path.json",

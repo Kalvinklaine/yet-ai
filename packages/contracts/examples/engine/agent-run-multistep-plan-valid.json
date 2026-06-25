@@ -1,0 +1,68 @@
+{
+  "version": "2026-06-25",
+  "kind": "agent_run.multistep_plan",
+  "authority": "metadata_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "title": "Preview a manual settings polish plan",
+  "summary": "Show a reviewed sequence for updating settings copy while keeping every later action separate and user selected.",
+  "steps": [
+    {
+      "id": "step-1",
+      "title": "Review visible settings labels",
+      "summary": "Compare the current labels against the requested wording using only user provided context.",
+      "status": "preview_only",
+      "expectedTouchedFiles": [
+        "apps/gui/src/settings/SettingsPanel.tsx"
+      ],
+      "riskLabels": [
+        "Copy may need product review"
+      ]
+    },
+    {
+      "id": "step-2",
+      "title": "Prepare a bounded proposal",
+      "summary": "Keep the possible change limited to existing settings UI text and present it for manual review.",
+      "status": "preview_only",
+      "expectedTouchedFiles": [
+        "apps/gui/src/settings/SettingsPanel.tsx"
+      ],
+      "riskLabels": [
+        "Existing tests may need label updates"
+      ]
+    },
+    {
+      "id": "step-3",
+      "title": "Suggest a review gate",
+      "summary": "Offer an allowlisted repository check as a user selected follow-up after any separate apply decision.",
+      "status": "preview_only",
+      "riskLabels": []
+    }
+  ],
+  "risks": [
+    "Copy may need product review",
+    "Existing tests may need label updates"
+  ],
+  "expectedTouchedFiles": [
+    "apps/gui/src/settings/SettingsPanel.tsx"
+  ],
+  "verificationSuggestions": [
+    {
+      "commandId": "repository-check",
+      "label": "Repository check",
+      "description": "Run the repository validation gate after explicit user selection.",
+      "riskLevel": "medium",
+      "expectedDuration": "Usually 1 to 5 minutes",
+      "cwdPolicyLabel": "Repository root selected by host",
+      "outputBoundLabel": "Sanitized tail only"
+    }
+  ],
+  "manualActionPolicy": {
+    "noAutoSend": true,
+    "noAutoApply": true,
+    "noAutoVerification": true,
+    "noAutoRollback": true,
+    "noHiddenReads": true,
+    "requiresExplicitUserAction": true
+  }
+}

@@ -1,0 +1,355 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/agent-run-multistep-plan.schema.json",
+  "title": "Agent Run Multi-step Plan Preview",
+  "description": "Strict assistant-authored metadata-only Agent Run multi-step plan preview for GUI review. It grants no bridge command, runtime endpoint, provider call, shell, git, tool, file read, edit, apply, verification, rollback, repair, retry, or autonomous-loop authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "kind",
+    "authority",
+    "cloudRequired",
+    "executionAllowed",
+    "title",
+    "summary",
+    "steps",
+    "risks",
+    "expectedTouchedFiles",
+    "verificationSuggestions",
+    "manualActionPolicy"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "2026-06-25"
+    },
+    "kind": {
+      "type": "string",
+      "const": "agent_run.multistep_plan"
+    },
+    "authority": {
+      "type": "string",
+      "const": "metadata_only"
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "executionAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "title": {
+      "$ref": "#/$defs/safeTitle"
+    },
+    "summary": {
+      "$ref": "#/$defs/safeSummary"
+    },
+    "steps": {
+      "type": "array",
+      "description": "Two to ten bounded, sanitized, user-visible plan preview items only. Steps are not executable instructions and do not authorize hidden reads or actions.",
+      "minItems": 2,
+      "maxItems": 10,
+      "items": {
+        "$ref": "#/$defs/planStep"
+      }
+    },
+    "risks": {
+      "type": "array",
+      "description": "Bounded sanitized risk labels for review only.",
+      "maxItems": 8,
+      "items": {
+        "$ref": "#/$defs/safeRiskLabel"
+      }
+    },
+    "expectedTouchedFiles": {
+      "type": "array",
+      "description": "Expected workspace-relative file labels only. They are preview labels, not read or write authority.",
+      "maxItems": 12,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/safeRelativePath"
+      }
+    },
+    "verificationSuggestions": {
+      "type": "array",
+      "description": "Allowlisted verification preset metadata only. No command strings, args, cwd, env, shell, git, package-manager, network, or provider fields are accepted.",
+      "maxItems": 3,
+      "items": {
+        "$ref": "#/$defs/verificationSuggestion"
+      }
+    },
+    "manualActionPolicy": {
+      "$ref": "#/$defs/manualActionPolicy"
+    }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Rr][Aa][Ww][-_ ]?(?:[Pp][Rr][Oo][Mm][Pp][Tt]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Dd][Ii][Ff][Ff]|[Oo][Uu][Tt][Pp][Uu][Tt]|[Ff][Ii][Ll][Ee])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][-_ ]?(?:[Pp][Aa][Yy][Ll][Oo][Aa][Dd]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Tt][Oo][Oo][Ll]|[Cc][Aa][Ll][Ll])|[Tt][Oo][Oo][Ll][-_ ]?(?:[Cc][Aa][Ll][Ll]|[Uu][Ss][Ee]|[Nn][Aa][Mm][Ee])|[Ss][Hh][Ee][Ll][Ll]|[Gg][Ii][Tt]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Aa][Rr][Gg][Ss]|[Aa][Rr][Gg][Uu][Mm][Ee][Nn][Tt][Ss]|[Ee][Xx][Ee][Cc]|[Cc][Mm][Dd]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Nn][Pp][Mm]\\s+[Rr][Uu][Nn]|[Cc][Aa][Rr][Gg][Oo]\\s+(?:[Cc][Hh][Ee][Cc][Kk]|[Tt][Ee][Ss][Tt])|[Aa][Pp][Pp][Ll][Yy][-_ ]?[Pp][Aa][Tt][Cc][Hh]|[Aa][Uu][Tt][Oo][-_ ]?(?:[Ss][Ee][Nn][Dd]|[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Vv][Ee][Rr][Ii][Ff][Yy]|[Ff][Ii][Xx]|[Rr][Ee][Pp][Aa][Ii][Rr]|[Rr][Oo][Ll][Ll][Bb][Aa][Cc][Kk])|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh]|[Ss][Cc][Aa][Nn])|[Ii][Nn][Dd][Ee][Xx][-_ ]?[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee]|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "safeTitle": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      ]
+    },
+    "safeSummary": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 360
+        }
+      ]
+    },
+    "safeStepLabel": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        }
+      ]
+    },
+    "safeRiskLabel": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      ]
+    },
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^(?!/)(?!~)(?!.*%)(?!.*\\\\)(?!.*:)(?!.*[?#])(?!.*(?:^|/)\\.)(?!.*//)(?!.*\\/$)(?!.*(?:^|/)(?:[Aa][Uu][Tt][Hh]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Cc][Cc][Ee][Ss][Ss][_-]?[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy])(?:[._-]|/|$))(?!.*(?:^|[._-])(?:[Aa][Uu][Tt][Hh]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Cc][Cc][Ee][Ss][Ss][_-]?[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy])(?:[._-]|$))(?!.*(?:^|/)[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,})[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+    },
+    "planStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "summary", "status"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^step-[1-9][0-9]?$"
+        },
+        "title": {
+          "$ref": "#/$defs/safeStepLabel"
+        },
+        "summary": {
+          "$ref": "#/$defs/safeSummary"
+        },
+        "status": {
+          "type": "string",
+          "const": "preview_only"
+        },
+        "expectedTouchedFiles": {
+          "type": "array",
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/safeRelativePath"
+          }
+        },
+        "riskLabels": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/safeRiskLabel"
+          }
+        }
+      }
+    },
+    "verificationCommandId": {
+      "type": "string",
+      "enum": [
+        "repository-check",
+        "gui-app-tests",
+        "engine-chat-tests"
+      ]
+    },
+    "verificationSuggestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commandId",
+        "label",
+        "description",
+        "riskLevel",
+        "expectedDuration",
+        "cwdPolicyLabel",
+        "outputBoundLabel"
+      ],
+      "properties": {
+        "commandId": {
+          "$ref": "#/$defs/verificationCommandId"
+        },
+        "label": {
+          "type": "string",
+          "enum": ["Repository check", "GUI app tests", "Engine chat tests"]
+        },
+        "description": {
+          "type": "string",
+          "enum": [
+            "Run the repository validation gate after explicit user selection.",
+            "Run the focused GUI application test gate after explicit user selection.",
+            "Run the focused engine chat test gate after explicit user selection."
+          ]
+        },
+        "riskLevel": {
+          "type": "string",
+          "enum": ["low", "medium"]
+        },
+        "expectedDuration": {
+          "type": "string",
+          "enum": ["Usually under 1 minute", "Usually 1 to 5 minutes", "Usually 5 to 10 minutes"]
+        },
+        "cwdPolicyLabel": {
+          "type": "string",
+          "const": "Repository root selected by host"
+        },
+        "outputBoundLabel": {
+          "type": "string",
+          "const": "Sanitized tail only"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "commandId": {
+                "const": "repository-check"
+              }
+            },
+            "required": ["commandId"]
+          },
+          "then": {
+            "properties": {
+              "label": {
+                "const": "Repository check"
+              },
+              "description": {
+                "const": "Run the repository validation gate after explicit user selection."
+              },
+              "riskLevel": {
+                "const": "medium"
+              },
+              "expectedDuration": {
+                "const": "Usually 1 to 5 minutes"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "commandId": {
+                "const": "gui-app-tests"
+              }
+            },
+            "required": ["commandId"]
+          },
+          "then": {
+            "properties": {
+              "label": {
+                "const": "GUI app tests"
+              },
+              "description": {
+                "const": "Run the focused GUI application test gate after explicit user selection."
+              },
+              "riskLevel": {
+                "const": "medium"
+              },
+              "expectedDuration": {
+                "const": "Usually 5 to 10 minutes"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "commandId": {
+                "const": "engine-chat-tests"
+              }
+            },
+            "required": ["commandId"]
+          },
+          "then": {
+            "properties": {
+              "label": {
+                "const": "Engine chat tests"
+              },
+              "description": {
+                "const": "Run the focused engine chat test gate after explicit user selection."
+              },
+              "riskLevel": {
+                "const": "low"
+              },
+              "expectedDuration": {
+                "const": "Usually under 1 minute"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "manualActionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "noAutoSend",
+        "noAutoApply",
+        "noAutoVerification",
+        "noAutoRollback",
+        "noHiddenReads",
+        "requiresExplicitUserAction"
+      ],
+      "properties": {
+        "noAutoSend": {
+          "type": "boolean",
+          "const": true
+        },
+        "noAutoApply": {
+          "type": "boolean",
+          "const": true
+        },
+        "noAutoVerification": {
+          "type": "boolean",
+          "const": true
+        },
+        "noAutoRollback": {
+          "type": "boolean",
+          "const": true
+        },
+        "noHiddenReads": {
+          "type": "boolean",
+          "const": true
+        },
+        "requiresExplicitUserAction": {
+          "type": "boolean",
+          "const": true
+        }
+      }
+    }
+  }
+}
