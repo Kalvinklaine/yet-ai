@@ -2439,10 +2439,11 @@ export function App() {
       {!hostedWebview && (
         <section className="readiness-card warn browser-preview-card" role="status" aria-label="Browser preview limits">
           <div className="row">
-            <strong>Browser preview mode</strong>
-            <span className="badge warn">preview-only host actions</span>
+            <strong>Browser standalone mode</strong>
+            <span className="badge warn">runtime chat yes · IDE actions no</span>
           </div>
-          <span className="subtle">Browser can use the local runtime for chat and GUI-only previews. Open {productName} in VS Code or JetBrains for host actions: applying edits, IDE verification commands, active-file/context requests, and project snippet search.</span>
+          <span className="subtle">Browser connects to a running loopback runtime, configures/tests providers, and chats with Demo Mode, Ollama, or OpenAI-compatible BYOK models. It cannot launch/restart runtime or run host actions.</span>
+          <span className="subtle">IDE-only: editor context, excerpts, snippets, apply, and verification. Browser uses explicit prompt/provider controls.</span>
         </section>
       )}
 
@@ -2636,7 +2637,9 @@ export function App() {
         </div>
         {hostedRuntimeConnection
           ? <p className="subtle">Runtime connection is IDE-managed. Trusted host.ready supplied the loopback URL{token ? " and an in-memory Session token" : ""}; there is no visible token to copy, and provider API keys are still configured only in the local runtime.</p>
-          : <p className="subtle">In VS Code or JetBrains, the local runtime Session token is normally supplied automatically by the IDE host through trusted host.ready. Paste a token only when connecting to a manually started runtime such as one launched with YET_AI_AUTH_TOKEN=.... This local runtime token authorizes the GUI to the loopback runtime; it is not an OpenAI key or provider API key.</p>}
+          : bridgeHost === "browser"
+            ? <p className="subtle">Browser standalone mode connects to a running loopback runtime. Enter its URL and optional Session token, then configure Demo Mode, Ollama, or OpenAI-compatible BYOK providers. This token authorizes GUI-to-runtime only; it is not a provider API key.</p>
+            : <p className="subtle">In VS Code or JetBrains, the local runtime Session token is normally supplied automatically by the IDE host through trusted host.ready. Paste a token only when connecting to a manually started runtime such as one launched with YET_AI_AUTH_TOKEN=.... This local runtime token authorizes the GUI to the loopback runtime; it is not an OpenAI key or provider API key.</p>}
         {!runtimeConnected && hostedRuntimeConnection && <div className="recovery-card" role="status"><strong>IDE-managed runtime recovery</strong><span>Refresh runtime asks the host-delivered URL/token to reconnect. If the runtime is stale, missing, or unauthorized, use the IDE runtime status/restart command; do not copy raw runtime tokens into chat.</span></div>}
         <div className={`recovery-card ${activeRuntimeLifecycle ? "" : "subtle"}`} role="status" aria-label="Runtime lifecycle diagnostics">
           <strong>{activeRuntimeLifecycle ? activeRuntimeLifecycle.title : "Runtime lifecycle diagnostics"}</strong>
@@ -2680,8 +2683,8 @@ export function App() {
         {runtimeConnected && !apiKeyChatReady && !experimentalOauthChatReady && (
           <div className="guided-setup-card stack" role="status">
             <strong>Runtime connected — choose the first-message path</strong>
-            <span><strong>Local provider:</strong> choose Ollama local for a direct engine call to http://127.0.0.1:11434, no API key, no hosted Yet AI service, no account, and no cloud workspace.</span>
-            <span><strong>Hosted BYOK provider:</strong> use OpenAI API-key fallback, paste a provider API key once, save, test provider, refresh runtime/model readiness, then send.</span>
+            <span><strong>Browser standalone local model:</strong> choose Ollama local for a direct engine call to http://127.0.0.1:11434, confirm a pulled model id, save, test provider, refresh runtime/model readiness, then send. No API key, hosted Yet AI service, account, managed gateway, product credits, or cloud workspace is required.</span>
+            <span><strong>Hosted BYOK provider:</strong> use OpenAI API-key fallback or another OpenAI-compatible /v1 endpoint, paste a provider API key once when required, save, test provider, refresh runtime/model readiness, then send.</span>
             <span><strong>Try without provider calls:</strong> enable Demo Mode from Chat readiness. It uses local canned responses only and is not model quality.</span>
             <div className="row">
               <button type="button" onClick={applyOpenAiApiPreset}>Use OpenAI API key fallback</button>
@@ -3628,7 +3631,7 @@ function ActiveFileExcerptAttachPanel({ host, excerpt, include, pending, status,
           <strong>Active file excerpt</strong>
           <span className="badge warn">IDE host required</span>
         </div>
-        <span className="subtle">Open {productName} in VS Code or JetBrains to attach a bounded active-file excerpt. Browser mode will not execute host actions.</span>
+        <span className="subtle">Standalone browser cannot read your editor, attach active files, search snippets, apply edits, or run IDE verification. Use VS Code/JetBrains for excerpts; include only chosen prompt text.</span>
       </section>
     );
   }

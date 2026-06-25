@@ -10,6 +10,7 @@ In scope:
 
 - Local runtime connected through an IDE/plugin or browser dev surface.
 - BYOK provider configured locally, or local model runtime selected locally.
+- Browser-first standalone dogfood where the browser connects to an already-running loopback runtime, configures/tests providers locally, and sends chat through the local runtime without IDE host actions.
 - Provider kind recorded only as a redacted/sanitized category, with a non-secret model label.
 - Explicit context attached or intentionally omitted before Send.
 - Model safe-edit proposal reviewed before Apply.
@@ -21,6 +22,20 @@ Out of scope:
 - Hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, cloud workspace, or cloud-required task execution.
 - Production/default account login remains unavailable/blocked; production autonomy, background agent execution, automatic repair, automatic retry, automatic rollback, marketplace publication, signing, notarization, and release readiness are not claimed.
 - Real-provider CI, automated provider calls, real apply actions in CI, or real verification commands in CI.
+
+## Browser-first standalone dogfood path
+
+Use this path when dogfooding from the browser GUI without VS Code or JetBrains. It is useful for real provider configuration and local model testing, but it is still manual local evidence only.
+
+1. Start the local runtime yourself outside the browser surface and record only a sanitized runtime label. Browser mode cannot launch or restart the runtime.
+2. Open the browser GUI, enter the loopback runtime base URL and optional Session token in Local runtime connection, then click Refresh runtime.
+3. Confirm the browser mode banner says chat/provider setup can use the local runtime while IDE actions are unavailable.
+4. For local model testing, choose the Ollama local preset, confirm `http://127.0.0.1:11434`, use a pulled non-secret model label, save, test provider, refresh runtime/model readiness, then send.
+5. For OpenAI-compatible testing, choose OpenAI API-key fallback or another `/v1` compatible endpoint, paste the provider API key only into the provider form, save, test provider, refresh runtime/model readiness, then send.
+6. For a no-provider smoke, use Demo Mode only as runtime-owned canned responses. Do not treat it as model quality.
+7. Active editor context is not available in standalone browser mode. The browser cannot attach active-file excerpts, search project snippets, apply edits, or run IDE verification commands. Include only prompt text or explicit GUI-managed context you choose manually.
+8. If a safe-edit proposal appears in browser mode, review it as proposal-only evidence unless an IDE host is opened separately for apply/verification. Do not claim browser mode applied or verified workspace edits.
+9. Confirm browser storage remains free of provider credentials, runtime tokens, raw prompts, raw responses, raw context, raw file bodies, raw diffs, traces, and secrets.
 
 ## Never include in a shareable report
 

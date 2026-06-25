@@ -121,9 +121,10 @@ describe("hosted iframe shell layout", () => {
     renderApp();
     await flushAsync();
 
-    expect(container?.textContent).toContain("Browser preview can connect to an already-running loopback runtime");
-    expect(container?.textContent).toContain("cannot launch or restart");
-    expect(container?.textContent).toContain("cannot execute host workspace actions");
+    expect(container?.textContent).toContain("Browser standalone mode connects to a running loopback runtime for chat/provider setup");
+    expect(container?.textContent).toContain("Demo Mode, Ollama, and OpenAI-compatible BYOK models");
+    expect(container?.textContent).toContain("cannot launch/restart");
+    expect(container?.textContent).toContain("run host actions");
   });
 });
 
@@ -229,9 +230,9 @@ describe("runtime refresh feedback", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("normally supplied automatically by the IDE host through trusted host.ready");
-    expect(container?.textContent).toContain("YET_AI_AUTH_TOKEN");
-    expect(container?.textContent).toContain("This local runtime token authorizes the GUI to the loopback runtime; it is not an OpenAI key or provider API key");
+    expect(container?.textContent).toContain("Browser standalone mode connects to a running loopback runtime.");
+    expect(container?.textContent).toContain("Enter its URL and optional Session token, then configure Demo Mode, Ollama, or OpenAI-compatible BYOK providers.");
+    expect(container?.textContent).toContain("This token authorizes GUI-to-runtime only; it is not a provider API key.");
 
     await act(async () => {
       setInputValue(sessionTokenInput(), runtimeToken);
@@ -1275,7 +1276,7 @@ describe("provider secret boundary", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("This local runtime token authorizes the GUI to the loopback runtime");
+    expect(container?.textContent).toContain("This token authorizes GUI-to-runtime only; it is not a provider API key.");
     expect(container?.textContent).toContain("Provider API key is for upstream providers that require one and is sent to the local runtime only on save, cleared from this form immediately after save/update is submitted, and never written to browser storage. Ollama local uses auth None.");
     expect(apiKeyInput().placeholder).toBe("Provider API key, not the runtime Session token");
     expect(container?.textContent).toContain("This is your provider/OpenAI API key, not the runtime Session token.");
@@ -3379,7 +3380,7 @@ describe("active editor attached context", () => {
 
     expect(container?.textContent).toContain("Active file excerpt");
     expect(container?.textContent).toContain("IDE host required");
-    expect(container?.textContent).toContain("Browser mode will not execute host actions.");
+    expect(container?.textContent).toContain("Standalone browser cannot read your editor, attach active files, search snippets, apply edits, or run IDE verification. Use VS Code/JetBrains for excerpts; include only chosen prompt text.");
     expect(buttonsNamed("Attach active file excerpt")).toHaveLength(0);
     expect(browserStorageDump()).not.toContain("Active file excerpt");
     expect(localSetItem).not.toHaveBeenCalled();
@@ -5664,7 +5665,9 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("Chat readiness");
     expect(container?.textContent).toContain("0 enabled providers");
     expect(container?.textContent).toContain("Runtime connected — choose the first-message path");
-    expect(container?.textContent).toContain("Local provider: choose Ollama local for a direct engine call to http://127.0.0.1:11434, no API key, no hosted Yet AI service, no account, and no cloud workspace.");
+    expect(container?.textContent).toContain("Browser standalone local model: choose Ollama local for a direct engine call to http://127.0.0.1:11434, confirm a pulled model id, save, test provider, refresh runtime/model readiness, then send.");
+    expect(container?.textContent).toContain("No API key, hosted Yet AI service, account, managed gateway, product credits, or cloud workspace is required.");
+    expect(container?.textContent).toContain("Hosted BYOK provider: use OpenAI API-key fallback or another OpenAI-compatible /v1 endpoint, paste a provider API key once when required, save, test provider, refresh runtime/model readiness, then send.");
     expect(container?.textContent).toContain("OpenAI API-key fallback is the current safe/default real-provider path for first-message GPT; provider setup stays local-first BYOK with no Yet AI hosted backend, account, cloud workspace, or credit balance required.");
     expect(container?.textContent).toContain("State: Provider required");
     expect(container?.textContent).toContain("Provider required: choose Demo Mode for a no-key local canned trial, or configure a BYOK provider/model such as local Ollama or OpenAI-compatible for real answers. No production account login is required.");
@@ -5685,9 +5688,11 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("Chat with Yet AI");
     expect(container?.textContent).toContain("Choose how this first chat should answer.");
     expect(container?.textContent).toContain("Provider credentials are sent only to the local runtime and are not stored by the GUI.");
-    expect(container?.textContent).toContain("Browser preview mode");
-    expect(container?.textContent).toContain("Browser can use the local runtime for chat and GUI-only previews.");
-    expect(container?.textContent).toContain("Open Yet AI in VS Code or JetBrains for host actions: applying edits, IDE verification commands, active-file/context requests, and project snippet search.");
+    expect(container?.textContent).toContain("Browser standalone mode");
+    expect(container?.textContent).toContain("Browser connects to a running loopback runtime, configures/tests providers, and chats with Demo Mode, Ollama, or OpenAI-compatible BYOK models.");
+    expect(container?.textContent).toContain("IDE-only: editor context, excerpts, snippets, apply, and verification.");
+    expect(container?.textContent).toContain("Browser uses explicit prompt/provider controls.");
+    expect(container?.textContent).toContain("Browser standalone mode connects to a running loopback runtime. Enter its URL and optional Session token, then configure Demo Mode, Ollama, or OpenAI-compatible BYOK providers.");
   });
 
 
@@ -5983,6 +5988,7 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("Connect the local runtime first");
     expect(container?.textContent).toContain("Next safest action: Use Refresh runtime from this chat page. If it still fails, fix the loopback URL or Session token in Local runtime connection.");
     expect(container?.textContent).toContain("Runtime Session token unlocks this GUI to the loopback runtime only; Provider API key unlocks the upstream model through the runtime. They are different secrets.");
+    expect(container?.textContent).toContain("Browser standalone mode connects to a running loopback runtime.");
     expect(findButton("Send").disabled).toBe(true);
 
     mockRuntimeResponses();

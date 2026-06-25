@@ -53,7 +53,7 @@ export function runtimeLifecycleDiagnostics(payload: HostRuntimeStatusPayload, h
 
 export function runtimeLifecycleHostCopy(host: BridgeHost): string {
   if (host === "browser") {
-    return "Browser preview can connect to an already-running loopback runtime for chat, but cannot launch or restart the runtime and cannot execute host workspace actions.";
+    return "Browser standalone mode connects to a running loopback runtime for chat/provider setup, including Demo Mode, Ollama, and OpenAI-compatible BYOK models; it cannot launch/restart runtime or run host actions.";
   }
   return "Runtime recovery is IDE-managed: click Refresh runtime first; if it still fails, use the IDE runtime status or restart command.";
 }
@@ -63,7 +63,7 @@ function lifecycleGuidance(payload: HostRuntimeStatusPayload, host: BridgeHost):
     return boundLifecycleText("Runtime session mismatch. Refresh runtime first; if still failing, use the IDE runtime status or restart command. Raw token values are never shown here.");
   }
   if (host === "browser" || payload.surface === "browser") {
-    return boundLifecycleText(`${payload.nextAction} Browser preview can only connect to an already-running loopback runtime; it cannot launch, restart, apply edits, run commands, or execute host workspace actions.`);
+    return boundLifecycleText(`${payload.nextAction} Browser standalone mode only connects to a running loopback runtime; it cannot launch, restart, apply edits, run commands, read editor context, or run host actions.`);
   }
   if (payload.lifecycle === "invalid_settings" || payload.lifecycle === "failed") {
     return boundLifecycleText(`${payload.nextAction} Refresh runtime first; if still failing, use the IDE runtime status or restart command.`);

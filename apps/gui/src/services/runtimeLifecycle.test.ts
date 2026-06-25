@@ -48,7 +48,8 @@ describe("runtimeLifecycle", () => {
   });
 
   it("keeps browser preview copy connect-only", () => {
-    expect(runtimeLifecycleHostCopy("browser")).toContain("connect to an already-running loopback runtime");
+    expect(runtimeLifecycleHostCopy("browser")).toContain("Browser standalone mode can connect to an already-running loopback runtime");
+    expect(runtimeLifecycleHostCopy("browser")).toContain("Ollama local, and OpenAI-compatible BYOK models");
     expect(runtimeLifecycleHostCopy("browser")).toContain("cannot launch or restart");
     expect(runtimeLifecycleHostCopy("vscode")).toContain("Runtime recovery is IDE-managed");
   });
