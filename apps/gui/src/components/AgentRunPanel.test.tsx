@@ -217,7 +217,7 @@ describe("AgentRunPanel", () => {
     expect(findButton("Manually review rollback").disabled).toBe(true);
   });
 
-  it("renders rollback available review without automatic rollback", () => {
+  it("renders restore review availability without automatic workspace restore", () => {
     const onReviewRollback = vi.fn();
     renderPanel({
       ...readyInput,
