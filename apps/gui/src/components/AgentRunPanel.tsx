@@ -33,6 +33,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const proposalRisks = stringArrayDetail(details.proposalRisks);
   const proposalVerificationSuggestions = stringArrayDetail(details.proposalVerificationSuggestions);
   const showProposalReviewMetadata = Boolean(textDetail(details.proposalPlanSummary) || proposalPlanSteps.length > 0 || proposalRisks.length > 0 || proposalVerificationSuggestions.length > 0);
+  const checkpointRollbackCopy = checkpointRollbackStatusCopy(details);
 
   return (
     <section className={`readiness-card ${view.enabled ? "ready" : "warn"} agent-run-panel stack`} aria-label="Experimental Agent Run" data-testid="agent-run-panel">
@@ -60,8 +61,18 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
         <span>Apply status: {applyStatusLabel(details)}</span>
         <span>Verification command id: {verificationCommandId ?? "not selected"}</span>
         <span>Verification status/result: {verificationStatus(details)}</span>
-        <span>Rollback availability: {view.rollbackAvailable ? "available for review" : "not available"}</span>
+        <span>Rollback availability: {view.rollbackAvailable ? "available for review" : rollbackAvailabilityLabel(details)}</span>
       </div>
+      {checkpointRollbackCopy.visible && (
+        <div className={`readiness-card ${checkpointRollbackCopy.tone}`} role="status" aria-label="Agent Run checkpoint rollback status">
+          <strong>Checkpoint and rollback readiness</strong>
+          <span>{checkpointRollbackCopy.summary}</span>
+          <span>Checkpoint: {checkpointRollbackCopy.checkpoint}</span>
+          <span>Rollback: {checkpointRollbackCopy.rollback}</span>
+          <span>{checkpointRollbackCopy.recovery}</span>
+          <span>{checkpointRollbackCopy.safety}</span>
+        </div>
+      )}
       {view.diagnostics.length > 0 && (
         <div className="readiness-card warn" role="status" aria-label="Agent Run diagnostics">
           <strong>Safety diagnostics</strong>
@@ -244,6 +255,163 @@ function proposalStatus(state: string, details: Record<string, string | number |
     return hasCheckpointEvidence(details) ? "detected but checkpoint or policy is blocked" : "detected but checkpoint metadata is missing";
   }
   return "detected";
+}
+
+function rollbackAvailabilityLabel(details: Record<string, string | number | boolean | string[]>): string {
+  const status = textDetail(details.checkpointRollbackStatus);
+  if (status === "blocked") {
+    return "blocked pending host review";
+  }
+  if (status === "completed") {
+    return "completed after user request";
+  }
+  if (status === "failed") {
+    return "failed after user request";
+  }
+  if (status === "unavailable") {
+    return "not available";
+  }
+  return "not available";
+}
+
+type CheckpointRollbackCopy = {
+  visible: boolean;
+  tone: "ready" | "warn";
+  summary: string;
+  checkpoint: string;
+  rollback: string;
+  recovery: string;
+  safety: string;
+};
+
+function checkpointRollbackStatusCopy(details: Record<string, string | number | boolean | string[]>): CheckpointRollbackCopy {
+  const displayState = textDetail(details.checkpointRollbackDisplayState);
+  const summary = textDetail(details.checkpointRollbackSummary);
+  const checkpointStatusValue = textDetail(details.checkpointRollbackCheckpointStatus);
+  const checkpointLabel = textDetail(details.checkpointRollbackCheckpointLabel);
+  const rollbackStatusValue = textDetail(details.checkpointRollbackStatus);
+  const rollbackLabel = textDetail(details.checkpointRollbackLabel);
+  const automatic = details.checkpointRollbackActionAutomatic === true;
+  const checkpoint = checkpointLabel || checkpointStatusLabel(checkpointStatusValue) || checkpointStatus(details);
+  const rollback = rollbackLabel || rollbackStatusLabel(rollbackStatusValue, details);
+  const safety = automatic ? "Unsafe rollback automation metadata was blocked; no rollback starts from this panel." : "No automatic rollback or workspace mutation starts from this panel.";
+
+  if (displayState === "rollback_failed" || rollbackStatusValue === "failed") {
+    return {
+      visible: true,
+      tone: "warn",
+      summary: summary || "Rollback failed with sanitized status metadata.",
+      checkpoint,
+      rollback,
+      recovery: "Recovery: review host guidance and existing checkpoint surfaces, then decide the next manual step; nothing retries or repairs itself.",
+      safety,
+    };
+  }
+  if (displayState === "rollback_completed" || rollbackStatusValue === "completed") {
+    return {
+      visible: true,
+      tone: "ready",
+      summary: summary || "Rollback completion is recorded for review.",
+      checkpoint,
+      rollback,
+      recovery: "Recovery: review the sanitized completion status before drafting follow-up work.",
+      safety,
+    };
+  }
+  if (displayState === "rollback_blocked" || rollbackStatusValue === "blocked") {
+    return {
+      visible: true,
+      tone: "warn",
+      summary: summary || "Rollback is blocked and shown as status only.",
+      checkpoint,
+      rollback,
+      recovery: "Recovery: resolve host checkpoint guidance first; the rollback button stays review-only and does not mutate the workspace.",
+      safety,
+    };
+  }
+  if (displayState === "rollback_available" || rollbackStatusValue === "available" || details.rollbackAvailable === true) {
+    return {
+      visible: true,
+      tone: "ready",
+      summary: summary || textDetail(details.rollbackSummary) || "Rollback review is available through existing checkpoint surfaces.",
+      checkpoint,
+      rollback,
+      recovery: "Recovery: use the existing manual rollback review path only if you choose; this panel posts no rollback request by itself.",
+      safety,
+    };
+  }
+  if (displayState === "checkpoint_created") {
+    return {
+      visible: true,
+      tone: "ready",
+      summary: summary || "Checkpoint was created and is ready for manual review.",
+      checkpoint,
+      rollback,
+      recovery: "Recovery: continue with manual apply or verification only after reviewing checkpoint readiness.",
+      safety,
+    };
+  }
+  if (displayState === "checkpoint_readiness" || checkpointStatusValue) {
+    return {
+      visible: true,
+      tone: checkpointStatusValue === "ready" || checkpointStatusValue === "verified" ? "ready" : "warn",
+      summary: summary || "Checkpoint readiness is displayed before any manual workspace action.",
+      checkpoint,
+      rollback,
+      recovery: checkpointStatusValue === "ready" || checkpointStatusValue === "verified" ? "Recovery: checkpoint prerequisites look ready; continue only through explicit manual controls." : "Recovery: refresh or resolve checkpoint readiness before applying changes.",
+      safety,
+    };
+  }
+  return {
+    visible: false,
+    tone: "warn",
+    summary: "Checkpoint and rollback metadata has not been reported yet.",
+    checkpoint,
+    rollback,
+    recovery: "Recovery: refresh runtime/checkpoint readiness before applying changes; rollback remains unavailable until host metadata says otherwise.",
+    safety,
+  };
+}
+
+function checkpointStatusLabel(status: string): string {
+  if (status === "ready") {
+    return "ready";
+  }
+  if (status === "verified") {
+    return "verified";
+  }
+  if (status === "created") {
+    return "created";
+  }
+  if (status === "blocked") {
+    return "blocked";
+  }
+  if (status === "not_ready") {
+    return "not ready";
+  }
+  if (status === "unavailable") {
+    return "unavailable";
+  }
+  return "missing";
+}
+
+function rollbackStatusLabel(status: string, details: Record<string, string | number | boolean | string[]>): string {
+  if (status === "available") {
+    return "available for manual review";
+  }
+  if (status === "blocked") {
+    return "blocked pending host review";
+  }
+  if (status === "completed") {
+    return "completed after user request";
+  }
+  if (status === "failed") {
+    return "failed after user request";
+  }
+  if (status === "unavailable") {
+    return "unavailable";
+  }
+  return details.rollbackAvailable === true ? "available for manual review" : "not available";
 }
 
 function checkpointStatus(details: Record<string, string | number | boolean | string[]>): string {

@@ -47,6 +47,41 @@ const failedVerificationLoop = {
   summary: "Verification failed.",
 };
 
+const checkpointReadinessState = {
+  kind: "agent_run_checkpoint_rollback_state" as const,
+  displayState: "checkpoint_readiness",
+  checkpoint: { status: "ready", label: "Checkpoint readiness confirmed" },
+  rollbackAction: { trigger: "user", owner: "host", automatic: false, label: "Rollback stays a user action" },
+  summary: "Checkpoint prerequisites are ready for display",
+};
+
+const rollbackBlockedState = {
+  ...checkpointReadinessState,
+  displayState: "rollback_blocked",
+  checkpoint: { status: "verified", label: "Checkpoint metadata verified" },
+  rollback: { status: "blocked", label: "Rollback blocked pending host review" },
+  rollbackAction: { trigger: "user", owner: "host", automatic: false, label: "User action required after host review" },
+  summary: "Rollback is blocked and shown as status only",
+};
+
+const rollbackFailedState = {
+  ...checkpointReadinessState,
+  displayState: "rollback_failed",
+  checkpoint: { status: "verified", label: "Checkpoint metadata still available" },
+  rollback: { status: "failed", label: "Rollback failed with sanitized status" },
+  rollbackAction: { trigger: "user", owner: "host", automatic: false, label: "User can review host guidance" },
+  summary: "Rollback failure is display metadata only",
+};
+
+const rollbackCompletedState = {
+  ...checkpointReadinessState,
+  displayState: "rollback_completed",
+  checkpoint: { status: "verified", label: "Checkpoint restored by host" },
+  rollback: { status: "completed", label: "Restore completed after user request" },
+  rollbackAction: { trigger: "user", owner: "host", automatic: false, label: "Completed rollback was user triggered" },
+  summary: "Rollback completion is reported with sanitized status",
+};
+
 const readyInput: AgentRunInput = {
   goal: { id: "goal-1", title: "Add safe panel", summary: "Add safe panel" },
   proposal: { id: "proposal-1", summary: "Small safe proposal", touchedFiles: ["src/example.ts"] },
@@ -146,6 +181,66 @@ describe("AgentRunPanel", () => {
     expect(panelText()).toContain("Edit count: 1");
     expect(findButton("Manually apply reviewed patch").disabled).toBe(false);
     expect(findButton("Manually run allowlisted verification").disabled).toBe(true);
+  });
+
+  it("renders checkpoint readiness and rollback states as display-only status", () => {
+    renderPanel({ ...readyInput, checkpointRollbackState: checkpointReadinessState }, { host: "vscode" });
+
+    expect(panelText()).toContain("Checkpoint and rollback readiness");
+    expect(panelText()).toContain("Checkpoint prerequisites are ready for display");
+    expect(panelText()).toContain("Checkpoint: Checkpoint readiness confirmed");
+    expect(panelText()).toContain("Rollback: not available");
+    expect(panelText()).toContain("No automatic rollback or workspace mutation starts from this panel.");
+    expect(findButton("Manually review rollback").disabled).toBe(true);
+
+    renderPanel({ ...readyInput, checkpointRollbackState: rollbackBlockedState }, { host: "vscode" });
+
+    expect(panelText()).toContain("Rollback is blocked and shown as status only");
+    expect(panelText()).toContain("Checkpoint: Checkpoint metadata verified");
+    expect(panelText()).toContain("Rollback: Rollback blocked pending host review");
+    expect(panelText()).toContain("Recovery: resolve host checkpoint guidance first; the rollback button stays review-only and does not mutate the workspace.");
+    expect(findButton("Manually review rollback").disabled).toBe(true);
+
+    renderPanel({ ...readyInput, checkpointRollbackState: rollbackFailedState }, { host: "vscode" });
+
+    expect(panelText()).toContain("Rollback failure is display metadata only");
+    expect(panelText()).toContain("Rollback: Rollback failed with sanitized status");
+    expect(panelText()).toContain("Recovery: review host guidance and existing checkpoint surfaces, then decide the next manual step; nothing retries or repairs itself.");
+    expect(findButton("Manually review rollback").disabled).toBe(true);
+
+    renderPanel({ ...readyInput, checkpointRollbackState: rollbackCompletedState }, { host: "vscode" });
+
+    expect(panelText()).toContain("Rollback completion is reported with sanitized status");
+    expect(panelText()).toContain("Checkpoint: Checkpoint restored by host");
+    expect(panelText()).toContain("Rollback: Restore completed after user request");
+    expect(panelText()).toContain("Recovery: review the sanitized completion status before drafting follow-up work.");
+    expect(findButton("Manually review rollback").disabled).toBe(true);
+  });
+
+  it("renders rollback available review without automatic rollback", () => {
+    const onReviewRollback = vi.fn();
+    renderPanel({
+      ...readyInput,
+      applyResult: { status: "failed", summary: "Apply failed.", appliedFileCount: 0 },
+      rollback: { available: true, summary: "Rollback review available." },
+      checkpointRollbackState: {
+        ...checkpointReadinessState,
+        displayState: "rollback_available",
+        checkpoint: { status: "verified", label: "Checkpoint verified by host" },
+        rollback: { status: "available", label: "Restore option shown after user review" },
+        rollbackAction: { trigger: "user", owner: "host", automatic: false, label: "User may request host rollback" },
+        summary: "Restore option is shown but not automatic",
+      },
+    }, { host: "vscode", onReviewRollback });
+
+    expect(panelText()).toContain("Rollback availability: available for review");
+    expect(panelText()).toContain("Restore option is shown but not automatic");
+    expect(panelText()).toContain("Recovery: use the existing manual rollback review path only if you choose; this panel posts no rollback request by itself.");
+    expect(onReviewRollback).not.toHaveBeenCalled();
+    act(() => {
+      findButton("Manually review rollback").click();
+    });
+    expect(onReviewRollback).toHaveBeenCalledTimes(1);
   });
 
   it("renders sanitized plan-to-patch metadata as display-only review context", () => {

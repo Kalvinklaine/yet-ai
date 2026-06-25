@@ -73,6 +73,26 @@ export type AgentRunRollbackMetadata = {
   summary?: string;
 };
 
+export type AgentRunCheckpointRollbackStateMetadata = {
+  kind?: "agent_run_checkpoint_rollback_state";
+  displayState?: string;
+  checkpoint?: {
+    status?: string;
+    label?: string;
+  };
+  rollback?: {
+    status?: string;
+    label?: string;
+  };
+  rollbackAction?: {
+    trigger?: string;
+    owner?: string;
+    automatic?: boolean;
+    label?: string;
+  };
+  summary?: string;
+};
+
 export type AgentRunInput = {
   goal?: AgentRunGoalMetadata;
   proposal?: AgentRunProposalMetadata;
@@ -83,6 +103,7 @@ export type AgentRunInput = {
   verificationProgress?: AgentRunVerificationProgressMetadata;
   verificationResult?: AgentRunVerificationResultMetadata;
   rollback?: AgentRunRollbackMetadata;
+  checkpointRollbackState?: AgentRunCheckpointRollbackStateMetadata;
   stopped?: boolean;
 };
 
@@ -123,7 +144,7 @@ export function evaluateAgentRunState(input: unknown): AgentRunViewModel {
 
   scanUnsafeMetadata(input, diagnostics);
   const metadata = input as AgentRunInput;
-  const rollbackAvailable = metadata.rollback?.available === true;
+  const rollbackAvailable = metadata.rollback?.available === true || metadata.checkpointRollbackState?.rollback?.status === "available";
   if (diagnostics.length > 0) {
     return buildView("blocked", true, true, "Agent Run metadata is blocked because unsafe fields were omitted.", rollbackAvailable ? "review_rollback" : "review_prerequisites", diagnostics, buildDetails(metadata, undefined));
   }
@@ -242,8 +263,16 @@ function buildDetails(metadata: AgentRunInput, boundedDetails: Record<string, st
     verificationExitCode: metadata.verificationResult?.exitCode,
     verificationDurationMs: metadata.verificationResult?.durationMs,
     verificationOutputTail: metadata.verificationResult?.outputTail,
-    rollbackAvailable: metadata.rollback?.available === true,
+    rollbackAvailable: metadata.rollback?.available === true || metadata.checkpointRollbackState?.rollback?.status === "available",
     rollbackSummary: metadata.rollback?.summary,
+    checkpointRollbackDisplayState: metadata.checkpointRollbackState?.displayState,
+    checkpointRollbackSummary: metadata.checkpointRollbackState?.summary,
+    checkpointRollbackCheckpointStatus: metadata.checkpointRollbackState?.checkpoint?.status,
+    checkpointRollbackCheckpointLabel: metadata.checkpointRollbackState?.checkpoint?.label,
+    checkpointRollbackStatus: metadata.checkpointRollbackState?.rollback?.status,
+    checkpointRollbackLabel: metadata.checkpointRollbackState?.rollback?.label,
+    checkpointRollbackActionLabel: metadata.checkpointRollbackState?.rollbackAction?.label,
+    checkpointRollbackActionAutomatic: metadata.checkpointRollbackState?.rollbackAction?.automatic === true,
   });
   return details;
 }
@@ -254,7 +283,7 @@ function sanitizeDetails(input: Record<string, unknown>): Record<string, string 
     return { displayOnly: true };
   }
   const details: Record<string, string | number | boolean | string[]> = {};
-  for (const [key, value] of Object.entries(sanitized).slice(0, 32)) {
+  for (const [key, value] of Object.entries(sanitized).slice(0, 48)) {
     const safeKey = sanitizeDisplayText(key);
     if (value === undefined) {
       continue;
