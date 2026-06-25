@@ -7206,6 +7206,88 @@ describe("chat panel", () => {
   });
 });
 
+describe("proposal history panel", () => {
+  it("renders empty proposal history without bridge or storage side effects", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+    expect(container?.textContent).not.toContain("Proposal history");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("Proposal history");
+  });
+
+  it("renders detected rejected applied and verified proposal metadata without new authority", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Proposal history", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Proposal history", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    let panel = proposalHistoryPanel();
+    expect(panel.textContent).toContain("Total: 1");
+    expect(panel.textContent).toContain("Latest: detected");
+    expect(panel.textContent).toContain("Replace one visible editor line after user review.");
+    expect(panel.textContent).toContain("src/example.ts");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
+
+    await act(async () => {
+      findButton("Apply in VS Code after review").click();
+    });
+    const applyCall = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
+    await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "Proposal history apply result.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["apps/gui/src/App.tsx"] });
+
+    panel = proposalHistoryPanel();
+    expect(panel.textContent).toContain("Applied: 1");
+    expect(panel.textContent).toContain("Apply metadata: applied after explicit user action");
+    expect(panel.textContent).toContain("Proposal history apply result.");
+
+    await act(async () => {
+      findButton("Repository check").click();
+    });
+    const verificationCall = postMessage.mock.calls.find(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")?.[0];
+    await dispatchHostIdeActionResult(verificationCall.requestId, { status: "succeeded", message: "Repository check passed for history.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 0, durationMs: 12, outputTail: "passed", truncated: false });
+
+    panel = proposalHistoryPanel();
+    expect(panel.textContent).toContain("Verified: 1");
+    expect(panel.textContent).toContain("Verification metadata: succeeded after explicit user action");
+    expect(panel.textContent).toContain("Repository check passed for history.");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("Proposal history apply result");
+    expect(Array.from(panel.querySelectorAll("button"))).toHaveLength(0);
+  });
+
+  it("renders rejected proposal history metadata safely", async () => {
+    const rawSecret = "access_token=" + "h".repeat(64);
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Rejected proposal history", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Rejected proposal history", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify({ ...safeEditProposalPayload(), requestId: rawSecret }))]) },
+    });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const panel = proposalHistoryPanel();
+    const text = panel.textContent ?? "";
+    expect(text).toContain("Rejected: 1");
+    expect(text).toContain("The edit proposal payload is invalid or unsafe.");
+    expect(text).not.toContain("access_token");
+    expect(text).not.toContain("h".repeat(64));
+    expect(browserStorageDump()).not.toContain(rawSecret);
+  });
+});
+
 describe("edit proposal preview", () => {
   it("renders a bounded proposal in browser mode without auto-applying or writing browser storage", async () => {
     localStorage.setItem("sentinel", "keep");
@@ -10592,6 +10674,14 @@ function codingTaskSessionPanel() {
   const panel = container?.querySelector<HTMLElement>("[aria-label='Coding task session']");
   if (!panel) {
     throw new Error("Coding task session panel not found");
+  }
+  return panel;
+}
+
+function proposalHistoryPanel() {
+  const panel = container?.querySelector<HTMLElement>("[data-testid='proposal-history-panel']");
+  if (!panel) {
+    throw new Error("Proposal history panel not found");
   }
   return panel;
 }

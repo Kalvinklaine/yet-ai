@@ -4,6 +4,7 @@ import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState,
 import { activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToBundleItem, activeFileExcerptToChatContext, addExplicitContextBundleItem, explicitContextBundleMaxItems, explicitContextBundleToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, projectMemoryToBundleItem, rangeFromContextSelection, summarizeExplicitContextBundleItem, validateWorkspaceSnippetQuery, workspaceSnippetToBundleItem, type ExplicitContextBundleItem, type ProjectMemoryBundleItem, type WorkspaceSnippetBundleItem } from "./services/activeEditorContext";
 import { AgentRunPanel } from "./components/AgentRunPanel";
 import { CodingSessionTracePanel } from "./components/CodingSessionTracePanel";
+import { ProposalHistoryPanel } from "./components/ProposalHistoryPanel";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
 import { IdeActionProposalPanel, IdeActionsPanel, VerificationCommandPanel, verificationOutputKey, type IdeActionAttemptState, type VerificationCommand } from "./components/IdeActionsPanel";
 import { analyzeAssistantIdeActionProposalContent, describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, latestIdeActionProposalReviewFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
@@ -16,7 +17,7 @@ import { listProviders, saveProvider, testProvider, type ProviderSummary, type P
 import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type DemoModeResponse, type ManualRunnerPlanProposal, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
-import { analyzeEditProposalContent, editProposalCandidateIdentityMatches, editProposalPayloadKey, isCompleteAssistantEditProposalStatus, latestEditProposalCandidateFromMessages, latestEditProposalReviewFromMessages, parseEditProposalContent, type EditProposalIdentity } from "./services/editProposal";
+import { analyzeEditProposalContent, editProposalCandidateIdentityMatches, editProposalPayloadKey, isCompleteAssistantEditProposalStatus, latestEditProposalCandidateFromMessages, latestEditProposalReviewFromMessages, parseEditProposalContent, type EditProposalIdentity, type EditProposalRejectedDiagnostic } from "./services/editProposal";
 import { codingActions, type CodingAction } from "./services/codingActions";
 import { buildCodingTaskPrompt, type CodingTaskPromptMode } from "./services/codingTaskPrompt";
 import { buildContextBudgetSummary, type ContextBudgetSummary } from "./services/contextBudget";
@@ -29,6 +30,7 @@ import { composeAgentRunReadiness, type AgentRunReadinessResult } from "./servic
 import { buildVerificationFollowupPrompt, type VerificationFollowupPromptMode, type VerificationResultForPrompt } from "./services/verificationFollowupPrompt";
 import { createProjectMemory, deleteProjectMemory, listProjectMemory, searchProjectMemory, type ProjectMemoryNote } from "./services/projectMemoryClient";
 import { appendCodingSessionTraceEntry, type CodingSessionTraceDraft, type CodingSessionTraceEntry } from "./services/codingSessionTrace";
+import { createProposalHistory, type ProposalHistoryEntryInput } from "./services/proposalHistory";
 import { createCodingTaskSessionSnapshot, createLinkedMemoryAttachTraceLabel, createSessionMemoryLabel, createTaskMemoryLabel, type CodingTaskSessionSnapshot } from "./services/codingTaskSession";
 import { evaluateHostCapabilityMetadata } from "./services/toolAuthorityPolicy";
 import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPatchVerificationLoop";
@@ -581,6 +583,14 @@ export function App() {
   }, [activeEditProposal, agentRunApplyRequest, agentRunModelProposal, agentRunReadiness, agentRunVerificationProgress, agentRunVerificationRequest, agentRunVerificationResult, legacyAgentRunInput, modelProposalDraft, submittedModelProposalPrompt]);
   agentRunInputRef.current = agentRunInput ?? null;
   const codingTaskPromptDraft = useMemo(() => buildCodingTaskPrompt({ mode: "ask", goal: codingTaskGoal, contextItems: explicitContextBundleItems, providerReadiness: chatReadinessLabel }), [chatReadinessLabel, codingTaskGoal, explicitContextBundleItems]);
+  const proposalHistory = useMemo(() => createProposalHistory(buildProposalHistoryEntries({
+    modelProposalResult: agentRunModelProposal,
+    editProposal: activeEditProposal,
+    rejectedEditProposal: activeRejectedEditProposal,
+    applyResult,
+    verificationAttempt,
+    planProposal: latestPlanProposal,
+  })), [activeEditProposal, activeRejectedEditProposal, agentRunModelProposal, applyResult, latestPlanProposal, verificationAttempt]);
   const contextBudgetSummary = useMemo(() => buildContextBudgetSummary({
     goal: codingTaskGoal,
     activeFileExcerpt: currentActiveFileExcerpt,
@@ -598,11 +608,12 @@ export function App() {
     memoryItems: attachedProjectMemoryItems,
     agentRun: agentRunInput,
     traceEntries: codingSessionTrace,
+    proposalHistory,
     diagnostics: [
       ...(activeRejectedEditProposal ? [`edit proposal rejected: ${activeRejectedEditProposal.diagnostic.reasonCode}`] : []),
       ...(activeRejectedIdeActionProposal ? [`IDE action proposal rejected: ${activeRejectedIdeActionProposal.diagnostic.reasonCode}`] : []),
     ],
-  }), [activeRejectedEditProposal, activeRejectedIdeActionProposal, agentRunInput, attachedProjectMemoryItems, codingSessionTrace, codingTaskGoal, explicitContextBundleItems]);
+  }), [activeRejectedEditProposal, activeRejectedIdeActionProposal, agentRunInput, attachedProjectMemoryItems, codingSessionTrace, codingTaskGoal, explicitContextBundleItems, proposalHistory]);
   const showWhatWillBeSentPanel = chatInput.trim().length > 0 || contextBudgetSummary.sources.some((source) => source.itemCount > 0 || source.charCount > 0) || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
   const workspaceSnippetQueryValidation = useMemo(() => validateWorkspaceSnippetQuery(workspaceSnippetQuery), [workspaceSnippetQuery]);
 
@@ -2626,6 +2637,7 @@ export function App() {
                 {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
               </div>
               <EditProposalPanel proposal={activeEditProposal} rejected={activeRejectedEditProposal} result={activeEditProposal ? applyResult : null} host={bridgeHost} pendingRequestId={pendingApplyRequestId} note={applyNote} onApply={submitEditProposal} onCancelPending={cancelPendingEditProposalApply} />
+              {proposalHistory.entries.length > 0 && pendingApplyRequestId === null && <ProposalHistoryPanel history={proposalHistory} />}
               <IdeActionProposalPanel proposal={activeIdeActionProposal} host={bridgeHost} pending={pendingIdeActionRequestIdRef.current !== null} onRun={(payload) => requestIdeAction(payload, "gui-ide-proposal-action")} />
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
@@ -2878,6 +2890,40 @@ export function App() {
       </section>
     </main>
   );
+}
+
+function buildProposalHistoryEntries({ modelProposalResult, editProposal, rejectedEditProposal, applyResult, verificationAttempt, planProposal }: { modelProposalResult: AgentRunModelProposalResult; editProposal: EditProposalState | null; rejectedEditProposal: { sourceMessageId: string; diagnostic: EditProposalRejectedDiagnostic } | null; applyResult: ApplyResultState | null; verificationAttempt: IdeActionAttemptState | null; planProposal: ManualRunnerPlanProposal | null }): ProposalHistoryEntryInput[] {
+  const entries: ProposalHistoryEntryInput[] = [];
+  const modelProposal = modelProposalResult.agentRunInput.proposal;
+  if (modelProposalResult.proposalPathState === "proposal_detected" && modelProposal) {
+    entries.push({ id: modelProposal.id, source: "model-proposal", kind: "original", status: "detected", summary: modelProposal.summary, touchedFiles: modelProposal.touchedFiles, editCount: editProposal?.payload.edits.reduce((count, edit) => count + edit.textReplacements.length, 0) });
+  }
+  if (modelProposalResult.proposalPathState === "plan_detected" && modelProposalResult.planPreview) {
+    entries.push({ id: modelProposalResult.planPreview.sourceMessageId, source: "model-plan-preview", kind: "plan_preview", status: "preview", summary: modelProposalResult.planPreview.plan.summary || modelProposalResult.planPreview.plan.title, touchedFiles: modelProposalResult.planPreview.plan.expectedTouchedFiles });
+  }
+  if (modelProposalResult.proposalPathState === "proposal_rejected" || modelProposalResult.proposalPathState === "plan_rejected" || modelProposalResult.proposalPathState === "blocked") {
+    entries.push({ id: submittedProposalDiagnosticId(modelProposalResult), source: "model-proposal", kind: "rejected", status: "rejected", summary: "Model proposal metadata was rejected safely.", diagnostics: modelProposalResult.diagnostics.map((item) => `${item.code}: ${item.message}`) });
+  }
+  if (editProposal) {
+    entries.push({ id: editProposal.requestId, source: editProposal.sourceMessageId, kind: "original", status: "detected", summary: editProposal.payload.summary, touchedFiles: editProposal.payload.edits.map((edit) => edit.workspaceRelativePath), editCount: editProposal.payload.edits.reduce((count, edit) => count + edit.textReplacements.length, 0) });
+  }
+  if (rejectedEditProposal) {
+    entries.push({ id: rejectedEditProposal.sourceMessageId, source: "edit-proposal", kind: "rejected", status: "rejected", summary: rejectedEditProposal.diagnostic.message, diagnostic: rejectedEditProposal.diagnostic.reasonCode });
+  }
+  if (applyResult) {
+    entries.push({ id: applyResult.proposalRequestId ?? applyResult.requestId, source: applyResult.requestId, kind: "applied", status: applyResult.payload.status === "applied" ? "applied" : "apply_failed", applyStatus: applyResult.payload.status === "applied" ? "applied" : "failed", summary: applyResult.payload.message, touchedFiles: applyResult.payload.affectedFiles, editCount: applyResult.payload.appliedEditCount });
+  }
+  if (verificationAttempt?.action === "runVerificationCommand" && verificationAttempt.result?.action === "runVerificationCommand" && (verificationAttempt.result.status === "succeeded" || verificationAttempt.result.status === "failed")) {
+    entries.push({ id: verificationAttempt.requestId, source: verificationAttempt.result.commandId ?? "verification", kind: "verification", status: verificationAttempt.result.status === "succeeded" ? "verification_succeeded" : "verification_failed", verificationStatus: verificationAttempt.result.status === "succeeded" ? "succeeded" : "failed", summary: verificationAttempt.result.message, diagnostic: verificationAttempt.result.exitCode !== undefined ? `Exit code ${verificationAttempt.result.exitCode}` : undefined });
+  }
+  if (planProposal) {
+    entries.push({ id: planProposal.title, source: "manual-runner", kind: "plan_preview", status: "preview", summary: planProposal.rationale, diagnostics: planProposal.steps });
+  }
+  return entries;
+}
+
+function submittedProposalDiagnosticId(result: AgentRunModelProposalResult): string {
+  return `proposal-history-${result.proposalPathState}`;
 }
 
 function agentRunPlanPreviewInput(plan: NonNullable<AgentRunModelProposalResult["planPreview"]>["plan"]): NonNullable<AgentRunInput["planPreview"]> {
