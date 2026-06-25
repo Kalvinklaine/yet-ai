@@ -105,7 +105,7 @@ describe("codingTaskPrompt service", () => {
 
     expect(prompt).toContain("active file excerpt · src/editor.ts · vscode · typescript · range 2:1-5:3 · 29 chars · preview complete · redacted no");
     expect(prompt).toContain("project snippet · apps/gui/src/App.tsx · tsx · range 10:0-20:2 · 31 chars · preview complete · redacted no");
-    expect(prompt).toContain("project memory · Architecture note · note mem-1 · 56 chars · tags architecture, local-first · preview complete · redacted no");
+    expect(prompt).toContain("project memory · Architecture note · note mem-1 · task-linked manual attach · 56 chars · tags architecture, local-first · preview complete · redacted no");
     expect(prompt).toContain("verification output · gui-app-tests · failed · exit 1 · 56 chars · host truncated yes · preview complete · redacted no");
     expect(prompt).toContain("Active-file excerpts\n- Count: 1");
     expect(prompt).toContain("Snippets\n- Count: 1");
