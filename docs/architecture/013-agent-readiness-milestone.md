@@ -31,6 +31,7 @@ Avoid softer wording that implies implementation, autonomy, production publicati
 | S62 follow-up/fix draft | Experimental manual-only | Follow-up and fix CTAs can draft sanitized composer text after explicit verification. They only write the composer and focus it; the user must review and click Send. No auto-send, repair, retry, rollback, context attachment, storage persistence, bridge request, or runtime execution is added. |
 | S63 safety bundle | Dogfood-ready dev-preview verification aid | `npm run smoke:agent-run-safety-bundle` is an explicit local/mock regression bundle for manual Agent Run boundaries. It is not part of `npm run check`, not real-provider CI, and not production autonomy or release evidence. |
 | S65 coding task session backbone | Experimental manual-only | Coding task session snapshots are GUI-local metadata-only summaries of explicit goal/context/memory/proposal/apply/verification/trace labels. They do not add proposal history, guided fix loop, send/apply/verify authority, storage persistence, hidden reads, provider calls, or runtime/bridge endpoints. |
+| S66 proposal history/comparison | Experimental manual-only | Proposal history and comparison summaries are GUI-local display metadata over already-known original/follow-up/rejected/applied/verified proposal states. They do not add apply or verification authority, proposal persistence, guided fix loops, runner behavior, storage persistence, hidden reads, provider calls, or runtime/bridge endpoints. |
 | Multi-step execution | Blocked/deferred | There is no implemented runner that executes a plan across multiple steps. S61 is only inert metadata. |
 | Controlled autonomy | Blocked/deferred | No autonomous loop is implemented. Any future controlled-autonomy work must pass the future eligibility gates below before design or implementation. |
 | Auto-repair / auto-retry / auto-rollback | Blocked/deferred | Failed verification can stop and may produce a draft-only prompt. The product must not claim automatic repair, retry, verification, or rollback. |
@@ -105,6 +106,12 @@ This completion status is documentation and local/mock verification evidence onl
 Sprint 65 is closed as a coding task session backbone milestone after the focused final local verification pass. The audit found no high or critical safety issue in the S65 scope: the snapshot remains GUI-local metadata-only state, the smoke remains explicit and outside `npm run check`, and no new bridge message, runtime endpoint, browser-storage persistence, hidden read, shell/git/tool/provider authority, auto-send, auto-attach, auto-apply, auto-verification, auto-repair, auto-retry, auto-rollback, proposal history, or guided fix loop was introduced.
 
 This completion status is local/mock verification evidence only. It confirms that the S65 coding task session surface accurately summarizes explicit manual workflow metadata without expanding Agent Run authority; it does not approve production release, marketplace readiness, real-provider CI, multi-step execution, controlled autonomy, provider/tool calling, shell/git/tool authority, hidden workspace reads, or autonomous recovery.
+
+## Sprint 66 proposal history boundary
+
+Sprint 66 proposal history and comparison remains an experimental manual-only display metadata surface. It may summarize original, follow-up, rejected, user-applied, and explicitly verified proposal states for review, but it does not persist proposals, make actions runnable, create apply or verification readiness, draft fixes, run a loop, or grant new runtime/bridge/provider/storage authority.
+
+The focused local smoke is `npm run smoke:proposal-history`. It is deterministic local/mock evidence only: it transpiles the pure GUI service and asserts metadata-only authority, conservative no-authority flags, bounded output, redaction, and no raw payload leakage. It is not real-provider CI, production autonomy, proposal storage, marketplace/release evidence, or proof that multi-step execution exists.
 
 ## Verification
 
