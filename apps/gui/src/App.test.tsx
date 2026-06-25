@@ -1,6 +1,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { App, completedApplyRequestChatsLimit, completedIdeActionRequestChatsLimit, generateApplyRequestSessionNonce, rememberCompletedApplyRequest, rememberCompletedIdeActionRequest } from "./App";
 import { buildVerificationFollowupPrompt } from "./services/verificationFollowupPrompt";
 import { validateWorkspaceSnippetQuery } from "./services/activeEditorContext";
@@ -11,10 +11,6 @@ const fetchMock = vi.fn();
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
-
-beforeAll(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-});
 
 afterEach(() => {
   if (root) {
