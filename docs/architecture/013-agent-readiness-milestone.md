@@ -156,6 +156,12 @@ The focused local smoke is `npm run smoke:task-memory-suggestions`. It is determ
 
 Sprint 69 task memory suggestions do not add auto-send, auto-attach, auto-save, auto-search, provider calls, runtime calls, bridge calls, hidden reads, indexing, shell/git/tool authority, workspace mutation, browser-storage persistence of raw memory text or suggestion metadata, new runtime endpoints, production readiness, or controlled-autonomy approval.
 
+## Sprint 69 final audit status
+
+Sprint 69 is closed as a task memory suggestions safety milestone after the focused final local verification pass. The audit found no high or critical safety issue in the S69 scope: suggestions remain bounded sanitized metadata/status labels over already-listed project memory notes; unsafe, stale, already-attached, and unrelated notes have no suggestion attach action; and safe `suggested` notes enter runtime chat context only after an explicit user Attach click through the existing one-shot project-memory bundle path.
+
+This completion status is local/mock verification evidence only. It confirms that S69 preserves the manual Agent Run boundary with no hidden memory attach, auto-send, auto-apply, auto-verification, auto-repair, auto-rollback, hidden reads, indexing, search, shell/git/tool/provider authority, raw prompt/provider/file/diff/command/log/browser persistence, runtime/bridge expansion, production readiness, or controlled-autonomy approval. Display-only task, session, trace, and suggestion labels remain sanitized metadata and are stripped from runtime chat context.
+
 ## Verification
 
 For this documentation milestone, run:

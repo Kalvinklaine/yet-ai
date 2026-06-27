@@ -134,6 +134,12 @@ Sprint 68 keeps apply readiness and rejection recovery inside the existing expli
 
 The final S68 audit found no high or critical tool-authority expansion in this scope. Apply enablement remains limited to the pre-existing supported-host, no-pending-request, `confirm_apply` gate; rejected or unsafe proposals have no apply action; and the focused smoke covers ready, blocked/browser-preview, rejected, and unsafe/no-leak states as deterministic local/mock evidence only.
 
+## Sprint 69 task memory suggestions audit note
+
+Sprint 69 keeps task memory suggestions inside the existing explicit context attachment boundary. The GUI may show sanitized suggestion counts, status labels, reason labels, stale/unsafe warnings, and attach-only policy metadata derived from already-listed local project memory note metadata. Only safe `suggested` notes expose a primary Attach control, and that control delegates to the existing one-shot project-memory bundle path; all other statuses remain warning or review labels only.
+
+The final S69 audit found no high or critical tool-authority expansion in this scope. Suggestions do not search, index, read hidden files, save memory, attach automatically, send chat, apply edits, run verification, repair, retry, roll back, call providers/tools, execute shell/git/package commands, persist raw prompt/provider/file/diff/command/log/browser data, or add runtime/bridge authority. Runtime chat context includes the memory body only after explicit Attach and strips display-only task/session/trace/suggestion labels.
+
 
 ## Product boundaries to preserve
 
