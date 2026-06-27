@@ -14,7 +14,9 @@ const validators = [
   ["scripts/validate-icon-assets.mjs"],
   ["scripts/check-gui-asset-freshness.mjs"],
   ["scripts/dogfood-real-provider-report.mjs", "--check-template"],
-  ["scripts/dogfood-real-provider-report.mjs", "--self-test"]
+  ["scripts/dogfood-real-provider-report.mjs", "--self-test"],
+  ["scripts/dogfood-agent-run-rc-report.mjs", "--check-template"],
+  ["scripts/dogfood-agent-run-rc-report.mjs", "--self-test"]
 ];
 
 for (const validator of validators) {
