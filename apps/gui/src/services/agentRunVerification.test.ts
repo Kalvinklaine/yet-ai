@@ -160,6 +160,34 @@ describe("correlateAgentRunVerificationResult", () => {
     expect(correlated.diagnostics.map((item) => item.code)).toContain("duplicate_result");
   });
 
+  it("ignores duplicate results with missing payload without throwing", () => {
+    const existingResult = { status: "succeeded" as const, exitCode: 0, durationMs: 1000, outputTail: "First pass" };
+    const correlated = correlateAgentRunVerificationResult({
+      current: correlation,
+      hostMessage: { version: "2026-05-15", type: "host.ideActionResult", requestId: "verify-s47-c1" } as HostMessage,
+      existingResult,
+    });
+
+    expect(correlated.state).toBe("ignored");
+    expect(correlated.verificationResult).toBeUndefined();
+    expect(correlated.diagnostics.map((item) => item.code)).toContain("stale_result");
+    expect(correlated.details).toMatchObject({ displayOnly: true, requestId: "verify-s47-c1", hostRequestId: "verify-s47-c1", commandId: "repository-check" });
+  });
+
+  it("ignores duplicate results with malformed payload without throwing", () => {
+    const existingResult = { status: "failed" as const, exitCode: 1, durationMs: 1000, outputTail: "First fail" };
+    const correlated = correlateAgentRunVerificationResult({
+      current: correlation,
+      hostMessage: result("verify-s47-c1", { action: "runVerificationCommand", commandId: "repository-check", message: undefined }),
+      existingResult,
+    });
+
+    expect(correlated.state).toBe("ignored");
+    expect(correlated.verificationResult).toBeUndefined();
+    expect(correlated.diagnostics.map((item) => item.code)).toContain("stale_result");
+    expect(correlated.details).toMatchObject({ displayOnly: true, requestId: "verify-s47-c1", hostRequestId: "verify-s47-c1", commandId: "repository-check" });
+  });
+
   it("normalizes successful host result to sanitized Agent Run metadata", () => {
     const correlated = correlateAgentRunVerificationResult({ current: correlation, hostMessage: result() });
 

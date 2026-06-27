@@ -159,14 +159,15 @@ export function correlateAgentRunVerificationResult(input: unknown): AgentRunVer
 
   const hostRequestId = isPlainObject(metadata.hostMessage) ? safeId(metadata.hostMessage.requestId) : undefined;
   const payload = isPlainObject(metadata.hostMessage) ? sanitizeResultPayload(metadata.hostMessage.payload) : undefined;
-  if (!hostRequestId || hostRequestId !== current.requestId || payload?.commandId !== current.commandId) {
+  const payloadCommandId = payload?.commandId;
+  if (!hostRequestId || hostRequestId !== current.requestId || payloadCommandId !== current.commandId) {
     diagnostics.push(diagnostic("stale_result", "Ignored verification result that does not match the current request and command ids."));
-    return { state: "ignored", diagnostics, details: resultDetails(current, undefined, hostRequestId, payload?.commandId) };
+    return { state: "ignored", diagnostics, details: resultDetails(current, undefined, hostRequestId, payloadCommandId) };
   }
 
   if (metadata.existingResult) {
     diagnostics.push(diagnostic("duplicate_result", "Duplicate verification result ignored after the first stable result."));
-    return { state: "duplicate", verificationResult: sanitizeExistingResult(metadata.existingResult), diagnostics, details: resultDetails(current, metadata.existingResult, hostRequestId, payload.commandId) };
+    return { state: "duplicate", verificationResult: sanitizeExistingResult(metadata.existingResult), diagnostics, details: resultDetails(current, metadata.existingResult, hostRequestId, payloadCommandId) };
   }
 
   if (!payload) {
