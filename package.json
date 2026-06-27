@@ -23,6 +23,7 @@
     "smoke:agent-run-followup-loop": "node scripts/smoke-agent-run-followup-loop.mjs",
     "smoke:agent-run-guided-fix-loop": "node scripts/smoke-agent-run-guided-fix-loop.mjs",
     "smoke:agent-run-safer-apply-ux": "node scripts/smoke-agent-run-safer-apply-ux.mjs",
+    "smoke:agent-run-manual-rc-hosts": "node scripts/smoke-agent-run-manual-rc-hosts.mjs",
     "smoke:agent-run-safety-bundle": "node scripts/smoke-agent-run-safety-bundle.mjs",
     "smoke:coding-task-session": "node scripts/smoke-coding-task-session.mjs",
     "smoke:task-memory-suggestions": "node scripts/smoke-task-memory-suggestions.mjs",
