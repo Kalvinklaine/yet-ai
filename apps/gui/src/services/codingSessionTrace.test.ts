@@ -155,6 +155,42 @@ describe("codingSessionTrace", () => {
     expect(sessionStorage.length).toBe(0);
   });
 
+  it("preserves verification follow-up prompt draft trace family for Agent Run guided fix drafts", () => {
+    localStorage.clear();
+    sessionStorage.clear();
+
+    const entry = createCodingSessionTraceEntry({
+      family: "verification.followupPromptDrafted",
+      title: "Agent Run verification fix prompt drafted",
+      status: "info",
+      summary: "Drafted Agent Run fix prompt from sanitized verification metadata.",
+      details: {
+        commandId: "gui-app-tests",
+        status: "failed",
+        exitCode: 1,
+        rawPrompt: "PROMPT_SENTINEL",
+        rawOutput: "OUTPUT_SENTINEL",
+        command: "npm test -- codingSessionTrace App verificationFollowupPrompt",
+        cwd: "/Users/alice/private/project",
+      },
+    }, fixedOptions());
+    const rendered = JSON.stringify(entry);
+
+    expect(entry.family).toBe("verification.followupPromptDrafted");
+    expect(normalizeTraceFamily("verification.followupPromptDrafted")).toBe("verification.followupPromptDrafted");
+    expect(normalizeTraceFamily("agentRun.followupPromptDrafted")).toBe("runtime.refresh");
+    expect(entry.details?.commandId).toBe("gui-app-tests");
+    expect(entry.details?.status).toBe("failed");
+    expect(entry.details?.exitCode).toBe(1);
+    expect(rendered).toContain("[redacted]");
+    expect(rendered).not.toContain("PROMPT_SENTINEL");
+    expect(rendered).not.toContain("OUTPUT_SENTINEL");
+    expect(rendered).not.toContain("npm test");
+    expect(rendered).not.toContain("/Users/alice");
+    expect(localStorage.length).toBe(0);
+    expect(sessionStorage.length).toBe(0);
+  });
+
   it("creates safe Agent Run completed handoff trace entries", () => {
     const entry = createCodingSessionTraceEntry({
       family: "agentRun.completed",

@@ -2236,7 +2236,7 @@ export function App() {
       setAgentRunVerificationFixDraft({ present: true, awaitingManualSend: true, metadata: draft.metadata, label: "fix draft waiting for manual Send" });
     }
     chatInputRef.current?.focus();
-    appendTrace({ family: "agentRun.followupPromptDrafted", title: mode === "fix" ? "Agent Run verification fix prompt drafted" : "Agent Run verification follow-up prompt drafted", status: "info", summary: `Drafted Agent Run ${mode} prompt from sanitized verification metadata.`, details: { commandId: result.commandId, status: result.status, exitCode: result.exitCode } });
+    appendTrace({ family: "verification.followupPromptDrafted", title: mode === "fix" ? "Agent Run verification fix prompt drafted" : "Agent Run verification follow-up prompt drafted", status: "info", summary: `Drafted Agent Run ${mode} prompt from sanitized verification metadata.`, details: { commandId: result.commandId, status: result.status, exitCode: result.exitCode } });
   };
 
   const attachVerificationResultToBundle = (result: IdeActionResultPayload) => {
