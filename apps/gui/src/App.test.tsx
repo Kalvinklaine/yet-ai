@@ -60,9 +60,9 @@ describe("codingTaskPrompt builder", () => {
     expect(prompt).toContain("Status: failed");
     expect(prompt).toContain("Exit code: 1");
     expect(prompt).toContain("Output truncated: yes");
-    expect(prompt).toContain("Bounded sanitized output summary");
-    expect(prompt).toContain("Suggest the smallest safe fix plan");
-    expect(prompt).toContain("[redacted]");
+    expect(prompt).toContain("Raw command output is intentionally omitted from this fix draft.");
+    expect(prompt).toContain("Propose a safe edit only");
+    expect(prompt).not.toContain("safe output line");
     expect(prompt).not.toContain("access_token");
     expect(prompt).not.toContain("/Users/alice");
     expect(prompt.length).toBeLessThan(1800);
@@ -4080,7 +4080,9 @@ describe("active editor attached context", () => {
     });
 
     expect(chatInput().value).toContain("Verification fix prompt");
-    expect(chatInput().value).toContain("Suggest the smallest safe fix plan");
+    expect(chatInput().value).toContain("Propose a safe edit only");
+    expect(chatInput().value).toContain("Raw command output is intentionally omitted from this fix draft.");
+    expect(chatInput().value).not.toContain("test failure summary");
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
     expect(localSetItem).not.toHaveBeenCalled();
@@ -7588,8 +7590,7 @@ describe("edit proposal preview", () => {
     expect(chatInput().value).toContain("Exit code: 0");
     expect(chatInput().value).toContain("passed");
     expect(chatInput().value).toContain("Previous proposal id: gui-edit-proposal-1");
-    expect(chatInput().value).toContain("Touched file labels: src/example.ts");
-    expect(chatInput().value).toContain("Review this draft, edit it if needed, then click Send manually");
+    expect(chatInput().value).toContain("review this draft, edit it if needed, then click Send manually");
     expect(chatInput().value).toContain("Do not apply edits, run commands, attach context, save memory, or send anything automatically.");
     expect(document.activeElement).toBe(chatInput());
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
@@ -7660,6 +7661,9 @@ describe("edit proposal preview", () => {
     expect(panel.textContent).toContain("Manual state: Verification failed");
     expect(panel.textContent).toContain("Verification status/result: Verification failed · exit 1 · sanitized result available");
     expect(panel.textContent).toContain("Review the sanitized verification failure, then manually draft a fix follow-up or review rollback. Nothing repairs itself, how polite.");
+    expect(panel.textContent).toContain("Manual guided fix");
+    expect(panel.textContent).toContain("fix draft available");
+    expect(panel.textContent).toContain("Draft only: this panel never sends chat, applies edits, runs verification, retries, repairs, rolls back, attaches context, saves memory, or changes the workspace.");
     expect(panel.textContent).toContain("Manual fix draft available");
     expect(buttonWithin(panel, "Draft Agent Run fix prompt").disabled).toBe(false);
     fetchMock.mockClear();
@@ -7673,10 +7677,15 @@ describe("edit proposal preview", () => {
     expect(chatInput().value).toContain("Command id: repository-check");
     expect(chatInput().value).toContain("Status: failed");
     expect(chatInput().value).toContain("Exit code: 1");
-    expect(chatInput().value).toContain("Repository validation failed");
-    expect(chatInput().value).toContain("Suggest the smallest safe fix plan");
-    expect(chatInput().value).toContain("Review this draft, edit it if needed, then click Send manually");
+    expect(chatInput().value).toContain("Previous proposal id: gui-edit-proposal-1");
+    expect(chatInput().value).toContain("Proposal lineage labels:");
+    expect(chatInput().value).toContain("Raw command output is intentionally omitted from this fix draft.");
+    expect(chatInput().value).not.toContain("Repository validation failed");
+    expect(chatInput().value).toContain("Propose a safe edit only");
+    expect(chatInput().value).toContain("review this draft, edit it if needed, then click Send manually");
     expect(document.activeElement).toBe(chatInput());
+    expect(agentRunPanel().textContent).toContain("awaiting manual send");
+    expect(agentRunPanel().textContent).toContain("A fix draft is waiting in the composer for manual review.");
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
     expect(browserStorageDump()).not.toContain("Repository validation failed");

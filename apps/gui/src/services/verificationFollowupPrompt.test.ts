@@ -207,6 +207,7 @@ describe("buildVerificationFollowupPrompt", () => {
     expect(draft.metadata.touchedFiles).toHaveLength(8);
     expect(draft.metadata.planPreview?.steps).toHaveLength(6);
     expect(draft.metadata.priorProposal?.summary?.length).toBeLessThanOrEqual(221);
-    expect((draft.prompt.match(/safe output/g) ?? []).length).toBeLessThan(130);
+    expect(draft.prompt).toContain("Raw command output is intentionally omitted from this fix draft.");
+    expect(draft.prompt).not.toContain("safe output");
   });
 });

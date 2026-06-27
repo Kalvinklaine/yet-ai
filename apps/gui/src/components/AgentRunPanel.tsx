@@ -1,5 +1,7 @@
 import type { BridgeHost, VerificationCommandId } from "../bridge/bridgeAdapter";
-import { evaluateAgentRunState } from "../services/agentRunState";
+import { evaluateAgentRunState, type AgentRunInput } from "../services/agentRunState";
+import { deriveGuidedFixLoopStatus, type GuidedFixLoopDraftState } from "../services/guidedFixLoop";
+import type { ProposalHistory } from "../services/proposalHistory";
 import { sanitizeDisplayText } from "../services/redaction";
 
 export type AgentRunPanelProps = {
@@ -12,10 +14,23 @@ export type AgentRunPanelProps = {
   onReviewRollback: () => void;
   onDraftVerificationFollowup: () => void;
   onDraftVerificationFix: () => void;
+  proposalHistory?: ProposalHistory;
+  verificationFixDraft?: GuidedFixLoopDraftState;
 };
 
-export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix }: AgentRunPanelProps) {
+export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft }: AgentRunPanelProps) {
   const view = evaluateAgentRunState(input);
+  const metadata = isAgentRunInput(input) ? input : undefined;
+  const guidedFix = deriveGuidedFixLoopStatus({
+    verificationResult: metadata?.verificationResult,
+    priorProposal: metadata?.proposal,
+    proposalHistory,
+    draft: verificationFixDraft,
+    lineage: {
+      verificationRequestId: metadata?.verificationRequest?.requestId,
+      priorProposalId: metadata?.proposal?.id,
+    },
+  });
   const details = view.details;
   const supported = host === "vscode" || host === "jetbrains";
   const verificationCommandId = verificationCommandIdFromDetails(details.verificationCommandId);
@@ -23,7 +38,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const canVerify = supported && !pendingVerification && view.nextUserAction === "confirm_verification" && verificationCommandId !== null;
   const canReviewRollback = view.rollbackAvailable || view.nextUserAction === "review_rollback";
   const canDraftFollowup = view.state === "verified";
-  const canDraftFix = view.state === "verification_failed";
+  const canDraftFix = view.state === "verification_failed" && guidedFix.status === "fix_draft_available";
   const touchedFileCount = numberDetail(details.touchedFileCount) ?? stringArrayDetail(details.touchedFiles).length;
   const editCount = numberDetail(details.editCount);
   const checkpointStatusLabel = checkpointStatus(details);
@@ -116,13 +131,29 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           {proposalVerificationSuggestions.length > 0 && <span>Verification suggestions (display-only command IDs): {proposalVerificationSuggestions.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
         </div>
       )}
-      {(canDraftFollowup || canDraftFix) && (
+      {guidedFix.status !== "idle" && (
+        <div className={`readiness-card ${guidedFix.status === "fix_draft_available" || guidedFix.status === "no_fix_needed" || guidedFix.status === "new_proposal_detected" ? "ready" : "warn"} stack`} role="status" aria-label="Agent Run manual guided fix">
+          <div className="row">
+            <strong>Manual guided fix</strong>
+            <span className="badge">draft only</span>
+            <span className="badge">metadata only</span>
+            <span className={guidedFix.status === "blocked" ? "badge warn" : "badge ok"}>{sanitizeDisplayText(guidedFix.status.replace(/_/g, " "))}</span>
+          </div>
+          {canDraftFix && <strong>Manual fix draft available</strong>}
+          <span>{sanitizeDisplayText(guidedFix.reason)}</span>
+          <span>{sanitizeDisplayText(guidedFix.cta)}</span>
+          <span className="subtle">Draft only: this panel never sends chat, applies edits, runs verification, retries, repairs, rolls back, attaches context, saves memory, or changes the workspace. Review first; the user must click Send manually.</span>
+          {guidedFix.labels.length > 0 && <span>Lineage/status labels: {guidedFix.labels.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
+          {guidedFix.diagnostics.length > 0 && <span className="subtle">Blocked metadata labels: {guidedFix.diagnostics.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
+          {canDraftFix && <div className="row" role="group" aria-label="Agent Run manual guided fix actions"><button type="button" className="secondary-button" onClick={onDraftVerificationFix}>Draft Agent Run fix prompt</button></div>}
+        </div>
+      )}
+      {canDraftFollowup && (
         <div className="readiness-card ready stack" role="status" aria-label="Agent Run verification follow-up draft">
-          <strong>{canDraftFix ? "Manual fix draft available" : "Manual follow-up draft available"}</strong>
-          <span>{canDraftFix ? "Verification failed after your explicit run. Draft a sanitized fix prompt into the composer, review it, then click Send manually if you choose." : "Verification succeeded after your explicit run. Draft a sanitized follow-up prompt into the composer, review it, then click Send manually if you choose."}</span>
+          <strong>Manual follow-up draft available</strong>
+          <span>Verification succeeded after your explicit run. Draft a sanitized follow-up prompt into the composer, review it, then click Send manually if you choose.</span>
           <div className="row" role="group" aria-label="Agent Run verification follow-up actions">
-            {canDraftFollowup && <button type="button" className="secondary-button" onClick={onDraftVerificationFollowup}>Draft Agent Run follow-up prompt</button>}
-            {canDraftFix && <button type="button" className="secondary-button" onClick={onDraftVerificationFix}>Draft Agent Run fix prompt</button>}
+            <button type="button" className="secondary-button" onClick={onDraftVerificationFollowup}>Draft Agent Run follow-up prompt</button>
           </div>
           <span className="subtle">Drafting only writes the composer and focuses it. It never sends, applies, runs verification, attaches context, saves memory, changes readiness, or stores browser data.</span>
         </div>
@@ -137,6 +168,10 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
       {(pendingApply || pendingVerification) && <span className="subtle" role="status">A user-requested host action is pending. Duplicate requests stay disabled.</span>}
     </section>
   );
+}
+
+function isAgentRunInput(value: unknown): value is AgentRunInput {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function textDetail(value: unknown): string {

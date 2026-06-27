@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentRunPanel } from "./AgentRunPanel";
 import type { AgentRunInput } from "../services/agentRunState";
 import type { VerificationCommandId } from "../bridge/bridgeAdapter";
+import { createProposalHistory, type ProposalHistory } from "../services/proposalHistory";
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
@@ -46,6 +47,10 @@ const failedVerificationLoop = {
   verification: { commandId: "repository-check", status: "failed", result: { exitCode: 1, durationMs: 10, outputTail: "failed", truncated: false, resultHash: "sha256:0000000000000000000000000000000000000000000000000000000000000000" } },
   summary: "Verification failed.",
 };
+
+const proposalHistory = createProposalHistory([
+  { id: "proposal-1", source: "assistant", kind: "original", summary: "Small safe proposal", touchedFiles: ["src/example.ts"] },
+]);
 
 const checkpointReadinessState = {
   kind: "agent_run_checkpoint_rollback_state" as const,
@@ -390,8 +395,62 @@ describe("AgentRunPanel", () => {
     expect(panelText()).toContain("Review the sanitized verification failure, then manually draft a fix follow-up or review rollback. Nothing repairs itself, how polite.");
     expect(panelText()).toContain("Verification status/result: Verification failed · exit 1 · sanitized result available");
     expect(panelText()).toContain("Manual fix draft available");
-    expect(panelText()).toContain("Draft a sanitized fix prompt into the composer");
+    expect(panelText()).toContain("Manual guided fix");
+    expect(panelText()).toContain("fix draft available");
+    expect(panelText()).toContain("Draft a fix prompt for manual review only.");
+    expect(panelText()).toContain("Review first; the user must click Send manually.");
     expect(findButton("Draft Agent Run fix prompt").disabled).toBe(false);
+  });
+
+  it("renders no-fix and blocked guided-fix states without a fix CTA", () => {
+    renderPanel({
+      ...readyInput,
+      applyResult: { status: "applied", summary: "Applied.", appliedFileCount: 1 },
+      verificationResult: { status: "succeeded", exitCode: 0, outputTail: "passed" },
+      boundedLoop: verifiedLoop,
+    }, { host: "vscode" });
+
+    expect(panelText()).toContain("Manual guided fix");
+    expect(panelText()).toContain("no fix needed");
+    expect(panelText()).toContain("Verification succeeded; no guided fix is needed.");
+    expect(optionalButton("Draft Agent Run fix prompt")).toBeUndefined();
+
+    renderPanel({
+      ...readyInput,
+      proposal: undefined,
+      applyResult: { status: "applied", summary: "Applied.", appliedFileCount: 1 },
+      verificationResult: { status: "failed", exitCode: 1, outputTail: "failed" },
+      boundedLoop: failedVerificationLoop,
+    }, { host: "vscode", proposalHistory: createProposalHistory([]) });
+
+    expect(panelText()).toContain("Manual guided fix");
+    expect(panelText()).toContain("blocked");
+    expect(panelText()).toContain("Failed verification has no prior safe proposal metadata.");
+    expect(optionalButton("Draft Agent Run fix prompt")).toBeUndefined();
+  });
+
+  it("renders guided-fix draft-only and correlated proposal labels without raw unsafe content", () => {
+    const secret = "access_token=" + "s".repeat(64);
+    const laterHistory = createProposalHistory([
+      { id: "proposal-1", source: "assistant", kind: "original", summary: "Small safe proposal", touchedFiles: ["src/example.ts"] },
+      { id: "proposal-2", source: "assistant-follow-up", kind: "follow_up", summary: "Follow-up proposal label", touchedFiles: ["src/example.ts"] },
+    ]);
+    renderPanel({
+      ...readyInput,
+      applyResult: { status: "applied", summary: "Applied.", appliedFileCount: 1 },
+      verificationResult: { status: "failed", exitCode: 1, outputTail: "failed" },
+      boundedLoop: failedVerificationLoop,
+    }, { host: "vscode", proposalHistory: laterHistory });
+
+    expect(panelText()).toContain("Manual guided fix");
+    expect(panelText()).toContain("new proposal detected");
+    expect(panelText()).toContain("latest proposal proposal-2");
+    expect(panelText()).toContain("Follow-up proposal label");
+    expect(panelText()).toContain("Draft only: this panel never sends chat, applies edits, runs verification, retries, repairs, rolls back, attaches context, saves memory, or changes the workspace.");
+    expect(optionalButton("Draft Agent Run fix prompt")).toBeUndefined();
+    expect(panelText()).not.toContain(secret);
+    expect(panelText()).not.toContain("/Users/alice");
+    expect(browserStorageDump()).not.toContain(secret);
   });
 
   it("draft follow-up CTAs call only explicit draft callbacks", () => {
@@ -453,6 +512,7 @@ type PanelTestProps = {
   onReviewRollback?: () => void;
   onDraftVerificationFollowup?: () => void;
   onDraftVerificationFix?: () => void;
+  proposalHistory?: ProposalHistory;
 };
 
 function renderPanel(input: unknown, props: PanelTestProps = {}) {
@@ -476,6 +536,7 @@ function renderPanel(input: unknown, props: PanelTestProps = {}) {
         onReviewRollback={props.onReviewRollback ?? vi.fn()}
         onDraftVerificationFollowup={props.onDraftVerificationFollowup ?? vi.fn()}
         onDraftVerificationFix={props.onDraftVerificationFix ?? vi.fn()}
+        proposalHistory={props.proposalHistory ?? proposalHistory}
       />,
     );
   });
@@ -491,6 +552,10 @@ function findButton(name: string) {
     throw new Error(`Button not found: ${name}`);
   }
   return button;
+}
+
+function optionalButton(name: string) {
+  return Array.from(container?.querySelectorAll<HTMLButtonElement>("button") ?? []).find((item) => item.textContent === name);
 }
 
 function browserStorageDump() {
