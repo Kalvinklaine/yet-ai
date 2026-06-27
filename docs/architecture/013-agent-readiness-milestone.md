@@ -141,6 +141,12 @@ The focused local smoke is `npm run smoke:agent-run-safer-apply-ux`. It is deter
 
 Sprint 68 safer apply UX does not add auto-send, auto-apply, auto-verification, auto-repair, auto-retry, auto-rollback, hidden reads, indexing, search, provider/tool execution, shell/git authority, attach behavior, browser-storage persistence of raw prompts/files/diffs/proposals/commands, new runtime endpoints, or new bridge authority. Future S70 release-candidate bundling may revisit broader bundle composition, but this S68 gate is already safe to keep in the local safety regression bundle.
 
+## Sprint 68 final audit status
+
+Sprint 68 is closed as a safer apply UX review milestone after the focused final safety audit. The audit found no high or critical safety issue in the S68 scope: apply readiness remains display-only sanitized metadata, rejection recovery remains manual guidance, the apply button remains no broader than the existing supported-host, no-pending-request, `confirm_apply` gate, and the smoke coverage exercises ready, blocked/browser-preview, rejected, and unsafe/no-leak states.
+
+This completion status is local/mock verification evidence only. It confirms that S68 preserves the manual Agent Run boundary with no auto-send, auto-apply, auto-verification, auto-repair, auto-retry, auto-rollback, hidden reads, indexing, search, shell/git/tool/provider authority, raw prompt/provider/file/diff/command/log browser-storage persistence, new runtime/bridge authority, production readiness, or controlled-autonomy approval.
+
 ## Verification
 
 For this documentation milestone, run:

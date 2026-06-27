@@ -128,6 +128,12 @@ Sprint 67 keeps failed-verification recovery inside the same draft-only authorit
 
 The final S67 audit found no high or critical tool-authority expansion in this scope. The focused smoke covers a safe failed-verification draft path and an unsafe metadata blocking path; both remain deterministic local/mock evidence, not production autonomy or a broader tool pipeline.
 
+## Sprint 68 safer apply UX audit note
+
+Sprint 68 keeps apply readiness and rejection recovery inside the existing explicit apply boundary. The GUI may show sanitized proposal counts, bounded file labels, readiness items, risk badges, disabled reasons, and manual recovery guidance, but these surfaces are display-only metadata and cannot mint apply authority, run verification, repair, retry, roll back, read or index files, call providers/tools, execute shell/git/package commands, persist raw prompt/provider/file/diff/command/log data in browser storage, or add runtime/bridge authority.
+
+The final S68 audit found no high or critical tool-authority expansion in this scope. Apply enablement remains limited to the pre-existing supported-host, no-pending-request, `confirm_apply` gate; rejected or unsafe proposals have no apply action; and the focused smoke covers ready, blocked/browser-preview, rejected, and unsafe/no-leak states as deterministic local/mock evidence only.
+
 
 ## Product boundaries to preserve
 

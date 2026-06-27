@@ -22,6 +22,8 @@ Sprint 68 adds safer apply review UX as display guidance only. The apply readine
 
 Sprint 68 safer apply UX audit expectation: no apply or verification request is emitted before the existing explicit user action; blocked checkpoint/policy or browser-preview states show blocked/manual guidance only; rejected or malformed proposals show recovery guidance with no apply action; unsafe labels or content are redacted from UI and browser storage. This remains dev-preview review guidance, not production readiness, autonomous apply, automatic verification, host mutation, real-provider CI, or release-candidate evidence.
 
+Sprint 68 final audit status: safer apply UX is complete for local dev-preview dogfood only. The final audit expectation is met when the S68 verification bundle passes and no high or critical issue remains: apply readiness/risk and rejection recovery stay sanitized bounded metadata, apply enablement stays no broader than the existing supported-host manual confirmation path, and the smokes cover ready, blocked/browser-preview, rejected, and unsafe/no-leak states without auto-send, auto-apply, auto-verification, auto-repair, auto-retry, auto-rollback, hidden reads, indexing, search, shell/git/tool/provider authority, or raw prompt/provider/file/diff/command/log browser-storage persistence.
+
 CI and smoke automation for Agent Run remain mock/loopback-only. Do not put real provider credentials, production accounts, hosted Yet AI services, managed gateways, cloud workspaces, provider account-login flows, real apply actions, or real verification commands into CI.
 
 ## Scope and boundaries
