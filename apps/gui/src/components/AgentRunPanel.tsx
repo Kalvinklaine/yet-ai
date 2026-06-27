@@ -1,4 +1,5 @@
-import type { BridgeHost, VerificationCommandId } from "../bridge/bridgeAdapter";
+import type { ApplyWorkspaceEditPayload, BridgeHost, VerificationCommandId } from "../bridge/bridgeAdapter";
+import { buildAgentRunApplyRiskSummary } from "../services/agentRunApplyRisk";
 import { evaluateAgentRunState, type AgentRunInput } from "../services/agentRunState";
 import { deriveGuidedFixLoopStatus, type GuidedFixLoopDraftState } from "../services/guidedFixLoop";
 import type { ProposalHistory } from "../services/proposalHistory";
@@ -34,6 +35,14 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   });
   const details = view.details;
   const supported = host === "vscode" || host === "jetbrains";
+  const applyRiskSummary = buildAgentRunApplyRiskSummary({
+    proposal: metadata?.proposal ? agentRunProposalToApplyRiskPayload(metadata.proposal, details) : undefined,
+    agentRun: input,
+    host,
+    pendingApply,
+    applyResult: metadata?.applyResult,
+  });
+  const showApplyRiskSummary = Boolean(metadata && !metadata.applyResult && (!pendingApply || metadata.applyRequest?.requested === true) && (hasProposal(details) || view.nextUserAction === "confirm_apply" || view.nextUserAction === "wait_for_apply" || view.state === "prerequisites_blocked" || view.state === "blocked"));
   const verificationCommandId = verificationCommandIdFromDetails(details.verificationCommandId);
   const canApply = supported && !pendingApply && view.nextUserAction === "confirm_apply";
   const canVerify = supported && !pendingVerification && view.nextUserAction === "confirm_verification" && verificationCommandId !== null;
@@ -132,6 +141,28 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           {proposalVerificationSuggestions.length > 0 && <span>Verification suggestions (display-only command IDs): {proposalVerificationSuggestions.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
         </div>
       )}
+      {showApplyRiskSummary && (
+        <div className={`readiness-card ${applyRiskSummary.status === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Agent Run apply readiness and risk">
+          <div className="row">
+            <strong>Apply readiness and risk</strong>
+            <span className={`badge ${applyRiskSummary.status === "ready" ? "ok" : "warn"}`}>{applyRiskSummary.status.replace(/_/g, " ")}</span>
+            <span className="badge">manual apply only</span>
+            <span className="badge">sanitized metadata</span>
+          </div>
+          <span>Display only: no workspace change happens until an explicit supported-IDE apply click.</span>
+          <div className="agent-progress-grid" aria-label="Agent Run apply readiness items">
+            {applyRiskSummary.readinessItems.map((item) => <span key={item.label}>{sanitizeDisplayText(item.label)}: {sanitizeDisplayText(item.state.replace(/_/g, " "))}</span>)}
+          </div>
+          <div className="agent-progress-grid" aria-label="Agent Run apply risk counts">
+            <span>Files: {applyRiskSummary.fileCount}</span>
+            <span>Edits: {applyRiskSummary.editCount}</span>
+          </div>
+          {applyRiskSummary.fileLabels.length > 0 && <span>File labels: {applyRiskSummary.fileLabels.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
+          {applyRiskSummary.riskBadges.length > 0 && <span>Risk badges: {applyRiskSummary.riskBadges.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
+          {applyRiskSummary.disabledReasons.length > 0 && <span>Apply disabled reasons: {applyRiskSummary.disabledReasons.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
+          {applyRiskSummary.recoveryGuidance.length > 0 && <span>Manual recovery guidance: {applyRiskSummary.recoveryGuidance.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
+        </div>
+      )}
       {guidedFix.status !== "idle" && (
         <div className={`readiness-card ${guidedFix.status === "fix_draft_available" || guidedFix.status === "no_fix_needed" || guidedFix.status === "new_proposal_detected" ? "ready" : "warn"} stack`} role="status" aria-label="Agent Run manual guided fix">
           <div className="row">
@@ -185,6 +216,31 @@ function numberDetail(value: unknown): number | undefined {
 
 function stringArrayDetail(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function agentRunProposalToApplyRiskPayload(proposal: AgentRunInput["proposal"], details: Record<string, string | number | boolean | string[]>): ApplyWorkspaceEditPayload | undefined {
+  const touchedFiles = stringArrayDetail(details.touchedFiles);
+  if (!proposal || touchedFiles.length === 0) {
+    return undefined;
+  }
+  const editCount = Math.max(1, numberDetail(details.editCount) ?? touchedFiles.length);
+  let remainingEdits = editCount;
+  return {
+    requiresUserConfirmation: true,
+    cloudRequired: false,
+    summary: textDetail(proposal.summary) || "Agent Run proposal metadata.",
+    edits: touchedFiles.map((workspaceRelativePath) => {
+      const editsForFile = Math.max(1, Math.ceil(remainingEdits / Math.max(1, touchedFiles.length)));
+      remainingEdits = Math.max(0, remainingEdits - editsForFile);
+      return {
+        workspaceRelativePath,
+        textReplacements: Array.from({ length: editsForFile }, (_, index) => ({
+          range: { start: { line: index, character: 0 }, end: { line: index, character: 0 } },
+          replacementText: "metadata-only replacement label",
+        })),
+      };
+    }),
+  };
 }
 
 function verificationCommandIdFromDetails(value: unknown): VerificationCommandId | null {

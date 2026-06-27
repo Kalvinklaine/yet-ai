@@ -206,6 +206,69 @@ describe("AgentRunPanel", () => {
     expect(findButton("Manually run allowlisted verification").disabled).toBe(true);
   });
 
+  it("renders apply readiness and risk for ready manual apply", () => {
+    renderPanel(readyInput, { host: "vscode" });
+
+    expect(panelText()).toContain("Apply readiness and risk");
+    expect(panelText()).toContain("ready");
+    expect(panelText()).toContain("manual apply only");
+    expect(panelText()).toContain("sanitized metadata");
+    expect(panelText()).toContain("proposal parsed: ready");
+    expect(panelText()).toContain("checkpoint ready: ready");
+    expect(panelText()).toContain("host supports apply: ready");
+    expect(panelText()).toContain("no pending apply: ready");
+    expect(panelText()).toContain("Files: 1");
+    expect(panelText()).toContain("Edits: 1");
+    expect(panelText()).toContain("File labels: src/example.ts");
+    expect(panelText()).toContain("Display only: no workspace change happens until an explicit supported-IDE apply click.");
+    expect(findButton("Manually apply reviewed patch").disabled).toBe(false);
+  });
+
+  it("renders apply readiness blocked by checkpoint and policy", () => {
+    renderPanel({
+      ...readyInput,
+      boundedLoop: {
+        ...baseLoop,
+        status: "blocked",
+        sandbox: { ...baseLoop.sandbox, modeStatus: "blocked", checkpointVerified: false },
+        policy: { decision: "blocked", requiresUserConfirmation: true, reasonCodes: ["explicit_user_confirmation_required", "blocked_by_policy"], blockReason: "Checkpoint is not ready." },
+      },
+    }, { host: "vscode" });
+
+    expect(panelText()).toContain("Apply readiness and risk");
+    expect(panelText()).toContain("checkpoint ready: blocked");
+    expect(panelText()).toContain("Risk badges: checkpoint missing · policy blocked");
+    expect(panelText()).toContain("Checkpoint metadata is not ready for manual apply.");
+    expect(panelText()).toContain("Apply policy metadata is blocked or unavailable.");
+    expect(panelText()).toContain("Resolve blocked policy or checkpoint metadata before manual apply.");
+    expect(findButton("Manually apply reviewed patch").disabled).toBe(true);
+  });
+
+  it("renders browser-only apply guidance without enabling apply", () => {
+    renderPanel(readyInput, { host: "browser" });
+
+    expect(panelText()).toContain("Apply readiness and risk");
+    expect(panelText()).toContain("browser preview only");
+    expect(panelText()).toContain("host supports apply: blocked");
+    expect(panelText()).toContain("Browser preview cannot apply. Open VS Code or JetBrains for host confirmation.");
+    expect(panelText()).toContain("Open the workspace in a supported IDE host for manual apply confirmation.");
+    expect(panelText()).toContain("Browser preview stays preview-only. These controls will not post privileged host actions here");
+    expect(findButton("Manually apply reviewed patch").disabled).toBe(true);
+  });
+
+  it("renders pending apply as blocked readiness", () => {
+    renderPanel({
+      ...readyInput,
+      applyRequest: { requested: true, source: "user", requestId: "apply-1" },
+    }, { host: "vscode", pendingApply: true });
+
+    expect(panelText()).toContain("Apply readiness and risk");
+    expect(panelText()).toContain("no pending apply: blocked");
+    expect(panelText()).toContain("An IDE apply request is already pending; wait for the current result before requesting another apply.");
+    expect(panelText()).toContain("Wait for the pending apply result metadata before starting another manual apply request.");
+    expect(findButton("Manually apply reviewed patch").disabled).toBe(true);
+  });
+
   it("renders checkpoint readiness and rollback states as display-only status", () => {
     renderPanel({ ...readyInput, checkpointRollbackState: checkpointReadinessState }, { host: "vscode" });
 
@@ -523,6 +586,24 @@ describe("AgentRunPanel", () => {
     expect(text).not.toContain("npm test");
     expect(browserStorageDump()).not.toContain(secret);
     expect(browserStorageDump()).not.toContain("rawCommand");
+  });
+
+  it("does not render unsafe apply readiness file labels", () => {
+    renderPanel({
+      goal: { id: "goal-1", title: "Review unsafe label" },
+      proposal: { id: "proposal-unsafe", summary: "Unsafe label proposal", touchedFiles: ["src/example.ts", "/Users/alice/private.ts", "../secret.ts", "auth/token.ts"] },
+      boundedLoop: {
+        ...baseLoop,
+        patch: { ...baseLoop.patch, proposalId: "proposal-unsafe", touchedFiles: ["src/example.ts"], editCount: 1, summary: "Unsafe label proposal" },
+      },
+    }, { host: "vscode" });
+
+    expect(panelText()).toContain("Apply readiness and risk");
+    expect(panelText()).toContain("File labels: src/example.ts");
+    expect(panelText()).not.toContain("/Users/alice");
+    expect(panelText()).not.toContain("../secret.ts");
+    expect(panelText()).not.toContain("auth/token.ts");
+    expect(browserStorageDump()).not.toContain("/Users/alice");
   });
 });
 
