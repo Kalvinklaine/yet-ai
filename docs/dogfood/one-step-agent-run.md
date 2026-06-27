@@ -14,6 +14,8 @@ Sprint 63 hardening keeps those gates stable rather than broadening authority. F
 
 Sprint 64 status is recorded in [`../architecture/013-agent-readiness-milestone.md`](../architecture/013-agent-readiness-milestone.md). Use it as the canonical readiness taxonomy: current one-step Agent Run is manual local dogfood/dev-preview evidence, S61 plan preview and S62 follow-up/fix drafts are experimental manual-only adjuncts, and S64 classification does not enable autonomy, production readiness, marketplace readiness, real-provider CI, hidden reads, provider/tool calling, or automatic execution.
 
+Sprint 67 adds a guided fix loop presentation for failed verification, but it remains manual and draft-only. A failed verification may show a sanitized "Manual guided fix" status and a "Draft Agent Run fix prompt" CTA when safe proposal lineage exists. Clicking that CTA only writes a fix prompt into the composer and focuses it; the user must review, edit if needed, and click Send manually. Unsafe verification metadata or raw-looking command/output/private-path fields must block the CTA or render sanitized blocked metadata only. The local/mock evidence gate is `npm run smoke:agent-run-guided-fix-loop`; it is not real-provider CI, auto-repair, auto-retry, auto-rollback, automatic verification, provider/tool execution, shell/git authority, production readiness, or autonomy evidence.
+
 CI and smoke automation for Agent Run remain mock/loopback-only. Do not put real provider credentials, production accounts, hosted Yet AI services, managed gateways, cloud workspaces, provider account-login flows, real apply actions, or real verification commands into CI.
 
 ## Scope and boundaries

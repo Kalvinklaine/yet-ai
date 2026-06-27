@@ -3,8 +3,8 @@ import process from "node:process";
 import { agentRunBuiltGuiApplyResult, agentRunBuiltGuiAssistantMessage, agentRunBuiltGuiCapsResponse, agentRunBuiltGuiChatThread, agentRunBuiltGuiFixture, agentRunBuiltGuiProviderSummary, agentRunBuiltGuiVerificationProgress, agentRunBuiltGuiVerificationResult, assertAgentRunBuiltGuiFixtureSafe } from "./lib/agent-run-built-gui-fixtures.mjs";
 import { agentRunBuiltGuiDistRoot, buildAgentRunBuiltGui, isAgentRunAllowedNetworkUrl, isAgentRunJsOrCssAssetRequest, isAgentRunRuntimeOriginUrl, isAgentRunStaticServerAsset, isExpectedAgentRunFetchConsoleError, messageOf, redactAgentRunUrl, requireAgentRunBuiltGui, requireAgentRunChromium, startAgentRunStaticServer } from "./lib/agent-run-built-gui-smoke-bootstrap.mjs";
 
-const smokeName = "Agent Run follow-up loop smoke";
-const smokeCommand = "smoke:agent-run-followup-loop";
+const smokeName = "Agent Run guided fix loop smoke";
+const smokeCommand = "smoke:agent-run-guided-fix-loop";
 const fixture = agentRunBuiltGuiFixture;
 const activeChatId = "chat-001";
 const submittedRequestId = "agent-run-followup-loop-request-1";
@@ -64,15 +64,15 @@ try {
   const guiBaseUrl = `http://127.0.0.1:${server.port}`;
   browser = await chromium.launch({ headless: true });
 
-  await runFailedVerificationFixDraftScenario(guiBaseUrl);
-  await runSucceededVerificationFollowupDraftScenario(guiBaseUrl);
+  await runValidGuidedFixDraftScenario(guiBaseUrl);
+  await runUnsafeGuidedFixBlockedScenario(guiBaseUrl);
 
   if (failures.length > 0) {
-    throw new Error(`Agent Run follow-up loop smoke failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
+    throw new Error(`Agent Run guided fix loop smoke failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
   }
 
-  console.log("Agent Run follow-up loop smoke passed.");
-  console.log("Verified deterministic mock-only failed and succeeded verification second-step drafts: composer/focus only, no auto-send/apply/verify/repair/rollback/attach, loopback-only runtime, and no browser-storage leakage.");
+  console.log("Agent Run guided fix loop smoke passed.");
+  console.log("Verified deterministic mock-only guided fix loop: valid failed verification drafts a manual fix prompt, unsafe metadata is blocked, no auto-send/apply/verify/repair/rollback/attach occurs, runtime stays loopback-only, and browser storage stays clean.");
 } catch (error) {
   console.error(redactSecrets(messageOf(error)));
   process.exit(1);
@@ -83,7 +83,7 @@ try {
   }
 }
 
-async function runFailedVerificationFixDraftScenario(guiBaseUrl) {
+async function runValidGuidedFixDraftScenario(guiBaseUrl) {
   resetScenario();
   const { page, prompt } = await prepareVerifiedProposalPage(guiBaseUrl, { status: "failed", exitCode: 1, outputTail: "Repository fixture check failed." });
   await expectVisibleText(page, "Manual state: Verification failed", "failed verification state", 20_000);
@@ -103,30 +103,31 @@ async function runFailedVerificationFixDraftScenario(guiBaseUrl) {
   await assertTextareaFocused(page);
   await assertDraftOnly(page, beforeDraft, "failed verification fix draft");
   await assertStorageSafe(page, "failed verification fix draft", draft);
-  assertAgentRunBuiltGuiFixtureSafe({ prompt, draft: sanitizeDraftForEvidence(draft), messages: await sanitizedMessages(page), runtimeRequests }, "failed verification follow-up smoke evidence");
+  await expectVisibleText(page, "awaiting manual send", "fix draft awaiting manual send status", 20_000);
+  await expectVisibleText(page, "A fix draft is waiting in the composer for manual review.", "fix draft waiting reason", 20_000);
+  await expectVisibleText(page, "Proposal history", "proposal history panel", 20_000);
+  await expectVisibleText(page, "Verification metadata: failed after explicit user action", "proposal history failed verification entry", 20_000);
+  assertAgentRunBuiltGuiFixtureSafe({ prompt, draft: sanitizeDraftForEvidence(draft), messages: await sanitizedMessages(page), runtimeRequests }, "failed verification guided fix smoke evidence");
   await page.close();
 }
 
-async function runSucceededVerificationFollowupDraftScenario(guiBaseUrl) {
+async function runUnsafeGuidedFixBlockedScenario(guiBaseUrl) {
   resetScenario();
-  const { page, prompt } = await prepareVerifiedProposalPage(guiBaseUrl, { status: "succeeded", exitCode: 0, outputTail: fixture.verificationOutputTail });
-  await expectVisibleText(page, "Manual state: Ready for follow-up", "succeeded verification follow-up state", 20_000);
-  await expectVisibleText(page, "Manual follow-up draft available", "succeeded verification follow-up CTA", 20_000);
-  await expectVisibleText(page, "Verification status/result: Verified · exit 0 · sanitized result available", "succeeded verification result", 20_000);
-  const beforeDraft = await collectCounts(page);
-
-  await page.getByRole("button", { name: "Draft Agent Run follow-up prompt" }).click();
-  const draft = await firstTextareaValueContaining(page, "Verification follow-up prompt", "succeeded verification follow-up draft");
-  assert.equal(draft.includes("Command id: repository-check"), true, "follow-up draft omitted sanitized command id");
-  assert.equal(draft.includes("Status: succeeded"), true, "follow-up draft omitted succeeded status");
-  assert.equal(draft.includes("Exit code: 0"), true, "follow-up draft omitted exit code");
-  assert.equal(draft.includes(fixture.verificationOutputTail), true, "follow-up draft omitted sanitized output tail");
-  assert.equal(draft.includes("Explain this verification result"), true, "follow-up draft omitted follow-up intent");
-  assert.equal(draft.includes("review this draft, edit it if needed, then click Send manually"), true, "follow-up draft omitted manual Send instruction");
-  await assertTextareaFocused(page);
-  await assertDraftOnly(page, beforeDraft, "succeeded verification follow-up draft");
-  await assertStorageSafe(page, "succeeded verification follow-up draft", draft);
-  assertAgentRunBuiltGuiFixtureSafe({ prompt, draft: sanitizeDraftForEvidence(draft), messages: await sanitizedMessages(page), runtimeRequests }, "succeeded verification follow-up smoke evidence");
+  const unsafeTail = "safe failed verification summary";
+  const { page, prompt } = await prepareVerifiedProposalPage(guiBaseUrl, { status: "failed", exitCode: 1, outputTail: unsafeTail, command: "make verify", cwd: "hidden-env", providerPayload: "provider payload omitted" });
+  await page.waitForTimeout(150);
+  await expectNoVisibleText(page, "Manual state: Verification failed", "unsafe failed verification state");
+  await expectNoVisibleText(page, "Manual fix draft available", "unsafe fix CTA availability");
+  await expectNoButton(page, "Draft Agent Run fix prompt", "unsafe fix draft button");
+  await expectNoVisibleText(page, "make verify", "unsafe command marker");
+  await expectNoVisibleText(page, "hidden-env", "unsafe cwd marker");
+  await expectNoVisibleText(page, "provider payload", "unsafe provider payload marker");
+  const beforeWait = await collectCounts(page);
+  await page.waitForTimeout(150);
+  const afterWait = await collectCounts(page);
+  assert.deepEqual(afterWait, beforeWait, "unsafe blocked state produced automatic behavior");
+  await assertStorageSafe(page, "unsafe guided fix blocked state", unsafeTail);
+  assertAgentRunBuiltGuiFixtureSafe({ prompt, messages: await sanitizedMessages(page), runtimeRequests }, "unsafe guided fix smoke evidence");
   await page.close();
 }
 
@@ -377,6 +378,16 @@ async function expectVisibleText(page, text, description, timeout = 10_000) {
   }
 }
 
+async function expectNoVisibleText(page, text, description) {
+  const count = await page.getByText(text, { exact: false }).count();
+  assert.equal(count, 0, `${description} unexpectedly rendered`);
+}
+
+async function expectNoButton(page, name, description) {
+  const count = await page.getByRole("button", { name }).count();
+  assert.equal(count, 0, `${description} unexpectedly rendered`);
+}
+
 async function firstTextareaValueContaining(page, text, description = "textarea value") {
   const matched = await page.locator("textarea").evaluateAll((textareas, expected) => textareas.find((textarea) => textarea.value.includes(expected))?.value ?? null, text);
   if (matched) {
@@ -458,7 +469,7 @@ async function assertStorageSafe(page, label, draft) {
   assert.equal(storageText.includes(fixture.userPrompt), false, `${label} persisted raw prompt in browser storage`);
   assert.equal(storageText.includes(fixture.explicitContext.selection.text), false, `${label} persisted raw file body in browser storage`);
   assert.equal(storageText.includes(fixture.safeEdit.edits[0].textReplacements[0].replacementText), false, `${label} persisted raw diff replacement in browser storage`);
-  assert.equal(storageText.includes(draft), false, `${label} persisted follow-up draft in browser storage`);
+  assert.equal(storageText.includes(draft), false, ` persisted guided fix draft in browser storage`);
   assertNoRawMarkers(storageText, `${label} browser storage`);
 }
 
