@@ -122,6 +122,12 @@ The draft must not carry raw command strings, args, cwd, env, shell snippets, gi
 
 This preserves the local-first BYOK and manual-only Agent Run boundary. S62 does not implement multi-step execution, autonomous repair, a task runner, a shell/git/tool executor, a new bridge message, or a hosted Yet AI backend requirement; it only defines the safe draft shape for a possible user-confirmed second prompt.
 
+## Sprint 67 guided fix loop audit note
+
+Sprint 67 keeps failed-verification recovery inside the same draft-only authority boundary. Guided fix status and CTA copy may be derived from sanitized verification, proposal-history, session, and draft metadata, but the CTA may only draft composer text for explicit user review and manual Send. It must not send chat, apply edits, run verification, repair, retry, roll back, read or index files, call providers/tools, execute shell/git/package commands, persist raw prompt/provider/file/diff/command/log data in browser storage, or add runtime/bridge authority.
+
+The final S67 audit found no high or critical tool-authority expansion in this scope. The focused smoke covers a safe failed-verification draft path and an unsafe metadata blocking path; both remain deterministic local/mock evidence, not production autonomy or a broader tool pipeline.
+
 
 ## Product boundaries to preserve
 

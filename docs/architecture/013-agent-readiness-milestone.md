@@ -126,6 +126,12 @@ Sprint 67 guided fix loop remains an experimental manual-only failed-verificatio
 
 The focused local smoke is `npm run smoke:agent-run-guided-fix-loop`. It is deterministic local/mock evidence only: it builds the GUI, serves it from loopback, drives an explicit model proposal/apply/verification fixture, asserts the failed-verification fix prompt remains unsent, and asserts unsafe raw-looking verification metadata blocks actionable guided-fix behavior. It is not real-provider CI, autonomous repair, production readiness, marketplace/release evidence, or proof that controlled autonomy exists.
 
+## Sprint 67 final audit status
+
+Sprint 67 is closed as a guided fix loop dev-preview milestone after the focused final safety audit. The audit found no high or critical safety issue in the S67 scope: guided fix status is derived from sanitized Agent Run verification, proposal-history, session, and draft metadata; fix drafting writes only the composer for user review; unsafe raw-looking verification metadata blocks actionable drafting; and the built-GUI smoke covers both the manual happy path and the unsafe/no-auto path.
+
+This completion status is local/mock verification evidence only. It confirms that S67 preserves the manual Agent Run boundary with no auto-send, auto-apply, auto-verification, auto-repair, auto-retry, auto-rollback, hidden reads, indexing, search, shell/git/tool/provider authority, raw prompt/provider/file/diff/command/log browser-storage persistence, new runtime/bridge authority, production readiness, or controlled-autonomy approval.
+
 ## Verification
 
 For this documentation milestone, run:
