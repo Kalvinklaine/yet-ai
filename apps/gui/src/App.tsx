@@ -33,7 +33,7 @@ import { createProjectMemory, deleteProjectMemory, listProjectMemory, searchProj
 import { appendCodingSessionTraceEntry, type CodingSessionTraceDraft, type CodingSessionTraceEntry } from "./services/codingSessionTrace";
 import { createProposalHistory, type ProposalHistoryEntryInput } from "./services/proposalHistory";
 import { createCodingTaskSessionSnapshot, createLinkedMemoryAttachTraceLabel, createSessionMemoryLabel, createTaskMemoryLabel, type CodingTaskSessionSnapshot } from "./services/codingTaskSession";
-import { suggestTaskMemory } from "./services/taskMemorySuggestions";
+import { createMemorySuggestionAttachTraceDetails, suggestTaskMemory, type TaskMemorySuggestion } from "./services/taskMemorySuggestions";
 import { evaluateHostCapabilityMetadata } from "./services/toolAuthorityPolicy";
 import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPatchVerificationLoop";
 import type { AgentRunInput } from "./services/agentRunState";
@@ -605,7 +605,7 @@ export function App() {
       ...(activeEditProposal ? [{ label: `Edit proposal metadata · ${activeEditProposal.payload.summary}`, charCount: activeEditProposal.payload.summary.length, itemCount: activeEditProposal.payload.edits.length }] : []),
     ],
   }), [activeEditProposal, codingTaskGoal, currentActiveFileExcerpt, explicitContextBundleItems, includeAttachedContext, includeExplicitContextBundle, modelProposalDraft]);
-  const codingTaskSession = useMemo(() => createCodingTaskSessionSnapshot({
+  const codingTaskSessionBase = useMemo(() => createCodingTaskSessionSnapshot({
     goal: codingTaskGoal,
     contextItems: explicitContextBundleItems,
     memoryItems: attachedProjectMemoryItems,
@@ -618,13 +618,26 @@ export function App() {
     ],
   }), [activeRejectedEditProposal, activeRejectedIdeActionProposal, agentRunInput, attachedProjectMemoryItems, codingSessionTrace, codingTaskGoal, explicitContextBundleItems, proposalHistory]);
   const taskMemorySuggestions = useMemo(() => suggestTaskMemory({
-    taskGoalLabel: codingTaskSession.goal.label,
+    taskGoalLabel: codingTaskSessionBase.goal.label,
     sessionLabel: createSessionMemoryLabel(undefined, chatId),
-    explicitContextLabels: codingTaskSession.context.labels,
+    explicitContextLabels: codingTaskSessionBase.context.labels,
     proposalFileLabels: proposalHistory.entries.flatMap((entry) => entry.touchedFiles ?? []),
     attachedMemoryNoteIds: Array.from(attachedProjectMemoryNoteIds),
     projectMemoryNotes: projectMemory.notes,
-  }), [attachedProjectMemoryNoteIds, chatId, codingTaskSession.context.labels, codingTaskSession.goal.label, projectMemory.notes, proposalHistory.entries]);
+  }), [attachedProjectMemoryNoteIds, chatId, codingTaskSessionBase.context.labels, codingTaskSessionBase.goal.label, projectMemory.notes, proposalHistory.entries]);
+  const codingTaskSession = useMemo(() => createCodingTaskSessionSnapshot({
+    goal: codingTaskGoal,
+    contextItems: explicitContextBundleItems,
+    memoryItems: attachedProjectMemoryItems,
+    memorySuggestions: taskMemorySuggestions,
+    agentRun: agentRunInput,
+    traceEntries: codingSessionTrace,
+    proposalHistory,
+    diagnostics: [
+      ...(activeRejectedEditProposal ? [`edit proposal rejected: ${activeRejectedEditProposal.diagnostic.reasonCode}`] : []),
+      ...(activeRejectedIdeActionProposal ? [`IDE action proposal rejected: ${activeRejectedIdeActionProposal.diagnostic.reasonCode}`] : []),
+    ],
+  }), [activeRejectedEditProposal, activeRejectedIdeActionProposal, agentRunInput, attachedProjectMemoryItems, codingSessionTrace, codingTaskGoal, explicitContextBundleItems, proposalHistory, taskMemorySuggestions]);
   const showWhatWillBeSentPanel = chatInput.trim().length > 0 || contextBudgetSummary.sources.some((source) => source.itemCount > 0 || source.charCount > 0) || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
   const workspaceSnippetQueryValidation = useMemo(() => validateWorkspaceSnippetQuery(workspaceSnippetQuery), [workspaceSnippetQuery]);
 
@@ -2049,7 +2062,7 @@ export function App() {
     }
   };
 
-  const attachProjectMemoryNote = (note: ProjectMemoryNote) => {
+  const attachProjectMemoryNote = (note: ProjectMemoryNote, suggestion?: TaskMemorySuggestion) => {
     const taskLabel = createTaskMemoryLabel(note.taskLabel, codingTaskGoal);
     const sessionLabel = createSessionMemoryLabel(note.sessionLabel, chatId);
     const attachTraceLabel = createLinkedMemoryAttachTraceLabel(chatId, note.id);
@@ -2063,7 +2076,20 @@ export function App() {
       setIncludeExplicitContextBundle(true);
       setExplicitContextBundleStatus(`Added task-linked local memory note ${sanitizeDisplayText(note.title)} to the one-shot bundle. Trace label: ${attachTraceLabel}.`);
       setProjectMemoryStatus(`Attached task-linked local memory note ${sanitizeDisplayText(note.title)} to the next message context. Trace label: ${attachTraceLabel}.`);
-      appendTrace({ family: "context.memory", title: "Task-linked project memory attached", status: "succeeded", summary: `Attached task-linked local memory note ${sanitizeDisplayText(note.title)} to the next message context.`, details: { memoryLabel: sanitizeDisplayText(note.title), taskLabel, sessionLabel, attachTraceLabel, attachedMemoryCount: attachedProjectMemoryCount + 1 } });
+      appendTrace({
+        family: "context.memory",
+        title: "Task-linked project memory attached",
+        status: "succeeded",
+        summary: `Attached task-linked local memory note ${sanitizeDisplayText(note.title)} to the next message context.`,
+        details: {
+          memoryLabel: sanitizeDisplayText(note.title),
+          taskLabel,
+          sessionLabel,
+          attachTraceLabel,
+          attachedMemoryCount: attachedProjectMemoryCount + 1,
+          ...(createMemorySuggestionAttachTraceDetails(suggestion) ?? {}),
+        },
+      });
       return next;
     });
   };
@@ -3523,6 +3549,7 @@ function CodingTaskSessionPanel({ session, goal, contextItems, modelStatus, canS
         <span>Verification lifecycle: {displayVerificationStatus}{verificationAttached ? " · attached for follow-up" : " · draft or attach manually"}</span>
         <span>Provider/model readiness: {canSendChat ? `ready · ${modelStatus}` : `blocked · ${modelStatus}`}</span>
         <span>Memory attachments: {session.memory.count}</span>
+        <span>Memory suggestions: suggested {session.memory.suggestionCounts.suggested} · stale {session.memory.suggestionCounts.stale} · unsafe {session.memory.suggestionCounts.unsafe} · already attached {session.memory.suggestionCounts.already_attached}</span>
       </div>
       <div className={`readiness-card ${canSendChat ? "ready" : "warn"}`} role="status" aria-label="Coding task next safe step">
         <strong>Next safe manual step</strong>
@@ -3544,13 +3571,14 @@ function CodingTaskSessionPanel({ session, goal, contextItems, modelStatus, canS
         <button type="button" className="secondary-button" onClick={onDraftOneStepModelProposal}>Draft one-step safe-edit prompt</button>
       </section>
       {recoveryCopy && <div className="readiness-card warn" role="status"><strong>Prompt recovery</strong><span>{recoveryCopy}</span></div>}
-      {(memoryLabels.length > 0 || session.diagnostics.length > 0) && <section className="readiness-card ready stack" aria-label="Unified session metadata">
+      {(memoryLabels.length > 0 || session.memory.suggestionLabels.length > 0 || session.diagnostics.length > 0) && <section className="readiness-card ready stack" aria-label="Unified session metadata">
         <div className="row">
           <strong>Unified session metadata</strong>
           <span className="badge">{session.authority}</span>
           <span className="badge">execution allowed {String(session.executionAllowed)}</span>
         </div>
         {memoryLabels.length > 0 && <div className="stack"><strong>Memory metadata</strong><ul className="first-message-steps">{memoryLabels.map((label) => <li key={label}>{label}</li>)}</ul></div>}
+        {session.memory.suggestionLabels.length > 0 && <div className="stack"><strong>Memory suggestion metadata</strong><ul className="first-message-steps">{session.memory.suggestionLabels.map((label) => <li key={label}>{label}</li>)}</ul></div>}
         {session.diagnostics.length > 0 && <div className="stack"><strong>Session diagnostics</strong><ul className="first-message-steps">{session.diagnostics.map((diagnostic) => <li key={diagnostic}>{diagnostic}</li>)}</ul></div>}
       </section>}
       <div className="stack">

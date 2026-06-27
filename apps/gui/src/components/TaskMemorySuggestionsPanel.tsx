@@ -2,8 +2,8 @@ import type { ProjectMemoryNote } from "../services/projectMemoryClient";
 import { sanitizeDisplayText } from "../services/redaction";
 import type { TaskMemorySuggestion, TaskMemorySuggestionSummary } from "../services/taskMemorySuggestions";
 
-export function TaskMemorySuggestionsPanel({ summary, notes, onAttach }: { summary: TaskMemorySuggestionSummary; notes: readonly ProjectMemoryNote[]; onAttach: (note: ProjectMemoryNote) => void }) {
-  const counts = statusCounts(summary.suggestions);
+export function TaskMemorySuggestionsPanel({ summary, notes, onAttach }: { summary: TaskMemorySuggestionSummary; notes: readonly ProjectMemoryNote[]; onAttach: (note: ProjectMemoryNote, suggestion: TaskMemorySuggestion) => void }) {
+  const counts = summary.counts;
   const notesById = new Map(notes.map((note) => [note.id, note]));
   const hasActionableSuggestions = summary.suggestions.some((suggestion) => suggestion.status === "suggested");
   return (
@@ -45,23 +45,13 @@ export function TaskMemorySuggestionsPanel({ summary, notes, onAttach }: { summa
             {suggestion.status === "unsafe" && <span className="subtle">Unsafe memory is warning-only and has no primary attach action here.</span>}
             {suggestion.status === "unrelated" && <span className="subtle">No safe metadata overlap was found for this task; attach only from Local project memory after manual review.</span>}
             <div className="row">
-              {attachable ? <button type="button" onClick={() => onAttach(note)}>Attach suggested memory to next message</button> : <span className="subtle">{attachDisabledCopy(suggestion)}</span>}
+              {attachable ? <button type="button" onClick={() => onAttach(note, suggestion)}>Attach suggested memory to next message</button> : <span className="subtle">{attachDisabledCopy(suggestion)}</span>}
             </div>
           </div>
         );
       })}
     </section>
   );
-}
-
-function statusCounts(suggestions: readonly TaskMemorySuggestion[]): Record<TaskMemorySuggestion["status"], number> {
-  return suggestions.reduce<Record<TaskMemorySuggestion["status"], number>>((counts, suggestion) => ({ ...counts, [suggestion.status]: counts[suggestion.status] + 1 }), {
-    suggested: 0,
-    already_attached: 0,
-    stale: 0,
-    unsafe: 0,
-    unrelated: 0,
-  });
 }
 
 function statusLabel(status: TaskMemorySuggestion["status"]): string {

@@ -210,7 +210,7 @@ function sanitizeTraceUnsafeKeys(value: unknown): unknown {
 }
 
 function isTraceUnsafeDetailKey(key: string): boolean {
-  return /^(?:rawCommand|raw_command|rawFileBody|raw_file_body|fileBody|file_body|rawDiff|raw_diff|diff|rawOutput|raw_output|command|cmd|args|arguments|cwd|env|environment|shell|git|network|providerTool|provider_tool|toolCall|tool_call|privatePath|private_path|stackTrace|stack_trace|callstack|affectedFiles|affected_files|touchedFiles|touched_files)$/i.test(key);
+  return /^(?:rawCommand|raw_command|rawFileBody|raw_file_body|fileBody|file_body|rawDiff|raw_diff|diff|rawOutput|raw_output|text|body|memoryBody|memory_body|noteBody|note_body|command|cmd|args|arguments|cwd|env|environment|shell|git|network|providerTool|provider_tool|toolCall|tool_call|privatePath|private_path|stackTrace|stack_trace|callstack|affectedFiles|affected_files|touchedFiles|touched_files)$/i.test(key);
 }
 
 function summarizeRejectedMetadata(value: unknown): unknown {

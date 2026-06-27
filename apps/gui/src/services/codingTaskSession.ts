@@ -4,11 +4,13 @@ import { evaluateAgentRunState, type AgentRunViewModel } from "./agentRunState";
 import type { CodingSessionTraceEntry, CodingSessionTraceFamily, CodingSessionTraceStatus } from "./codingSessionTrace";
 import { createProposalHistoryComparisonSummary, type ProposalHistory, type ProposalHistoryComparisonSummary, type ProposalHistoryEntryInput } from "./proposalHistory";
 import { redactSecrets, sanitizeDisplayText, sanitizeTimelineText } from "./redaction";
+import { countSuggestionStatuses, type TaskMemorySuggestion, type TaskMemorySuggestionStatus, type TaskMemorySuggestionSummary } from "./taskMemorySuggestions";
 
 export type CodingTaskSessionInput = {
   goal?: unknown;
   contextItems?: readonly ExplicitContextBundleItem[];
   memoryItems?: readonly ExplicitContextBundleItem[];
+  memorySuggestions?: TaskMemorySuggestionSummary | readonly TaskMemorySuggestion[];
   agentRun?: unknown;
   traceEntries?: readonly CodingSessionTraceEntry[];
   proposalHistory?: ProposalHistory | readonly ProposalHistoryEntryInput[];
@@ -47,6 +49,8 @@ export type CodingTaskSessionSnapshot = {
   memory: {
     count: number;
     labels: string[];
+    suggestionCounts: Record<TaskMemorySuggestionStatus, number>;
+    suggestionLabels: string[];
   };
   statuses: {
     proposal: string;
@@ -98,7 +102,7 @@ export function createCodingTaskSessionSnapshot(input: CodingTaskSessionInput = 
     executionAllowed: false,
     goal: summarizeGoal(input.goal, run),
     context: summarizeContext(contextItems),
-    memory: summarizeMemory(memoryItems),
+    memory: summarizeMemory(memoryItems, input.memorySuggestions),
     statuses: summarizeStatuses(run),
     trace: summarizeTrace(traceEntries),
     proposalHistory: createProposalHistoryComparisonSummary(input.proposalHistory),
@@ -165,11 +169,24 @@ function summarizeContext(items: readonly ExplicitContextBundleItem[]): CodingTa
   };
 }
 
-function summarizeMemory(items: readonly ExplicitContextBundleItem[]): CodingTaskSessionSnapshot["memory"] {
+function summarizeMemory(items: readonly ExplicitContextBundleItem[], suggestionsInput?: TaskMemorySuggestionSummary | readonly TaskMemorySuggestion[]): CodingTaskSessionSnapshot["memory"] {
+  const suggestions = normalizeMemorySuggestions(suggestionsInput);
   return {
     count: items.length,
     labels: items.slice(0, maxLabels).map((item) => item.kind === "project_memory" ? safeLabel(item.title, labelLimit) : safeContextLabel(item)).filter(Boolean),
+    suggestionCounts: countSuggestionStatuses(suggestions),
+    suggestionLabels: suggestions.slice(0, maxLabels).map((suggestion) => safeLabel(`memory suggestion · ${suggestion.status} · ${suggestion.titleLabel}`, labelLimit)).filter(Boolean),
   };
+}
+
+function normalizeMemorySuggestions(value: TaskMemorySuggestionSummary | readonly TaskMemorySuggestion[] | undefined): readonly TaskMemorySuggestion[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (isPlainObject(value) && Array.isArray(value.suggestions)) {
+    return value.suggestions;
+  }
+  return [];
 }
 
 function summarizeStatuses(run: AgentRunViewModel): CodingTaskSessionSnapshot["statuses"] {

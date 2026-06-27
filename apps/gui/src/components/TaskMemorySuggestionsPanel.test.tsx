@@ -53,7 +53,7 @@ describe("TaskMemorySuggestionsPanel", () => {
     });
 
     expect(onAttach).toHaveBeenCalledTimes(1);
-    expect(onAttach).toHaveBeenCalledWith(notes[0]);
+    expect(onAttach).toHaveBeenCalledWith(notes[0], expect.objectContaining({ status: "suggested", titleLabel: "Agent memory metadata" }));
     expect(browserStorageDump()).not.toContain("SECRET BODY SENTINEL");
   });
 

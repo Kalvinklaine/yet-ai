@@ -28,6 +28,8 @@ export type TaskMemorySuggestionSummary = {
   authority: "metadata_only";
   cloudRequired: false;
   executionAllowed: false;
+  counts: Record<TaskMemorySuggestionStatus, number>;
+  labels: string[];
   suggestions: TaskMemorySuggestion[];
   policy: {
     canAutoAttachMemory: false;
@@ -60,13 +62,32 @@ export function suggestTaskMemory(input: TaskMemorySuggestionInput = {}): TaskMe
   const staleBefore = safeTimestamp(input.staleBeforeIso);
   const notes = Array.isArray(input.projectMemoryNotes) ? input.projectMemoryNotes : [];
 
+  const suggestions = notes.slice(0, maxSuggestions).map((note) => classifyNote(note, { attachedIds, queryTokens, sessionLabel: safeLabel(input.sessionLabel), staleBefore }));
   return {
     kind: "task_memory_suggestions",
     authority: "metadata_only",
     cloudRequired: false,
     executionAllowed: false,
-    suggestions: notes.slice(0, maxSuggestions).map((note) => classifyNote(note, { attachedIds, queryTokens, sessionLabel: safeLabel(input.sessionLabel), staleBefore })),
+    counts: countSuggestionStatuses(suggestions),
+    labels: suggestionLabels(suggestions),
+    suggestions,
     policy: conservativePolicy(),
+  };
+}
+
+export function countSuggestionStatuses(suggestions: readonly TaskMemorySuggestion[]): Record<TaskMemorySuggestionStatus, number> {
+  return suggestions.reduce<Record<TaskMemorySuggestionStatus, number>>((counts, suggestion) => ({ ...counts, [suggestion.status]: counts[suggestion.status] + 1 }), emptySuggestionCounts());
+}
+
+export function createMemorySuggestionAttachTraceDetails(suggestion: TaskMemorySuggestion | null | undefined): Record<string, string | string[]> | undefined {
+  if (!suggestion) {
+    return undefined;
+  }
+  return {
+    suggestionStatus: suggestion.status,
+    suggestionTitleLabel: boundLabel(suggestion.titleLabel, labelLimit),
+    suggestionReasonLabels: suggestion.reasonLabels.map((label) => boundLabel(label, labelLimit)).slice(0, maxReasons),
+    suggestionWarningLabels: suggestion.warnings.map((label) => boundLabel(label, labelLimit)).slice(0, maxWarnings),
   };
 }
 
@@ -109,6 +130,20 @@ function suggestion(noteId: string, titleLabel: string, reasonLabels: string[], 
     status,
     warnings: uniqueLabels(warnings).slice(0, maxWarnings),
     canAttachExplicitly: status === "suggested",
+  };
+}
+
+function suggestionLabels(suggestions: readonly TaskMemorySuggestion[]): string[] {
+  return suggestions.slice(0, defaultMaxSuggestions).map((suggestion) => boundLabel(`memory suggestion · ${suggestion.status} · ${suggestion.titleLabel}`, labelLimit));
+}
+
+function emptySuggestionCounts(): Record<TaskMemorySuggestionStatus, number> {
+  return {
+    suggested: 0,
+    already_attached: 0,
+    stale: 0,
+    unsafe: 0,
+    unrelated: 0,
   };
 }
 

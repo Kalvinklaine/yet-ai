@@ -226,6 +226,38 @@ describe("codingSessionTrace", () => {
     expect(rendered).not.toContain("sk-secret123456789");
   });
 
+  it("keeps memory suggestion attach trace details sanitized", () => {
+    const entry = createCodingSessionTraceEntry({
+      family: "context.memory",
+      title: "Task-linked project memory attached",
+      status: "succeeded",
+      summary: "Attached task-linked local memory note from suggestion metadata.",
+      details: {
+        memoryLabel: "Agent memory",
+        taskLabel: "Task S69",
+        sessionLabel: "Chat chat-001",
+        attachTraceLabel: "memory-attach-chat-001-mem-1",
+        suggestionStatus: "suggested",
+        suggestionReasonLabels: ["Safe metadata overlap: agent."],
+        suggestionWarningLabels: [],
+        text: "RAW MEMORY BODY SENTINEL",
+        rawPrompt: "PROMPT_SENTINEL",
+        privatePath: "/Users/alice/private/memory.md",
+      },
+    }, fixedOptions());
+    const rendered = JSON.stringify(entry);
+
+    expect(entry.family).toBe("context.memory");
+    expect(entry.details?.suggestionStatus).toBe("suggested");
+    expect(entry.details?.suggestionReasonLabels).toEqual(["Safe metadata overlap: agent."]);
+    expect(rendered).toContain("Task S69");
+    expect(rendered).toContain("memory-attach-chat-001-mem-1");
+    expect(rendered).toContain("[redacted]");
+    expect(rendered).not.toContain("RAW MEMORY BODY SENTINEL");
+    expect(rendered).not.toContain("PROMPT_SENTINEL");
+    expect(rendered).not.toContain("/Users/alice");
+  });
+
   it("creates sanitized Agent Run apply requested and result trace entries", () => {
     const requested = createCodingSessionTraceEntry({
       family: "agentRun.applyRequested",

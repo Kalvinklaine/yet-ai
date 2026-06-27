@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectMemoryNote } from "./projectMemoryClient";
-import { suggestTaskMemory } from "./taskMemorySuggestions";
+import { createMemorySuggestionAttachTraceDetails, suggestTaskMemory } from "./taskMemorySuggestions";
 
 function note(patch: Partial<ProjectMemoryNote>): ProjectMemoryNote {
   return {
@@ -50,9 +50,51 @@ describe("suggestTaskMemory", () => {
     expect(rendered(summary)).not.toContain("SECRET BODY SENTINEL");
   });
 
+  it("returns sanitized suggestion count and status labels only", () => {
+    const summary = suggestTaskMemory({
+      taskGoalLabel: "Agent memory",
+      attachedMemoryNoteIds: ["mem-attached"],
+      projectMemoryNotes: [
+        note({ id: "mem-suggested", title: "Agent memory", tags: ["agent"] }),
+        note({ id: "mem-attached", title: "Attached memory", tags: ["agent"] }),
+        note({ id: "mem-stale", title: "Superseded memory", tags: ["agent"] }),
+        note({ id: "mem-unsafe", title: "Unsafe memory", text: "raw prompt body" }),
+        note({ id: "mem-unrelated", title: "Theme colors", tags: ["design"] }),
+      ],
+    });
+    const output = rendered(summary);
+
+    expect(summary.counts).toEqual({ suggested: 1, already_attached: 1, stale: 1, unsafe: 1, unrelated: 1 });
+    expect(summary.labels).toEqual(expect.arrayContaining([
+      "memory suggestion · suggested · Agent memory",
+      "memory suggestion · already_attached · Attached memory",
+      "memory suggestion · stale · Superseded memory",
+      "memory suggestion · unsafe · Unsafe memory",
+      "memory suggestion · unrelated · Theme colors",
+    ]));
+    expect(output).not.toContain("raw prompt body");
+  });
+  it("creates sanitized suggestion attach trace details without note bodies", () => {
+    const secret = "access_token=" + "q".repeat(64);
+    const summary = suggestTaskMemory({
+      taskGoalLabel: "Agent memory",
+      projectMemoryNotes: [note({ id: "mem-suggested", title: "Agent memory", tags: ["agent"], text: "Hidden body without suggestion labels" })],
+    });
+    const details = createMemorySuggestionAttachTraceDetails(summary.suggestions[0]);
+    const output = rendered(details);
+
+    expect(details).toEqual({
+      suggestionStatus: "suggested",
+      suggestionTitleLabel: "Agent memory",
+      suggestionReasonLabels: expect.arrayContaining([expect.stringContaining("agent")]),
+      suggestionWarningLabels: [],
+    });
+    expect(output).not.toContain("Hidden body");
+    expect(output).not.toContain(secret);
+    expect(output).not.toContain("access_token");
+  });
   it("classifies already attached notes without allowing another attach", () => {
     const summary = suggestTaskMemory({
-      taskGoalLabel: "Agent Run memory",
       attachedMemoryNoteIds: ["mem-attached"],
       projectMemoryNotes: [note({ id: "mem-attached", title: "Agent Run memory", tags: ["memory"] })],
     });

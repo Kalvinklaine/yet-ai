@@ -162,6 +162,32 @@ describe("activeEditorContext", () => {
     expect(summarizeExplicitContextBundleItem(verification).line).not.toContain("access_token");
   });
 
+  it("strips task session and trace labels from project memory chat context", () => {
+    const context = explicitContextBundleToChatContext([projectMemoryToBundleItem({
+      kind: "project_memory",
+      noteId: "mem-1",
+      title: "Suggestion note",
+      text: "Body selected only by explicit attach.",
+      tags: ["memory"],
+      taskLabel: "Task S69",
+      sessionLabel: "Chat chat-001",
+      attachTraceLabel: "memory-attach-chat-001-mem-1",
+    })]);
+    const output = JSON.stringify(context);
+
+    expect(context?.items[0]).toEqual({
+      kind: "project_memory",
+      noteId: "mem-1",
+      title: "Suggestion note",
+      text: "Body selected only by explicit attach.",
+      tags: ["memory"],
+    });
+    expect(output).not.toContain("Task S69");
+    expect(output).not.toContain("Chat chat-001");
+    expect(output).not.toContain("memory-attach");
+    expect(output).not.toContain("suggestionStatus");
+  });
+
   it("redacts active-file excerpt previews and reports host truncation", () => {
     const rawSecret = "sk-proj-1234567890abcdef";
     const preview = activeFileExcerptPreview({

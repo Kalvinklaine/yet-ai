@@ -172,6 +172,27 @@ describe("createCodingTaskSessionSnapshot", () => {
     expect(rendered(snapshot)).not.toContain("Long memory body");
   });
 
+  it("summarizes memory suggestion labels and counts without note bodies", () => {
+    const snapshot = createCodingTaskSessionSnapshot({
+      contextItems,
+      memorySuggestions: [
+        { noteId: "mem-1", titleLabel: "Architecture note", reasonLabels: ["Safe metadata overlap: architecture."], status: "suggested", warnings: [], canAttachExplicitly: true },
+        { noteId: "mem-2", titleLabel: "Stale note", reasonLabels: ["Memory note may be stale; review before reusing."], status: "stale", warnings: ["Memory note is labeled stale or superseded."], canAttachExplicitly: false },
+        { noteId: "mem-3", titleLabel: "Unsafe note", reasonLabels: ["Memory note needs manual review before attach."], status: "unsafe", warnings: ["Sensitive execution marker detected."], canAttachExplicitly: false },
+      ],
+    });
+    const output = rendered(snapshot);
+
+    expect(snapshot.memory.suggestionCounts).toEqual({ suggested: 1, already_attached: 0, stale: 1, unsafe: 1, unrelated: 0 });
+    expect(snapshot.memory.suggestionLabels).toEqual([
+      "memory suggestion · suggested · Architecture note",
+      "memory suggestion · stale · Stale note",
+      "memory suggestion · unsafe · Unsafe note",
+    ]);
+    expect(output).not.toContain("Long memory body");
+    expect(output).not.toContain("Raw failure body");
+  });
+
   it("creates safe memory linkage labels without leaking unsafe ids", () => {
     const secret = "access_token=" + "l".repeat(64);
 

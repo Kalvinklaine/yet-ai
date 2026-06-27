@@ -2252,7 +2252,7 @@ describe("agent progress panel", () => {
     expect(text).toContain("7 more summaries hidden.");
     expect(text).not.toContain("T-BOUND-18 / run-18");
     expect(text).not.toContain("safe recent summary 16");
-    expect(text.length).toBeLessThan(37500);
+    expect(text.length).toBeLessThan(37600);
   });
 
   it("endpoint unavailable or corrupt runtime error is sanitized and non-fatal", async () => {
@@ -2859,7 +2859,8 @@ describe("active editor attached context", () => {
     expect(text).toContain("suggested 1");
     expect(text).toContain("stale 1");
     expect(text).toContain("unsafe 1");
-    expect(text).toContain("Agent memory setup");
+    expect(text).toContain("Memory suggestions: suggested 1 · stale 1 · unsafe 1 · already attached 0");
+    expect(text).toContain("memory suggestion · suggested · Agent memory setup");
     expect(text).toContain("stale · review");
     expect(text).toContain("unsafe · warning only");
     expect(text).toContain("Unsafe memory cannot be attached from suggestions.");
@@ -2873,8 +2874,17 @@ describe("active editor attached context", () => {
     await act(async () => {
       findButton("Attach suggested memory to next message").click();
     });
-
     expect(container?.textContent).toContain("Attached task-linked local memory note Agent memory setup to the next message context.");
+    await act(async () => {
+      const details = findDetails("coding-session-trace-details");
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+    const trace = findDetails("coding-session-trace-details").textContent ?? "";
+    expect(trace).toContain("suggestionStatus");
+    expect(trace).toContain("suggested");
+    expect(trace).not.toContain("Suggested body must only send after click.");
+    expect(container?.textContent).toContain("already attached");
     expect(container?.textContent).toContain("already attached");
     expect(buttonsNamed("Attach suggested memory to next message")).toHaveLength(0);
     expect(findButton("Detach memory from next message")).toBeDefined();
@@ -9187,7 +9197,7 @@ describe("edit proposal preview", () => {
     expect(text).not.toContain("Bearer");
     expect(text).not.toContain("/Users/private/me");
     expect(text).not.toContain("credentials/private-token.txt");
-    expect(text.length).toBeLessThan(15500);
+    expect(text.length).toBeLessThan(15600);
   });
 
   it("ignores stale host apply result while a different apply request is pending in the same chat", async () => {
