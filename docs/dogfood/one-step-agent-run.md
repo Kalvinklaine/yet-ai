@@ -32,6 +32,8 @@ CI and smoke automation for Agent Run remain mock/loopback-only. Do not put real
 
 Sprint 70 Manual Agent Run RC status is manual local dogfood RC only. Use [`manual-agent-run-rc.md`](manual-agent-run-rc.md) for the current RC checklist and safe-share report template across browser, VS Code, and JetBrains. Browser evidence is limited to chat/provider/dev-preview review with no apply, verification, or IDE actions; VS Code is the primary manual host for explicit Apply and allowlisted Verification; JetBrains is a dev-preview parity host. The RC commands are `npm run check`, `npm run report:agent-run-rc -- --template`, `npm run report:agent-run-rc -- --check path/to/local-report.md`, optional `npm run report:agent-run-rc -- --self-test`, and optional `npm run smoke:agent-run-rc-bundle`. These commands do not create production, autonomy, marketplace publication, release publication, or real-provider CI evidence.
 
+Sprint 70 final audit status: Manual Agent Run RC is closed for local dogfood documentation and local/mock evidence only. The final audit found no high or critical issue in the S70 scope and no new auto-send, auto-apply, auto-verification, auto-repair, auto-retry, auto-rollback, hidden memory attach, hidden reads/search/indexing, shell/git/tool/provider authority, raw prompt/provider/file/diff/command/log/browser persistence, production readiness, publication readiness, real-provider CI, or controlled-autonomy approval. T-95, T-98, and T-244 remain triaged stale, superseded, or non-blocking unless reopened with current evidence.
+
 ## Scope and boundaries
 
 In scope:

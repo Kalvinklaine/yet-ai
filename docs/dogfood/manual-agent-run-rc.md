@@ -46,6 +46,12 @@ npm run smoke:agent-run-rc-bundle
 
 The RC smoke bundle is fail-fast and local/mock-only. It is not real-provider CI, production evidence, release evidence, hosted-backend evidence, workspace mutation evidence, or autonomy evidence.
 
+## S70 final audit status
+
+S70 Manual Agent Run RC is closed as a manual local dogfood documentation and local/mock evidence milestone. The final audit found no high or critical safety issue in the S70 scope: browser remains preview/review only for IDE actions, VS Code remains the primary explicit Apply and allowlisted Verification dogfood host, JetBrains remains dev-preview parity evidence, and the report helper plus RC smoke bundle do not add product authority.
+
+The S70 RC boundary remains: no auto-send, auto-apply, auto-verification, auto-repair, auto-retry, auto-rollback, hidden memory attach, hidden reads/search/indexing, shell/git/tool/provider authority, raw prompt/provider/file/diff/command/log/browser persistence, production readiness, publication readiness, real-provider CI, or controlled-autonomy claim. T-95, T-98, and T-244 are triaged stale, superseded, or non-blocking for this RC unless a future audit reopens them with current evidence.
+
 ## Manual RC run checklist
 
 1. Start from a clean local checkout or sanitized dev-preview artifact label.

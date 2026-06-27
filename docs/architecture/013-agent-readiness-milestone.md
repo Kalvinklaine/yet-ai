@@ -174,6 +174,12 @@ Sprint 69 is closed as a task memory suggestions safety milestone after the focu
 
 This completion status is local/mock verification evidence only. It confirms that S69 preserves the manual Agent Run boundary with no hidden memory attach, auto-send, auto-apply, auto-verification, auto-repair, auto-rollback, hidden reads, indexing, search, shell/git/tool/provider authority, raw prompt/provider/file/diff/command/log/browser persistence, runtime/bridge expansion, production readiness, or controlled-autonomy approval. Display-only task, session, trace, and suggestion labels remain sanitized metadata and are stripped from runtime chat context.
 
+## Sprint 70 final audit status
+
+Sprint 70 is closed as a Manual Agent Run RC documentation, local/mock smoke, and final safety audit milestone after the full S70 verification pass. The audit found no high or critical safety issue in the S70 scope: the RC report helper is a template/sanitizer only, the RC smoke bundle aggregates existing local/mock evidence only, and browser, VS Code, and JetBrains surfaces remain manual dev-preview evidence with explicit user Send, Apply, Verification, memory Attach, snippet search, follow-up/fix draft, and rollback review controls.
+
+This completion status is local/mock verification evidence only. It confirms that S70 preserves the manual Agent Run boundary with no auto-send, auto-apply, auto-verification, auto-repair, auto-retry, auto-rollback, hidden memory attach, hidden reads, search or indexing, shell/git/tool/provider authority, raw prompt/provider/file/diff/command/log/browser persistence, production readiness, publication readiness, real-provider CI, or controlled-autonomy approval. T-95, T-98, and T-244 remain triaged stale, superseded, or non-blocking for S70 unless a future audit reopens them with current evidence.
+
 ## Verification
 
 For this documentation milestone, run:
