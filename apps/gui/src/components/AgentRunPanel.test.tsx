@@ -433,14 +433,16 @@ describe("AgentRunPanel", () => {
     const secret = "access_token=" + "s".repeat(64);
     const laterHistory = createProposalHistory([
       { id: "proposal-1", source: "assistant", kind: "original", summary: "Small safe proposal", touchedFiles: ["src/example.ts"] },
-      { id: "proposal-2", source: "assistant-follow-up", kind: "follow_up", summary: "Follow-up proposal label", touchedFiles: ["src/example.ts"] },
+      { id: "proposal-2", source: "assistant-follow-up", kind: "follow_up", summary: "Follow-up proposal label", touchedFiles: ["src/example.ts"], lineage: { priorProposalId: "proposal-1", verificationRequestId: "verify-1", intent: "fix" } },
     ]);
     renderPanel({
       ...readyInput,
       applyResult: { status: "applied", summary: "Applied.", appliedFileCount: 1 },
+      verificationRequest: { requested: true, source: "user", requestId: "verify-1" },
       verificationResult: { status: "failed", exitCode: 1, outputTail: "failed" },
       boundedLoop: failedVerificationLoop,
     }, { host: "vscode", proposalHistory: laterHistory });
+
 
     expect(panelText()).toContain("Manual guided fix");
     expect(panelText()).toContain("new proposal detected");
@@ -451,6 +453,27 @@ describe("AgentRunPanel", () => {
     expect(panelText()).not.toContain(secret);
     expect(panelText()).not.toContain("/Users/alice");
     expect(browserStorageDump()).not.toContain(secret);
+  });
+
+  it("does not render unrelated follow-up proposals as guided-fix results", () => {
+    const unrelatedHistory = createProposalHistory([
+      { id: "proposal-1", source: "assistant", kind: "original", summary: "Small safe proposal", touchedFiles: ["src/example.ts"] },
+      { id: "proposal-2", source: "assistant-follow-up", kind: "follow_up", summary: "Unrelated follow-up proposal", touchedFiles: ["src/example.ts"], lineage: { priorProposalId: "proposal-other", verificationRequestId: "verify-other", intent: "followup" } },
+    ]);
+
+    renderPanel({
+      ...readyInput,
+      applyResult: { status: "applied", summary: "Applied.", appliedFileCount: 1 },
+      verificationRequest: { requested: true, source: "user", requestId: "verify-1" },
+      verificationResult: { status: "failed", exitCode: 1, outputTail: "failed" },
+      boundedLoop: failedVerificationLoop,
+    }, { host: "vscode", proposalHistory: unrelatedHistory });
+
+    expect(panelText()).toContain("Manual guided fix");
+    expect(panelText()).toContain("fix draft available");
+    expect(panelText()).not.toContain("new proposal detected");
+    expect(panelText()).not.toContain("Unrelated follow-up proposal");
+    expect(findButton("Draft Agent Run fix prompt").disabled).toBe(false);
   });
 
   it("draft follow-up CTAs call only explicit draft callbacks", () => {

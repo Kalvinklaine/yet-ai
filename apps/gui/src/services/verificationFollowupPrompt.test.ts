@@ -149,6 +149,18 @@ describe("buildVerificationFollowupPrompt", () => {
     expect(draft.metadata.session).toEqual({ label: "Settings copy session" });
   });
 
+  it("includes sanitized fix draft lineage metadata without raw payloads", () => {
+    const draft = buildVerificationFollowupPromptDraft(verificationResult("failed assertion label only"), "fix", {
+      priorProposal: { id: "proposal-1", summary: "Adjust visible review copy." },
+      verificationRequestId: "verify-1",
+      followupDraftId: "fix-draft-1",
+    });
+
+    expect(draft.metadata.draftId).toBe("fix-draft-1");
+    expect(draft.metadata.verification.requestId).toBe("verify-1");
+    expect(JSON.stringify(draft.metadata)).not.toContain("failed assertion label only");
+  });
+
   it("omits unsafe raw commands, cwd, env, diffs, file bodies, secrets, and private paths from context", () => {
     const secret = "sk-unsafecontextsecret";
     const draft = buildVerificationFollowupPromptDraft(verificationResult(`npm test -- --runInBand\n${secret}\n/Users/alice/project`, { commandId: "repository-check" }), "followup", {

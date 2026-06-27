@@ -29,6 +29,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
     lineage: {
       verificationRequestId: metadata?.verificationRequest?.requestId,
       priorProposalId: metadata?.proposal?.id,
+      followupDraftId: verificationFixDraft?.metadata?.draftId,
     },
   });
   const details = view.details;

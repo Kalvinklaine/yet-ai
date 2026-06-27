@@ -70,19 +70,46 @@ describe("deriveGuidedFixLoopStatus", () => {
     expect(awaiting.policy).toEqual({ displayOnly: true });
   });
 
-  it("detects a later correlated proposal from safe lineage labels", () => {
+  it("detects a later proposal only from matching sanitized proposal-history lineage", () => {
     const state = deriveGuidedFixLoopStatus(failedInput({
       proposalHistory: createProposalHistory([
         { id: "proposal-1", source: "assistant", kind: "original", summary: "Adjust the visible status label." },
-        { id: "proposal-2", source: "assistant", kind: "follow_up", summary: "Use safer manual fix copy." },
+        { id: "proposal-2", source: "assistant", kind: "follow_up", summary: "Use safer manual fix copy.", lineage: { priorProposalId: "proposal-1", verificationRequestId: "verify-1", followupDraftId: "fix-draft-1", intent: "fix" } },
       ]),
-      lineage: { priorProposalId: "proposal-1", latestProposalId: "proposal-2", latestProposalSource: "assistant" },
+      draft: {
+        present: true,
+        metadata: {
+          kind: "agent_run.followup_prompt_draft",
+          authority: "metadata_only",
+          cloudRequired: false,
+          executionAllowed: false,
+          draftOnly: true,
+          mode: "fix",
+          draftId: "fix-draft-1",
+          verification: { commandId: "gui-app-tests", status: "failed", exitCode: 1, truncated: true, requestId: "verify-1" },
+          priorProposal: { id: "proposal-1" },
+        },
+      },
+      lineage: { priorProposalId: "proposal-1", verificationRequestId: "verify-1", followupDraftId: "fix-draft-1" },
     }));
 
     expect(state.status).toBe("new_proposal_detected");
     expect(state.reason).toContain("later correlated proposal");
     expect(state.cta).toContain("Review the new proposal manually");
     expect(state.labels).toEqual(expect.arrayContaining(["latest proposal proposal-2"]));
+  });
+
+  it("does not detect unrelated later follow-up proposals as guided fixes", () => {
+    const state = deriveGuidedFixLoopStatus(failedInput({
+      proposalHistory: createProposalHistory([
+        { id: "proposal-1", source: "assistant", kind: "original", summary: "Adjust the visible status label." },
+        { id: "proposal-2", source: "assistant", kind: "follow_up", summary: "Unrelated follow-up copy.", lineage: { priorProposalId: "proposal-x", verificationRequestId: "verify-other", intent: "followup" } },
+      ]),
+      lineage: { priorProposalId: "proposal-1", verificationRequestId: "verify-1" },
+    }));
+
+    expect(state.status).toBe("fix_draft_available");
+    expect(state.reason).not.toContain("later correlated proposal");
   });
 
   it("blocks failed verification when prior proposal metadata is missing", () => {

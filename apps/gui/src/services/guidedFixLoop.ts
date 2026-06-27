@@ -26,8 +26,7 @@ export type GuidedFixLoopInput = {
   lineage?: {
     verificationRequestId?: unknown;
     priorProposalId?: unknown;
-    latestProposalId?: unknown;
-    latestProposalSource?: unknown;
+    followupDraftId?: unknown;
   };
 };
 
@@ -83,8 +82,9 @@ export function deriveGuidedFixLoopStatus(input: GuidedFixLoopInput = {}): Guide
     return result("blocked", "Failed verification has no prior safe proposal metadata.", "Review the failed run and request a manual proposal before drafting a fix.", labels(priorProposal, history, draft), ["Missing prior safe proposal metadata."]);
   }
 
-  if (history.latestProposalId && isLaterProposal(history.latestProposalId, priorProposal?.id, lineage.latestProposalId, lineage.priorProposalId)) {
-    return result("new_proposal_detected", "A later correlated proposal is available after the failed verification.", "Review the new proposal manually before applying anything.", labels(priorProposal, history, draft, "new proposal detected"), []);
+    const correlatedProposal = findCorrelatedProposal(history, priorProposal, lineage, draft);
+  if (correlatedProposal) {
+    return result("new_proposal_detected", "A later correlated proposal is available after the failed verification.", "Review the new proposal manually before applying anything.", labels(priorProposal, { ...history, latestProposalId: correlatedProposal.id, latestStatus: correlatedProposal.status, latestSummary: correlatedProposal.summary, latestSource: correlatedProposal.source }, draft, "new proposal detected"), []);
   }
   if (draft.present && draft.awaitingManualSend) {
     return result("awaiting_manual_send", "A fix draft is waiting in the composer for manual review.", "Edit the draft if needed, then click Send manually only if you choose.", labels(priorProposal, history, draft), []);
@@ -120,18 +120,44 @@ function sanitizeProposal(value: GuidedFixLoopInput["priorProposal"], diagnostic
   return id || summary || source ? stripUndefined({ id, summary, source }) : undefined;
 }
 
-function summarizeHistory(history: GuidedFixLoopInput["proposalHistory"], session: CodingTaskSessionSnapshot | undefined, diagnostics: string[]): { hasSafeProposal: boolean; latestProposalId?: string; latestStatus?: string; latestSummary?: string; latestSource?: string } {
+type SafeHistoryEntry = {
+  id?: string;
+  kind: string;
+  status: string;
+  summary?: string;
+  source?: string;
+  lineage?: {
+    priorProposalId?: string;
+    verificationRequestId?: string;
+    followupDraftId?: string;
+    intent?: "fix" | "followup";
+  };
+};
+
+type HistorySummary = {
+  hasSafeProposal: boolean;
+  latestProposalId?: string;
+  latestStatus?: string;
+  latestSummary?: string;
+  latestSource?: string;
+  entries: SafeHistoryEntry[];
+};
+
+function summarizeHistory(history: GuidedFixLoopInput["proposalHistory"], session: CodingTaskSessionSnapshot | undefined, diagnostics: string[]): HistorySummary {
   if (Array.isArray(history)) {
-    const safeEntries = history.map((entry) => sanitizeHistoryEntry(entry, diagnostics)).filter((entry): entry is NonNullable<ReturnType<typeof sanitizeHistoryEntry>> => Boolean(entry));
+    const safeEntries = history.map((entry) => sanitizeHistoryEntry(entry, diagnostics)).filter((entry): entry is SafeHistoryEntry => Boolean(entry));
     const proposalEntries = safeEntries.filter((entry) => entry.kind === "original" || entry.kind === "follow_up");
-    const latestProposal = proposalEntries[proposalEntries.length - 1];
+    const displayProposalEntries = proposalEntries.filter((entry) => entry.kind !== "follow_up" || entry.lineage?.intent === "fix");
+    const latestDisplayProposal = displayProposalEntries[displayProposalEntries.length - 1] ?? proposalEntries[proposalEntries.length - 1];
     const latest = safeEntries[safeEntries.length - 1];
+    const latestDisplayEntry = latest?.kind === "follow_up" && latest.lineage?.intent !== "fix" ? latestDisplayProposal : latest;
     return stripUndefined({
       hasSafeProposal: proposalEntries.length > 0,
-      latestProposalId: latestProposal?.id,
-      latestStatus: latest?.status,
-      latestSummary: latest?.summary,
-      latestSource: latest?.source,
+      latestProposalId: latestDisplayProposal?.id,
+      latestStatus: latestDisplayEntry?.status,
+      latestSummary: latestDisplayEntry?.summary,
+      latestSource: latestDisplayEntry?.source,
+      entries: safeEntries,
     });
   }
   if (history && "entries" in history && Array.isArray(history.entries)) {
@@ -141,15 +167,15 @@ function summarizeHistory(history: GuidedFixLoopInput["proposalHistory"], sessio
     const latestStatus = safeLabel(history.latestStatus, 80, diagnostics, "history latest status");
     const latestSummary = safeLabel(history.latestSummary, 160, diagnostics, "history latest summary");
     const latestSource = safeLabel(history.latestSource, 80, diagnostics, "history latest source");
-    return stripUndefined({ hasSafeProposal: history.visibleCount > 0, latestStatus, latestSummary, latestSource });
+    return stripUndefined({ hasSafeProposal: history.visibleCount > 0, latestStatus, latestSummary, latestSource, entries: [] });
   }
   if (session?.proposalHistory) {
     return summarizeHistory(session.proposalHistory, undefined, diagnostics);
   }
-  return { hasSafeProposal: false };
+  return { hasSafeProposal: false, entries: [] };
 }
 
-function sanitizeHistoryEntry(entry: ProposalHistoryEntry, diagnostics: string[]): { id?: string; kind: string; status: string; summary?: string; source?: string } | undefined {
+function sanitizeHistoryEntry(entry: ProposalHistoryEntry, diagnostics: string[]): SafeHistoryEntry | undefined {
   if (!entry || typeof entry !== "object") {
     diagnostics.push("Proposal history metadata is malformed.");
     return undefined;
@@ -159,18 +185,37 @@ function sanitizeHistoryEntry(entry: ProposalHistoryEntry, diagnostics: string[]
   const status = safeLabel(entry.status, 80, diagnostics, "proposal history status");
   const summary = safeLabel(entry.summary, 160, diagnostics, "proposal history summary");
   const source = safeLabel(entry.source, 80, diagnostics, "proposal history source");
+  const lineage = sanitizeHistoryLineage(entry.lineage, diagnostics);
   if (!kind || !status) {
     diagnostics.push("Proposal history metadata is missing safe labels.");
     return undefined;
   }
-  return stripUndefined({ id, kind, status, summary, source });
+  return stripUndefined({ id, kind, status, summary, source, lineage });
 }
 
-function sanitizeDraft(value: GuidedFixLoopDraftState | undefined, diagnostics: string[]): { present: boolean; awaitingManualSend: boolean; label?: string } {
+function sanitizeHistoryLineage(value: ProposalHistoryEntry["lineage"], diagnostics: string[]): SafeHistoryEntry["lineage"] | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const priorProposalId = safeId(value.priorProposalId, diagnostics, "proposal history lineage prior proposal id");
+  const verificationRequestId = safeId(value.verificationRequestId, diagnostics, "proposal history lineage verification request id");
+  const followupDraftId = safeId(value.followupDraftId, diagnostics, "proposal history lineage follow-up draft id");
+  const intent = value.intent === "fix" || value.intent === "followup" ? value.intent : undefined;
+  if (value.intent !== undefined && !intent) {
+    diagnostics.push("Unsafe proposal history lineage intent metadata was omitted.");
+  }
+  const lineage = stripUndefined({ priorProposalId, verificationRequestId, followupDraftId, intent });
+  return Object.keys(lineage).length > 0 ? lineage : undefined;
+}
+
+function sanitizeDraft(value: GuidedFixLoopDraftState | undefined, diagnostics: string[]): { present: boolean; awaitingManualSend: boolean; label?: string; followupDraftId?: string; verificationRequestId?: string; priorProposalId?: string } {
   if (!value) {
     return { present: false, awaitingManualSend: false };
   }
   const metadata = value.metadata;
+  let followupDraftId: string | undefined;
+  let verificationRequestId: string | undefined;
+  let priorProposalId: string | undefined;
   if (metadata) {
     if (metadata.kind !== "agent_run.followup_prompt_draft" || metadata.authority !== "metadata_only" || metadata.cloudRequired !== false || metadata.executionAllowed !== false || metadata.draftOnly !== true) {
       diagnostics.push("Fix draft metadata is not display-only.");
@@ -178,27 +223,50 @@ function sanitizeDraft(value: GuidedFixLoopDraftState | undefined, diagnostics: 
     if (metadata.mode !== "fix") {
       diagnostics.push("Fix draft metadata is not a fix draft.");
     }
+    followupDraftId = safeId(metadata.draftId, diagnostics, "fix draft id");
+    verificationRequestId = safeId(metadata.verification.requestId, diagnostics, "fix draft verification request id");
+    priorProposalId = safeId(metadata.priorProposal?.id, diagnostics, "fix draft prior proposal id");
   }
   const label = safeLabel(value.label, 120, diagnostics, "draft label");
-  return { present: value.present === true || Boolean(metadata), awaitingManualSend: value.awaitingManualSend === true, label };
+  return stripUndefined({ present: value.present === true || Boolean(metadata), awaitingManualSend: value.awaitingManualSend === true, label, followupDraftId, verificationRequestId, priorProposalId });
 }
 
-function sanitizeLineage(value: GuidedFixLoopInput["lineage"], diagnostics: string[]): { verificationRequestId?: string; priorProposalId?: string; latestProposalId?: string; latestProposalSource?: string } {
+function sanitizeLineage(value: GuidedFixLoopInput["lineage"], diagnostics: string[]): { verificationRequestId?: string; priorProposalId?: string; followupDraftId?: string } {
   if (!value) {
     return {};
   }
   return stripUndefined({
     verificationRequestId: safeId(value.verificationRequestId, diagnostics, "verification request id"),
     priorProposalId: safeId(value.priorProposalId, diagnostics, "lineage prior proposal id"),
-    latestProposalId: safeId(value.latestProposalId, diagnostics, "lineage latest proposal id"),
-    latestProposalSource: safeLabel(value.latestProposalSource, 80, diagnostics, "lineage latest proposal source"),
+    followupDraftId: safeId(value.followupDraftId, diagnostics, "lineage follow-up draft id"),
   });
 }
 
-function isLaterProposal(historyLatestId: string, priorProposalId: string | undefined, lineageLatestId: string | undefined, lineagePriorId: string | undefined): boolean {
-  const prior = priorProposalId ?? lineagePriorId;
-  const latest = lineageLatestId ?? historyLatestId;
-  return Boolean(prior && latest && latest !== prior && historyLatestId === latest);
+function findCorrelatedProposal(history: HistorySummary, priorProposal: { id?: string } | undefined, lineage: { verificationRequestId?: string; priorProposalId?: string; followupDraftId?: string }, draft: { followupDraftId?: string; verificationRequestId?: string; priorProposalId?: string }): SafeHistoryEntry | undefined {
+  const priorProposalId = priorProposal?.id ?? draft.priorProposalId ?? lineage.priorProposalId;
+  const verificationRequestId = draft.verificationRequestId ?? lineage.verificationRequestId;
+  const followupDraftId = draft.followupDraftId ?? lineage.followupDraftId;
+  if (!priorProposalId || !verificationRequestId) {
+    return undefined;
+  }
+  const proposalEntries = history.entries.filter((entry) => entry.kind === "original" || entry.kind === "follow_up");
+  const priorIndex = proposalEntries.findIndex((entry) => entry.id === priorProposalId);
+  return proposalEntries.find((entry, index) => {
+    if (priorIndex >= 0 && index <= priorIndex) {
+      return false;
+    }
+    if (!entry.id || entry.id === priorProposalId || entry.kind !== "follow_up") {
+      return false;
+    }
+    const entryLineage = entry.lineage;
+    if (entryLineage?.intent !== "fix") {
+      return false;
+    }
+    if (entryLineage.priorProposalId !== priorProposalId || entryLineage.verificationRequestId !== verificationRequestId) {
+      return false;
+    }
+    return followupDraftId ? entryLineage.followupDraftId === followupDraftId : true;
+  });
 }
 
 function labels(priorProposal: { id?: string; summary?: string; source?: string } | undefined, history: { latestProposalId?: string; latestStatus?: string; latestSummary?: string; latestSource?: string }, draft: { present: boolean; awaitingManualSend: boolean; label?: string }, extra?: string): string[] {

@@ -2224,12 +2224,15 @@ export function App() {
       chatInputRef.current?.focus();
       return;
     }
+    const draftId = mode === "fix" && agentRunInput?.verificationRequest?.requestId ? `fix-draft-${agentRunInput.verificationRequest.requestId}` : undefined;
     const draft = buildVerificationFollowupPromptDraft(result, mode, {
       priorProposal: agentRunInput?.proposal,
       proposalHistory,
       planPreview: agentRunInput?.planPreview,
       touchedFiles: agentRunInput?.proposal?.touchedFiles ?? agentRunInput?.planPreview?.expectedTouchedFiles,
       sessionLabel: codingTaskSession.goal.label,
+      verificationRequestId: agentRunInput?.verificationRequest?.requestId,
+      followupDraftId: draftId,
     });
     setChatInput(draft.prompt);
     if (mode === "fix") {

@@ -56,6 +56,47 @@ describe("proposalHistory", () => {
     expect(summary.touchedFileLabels).toEqual(["apps/gui/src/App.tsx", "apps/gui/src/main.tsx"]);
   });
 
+  it("records sanitized proposal lineage metadata", () => {
+    const history = createProposalHistory([
+      original({
+        kind: "follow_up",
+        lineage: {
+          priorProposalId: "proposal-0",
+          verificationRequestId: "verify-1",
+          followupDraftId: "fix-draft-1",
+          intent: "fix",
+        },
+      }),
+    ]);
+
+    expect(history.entries[0].lineage).toEqual({
+      priorProposalId: "proposal-0",
+      verificationRequestId: "verify-1",
+      followupDraftId: "fix-draft-1",
+      intent: "fix",
+    });
+  });
+
+  it("omits unsafe proposal lineage metadata", () => {
+    const history = createProposalHistory([
+      original({
+        lineage: {
+          priorProposalId: "proposal-/Users/alice/private",
+          verificationRequestId: "verify-1",
+          followupDraftId: "raw prompt body",
+          intent: "repair-now",
+        },
+      }),
+    ]);
+    const serialized = JSON.stringify(history);
+
+    expect(history.entries[0].lineage).toEqual({ verificationRequestId: "verify-1" });
+    expect(history.diagnostics.map((item) => item.code)).toContain("unsafe_metadata");
+    expect(serialized).not.toContain("/Users/alice");
+    expect(serialized).not.toContain("raw prompt");
+    expect(serialized).not.toContain("repair-now");
+  });
+
   it("records rejected proposals with safe diagnostics only", () => {
     const history = createProposalHistory([
       original({ id: "proposal-bad", kind: "rejected", status: "rejected", summary: "Proposal rejected before apply.", diagnostic: "Missing explicit user confirmation." }),

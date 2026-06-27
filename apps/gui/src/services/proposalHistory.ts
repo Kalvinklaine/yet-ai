@@ -19,6 +19,20 @@ export type ProposalHistoryAuthorityPolicy = {
   displayOnly: true;
 };
 
+export type ProposalHistoryEntryLineageInput = {
+  priorProposalId?: unknown;
+  verificationRequestId?: unknown;
+  followupDraftId?: unknown;
+  intent?: unknown;
+};
+
+export type ProposalHistoryEntryLineage = {
+  priorProposalId?: string;
+  verificationRequestId?: string;
+  followupDraftId?: string;
+  intent?: "fix" | "followup";
+};
+
 export type ProposalHistoryEntryInput = {
   id?: unknown;
   source?: unknown;
@@ -33,6 +47,7 @@ export type ProposalHistoryEntryInput = {
   applyStatus?: unknown;
   verificationStatus?: unknown;
   timestamp?: unknown;
+  lineage?: ProposalHistoryEntryLineageInput;
 };
 
 export type ProposalHistoryEntry = {
@@ -48,6 +63,7 @@ export type ProposalHistoryEntry = {
   applyStatus?: "applied" | "failed";
   verificationStatus?: "succeeded" | "failed";
   timestamp?: string;
+  lineage?: ProposalHistoryEntryLineage;
 };
 
 export type ProposalHistory = {
@@ -218,6 +234,7 @@ function sanitizeEntry(input: ProposalHistoryEntryInput): { entry?: ProposalHist
   const applyStatus = sanitizeApplyStatus(input.applyStatus, status);
   const verificationStatus = sanitizeVerificationStatus(input.verificationStatus, status);
   const timestamp = sanitizeTimestamp(input.timestamp, diagnostics);
+  const lineage = sanitizeLineage(input.lineage, diagnostics);
   return {
     entry: stripUndefined({
       id: identity.id,
@@ -232,6 +249,7 @@ function sanitizeEntry(input: ProposalHistoryEntryInput): { entry?: ProposalHist
       applyStatus,
       verificationStatus,
       timestamp,
+      lineage,
     }),
     diagnostics,
   };
@@ -382,6 +400,48 @@ function sanitizeTimestamp(value: unknown, diagnostics: ProposalHistoryDiagnosti
     return undefined;
   }
   return new Date(time).toISOString();
+}
+
+function sanitizeLineage(value: ProposalHistoryEntryLineageInput | undefined, diagnostics: ProposalHistoryDiagnostic[]): ProposalHistoryEntryLineage | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isPlainObject(value)) {
+    diagnostics.push(diagnostic("unsafe_metadata", "Unsafe proposal history lineage metadata was omitted."));
+    return undefined;
+  }
+  const priorProposalId = safeLineageId(value.priorProposalId, diagnostics, "prior proposal id");
+  const verificationRequestId = safeLineageId(value.verificationRequestId, diagnostics, "verification request id");
+  const followupDraftId = safeLineageId(value.followupDraftId, diagnostics, "follow-up draft id");
+  const intent = sanitizeLineageIntent(value.intent, diagnostics);
+  const lineage = stripUndefined({ priorProposalId, verificationRequestId, followupDraftId, intent });
+  return Object.keys(lineage).length > 0 ? lineage : undefined;
+}
+
+function safeLineageId(value: unknown, diagnostics: ProposalHistoryDiagnostic[], field: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const id = safeId(value);
+  if (!id) {
+    diagnostics.push(diagnostic("unsafe_metadata", `Unsafe proposal history lineage ${field} was omitted.`));
+  }
+  return id;
+}
+
+function sanitizeLineageIntent(value: unknown, diagnostics: ProposalHistoryDiagnostic[]): ProposalHistoryEntryLineage["intent"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "fix" || value === "followup") {
+    return value;
+  }
+  diagnostics.push(diagnostic("unsafe_metadata", "Unsafe proposal history lineage intent was omitted."));
+  return undefined;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function safeCount(value: unknown): number | undefined {

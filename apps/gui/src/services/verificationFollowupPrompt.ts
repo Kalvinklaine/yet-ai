@@ -23,6 +23,8 @@ export type VerificationFollowupPromptContext = {
   sessionLabel?: unknown;
   sessionSnapshot?: CodingTaskSessionSnapshot;
   touchedFiles?: string[];
+  verificationRequestId?: unknown;
+  followupDraftId?: unknown;
 };
 
 export type VerificationFollowupPromptDraftMetadata = {
@@ -32,11 +34,13 @@ export type VerificationFollowupPromptDraftMetadata = {
   executionAllowed: false;
   draftOnly: true;
   mode: VerificationFollowupPromptMode;
+  draftId?: string;
   verification: {
     commandId: string;
     status: string;
     exitCode: number | "unknown";
     truncated: boolean;
+    requestId?: string;
   };
   priorProposal?: {
     id?: string;
@@ -89,6 +93,8 @@ export function buildVerificationFollowupPromptDraft(result: VerificationResultF
   const status = safeContextLine(result.status, 40, diagnostics, "verification status") ?? "unknown";
   const exitCode = Number.isInteger(result.exitCode) && result.exitCode >= 0 && result.exitCode <= 255 ? result.exitCode : "unknown";
   const truncated = result.truncated ? "yes" : "no";
+  const verificationRequestId = safeId(context?.verificationRequestId, diagnostics, "verification request id");
+  const followupDraftId = safeId(context?.followupDraftId, diagnostics, "follow-up draft id");
   const outputSummary = mode === "fix" ? undefined : boundedOutputSummary(result.outputTail, diagnostics);
   const priorProposal = sanitizePriorProposal(context?.priorProposal, diagnostics);
   const planPreview = sanitizePlanPreview(context?.planPreview, context?.planStepLabel, diagnostics);
@@ -106,12 +112,14 @@ export function buildVerificationFollowupPromptDraft(result: VerificationResultF
     executionAllowed: false,
     draftOnly: true,
     mode,
-    verification: {
+    draftId: followupDraftId,
+    verification: stripUndefined({
       commandId,
       status,
       exitCode,
       truncated: result.truncated,
-    },
+      requestId: verificationRequestId,
+    }),
     priorProposal,
     planPreview,
     proposalHistory,
