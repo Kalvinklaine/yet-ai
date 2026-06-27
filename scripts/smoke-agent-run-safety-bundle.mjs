@@ -12,6 +12,7 @@ const steps = [
   ["Explicit verification safety", "smoke:agent-run-verification"],
   ["S61 multi-step plan preview safety", "smoke:agent-run-multistep-plan"],
   ["S62 follow-up loop safety", "smoke:agent-run-followup-loop"],
+  ["S68 safer apply UX safety", "smoke:agent-run-safer-apply-ux"],
 ];
 
 console.log("Agent Run safety regression bundle starting.");
@@ -39,7 +40,7 @@ for (const [label, scriptName] of steps) {
 }
 
 console.log("\nAgent Run safety regression bundle passed.");
-console.log("Verified curated local/mock safety gates for model proposal, checkpoint readiness, apply, verification, S61 plan preview, and S62 follow-up loop.");
+console.log("Verified curated local/mock safety gates for model proposal, checkpoint readiness, apply, verification, S61 plan preview, S62 follow-up loop, and S68 safer apply UX.");
 
 function printDependencyGuidance(scriptName) {
   console.error("\nActionable dependency guidance:");
