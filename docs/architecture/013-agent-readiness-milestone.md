@@ -43,6 +43,18 @@ Avoid softer wording that implies implementation, autonomy, production publicati
 | Real-provider CI | Blocked/deferred | CI and smokes remain mock/loopback/local deterministic. Real provider use is manual local BYOK dogfood only and must not use secrets in automation. |
 | Production release / marketplace claims | Blocked/deferred | Current artifacts and docs are dev-preview evidence only. They do not prove signing, notarization, publishing, marketplace listing readiness, installer readiness, production support, or production autonomy. |
 
+## Sprint 70 Manual Agent Run RC status
+
+Sprint 70 is a manual local dogfood RC documentation and evidence pass only. It does not change the readiness taxonomy above and does not approve production, autonomy, marketplace readiness, release readiness, or real-provider CI.
+
+Host boundaries for S70 RC evidence:
+
+- **Browser / standalone GUI**: chat, provider setup/status, and dev-preview Agent Run review evidence only. Browser does not apply workspace edits, run verification commands, launch IDE actions, or prove production readiness.
+- **VS Code**: primary manual local IDE dogfood host. It may provide evidence for explicit user Send, reviewed Apply through the existing confirmed host path, and allowlisted command-id Verification. It remains dev-preview and manual-only.
+- **JetBrains**: dev-preview parity host. It may provide hosted GUI and bridge parity evidence for manual controls and boundaries, but it is not a production parity or marketplace publication claim.
+
+Use `docs/dogfood/manual-agent-run-rc.md` for the S70 checklist and sanitized report template. The exact RC commands are `npm run check`, `npm run report:agent-run-rc -- --template`, `npm run report:agent-run-rc -- --check path/to/local-report.md`, optional `npm run report:agent-run-rc -- --self-test`, and optional `npm run smoke:agent-run-rc-bundle`. Completed reports must omit secrets, raw prompts, provider responses, file bodies, diffs, patch bodies, command strings, cwd/env values, private paths, browser-storage dumps, and bridge payload dumps.
+
 ## Blocked and deferred capabilities
 
 These capabilities are explicitly not implemented as active Agent Run features:

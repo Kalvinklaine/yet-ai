@@ -140,6 +140,12 @@ Sprint 69 keeps task memory suggestions inside the existing explicit context att
 
 The final S69 audit found no high or critical tool-authority expansion in this scope. Suggestions do not search, index, read hidden files, save memory, attach automatically, send chat, apply edits, run verification, repair, retry, roll back, call providers/tools, execute shell/git/package commands, persist raw prompt/provider/file/diff/command/log/browser data, or add runtime/bridge authority. Runtime chat context includes the memory body only after explicit Attach and strips display-only task/session/trace/suggestion labels.
 
+## Sprint 70 manual RC authority note
+
+Sprint 70 Manual Agent Run RC evidence does not expand tool authority. The S70 checklist and `npm run smoke:agent-run-rc-bundle` aggregate manual/local/mock evidence for existing boundaries only: browser remains chat/provider/dev-preview review with no apply, verification, or IDE actions; VS Code remains the primary manual host for explicit Apply and allowlisted Verification; JetBrains remains a dev-preview parity host. The report helper `npm run report:agent-run-rc` is a sanitizer/template validator only and does not call providers, execute commands through the product, mutate workspaces, or certify production/autonomy/marketplace readiness.
+
+S70 reports must stay sanitized and omit secrets, raw prompts, provider responses, file bodies, diffs, patch bodies, command strings, cwd/env values, private paths, browser-storage dumps, and bridge payload dumps. Any future card that changes these authority boundaries must start with schemas, invalid fixtures, host policy, and local smokes before implementation.
+
 
 ## Product boundaries to preserve
 
