@@ -45,8 +45,9 @@ describe("buildVerificationFollowupPrompt", () => {
     const prompt = buildVerificationFollowupPrompt(result, "fix");
 
     expect(prompt).toContain("Verification fix prompt");
-    expect(prompt).toContain("Command id: repository-check [redacted]");
-    expect(prompt).toContain("Suggest the smallest safe fix plan");
+    expect(prompt).toContain("Command id: verification-command");
+    expect(prompt).toContain("Unsafe verification command id was omitted.");
+    expect(prompt).toContain("Propose a safe edit only");
     expect(prompt).not.toContain("access_token");
     expect(prompt).not.toContain("c".repeat(64));
   });
@@ -68,7 +69,7 @@ describe("buildVerificationFollowupPrompt", () => {
         truncated: true,
       },
     });
-    expect(draft.prompt).toContain("Suggest the smallest safe fix plan for this verification result.");
+    expect(draft.prompt).toContain("Propose a safe edit only.");
     expect(draft.prompt).not.toMatch(/automatically\s+(?:send|apply|run|verify|fix|repair|rollback)/i);
     expect(draft.prompt).not.toMatch(/(?:will|should)\s+(?:send|apply|run|verify|repair)/i);
     expect(draft.prompt).not.toContain("requestId");
@@ -102,7 +103,7 @@ describe("buildVerificationFollowupPrompt", () => {
 
     expect(draft.prompt).toContain("Sanitized Agent Run context");
     expect(draft.prompt).toContain("Previous proposal id: assistant-msg-123");
-    expect(draft.prompt).toContain("Previous proposal summary: Update the visible empty state copy after manual review.");
+    expect(draft.prompt).toContain("Previous proposal label: Update the visible empty state copy after manual review.");
     expect(draft.prompt).toContain("Plan title: Review copy change");
     expect(draft.prompt).toContain("Plan summary: Inert plan summary for the next manual review.");
     expect(draft.prompt).toContain("Plan steps: Inspect failing assertion; Adjust copy; Ask user to re-run verification");
@@ -110,6 +111,42 @@ describe("buildVerificationFollowupPrompt", () => {
     expect(draft.metadata.priorProposal).toEqual({ id: "assistant-msg-123", summary: "Update the visible empty state copy after manual review." });
     expect(draft.metadata.planPreview?.steps).toHaveLength(3);
     expect(draft.metadata.touchedFiles).toEqual(["src/App.tsx", "src/services/state.ts"]);
+  });
+
+  it("correlates failed verification with proposal history, plan step, and session labels for manual fix drafts", () => {
+    const draft = buildVerificationFollowupPromptDraft(verificationResult("failed assertion label only"), "fix", {
+      priorProposal: {
+        id: "proposal-1",
+        summary: "Adjust visible review copy.",
+        touchedFiles: ["apps/gui/src/App.tsx"],
+      },
+      proposalHistory: [
+        { id: "proposal-1", source: "assistant", kind: "original", status: "applied", summary: "Adjust visible review copy.", touchedFiles: [], touchedFileCount: 0, diagnostics: [] },
+        { id: "proposal-2", source: "assistant", kind: "follow_up", status: "detected", summary: "Prepare safer fix copy.", touchedFiles: [], touchedFileCount: 0, diagnostics: [] },
+      ],
+      planPreview: {
+        title: "Manual review plan",
+        summary: "Review the failed label and prepare a bounded proposal.",
+        steps: ["Inspect label", "Draft safe proposal"],
+      },
+      planStepLabel: "Draft safe proposal",
+      sessionLabel: "Settings copy session",
+    });
+
+    expect(draft.prompt).toContain("The user must review this draft");
+    expect(draft.prompt).toContain("click Send manually");
+    expect(draft.prompt).toContain("Status: failed");
+    expect(draft.prompt).toContain("Previous proposal label: Adjust visible review copy.");
+    expect(draft.prompt).toContain("Latest proposal id: proposal-2");
+    expect(draft.prompt).toContain("Proposal lineage labels: proposal-1 · applied · Adjust visible review copy.; proposal-2 · detected · Prepare safer fix copy.");
+    expect(draft.prompt).toContain("Current plan step: Draft safe proposal");
+    expect(draft.prompt).toContain("Session label: Settings copy session");
+    expect(draft.prompt).toContain("Touched file labels: apps/gui/src/App.tsx");
+    expect(draft.prompt).toContain("Propose a safe edit only");
+    expect(draft.prompt).toContain("Raw command output is intentionally omitted from this fix draft.");
+    expect(draft.metadata.proposalHistory).toMatchObject({ latestProposalId: "proposal-2", latestStatus: "detected", latestSummary: "Prepare safer fix copy.", latestSource: "assistant" });
+    expect(draft.metadata.planPreview?.stepLabel).toBe("Draft safe proposal");
+    expect(draft.metadata.session).toEqual({ label: "Settings copy session" });
   });
 
   it("omits unsafe raw commands, cwd, env, diffs, file bodies, secrets, and private paths from context", () => {
@@ -123,9 +160,11 @@ describe("buildVerificationFollowupPrompt", () => {
       planPreview: {
         title: "Plan with safe title",
         summary: "raw diff: do not include this body",
-        steps: ["Inspect visible summary", "apply patch automatically", "Review manually"],
+        steps: ["Inspect visible summary", "provider payload response", "apply patch automatically", "Review manually"],
         expectedTouchedFiles: ["src/plan.ts"],
       },
+      planStepLabel: "file body should not appear",
+      sessionLabel: "provider payload should not appear",
     });
 
     expect(draft.prompt).toContain("[redacted]");
@@ -139,6 +178,8 @@ describe("buildVerificationFollowupPrompt", () => {
     expect(draft.prompt).not.toContain(secret);
     expect(draft.prompt).not.toContain("raw diff");
     expect(draft.prompt).not.toContain("apply patch");
+    expect(draft.prompt).not.toContain("provider payload");
+    expect(draft.prompt).not.toContain("file body should not appear");
     expect(draft.prompt).not.toContain("/Users/alice");
     expect(draft.prompt).not.toContain("../outside");
     expect(draft.prompt).not.toContain("?raw");
