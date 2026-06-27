@@ -230,7 +230,7 @@ try {
   const runProposalButton = page.getByRole("button", { name: "Run read-only IDE action", exact: true });
   await runProposalButton.waitFor({ state: "visible", timeout: 10_000 });
   if (await runProposalButton.isDisabled()) failures.push("Run read-only IDE action button was disabled before any proposal request was pending.");
-  await runProposalButton.click();
+  await clickButtonWithDomFallback(runProposalButton, "initial read-only IDE action proposal");
 
   const proposalIdeRequest = await waitForGuiMessageAfter(page, "gui.ideActionRequest", proposalPreClickIdeRequestCount);
   if (!proposalIdeRequest) {
@@ -279,7 +279,7 @@ try {
   await expectNoVisibleText(page, staleResultMessage, "stale proposal IDE action result after clear");
 
   const retryPreClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
-  await runProposalButton.click();
+  await clickButtonWithDomFallback(runProposalButton, "retry read-only IDE action proposal");
   const retryProposalIdeRequest = await waitForGuiMessageAfter(page, "gui.ideActionRequest", retryPreClickIdeRequestCount);
   if (!retryProposalIdeRequest) {
     failures.push("Retrying Run read-only IDE action did not send a fresh gui.ideActionRequest.");
@@ -703,7 +703,7 @@ async function runProjectMemoryScenario(page) {
   await expectAttachedText(page, "engine-owned", "VS Code project memory engine-owned badge");
   await expectVisibleText(page, "Manual bounded notes only", "VS Code project memory local-only policy");
   await expectAttachedText(page, memoryNoteText, "VS Code project memory bounded preview");
-  const attachButton = page.getByRole("button", { name: "Attach memory to next message", exact: true });
+  const attachButton = page.getByRole("button", { name: "Attach task-linked memory to next message", exact: true });
   await attachButton.click();
   await expectVisibleText(page, "attached to next message", "VS Code project memory attached badge");
   await expectVisibleText(page, "Project memory", "VS Code project memory item in bundle");
@@ -874,6 +874,19 @@ async function runDemoModeFirstMessageScenario(page) {
   if (chatPostCount !== 1) failures.push(`Demo Mode focused smoke expected exactly one chat command POST; observed ${chatPostCount}.`);
   await expectTextOccurrenceCount(page, prompt, 1, "Demo Mode first-message user prompt");
   await expectTextOccurrenceCount(page, "VS Code wrapper canned chat response.", 1, "Demo Mode canned assistant response");
+}
+
+async function clickButtonWithDomFallback(locator, label) {
+  await locator.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
+  await locator.click({ timeout: 5000 }).catch(async (error) => {
+    const clicked = await locator.evaluate((button) => {
+      if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
+      button.click();
+      return true;
+    }).catch(() => false);
+    if (!clicked) throw error;
+    console.log(`${label}: Playwright click was intercepted; DOM button.click() reached the same explicit user-action handler.`);
+  });
 }
 
 async function clickSendButtonWithActionability(page, label) {

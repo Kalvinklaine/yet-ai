@@ -775,7 +775,7 @@ function assertJetBrainsParityContract() {
 
 async function assertJetBrainsAgentRunAndContextBudgetSurfaces(page, frameLocator) {
   const beforeMessages = await page.evaluate(() => window.__yetAiBridgeMessages?.length ?? 0);
-  await frameLocator.getByText("Experimental Agent Run · one-step manual shell", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
+  await frameLocator.getByText("Agent Run · dev-preview, not autonomy", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
     .catch(() => failures.push("Hosted JetBrains GUI did not render the Agent Run manual shell."));
   await frameLocator.getByText("manual only", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
     .catch(() => failures.push("Hosted JetBrains Agent Run shell did not show manual-only state."));
@@ -785,7 +785,7 @@ async function assertJetBrainsAgentRunAndContextBudgetSurfaces(page, frameLocato
     .catch(() => failures.push("Hosted JetBrains Agent Run shell did not show explicit apply control."));
   await frameLocator.getByText("Manually run allowlisted verification", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 })
     .catch(() => failures.push("Hosted JetBrains Agent Run shell did not show explicit verification control."));
-  await frameLocator.getByText("Safety copy", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
+  await frameLocator.getByText("no hidden model/provider calls; manual", { exact: false }).first().waitFor({ state: "visible", timeout: 5000 })
     .catch(() => failures.push("Hosted JetBrains Agent Run shell did not render safety copy."));
 
   await frameLocator.getByPlaceholder("Describe the coding task goal before choosing context and asking the model.").fill("JetBrains context budget parity smoke.");
