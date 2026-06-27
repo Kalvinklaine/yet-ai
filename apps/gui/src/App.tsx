@@ -3,6 +3,7 @@ import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspac
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, removeOptimisticUserMessage, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToBundleItem, activeFileExcerptToChatContext, addExplicitContextBundleItem, explicitContextBundleMaxItems, explicitContextBundleToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, projectMemoryToBundleItem, rangeFromContextSelection, summarizeExplicitContextBundleItem, validateWorkspaceSnippetQuery, workspaceSnippetToBundleItem, type ExplicitContextBundleItem, type ProjectMemoryBundleItem, type WorkspaceSnippetBundleItem } from "./services/activeEditorContext";
 import { AgentRunPanel } from "./components/AgentRunPanel";
+import { TaskMemorySuggestionsPanel } from "./components/TaskMemorySuggestionsPanel";
 import { CodingSessionTracePanel } from "./components/CodingSessionTracePanel";
 import { ProposalHistoryPanel } from "./components/ProposalHistoryPanel";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
@@ -32,6 +33,7 @@ import { createProjectMemory, deleteProjectMemory, listProjectMemory, searchProj
 import { appendCodingSessionTraceEntry, type CodingSessionTraceDraft, type CodingSessionTraceEntry } from "./services/codingSessionTrace";
 import { createProposalHistory, type ProposalHistoryEntryInput } from "./services/proposalHistory";
 import { createCodingTaskSessionSnapshot, createLinkedMemoryAttachTraceLabel, createSessionMemoryLabel, createTaskMemoryLabel, type CodingTaskSessionSnapshot } from "./services/codingTaskSession";
+import { suggestTaskMemory } from "./services/taskMemorySuggestions";
 import { evaluateHostCapabilityMetadata } from "./services/toolAuthorityPolicy";
 import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPatchVerificationLoop";
 import type { AgentRunInput } from "./services/agentRunState";
@@ -615,6 +617,14 @@ export function App() {
       ...(activeRejectedIdeActionProposal ? [`IDE action proposal rejected: ${activeRejectedIdeActionProposal.diagnostic.reasonCode}`] : []),
     ],
   }), [activeRejectedEditProposal, activeRejectedIdeActionProposal, agentRunInput, attachedProjectMemoryItems, codingSessionTrace, codingTaskGoal, explicitContextBundleItems, proposalHistory]);
+  const taskMemorySuggestions = useMemo(() => suggestTaskMemory({
+    taskGoalLabel: codingTaskSession.goal.label,
+    sessionLabel: createSessionMemoryLabel(undefined, chatId),
+    explicitContextLabels: codingTaskSession.context.labels,
+    proposalFileLabels: proposalHistory.entries.flatMap((entry) => entry.touchedFiles ?? []),
+    attachedMemoryNoteIds: Array.from(attachedProjectMemoryNoteIds),
+    projectMemoryNotes: projectMemory.notes,
+  }), [attachedProjectMemoryNoteIds, chatId, codingTaskSession.context.labels, codingTaskSession.goal.label, projectMemory.notes, proposalHistory.entries]);
   const showWhatWillBeSentPanel = chatInput.trim().length > 0 || contextBudgetSummary.sources.some((source) => source.itemCount > 0 || source.charCount > 0) || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
   const workspaceSnippetQueryValidation = useMemo(() => validateWorkspaceSnippetQuery(workspaceSnippetQuery), [workspaceSnippetQuery]);
 
@@ -2661,6 +2671,7 @@ export function App() {
                 <ManualRunnerPanel host={bridgeHost} draftPlan={manualRunnerDraftPlan} planProposal={latestPlanProposal} hasContext={Boolean((currentAttachedContext && hasUsableAttachedContext(currentAttachedContext)) || explicitContextBundleItems.length > 0)} hasPrompt={Boolean(chatInput.trim())} hasAssistantActivity={chatView.messages.some((message) => message.role === "assistant") || chatLifecycleState !== "idle"} hasEditProposal={Boolean(activeEditProposal)} applyResult={applyResult} verificationAttempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} verificationAttached={Boolean(attachedVerificationKey)} canSendChat={canSendChat} onDraftPlanChange={setManualRunnerDraftPlan} onFocusPrompt={() => chatInputRef.current?.focus()} />
                 <ActiveFileExcerptAttachPanel host={bridgeHost} excerpt={currentActiveFileExcerpt} include={includeAttachedContext} pending={pendingActiveFileExcerpt} status={attachedContextStatus} promptAction={activeFilePromptAction} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onRequest={() => requestIdeAction({ action: "getActiveFileExcerpt" }, "gui-active-file-excerpt")} onClearPending={clearPendingIdeActionState} onIncludeChange={setIncludeAttachedContext} onApplyPrompt={applyActiveFilePrompt} onAddToBundle={addActiveFileExcerptToBundle} />
                 <WorkspaceSnippetSearchPanel host={bridgeHost} query={workspaceSnippetQuery} validation={workspaceSnippetQueryValidation} result={workspaceSnippetResult} selectedKeys={selectedWorkspaceSnippetKeys} pending={ideActionAttempt?.action === "searchWorkspaceSnippets" && (ideActionAttempt.status === "pending" || ideActionAttempt.status === "inProgress")} status={workspaceSnippetStatus} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} onQueryChange={setWorkspaceSnippetQuery} onSearch={searchWorkspaceSnippets} onClearPending={clearPendingIdeActionState} onSelectionChange={setSelectedWorkspaceSnippetKeys} onAttachSelected={attachSelectedWorkspaceSnippetsToBundle} />
+                <TaskMemorySuggestionsPanel summary={taskMemorySuggestions} notes={projectMemory.notes} onAttach={attachProjectMemoryNote} />
                 <ProjectMemoryPanel notes={projectMemory.notes} state={projectMemory.state} error={projectMemory.error} title={projectMemoryTitle} text={projectMemoryText} tags={projectMemoryTags} query={projectMemoryQuery} status={projectMemoryStatus} attachedCount={attachedProjectMemoryCount} attachedNoteIds={attachedProjectMemoryNoteIds} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} taskGoal={codingTaskGoal} chatId={chatId} onTitleChange={setProjectMemoryTitle} onTextChange={setProjectMemoryText} onTagsChange={setProjectMemoryTags} onQueryChange={setProjectMemoryQuery} onCreate={() => void createProjectMemoryNote()} onSearch={() => void searchProjectMemoryNotes()} onRefresh={() => void refreshProjectMemory()} onAttach={attachProjectMemoryNote} onDetach={detachProjectMemoryNote} onDelete={(note) => void deleteProjectMemoryNote(note)} />
                 <ExplicitContextBundlePanel items={explicitContextBundleItems} include={includeExplicitContextBundle} status={explicitContextBundleStatus} onIncludeChange={setIncludeExplicitContextBundle} onRemove={(key) => removeExplicitContextBundleItem(key)} onClear={() => clearExplicitContextBundle("Cleared the one-shot explicit context bundle.")} />
                 <AttachedContextPreview context={currentAttachedContext} include={includeAttachedContext} acknowledged={attachedContextAcknowledged} status={attachedContextStatus} onIncludeChange={setIncludeAttachedContext} onAcknowledgeChange={setAttachedContextAcknowledged} />

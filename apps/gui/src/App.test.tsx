@@ -2196,7 +2196,7 @@ describe("agent progress panel", () => {
     expect(text).not.toContain("SECRET_WORKSPACE_BODY");
     expect(text).not.toContain("SECRET_THOUGHT_BODY");
     expect((text.match(/SAFE_NOISY_AGENT_OUTPUT_/g) ?? []).length).toBeLessThan(220);
-    expect(text.length).toBeLessThan(17000);
+    expect(text.length).toBeLessThan(17400);
   });
 
   it("detects fallback overflow before raw-content redaction", async () => {
@@ -2252,7 +2252,7 @@ describe("agent progress panel", () => {
     expect(text).toContain("7 more summaries hidden.");
     expect(text).not.toContain("T-BOUND-18 / run-18");
     expect(text).not.toContain("safe recent summary 16");
-    expect(text.length).toBeLessThan(37100);
+    expect(text.length).toBeLessThan(37500);
   });
 
   it("endpoint unavailable or corrupt runtime error is sanitized and non-fatal", async () => {
@@ -2838,6 +2838,49 @@ describe("host.ready runtime bootstrap", () => {
 });
 
 describe("active editor attached context", () => {
+  it("renders task memory suggestions as explicit attach-only guidance", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const rawSecret = "access_token=" + "s".repeat(64);
+    const suggested = projectMemoryNote({ id: "mem-suggested", title: "Agent memory setup", text: "Suggested body must only send after click.", tags: ["agent", "memory"] });
+    const stale = projectMemoryNote({ id: "mem-stale", title: "Superseded agent memory", text: "Stale body must not leak.", tags: ["agent"], sessionLabel: "older-session" });
+    const unsafe = projectMemoryNote({ id: "mem-unsafe", title: `Provider payload ${rawSecret}`, text: "raw prompt file body /Users/alice/private.ts", tags: ["tool-call"] });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), projectMemoryNotes: [suggested, stale, unsafe] });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    await act(async () => {
+      setTextareaByPlaceholder("Describe the coding task goal", "Agent memory setup");
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Task memory suggestions");
+    expect(text).toContain("attach-only guidance");
+    expect(text).toContain("suggested 1");
+    expect(text).toContain("stale 1");
+    expect(text).toContain("unsafe 1");
+    expect(text).toContain("Agent memory setup");
+    expect(text).toContain("stale · review");
+    expect(text).toContain("unsafe · warning only");
+    expect(text).toContain("Unsafe memory cannot be attached from suggestions.");
+    expect(text).not.toContain(rawSecret);
+    expect(text).not.toContain("access_token");
+    expect(text).not.toContain("/Users/alice");
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
+    expect(browserStorageDump()).not.toContain("Suggested body must only send after click.");
+    expect(localSetItem).not.toHaveBeenCalled();
+
+    await act(async () => {
+      findButton("Attach suggested memory to next message").click();
+    });
+
+    expect(container?.textContent).toContain("Attached task-linked local memory note Agent memory setup to the next message context.");
+    expect(container?.textContent).toContain("already attached");
+    expect(buttonsNamed("Attach suggested memory to next message")).toHaveLength(0);
+    expect(findButton("Detach memory from next message")).toBeDefined();
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
+  });
+
   it("creates searches attaches clears and deletes local project memory without browser storage", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     const rawSecret = "access_token=" + "m".repeat(64);
@@ -9144,7 +9187,7 @@ describe("edit proposal preview", () => {
     expect(text).not.toContain("Bearer");
     expect(text).not.toContain("/Users/private/me");
     expect(text).not.toContain("credentials/private-token.txt");
-    expect(text.length).toBeLessThan(15000);
+    expect(text.length).toBeLessThan(15500);
   });
 
   it("ignores stale host apply result while a different apply request is pending in the same chat", async () => {
