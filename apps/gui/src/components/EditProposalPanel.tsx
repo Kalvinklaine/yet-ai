@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ApplyWorkspaceEditPayload, ApplyWorkspaceEditResultPayload, BridgeHost } from "../bridge/bridgeAdapter";
-import type { EditProposalRejectedDiagnostic } from "../services/editProposal";
+import { editProposalRejectedRecoveryGuidance, type EditProposalRejectedDiagnostic } from "../services/editProposal";
 import { buildEditProposalQualitySummary } from "../services/editProposalQuality";
 import { sanitizeDisplayText } from "../services/redaction";
 
@@ -53,12 +53,17 @@ export function EditProposalPanel({ proposal, rejected, result, host, pendingReq
 }
 
 export function RejectedEditProposalPreview({ rejected }: { rejected: RejectedEditProposalState }) {
+  const guidance = editProposalRejectedRecoveryGuidance(rejected.diagnostic.reasonCode);
   return (
     <div className="readiness-card warn stack" role="status" data-testid="edit-proposal-rejected-card">
       <strong>Edit proposal detected but rejected</strong>
       <span>{sanitizeDisplayText(rejected.diagnostic.message)}</span>
       <span className="subtle">Reason: {sanitizeDisplayText(rejected.diagnostic.reasonCode)}</span>
-      <span>Ask the model to resend one strict edit proposal, or use the Safe edit/proposal template. No apply request is available for this response.</span>
+      <span>Apply is unavailable because this response did not pass safe-edit proposal validation. No apply request is available for this response.</span>
+      <strong>{sanitizeDisplayText(guidance.title)}</strong>
+      <span>{sanitizeDisplayText(guidance.nextStep)}</span>
+      <span className="subtle">Expected correction: {sanitizeDisplayText(guidance.formatHint)}</span>
+      <span className="subtle">Recovery stays manual: use the Safe edit/proposal template. Ask the model to resend one strict edit proposal, then review the next proposal card before choosing any IDE apply request.</span>
     </div>
   );
 }

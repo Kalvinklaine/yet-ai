@@ -63,6 +63,7 @@ describe("buildEditProposalQualitySummary", () => {
     expect(result.reviewChecklist).toEqual([
       "Review every listed file and range before requesting IDE apply.",
       "Confirm the proposal only changes the intended workspace-relative files.",
+      "Confirm edits are replacement-only and do not rely on hidden reads or follow-up actions.",
       "Use the IDE confirmation dialog for the final manual apply decision.",
     ]);
     expect(JSON.stringify(result)).not.toContain("Yet AI");

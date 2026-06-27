@@ -6,6 +6,7 @@ import {
   editProposalCandidateMatchesIdentity,
   editProposalIdentityMatchesCandidate,
   editProposalPayloadKey,
+  editProposalRejectedRecoveryGuidance,
   isCompleteAssistantEditProposalStatus,
   latestEditProposalCandidateFromMessages,
   latestEditProposalReviewFromMessages,
@@ -315,6 +316,37 @@ describe("analyzeEditProposalContent", () => {
       expect(analysis.diagnostic.message).not.toContain(rawPath);
       expect(analysis.diagnostic.message).not.toContain(rawSecret);
       expect(analysis.diagnostic).toEqual({ reasonCode: "no_json", message: expect.any(String) });
+    }
+  });
+});
+
+describe("editProposalRejectedRecoveryGuidance", () => {
+  it.each([
+    ["invalid_json", "one strict safe-edit JSON proposal"],
+    ["ambiguous", "single smaller patch proposal"],
+    ["unsafe_path", "corrected workspace-relative paths only"],
+    ["command_tool_smuggling", "replacement-only safe-edit JSON"],
+    ["assistant_request_id", "without any requestId field"],
+    ["unsupported_verification", "supported display-only verification suggestions"],
+  ] as Array<[Parameters<typeof editProposalRejectedRecoveryGuidance>[0], string]>)("maps %s to concise manual guidance", (reasonCode, expectedCopy) => {
+    const guidance = editProposalRejectedRecoveryGuidance(reasonCode);
+
+    expect(guidance.nextStep).toContain(expectedCopy);
+    expect(`${guidance.title} ${guidance.nextStep} ${guidance.formatHint}`).not.toMatch(/auto[- ]?(?:fix|apply|run|verify)|\b(?:shell|git|cwd|env)\b|hidden read|hidden search|apply automatically|run automatically/i);
+  });
+
+  it("keeps recovery guidance generic without unsafe diagnostic content", () => {
+    const rawSecret = "access_token=" + "r".repeat(64);
+    const rawPath = "/Users/alice/private/project/src/secret.ts";
+
+    for (const reasonCode of ["unsafe_path", "command_tool_smuggling", "invalid_payload"] as const) {
+      const guidance = editProposalRejectedRecoveryGuidance(reasonCode);
+      const rendered = JSON.stringify(guidance);
+      expect(rendered).not.toContain(rawSecret);
+      expect(rendered).not.toContain(rawPath);
+      expect(rendered).not.toContain("/Users/alice");
+      expect(rendered).not.toContain("api_key");
+      expect(rendered.length).toBeLessThan(520);
     }
   });
 });

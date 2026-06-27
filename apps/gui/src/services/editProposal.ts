@@ -62,6 +62,12 @@ export type EditProposalRejectedDiagnostic = {
   message: string;
 };
 
+export type EditProposalRejectedRecoveryGuidance = {
+  title: string;
+  nextStep: string;
+  formatHint: string;
+};
+
 export type EditProposalAnalysis =
   | { state: "valid"; proposal: ApplyWorkspaceEditPayload; planToPatchMetadata?: PlanToPatchProposalMetadata }
   | { state: "rejected"; diagnostic: EditProposalRejectedDiagnostic }
@@ -142,6 +148,80 @@ export function analyzeEditProposalContent(content: string): EditProposalAnalysi
 export function parseEditProposalContent(content: string): ApplyWorkspaceEditPayload | null {
   const analysis = analyzeEditProposalContent(content);
   return analysis.state === "valid" ? analysis.proposal : null;
+}
+
+export function editProposalRejectedRecoveryGuidance(reasonCode: EditProposalRejectedReasonCode): EditProposalRejectedRecoveryGuidance {
+  switch (reasonCode) {
+    case "no_json":
+    case "invalid_json":
+    case "invalid_fence":
+    case "fenced_payload_requires_envelope":
+      return {
+        title: "Proposal format needs correction.",
+        nextStep: "Ask for one strict safe-edit JSON proposal and review it again before requesting IDE apply.",
+        formatHint: "Use either one direct replacement-only payload or one json-fenced full envelope, not prose plus partial JSON.",
+      };
+    case "ambiguous":
+      return {
+        title: "Only one proposal can be reviewed at a time.",
+        nextStep: "Ask for a single smaller patch proposal that targets the intended change only.",
+        formatHint: "Send one bounded safe-edit JSON object with one clear set of replacement-only edits.",
+      };
+    case "unsafe_path":
+      return {
+        title: "A path was not workspace-relative and safe.",
+        nextStep: "Ask for the same edit with corrected workspace-relative paths only.",
+        formatHint: "Paths should look like src/file.ts, without absolute paths, home folders, parent traversal, drive letters, secrets, or URL/query parts.",
+      };
+    case "missing_confirmation":
+      return {
+        title: "Explicit user confirmation is missing.",
+        nextStep: "Ask for a safe-edit proposal that sets requiresUserConfirmation to true.",
+        formatHint: "The GUI keeps apply unavailable until the proposal explicitly requires manual confirmation.",
+      };
+    case "oversized":
+    case "oversized_content":
+      return {
+        title: "The proposed change is too large for safe review.",
+        nextStep: "Ask for a smaller patch focused on one reviewable change.",
+        formatHint: "Keep replacement text bounded and split broad changes into separate manually reviewed proposals.",
+      };
+    case "command_tool_smuggling":
+      return {
+        title: "The proposal mixed edits with command or tool fields.",
+        nextStep: "Ask for replacement-only safe-edit JSON with no command, tool, or execution fields.",
+        formatHint: "A valid proposal describes workspace-relative text replacements only; verification remains a separate explicit user choice.",
+      };
+    case "assistant_request_id":
+      return {
+        title: "The proposal tried to provide an apply request id.",
+        nextStep: "Ask for the same edit without any requestId field.",
+        formatHint: "Request ids are created by the GUI only after you choose to request apply.",
+      };
+    case "unsupported_verification":
+      return {
+        title: "The verification suggestion is not supported here.",
+        nextStep: "Ask for a proposal that uses only supported display-only verification suggestions.",
+        formatHint: "Supported suggestions are repository-check, gui-app-tests, or engine-chat-tests labels only.",
+      };
+    case "invalid_payload":
+    case "proposal_like_rejected":
+      return {
+        title: "The edit shape is not a supported safe-edit proposal.",
+        nextStep: "Ask for a corrected replacement-only safe-edit JSON proposal.",
+        formatHint: "Use requiresUserConfirmation true, cloudRequired false, workspace-relative files, and textReplacements ranges only.",
+      };
+    case "invalid_envelope":
+    case "wrong_version":
+    case "unknown_keys":
+    case "envelope_like_direct_payload":
+    case "empty":
+      return {
+        title: "The proposal envelope is not accepted.",
+        nextStep: "Ask for one strict safe-edit JSON proposal using the supported schema only.",
+        formatHint: "Remove unsupported fields and keep envelope metadata separate from the edit payload.",
+      };
+  }
 }
 
 export function editProposalPayloadKey(payload: ApplyWorkspaceEditPayload): string {
@@ -390,7 +470,7 @@ function isVerificationSuggestions(value: unknown): value is PlanToPatchVerifica
     return false;
   }
   return value.every((item) => {
-    if (!isPlainObject(item) || !hasOnlyKeys(item, ["commandId", "label"])) {
+    if (!isPlainObject(item) || typeof item.commandId !== "string" || typeof item.label !== "string") {
       return false;
     }
     return (item.commandId === "repository-check" && item.label === "Repository check") ||
