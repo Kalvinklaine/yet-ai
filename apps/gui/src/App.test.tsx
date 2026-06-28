@@ -2196,7 +2196,7 @@ describe("agent progress panel", () => {
     expect(text).not.toContain("SECRET_WORKSPACE_BODY");
     expect(text).not.toContain("SECRET_THOUGHT_BODY");
     expect((text.match(/SAFE_NOISY_AGENT_OUTPUT_/g) ?? []).length).toBeLessThan(220);
-    expect(text.length).toBeLessThan(17400);
+    expect(text.length).toBeLessThan(17500);
   });
 
   it("detects fallback overflow before raw-content redaction", async () => {
@@ -2838,6 +2838,43 @@ describe("host.ready runtime bootstrap", () => {
 });
 
 describe("active editor attached context", () => {
+  it("integrates the collapsed read-only manual timeline near Agent Run surfaces", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+
+    const details = findDetails("multi-step-task-timeline-details");
+    expect(details.open).toBe(false);
+    expect(container?.textContent).toContain("Manual timeline");
+    expect(container?.textContent).toContain("metadata only");
+    expect(container?.textContent).toContain("no automatic execution");
+    expect(container?.textContent).toContain("4 steps");
+    expect(container?.textContent).toContain("latest succeeded");
+    expect(container?.textContent).not.toContain("Manual timeline metadata groups");
+
+    await act(async () => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+
+    const panelText = container?.querySelector("[data-testid='multi-step-task-timeline-panel']")?.textContent ?? "";
+    expect(panelText).toContain("Read-only manual timeline");
+    expect(panelText).toContain("Task goal not selected");
+    expect(panelText).toContain("Explicit context omitted");
+    expect(panelText).toContain("Task memory skipped");
+    expect(panelText).toContain("Proposal detected");
+    expect(panelText).toContain("Policy: metadata_only");
+    expect(panelText).toContain("auto send false");
+    expect(panelText).toContain("auto apply false");
+    expect(panelText).toContain("auto verification false");
+    expect(Array.from(container?.querySelectorAll("[data-testid='multi-step-task-timeline-panel'] button") ?? [])).toHaveLength(0);
+    expect(findButton("Manually apply reviewed patch")).toBeDefined();
+    expect(findButton("Manually apply reviewed patch").disabled).toBe(true);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("Manual timeline");
+  });
+
   it("renders task memory suggestions as explicit attach-only guidance", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     const rawSecret = "access_token=" + "s".repeat(64);

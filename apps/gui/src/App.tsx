@@ -6,6 +6,7 @@ import { AgentRunPanel } from "./components/AgentRunPanel";
 import { TaskMemorySuggestionsPanel } from "./components/TaskMemorySuggestionsPanel";
 import { CodingSessionTracePanel } from "./components/CodingSessionTracePanel";
 import { ProposalHistoryPanel } from "./components/ProposalHistoryPanel";
+import { MultiStepTaskTimelinePanel } from "./components/MultiStepTaskTimelinePanel";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
 import { IdeActionProposalPanel, IdeActionsPanel, VerificationCommandPanel, verificationOutputKey, type IdeActionAttemptState, type VerificationCommand } from "./components/IdeActionsPanel";
 import { analyzeAssistantIdeActionProposalContent, describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, latestIdeActionProposalReviewFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
@@ -638,6 +639,21 @@ export function App() {
       ...(activeRejectedIdeActionProposal ? [`IDE action proposal rejected: ${activeRejectedIdeActionProposal.diagnostic.reasonCode}`] : []),
     ],
   }), [activeRejectedEditProposal, activeRejectedIdeActionProposal, agentRunInput, attachedProjectMemoryItems, codingSessionTrace, codingTaskGoal, explicitContextBundleItems, proposalHistory, taskMemorySuggestions]);
+  const multiStepTaskTimelineInput = useMemo(() => ({
+    goal: codingTaskGoal,
+    contextItems: explicitContextBundleItems,
+    memoryItems: attachedProjectMemoryItems,
+    memorySuggestions: taskMemorySuggestions,
+    agentRun: agentRunInput,
+    traceEntries: codingSessionTrace,
+    proposalHistory,
+    planPreview: agentRunInput?.planPreview,
+    followupDraft: agentRunVerificationFixDraft?.metadata,
+    diagnostics: [
+      ...(activeRejectedEditProposal ? [`edit proposal rejected: ${activeRejectedEditProposal.diagnostic.reasonCode}`] : []),
+      ...(activeRejectedIdeActionProposal ? [`IDE action proposal rejected: ${activeRejectedIdeActionProposal.diagnostic.reasonCode}`] : []),
+    ],
+  }), [activeRejectedEditProposal, activeRejectedIdeActionProposal, agentRunInput, agentRunVerificationFixDraft, attachedProjectMemoryItems, codingSessionTrace, codingTaskGoal, explicitContextBundleItems, proposalHistory, taskMemorySuggestions]);
   const showWhatWillBeSentPanel = chatInput.trim().length > 0 || contextBudgetSummary.sources.some((source) => source.itemCount > 0 || source.charCount > 0) || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
   const workspaceSnippetQueryValidation = useMemo(() => validateWorkspaceSnippetQuery(workspaceSnippetQuery), [workspaceSnippetQuery]);
 
@@ -2692,6 +2708,7 @@ export function App() {
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
                 <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} />
+                <MultiStepTaskTimelinePanel input={multiStepTaskTimelineInput} />
                 {showWhatWillBeSentPanel && <WhatWillBeSentPanel summary={contextBudgetSummary} draftPromptCharacters={chatInput.trim().length} />}
                 <CodingTaskSessionPanel session={codingTaskSession} goal={codingTaskGoal} contextItems={explicitContextBundleItems} memoryAttachedCount={attachedProjectMemoryCount} modelStatus={chatReadinessLabel} canSendChat={canSendChat} latestResponseStatus={chatLifecycleLabel} editProposal={activeEditProposal} applyResult={applyResult} verificationAttempt={verificationAttempt} verificationAttached={Boolean(attachedVerificationKey)} draftPrompt={codingTaskPromptDraft} contextBudgetSummary={contextBudgetSummary} modelProposalDraft={modelProposalDraft} modelProposalResult={agentRunModelProposal} onGoalChange={setCodingTaskGoal} onUseDraftPrompt={useCodingTaskDraftPrompt} onUseDraftPlan={useCodingTaskDraftPlan} onDraftOneStepModelProposal={draftOneStepModelProposalPrompt} onFocusPrompt={focusCodingTaskPrompt} />
                 <ManualRunnerPanel host={bridgeHost} draftPlan={manualRunnerDraftPlan} planProposal={latestPlanProposal} hasContext={Boolean((currentAttachedContext && hasUsableAttachedContext(currentAttachedContext)) || explicitContextBundleItems.length > 0)} hasPrompt={Boolean(chatInput.trim())} hasAssistantActivity={chatView.messages.some((message) => message.role === "assistant") || chatLifecycleState !== "idle"} hasEditProposal={Boolean(activeEditProposal)} applyResult={applyResult} verificationAttempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} verificationAttached={Boolean(attachedVerificationKey)} canSendChat={canSendChat} onDraftPlanChange={setManualRunnerDraftPlan} onFocusPrompt={() => chatInputRef.current?.focus()} />
