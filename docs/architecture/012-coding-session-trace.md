@@ -129,6 +129,35 @@ Trace entries for this draft should summarize only bounded ids, the `followup` o
 
 The draft remains idle until the user explicitly reviews it and clicks Send. Trace/report copy must distinguish this from automatic repair: no auto-send, auto-apply, automatic verification, automatic repair, automatic rollback, retry loop, hidden reads, or execution authority is enabled. Any later Send, Apply, Verify, or Rollback remains a separate explicit user action with its own existing contract and host policy. Sprint 62 does not claim multi-step execution or autonomy, and it preserves the local-first BYOK/no-hosted-backend invariant.
 
+## S71 multi-step task timeline UX
+
+Sprint 71 adds a GUI-only multi-step task timeline panel for the manual Agent Run surface. The timeline is read-only sanitized metadata UX over already-known React state: local goal status, explicit context attached or omitted labels, task memory suggestion labels, proposal review status, explicit Apply request/result metadata, explicit Verification request/progress/result metadata, follow-up or fix draft status, and final result labels. It is not an execution engine, task runner, replay protocol, scheduler, storage layer, provider adapter, bridge authority, runtime endpoint, or audit log with security guarantees.
+
+The S71 timeline does not add autonomy. It cannot send chat, attach context, search memory, apply edits, run verification, repair, retry, roll back, call providers or tools, execute shell/git/package/network commands, read files, scan workspaces, or mutate the project. It exposes no action buttons in the timeline itself; Send, Apply, Verification, memory Attach, and follow-up/fix Send remain separate explicit user controls governed by their existing contracts.
+
+Timeline entries must stay bounded and sanitized. They must not include raw prompts, raw provider responses, raw model payloads, raw file bodies, raw active excerpts, raw memory bodies, raw verification bodies, raw diffs, raw patch bodies, raw command strings, args, cwd/env values, private absolute paths, browser-storage dumps, bridge payload dumps, stack traces, credentials, tokens, cookies, or unbounded logs. The timeline remains in GUI memory only and does not persist raw data or timeline entries to browser storage, engine state, project files, telemetry, host storage, logs, or provider/runtime storage.
+
+The focused S71 smoke is:
+
+```sh
+npm run smoke:multi-step-task-timeline
+```
+
+It is deterministic local/mock built-GUI evidence only. T-315 delivered this replacement smoke after the earlier T-312 smoke attempt failed; do not cite T-312 as successful evidence. The smoke drives the manual Agent Run flow through explicit Send, explicit Apply, explicit Verification failure, and a manual fix-draft state, then expands the collapsed-by-default timeline and checks sanitized metadata coverage, no timeline action buttons, no pre-action apply/verification bridge requests, no hidden runtime/provider/tool calls, loopback-only network, and no raw prompt/file/diff/command/browser-storage leakage.
+
+Focused implementation checks for S71 timeline behavior are:
+
+```sh
+cd apps/gui && npm test -- multiStepTaskTimeline MultiStepTaskTimelinePanel App
+npm run check
+```
+
+Run the repository documentation and identity gate after S71 documentation changes:
+
+```sh
+npm run check
+```
+
 ## Maintenance rules
 
 When a future card wires trace entries into UI state, keep the trace in memory only unless a separate architecture decision approves storage. Do not store raw assistant messages, user prompts, provider payloads, file excerpts, verification output, or host diagnostics directly in trace entries. Store only safe labels, counts, enum values, request correlation, durations, exit codes, and short redacted tails.

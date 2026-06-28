@@ -52,6 +52,25 @@ S70 Manual Agent Run RC is closed as a manual local dogfood documentation and lo
 
 The S70 RC boundary remains: no auto-send, auto-apply, auto-verification, auto-repair, auto-retry, auto-rollback, hidden memory attach, hidden reads/search/indexing, shell/git/tool/provider authority, raw prompt/provider/file/diff/command/log/browser persistence, production readiness, publication readiness, real-provider CI, or controlled-autonomy claim. T-95, T-98, and T-244 are triaged stale, superseded, or non-blocking for this RC unless a future audit reopens them with current evidence.
 
+## S71 timeline note
+
+S71 adds a collapsed-by-default multi-step task timeline to the manual Agent Run UI as read-only sanitized metadata UX. The timeline is not part of the S70 RC authority model, is not an execution engine, and does not add autonomy. It must not be used to claim multi-step execution, production readiness, marketplace readiness, release readiness, real-provider CI, automatic Send, automatic Apply, automatic Verification, repair, retry, rollback, hidden reads, provider/tool calls, shell/git authority, workspace mutation, or raw-data/browser-storage persistence.
+
+The exact focused S71 smoke is:
+
+```sh
+npm run smoke:multi-step-task-timeline
+```
+
+T-315 delivered this replacement smoke after the failed T-312 attempt; T-312 is not successful evidence. Focused S71 behavior checks are:
+
+```sh
+cd apps/gui && npm test -- multiStepTaskTimeline MultiStepTaskTimelinePanel App
+npm run check
+```
+
+If a manual RC run observes the S71 timeline, record only sanitized status: collapsed/read-only, metadata-only, no action buttons, no raw prompts/provider responses/file bodies/diffs/command material/private paths/secrets/bridge payloads, and no timeline entries or raw data persisted in browser storage.
+
 ## Manual RC run checklist
 
 1. Start from a clean local checkout or sanitized dev-preview artifact label.
@@ -69,8 +88,9 @@ The S70 RC boundary remains: no auto-send, auto-apply, auto-verification, auto-r
 13. In supported IDE-host dogfood only, click allowlisted Verification manually by command id. Browser does not run verification commands.
 14. Confirm no auto-send, auto-apply, auto-verification, automatic repair, automatic retry, automatic rollback, hidden read, provider tool call, shell/git/tool execution, or background indexing occurred.
 15. Inspect report/trace evidence for sanitized bounded metadata only.
-16. Validate the completed local report with `npm run report:agent-run-rc -- --check path/to/local-report.md` before sharing any excerpt.
-17. Keep raw local evidence, screenshots, logs, provider transcripts, bridge captures, and browser-storage dumps out of tracked files.
+16. If the S71 timeline is visible, inspect it only as read-only sanitized metadata and confirm it adds no action controls or browser-storage/raw-data persistence.
+17. Validate the completed local report with `npm run report:agent-run-rc -- --check path/to/local-report.md` before sharing any excerpt.
+18. Keep raw local evidence, screenshots, logs, provider transcripts, bridge captures, and browser-storage dumps out of tracked files.
 
 ## Sanitized report workflow
 
@@ -120,6 +140,7 @@ Manual local evidence only. This report is not CI evidence, not automation evide
 - Apply evidence: <user clicked Apply manually | blocked | browser preview-only | skipped | failed/rejected with sanitized summary | not run>
 - Verify evidence: <user clicked Verification manually | browser unsupported | skipped | failed with sanitized summary | not run>
 - No automatic execution observed: <checked | issue found with sanitized summary | not run>
+- S71 timeline, if visible: <collapsed/read-only metadata only | no action buttons | no raw-data/browser-storage persistence | not visible | issue found with sanitized summary | not run>
 
 ## RC result statuses
 

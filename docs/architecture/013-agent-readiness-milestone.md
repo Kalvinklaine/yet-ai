@@ -35,6 +35,7 @@ Avoid softer wording that implies implementation, autonomy, production publicati
 | S67 guided fix loop | Experimental manual-only | Failed verification can expose sanitized guided-fix status and a draft-only fix CTA when safe prior proposal lineage exists. Clicking the CTA only writes composer text and focuses it; unsafe/raw-looking verification metadata blocks actionable drafting. It adds no auto-send, repair, retry, rollback, apply, verification, provider/tool execution, persistence, hidden reads, or runtime/bridge authority. |
 | S68 safer apply UX | Experimental manual-only | Apply readiness and risk display may summarize sanitized proposal metadata, checkpoint/policy readiness, host support, disabled reasons, and manual recovery guidance. It does not expose raw replacement bodies, create apply authority, apply automatically, run verification, repair, retry, roll back, attach context, persist proposal bodies, or add runtime/bridge endpoints. |
 | S69 task memory suggestions | Experimental manual-only | Task memory suggestions are GUI-local display metadata over already-listed local project memory note metadata. Safe suggested notes can be attached only by explicit user click through the existing one-shot project-memory bundle path; stale, unsafe, already-attached, or unrelated notes show labels/warnings only. Suggestion/session/trace labels do not become hidden runtime chat context and do not add auto-attach, search, save, provider, bridge, storage, hidden-read, indexing, or workspace mutation authority. |
+| S71 multi-step task timeline | Experimental manual-only | The multi-step task timeline is read-only sanitized metadata UX over already-known Agent Run GUI state. It is not an execution engine and does not add autonomy, Send, Apply, Verification, repair, retry, rollback, provider/tool calls, hidden reads, runtime endpoints, bridge authority, browser-storage persistence, or raw-data persistence. |
 | Multi-step execution | Blocked/deferred | There is no implemented runner that executes a plan across multiple steps. S61 is only inert metadata. |
 | Controlled autonomy | Blocked/deferred | No autonomous loop is implemented. Any future controlled-autonomy work must pass the future eligibility gates below before design or implementation. |
 | Auto-repair / auto-retry / auto-rollback | Blocked/deferred | Failed verification can stop and may produce a draft-only prompt. The product must not claim automatic repair, retry, verification, or rollback. |
@@ -54,6 +55,27 @@ Host boundaries for S70 RC evidence:
 - **JetBrains**: dev-preview parity host. It may provide hosted GUI and bridge parity evidence for manual controls and boundaries, but it is not a production parity or marketplace publication claim.
 
 Use `docs/dogfood/manual-agent-run-rc.md` for the S70 checklist and sanitized report template. The exact RC commands are `npm run check`, `npm run report:agent-run-rc -- --template`, `npm run report:agent-run-rc -- --check path/to/local-report.md`, optional `npm run report:agent-run-rc -- --self-test`, and optional `npm run smoke:agent-run-rc-bundle`. Completed reports must omit secrets, raw prompts, provider responses, file bodies, diffs, patch bodies, command strings, cwd/env values, private paths, browser-storage dumps, and bridge payload dumps.
+
+## Sprint 71 multi-step task timeline status
+
+Sprint 71 adds the multi-step task timeline as a read-only, sanitized, metadata-only GUI panel for the manual Agent Run path. It summarizes only already-known GUI metadata such as goal/context labels, proposal status, explicit Apply and Verification request/result labels, follow-up or fix draft status, and final result labels. It does not persist raw data or timeline entries to browser storage, engine state, host storage, project files, telemetry, logs, or provider/runtime storage.
+
+S71 does not change the readiness taxonomy and does not approve multi-step execution, controlled autonomy, production readiness, marketplace readiness, release readiness, or real-provider CI. The timeline is not an execution engine, task runner, scheduler, replay system, bridge command, runtime endpoint, storage contract, or provider/tool surface. It adds no auto-send, auto-apply, automatic verification, automatic repair, automatic retry, automatic rollback, hidden reads, workspace indexing, shell/git/tool/provider authority, browser-storage raw persistence, or workspace mutation authority.
+
+The exact S71 focused smoke is:
+
+```sh
+npm run smoke:multi-step-task-timeline
+```
+
+T-315 is the replacement smoke evidence for the failed T-312 attempt; T-312 must not be referenced as a successful smoke. Focused S71 behavior checks are:
+
+```sh
+cd apps/gui && npm test -- multiStepTaskTimeline MultiStepTaskTimelinePanel App
+npm run check
+```
+
+These commands are local/mock or repository validation evidence only. They do not launch real IDE automation, call real providers, require credentials, contact hosted Yet AI services, persist raw timeline data, mutate workspaces through the timeline, or prove production autonomy.
 
 ## Blocked and deferred capabilities
 
