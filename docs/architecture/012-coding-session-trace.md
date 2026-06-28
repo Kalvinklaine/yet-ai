@@ -158,6 +158,8 @@ Run the repository documentation and identity gate after S71 documentation chang
 npm run check
 ```
 
+S71-C5 final audit status: Sprint 71 remains a read-only metadata timeline for manual Agent Run review, not multi-step execution or autonomy. The audited service, panel, App wiring, trace/session/proposal metadata inputs, replacement smoke, and docs add no auto-send, auto-apply, automatic verification, automatic repair, automatic retry, automatic rollback, hidden memory attach, hidden reads/search/indexing, shell/git/tool/provider authority, runtime or bridge authority, browser-storage timeline persistence, raw prompt/provider/file/diff/command/log persistence, production readiness, publication readiness, real-provider CI, or controlled-autonomy approval. T-315 is the passing replacement smoke after T-312 failed, and S72+ work remains deferred.
+
 ## Maintenance rules
 
 When a future card wires trace entries into UI state, keep the trace in memory only unless a separate architecture decision approves storage. Do not store raw assistant messages, user prompts, provider payloads, file excerpts, verification output, or host diagnostics directly in trace entries. Store only safe labels, counts, enum values, request correlation, durations, exit codes, and short redacted tails.
