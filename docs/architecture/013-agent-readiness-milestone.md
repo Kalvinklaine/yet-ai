@@ -119,6 +119,14 @@ npm run smoke:controlled-agent-workspace-readiness && npm run check && git diff 
 
 These commands are deterministic local/mock evidence only. They build/load the GUI through loopback mocks and verify safe/inert defaults, explicit opt-in display readiness, blocked isolation/checkpoint/rollback prerequisites, no Start Agent or worktree-creation controls, no bridge apply/verify/read/search/rollback messages, no runtime tool/git/shell/provider endpoints, no non-loopback network, clean browser storage, and no private path, secret, raw prompt/file/diff/command/log leakage. They are not real-provider CI, worktree creation evidence, production readiness, marketplace readiness, multi-step execution, or autonomy approval.
 
+## Sprint 73 final audit status
+
+Sprint 73 is closed as a controlled workspace/worktree readiness metadata milestone after the final safety/product audit and full local verification pass. The audit found no high or critical issue in the S73 scope: the contract remains strict metadata-only prerequisite state, the evaluator is a pure fail-closed sanitizer, the panel is collapsed-by-default display-only UI, App wiring consumes only `/v1/caps.controlledAgentWorkspaceReadiness`, and the smoke remains standalone local/mock evidence.
+
+This completion status confirms only future controlled-mode prerequisite readiness. A `ready_for_future_controlled_mode` state means user opt-in, host-owned isolated workspace/worktree metadata, verified checkpoint metadata, rollback-plan metadata, bounded limits, and all-false policy flags are present for later review; it still does not permit starting an agent or running any controlled-agent action.
+
+S73 adds no agent start, worktree creation, file read/write/search/indexing, apply/edit execution, verification execution, rollback execution, hidden reads, shell/git/tool/provider authority, runtime endpoint, bridge message type, browser raw-data persistence, production readiness, marketplace readiness, real-provider CI, multi-step execution, or autonomy claim. S74 and later controlled local-agent work remain deferred until explicit future cards approve their narrower contracts, implementation, tests, and audit gates.
+
 ## Blocked and deferred capabilities
 
 These capabilities are explicitly not implemented as active Agent Run features:
