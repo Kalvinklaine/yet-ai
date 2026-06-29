@@ -5,6 +5,7 @@ import { App, completedApplyRequestChatsLimit, completedIdeActionRequestChatsLim
 import { buildVerificationFollowupPrompt } from "./services/verificationFollowupPrompt";
 import { validateWorkspaceSnippetQuery } from "./services/activeEditorContext";
 import type { ProviderAuthResponse, ProviderAuthStatus } from "./services/providerAuthClient";
+import worktreeReadiness from "../../../packages/contracts/examples/engine/controlled-agent-workspace-readiness-worktree.json";
 
 const bridgeVersion = "2026-05-15";
 const fetchMock = vi.fn();
@@ -282,6 +283,42 @@ describe("runtime refresh feedback", () => {
     expect(buttonsNamed("Get IDE context")).toHaveLength(0);
     expect(buttonsNamed("Run read-only IDE action")).toHaveLength(0);
     expect(buttonsNamed("Apply in VS Code after review")).toHaveLength(0);
+  });
+
+  it("renders controlled workspace readiness as metadata-only without bridge authority", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness }) });
+    renderApp();
+    await flushAsync();
+
+    const details = findDetails("controlled-agent-workspace-readiness-details");
+    expect(details.open).toBe(false);
+    expect(container?.textContent).toContain("Controlled workspace readiness");
+    expect(container?.textContent).toContain("S73 future gated");
+    expect(container?.textContent).toContain("metadata only");
+    expect(container?.textContent).toContain("ready for future controlled mode");
+
+    await act(async () => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Cannot start an agent.");
+    expect(text).toContain("Browser preview remains unsupported for future controlled mode.");
+    expect(text).toContain("Can start agent: false");
+    expect(text).toContain("Can read files: false");
+    expect(text).toContain("Can run commands: false");
+    expect(text).toContain("Can apply edits: false");
+    expect(text).toContain("Can call provider: false");
+    expect(buttonsNamed("Start Agent")).toHaveLength(0);
+    expect(buttonsNamed("Create Worktree")).toHaveLength(0);
+    expect(buttonsNamed("Read Files")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("controlled_agent_workspace_readiness");
   });
 
   it("renders auth mismatch lifecycle guidance without token leakage", async () => {

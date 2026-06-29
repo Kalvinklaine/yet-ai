@@ -44,6 +44,7 @@ export type CapsResponse = {
     host?: string;
   };
   agentRunReadiness?: unknown;
+  controlledAgentWorkspaceReadiness?: unknown;
 };
 
 export type ModelCapabilities = {
