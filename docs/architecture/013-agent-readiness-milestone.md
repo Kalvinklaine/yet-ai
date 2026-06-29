@@ -127,11 +127,23 @@ This completion status confirms only future controlled-mode prerequisite readine
 
 S73 adds no agent start, worktree creation, file read/write/search/indexing, apply/edit execution, verification execution, rollback execution, hidden reads, shell/git/tool/provider authority, runtime endpoint, bridge message type, browser raw-data persistence, production readiness, marketplace readiness, real-provider CI, multi-step execution, or autonomy claim. S74 and later controlled local-agent work remain deferred until explicit future cards approve their narrower contracts, implementation, tests, and audit gates.
 
-## Sprint 74 bounded file-read contract status
+## Sprint 74 bounded file-read status
 
-Sprint 74 starts the next phase with a contract-only, bounded, explicit controlled file-read metadata shape. This is the first narrow read authority proposed after S73 readiness, but it is deliberately not hidden context gathering and not agent start. The contract can describe one GUI- or host-minted request in an already controlled workspace/worktree, one safe workspace-relative path, text-only expectations, explicit byte/line/body budgets, and a sanitized disabled/blocked/success/truncated result.
+Sprint 74 adds the first narrow explicit bounded file-read authority for future controlled local-agent work, limited to an already controlled disposable workspace or worktree. The authority is intentionally small: one trusted GUI- or host-minted `controlled_agent_file_read` metadata envelope, one safe workspace-relative text path, text-only expectations, byte and line budgets up to 8192 bytes and 240 lines, optional body only when `budget.allowBody` is true, and sanitized disabled/blocked/success/truncated result metadata.
 
-S74 does not create a runtime endpoint, bridge message, file browser, workspace search, workspace index, provider context fetch, command runner, apply path, verification executor, or autonomous loop. It does not allow absolute paths, traversal, home/private paths, hidden files, secret-like paths, dependency/build/generated paths, globs, regex, recursive search, background indexing, binary reads, symlink traversal, oversized bodies, assistant-minted request ids, or command/cwd/env/git/tool/provider fields. The only body-bearing success path is a bounded text body explicitly allowed by the read budget, with sanitized path label, counts, truncation state, and content hash. All write, shell, git, tool, provider, auto-start, auto-apply, and auto-run authority remains absent.
+The S74 implementation remains split across strict contracts, a pure GUI evaluator, sanitized GUI/trace/session/timeline display, and a standalone local/mock smoke substrate. The evaluator performs no file I/O, bridge call, runtime call, provider call, persistence, or workspace mutation. GUI surfaces display only sanitized state, path label, counts, truncation, and hash evidence; raw file bodies are intentionally omitted from DOM-facing controlled-read evidence, trace, timeline, session metadata, reports, and browser storage. The smoke creates its own disposable sentinel-marked workspace and reports only sanitized metadata.
+
+S74 does not create a production runtime endpoint, bridge message, file browser, workspace search, workspace index, provider context fetch, command runner, apply path, verification executor, or autonomous loop. It does not allow absolute paths, traversal, home/private paths, hidden files, secret-like paths, dependency/build/generated paths, globs, regex, recursive search, background indexing, binary reads, symlink traversal, oversized bodies, assistant-minted request ids, raw data leakage, or command/cwd/env/git/tool/provider fields. All write, shell, git, tool, provider, auto-start, auto-apply, auto-run, rollback, hidden-read, and broad-context authority remains absent.
+
+The S74 final audit found no high or critical issue in the bounded file-read scope: contracts fail closed for unsafe examples, the GUI evaluator is pure metadata evaluation, the panel is collapsed and metadata-only, App wiring consumes only `/v1/caps.controlledAgentFileRead` metadata, the smoke is standalone local/mock evidence, and local-first BYOK remains unchanged. Core workflows still require no hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, cloud workspace, production login, marketplace publication, signing, notarization, or real-provider CI.
+
+The exact S74 final audit gate is:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm test -- controlledAgentFileRead ControlledAgentWorkspaceReadinessPanel controlledAgentWorkspaceReadiness codingSessionTrace App && npm run build && cd ../.. && npm run smoke:controlled-agent-file-read && npm run check && git diff --check && git status --short
+```
+
+S75 and later capabilities remain deferred until explicit future cards define their contracts, implementation, tests, and audits. In particular, S74 does not implement command execution, write/apply flows, provider/tool calling, multi-step execution, automatic repair/retry/rollback, or controlled autonomy.
 
 ## Blocked and deferred capabilities
 

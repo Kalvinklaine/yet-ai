@@ -153,6 +153,20 @@ npm run smoke:controlled-agent-workspace-readiness
 
 The smoke builds the GUI, serves built assets from loopback, and drives deterministic mock `/v1/caps.controlledAgentWorkspaceReadiness` metadata through safe/inert default, explicit user opt-in display readiness, missing isolation, missing checkpoint, missing rollback, future-ready, and unsafe-redaction cases. It asserts the panel/evaluator remain metadata-only, future-gated, collapsed by default, and unable to start an agent; a future-ready fixture still has no Start Agent or Create Worktree control and all authority flags remain false. It also asserts no bridge apply/verify/read/search/rollback messages, no runtime tool/git/shell/provider endpoints, no non-loopback network, clean browser storage, and no private path, secret, raw prompt/file/diff/command/log leakage. S73 is not worktree creation, not checkpoint creation, not controlled runtime execution, not autonomy, not production readiness, not a new runtime/bridge/storage authority, and not real-provider CI evidence.
 
+For the S74 bounded controlled file-read boundary, run:
+
+```sh
+npm run smoke:controlled-agent-file-read
+```
+
+The smoke creates its own disposable sentinel-marked workspace and exercises one explicit workspace-relative text file read with byte, line, body, and total-budget limits. It verifies success and truncation metadata plus fail-closed traversal, absolute/private, hidden, secret, dependency, generated/build, symlink, binary, oversized, glob/search, and budget-exhaustion cases. The smoke output is sanitized metadata only: no raw file bodies, private temp roots, command strings, provider/tool payloads, or secrets. S74 is narrow controlled workspace file-read evidence only; it is not hidden context gathering, broad project search, indexing, write/apply authority, verification/command authority, provider/tool authority, agent start, production autonomy, real-provider CI, or S75+ execution capability.
+
+The full S74 final gate is:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm test -- controlledAgentFileRead ControlledAgentWorkspaceReadinessPanel controlledAgentWorkspaceReadiness codingSessionTrace App && npm run build && cd ../.. && npm run smoke:controlled-agent-file-read && npm run check && git diff --check && git status --short
+```
+
 Focused S71 GUI checks are:
 
 ```sh

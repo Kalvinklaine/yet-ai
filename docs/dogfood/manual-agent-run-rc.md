@@ -107,6 +107,24 @@ npm run smoke:controlled-agent-workspace-readiness && npm run check && git diff 
 
 Do not report S73 as autonomy, production readiness, marketplace readiness, release readiness, real-provider CI, worktree creation, checkpoint creation, controlled runtime execution, automatic Send, automatic Apply, automatic Verification, automatic repair, automatic retry, automatic rollback, hidden reads/search/indexing, hidden memory attach, provider/tool calls, shell/git authority, workspace mutation, or raw-data/browser-storage persistence. Manual RC notes may record only sanitized readiness state and that no Start Agent or Create Worktree control was available.
 
+## S74 bounded controlled file-read note
+
+S74 adds bounded controlled file-read evidence for a future controlled workspace only. It can surface sanitized metadata for one explicit GUI- or host-minted read request, one safe workspace-relative text path, byte and line budgets up to 8192 bytes and 240 lines, truncation status, counts, and a content hash. The GUI display remains metadata-only: raw file bodies are intentionally omitted from panels, trace, timeline, session summaries, reports, and browser storage.
+
+The exact focused S74 smoke is:
+
+```sh
+npm run smoke:controlled-agent-file-read
+```
+
+For the final S74 audit gate, use:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm test -- controlledAgentFileRead ControlledAgentWorkspaceReadinessPanel controlledAgentWorkspaceReadiness codingSessionTrace App && npm run build && cd ../.. && npm run smoke:controlled-agent-file-read && npm run check && git diff --check && git status --short
+```
+
+Do not report S74 as hidden context gathering, broad project search, workspace indexing, arbitrary file browsing, write/apply authority, verification or shell command authority, provider/tool authority, agent start, controlled runtime execution, autonomy, production readiness, marketplace readiness, release readiness, or real-provider CI. Manual RC notes may record only sanitized bounded-read state/path labels/counts/truncation/hash evidence and must confirm no raw file body, private path, prompt, command, provider/tool payload, or secret appeared. S75+ capabilities remain unimplemented until their explicit future sprints land.
+
 ## Manual RC run checklist
 
 1. Start from a clean local checkout or sanitized dev-preview artifact label.
@@ -127,8 +145,9 @@ Do not report S73 as autonomy, production readiness, marketplace readiness, rele
 16. If the S71 timeline is visible, inspect it only as read-only sanitized metadata and confirm it adds no action controls or browser-storage/raw-data persistence.
 17. If the S72 checkpoint decision card is visible, record only sanitized status such as continue, stop, rollback review, or separate manual run guidance; confirm rollback remains review-only and no separate run, send, apply, verify, repair, retry, rollback, hidden read, search, indexing, or memory attach started automatically.
 18. If the S73 controlled workspace readiness panel is visible, record only sanitized readiness state; confirm it remains metadata-only with no Start Agent, Create Worktree, read/search, apply, verify, rollback, shell/git/tool/provider, browser-storage, or workspace-mutation authority.
-19. Validate the completed local report with `npm run report:agent-run-rc -- --check path/to/local-report.md` before sharing any excerpt.
-20. Keep raw local evidence, screenshots, logs, provider transcripts, bridge captures, and browser-storage dumps out of tracked files.
+19. If the S74 controlled file-read evidence panel is visible, record only sanitized bounded-read metadata; confirm no raw body/private path leaks and no hidden read/search/indexing/write/apply/verify/command/provider/tool authority appeared.
+20. Validate the completed local report with `npm run report:agent-run-rc -- --check path/to/local-report.md` before sharing any excerpt.
+21. Keep raw local evidence, screenshots, logs, provider transcripts, bridge captures, and browser-storage dumps out of tracked files.
 
 ## Sanitized report workflow
 
