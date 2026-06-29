@@ -11,7 +11,7 @@ const groupOrder: Array<{ label: string; families: MultiStepTaskTimelineItem["fa
   { label: "Goal and context", families: ["task.goal", "context.attachment", "memory.attachment"] },
   { label: "Review and apply", families: ["plan.preview", "proposal.review", "apply.request", "apply.result"] },
   { label: "Verification", families: ["verification.request", "verification.progress", "verification.result"] },
-  { label: "Follow-up and final", families: ["followup.draft", "final.result"] },
+  { label: "Follow-up and final", families: ["checkpoint.decision", "followup.draft", "final.result"] },
 ];
 
 export function MultiStepTaskTimelinePanel({ input, timeline: providedTimeline }: MultiStepTaskTimelinePanelProps) {

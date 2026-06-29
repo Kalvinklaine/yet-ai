@@ -7785,6 +7785,123 @@ describe("edit proposal preview", () => {
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
   });
 
+  it("wires checkpoint decisions into session timeline and trace without automatic bridge messages", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Agent Run checkpoint decisions", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Agent Run checkpoint decisions", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+    postMessage.mockClear();
+
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Manually apply reviewed patch").click();
+    });
+    const applyCall = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
+    await dispatchHostApplyResult(applyCall.requestId, { status: "failed", message: "Patch could not apply cleanly.", cloudRequired: false, appliedEditCount: 0, affectedFiles: ["src/example.ts"] });
+
+    expect(codingTaskSessionPanel().textContent).toContain("Checkpoint decision: rollback_review_available");
+    expect(codingTaskSessionPanel().textContent).toContain("Recommended checkpoint step: review_rollback · Review rollback");
+    const details = findDetails("multi-step-task-timeline-details");
+    await act(async () => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+    const timelineText = container?.querySelector("[data-testid='multi-step-task-timeline-panel']")?.textContent ?? "";
+    expect(timelineText).toContain("Checkpoint decision: rollback review available");
+    expect(timelineText).toContain("Recommended manual next step: Review rollback.");
+    expect(timelineText).toContain("decision status rollback_review_available");
+    await act(async () => {
+      const traceDetails = findDetails("coding-session-trace-details");
+      traceDetails.open = true;
+      traceDetails.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+    const traceText = findDetails("coding-session-trace-details").textContent ?? "";
+    expect(traceText).toContain("Checkpoint decision rollback review metadata visible");
+    expect(traceText).toContain("Decision status rollback_review_available; recommended manual next step Review rollback.");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
+  });
+
+  it("shows separate-run and continue checkpoint labels without creating a new run", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Agent Run checkpoint continuation", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Agent Run checkpoint continuation", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+    postMessage.mockClear();
+
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Manually apply reviewed patch").click();
+    });
+    const applyCall = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
+    await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "Agent Run apply result.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Manually run allowlisted verification").click();
+    });
+    const failedVerificationCall = postMessage.mock.calls.find(([message]) => message.type === "gui.ideActionRequest")?.[0];
+    await dispatchHostIdeActionResult(failedVerificationCall.requestId, { status: "failed", message: "Repository check failed.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 1, durationMs: 50, outputTail: "Repository validation failed", truncated: false });
+
+    expect(codingTaskSessionPanel().textContent).toContain("Checkpoint decision: separate_run_suggested");
+    expect(codingTaskSessionPanel().textContent).toContain("Recommended checkpoint step: start_separate_manual_run · Start separate manual run");
+    expect(container?.textContent).not.toContain("New run created");
+    postMessage.mockClear();
+    fetchMock.mockClear();
+
+    await act(async () => {
+      setInputValue(chatIdInput(), "chat-002");
+      await Promise.resolve();
+    });
+    await flushAsync();
+    await dispatchHostIdeActionResult("gui-agent-run-verification-2", { status: "succeeded", message: "Stale success ignored.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 0, durationMs: 10, outputTail: "passed", truncated: false });
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
+
+    act(() => root?.unmount());
+    root = undefined;
+    container?.remove();
+    container = undefined;
+    fetchMock.mockReset();
+
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Agent Run checkpoint continue", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Agent Run checkpoint continue", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+    postMessage.mockClear();
+
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Manually apply reviewed patch").click();
+    });
+    const continueApplyCall = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
+    await dispatchHostApplyResult(continueApplyCall.requestId, { status: "applied", message: "Agent Run apply result.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Manually run allowlisted verification").click();
+    });
+    const succeededVerificationCall = postMessage.mock.calls.find(([message]) => message.type === "gui.ideActionRequest")?.[0];
+    await dispatchHostIdeActionResult(succeededVerificationCall.requestId, { status: "succeeded", message: "Repository check passed.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 0, durationMs: 25, outputTail: "Repository validation passed", truncated: false });
+
+    expect(codingTaskSessionPanel().textContent).toContain("Checkpoint decision: continue_available");
+    expect(codingTaskSessionPanel().textContent).toContain("Recommended checkpoint step: continue_current_checkpoint · Continue current checkpoint");
+  });
+
   it("Agent Run stale chat change prevents verification request", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });

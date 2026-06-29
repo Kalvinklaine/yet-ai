@@ -1,4 +1,5 @@
 import { createAgentRunReport } from "./agentRunReport";
+import type { AgentRunCheckpointDecisionSummary } from "./agentRunCheckpointDecision";
 import type { CodingSessionTraceEntry } from "./codingSessionTrace";
 import { createCodingTaskSessionSnapshot, type CodingTaskSessionInput } from "./codingTaskSession";
 import { createProposalHistoryComparisonSummary, type ProposalHistory, type ProposalHistoryEntryInput } from "./proposalHistory";
@@ -17,6 +18,7 @@ export type MultiStepTaskTimelineFamily =
   | "verification.progress"
   | "verification.result"
   | "followup.draft"
+  | "checkpoint.decision"
   | "final.result";
 
 export type MultiStepTaskTimelineStatus = "info" | "pending" | "in_progress" | "succeeded" | "rejected" | "failed" | "blocked" | "skipped";
@@ -47,6 +49,7 @@ export type MultiStepTaskTimelinePolicy = {
 export type MultiStepTaskTimelineInput = CodingTaskSessionInput & {
   planPreview?: unknown;
   followupDraft?: unknown;
+  checkpointDecision?: AgentRunCheckpointDecisionSummary;
   maxItems?: unknown;
 };
 
@@ -89,6 +92,7 @@ export function createMultiStepTaskTimeline(input: MultiStepTaskTimelineInput = 
     createVerificationRequestItem(agentRun, traceEntries),
     createVerificationProgressItem(agentRun, traceEntries),
     createVerificationResultItem(agentRun, snapshot.statuses.verification, traceEntries),
+    createCheckpointDecisionItem(input.checkpointDecision),
     createFollowupDraftItem(input.followupDraft, traceEntries),
     createFinalResultItem(input.agentRun, snapshot.statuses.agentRunState, traceEntries),
   ]);
@@ -200,6 +204,29 @@ function createVerificationResultItem(agentRun: Record<string, unknown> | undefi
   const status = result?.status === "failed" || verificationStatus === "failed" ? "failed" : result?.status === "succeeded" || verificationStatus === "succeeded" ? "succeeded" : "pending";
   const labels = [typeof result?.exitCode === "number" ? `exit ${result.exitCode}` : "", typeof result?.durationMs === "number" ? `${result.durationMs}ms` : ""].filter(Boolean);
   return item("verification-result", "verification.result", status === "failed" ? "Verification failed" : status === "succeeded" ? "Verification completed" : "Verification result pending", status, safeValue(result?.summary) || (status === "pending" ? "Verification result metadata has not been recorded." : "Verification result metadata was recorded."), trace, labels);
+}
+
+function createCheckpointDecisionItem(decision: AgentRunCheckpointDecisionSummary | undefined): MultiStepTaskTimelineItem | undefined {
+  if (!decision || decision.status === "unavailable") {
+    return undefined;
+  }
+  const recommendedCard = decision.decisionCards.find((card) => card.state === "recommended");
+  const status: MultiStepTaskTimelineStatus = decision.status === "blocked" ? "blocked" : decision.status === "rollback_review_available" || decision.status === "separate_run_suggested" ? "pending" : "succeeded";
+  const title = decision.status === "continue_available"
+    ? "Checkpoint decision: continue manually available"
+    : decision.status === "rollback_review_available"
+      ? "Checkpoint decision: rollback review available"
+      : decision.status === "separate_run_suggested"
+        ? "Checkpoint decision: separate manual run suggested"
+        : "Checkpoint decision: stop recommended";
+  const summary = recommendedCard ? `Recommended manual next step: ${recommendedCard.label}. ${recommendedCard.reason}` : `Recommended manual next step: ${decision.recommendedDecision}.`;
+  const labels = [
+    `decision status ${decision.status}`,
+    `recommended ${decision.recommendedDecision}`,
+    "display only",
+    "no automatic action",
+  ];
+  return item("checkpoint-decision", "checkpoint.decision", title, status, summary, undefined, labels);
 }
 
 function createFollowupDraftItem(followupDraft: unknown, traceEntries: readonly CodingSessionTraceEntry[]): MultiStepTaskTimelineItem | undefined {

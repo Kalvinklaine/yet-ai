@@ -233,6 +233,30 @@ describe("createCodingTaskSessionSnapshot", () => {
     expect(snapshot.nextSafeManualStep).toContain("Stop and review");
   });
 
+  it("summarizes checkpoint decision status and recommended manual step", () => {
+    const snapshot = createCodingTaskSessionSnapshot({
+      agentRun: readyAgentRun(),
+      checkpointDecision: {
+        status: "separate_run_suggested",
+        recommendedDecision: "start_separate_manual_run",
+        decisionCards: [{ kind: "start_separate_manual_run", label: "Start separate manual run", state: "recommended", reason: "Manual follow-up only.", manualOnly: true, actionPayload: null }],
+        diagnostics: [],
+        details: { displayOnly: true },
+        canAutoContinue: false,
+        canAutoApply: false,
+        canAutoRollback: false,
+        canAutoRunVerification: false,
+        canStartAutonomousLoop: false,
+        hasExecutableAuthority: false,
+        displayOnly: true,
+      },
+    });
+
+    expect(snapshot.statuses.checkpointDecision).toBe("separate_run_suggested");
+    expect(snapshot.statuses.checkpointRecommendedStep).toBe("start_separate_manual_run · Start separate manual run");
+    expect(rendered(snapshot)).not.toContain("Manual follow-up only");
+  });
+
   it("summarizes trace family counts and labels", () => {
     const snapshot = createCodingTaskSessionSnapshot({ traceEntries });
 

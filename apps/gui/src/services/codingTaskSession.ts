@@ -1,5 +1,6 @@
 import type { ExplicitContextBundleItem } from "./activeEditorContext";
 import { summarizeExplicitContextBundleItem } from "./activeEditorContext";
+import type { AgentRunCheckpointDecisionSummary } from "./agentRunCheckpointDecision";
 import { evaluateAgentRunState, type AgentRunViewModel } from "./agentRunState";
 import type { CodingSessionTraceEntry, CodingSessionTraceFamily, CodingSessionTraceStatus } from "./codingSessionTrace";
 import { createProposalHistoryComparisonSummary, type ProposalHistory, type ProposalHistoryComparisonSummary, type ProposalHistoryEntryInput } from "./proposalHistory";
@@ -12,6 +13,7 @@ export type CodingTaskSessionInput = {
   memoryItems?: readonly ExplicitContextBundleItem[];
   memorySuggestions?: TaskMemorySuggestionSummary | readonly TaskMemorySuggestion[];
   agentRun?: unknown;
+  checkpointDecision?: AgentRunCheckpointDecisionSummary;
   traceEntries?: readonly CodingSessionTraceEntry[];
   proposalHistory?: ProposalHistory | readonly ProposalHistoryEntryInput[];
   diagnostics?: readonly unknown[];
@@ -57,6 +59,8 @@ export type CodingTaskSessionSnapshot = {
     apply: string;
     verification: string;
     agentRunState: string;
+    checkpointDecision: string;
+    checkpointRecommendedStep: string;
   };
   trace: {
     totalCount: number;
@@ -103,7 +107,7 @@ export function createCodingTaskSessionSnapshot(input: CodingTaskSessionInput = 
     goal: summarizeGoal(input.goal, run),
     context: summarizeContext(contextItems),
     memory: summarizeMemory(memoryItems, input.memorySuggestions),
-    statuses: summarizeStatuses(run),
+    statuses: summarizeStatuses(run, input.checkpointDecision),
     trace: summarizeTrace(traceEntries),
     proposalHistory: createProposalHistoryComparisonSummary(input.proposalHistory),
     nextSafeManualStep: nextSafeManualStep(run),
@@ -189,12 +193,14 @@ function normalizeMemorySuggestions(value: TaskMemorySuggestionSummary | readonl
   return [];
 }
 
-function summarizeStatuses(run: AgentRunViewModel): CodingTaskSessionSnapshot["statuses"] {
+function summarizeStatuses(run: AgentRunViewModel, decision: AgentRunCheckpointDecisionSummary | undefined): CodingTaskSessionSnapshot["statuses"] {
   return {
     proposal: statusFromDetails(run.details.proposalId, run.details.proposalSummary, run.state === "goal_ready" ? "not_detected" : "detected"),
     apply: statusFromDetails(run.details.applyStatus, run.details.applyRequested === true ? "requested" : undefined, "not_requested"),
     verification: statusFromDetails(run.details.verificationStatus, run.details.verificationProgress, run.details.verificationRequested === true ? "requested" : "not_requested"),
     agentRunState: safeLabel(run.state, labelLimit),
+    checkpointDecision: checkpointDecisionStatusLabel(decision),
+    checkpointRecommendedStep: checkpointDecisionRecommendedStepLabel(decision),
   };
 }
 
@@ -209,6 +215,22 @@ function summarizeTrace(entries: readonly CodingSessionTraceEntry[]): CodingTask
     families: Array.from(familyMap.entries()).slice(0, maxTraceFamilies).map(([family, value]) => ({ family: safeLabel(family, labelLimit), count: value.count, latestStatus: safeLabel(value.latestStatus, labelLimit) })),
     labels: entries.slice(-maxLabels).map((entry) => safeLabel(`${entry.family} · ${entry.status} · ${entry.title}`, labelLimit)).filter(Boolean),
   };
+}
+
+function checkpointDecisionStatusLabel(decision: AgentRunCheckpointDecisionSummary | undefined): string {
+  if (!decision || decision.status === "unavailable") {
+    return "unavailable";
+  }
+  return safeLabel(decision.status, labelLimit);
+}
+
+function checkpointDecisionRecommendedStepLabel(decision: AgentRunCheckpointDecisionSummary | undefined): string {
+  if (!decision || decision.status === "unavailable" || decision.recommendedDecision === "none") {
+    return "none";
+  }
+  const recommendedCard = decision.decisionCards.find((card) => card.state === "recommended");
+  const label = recommendedCard ? `${decision.recommendedDecision} · ${recommendedCard.label}` : decision.recommendedDecision;
+  return safeLabel(label, labelLimit);
 }
 
 function nextSafeManualStep(run: AgentRunViewModel): string {

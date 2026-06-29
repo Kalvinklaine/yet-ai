@@ -28,6 +28,7 @@ import { evaluateAgentRunModelProposal, type AgentRunModelProposalResult } from 
 import { normalizeAgentRunApplyRequest, correlateAgentRunApplyResult, type AgentRunApplyCorrelationMetadata } from "./services/agentRunApply";
 import { normalizeAgentRunVerificationRequest, correlateAgentRunVerificationProgress, correlateAgentRunVerificationResult, type AgentRunVerificationCorrelationMetadata } from "./services/agentRunVerification";
 import { createAgentRunReport, createAgentRunTraceDetails } from "./services/agentRunReport";
+import { buildAgentRunCheckpointDecision, type AgentRunCheckpointDecisionSummary } from "./services/agentRunCheckpointDecision";
 import { composeAgentRunReadiness, type AgentRunReadinessResult } from "./services/agentRunReadiness";
 import { buildVerificationFollowupPrompt, buildVerificationFollowupPromptDraft, type VerificationFollowupPromptDraftMetadata, type VerificationFollowupPromptMode, type VerificationResultForPrompt } from "./services/verificationFollowupPrompt";
 import { createProjectMemory, deleteProjectMemory, listProjectMemory, searchProjectMemory, type ProjectMemoryNote } from "./services/projectMemoryClient";
@@ -586,6 +587,9 @@ export function App() {
     return baseInput;
   }, [activeEditProposal, agentRunApplyRequest, agentRunModelProposal, agentRunReadiness, agentRunVerificationProgress, agentRunVerificationRequest, agentRunVerificationResult, legacyAgentRunInput, modelProposalDraft, submittedModelProposalPrompt]);
   agentRunInputRef.current = agentRunInput ?? null;
+  const agentRunCheckpointDecision = useMemo<AgentRunCheckpointDecisionSummary | undefined>(() => agentRunInput ? buildAgentRunCheckpointDecision({ host: bridgeHost, agentRun: agentRunInput }) : undefined, [agentRunInput, bridgeHost]);
+  const agentRunCheckpointDecisionTraceEntry = useMemo<CodingSessionTraceEntry | null>(() => createCheckpointDecisionTraceEntry(agentRunCheckpointDecision), [agentRunCheckpointDecision]);
+  const codingSessionTraceWithCheckpointDecision = useMemo(() => agentRunCheckpointDecisionTraceEntry ? [...codingSessionTrace, agentRunCheckpointDecisionTraceEntry] : codingSessionTrace, [agentRunCheckpointDecisionTraceEntry, codingSessionTrace]);
   const codingTaskPromptDraft = useMemo(() => buildCodingTaskPrompt({ mode: "ask", goal: codingTaskGoal, contextItems: explicitContextBundleItems, providerReadiness: chatReadinessLabel }), [chatReadinessLabel, codingTaskGoal, explicitContextBundleItems]);
   const proposalHistory = useMemo(() => createProposalHistory(buildProposalHistoryEntries({
     modelProposalResult: agentRunModelProposal,
@@ -611,13 +615,14 @@ export function App() {
     contextItems: explicitContextBundleItems,
     memoryItems: attachedProjectMemoryItems,
     agentRun: agentRunInput,
-    traceEntries: codingSessionTrace,
+    traceEntries: codingSessionTraceWithCheckpointDecision,
+    checkpointDecision: agentRunCheckpointDecision,
     proposalHistory,
     diagnostics: [
       ...(activeRejectedEditProposal ? [`edit proposal rejected: ${activeRejectedEditProposal.diagnostic.reasonCode}`] : []),
       ...(activeRejectedIdeActionProposal ? [`IDE action proposal rejected: ${activeRejectedIdeActionProposal.diagnostic.reasonCode}`] : []),
     ],
-  }), [activeRejectedEditProposal, activeRejectedIdeActionProposal, agentRunInput, attachedProjectMemoryItems, codingSessionTrace, codingTaskGoal, explicitContextBundleItems, proposalHistory]);
+  }), [activeRejectedEditProposal, activeRejectedIdeActionProposal, agentRunInput, attachedProjectMemoryItems, codingSessionTraceWithCheckpointDecision, agentRunCheckpointDecision, codingTaskGoal, explicitContextBundleItems, proposalHistory]);
   const taskMemorySuggestions = useMemo(() => suggestTaskMemory({
     taskGoalLabel: codingTaskSessionBase.goal.label,
     sessionLabel: createSessionMemoryLabel(undefined, chatId),
@@ -632,20 +637,22 @@ export function App() {
     memoryItems: attachedProjectMemoryItems,
     memorySuggestions: taskMemorySuggestions,
     agentRun: agentRunInput,
-    traceEntries: codingSessionTrace,
+    traceEntries: codingSessionTraceWithCheckpointDecision,
+    checkpointDecision: agentRunCheckpointDecision,
     proposalHistory,
     diagnostics: [
       ...(activeRejectedEditProposal ? [`edit proposal rejected: ${activeRejectedEditProposal.diagnostic.reasonCode}`] : []),
       ...(activeRejectedIdeActionProposal ? [`IDE action proposal rejected: ${activeRejectedIdeActionProposal.diagnostic.reasonCode}`] : []),
     ],
-  }), [activeRejectedEditProposal, activeRejectedIdeActionProposal, agentRunInput, attachedProjectMemoryItems, codingSessionTrace, codingTaskGoal, explicitContextBundleItems, proposalHistory, taskMemorySuggestions]);
+  }), [activeRejectedEditProposal, activeRejectedIdeActionProposal, agentRunInput, attachedProjectMemoryItems, codingSessionTraceWithCheckpointDecision, agentRunCheckpointDecision, codingTaskGoal, explicitContextBundleItems, proposalHistory, taskMemorySuggestions]);
   const multiStepTaskTimelineInput = useMemo(() => ({
     goal: codingTaskGoal,
     contextItems: explicitContextBundleItems,
     memoryItems: attachedProjectMemoryItems,
     memorySuggestions: taskMemorySuggestions,
     agentRun: agentRunInput,
-    traceEntries: codingSessionTrace,
+    traceEntries: codingSessionTraceWithCheckpointDecision,
+    checkpointDecision: agentRunCheckpointDecision,
     proposalHistory,
     planPreview: agentRunInput?.planPreview,
     followupDraft: agentRunVerificationFixDraft?.metadata,
@@ -653,7 +660,7 @@ export function App() {
       ...(activeRejectedEditProposal ? [`edit proposal rejected: ${activeRejectedEditProposal.diagnostic.reasonCode}`] : []),
       ...(activeRejectedIdeActionProposal ? [`IDE action proposal rejected: ${activeRejectedIdeActionProposal.diagnostic.reasonCode}`] : []),
     ],
-  }), [activeRejectedEditProposal, activeRejectedIdeActionProposal, agentRunInput, agentRunVerificationFixDraft, attachedProjectMemoryItems, codingSessionTrace, codingTaskGoal, explicitContextBundleItems, proposalHistory, taskMemorySuggestions]);
+  }), [activeRejectedEditProposal, activeRejectedIdeActionProposal, agentRunInput, agentRunVerificationFixDraft, attachedProjectMemoryItems, codingSessionTraceWithCheckpointDecision, agentRunCheckpointDecision, codingTaskGoal, explicitContextBundleItems, proposalHistory, taskMemorySuggestions]);
   const showWhatWillBeSentPanel = chatInput.trim().length > 0 || contextBudgetSummary.sources.some((source) => source.itemCount > 0 || source.charCount > 0) || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
   const workspaceSnippetQueryValidation = useMemo(() => validateWorkspaceSnippetQuery(workspaceSnippetQuery), [workspaceSnippetQuery]);
 
@@ -2497,7 +2504,7 @@ export function App() {
         ? "Configure a provider/model or enable Demo Mode before sending."
         : "Connect the local runtime before sending."
     : chatLifecycleLabels[chatLifecycleState];
-  const tracePanelEntries = codingSessionTrace.slice(-12);
+  const tracePanelEntries = codingSessionTraceWithCheckpointDecision.slice(-12);
   const currentChatTitle = sanitizeDisplayText(activeChatSummary?.title ?? chatId);
   const renderConversationList = (deleteHelpId: string) => (
     <div className="conversation-list" role="list" aria-label="Local conversations list">
@@ -2957,6 +2964,38 @@ export function App() {
       </section>
     </main>
   );
+}
+
+function createCheckpointDecisionTraceEntry(decision: AgentRunCheckpointDecisionSummary | undefined): CodingSessionTraceEntry | null {
+  if (!decision || decision.status === "unavailable") {
+    return null;
+  }
+  const recommendedCard = decision.decisionCards.find((card) => card.state === "recommended");
+  const title = decision.status === "continue_available"
+    ? "Checkpoint decision continue metadata visible"
+    : decision.status === "rollback_review_available"
+      ? "Checkpoint decision rollback review metadata visible"
+      : decision.status === "separate_run_suggested"
+        ? "Checkpoint decision separate manual run metadata visible"
+        : "Checkpoint decision stop metadata visible";
+  const status: CodingSessionTraceEntry["status"] = decision.status === "blocked" ? "failed" : decision.status === "continue_available" ? "succeeded" : "pending";
+  return {
+    id: `checkpoint-decision-${decision.status}`,
+    timestamp: "1970-01-01T00:00:00.000Z",
+    family: decision.status === "rollback_review_available" ? "agentRun.rollbackAvailable" : decision.status === "continue_available" ? "agentRun.completed" : "agentRun.blocked",
+    title,
+    status,
+    summary: recommendedCard ? `Decision status ${decision.status}; recommended manual next step ${recommendedCard.label}.` : `Decision status ${decision.status}; recommended manual next step ${decision.recommendedDecision}.`,
+    details: {
+      decisionStatus: decision.status,
+      recommendedDecision: decision.recommendedDecision,
+      displayOnly: decision.displayOnly,
+      canAutoContinue: decision.canAutoContinue,
+      canAutoApply: decision.canAutoApply,
+      canAutoRollback: decision.canAutoRollback,
+      canAutoRunVerification: decision.canAutoRunVerification,
+    },
+  };
 }
 
 function buildProposalHistoryEntries({ modelProposalResult, editProposal, rejectedEditProposal, applyResult, verificationAttempt, planProposal }: { modelProposalResult: AgentRunModelProposalResult; editProposal: EditProposalState | null; rejectedEditProposal: { sourceMessageId: string; diagnostic: EditProposalRejectedDiagnostic } | null; applyResult: ApplyResultState | null; verificationAttempt: IdeActionAttemptState | null; planProposal: ManualRunnerPlanProposal | null }): ProposalHistoryEntryInput[] {
@@ -3564,6 +3603,8 @@ function CodingTaskSessionPanel({ session, goal, contextItems, modelStatus, canS
         <span>Apply lifecycle: {session.statuses.apply}</span>
         <span>Edit lifecycle: {editProposalStatus}</span>
         <span>Verification lifecycle: {displayVerificationStatus}{verificationAttached ? " · attached for follow-up" : " · draft or attach manually"}</span>
+        {session.statuses.checkpointDecision !== "unavailable" && <span>Checkpoint decision: {session.statuses.checkpointDecision}</span>}
+        {session.statuses.checkpointDecision !== "unavailable" && <span>Recommended checkpoint step: {session.statuses.checkpointRecommendedStep}</span>}
         <span>Provider/model readiness: {canSendChat ? `ready · ${modelStatus}` : `blocked · ${modelStatus}`}</span>
         <span>Memory attachments: {session.memory.count}</span>
         <span>Memory suggestions: suggested {session.memory.suggestionCounts.suggested} · stale {session.memory.suggestionCounts.stale} · unsafe {session.memory.suggestionCounts.unsafe} · already attached {session.memory.suggestionCounts.already_attached}</span>

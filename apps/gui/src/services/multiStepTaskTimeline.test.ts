@@ -151,6 +151,32 @@ describe("createMultiStepTaskTimeline", () => {
     expect(rendered(timeline)).not.toContain("raw memory note body");
   });
 
+  it("adds display-only checkpoint decision timeline metadata", () => {
+    const input = fullInput();
+    input.checkpointDecision = {
+      status: "continue_available",
+      recommendedDecision: "continue_current_checkpoint",
+      decisionCards: [{ kind: "continue", label: "Continue current checkpoint", state: "recommended", reason: "Continue is manual after verification.", manualOnly: true, actionPayload: null }],
+      diagnostics: [],
+      details: { displayOnly: true },
+      canAutoContinue: false,
+      canAutoApply: false,
+      canAutoRollback: false,
+      canAutoRunVerification: false,
+      canStartAutonomousLoop: false,
+      hasExecutableAuthority: false,
+      displayOnly: true,
+    };
+
+    const timeline = createMultiStepTaskTimeline(input);
+    const decisionItem = timeline.items.find((item) => item.id === "checkpoint-decision");
+
+    expect(decisionItem).toMatchObject({ family: "checkpoint.decision", status: "succeeded", title: "Checkpoint decision: continue manually available" });
+    expect(decisionItem?.summary).toContain("Recommended manual next step: Continue current checkpoint.");
+    expect(decisionItem?.labels).toEqual(expect.arrayContaining(["decision status continue_available", "recommended continue_current_checkpoint", "display only", "no automatic action"]));
+    expect(rendered(timeline)).not.toContain("autoApply");
+  });
+
   it("redacts unsafe metadata without leaking secrets paths commands diffs or stack traces", () => {
     const secret = "access_token=" + "x".repeat(64);
     const timeline = createMultiStepTaskTimeline({
