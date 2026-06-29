@@ -1,5 +1,6 @@
 import type { ApplyWorkspaceEditPayload, BridgeHost, VerificationCommandId } from "../bridge/bridgeAdapter";
 import { buildAgentRunApplyRiskSummary } from "../services/agentRunApplyRisk";
+import { buildAgentRunCheckpointDecision, type AgentRunCheckpointDecisionSummary } from "../services/agentRunCheckpointDecision";
 import { evaluateAgentRunState, type AgentRunInput } from "../services/agentRunState";
 import { deriveGuidedFixLoopStatus, type GuidedFixLoopDraftState } from "../services/guidedFixLoop";
 import type { ProposalHistory } from "../services/proposalHistory";
@@ -42,6 +43,8 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
     pendingApply,
     applyResult: metadata?.applyResult,
   });
+  const checkpointDecision = buildAgentRunCheckpointDecision({ agentRun: input, host });
+  const showCheckpointDecision = metadata && checkpointDecision.status !== "unavailable";
   const showApplyRiskSummary = Boolean(metadata && !metadata.applyResult && (!pendingApply || metadata.applyRequest?.requested === true) && (hasProposal(details) || view.nextUserAction === "confirm_apply" || view.nextUserAction === "wait_for_apply" || view.state === "prerequisites_blocked" || view.state === "blocked"));
   const verificationCommandId = verificationCommandIdFromDetails(details.verificationCommandId);
   const canApply = supported && !pendingApply && view.nextUserAction === "confirm_apply";
@@ -101,6 +104,28 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           <span>Rollback: {checkpointRollbackCopy.rollback}</span>
           <span>{checkpointRollbackCopy.recovery}</span>
           <span>{checkpointRollbackCopy.safety}</span>
+        </div>
+      )}
+      {showCheckpointDecision && (
+        <div className={`readiness-card ${checkpointDecisionTone(checkpointDecision)} stack`} role="status" aria-label="Agent Run manual checkpoint decision">
+          <div className="row">
+            <strong>Manual checkpoint decision</strong>
+            <span className="badge">manual decisions only</span>
+            <span className="badge">sanitized metadata</span>
+            <span className={checkpointDecision.status === "blocked" ? "badge warn" : "badge ok"}>{sanitizeDisplayText(checkpointDecision.status.replace(/_/g, " "))}</span>
+          </div>
+          <span>{checkpointDecisionSummaryCopy(checkpointDecision)}</span>
+          <span>No automatic rollback, continuation, apply, verification, repair, retry, chat send, context attach, file read, search, or separate run starts from this panel.</span>
+          <span>Recommended manual decision: {checkpointDecisionLabel(checkpointDecision.recommendedDecision)}</span>
+          <div className="agent-progress-grid" aria-label="Agent Run manual checkpoint decision options">
+            {checkpointDecision.decisionCards.map((card) => <span key={card.kind}>{sanitizeDisplayText(card.label)}: {sanitizeDisplayText(card.state.replace(/_/g, " "))} · {sanitizeDisplayText(card.reason)}</span>)}
+          </div>
+          {checkpointDecision.details.reason && <span>Decision reason: {sanitizeDisplayText(String(checkpointDecision.details.reason))}</span>}
+          {checkpointDecision.details.applyStatus && <span>Apply status: {sanitizeDisplayText(String(checkpointDecision.details.applyStatus))}</span>}
+          {checkpointDecision.details.verificationStatus && <span>Verification status: {sanitizeDisplayText(String(checkpointDecision.details.verificationStatus))}</span>}
+          {checkpointDecision.details.verificationExitCode !== undefined && <span>Verification exit code: {String(checkpointDecision.details.verificationExitCode)}</span>}
+          {checkpointDecision.diagnostics.length > 0 && <span className="subtle">Decision diagnostics: {checkpointDecision.diagnostics.map((item) => `${sanitizeDisplayText(item.code)}: ${sanitizeDisplayText(item.message)}`).join(" · ")}</span>}
+          <span className="subtle">Continue means keep working in the current checkpoint by explicit user choice only. Review rollback opens the existing review-only path when available. Start separate manual run is guidance only and creates nothing.</span>
         </div>
       )}
       {view.diagnostics.length > 0 && (
@@ -200,6 +225,42 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
       {(pendingApply || pendingVerification) && <span className="subtle" role="status">A user-requested host action is pending. Duplicate requests stay disabled.</span>}
     </section>
   );
+}
+
+function checkpointDecisionTone(decision: AgentRunCheckpointDecisionSummary): "ready" | "warn" {
+  return decision.status === "continue_available" ? "ready" : "warn";
+}
+
+function checkpointDecisionSummaryCopy(decision: AgentRunCheckpointDecisionSummary): string {
+  if (decision.recommendedDecision === "continue_current_checkpoint") {
+    return "Continue in the current checkpoint is available as manual guidance after successful apply and verification metadata.";
+  }
+  if (decision.recommendedDecision === "review_rollback") {
+    return "Rollback review is available as a manual review-only decision; this card has no rollback execution payload.";
+  }
+  if (decision.recommendedDecision === "start_separate_manual_run") {
+    return "Verification failed; start a separate manual run only if the user chooses to draft follow-up work.";
+  }
+  if (decision.recommendedDecision === "stop") {
+    return "Stop is the safe manual decision for this checkpoint; no automatic recovery action is started.";
+  }
+  return "Checkpoint decision metadata is display-only and unavailable for action.";
+}
+
+function checkpointDecisionLabel(decision: AgentRunCheckpointDecisionSummary["recommendedDecision"]): string {
+  if (decision === "continue_current_checkpoint") {
+    return "continue in current checkpoint";
+  }
+  if (decision === "review_rollback") {
+    return "review rollback";
+  }
+  if (decision === "start_separate_manual_run") {
+    return "start separate manual run";
+  }
+  if (decision === "stop") {
+    return "stop";
+  }
+  return "none";
 }
 
 function isAgentRunInput(value: unknown): value is AgentRunInput {

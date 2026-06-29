@@ -329,6 +329,96 @@ describe("AgentRunPanel", () => {
     expect(onReviewRollback).toHaveBeenCalledTimes(1);
   });
 
+  it("renders manual checkpoint rollback-review decision without new execution controls", () => {
+    const onApply = vi.fn();
+    const onVerify = vi.fn();
+    const onReviewRollback = vi.fn();
+    renderPanel({
+      ...readyInput,
+      applyResult: { status: "failed", summary: "Apply failed.", appliedFileCount: 0 },
+      rollback: { available: true, summary: "Rollback review available." },
+      checkpointRollbackState: {
+        ...checkpointReadinessState,
+        displayState: "rollback_available",
+        checkpoint: { status: "verified", label: "Checkpoint verified by host" },
+        rollback: { status: "available", label: "Restore option shown after user review" },
+        rollbackAction: { trigger: "user", owner: "host", automatic: false, label: "User may request host rollback" },
+        summary: "Restore option is shown but not automatic",
+      },
+    }, { host: "vscode", onApplyReviewedPatch: onApply, onRunAllowlistedVerification: onVerify, onReviewRollback });
+
+    expect(panelText()).toContain("Manual checkpoint decision");
+    expect(panelText()).toContain("manual decisions only");
+    expect(panelText()).toContain("sanitized metadata");
+    expect(panelText()).toContain("Rollback review is available as a manual review-only decision; this card has no rollback execution payload.");
+    expect(panelText()).toContain("Recommended manual decision: review rollback");
+    expect(panelText()).toContain("Review rollback: recommended · Rollback is review-only and has no execute payload.");
+    expect(panelText()).toContain("No automatic rollback, continuation, apply, verification, repair, retry, chat send, context attach, file read, search, or separate run starts from this panel.");
+    expect(panelText()).toContain("Review rollback opens the existing review-only path when available.");
+    expect(actionButtonLabels()).toEqual(["Manually apply reviewed patch", "Manually run allowlisted verification", "Manually review rollback"]);
+    expect(onApply).not.toHaveBeenCalled();
+    expect(onVerify).not.toHaveBeenCalled();
+    expect(onReviewRollback).not.toHaveBeenCalled();
+    act(() => {
+      findButton("Manually review rollback").click();
+    });
+    expect(onReviewRollback).toHaveBeenCalledTimes(1);
+    expect(onApply).not.toHaveBeenCalled();
+    expect(onVerify).not.toHaveBeenCalled();
+  });
+
+  it("renders safe continue checkpoint decision as guidance only", () => {
+    const onApply = vi.fn();
+    const onVerify = vi.fn();
+    const onReviewRollback = vi.fn();
+    renderPanel({
+      ...readyInput,
+      applyResult: { status: "applied", summary: "Applied.", appliedFileCount: 1 },
+      verificationResult: { status: "succeeded", exitCode: 0, outputTail: "passed" },
+      boundedLoop: verifiedLoop,
+    }, { host: "vscode", onApplyReviewedPatch: onApply, onRunAllowlistedVerification: onVerify, onReviewRollback });
+
+    expect(panelText()).toContain("Manual checkpoint decision");
+    expect(panelText()).toContain("Continue in the current checkpoint is available as manual guidance after successful apply and verification metadata.");
+    expect(panelText()).toContain("Recommended manual decision: continue in current checkpoint");
+    expect(panelText()).toContain("Continue current checkpoint: recommended · Continue is a manual recommendation after successful apply and verification metadata.");
+    expect(panelText()).toContain("No automatic rollback, continuation, apply, verification, repair, retry, chat send, context attach, file read, search, or separate run starts from this panel.");
+    expect(panelText()).toContain("Continue means keep working in the current checkpoint by explicit user choice only.");
+    expect(actionButtonLabels()).toEqual(["Draft Agent Run follow-up prompt", "Manually apply reviewed patch", "Manually run allowlisted verification", "Manually review rollback"]);
+    expect(findButton("Manually apply reviewed patch").disabled).toBe(true);
+    expect(findButton("Manually run allowlisted verification").disabled).toBe(true);
+    expect(findButton("Manually review rollback").disabled).toBe(true);
+    expect(onApply).not.toHaveBeenCalled();
+    expect(onVerify).not.toHaveBeenCalled();
+    expect(onReviewRollback).not.toHaveBeenCalled();
+  });
+
+  it("renders failed verification as separate manual run guidance only", () => {
+    const onApply = vi.fn();
+    const onVerify = vi.fn();
+    const onReviewRollback = vi.fn();
+    renderPanel({
+      ...readyInput,
+      applyResult: { status: "applied", summary: "Applied.", appliedFileCount: 1 },
+      verificationResult: { status: "failed", exitCode: 1, outputTail: "failed" },
+      boundedLoop: failedVerificationLoop,
+    }, { host: "vscode", onApplyReviewedPatch: onApply, onRunAllowlistedVerification: onVerify, onReviewRollback });
+
+    expect(panelText()).toContain("Manual checkpoint decision");
+    expect(panelText()).toContain("Verification failed; start a separate manual run only if the user chooses to draft follow-up work.");
+    expect(panelText()).toContain("Recommended manual decision: start separate manual run");
+    expect(panelText()).toContain("Start separate manual run: recommended · Follow-up work should start as a separate user-controlled run.");
+    expect(panelText()).toContain("Decision diagnostics: manual_review_required: Verification failed; use a separate manual run for follow-up work.");
+    expect(panelText()).toContain("Start separate manual run is guidance only and creates nothing.");
+    expect(actionButtonLabels()).toEqual(["Draft Agent Run fix prompt", "Manually apply reviewed patch", "Manually run allowlisted verification", "Manually review rollback"]);
+    expect(findButton("Manually apply reviewed patch").disabled).toBe(true);
+    expect(findButton("Manually run allowlisted verification").disabled).toBe(true);
+    expect(findButton("Manually review rollback").disabled).toBe(true);
+    expect(onApply).not.toHaveBeenCalled();
+    expect(onVerify).not.toHaveBeenCalled();
+    expect(onReviewRollback).not.toHaveBeenCalled();
+  });
+
   it("renders sanitized plan-to-patch metadata as display-only review context", () => {
     renderPanel(readyInputWithPlanMetadata, { host: "vscode" });
 
@@ -660,6 +750,10 @@ function findButton(name: string) {
 
 function optionalButton(name: string) {
   return Array.from(container?.querySelectorAll<HTMLButtonElement>("button") ?? []).find((item) => item.textContent === name);
+}
+
+function actionButtonLabels() {
+  return Array.from(container?.querySelectorAll<HTMLButtonElement>("button") ?? []).map((item) => item.textContent ?? "");
 }
 
 function browserStorageDump() {
