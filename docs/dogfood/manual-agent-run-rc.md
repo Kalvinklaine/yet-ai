@@ -125,6 +125,24 @@ npm run validate:contracts && cd apps/gui && npm test -- controlledAgentFileRead
 
 Do not report S74 as hidden context gathering, broad project search, workspace indexing, arbitrary file browsing, write/apply authority, verification or shell command authority, provider/tool authority, agent start, controlled runtime execution, autonomy, production readiness, marketplace readiness, release readiness, or real-provider CI. Manual RC notes may record only sanitized bounded-read state/path labels/counts/truncation/hash evidence and must confirm no raw file body, private path, prompt, command, provider/tool payload, or secret appeared. S75+ capabilities remain unimplemented until their explicit future sprints land.
 
+## S75 allowlisted command-runner note
+
+S75 adds allowlisted command-id evidence for a future controlled workspace only. It can surface sanitized metadata for one trusted GUI- or host-minted request, explicit user/host confirmation, a controlled workspace/run id, one fixed command id (`repository-check`, `gui-app-tests`, or `engine-chat-tests`), bounded timeout and output-tail limits, status, exit code where applicable, duration, counts, truncation, and hash evidence. The GUI display remains metadata-only and reads this evidence only from `/v1/caps.controlledAgentCommandRunner`; it adds no bridge run button, no runtime endpoint, and no browser-storage persistence of raw command output.
+
+The exact focused S75 smoke is:
+
+```sh
+npm run smoke:controlled-agent-command-runner
+```
+
+For the final S75 audit gate, use:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm test -- controlledAgentCommandRunner agentRunVerification codingSessionTrace App && npm run build && cd ../.. && npm run smoke:controlled-agent-command-runner && npm run check && git diff --check && git status --short
+```
+
+Do not report S75 as shell access, arbitrary command execution, model-provided commands, git/package/network authority, provider/tool calling, broad agent runtime, production autonomy, marketplace readiness, release readiness, or real-provider CI. Manual RC notes may record only sanitized command-id state/label/status/limit/count/hash evidence and must confirm no raw command string, args, cwd, env, stdout/stderr dump, private path, provider/tool payload, or secret appeared. S76+ loop, edit, repair, retry, rollback, provider-tool, and controlled-autonomy capabilities remain unimplemented until their explicit future sprints land.
+
 ## Manual RC run checklist
 
 1. Start from a clean local checkout or sanitized dev-preview artifact label.
@@ -146,8 +164,9 @@ Do not report S74 as hidden context gathering, broad project search, workspace i
 17. If the S72 checkpoint decision card is visible, record only sanitized status such as continue, stop, rollback review, or separate manual run guidance; confirm rollback remains review-only and no separate run, send, apply, verify, repair, retry, rollback, hidden read, search, indexing, or memory attach started automatically.
 18. If the S73 controlled workspace readiness panel is visible, record only sanitized readiness state; confirm it remains metadata-only with no Start Agent, Create Worktree, read/search, apply, verify, rollback, shell/git/tool/provider, browser-storage, or workspace-mutation authority.
 19. If the S74 controlled file-read evidence panel is visible, record only sanitized bounded-read metadata; confirm no raw body/private path leaks and no hidden read/search/indexing/write/apply/verify/command/provider/tool authority appeared.
-20. Validate the completed local report with `npm run report:agent-run-rc -- --check path/to/local-report.md` before sharing any excerpt.
-21. Keep raw local evidence, screenshots, logs, provider transcripts, bridge captures, and browser-storage dumps out of tracked files.
+20. If the S75 controlled command evidence panel is visible, record only sanitized command-id metadata; confirm no raw command/args/cwd/env/output dumps/private paths/secrets appeared and no shell/git/network/provider/tool/runtime execution authority or action control was available.
+21. Validate the completed local report with `npm run report:agent-run-rc -- --check path/to/local-report.md` before sharing any excerpt.
+22. Keep raw local evidence, screenshots, logs, provider transcripts, bridge captures, and browser-storage dumps out of tracked files.
 
 ## Sanitized report workflow
 

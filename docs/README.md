@@ -167,6 +167,20 @@ The full S74 final gate is:
 npm run validate:contracts && cd apps/gui && npm test -- controlledAgentFileRead ControlledAgentWorkspaceReadinessPanel controlledAgentWorkspaceReadiness codingSessionTrace App && npm run build && cd ../.. && npm run smoke:controlled-agent-file-read && npm run check && git diff --check && git status --short
 ```
 
+For the S75 allowlisted command-runner foundation, run:
+
+```sh
+npm run smoke:controlled-agent-command-runner
+```
+
+The smoke uses an internal command-id allowlist mapped to deterministic local Node actions for `repository-check`, `gui-app-tests`, and `engine-chat-tests`. It proves allowed success/failure/timeout metadata, unknown command blocking, raw command/cwd/env rejection, bounded timeout and output limits, sanitized output-tail evidence, and no raw command material, private paths, provider/tool payloads, or secrets in the final report. S75 is an allowlisted command-id metadata foundation only: it is not free-form shell, arbitrary command execution, model-provided commands, git/package/network authority, provider tool calling, a production runner, broad agent runtime, automatic verification, repair/retry/rollback, or controlled autonomy.
+
+The full S75 final gate is:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm test -- controlledAgentCommandRunner agentRunVerification codingSessionTrace App && npm run build && cd ../.. && npm run smoke:controlled-agent-command-runner && npm run check && git diff --check && git status --short
+```
+
 Focused S71 GUI checks are:
 
 ```sh
