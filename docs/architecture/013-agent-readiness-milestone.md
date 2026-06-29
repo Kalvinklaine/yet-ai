@@ -40,6 +40,7 @@ Avoid softer wording that implies implementation, autonomy, production publicati
 | S73 controlled workspace readiness | Experimental manual-only | Controlled workspace readiness renders future-gated metadata from `/v1/caps.controlledAgentWorkspaceReadiness` only. It can show opt-in, isolation, checkpoint, rollback, and limit status, but it cannot start an agent, create a worktree, read/search files, apply edits, run verification or shell commands, call providers/tools, use git, persist raw data, or add runtime/bridge/storage authority. |
 | S74 bounded controlled file-read | Experimental manual-only | Controlled file-read evidence renders only sanitized metadata from `/v1/caps.controlledAgentFileRead` for one bounded explicit workspace-relative text read in a controlled workspace. It does not add hidden reads, search/indexing, raw body display, write/apply, command, provider/tool, bridge, runtime, storage, or autonomy authority. |
 | S75 allowlisted command-runner evidence | Experimental manual-only | Controlled command evidence renders only sanitized allowlisted command-id metadata from `/v1/caps.controlledAgentCommandRunner` for trusted user/host-confirmed requests. It is not free-form shell or arbitrary command execution and adds no raw command/args/cwd/env, git/network/package/provider/tool, bridge run button, runtime endpoint, automatic verification, repair, retry, rollback, or autonomy authority. |
+| S76 controlled run state skeleton | Experimental manual-only | Controlled run state records deterministic metadata-only phases, bounded counters, readiness correlation, stop reasons, and sanitized details for a future state machine. It does not start an agent, execute a loop, read files, apply edits, run verification, repair, retry, roll back, call providers/tools, add runtime/bridge authority, or provide real agent autonomy yet. |
 | Multi-step execution | Blocked/deferred | There is no implemented runner that executes a plan across multiple steps. S61 is only inert metadata. |
 | Controlled autonomy | Blocked/deferred | No autonomous loop is implemented. Any future controlled-autonomy work must pass the future eligibility gates below before design or implementation. |
 | Auto-repair / auto-retry / auto-rollback | Blocked/deferred | Failed verification can stop and may produce a draft-only prompt. The product must not claim automatic repair, retry, verification, or rollback. |
@@ -163,6 +164,18 @@ The exact S75 final audit gate is:
 
 ```sh
 npm run validate:contracts && cd apps/gui && npm test -- controlledAgentCommandRunner agentRunVerification codingSessionTrace App && npm run build && cd ../.. && npm run smoke:controlled-agent-command-runner && npm run check && git diff --check && git status --short
+```
+
+## Sprint 76 controlled run state contract status
+
+Sprint 76 starts with the `controlled_agent_run_state` contract as a state-machine skeleton only. The contract records deterministic metadata for `idle`, `opt_in_required`, `workspace_ready`, `reading_context`, `planning`, `waiting_for_user`, `running_verification`, `stopping`, `stopped`, `blocked`, `failed`, and `completed`, with controlled workspace/run/readiness correlation, bounded run limits, bounded counters, sanitized details, and explicit stop reasons for interrupted or failed states.
+
+S76 does not implement the real controlled-agent loop yet. The contract grants no agent start, auto-start, file read/write, apply/edit, verification execution, repair, retry, rollback, shell, git, network, package-manager, provider/tool call, runtime endpoint, bridge message, storage authority, or autonomous behavior. It is metadata for future evaluation and UI wiring only. Invalid fixtures reject assistant-minted authority, auto-action claims, shell/git/provider/tool flags, raw prompt/file/diff/command/log fields, unsafe details, unbounded limits, and stopped/blocked/failed states without explicit sanitized stop metadata.
+
+The exact S76-C1 contract gate is:
+
+```sh
+npm run validate:contracts && npm run check && git diff --check
 ```
 
 ## Blocked and deferred capabilities

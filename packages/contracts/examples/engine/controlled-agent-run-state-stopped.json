@@ -1,0 +1,91 @@
+{
+  "kind": "controlled_agent_run_state",
+  "version": "2026-06-29",
+  "authority": "state_metadata_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "agentStartAllowed": false,
+  "autoStartAllowed": false,
+  "workspace": {
+    "controlledWorkspaceId": "workspace-s76-demo",
+    "runId": "run-s76-stopped",
+    "readinessId": "controlled-workspace-s73-c1",
+    "workspaceMode": "worktree",
+    "host": "vscode",
+    "workspaceReady": true,
+    "privatePathExposed": false,
+    "workspaceLabel": "Controlled workspace demo"
+  },
+  "request": {
+    "requestId": "request-s76-stopped",
+    "source": "gui",
+    "requestIdMintedBy": "gui",
+    "assistantMinted": false,
+    "correlation": {
+      "origin": "user",
+      "confirmedBy": "user",
+      "confirmationId": "confirm-s76-demo",
+      "hostCorrelationId": "host-s76-demo",
+      "confirmedAt": "2026-06-29T19:00:00Z",
+      "label": "User confirmed state review"
+    },
+    "requestedAt": "2026-06-29T19:00:01Z",
+    "reason": "Track controlled run state skeleton"
+  },
+  "phase": {
+    "state": "stopped",
+    "enteredAt": "2026-06-29T19:10:00Z",
+    "sequence": 5,
+    "label": "Stopped state"
+  },
+  "limits": {
+    "maxSteps": 6,
+    "maxFileReads": 6,
+    "maxTouchedFiles": 4,
+    "maxPatchBytes": 12000,
+    "maxVerificationRuns": 2,
+    "maxRuntimeSeconds": 600,
+    "limitLabel": "Bounded run state limits"
+  },
+  "counters": {
+    "stepsCompleted": 2,
+    "fileReadsUsed": 3,
+    "filesTouched": 1,
+    "patchBytesUsed": 900,
+    "verificationRuns": 1,
+    "userTurns": 2
+  },
+  "policyFlags": {
+    "stateMetadataOnly": true,
+    "autoStartAllowed": false,
+    "autoApplyAllowed": false,
+    "autoRunAllowed": false,
+    "autoVerifyAllowed": false,
+    "autoFixAllowed": false,
+    "autoRollbackAllowed": false,
+    "fileReadAllowed": false,
+    "fileWriteAllowed": false,
+    "shellAllowed": false,
+    "gitAllowed": false,
+    "networkAllowed": false,
+    "providerAllowed": false,
+    "toolAllowed": false,
+    "rawPromptAllowed": false,
+    "rawFileAllowed": false,
+    "rawDiffAllowed": false,
+    "rawCommandAllowed": false,
+    "rawLogAllowed": false
+  },
+  "details": {
+    "summary": "Stopped state records a sanitized user stop reason",
+    "sanitized": true,
+    "nextUserAction": "review_stop",
+    "evidenceLabel": "Stopped state evidence"
+  },
+  "stop": {
+    "reason": "user_stop",
+    "stoppedAt": "2026-06-29T19:10:01Z",
+    "recoverable": true,
+    "message": "User requested a safe stop"
+  }
+}

@@ -108,6 +108,15 @@ const mappings = [
     "packages/contracts/schemas/engine/controlled-agent-command-runner.schema.json"
   ]),
   ...[
+    "controlled-agent-run-state-idle.json",
+    "controlled-agent-run-state-planning.json",
+    "controlled-agent-run-state-stopped.json",
+    "controlled-agent-run-state-completed.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-run-state.schema.json"
+  ]),
+  ...[
     "tool-authority-policy-metadata-only.json",
     "tool-authority-policy-bounded-edit-confirmation.json",
     "tool-authority-policy-shell-deny.json"
@@ -1043,6 +1052,19 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-command-runner.schema.json"
+  ]),
+  ...[
+    "controlled-agent-run-state-auto-start.json",
+    "controlled-agent-run-state-shell-git-provider-tool.json",
+    "controlled-agent-run-state-raw-prompt-field.json",
+    "controlled-agent-run-state-raw-command-field.json",
+    "controlled-agent-run-state-assistant-request-id.json",
+    "controlled-agent-run-state-unbounded-limits.json",
+    "controlled-agent-run-state-private-path-detail.json",
+    "controlled-agent-run-state-missing-stop-reason.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-run-state.schema.json"
   ]),
   ...[
     "tool-authority-policy-permissive-default.json",
