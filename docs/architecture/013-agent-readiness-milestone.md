@@ -233,6 +233,18 @@ This completion status is local/mock verification evidence only. It confirms tha
 
 Sprint 72 checkpoint decision docs and smoke are focused on experimental manual-only UX. The local/mock smoke covers continue, stop, rollback review, and separate manual run checkpoint decisions with sanitized metadata. It verifies rollback review stays review-only, separate manual run creates nothing, existing Apply and Verification bridge messages occur only after explicit user clicks, and no automatic send/apply/verification/repair/retry/rollback, hidden reads/search/indexing, hidden memory attach, raw-data persistence, new runtime/bridge/storage authority, production readiness, real-provider CI, or controlled-autonomy approval is introduced.
 
+## Sprint 72 final audit status
+
+Sprint 72 is closed as an experimental manual checkpoint decision UX milestone after the final safety/product audit and full local verification pass. The audit found no high or critical issue in the S72 scope: checkpoint decisions remain sanitized display metadata over already-known GUI state, rollback is review-only through the existing manual review path, separate manual run is guidance only and creates nothing, and continue is only a manual recommendation after successful apply and verification metadata.
+
+This completion status is local/mock verification evidence only. It confirms that S72 preserves the manual Agent Run boundary with no auto-send, auto-apply, auto-verification, auto-repair, auto-retry, auto-rollback, hidden reads/search/indexing, hidden memory attach, shell/git/tool/provider authority, raw prompt/provider/file/diff/command/output/private-path/secret/browser persistence, runtime/bridge/storage expansion, production readiness, publication readiness, real-provider CI, multi-step execution, or controlled-autonomy approval.
+
+The exact S72 final audit gate is:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm test -- agentRunCheckpointDecision AgentRunPanel App multiStepTaskTimeline codingTaskSession && npm run build && cd ../.. && npm run smoke:agent-run-checkpoint-decision && npm run check && git diff --check && git status --short
+```
+
 ## Verification
 
 For this documentation milestone, run:
