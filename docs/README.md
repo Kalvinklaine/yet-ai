@@ -137,6 +137,14 @@ npm run smoke:multi-step-task-timeline
 
 The smoke builds the GUI, serves built assets from loopback, and drives deterministic mock runtime/SSE/provider/bridge/host data through explicit Send, explicit Apply, explicit allowlisted Verification failure, and a manual fix-draft state. It then expands the collapsed-by-default `Manual timeline` panel and asserts read-only sanitized metadata coverage for goal/context, task memory, proposal, apply, verification, follow-up/final-result labels, no timeline action buttons, no pre-action apply or verification bridge requests, no hidden runtime/provider/tool calls, loopback-only network, clean browser storage, and no raw prompt/file/diff/command/private-data leakage. T-315 is the replacement smoke evidence after the failed T-312 attempt; do not cite T-312 as successful. S71 is display metadata only: it is not an execution engine, not multi-step execution, not autonomy, not a runtime endpoint, not a bridge authority, not a storage contract, and not production or marketplace evidence.
 
+For the S72 manual checkpoint decision boundary, run:
+
+```sh
+npm run smoke:agent-run-checkpoint-decision
+```
+
+The smoke builds the GUI, serves built assets from loopback, and drives deterministic mock runtime/SSE/provider/bridge/host data through the already manual Send, Apply, Verification, rollback-review, fix-draft, and follow-up-draft paths. It asserts checkpoint decision metadata for continue, stop, rollback review, and separate manual run outcomes; rollback remains review-only; no separate run is created; no repair, retry, rollback, send, apply, verification, hidden read, search, indexing, memory attach, or provider/tool call starts automatically; apply and verification bridge messages appear only after the existing explicit user clicks; browser storage stays clean; and rendered/service evidence does not leak raw prompts, file bodies, diffs, command/output material, private paths, or secrets. S72 is experimental manual-only UX: it is sanitized display metadata and guidance over existing Agent Run state, not autonomy, not production readiness, not a new runtime/bridge/storage surface, and not real-provider CI evidence.
+
 Focused S71 GUI checks are:
 
 ```sh
@@ -151,6 +159,7 @@ The focused Agent Run gates are:
 - S63 stability docs or matrix updates: `npm run check`; run the S61/S62 focused gate only if the edited docs change an Agent Run contract, GUI behavior claim, or smoke boundary.
 - S64 readiness status docs: `npm run check`; use `architecture/013-agent-readiness-milestone.md` as the canonical taxonomy and keep browser/VS Code/JetBrains status manual-only, local/mock where relevant, and non-autonomous.
 - S71 multi-step task timeline docs: `npm run check`; run `npm run smoke:multi-step-task-timeline` and `cd apps/gui && npm test -- multiStepTaskTimeline MultiStepTaskTimelinePanel App` only when timeline behavior, rendered copy, or panel wiring changes.
+- S72 checkpoint decision docs/smoke: `npm run smoke:agent-run-checkpoint-decision && npm run check && git diff --check`; S72 remains experimental manual-only display metadata, with rollback review-only and no auto-send/apply/verification/repair/retry/rollback, hidden reads/search/indexing/memory attach, new bridge/runtime/storage authority, production readiness, or real-provider CI claim.
 
 The built-GUI smokes (`npm run smoke:agent-run-multistep-plan`, `npm run smoke:agent-run-followup-loop`, and the older one-step smokes) are local/mock-only Playwright checks. They build `apps/gui`, serve static assets from loopback, and use deterministic runtime/SSE/provider/bridge/host fixtures. They do not launch real IDEs, call real providers, use credentials, contact hosted Yet AI services, mutate workspaces, run shell/git/tool endpoints, or prove production autonomy.
 

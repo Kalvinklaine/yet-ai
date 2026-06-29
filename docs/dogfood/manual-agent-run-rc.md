@@ -71,6 +71,24 @@ npm run check
 
 If a manual RC run observes the S71 timeline, record only sanitized status: collapsed/read-only, metadata-only, no action buttons, no raw prompts/provider responses/file bodies/diffs/command material/private paths/secrets/bridge payloads, and no timeline entries or raw data persisted in browser storage.
 
+## S72 checkpoint decision note
+
+S72 adds manual checkpoint decision metadata to the Agent Run UI and trace/timeline surfaces. It is experimental manual-only UX: continue, stop, rollback review, and separate manual run outcomes are rendered as sanitized guidance only. Rollback remains review-only through the existing manual review path; separate manual run is guidance only and creates nothing; continue means the user may keep working in the current checkpoint by explicit choice only.
+
+The exact focused S72 smoke is:
+
+```sh
+npm run smoke:agent-run-checkpoint-decision
+```
+
+For S72 documentation/smoke edits, use the full local gate:
+
+```sh
+npm run smoke:agent-run-checkpoint-decision && npm run check && git diff --check
+```
+
+Do not report S72 as autonomy, production readiness, marketplace readiness, release readiness, real-provider CI, automatic Send, automatic Apply, automatic Verification, automatic repair, automatic retry, automatic rollback, hidden reads/search/indexing, hidden memory attach, provider/tool calls, shell/git authority, workspace mutation, or raw-data/browser-storage persistence. Manual RC notes may record only sanitized decision status and whether rollback review remained review-only.
+
 ## Manual RC run checklist
 
 1. Start from a clean local checkout or sanitized dev-preview artifact label.
@@ -89,8 +107,9 @@ If a manual RC run observes the S71 timeline, record only sanitized status: coll
 14. Confirm no auto-send, auto-apply, auto-verification, automatic repair, automatic retry, automatic rollback, hidden read, provider tool call, shell/git/tool execution, or background indexing occurred.
 15. Inspect report/trace evidence for sanitized bounded metadata only.
 16. If the S71 timeline is visible, inspect it only as read-only sanitized metadata and confirm it adds no action controls or browser-storage/raw-data persistence.
-17. Validate the completed local report with `npm run report:agent-run-rc -- --check path/to/local-report.md` before sharing any excerpt.
-18. Keep raw local evidence, screenshots, logs, provider transcripts, bridge captures, and browser-storage dumps out of tracked files.
+17. If the S72 checkpoint decision card is visible, record only sanitized status such as continue, stop, rollback review, or separate manual run guidance; confirm rollback remains review-only and no separate run, send, apply, verify, repair, retry, rollback, hidden read, search, indexing, or memory attach started automatically.
+18. Validate the completed local report with `npm run report:agent-run-rc -- --check path/to/local-report.md` before sharing any excerpt.
+19. Keep raw local evidence, screenshots, logs, provider transcripts, bridge captures, and browser-storage dumps out of tracked files.
 
 ## Sanitized report workflow
 

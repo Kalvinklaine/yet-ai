@@ -36,6 +36,7 @@ Avoid softer wording that implies implementation, autonomy, production publicati
 | S68 safer apply UX | Experimental manual-only | Apply readiness and risk display may summarize sanitized proposal metadata, checkpoint/policy readiness, host support, disabled reasons, and manual recovery guidance. It does not expose raw replacement bodies, create apply authority, apply automatically, run verification, repair, retry, roll back, attach context, persist proposal bodies, or add runtime/bridge endpoints. |
 | S69 task memory suggestions | Experimental manual-only | Task memory suggestions are GUI-local display metadata over already-listed local project memory note metadata. Safe suggested notes can be attached only by explicit user click through the existing one-shot project-memory bundle path; stale, unsafe, already-attached, or unrelated notes show labels/warnings only. Suggestion/session/trace labels do not become hidden runtime chat context and do not add auto-attach, search, save, provider, bridge, storage, hidden-read, indexing, or workspace mutation authority. |
 | S71 multi-step task timeline | Experimental manual-only | The multi-step task timeline is read-only sanitized metadata UX over already-known Agent Run GUI state. It is not an execution engine and does not add autonomy, Send, Apply, Verification, repair, retry, rollback, provider/tool calls, hidden reads, runtime endpoints, bridge authority, browser-storage persistence, or raw-data persistence. |
+| S72 checkpoint decision UX | Experimental manual-only | Checkpoint decision metadata can show continue, stop, rollback review, and separate manual run guidance over already-known Agent Run state. Rollback review remains review-only, separate manual run creates nothing, and no automatic Send, Apply, Verification, repair, retry, rollback, hidden read/search/indexing, memory attach, provider/tool call, runtime endpoint, bridge authority, storage persistence, production readiness, or autonomy is added. |
 | Multi-step execution | Blocked/deferred | There is no implemented runner that executes a plan across multiple steps. S61 is only inert metadata. |
 | Controlled autonomy | Blocked/deferred | No autonomous loop is implemented. Any future controlled-autonomy work must pass the future eligibility gates below before design or implementation. |
 | Auto-repair / auto-retry / auto-rollback | Blocked/deferred | Failed verification can stop and may produce a draft-only prompt. The product must not claim automatic repair, retry, verification, or rollback. |
@@ -76,6 +77,26 @@ npm run check
 ```
 
 These commands are local/mock or repository validation evidence only. They do not launch real IDE automation, call real providers, require credentials, contact hosted Yet AI services, persist raw timeline data, mutate workspaces through the timeline, or prove production autonomy.
+
+## Sprint 72 checkpoint decision UX status
+
+Sprint 72 adds manual checkpoint decision metadata for the existing manual Agent Run path. It renders sanitized guidance for continue, stop, rollback review, and separate manual run outcomes in the Agent Run panel, coding task session summary, timeline, and trace metadata. The decision data is display-only over already-known GUI state: it does not create a new runtime endpoint, bridge message, storage contract, model/provider call, execution loop, task runner, scheduler, rollback request, or separate run.
+
+S72 does not change the readiness taxonomy and does not approve controlled autonomy, multi-step execution, production readiness, marketplace readiness, release readiness, or real-provider CI. Continue means the user may keep working in the current checkpoint by explicit choice only. Rollback remains review-only through the existing manual review path. Separate manual run is guidance only and creates nothing. Stop is fail-closed guidance when metadata is unsafe or authority-like.
+
+The exact S72 focused smoke is:
+
+```sh
+npm run smoke:agent-run-checkpoint-decision
+```
+
+The S72 documentation and smoke gate is:
+
+```sh
+npm run smoke:agent-run-checkpoint-decision && npm run check && git diff --check
+```
+
+These commands are local/mock or repository validation evidence only. They do not launch real IDE automation, call real providers, require credentials, contact hosted Yet AI services, mutate workspaces except through explicitly mocked host messages, persist raw data, or prove production autonomy. S72 adds no auto-send, auto-apply, automatic verification, automatic repair, automatic retry, automatic rollback, hidden reads/search/indexing, hidden memory attach, provider/tool calls, shell/git authority, browser-storage raw persistence, workspace mutation authority, or raw prompt/file/diff/command/output/private-path/secret exposure.
 
 ## Blocked and deferred capabilities
 
@@ -207,6 +228,10 @@ This completion status is local/mock verification evidence only. It confirms tha
 Sprint 71 is closed as a read-only multi-step task timeline UX milestone after the full S71 verification pass. The final audit found no high or critical safety issue in the S71 scope: the timeline service remains a pure bounded metadata formatter, the panel remains collapsed-by-default and display-only with no action buttons, App wiring passes already-known React metadata only, and the focused smoke remains the standalone T-315 replacement for the failed T-312 attempt.
 
 This completion status is local/mock verification evidence only. It confirms that S71 preserves the manual Agent Run boundary with no auto-send, auto-apply, auto-verification, auto-repair, auto-retry, auto-rollback, hidden memory attach, hidden reads/search/indexing, shell/git/tool/provider authority, raw prompt/provider/file/diff/command/log/browser persistence, runtime/bridge/storage expansion, production readiness, publication readiness, real-provider CI, or controlled-autonomy approval. S72 and later controlled local-agent work remain deferred behind future explicit cards and readiness decisions.
+
+## Sprint 72 checkpoint decision smoke and docs status
+
+Sprint 72 checkpoint decision docs and smoke are focused on experimental manual-only UX. The local/mock smoke covers continue, stop, rollback review, and separate manual run checkpoint decisions with sanitized metadata. It verifies rollback review stays review-only, separate manual run creates nothing, existing Apply and Verification bridge messages occur only after explicit user clicks, and no automatic send/apply/verification/repair/retry/rollback, hidden reads/search/indexing, hidden memory attach, raw-data persistence, new runtime/bridge/storage authority, production readiness, real-provider CI, or controlled-autonomy approval is introduced.
 
 ## Verification
 
