@@ -145,6 +145,14 @@ npm run smoke:agent-run-checkpoint-decision
 
 The smoke builds the GUI, serves built assets from loopback, and drives deterministic mock runtime/SSE/provider/bridge/host data through the already manual Send, Apply, Verification, rollback-review, fix-draft, and follow-up-draft paths. It asserts checkpoint decision metadata for continue, stop, rollback review, and separate manual run outcomes; rollback remains review-only; no separate run is created; no repair, retry, rollback, send, apply, verification, hidden read, search, indexing, memory attach, or provider/tool call starts automatically; apply and verification bridge messages appear only after the existing explicit user clicks; browser storage stays clean; and rendered/service evidence does not leak raw prompts, file bodies, diffs, command/output material, private paths, or secrets. S72 is experimental manual-only UX: it is sanitized display metadata and guidance over existing Agent Run state, not autonomy, not production readiness, not a new runtime/bridge/storage surface, and not real-provider CI evidence.
 
+For the S73 controlled workspace readiness boundary, run:
+
+```sh
+npm run smoke:controlled-agent-workspace-readiness
+```
+
+The smoke builds the GUI, serves built assets from loopback, and drives deterministic mock `/v1/caps.controlledAgentWorkspaceReadiness` metadata through safe/inert default, explicit user opt-in display readiness, missing isolation, missing checkpoint, missing rollback, future-ready, and unsafe-redaction cases. It asserts the panel/evaluator remain metadata-only, future-gated, collapsed by default, and unable to start an agent; a future-ready fixture still has no Start Agent or Create Worktree control and all authority flags remain false. It also asserts no bridge apply/verify/read/search/rollback messages, no runtime tool/git/shell/provider endpoints, no non-loopback network, clean browser storage, and no private path, secret, raw prompt/file/diff/command/log leakage. S73 is not worktree creation, not checkpoint creation, not controlled runtime execution, not autonomy, not production readiness, not a new runtime/bridge/storage authority, and not real-provider CI evidence.
+
 Focused S71 GUI checks are:
 
 ```sh
@@ -160,6 +168,7 @@ The focused Agent Run gates are:
 - S64 readiness status docs: `npm run check`; use `architecture/013-agent-readiness-milestone.md` as the canonical taxonomy and keep browser/VS Code/JetBrains status manual-only, local/mock where relevant, and non-autonomous.
 - S71 multi-step task timeline docs: `npm run check`; run `npm run smoke:multi-step-task-timeline` and `cd apps/gui && npm test -- multiStepTaskTimeline MultiStepTaskTimelinePanel App` only when timeline behavior, rendered copy, or panel wiring changes.
 - S72 checkpoint decision docs/smoke: `npm run smoke:agent-run-checkpoint-decision && npm run check && git diff --check`; S72 remains experimental manual-only display metadata, with rollback review-only and no auto-send/apply/verification/repair/retry/rollback, hidden reads/search/indexing/memory attach, new bridge/runtime/storage authority, production readiness, or real-provider CI claim.
+- S73 controlled workspace readiness docs/smoke: `npm run smoke:controlled-agent-workspace-readiness && npm run check && git diff --check`; S73 remains future-gated readiness metadata only, with no agent start, no worktree/checkpoint creation, no apply/verify/read/search/rollback bridge authority, no runtime shell/git/tool/provider endpoint, no browser-storage raw persistence, no production readiness, and no autonomy claim.
 
 The built-GUI smokes (`npm run smoke:agent-run-multistep-plan`, `npm run smoke:agent-run-followup-loop`, and the older one-step smokes) are local/mock-only Playwright checks. They build `apps/gui`, serve static assets from loopback, and use deterministic runtime/SSE/provider/bridge/host fixtures. They do not launch real IDEs, call real providers, use credentials, contact hosted Yet AI services, mutate workspaces, run shell/git/tool endpoints, or prove production autonomy.
 

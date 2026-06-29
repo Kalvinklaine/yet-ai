@@ -89,6 +89,24 @@ npm run smoke:agent-run-checkpoint-decision && npm run check && git diff --check
 
 Do not report S72 as autonomy, production readiness, marketplace readiness, release readiness, real-provider CI, automatic Send, automatic Apply, automatic Verification, automatic repair, automatic retry, automatic rollback, hidden reads/search/indexing, hidden memory attach, provider/tool calls, shell/git authority, workspace mutation, or raw-data/browser-storage persistence. Manual RC notes may record only sanitized decision status and whether rollback review remained review-only.
 
+## S73 controlled workspace readiness note
+
+S73 adds controlled workspace readiness metadata near the manual Agent Run surfaces as future-gated display only. It can show sanitized opt-in, isolated workspace/worktree, checkpoint, rollback, limits, and policy metadata from `/v1/caps.controlledAgentWorkspaceReadiness`, but it cannot start an agent, create a worktree, create a checkpoint, read/search/index files, attach context, apply edits, run verification or shell commands, call providers/tools, use git, roll back, or persist raw readiness data.
+
+The exact focused S73 smoke is:
+
+```sh
+npm run smoke:controlled-agent-workspace-readiness
+```
+
+For S73 documentation/smoke edits, use the full local gate:
+
+```sh
+npm run smoke:controlled-agent-workspace-readiness && npm run check && git diff --check
+```
+
+Do not report S73 as autonomy, production readiness, marketplace readiness, release readiness, real-provider CI, worktree creation, checkpoint creation, controlled runtime execution, automatic Send, automatic Apply, automatic Verification, automatic repair, automatic retry, automatic rollback, hidden reads/search/indexing, hidden memory attach, provider/tool calls, shell/git authority, workspace mutation, or raw-data/browser-storage persistence. Manual RC notes may record only sanitized readiness state and that no Start Agent or Create Worktree control was available.
+
 ## Manual RC run checklist
 
 1. Start from a clean local checkout or sanitized dev-preview artifact label.
@@ -108,8 +126,9 @@ Do not report S72 as autonomy, production readiness, marketplace readiness, rele
 15. Inspect report/trace evidence for sanitized bounded metadata only.
 16. If the S71 timeline is visible, inspect it only as read-only sanitized metadata and confirm it adds no action controls or browser-storage/raw-data persistence.
 17. If the S72 checkpoint decision card is visible, record only sanitized status such as continue, stop, rollback review, or separate manual run guidance; confirm rollback remains review-only and no separate run, send, apply, verify, repair, retry, rollback, hidden read, search, indexing, or memory attach started automatically.
-18. Validate the completed local report with `npm run report:agent-run-rc -- --check path/to/local-report.md` before sharing any excerpt.
-19. Keep raw local evidence, screenshots, logs, provider transcripts, bridge captures, and browser-storage dumps out of tracked files.
+18. If the S73 controlled workspace readiness panel is visible, record only sanitized readiness state; confirm it remains metadata-only with no Start Agent, Create Worktree, read/search, apply, verify, rollback, shell/git/tool/provider, browser-storage, or workspace-mutation authority.
+19. Validate the completed local report with `npm run report:agent-run-rc -- --check path/to/local-report.md` before sharing any excerpt.
+20. Keep raw local evidence, screenshots, logs, provider transcripts, bridge captures, and browser-storage dumps out of tracked files.
 
 ## Sanitized report workflow
 

@@ -24,6 +24,7 @@
     "smoke:agent-run-guided-fix-loop": "node scripts/smoke-agent-run-guided-fix-loop.mjs",
     "smoke:multi-step-task-timeline": "node scripts/smoke-multi-step-task-timeline.mjs",
     "smoke:agent-run-checkpoint-decision": "node scripts/smoke-agent-run-checkpoint-decision.mjs",
+    "smoke:controlled-agent-workspace-readiness": "node scripts/smoke-controlled-agent-workspace-readiness.mjs",
     "smoke:agent-run-safer-apply-ux": "node scripts/smoke-agent-run-safer-apply-ux.mjs",
     "smoke:agent-run-manual-rc-hosts": "node scripts/smoke-agent-run-manual-rc-hosts.mjs",
     "smoke:agent-run-rc-bundle": "node scripts/smoke-agent-run-rc-bundle.mjs",

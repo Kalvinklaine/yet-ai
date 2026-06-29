@@ -37,6 +37,7 @@ Avoid softer wording that implies implementation, autonomy, production publicati
 | S69 task memory suggestions | Experimental manual-only | Task memory suggestions are GUI-local display metadata over already-listed local project memory note metadata. Safe suggested notes can be attached only by explicit user click through the existing one-shot project-memory bundle path; stale, unsafe, already-attached, or unrelated notes show labels/warnings only. Suggestion/session/trace labels do not become hidden runtime chat context and do not add auto-attach, search, save, provider, bridge, storage, hidden-read, indexing, or workspace mutation authority. |
 | S71 multi-step task timeline | Experimental manual-only | The multi-step task timeline is read-only sanitized metadata UX over already-known Agent Run GUI state. It is not an execution engine and does not add autonomy, Send, Apply, Verification, repair, retry, rollback, provider/tool calls, hidden reads, runtime endpoints, bridge authority, browser-storage persistence, or raw-data persistence. |
 | S72 checkpoint decision UX | Experimental manual-only | Checkpoint decision metadata can show continue, stop, rollback review, and separate manual run guidance over already-known Agent Run state. Rollback review remains review-only, separate manual run creates nothing, and no automatic Send, Apply, Verification, repair, retry, rollback, hidden read/search/indexing, memory attach, provider/tool call, runtime endpoint, bridge authority, storage persistence, production readiness, or autonomy is added. |
+| S73 controlled workspace readiness | Experimental manual-only | Controlled workspace readiness renders future-gated metadata from `/v1/caps.controlledAgentWorkspaceReadiness` only. It can show opt-in, isolation, checkpoint, rollback, and limit status, but it cannot start an agent, create a worktree, read/search files, apply edits, run verification or shell commands, call providers/tools, use git, persist raw data, or add runtime/bridge/storage authority. |
 | Multi-step execution | Blocked/deferred | There is no implemented runner that executes a plan across multiple steps. S61 is only inert metadata. |
 | Controlled autonomy | Blocked/deferred | No autonomous loop is implemented. Any future controlled-autonomy work must pass the future eligibility gates below before design or implementation. |
 | Auto-repair / auto-retry / auto-rollback | Blocked/deferred | Failed verification can stop and may produce a draft-only prompt. The product must not claim automatic repair, retry, verification, or rollback. |
@@ -97,6 +98,26 @@ npm run smoke:agent-run-checkpoint-decision && npm run check && git diff --check
 ```
 
 These commands are local/mock or repository validation evidence only. They do not launch real IDE automation, call real providers, require credentials, contact hosted Yet AI services, mutate workspaces except through explicitly mocked host messages, persist raw data, or prove production autonomy. S72 adds no auto-send, auto-apply, automatic verification, automatic repair, automatic retry, automatic rollback, hidden reads/search/indexing, hidden memory attach, provider/tool calls, shell/git authority, browser-storage raw persistence, workspace mutation authority, or raw prompt/file/diff/command/output/private-path/secret exposure.
+
+## Sprint 73 controlled workspace readiness status
+
+Sprint 73 adds a controlled workspace readiness panel for future local controlled-agent work. The panel consumes only `/v1/caps.controlledAgentWorkspaceReadiness` metadata and stays future-gated: it evaluates whether user opt-in, isolated workspace/worktree metadata, verified checkpoint metadata, rollback-plan metadata, bounded limits, and all-false policy flags are present, then renders sanitized display state only.
+
+S73 does not start an agent, create a worktree, create checkpoints, roll back, read files, search, index, attach context, apply edits, run verification, run shell commands, call providers/tools, use git, persist browser storage payloads, add runtime endpoints, add bridge messages, or grant execution authority. Browser preview remains unsupported for future controlled mode and must fail visibly as metadata-only. A future-ready fixture only means prerequisites are described for later review; it still has no Start Agent control and all authority flags remain false.
+
+The exact S73 focused smoke is:
+
+```sh
+npm run smoke:controlled-agent-workspace-readiness
+```
+
+The S73 documentation and smoke gate is:
+
+```sh
+npm run smoke:controlled-agent-workspace-readiness && npm run check && git diff --check
+```
+
+These commands are deterministic local/mock evidence only. They build/load the GUI through loopback mocks and verify safe/inert defaults, explicit opt-in display readiness, blocked isolation/checkpoint/rollback prerequisites, no Start Agent or worktree-creation controls, no bridge apply/verify/read/search/rollback messages, no runtime tool/git/shell/provider endpoints, no non-loopback network, clean browser storage, and no private path, secret, raw prompt/file/diff/command/log leakage. They are not real-provider CI, worktree creation evidence, production readiness, marketplace readiness, multi-step execution, or autonomy approval.
 
 ## Blocked and deferred capabilities
 
