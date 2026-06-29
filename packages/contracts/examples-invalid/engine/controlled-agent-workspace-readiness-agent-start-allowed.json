@@ -1,0 +1,55 @@
+{
+  "kind": "controlled_agent_workspace_readiness",
+  "version": "2026-06-29",
+  "authority": "metadata_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "agentStartAllowed": true,
+  "workspaceMode": "worktree",
+  "host": "vscode",
+  "optIn": {
+    "origin": "user",
+    "confirmedBy": "user",
+    "confirmedAt": "2026-06-29T07:00:00Z",
+    "requestIdMintedBy": "gui",
+    "grantsStartAuthority": false
+  },
+  "isolation": {
+    "status": "ready",
+    "workspaceMode": "worktree",
+    "hostOwned": true,
+    "workspaceLabel": "Sanitized worktree readiness label",
+    "privatePathExposed": false
+  },
+  "checkpoint": {
+    "status": "verified",
+    "verified": true,
+    "metadataOnly": true,
+    "autoCreateAllowed": false
+  },
+  "rollback": {
+    "status": "planned",
+    "metadataOnly": true,
+    "autoRollbackAllowed": false,
+    "requiresUserConfirmation": true
+  },
+  "limits": {
+    "maxSteps": 6,
+    "maxTouchedFiles": 4,
+    "maxPatchBytes": 12000,
+    "maxRuntimeSeconds": 600
+  },
+  "policyFlags": {
+    "fileReadAllowed": false,
+    "fileWriteAllowed": false,
+    "shellAllowed": false,
+    "gitAllowed": false,
+    "providerAllowed": false,
+    "toolAllowed": false,
+    "autoStartAllowed": false,
+    "autoApplyAllowed": false,
+    "autoRunAllowed": false,
+    "autoRollbackAllowed": false
+  },
+  "summary": "Worktree readiness metadata is available but cannot start an agent"
+}

@@ -1,0 +1,49 @@
+{
+  "kind": "controlled_agent_workspace_readiness",
+  "version": "2026-06-29",
+  "authority": "metadata_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "agentStartAllowed": false,
+  "workspaceMode": "none",
+  "host": "browser",
+  "isolation": {
+    "status": "disabled",
+    "workspaceMode": "none",
+    "hostOwned": false,
+    "workspaceLabel": "No controlled workspace selected",
+    "privatePathExposed": false
+  },
+  "checkpoint": {
+    "status": "not_applicable",
+    "verified": false,
+    "metadataOnly": true,
+    "autoCreateAllowed": false
+  },
+  "rollback": {
+    "status": "not_applicable",
+    "metadataOnly": true,
+    "autoRollbackAllowed": false,
+    "requiresUserConfirmation": true
+  },
+  "limits": {
+    "maxSteps": 1,
+    "maxTouchedFiles": 0,
+    "maxPatchBytes": 0,
+    "maxRuntimeSeconds": 1,
+    "limitLabel": "No run limits active"
+  },
+  "policyFlags": {
+    "fileReadAllowed": false,
+    "fileWriteAllowed": false,
+    "shellAllowed": false,
+    "gitAllowed": false,
+    "providerAllowed": false,
+    "toolAllowed": false,
+    "autoStartAllowed": false,
+    "autoApplyAllowed": false,
+    "autoRunAllowed": false,
+    "autoRollbackAllowed": false
+  },
+  "summary": "Controlled agent workspace readiness is disabled"
+}

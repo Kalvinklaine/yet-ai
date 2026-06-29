@@ -80,6 +80,13 @@ const mappings = [
     "packages/contracts/schemas/engine/bounded-patch-verification-loop.schema.json"
   ]),
   ...[
+    "controlled-agent-workspace-readiness-disabled.json",
+    "controlled-agent-workspace-readiness-worktree.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-workspace-readiness.schema.json"
+  ]),
+  ...[
     "tool-authority-policy-metadata-only.json",
     "tool-authority-policy-bounded-edit-confirmation.json",
     "tool-authority-policy-shell-deny.json"
@@ -971,6 +978,17 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/bounded-patch-verification-loop.schema.json"
+  ]),
+  ...[
+    "controlled-agent-workspace-readiness-assistant-opt-in.json",
+    "controlled-agent-workspace-readiness-private-path.json",
+    "controlled-agent-workspace-readiness-command-fields.json",
+    "controlled-agent-workspace-readiness-auto-actions.json",
+    "controlled-agent-workspace-readiness-raw-data-fields.json",
+    "controlled-agent-workspace-readiness-agent-start-allowed.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-workspace-readiness.schema.json"
   ]),
   ...[
     "tool-authority-policy-permissive-default.json",

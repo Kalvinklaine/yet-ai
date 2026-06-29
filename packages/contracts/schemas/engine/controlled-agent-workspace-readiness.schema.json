@@ -1,0 +1,401 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/controlled-agent-workspace-readiness.schema.json",
+  "title": "Controlled Agent Workspace Readiness Metadata",
+  "description": "Strict metadata-only readiness state for a future gated controlled local-agent workspace or worktree. It grants no bridge command, runtime endpoint, worktree creation, agent start, file read/write, shell, git, provider, tool, checkpoint, rollback, auto-apply, auto-run, or execution authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "authority",
+    "cloudRequired",
+    "executionAllowed",
+    "agentStartAllowed",
+    "workspaceMode",
+    "host",
+    "isolation",
+    "checkpoint",
+    "rollback",
+    "limits",
+    "policyFlags",
+    "summary"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "const": "controlled_agent_workspace_readiness"
+    },
+    "version": {
+      "type": "string",
+      "const": "2026-06-29"
+    },
+    "authority": {
+      "type": "string",
+      "const": "metadata_only"
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "executionAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "agentStartAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "workspaceMode": {
+      "type": "string",
+      "enum": ["none", "disposable", "worktree", "existing"]
+    },
+    "host": {
+      "type": "string",
+      "enum": ["browser", "vscode", "jetbrains"]
+    },
+    "optIn": {
+      "$ref": "#/$defs/optIn"
+    },
+    "isolation": {
+      "$ref": "#/$defs/isolation"
+    },
+    "checkpoint": {
+      "$ref": "#/$defs/checkpoint"
+    },
+    "rollback": {
+      "$ref": "#/$defs/rollback"
+    },
+    "limits": {
+      "$ref": "#/$defs/limits"
+    },
+    "policyFlags": {
+      "$ref": "#/$defs/policyFlags"
+    },
+    "summary": {
+      "$ref": "#/$defs/safeSummary"
+    }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Rr][Aa][Ww][-_ ]?(?:[Ff][Ii][Ll][Ee]|[Pp][Rr][Oo][Mm][Pp][Tt]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Oo][Uu][Tt][Pp][Uu][Tt]|[Ll][Oo][Gg]|[Dd][Ii][Ff][Ff])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][-_ ]?(?:[Pp][Aa][Yy][Ll][Oo][Aa][Dd]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee])|[Bb][Rr][Oo][Ww][Ss][Ee][Rr][-_ ]?[Ss][Tt][Oo][Rr][Aa][Gg][Ee]|[Ss][Tt][Oo][Rr][Aa][Gg][Ee][-_ ]?[Dd][Uu][Mm][Pp]|[Ss][Tt][Aa][Cc][Kk][-_ ]?[Tt][Rr][Aa][Cc][Ee]|[Cc][Aa][Ll][Ll][Ss][Tt][Aa][Cc][Kk]|[Ss][Hh][Ee][Ll][Ll]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Gg][Ii][Tt]|[Tt][Oo][Oo][Ll]|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]|[Nn][Ee][Tt][Ww][Oo][Rr][Kk]|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Ss][Cc][Aa][Nn]|[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh])|[Aa][Uu][Tt][Oo][-_ ]?(?:[Ss][Tt][Aa][Rr][Tt]|[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Rr][Oo][Ll][Ll][Bb][Aa][Cc][Kk])|[Aa][Pp][Pp][Ll][Yy][-_ ]?[Pp][Aa][Tt][Cc][Hh]|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "safeLabel": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      ]
+    },
+    "safeSummary": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        }
+      ]
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "safeHash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 32
+    },
+    "optIn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin", "confirmedBy", "confirmedAt", "requestIdMintedBy", "grantsStartAuthority"],
+      "properties": {
+        "origin": {
+          "type": "string",
+          "const": "user"
+        },
+        "confirmedBy": {
+          "type": "string",
+          "const": "user"
+        },
+        "confirmedAt": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "requestIdMintedBy": {
+          "type": "string",
+          "enum": ["gui", "host"]
+        },
+        "grantsStartAuthority": {
+          "type": "boolean",
+          "const": false
+        },
+        "label": {
+          "$ref": "#/$defs/safeLabel"
+        }
+      }
+    },
+    "isolation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "workspaceMode", "hostOwned", "workspaceLabel", "privatePathExposed"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["disabled", "not_ready", "ready", "blocked"]
+        },
+        "workspaceMode": {
+          "type": "string",
+          "enum": ["none", "disposable", "worktree", "existing"]
+        },
+        "hostOwned": {
+          "type": "boolean"
+        },
+        "workspaceLabel": {
+          "$ref": "#/$defs/safeLabel"
+        },
+        "privatePathExposed": {
+          "type": "boolean",
+          "const": false
+        },
+        "readinessId": {
+          "$ref": "#/$defs/safeId"
+        }
+      }
+    },
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "verified", "metadataOnly", "autoCreateAllowed"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["not_applicable", "missing", "pending", "verified", "blocked"]
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "metadataOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "autoCreateAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "checkpointId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "checkedAt": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "contentHash": {
+          "$ref": "#/$defs/safeHash"
+        },
+        "label": {
+          "$ref": "#/$defs/safeLabel"
+        }
+      }
+    },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "metadataOnly", "autoRollbackAllowed", "requiresUserConfirmation"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["not_applicable", "missing", "planned", "ready", "blocked"]
+        },
+        "metadataOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "autoRollbackAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "requiresUserConfirmation": {
+          "type": "boolean",
+          "const": true
+        },
+        "planId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "planHash": {
+          "$ref": "#/$defs/safeHash"
+        },
+        "label": {
+          "$ref": "#/$defs/safeLabel"
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxSteps", "maxTouchedFiles", "maxPatchBytes", "maxRuntimeSeconds"],
+      "properties": {
+        "maxSteps": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "maxTouchedFiles": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 12
+        },
+        "maxPatchBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50000
+        },
+        "maxRuntimeSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1800
+        },
+        "limitLabel": {
+          "$ref": "#/$defs/safeLabel"
+        }
+      }
+    },
+    "policyFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fileReadAllowed",
+        "fileWriteAllowed",
+        "shellAllowed",
+        "gitAllowed",
+        "providerAllowed",
+        "toolAllowed",
+        "autoStartAllowed",
+        "autoApplyAllowed",
+        "autoRunAllowed",
+        "autoRollbackAllowed"
+      ],
+      "properties": {
+        "fileReadAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "fileWriteAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "shellAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "gitAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "providerAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "toolAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoStartAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoApplyAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoRunAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoRollbackAllowed": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "workspaceMode": {
+            "enum": ["disposable", "worktree", "existing"]
+          }
+        },
+        "required": ["workspaceMode"]
+      },
+      "then": {
+        "properties": {
+          "optIn": {}
+        },
+        "required": ["optIn"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "workspaceMode": {
+            "const": "none"
+          }
+        },
+        "required": ["workspaceMode"]
+      },
+      "then": {
+        "properties": {
+          "isolation": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "disabled"
+              },
+              "workspaceMode": {
+                "const": "none"
+              }
+            },
+            "required": ["status", "workspaceMode"]
+          },
+          "checkpoint": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "not_applicable"
+              },
+              "verified": {
+                "const": false
+              }
+            },
+            "required": ["status", "verified"]
+          },
+          "rollback": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "not_applicable"
+              }
+            },
+            "required": ["status"]
+          }
+        }
+      }
+    }
+  ]
+}
