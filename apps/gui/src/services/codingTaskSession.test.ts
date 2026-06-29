@@ -480,6 +480,36 @@ describe("createCodingTaskSessionSnapshot", () => {
     }
   });
 
+  it("summarizes controlled command trace metadata without raw execution fields", () => {
+    const snapshot = createCodingTaskSessionSnapshot({
+      traceEntries: [
+        {
+          id: "trace-command-result",
+          timestamp: "2026-06-25T18:00:00.000Z",
+          family: "controlledAgent.commandResult",
+          title: "Controlled command result evidence visible",
+          status: "succeeded",
+          summary: "Allowlisted command-id evidence only",
+          details: {
+            commandId: "repository-check",
+            command: "npm test -- --watch",
+            cwd: "/Users/alice/private",
+            env: "SECRET_SENTINEL",
+          },
+        },
+      ],
+    });
+    const rendered = JSON.stringify(snapshot);
+
+    expect(snapshot.controlledCommandRun.present).toBe(true);
+    expect(snapshot.controlledCommandRun.latestStatus).toBe("succeeded");
+    expect(snapshot.controlledCommandRun.labels).toEqual(["controlledAgent.commandResult · succeeded · Controlled command result evidence visible"]);
+    expect(snapshot.policy.canAutoRunVerification).toBe(false);
+    expect(rendered).not.toContain("npm test");
+    expect(rendered).not.toContain("/Users/alice");
+    expect(rendered).not.toContain("SECRET_SENTINEL");
+  });
+
   it("does not mutate input objects", () => {
     const input = {
       goal: { title: "Do not mutate" },

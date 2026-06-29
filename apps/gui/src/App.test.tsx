@@ -8,6 +8,8 @@ import type { ProviderAuthResponse, ProviderAuthStatus } from "./services/provid
 import worktreeReadiness from "../../../packages/contracts/examples/engine/controlled-agent-workspace-readiness-worktree.json";
 import fileReadSuccess from "../../../packages/contracts/examples/engine/controlled-agent-file-read-success.json";
 import fileReadBlocked from "../../../packages/contracts/examples/engine/controlled-agent-file-read-blocked.json";
+import commandRunSucceeded from "../../../packages/contracts/examples/engine/controlled-agent-command-runner-succeeded.json";
+import commandRunBlocked from "../../../packages/contracts/examples/engine/controlled-agent-command-runner-blocked.json";
 
 const bridgeVersion = "2026-05-15";
 const fetchMock = vi.fn();
@@ -391,6 +393,83 @@ describe("runtime refresh feedback", () => {
     expect(text).not.toContain("This bounded excerpt is explicit");
     expect(buttonsNamed("Read Files")).toHaveLength(0);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+  });
+
+  it("renders controlled command result metadata as sanitized evidence without bridge or storage authority", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentCommandRunner: commandRunSucceeded }) });
+    renderApp();
+    await flushAsync();
+
+    const details = findDetails("controlled-agent-command-runner-details");
+    expect(details.open).toBe(false);
+    expect(container?.textContent).toContain("Controlled command evidence");
+    expect(container?.textContent).toContain("S75 command id");
+    expect(container?.textContent).toContain("metadata only");
+    expect(container?.textContent).not.toContain("Repository validation completed with sanitized metadata");
+
+    await act(async () => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+
+    const traceDetails = findDetails("coding-session-trace-details");
+    await act(async () => {
+      traceDetails.open = true;
+      traceDetails.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+    const timelineDetails = findDetails("multi-step-task-timeline-details");
+    await act(async () => {
+      timelineDetails.open = true;
+      timelineDetails.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Allowlisted command-id evidence.");
+    expect(text).toContain("Command id: repository-check");
+    expect(text).toContain("Command label: Repository check");
+    expect(text).toContain("Output tail: Repository validation completed with sanitized metadata");
+    expect(text).toContain("Controlled command session metadata");
+    expect(text).toContain("controlledAgent.commandResult");
+    expect(text).toContain("command · evidence");
+    expect(text).not.toContain("npm test");
+    expect(text).not.toContain("/Users/");
+    expect(text).not.toContain("raw cwd");
+    expect(text).not.toContain("raw env");
+    expect(buttonsNamed("Run command")).toHaveLength(0);
+    expect(buttonsNamed("Run controlled command")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.controlledCommandRequest")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("controlled_agent_command_runner");
+    expect(browserStorageDump()).not.toContain("Repository validation completed with sanitized metadata");
+  });
+
+  it("renders controlled command blocked metadata without raw command authority", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentCommandRunner: commandRunBlocked }) });
+    renderApp();
+    await flushAsync();
+
+    const details = findDetails("controlled-agent-command-runner-details");
+    await act(async () => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Controlled command evidence");
+    expect(text).toContain("blocked");
+    expect(text).toContain("Allowed to run command: false");
+    expect(text).toContain("blockedReason: policy_denied");
+    expect(text).toContain("Can run shell: false");
+    expect(text).not.toContain("npm test");
+    expect(text).not.toContain("/Users/");
+    expect(text).not.toContain("npm test");
+    expect(buttonsNamed("Run command")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.controlledCommandRequest")).toHaveLength(0);
   });
 
   it("renders auth mismatch lifecycle guidance without token leakage", async () => {

@@ -8,7 +8,7 @@ export type MultiStepTaskTimelinePanelProps = {
 };
 
 const groupOrder: Array<{ label: string; families: MultiStepTaskTimelineItem["family"][] }> = [
-  { label: "Goal and context", families: ["task.goal", "context.attachment", "fileRead.evidence", "memory.attachment"] },
+  { label: "Goal and context", families: ["task.goal", "context.attachment", "fileRead.evidence", "command.evidence", "memory.attachment"] },
   { label: "Review and apply", families: ["plan.preview", "proposal.review", "apply.request", "apply.result"] },
   { label: "Verification", families: ["verification.request", "verification.progress", "verification.result"] },
   { label: "Follow-up and final", families: ["checkpoint.decision", "followup.draft", "final.result"] },

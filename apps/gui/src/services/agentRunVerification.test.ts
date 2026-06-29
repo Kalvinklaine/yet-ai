@@ -91,6 +91,19 @@ describe("normalizeAgentRunVerificationRequest", () => {
     expect(request.diagnostics.map((item) => item.code)).toContain("unsupported_command");
   });
 
+  it("does not treat controlled command-run metadata as a manual verification bridge request", () => {
+    const request = normalizeAgentRunVerificationRequest({
+      kind: "controlled_agent_command_runner",
+      authority: "allowlisted_command_id_metadata",
+      request: { commandId: "repository-check", requestId: "request-s75-demo" },
+      result: { status: "succeeded", outputTail: "bounded tail" },
+    });
+
+    expect(request.state).toBe("blocked");
+    expect(request.ideActionRequest).toBeUndefined();
+    expect(request.verificationRequest).toBeUndefined();
+  });
+
   it("blocks assistant and system supplied request ids", () => {
     const assistant = normalizeAgentRunVerificationRequest(userRequest({ source: "assistant", requestIdMintedBy: "assistant" }));
     const system = normalizeAgentRunVerificationRequest(userRequest({ source: "system", requestIdMintedBy: "system" }));

@@ -9,6 +9,7 @@ import { ProposalHistoryPanel } from "./components/ProposalHistoryPanel";
 import { MultiStepTaskTimelinePanel } from "./components/MultiStepTaskTimelinePanel";
 import { ControlledAgentWorkspaceReadinessPanel } from "./components/ControlledAgentWorkspaceReadinessPanel";
 import { ControlledAgentFileReadPanel } from "./components/ControlledAgentFileReadPanel";
+import { ControlledAgentCommandRunnerPanel } from "./components/ControlledAgentCommandRunnerPanel";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
 import { IdeActionProposalPanel, IdeActionsPanel, VerificationCommandPanel, verificationOutputKey, type IdeActionAttemptState, type VerificationCommand } from "./components/IdeActionsPanel";
 import { analyzeAssistantIdeActionProposalContent, describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, latestIdeActionProposalReviewFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
@@ -40,6 +41,7 @@ import { createCodingTaskSessionSnapshot, createLinkedMemoryAttachTraceLabel, cr
 import { createMemorySuggestionAttachTraceDetails, suggestTaskMemory, type TaskMemorySuggestion } from "./services/taskMemorySuggestions";
 import { evaluateHostCapabilityMetadata } from "./services/toolAuthorityPolicy";
 import { evaluateControlledAgentFileRead } from "./services/controlledAgentFileRead";
+import { evaluateControlledAgentCommandRun } from "./services/controlledAgentCommandRunner";
 import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPatchVerificationLoop";
 import type { AgentRunInput } from "./services/agentRunState";
 
@@ -594,10 +596,16 @@ export function App() {
   const agentRunCheckpointDecisionTraceEntry = useMemo<CodingSessionTraceEntry | null>(() => createCheckpointDecisionTraceEntry(agentRunCheckpointDecision), [agentRunCheckpointDecision]);
   const controlledAgentFileReadMetadata = activeCaps?.controlledAgentFileRead;
   const controlledAgentFileReadTraceEntry = useMemo<CodingSessionTraceEntry | null>(() => createControlledAgentFileReadTraceEntry(controlledAgentFileReadMetadata), [controlledAgentFileReadMetadata]);
+  const controlledAgentCommandRunnerMetadata = activeCaps?.controlledAgentCommandRunner;
+  const controlledAgentCommandRunTraceEntry = useMemo<CodingSessionTraceEntry | null>(() => createControlledAgentCommandRunTraceEntry(controlledAgentCommandRunnerMetadata), [controlledAgentCommandRunnerMetadata]);
   const codingSessionTraceWithCheckpointDecision = useMemo(() => {
-    const entries = controlledAgentFileReadTraceEntry ? [...codingSessionTrace, controlledAgentFileReadTraceEntry] : codingSessionTrace;
+    const entries = [
+      ...codingSessionTrace,
+      ...(controlledAgentFileReadTraceEntry ? [controlledAgentFileReadTraceEntry] : []),
+      ...(controlledAgentCommandRunTraceEntry ? [controlledAgentCommandRunTraceEntry] : []),
+    ];
     return agentRunCheckpointDecisionTraceEntry ? [...entries, agentRunCheckpointDecisionTraceEntry] : entries;
-  }, [agentRunCheckpointDecisionTraceEntry, codingSessionTrace, controlledAgentFileReadTraceEntry]);
+  }, [agentRunCheckpointDecisionTraceEntry, codingSessionTrace, controlledAgentCommandRunTraceEntry, controlledAgentFileReadTraceEntry]);
   const codingTaskPromptDraft = useMemo(() => buildCodingTaskPrompt({ mode: "ask", goal: codingTaskGoal, contextItems: explicitContextBundleItems, providerReadiness: chatReadinessLabel }), [chatReadinessLabel, codingTaskGoal, explicitContextBundleItems]);
   const proposalHistory = useMemo(() => createProposalHistory(buildProposalHistoryEntries({
     modelProposalResult: agentRunModelProposal,
@@ -2726,6 +2734,7 @@ export function App() {
                 <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} />
                 {controlledWorkspaceReadinessMetadata !== undefined && <ControlledAgentWorkspaceReadinessPanel metadata={controlledWorkspaceReadinessMetadata} />}
                 {controlledAgentFileReadMetadata !== undefined && <ControlledAgentFileReadPanel metadata={controlledAgentFileReadMetadata} />}
+                {controlledAgentCommandRunnerMetadata !== undefined && <ControlledAgentCommandRunnerPanel metadata={controlledAgentCommandRunnerMetadata} />}
                 <MultiStepTaskTimelinePanel input={multiStepTaskTimelineInput} />
                 {showWhatWillBeSentPanel && <WhatWillBeSentPanel summary={contextBudgetSummary} draftPromptCharacters={chatInput.trim().length} />}
                 <CodingTaskSessionPanel session={codingTaskSession} goal={codingTaskGoal} contextItems={explicitContextBundleItems} memoryAttachedCount={attachedProjectMemoryCount} modelStatus={chatReadinessLabel} canSendChat={canSendChat} latestResponseStatus={chatLifecycleLabel} editProposal={activeEditProposal} applyResult={applyResult} verificationAttempt={verificationAttempt} verificationAttached={Boolean(attachedVerificationKey)} draftPrompt={codingTaskPromptDraft} contextBudgetSummary={contextBudgetSummary} modelProposalDraft={modelProposalDraft} modelProposalResult={agentRunModelProposal} onGoalChange={setCodingTaskGoal} onUseDraftPrompt={useCodingTaskDraftPrompt} onUseDraftPlan={useCodingTaskDraftPlan} onDraftOneStepModelProposal={draftOneStepModelProposalPrompt} onFocusPrompt={focusCodingTaskPrompt} />
@@ -3038,6 +3047,45 @@ function createControlledAgentFileReadTraceEntry(metadata: unknown): CodingSessi
       canRunCommands: read.canRunCommands,
       canWriteFiles: read.canWriteFiles,
       canCallProvider: read.canCallProvider,
+    },
+  };
+}
+
+function createControlledAgentCommandRunTraceEntry(metadata: unknown): CodingSessionTraceEntry | null {
+  if (metadata === undefined) {
+    return null;
+  }
+  const commandRun = evaluateControlledAgentCommandRun(metadata);
+  const terminalResult = commandRun.state === "succeeded" || commandRun.state === "failed" || commandRun.state === "timed_out" || commandRun.state === "killed";
+  const family: CodingSessionTraceEntry["family"] = commandRun.state === "blocked" || commandRun.state === "disabled" ? "controlledAgent.commandBlocked" : commandRun.state === "running" ? "controlledAgent.commandRunning" : terminalResult ? "controlledAgent.commandResult" : "controlledAgent.commandPlanned";
+  const status: CodingSessionTraceEntry["status"] = commandRun.state === "blocked" || commandRun.state === "disabled" || commandRun.state === "failed" || commandRun.state === "timed_out" || commandRun.state === "killed" ? "failed" : commandRun.state === "running" ? "in_progress" : commandRun.state === "succeeded" ? "succeeded" : "info";
+  return {
+    id: `controlled-command-run-${commandRun.state}`,
+    timestamp: "1970-01-01T00:00:00.000Z",
+    family,
+    title: commandRun.state === "blocked" || commandRun.state === "disabled" ? "Controlled command blocked" : commandRun.state === "running" ? "Controlled command running metadata visible" : terminalResult ? "Controlled command result evidence visible" : "Controlled command planned metadata visible",
+    status,
+    summary: `Allowlisted controlled command-id evidence: ${commandRun.summary}`,
+    details: {
+      displayOnly: true,
+      allowlistedCommandIdEvidence: true,
+      allowedToRunCommand: commandRun.allowedToRunCommand,
+      state: commandRun.state,
+      commandId: commandRun.commandId ?? "none",
+      commandIdLabel: commandRun.commandIdLabel ?? "none",
+      exitCode: typeof commandRun.details.exitCode === "number" ? commandRun.details.exitCode : -1,
+      durationMs: typeof commandRun.details.durationMs === "number" ? commandRun.details.durationMs : 0,
+      outputByteCount: commandRun.outputTail?.outputByteCount ?? (typeof commandRun.details.outputByteCount === "number" ? commandRun.details.outputByteCount : 0),
+      outputLineCount: commandRun.outputTail?.outputLineCount ?? (typeof commandRun.details.outputLineCount === "number" ? commandRun.details.outputLineCount : 0),
+      truncated: commandRun.outputTail?.truncated ?? false,
+      resultHash: commandRun.outputTail?.resultHash ?? "none",
+      canRunShell: commandRun.canRunShell,
+      canUseGit: commandRun.canUseGit,
+      canUseNetwork: commandRun.canUseNetwork,
+      canCallProvider: commandRun.canCallProvider,
+      canUseTools: commandRun.canUseTools,
+      canReadFiles: commandRun.canReadFiles,
+      canWriteFiles: commandRun.canWriteFiles,
     },
   };
 }
@@ -3691,6 +3739,15 @@ function CodingTaskSessionPanel({ session, goal, contextItems, modelStatus, canS
         </div>
         <span className="subtle">Sanitized trace/session labels only. No raw file body, hidden read, search, bridge request, runtime command, provider call, or browser storage is created here.</span>
         <ul className="first-message-steps">{session.controlledFileRead.labels.map((label) => <li key={label}>{sanitizeDisplayText(label)}</li>)}</ul>
+      </section>}
+      {session.controlledCommandRun.present && <section className="readiness-card ready stack" aria-label="Controlled command session metadata">
+        <div className="row">
+          <strong>Controlled command session metadata</strong>
+          <span className="badge">command-id evidence</span>
+          <span className="badge">latest {sanitizeDisplayText(session.controlledCommandRun.latestStatus)}</span>
+        </div>
+        <span className="subtle">Sanitized trace/session labels only. No raw command string, cwd, env, shell, bridge request, runtime execution, provider call, file access, or browser storage is created here.</span>
+        <ul className="first-message-steps">{session.controlledCommandRun.labels.map((label) => <li key={label}>{sanitizeDisplayText(label)}</li>)}</ul>
       </section>}
       <div className="stack">
         <strong>Task templates</strong>

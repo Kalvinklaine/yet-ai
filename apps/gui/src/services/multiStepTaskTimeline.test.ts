@@ -279,6 +279,38 @@ describe("createMultiStepTaskTimeline", () => {
     expect(rendered).not.toContain("raw file body sentinel");
   });
 
+  it("includes controlled command evidence without raw command metadata", () => {
+    const timeline = createMultiStepTaskTimeline({
+      traceEntries: [
+        {
+          id: "trace-command-result",
+          timestamp: "2026-06-28T08:05:00.000Z",
+          family: "controlledAgent.commandResult",
+          title: "Controlled command result evidence visible",
+          status: "succeeded",
+          summary: "Allowlisted controlled command-id evidence: Repository check completed.",
+          details: {
+            commandId: "repository-check",
+            command: "npm test -- --watch",
+            cwd: "/Users/alice/private",
+            env: "SECRET_SENTINEL",
+          },
+        },
+      ],
+    });
+    const rendered = JSON.stringify(timeline);
+    const commandItem = timeline.items.find((item) => item.family === "command.evidence");
+
+    expect(commandItem?.title).toBe("Controlled command result recorded");
+    expect(commandItem?.status).toBe("succeeded");
+    expect(commandItem?.labels).toEqual(["[redacted]"]);
+    expect(rendered).toContain("Allowlisted controlled command-id evidence");
+    expect(rendered).not.toContain("npm test");
+    expect(rendered).not.toContain("/Users/alice");
+    expect(rendered).not.toContain("SECRET_SENTINEL");
+    expect(timeline.policy.canAutoRunVerification).toBe(false);
+  });
+
   it("does not mutate input objects", () => {
     const input = fullInput();
     const before = structuredClone(input);

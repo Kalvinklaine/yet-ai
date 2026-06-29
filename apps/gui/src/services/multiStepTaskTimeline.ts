@@ -10,6 +10,7 @@ export type MultiStepTaskTimelineFamily =
   | "task.goal"
   | "context.attachment"
   | "fileRead.evidence"
+  | "command.evidence"
   | "memory.attachment"
   | "plan.preview"
   | "proposal.review"
@@ -72,7 +73,7 @@ const maxTitleLength = 96;
 const maxSummaryLength = 220;
 const safeIdPattern = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const unsafeKeyPattern = /^(?:prompt|rawPrompt|raw_prompt|file|filePath|absolutePath|path|privatePath|private_path|diff|rawDiff|raw_diff|patch|body|fileBody|file_body|fileContent|file_content|command|cmd|args|arguments|cwd|env|environment|shell|git|provider|providerPayload|provider_payload|providerResponse|provider_response|tool|toolCall|tool_call|output|rawOutput|raw_output|stdout|stderr|browserStorage|browser_storage|bridgeDump|bridge_dump|stackTrace|stack_trace)$/i;
-const unsafeTextPattern = /(?:^|\b)(?:raw[_ -]?(?:prompt|file|diff|patch|command|output|response|body)|file[_ -]?(?:body|content|contents)|provider[_ -]?(?:payload|response|tool)|browser[_ -]?storage|bridge[_ -]?dump|tool[_ -]?call|private[_ -]?path|chain[_ -]?of[_ -]?thought|command|cmd|cwd|env|shell|git|stdout|stderr|apply[_ -]?patch|auto[_ -]?(?:send|apply|run|verify|repair|rollback))(?:\b|$)/i;
+const unsafeTextPattern = /(?:^|\b)(?:raw[_ -]?(?:prompt|file|diff|patch|command|output|response|body)|file[_ -]?(?:body|content|contents)|provider[_ -]?(?:payload|response|tool)|browser[_ -]?storage|bridge[_ -]?dump|tool[_ -]?call|private[_ -]?path|chain[_ -]?of[_ -]?thought|command\s+(?!id\b)|command[:=]|cmd|cwd|env|shell|git|stdout|stderr|apply[_ -]?patch|auto[_ -]?(?:send|apply|run|verify|repair|rollback))(?:\b|$)/i;
 const privatePathPattern = /(?:^|\s)(?:\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private)(?=\/|\s|$)|[A-Za-z]:(?:\\|\/)|~(?:\\|\/))/;
 const stackTracePattern = /(?:^|\n)\s*at\s+\S+\s+\([^)]*:\d+:\d+\)|Traceback \(most recent call last\):|panicked at .*:\d+:\d+/;
 
@@ -86,6 +87,7 @@ export function createMultiStepTaskTimeline(input: MultiStepTaskTimelineInput = 
     createGoalItem(input.goal, snapshot.goal.present, snapshot.goal.label, traceEntries),
     createContextItem(snapshot.context, traceEntries),
     createControlledFileReadItem(snapshot.controlledFileRead, traceEntries),
+    createControlledCommandItem(snapshot.controlledCommandRun, traceEntries),
     createMemoryItem(snapshot.memory, input.memorySuggestions, traceEntries),
     createPlanPreviewItem(input.planPreview, input.proposalHistory, snapshot.proposalHistory, traceEntries, diagnostics),
     createProposalItem(snapshot.proposalHistory, snapshot.statuses.proposal, traceEntries),
@@ -137,6 +139,27 @@ function createControlledFileReadItem(controlledFileRead: ReturnType<typeof crea
     trace?.summary ?? "Bounded controlled workspace read metadata is visible for review only; no GUI read action is available.",
     trace,
     controlledFileRead.labels,
+    safeRequestId(trace?.requestId),
+  );
+}
+
+function createControlledCommandItem(controlledCommandRun: ReturnType<typeof createCodingTaskSessionSnapshot>["controlledCommandRun"], traceEntries: readonly CodingSessionTraceEntry[]): MultiStepTaskTimelineItem | undefined {
+  const trace = latestTrace(traceEntries, ["controlledAgent.commandPlanned", "controlledAgent.commandRunning", "controlledAgent.commandResult", "controlledAgent.commandBlocked"]);
+  if (!controlledCommandRun.present && !trace) {
+    return undefined;
+  }
+  const blocked = trace?.family === "controlledAgent.commandBlocked" || trace?.status === "failed" || trace?.status === "rejected";
+  const running = trace?.family === "controlledAgent.commandRunning" || trace?.status === "in_progress";
+  const succeeded = trace?.family === "controlledAgent.commandResult" && trace.status === "succeeded";
+  const status: MultiStepTaskTimelineStatus = blocked ? "blocked" : running ? "in_progress" : succeeded ? "succeeded" : "pending";
+  return item(
+    "controlled-command-evidence",
+    "command.evidence",
+    blocked ? "Controlled command blocked" : running ? "Controlled command running metadata recorded" : succeeded ? "Controlled command result recorded" : "Controlled command planned",
+    status,
+    trace?.summary ?? "Allowlisted command-id metadata is visible for review only; no GUI command execution action is available.",
+    trace,
+    controlledCommandRun.labels,
     safeRequestId(trace?.requestId),
   );
 }
@@ -383,7 +406,10 @@ function safeValue(value: unknown, limit = maxSummaryLength): string | undefined
 
 function redactUnsafeText(value: string): string {
   const secretRedacted = redactSecrets(value);
-  if (privatePathPattern.test(secretRedacted) || stackTracePattern.test(secretRedacted) || unsafeTextPattern.test(secretRedacted)) {
+  if (privatePathPattern.test(secretRedacted) || stackTracePattern.test(secretRedacted)) {
+    return "[redacted]";
+  }
+  if (unsafeTextPattern.test(secretRedacted) && !/^Controlled command (?:planned|running|result|blocked|result recorded|planned metadata|running metadata)/i.test(secretRedacted)) {
     return "[redacted]";
   }
   return secretRedacted;
@@ -439,6 +465,9 @@ function scanUnsafeValues(value: unknown, diagnostics: string[], keyPath = "inpu
 }
 
 function isUnsafeString(value: string): boolean {
+  if (/^Controlled command (?:planned|running|result|blocked|result recorded|planned metadata|running metadata)/i.test(value)) {
+    return redactSecrets(value) !== value || privatePathPattern.test(value) || stackTracePattern.test(value);
+  }
   return redactSecrets(value) !== value || unsafeTextPattern.test(value) || privatePathPattern.test(value) || stackTracePattern.test(value);
 }
 

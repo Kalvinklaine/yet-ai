@@ -72,6 +72,11 @@ export type CodingTaskSessionSnapshot = {
     latestStatus: string;
     labels: string[];
   };
+  controlledCommandRun: {
+    present: boolean;
+    latestStatus: string;
+    labels: string[];
+  };
   proposalHistory: ProposalHistoryComparisonSummary;
   nextSafeManualStep: string;
   diagnostics: string[];
@@ -115,6 +120,7 @@ export function createCodingTaskSessionSnapshot(input: CodingTaskSessionInput = 
     statuses: summarizeStatuses(run, input.checkpointDecision),
     trace: summarizeTrace(traceEntries),
     controlledFileRead: summarizeControlledFileRead(traceEntries),
+    controlledCommandRun: summarizeControlledCommandRun(traceEntries),
     proposalHistory: createProposalHistoryComparisonSummary(input.proposalHistory),
     nextSafeManualStep: nextSafeManualStep(run),
     diagnostics: uniqueStrings(diagnostics).slice(0, maxDiagnostics),
@@ -230,6 +236,16 @@ function summarizeControlledFileRead(entries: readonly CodingSessionTraceEntry[]
     present: readEntries.length > 0,
     latestStatus: safeLabel(latest?.status ?? "not_recorded", labelLimit),
     labels: readEntries.slice(-maxLabels).map((entry) => safeLabel(`${entry.family} · ${entry.status} · ${entry.title}`, labelLimit)).filter(Boolean),
+  };
+}
+
+function summarizeControlledCommandRun(entries: readonly CodingSessionTraceEntry[]): CodingTaskSessionSnapshot["controlledCommandRun"] {
+  const commandEntries = entries.filter((entry) => entry.family === "controlledAgent.commandPlanned" || entry.family === "controlledAgent.commandRunning" || entry.family === "controlledAgent.commandResult" || entry.family === "controlledAgent.commandBlocked");
+  const latest = commandEntries[commandEntries.length - 1];
+  return {
+    present: commandEntries.length > 0,
+    latestStatus: safeLabel(latest?.status ?? "not_recorded", labelLimit),
+    labels: commandEntries.slice(-maxLabels).map((entry) => safeLabel(`${entry.family} · ${entry.status} · ${entry.title}`, labelLimit)).filter(Boolean),
   };
 }
 

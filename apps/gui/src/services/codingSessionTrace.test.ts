@@ -454,6 +454,34 @@ describe("codingSessionTrace", () => {
     expect(rendered).not.toContain("/Users/alice");
   });
 
+  it("accepts controlled command trace families and redacts executable details", () => {
+    const entry = createCodingSessionTraceEntry({
+      family: "controlledAgent.commandResult",
+      title: "Controlled command result evidence visible",
+      status: "succeeded",
+      summary: "Allowlisted command-id evidence for repository-check.",
+      requestId: "controlled-command-1",
+      details: {
+        commandId: "repository-check",
+        command: "npm test -- --watch",
+        cwd: "/Users/alice/private",
+        env: { API_KEY: "sk-secret123456789" },
+        outputTail: "bounded sanitized tail",
+      },
+    }, fixedOptions());
+    const rendered = JSON.stringify(entry);
+
+    expect(entry.family).toBe("controlledAgent.commandResult");
+    expect(normalizeTraceFamily("controlledAgent.commandPlanned")).toBe("controlledAgent.commandPlanned");
+    expect(normalizeTraceFamily("controlledAgent.commandRunning")).toBe("controlledAgent.commandRunning");
+    expect(normalizeTraceFamily("controlledAgent.commandBlocked")).toBe("controlledAgent.commandBlocked");
+    expect(rendered).toContain("repository-check");
+    expect(rendered).toContain("[redacted]");
+    expect(rendered).not.toContain("npm test");
+    expect(rendered).not.toContain("/Users/alice");
+    expect(rendered).not.toContain("sk-secret");
+  });
+
   it("uses bounded generated identifiers without persisting state", () => {
     vi.spyOn(Math, "random").mockReturnValue(0.5);
     const entry = createCodingSessionTraceEntry({
