@@ -256,6 +256,29 @@ describe("createMultiStepTaskTimeline", () => {
     });
   });
 
+  it("adds controlled file read evidence from sanitized trace metadata", () => {
+    const timeline = createMultiStepTaskTimeline({
+      traceEntries: [
+        {
+          id: "trace-file-read",
+          timestamp: "2026-06-29T08:02:00.000Z",
+          family: "controlledAgent.fileReadResult",
+          title: "Controlled file read evidence visible",
+          status: "succeeded",
+          summary: "Bounded controlled workspace read evidence recorded for docs/architecture/013-agent-readiness-milestone.md.",
+          details: { text: "raw file body sentinel" },
+        },
+      ],
+    });
+    const item = timeline.items.find((entry) => entry.family === "fileRead.evidence");
+    const rendered = JSON.stringify(timeline);
+
+    expect(item).toMatchObject({ status: "succeeded", title: "Controlled file read evidence recorded" });
+    expect(timeline.policy.canReadFiles).toBe(false);
+    expect(rendered).toContain("Bounded controlled workspace read evidence");
+    expect(rendered).not.toContain("raw file body sentinel");
+  });
+
   it("does not mutate input objects", () => {
     const input = fullInput();
     const before = structuredClone(input);

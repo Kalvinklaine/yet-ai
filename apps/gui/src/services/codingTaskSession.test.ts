@@ -268,6 +268,30 @@ describe("createCodingTaskSessionSnapshot", () => {
     expect(snapshot.trace.labels).toEqual(expect.arrayContaining([expect.stringContaining("agentRun.applyResult · succeeded · Apply result reviewed")]));
   });
 
+  it("summarizes controlled file read trace labels as session metadata only", () => {
+    const snapshot = createCodingTaskSessionSnapshot({
+      traceEntries: [
+        ...traceEntries,
+        {
+          id: "trace-file-read",
+          timestamp: "2026-06-29T08:02:00.000Z",
+          family: "controlledAgent.fileReadResult",
+          title: "Controlled file read evidence visible",
+          status: "succeeded",
+          summary: "Bounded controlled workspace read evidence recorded.",
+          details: { pathLabel: "docs/architecture/013-agent-readiness-milestone.md", text: "raw body sentinel" },
+        },
+      ],
+    });
+    const rendered = JSON.stringify(snapshot);
+
+    expect(snapshot.controlledFileRead.present).toBe(true);
+    expect(snapshot.controlledFileRead.latestStatus).toBe("succeeded");
+    expect(snapshot.controlledFileRead.labels).toEqual(["controlledAgent.fileReadResult · succeeded · Controlled file read evidence visible"]);
+    expect(snapshot.policy.canReadHiddenFiles).toBe(false);
+    expect(rendered).not.toContain("raw body sentinel");
+  });
+
   it("includes an empty proposal history summary when no history is provided", () => {
     const snapshot = createCodingTaskSessionSnapshot({ goal: "Review history later" });
 

@@ -9,6 +9,7 @@ import { countSuggestionStatuses, type TaskMemorySuggestion, type TaskMemorySugg
 export type MultiStepTaskTimelineFamily =
   | "task.goal"
   | "context.attachment"
+  | "fileRead.evidence"
   | "memory.attachment"
   | "plan.preview"
   | "proposal.review"
@@ -84,6 +85,7 @@ export function createMultiStepTaskTimeline(input: MultiStepTaskTimelineInput = 
   const items = compactItems([
     createGoalItem(input.goal, snapshot.goal.present, snapshot.goal.label, traceEntries),
     createContextItem(snapshot.context, traceEntries),
+    createControlledFileReadItem(snapshot.controlledFileRead, traceEntries),
     createMemoryItem(snapshot.memory, input.memorySuggestions, traceEntries),
     createPlanPreviewItem(input.planPreview, input.proposalHistory, snapshot.proposalHistory, traceEntries, diagnostics),
     createProposalItem(snapshot.proposalHistory, snapshot.statuses.proposal, traceEntries),
@@ -117,6 +119,26 @@ function createContextItem(context: ReturnType<typeof createCodingTaskSessionSna
   const status: MultiStepTaskTimelineStatus = count > 0 ? "succeeded" : "skipped";
   const summary = count > 0 ? `${count} explicit context item${count === 1 ? "" : "s"} attached for user-reviewed Send.` : "No explicit context is attached; hidden reads remain unavailable.";
   return item("context-attachment", "context.attachment", count > 0 ? "Explicit context attached" : "Explicit context omitted", status, summary, trace, context.labels);
+}
+
+function createControlledFileReadItem(controlledFileRead: ReturnType<typeof createCodingTaskSessionSnapshot>["controlledFileRead"], traceEntries: readonly CodingSessionTraceEntry[]): MultiStepTaskTimelineItem | undefined {
+  const trace = latestTrace(traceEntries, ["controlledAgent.fileReadPlanned", "controlledAgent.fileReadResult", "controlledAgent.fileReadBlocked"]);
+  if (!controlledFileRead.present && !trace) {
+    return undefined;
+  }
+  const blocked = trace?.family === "controlledAgent.fileReadBlocked" || trace?.status === "failed" || trace?.status === "rejected";
+  const succeeded = trace?.family === "controlledAgent.fileReadResult" && trace.status === "succeeded";
+  const status: MultiStepTaskTimelineStatus = blocked ? "blocked" : succeeded ? "succeeded" : "pending";
+  return item(
+    "controlled-file-read-evidence",
+    "fileRead.evidence",
+    blocked ? "Controlled file read blocked" : succeeded ? "Controlled file read evidence recorded" : "Controlled file read planned",
+    status,
+    trace?.summary ?? "Bounded controlled workspace read metadata is visible for review only; no GUI read action is available.",
+    trace,
+    controlledFileRead.labels,
+    safeRequestId(trace?.requestId),
+  );
 }
 
 function createMemoryItem(memory: ReturnType<typeof createCodingTaskSessionSnapshot>["memory"], suggestionsInput: MultiStepTaskTimelineInput["memorySuggestions"], traceEntries: readonly CodingSessionTraceEntry[]): MultiStepTaskTimelineItem {

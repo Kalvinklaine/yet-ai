@@ -6,6 +6,8 @@ import { buildVerificationFollowupPrompt } from "./services/verificationFollowup
 import { validateWorkspaceSnippetQuery } from "./services/activeEditorContext";
 import type { ProviderAuthResponse, ProviderAuthStatus } from "./services/providerAuthClient";
 import worktreeReadiness from "../../../packages/contracts/examples/engine/controlled-agent-workspace-readiness-worktree.json";
+import fileReadSuccess from "../../../packages/contracts/examples/engine/controlled-agent-file-read-success.json";
+import fileReadBlocked from "../../../packages/contracts/examples/engine/controlled-agent-file-read-blocked.json";
 
 const bridgeVersion = "2026-05-15";
 const fetchMock = vi.fn();
@@ -319,6 +321,76 @@ describe("runtime refresh feedback", () => {
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("controlled_agent_workspace_readiness");
+  });
+
+  it("renders controlled file read evidence as sanitized metadata without bridge or storage authority", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentFileRead: fileReadSuccess }) });
+    renderApp();
+    await flushAsync();
+
+    const details = findDetails("controlled-agent-file-read-details");
+    expect(details.open).toBe(false);
+    expect(container?.textContent).toContain("Controlled file read evidence");
+    expect(container?.textContent).toContain("S74 bounded read");
+    expect(container?.textContent).toContain("metadata only");
+    expect(container?.textContent).not.toContain("This bounded excerpt is explicit");
+
+    await act(async () => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+
+    const traceDetails = findDetails("coding-session-trace-details");
+    await act(async () => {
+      traceDetails.open = true;
+      traceDetails.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+    const timelineDetails = findDetails("multi-step-task-timeline-details");
+    await act(async () => {
+      timelineDetails.open = true;
+      timelineDetails.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Bounded controlled workspace read evidence.");
+    expect(text).toContain("Path label: docs/architecture/013-agent-readiness-milestone.md");
+    expect(text).toContain("Controlled file read session metadata");
+    expect(text).toContain("controlledAgent.fileReadResult");
+    expect(text).toContain("fileRead · evidence");
+    expect(text).not.toContain("# 013 Agent Run Readiness Milestone");
+    expect(text).not.toContain("This bounded excerpt is explicit");
+    expect(buttonsNamed("Read Files")).toHaveLength(0);
+    expect(buttonsNamed("Read file")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("controlled_agent_file_read");
+    expect(browserStorageDump()).not.toContain("This bounded excerpt is explicit");
+  });
+
+  it("renders controlled file read blocked metadata without raw content or actions", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentFileRead: fileReadBlocked }) });
+    renderApp();
+    await flushAsync();
+
+    const details = findDetails("controlled-agent-file-read-details");
+    await act(async () => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Controlled file read evidence");
+    expect(text).toContain("blocked");
+    expect(text).toContain("Allowed to read: false");
+    expect(text).toContain("blockedReason: policy_denied");
+    expect(text).not.toContain("This bounded excerpt is explicit");
+    expect(buttonsNamed("Read Files")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
 
   it("renders auth mismatch lifecycle guidance without token leakage", async () => {

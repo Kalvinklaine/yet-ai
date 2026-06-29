@@ -67,6 +67,11 @@ export type CodingTaskSessionSnapshot = {
     families: Array<{ family: string; count: number; latestStatus: string }>;
     labels: string[];
   };
+  controlledFileRead: {
+    present: boolean;
+    latestStatus: string;
+    labels: string[];
+  };
   proposalHistory: ProposalHistoryComparisonSummary;
   nextSafeManualStep: string;
   diagnostics: string[];
@@ -109,6 +114,7 @@ export function createCodingTaskSessionSnapshot(input: CodingTaskSessionInput = 
     memory: summarizeMemory(memoryItems, input.memorySuggestions),
     statuses: summarizeStatuses(run, input.checkpointDecision),
     trace: summarizeTrace(traceEntries),
+    controlledFileRead: summarizeControlledFileRead(traceEntries),
     proposalHistory: createProposalHistoryComparisonSummary(input.proposalHistory),
     nextSafeManualStep: nextSafeManualStep(run),
     diagnostics: uniqueStrings(diagnostics).slice(0, maxDiagnostics),
@@ -214,6 +220,16 @@ function summarizeTrace(entries: readonly CodingSessionTraceEntry[]): CodingTask
     totalCount: entries.length,
     families: Array.from(familyMap.entries()).slice(0, maxTraceFamilies).map(([family, value]) => ({ family: safeLabel(family, labelLimit), count: value.count, latestStatus: safeLabel(value.latestStatus, labelLimit) })),
     labels: entries.slice(-maxLabels).map((entry) => safeLabel(`${entry.family} · ${entry.status} · ${entry.title}`, labelLimit)).filter(Boolean),
+  };
+}
+
+function summarizeControlledFileRead(entries: readonly CodingSessionTraceEntry[]): CodingTaskSessionSnapshot["controlledFileRead"] {
+  const readEntries = entries.filter((entry) => entry.family === "controlledAgent.fileReadPlanned" || entry.family === "controlledAgent.fileReadResult" || entry.family === "controlledAgent.fileReadBlocked");
+  const latest = readEntries[readEntries.length - 1];
+  return {
+    present: readEntries.length > 0,
+    latestStatus: safeLabel(latest?.status ?? "not_recorded", labelLimit),
+    labels: readEntries.slice(-maxLabels).map((entry) => safeLabel(`${entry.family} · ${entry.status} · ${entry.title}`, labelLimit)).filter(Boolean),
   };
 }
 

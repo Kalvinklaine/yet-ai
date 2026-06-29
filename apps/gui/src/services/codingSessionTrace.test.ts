@@ -113,6 +113,32 @@ describe("codingSessionTrace", () => {
     expect(localStorage.length).toBe(0);
   });
 
+  it("accepts controlled file read trace families while redacting raw bodies", () => {
+    const entry = createCodingSessionTraceEntry({
+      family: "controlledAgent.fileReadResult",
+      title: "Controlled file read evidence visible",
+      status: "succeeded",
+      summary: "Bounded controlled workspace read evidence recorded.",
+      requestId: "file-read-1",
+      details: {
+        displayOnly: true,
+        pathLabel: "docs/architecture/013-agent-readiness-milestone.md",
+        byteCount: 72,
+        lineCount: 2,
+        text: "raw file body sentinel",
+        canSearchWorkspace: false,
+        canRunCommands: false,
+      },
+    }, fixedOptions());
+    const rendered = JSON.stringify(entry);
+
+    expect(entry.family).toBe("controlledAgent.fileReadResult");
+    expect(entry.details?.pathLabel).toBe("docs/architecture/013-agent-readiness-milestone.md");
+    expect(entry.details?.canSearchWorkspace).toBe(false);
+    expect(rendered).toContain("[redacted]");
+    expect(rendered).not.toContain("raw file body sentinel");
+  });
+
   it("creates sanitized agent run trace entries for deliberate S43 families", () => {
     localStorage.clear();
     sessionStorage.clear();
