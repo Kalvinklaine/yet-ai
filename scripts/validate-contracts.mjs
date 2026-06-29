@@ -96,6 +96,18 @@ const mappings = [
     "packages/contracts/schemas/engine/controlled-agent-file-read.schema.json"
   ]),
   ...[
+    "controlled-agent-command-runner-disabled.json",
+    "controlled-agent-command-runner-blocked.json",
+    "controlled-agent-command-runner-running.json",
+    "controlled-agent-command-runner-succeeded.json",
+    "controlled-agent-command-runner-failed.json",
+    "controlled-agent-command-runner-timed_out.json",
+    "controlled-agent-command-runner-killed.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-command-runner.schema.json"
+  ]),
+  ...[
     "tool-authority-policy-metadata-only.json",
     "tool-authority-policy-bounded-edit-confirmation.json",
     "tool-authority-policy-shell-deny.json"
@@ -1014,6 +1026,23 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-file-read.schema.json"
+  ]),
+  ...[
+    "controlled-agent-command-runner-unknown-command-id.json",
+    "controlled-agent-command-runner-raw-command-field.json",
+    "controlled-agent-command-runner-raw-args-field.json",
+    "controlled-agent-command-runner-cwd-env-fields.json",
+    "controlled-agent-command-runner-assistant-request-id.json",
+    "controlled-agent-command-runner-shell-git-network-provider-tool.json",
+    "controlled-agent-command-runner-unbounded-timeout.json",
+    "controlled-agent-command-runner-unbounded-output.json",
+    "controlled-agent-command-runner-private-path-output.json",
+    "controlled-agent-command-runner-secret-output.json",
+    "controlled-agent-command-runner-auto-run-claim.json",
+    "controlled-agent-command-runner-freeform-authority.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-command-runner.schema.json"
   ]),
   ...[
     "tool-authority-policy-permissive-default.json",

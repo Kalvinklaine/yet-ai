@@ -1,0 +1,495 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/controlled-agent-command-runner.schema.json",
+  "title": "Controlled Agent Allowlisted Command Runner Metadata",
+  "description": "Strict metadata contract for one explicit allowlisted controlled-agent command-id request/result inside an isolated controlled workspace. It grants no free-form shell, raw command, args, cwd, env, git, network, provider, tool, package install, hidden read, auto-run, or autonomous execution authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "authority",
+    "cloudRequired",
+    "executionAllowed",
+    "freeformCommandAllowed",
+    "agentStartAllowed",
+    "workspace",
+    "request",
+    "policyFlags",
+    "result"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "const": "controlled_agent_command_runner"
+    },
+    "version": {
+      "type": "string",
+      "const": "2026-06-29"
+    },
+    "authority": {
+      "type": "string",
+      "const": "allowlisted_command_id_metadata"
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "executionAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "freeformCommandAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "agentStartAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "workspace": {
+      "$ref": "#/$defs/workspace"
+    },
+    "request": {
+      "$ref": "#/$defs/runRequest"
+    },
+    "policyFlags": {
+      "$ref": "#/$defs/policyFlags"
+    },
+    "result": {
+      "$ref": "#/$defs/runResult"
+    }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Rr][Aa][Ww][-_ ]?(?:[Ff][Ii][Ll][Ee]|[Pp][Rr][Oo][Mm][Pp][Tt]|[Cc][Oo][Mm][Aa][Nn][Dd]|[Oo][Uu][Tt][Pp][Uu][Tt]|[Ll][Oo][Gg]|[Dd][Ii][Ff][Ff])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr](?:[-_ ]?(?:[Pp][Aa][Yy][Ll][Oo][Aa][Dd]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]))?|[Ss][Hh][Ee][Ll][Ll]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Gg][Ii][Tt]|[Tt][Oo][Oo][Ll]|[Nn][Ee][Tt][Ww][Oo][Rr][Kk]|[Pp][Aa][Cc][Kk][Aa][Gg][Ee][-_ ]?[Ii][Nn][Ss][Tt][Aa][Ll][Ll]|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Ss][Cc][Aa][Nn]|[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh])|[Ii][Nn][Dd][Ee][Xx](?:[Ii][Nn][Gg])?|[Aa][Uu][Tt][Oo][-_ ]?(?:[Ss][Tt][Aa][Rr][Tt]|[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Vv][Ee][Rr][Ii][Ff][Yy]|[Ff][Ii][Xx]|[Rr][Ee][Pp][Aa][Ii][Rr])|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "safeLabel": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 100 }
+      ]
+    },
+    "safeSummary": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 240 }
+      ]
+    },
+    "safeOutputTail": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 2000 }
+      ]
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(?!assistant(?:[._-]|$))(?!.*(?:[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?))[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "safeHash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 32
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["controlledWorkspaceId", "runId", "workspaceMode", "host", "privatePathExposed"],
+      "properties": {
+        "controlledWorkspaceId": { "$ref": "#/$defs/safeId" },
+        "runId": { "$ref": "#/$defs/safeId" },
+        "workspaceMode": {
+          "type": "string",
+          "enum": ["disposable", "worktree", "existing"]
+        },
+        "host": {
+          "type": "string",
+          "enum": ["vscode", "jetbrains"]
+        },
+        "privatePathExposed": {
+          "type": "boolean",
+          "const": false
+        },
+        "workspaceLabel": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "runRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "source",
+        "requestIdMintedBy",
+        "assistantMinted",
+        "correlation",
+        "commandId",
+        "limits"
+      ],
+      "properties": {
+        "requestId": { "$ref": "#/$defs/safeId" },
+        "source": {
+          "type": "string",
+          "enum": ["gui", "host"]
+        },
+        "requestIdMintedBy": {
+          "type": "string",
+          "enum": ["gui", "host"]
+        },
+        "assistantMinted": {
+          "type": "boolean",
+          "const": false
+        },
+        "correlation": {
+          "$ref": "#/$defs/correlation"
+        },
+        "commandId": {
+          "$ref": "#/$defs/commandId"
+        },
+        "limits": {
+          "$ref": "#/$defs/limits"
+        },
+        "requestedAt": { "$ref": "#/$defs/utcTimestamp" },
+        "reason": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "commandId": {
+      "type": "string",
+      "enum": ["repository-check", "gui-app-tests", "engine-chat-tests"]
+    },
+    "correlation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin", "confirmedBy", "confirmationId", "hostCorrelationId"],
+      "properties": {
+        "origin": {
+          "type": "string",
+          "enum": ["user", "host"]
+        },
+        "confirmedBy": {
+          "type": "string",
+          "enum": ["user", "host"]
+        },
+        "confirmationId": { "$ref": "#/$defs/safeId" },
+        "hostCorrelationId": { "$ref": "#/$defs/safeId" },
+        "confirmedAt": { "$ref": "#/$defs/utcTimestamp" },
+        "label": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timeoutMs",
+        "maxOutputBytes",
+        "maxOutputLines",
+        "tailOnly",
+        "commandStringAllowed",
+        "argsAllowed",
+        "cwdAllowed",
+        "envAllowed",
+        "shellAllowed"
+      ],
+      "properties": {
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 1800000
+        },
+        "maxOutputBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20000
+        },
+        "maxOutputLines": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 400
+        },
+        "tailOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "commandStringAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "argsAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "cwdAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "envAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "shellAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "limitLabel": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "policyFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowlistedCommandIdOnly",
+        "freeformCommandAllowed",
+        "argsAllowed",
+        "cwdAllowed",
+        "envAllowed",
+        "shellAllowed",
+        "gitAllowed",
+        "networkAllowed",
+        "providerAllowed",
+        "toolAllowed",
+        "packageInstallAllowed",
+        "fileReadAllowed",
+        "fileWriteAllowed",
+        "hiddenSearchAllowed",
+        "indexingAllowed",
+        "autoStartAllowed",
+        "autoApplyAllowed",
+        "autoRunAllowed",
+        "autoVerifyAllowed",
+        "autoFixAllowed"
+      ],
+      "properties": {
+        "allowlistedCommandIdOnly": { "type": "boolean", "const": true },
+        "freeformCommandAllowed": { "type": "boolean", "const": false },
+        "argsAllowed": { "type": "boolean", "const": false },
+        "cwdAllowed": { "type": "boolean", "const": false },
+        "envAllowed": { "type": "boolean", "const": false },
+        "shellAllowed": { "type": "boolean", "const": false },
+        "gitAllowed": { "type": "boolean", "const": false },
+        "networkAllowed": { "type": "boolean", "const": false },
+        "providerAllowed": { "type": "boolean", "const": false },
+        "toolAllowed": { "type": "boolean", "const": false },
+        "packageInstallAllowed": { "type": "boolean", "const": false },
+        "fileReadAllowed": { "type": "boolean", "const": false },
+        "fileWriteAllowed": { "type": "boolean", "const": false },
+        "hiddenSearchAllowed": { "type": "boolean", "const": false },
+        "indexingAllowed": { "type": "boolean", "const": false },
+        "autoStartAllowed": { "type": "boolean", "const": false },
+        "autoApplyAllowed": { "type": "boolean", "const": false },
+        "autoRunAllowed": { "type": "boolean", "const": false },
+        "autoVerifyAllowed": { "type": "boolean", "const": false },
+        "autoFixAllowed": { "type": "boolean", "const": false }
+      }
+    },
+    "runResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "cloudRequired", "freeformCommandAllowed", "truncated", "message"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["disabled", "blocked", "running", "succeeded", "failed", "timed_out", "killed"]
+        },
+        "cloudRequired": { "type": "boolean", "const": false },
+        "freeformCommandAllowed": { "type": "boolean", "const": false },
+        "exitCode": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 255
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1800000
+        },
+        "truncated": { "type": "boolean" },
+        "outputTail": { "$ref": "#/$defs/safeOutputTail" },
+        "outputByteCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20000
+        },
+        "outputLineCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 400
+        },
+        "resultHash": { "$ref": "#/$defs/safeHash" },
+        "blockedReason": {
+          "type": "string",
+          "enum": [
+            "runner_disabled",
+            "policy_denied",
+            "unknown_command_id",
+            "missing_user_confirmation",
+            "untrusted_request_id",
+            "workspace_not_ready",
+            "timeout_exceeds_limit",
+            "output_limit_exceeds_limit"
+          ]
+        },
+        "message": { "$ref": "#/$defs/safeSummary" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "status": { "enum": ["disabled", "blocked"] }
+            },
+            "required": ["status"]
+          }
+        },
+        "required": ["result"]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "exitCode": false,
+              "durationMs": false,
+              "outputTail": false,
+              "outputByteCount": false,
+              "outputLineCount": false,
+              "resultHash": false,
+              "truncated": { "const": false },
+              "blockedReason": {}
+            },
+            "required": ["blockedReason"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "status": { "const": "running" }
+            },
+            "required": ["status"]
+          }
+        },
+        "required": ["result"]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "exitCode": false,
+              "durationMs": {},
+              "outputTail": false,
+              "resultHash": false,
+              "truncated": { "const": false }
+            },
+            "required": ["durationMs"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "status": { "const": "succeeded" }
+            },
+            "required": ["status"]
+          }
+        },
+        "required": ["result"]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "exitCode": { "const": 0 },
+              "durationMs": {},
+              "outputTail": {},
+              "outputByteCount": {},
+              "outputLineCount": {},
+              "resultHash": {}
+            },
+            "required": ["exitCode", "durationMs", "outputTail", "outputByteCount", "outputLineCount", "resultHash"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "status": { "const": "failed" }
+            },
+            "required": ["status"]
+          }
+        },
+        "required": ["result"]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "exitCode": { "not": { "const": 0 } },
+              "durationMs": {},
+              "outputTail": {},
+              "outputByteCount": {},
+              "outputLineCount": {},
+              "resultHash": {}
+            },
+            "required": ["exitCode", "durationMs", "outputTail", "outputByteCount", "outputLineCount", "resultHash"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "status": { "enum": ["timed_out", "killed"] }
+            },
+            "required": ["status"]
+          }
+        },
+        "required": ["result"]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "exitCode": { "type": "null" },
+              "durationMs": {},
+              "outputTail": {},
+              "outputByteCount": {},
+              "outputLineCount": {},
+              "resultHash": {}
+            },
+            "required": ["exitCode", "durationMs", "outputTail", "outputByteCount", "outputLineCount", "resultHash"]
+          }
+        }
+      }
+    }
+  ]
+}

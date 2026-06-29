@@ -1,0 +1,81 @@
+{
+  "kind": "controlled_agent_command_runner",
+  "version": "2026-06-29",
+  "authority": "allowlisted_command_id_metadata",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "freeformCommandAllowed": false,
+  "agentStartAllowed": false,
+  "workspace": {
+    "controlledWorkspaceId": "workspace-s75-demo",
+    "runId": "run-s75-timed_out",
+    "workspaceMode": "worktree",
+    "host": "vscode",
+    "privatePathExposed": false,
+    "workspaceLabel": "Controlled worktree demo"
+  },
+  "request": {
+    "requestId": "request-s75-timed_out",
+    "source": "gui",
+    "requestIdMintedBy": "gui",
+    "assistantMinted": false,
+    "correlation": {
+      "origin": "user",
+      "confirmedBy": "user",
+      "confirmationId": "confirm-s75-timed_out",
+      "hostCorrelationId": "host-s75-timed_out",
+      "confirmedAt": "2026-06-29T18:30:00Z",
+      "label": "User confirmed verification preset"
+    },
+    "commandId": "repository-check",
+    "limits": {
+      "timeoutMs": 600000,
+      "maxOutputBytes": 12000,
+      "maxOutputLines": 240,
+      "tailOnly": true,
+      "commandStringAllowed": false,
+      "argsAllowed": false,
+      "cwdAllowed": false,
+      "envAllowed": false,
+      "shellAllowed": false,
+      "limitLabel": "Bounded sanitized tail only"
+    },
+    "requestedAt": "2026-06-29T18:30:01Z",
+    "reason": "Verify repository state with an allowlisted preset"
+  },
+  "policyFlags": {
+    "allowlistedCommandIdOnly": true,
+    "freeformCommandAllowed": false,
+    "argsAllowed": false,
+    "cwdAllowed": false,
+    "envAllowed": false,
+    "shellAllowed": false,
+    "gitAllowed": false,
+    "networkAllowed": false,
+    "providerAllowed": false,
+    "toolAllowed": false,
+    "packageInstallAllowed": false,
+    "fileReadAllowed": false,
+    "fileWriteAllowed": false,
+    "hiddenSearchAllowed": false,
+    "indexingAllowed": false,
+    "autoStartAllowed": false,
+    "autoApplyAllowed": false,
+    "autoRunAllowed": false,
+    "autoVerifyAllowed": false,
+    "autoFixAllowed": false
+  },
+  "result": {
+    "status": "timed_out",
+    "cloudRequired": false,
+    "freeformCommandAllowed": false,
+    "truncated": true,
+    "message": "Allowlisted preset reached its time limit",
+    "exitCode": null,
+    "durationMs": 600000,
+    "outputTail": "Allowlisted preset stopped after the configured time limit",
+    "outputByteCount": 700,
+    "outputLineCount": 22,
+    "resultHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

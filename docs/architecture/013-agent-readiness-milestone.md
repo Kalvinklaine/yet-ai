@@ -145,6 +145,13 @@ npm run validate:contracts && cd apps/gui && npm test -- controlledAgentFileRead
 
 S75 and later capabilities remain deferred until explicit future cards define their contracts, implementation, tests, and audits. In particular, S74 does not implement command execution, write/apply flows, provider/tool calling, multi-step execution, automatic repair/retry/rollback, or controlled autonomy.
 
+## Sprint 75 allowlisted command-runner contract status
+
+Sprint 75 adds the `controlled_agent_command_runner` contract as a verification foundation only for future controlled local-agent work. The contract is intentionally limited to one trusted GUI- or host-minted metadata envelope, explicit user/host request correlation, controlled workspace/run ids, one fixed allowlisted `commandId` (`repository-check`, `gui-app-tests`, or `engine-chat-tests`), bounded timeout and output-tail limits, all-false non-command-id authority flags, and sanitized disabled/blocked/running/succeeded/failed/timed-out/killed result metadata.
+
+S75 does not implement a runtime endpoint, bridge message, shell runner, git action, package manager, network call, provider/tool call, file read/write path, automatic verification, repair, retry, rollback, multi-step execution, or controlled autonomy. It is not a free-form command/cwd/env/args contract. Raw command strings, args, cwd, env, shell/git/network/provider/tool fields, unknown command ids, assistant-minted request ids, unbounded timeout/output limits, private-path or secret-looking output, and auto-run authority claims are invalid fixtures that must fail closed.
+
+
 ## Blocked and deferred capabilities
 
 These capabilities are explicitly not implemented as active Agent Run features:
