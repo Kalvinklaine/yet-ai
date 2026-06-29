@@ -1,0 +1,63 @@
+{
+  "kind": "controlled_agent_file_read",
+  "version": "2026-06-29",
+  "authority": "bounded_text_file_read",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "agentStartAllowed": false,
+  "workspace": {
+    "controlledWorkspaceId": "workspace-s74-disabled",
+    "runId": "run-s74-disabled",
+    "workspaceMode": "worktree",
+    "host": "vscode",
+    "privatePathExposed": false,
+    "workspaceLabel": "Controlled worktree"
+  },
+  "request": {
+    "requestId": "gui-s74-read-disabled",
+    "source": "gui",
+    "requestIdMintedBy": "gui",
+    "assistantMinted": false,
+    "workspaceRelativePath": "docs/architecture/013-agent-readiness-milestone.md",
+    "textOnly": true,
+    "maxBytes": 2048,
+    "budget": {
+      "scope": "single_explicit_file",
+      "maxBytes": 2048,
+      "maxLines": 80,
+      "allowBody": false,
+      "singleFileOnly": true,
+      "recursive": false,
+      "globAllowed": false,
+      "regexAllowed": false,
+      "indexingAllowed": false,
+      "budgetLabel": "Metadata only read budget"
+    },
+    "requestedAt": "2026-06-29T08:00:00Z",
+    "reason": "Read disabled while controlled file read authority is unavailable"
+  },
+  "policyFlags": {
+    "fileReadAllowed": false,
+    "fileWriteAllowed": false,
+    "shellAllowed": false,
+    "gitAllowed": false,
+    "providerAllowed": false,
+    "toolAllowed": false,
+    "hiddenSearchAllowed": false,
+    "indexingAllowed": false,
+    "binaryReadAllowed": false,
+    "symlinkAllowed": false,
+    "autoStartAllowed": false,
+    "autoApplyAllowed": false,
+    "autoRunAllowed": false
+  },
+  "result": {
+    "status": "disabled",
+    "cloudRequired": false,
+    "executionAllowed": false,
+    "bodyIncluded": false,
+    "truncated": false,
+    "blockedReason": "read_disabled",
+    "message": "Bounded file reads are disabled for this controlled workspace"
+  }
+}

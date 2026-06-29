@@ -87,6 +87,15 @@ const mappings = [
     "packages/contracts/schemas/engine/controlled-agent-workspace-readiness.schema.json"
   ]),
   ...[
+    "controlled-agent-file-read-disabled.json",
+    "controlled-agent-file-read-blocked.json",
+    "controlled-agent-file-read-success.json",
+    "controlled-agent-file-read-truncated.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-file-read.schema.json"
+  ]),
+  ...[
     "tool-authority-policy-metadata-only.json",
     "tool-authority-policy-bounded-edit-confirmation.json",
     "tool-authority-policy-shell-deny.json"
@@ -989,6 +998,22 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-workspace-readiness.schema.json"
+  ]),
+  ...[
+    "controlled-agent-file-read-absolute-path.json",
+    "controlled-agent-file-read-traversal-path.json",
+    "controlled-agent-file-read-hidden-path.json",
+    "controlled-agent-file-read-secret-dependency-path.json",
+    "controlled-agent-file-read-glob-path.json",
+    "controlled-agent-file-read-regex-path.json",
+    "controlled-agent-file-read-assistant-request-id.json",
+    "controlled-agent-file-read-command-fields.json",
+    "controlled-agent-file-read-hidden-search-indexing.json",
+    "controlled-agent-file-read-binary-symlink.json",
+    "controlled-agent-file-read-oversized-body.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-file-read.schema.json"
   ]),
   ...[
     "tool-authority-policy-permissive-default.json",

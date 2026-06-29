@@ -127,6 +127,12 @@ This completion status confirms only future controlled-mode prerequisite readine
 
 S73 adds no agent start, worktree creation, file read/write/search/indexing, apply/edit execution, verification execution, rollback execution, hidden reads, shell/git/tool/provider authority, runtime endpoint, bridge message type, browser raw-data persistence, production readiness, marketplace readiness, real-provider CI, multi-step execution, or autonomy claim. S74 and later controlled local-agent work remain deferred until explicit future cards approve their narrower contracts, implementation, tests, and audit gates.
 
+## Sprint 74 bounded file-read contract status
+
+Sprint 74 starts the next phase with a contract-only, bounded, explicit controlled file-read metadata shape. This is the first narrow read authority proposed after S73 readiness, but it is deliberately not hidden context gathering and not agent start. The contract can describe one GUI- or host-minted request in an already controlled workspace/worktree, one safe workspace-relative path, text-only expectations, explicit byte/line/body budgets, and a sanitized disabled/blocked/success/truncated result.
+
+S74 does not create a runtime endpoint, bridge message, file browser, workspace search, workspace index, provider context fetch, command runner, apply path, verification executor, or autonomous loop. It does not allow absolute paths, traversal, home/private paths, hidden files, secret-like paths, dependency/build/generated paths, globs, regex, recursive search, background indexing, binary reads, symlink traversal, oversized bodies, assistant-minted request ids, or command/cwd/env/git/tool/provider fields. The only body-bearing success path is a bounded text body explicitly allowed by the read budget, with sanitized path label, counts, truncation state, and content hash. All write, shell, git, tool, provider, auto-start, auto-apply, and auto-run authority remains absent.
+
 ## Blocked and deferred capabilities
 
 These capabilities are explicitly not implemented as active Agent Run features:

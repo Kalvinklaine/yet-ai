@@ -1,0 +1,68 @@
+{
+  "kind": "controlled_agent_file_read",
+  "version": "2026-06-29",
+  "authority": "bounded_text_file_read",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "agentStartAllowed": false,
+  "workspace": {
+    "controlledWorkspaceId": "workspace-s74-invalid",
+    "runId": "run-s74-invalid",
+    "workspaceMode": "worktree",
+    "host": "vscode",
+    "privatePathExposed": false,
+    "workspaceLabel": "Controlled worktree"
+  },
+  "request": {
+    "requestId": "gui-s74-read-invalid",
+    "source": "gui",
+    "requestIdMintedBy": "gui",
+    "assistantMinted": false,
+    "workspaceRelativePath": "docs/architecture/013-agent-readiness-milestone.md",
+    "textOnly": false,
+    "maxBytes": 2048,
+    "budget": {
+      "scope": "single_explicit_file",
+      "maxBytes": 2048,
+      "maxLines": 80,
+      "allowBody": true,
+      "singleFileOnly": true,
+      "recursive": false,
+      "globAllowed": false,
+      "regexAllowed": false,
+      "indexingAllowed": false,
+      "budgetLabel": "Small explicit text read budget"
+    },
+    "requestedAt": "2026-06-29T08:10:00Z",
+    "reason": "User approved one bounded text read for review"
+  },
+  "policyFlags": {
+    "fileReadAllowed": true,
+    "fileWriteAllowed": false,
+    "shellAllowed": false,
+    "gitAllowed": false,
+    "providerAllowed": false,
+    "toolAllowed": false,
+    "hiddenSearchAllowed": false,
+    "indexingAllowed": false,
+    "binaryReadAllowed": true,
+    "symlinkAllowed": true,
+    "autoStartAllowed": false,
+    "autoApplyAllowed": false,
+    "autoRunAllowed": false
+  },
+  "result": {
+    "status": "success",
+    "cloudRequired": false,
+    "executionAllowed": false,
+    "bodyIncluded": true,
+    "truncated": false,
+    "sanitizedPathLabel": "docs/architecture/013-agent-readiness-milestone.md",
+    "byteCount": 72,
+    "lineCount": 2,
+    "contentHash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "text": "# 013 Agent Run Readiness Milestone\n\nThis bounded excerpt is explicit.",
+    "message": "Bounded text read completed within budget"
+  },
+  "symlinkTarget": "docs/architecture/013-agent-readiness-milestone.md"
+}

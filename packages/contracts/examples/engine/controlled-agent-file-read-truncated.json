@@ -1,0 +1,67 @@
+{
+  "kind": "controlled_agent_file_read",
+  "version": "2026-06-29",
+  "authority": "bounded_text_file_read",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "agentStartAllowed": false,
+  "workspace": {
+    "controlledWorkspaceId": "workspace-s74-truncated",
+    "runId": "run-s74-truncated",
+    "workspaceMode": "worktree",
+    "host": "jetbrains",
+    "privatePathExposed": false,
+    "workspaceLabel": "Controlled worktree"
+  },
+  "request": {
+    "requestId": "gui-s74-read-truncated",
+    "source": "gui",
+    "requestIdMintedBy": "gui",
+    "assistantMinted": false,
+    "workspaceRelativePath": "packages/contracts/README.md",
+    "textOnly": true,
+    "maxBytes": 256,
+    "budget": {
+      "scope": "single_explicit_file",
+      "maxBytes": 256,
+      "maxLines": 20,
+      "allowBody": true,
+      "singleFileOnly": true,
+      "recursive": false,
+      "globAllowed": false,
+      "regexAllowed": false,
+      "indexingAllowed": false,
+      "budgetLabel": "Tiny explicit text read budget"
+    },
+    "requestedAt": "2026-06-29T08:03:00Z",
+    "reason": "User approved one bounded text read with truncation"
+  },
+  "policyFlags": {
+    "fileReadAllowed": true,
+    "fileWriteAllowed": false,
+    "shellAllowed": false,
+    "gitAllowed": false,
+    "providerAllowed": false,
+    "toolAllowed": false,
+    "hiddenSearchAllowed": false,
+    "indexingAllowed": false,
+    "binaryReadAllowed": false,
+    "symlinkAllowed": false,
+    "autoStartAllowed": false,
+    "autoApplyAllowed": false,
+    "autoRunAllowed": false
+  },
+  "result": {
+    "status": "truncated",
+    "cloudRequired": false,
+    "executionAllowed": false,
+    "bodyIncluded": true,
+    "truncated": true,
+    "sanitizedPathLabel": "packages/contracts/README.md",
+    "byteCount": 256,
+    "lineCount": 8,
+    "contentHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "text": "# Yet AI Contracts\n\nThis bounded read is intentionally truncated before the full document is attached.",
+    "message": "Bounded text read returned a truncated body within budget"
+  }
+}

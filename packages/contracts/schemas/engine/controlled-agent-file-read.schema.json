@@ -1,0 +1,408 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/controlled-agent-file-read.schema.json",
+  "title": "Controlled Agent Bounded File Read Metadata",
+  "description": "Strict metadata contract for one explicit bounded text file read inside an isolated controlled workspace. It grants no write, command, shell, git, tool, provider, hidden search, recursive scan, indexing, binary read, symlink traversal, or agent start authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "authority",
+    "cloudRequired",
+    "executionAllowed",
+    "agentStartAllowed",
+    "workspace",
+    "request",
+    "policyFlags",
+    "result"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "const": "controlled_agent_file_read"
+    },
+    "version": {
+      "type": "string",
+      "const": "2026-06-29"
+    },
+    "authority": {
+      "type": "string",
+      "const": "bounded_text_file_read"
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "executionAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "agentStartAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "workspace": {
+      "$ref": "#/$defs/workspace"
+    },
+    "request": {
+      "$ref": "#/$defs/readRequest"
+    },
+    "policyFlags": {
+      "$ref": "#/$defs/policyFlags"
+    },
+    "result": {
+      "$ref": "#/$defs/readResult"
+    }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Rr][Aa][Ww][-_ ]?(?:[Ff][Ii][Ll][Ee]|[Pp][Rr][Oo][Mm][Pp][Tt]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Oo][Uu][Tt][Pp][Uu][Tt]|[Ll][Oo][Gg]|[Dd][Ii][Ff][Ff])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]|[Ss][Hh][Ee][Ll][Ll]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Gg][Ii][Tt]|[Tt][Oo][Oo][Ll]|[Nn][Ee][Tt][Ww][Oo][Rr][Kk]|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Ss][Cc][Aa][Nn]|[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh])|[Ii][Nn][Dd][Ee][Xx](?:[Ii][Nn][Gg])?|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "safeLabel": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 100 }
+      ]
+    },
+    "safeSummary": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 240 }
+      ]
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(?!assistant(?:[._-]|$))(?!.*(?:[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?))[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "safeHash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 32
+    },
+    "workspaceRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 180,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!~)(?!.*(?:^|/)\\.)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*[\\\\:*?\"<>|{}\\[\\]$^+])(?!(?:^|.*/)(?:node_modules|vendor|dist|build|out|target|coverage|__pycache__|generated|tmp|temp|secrets?|credentials?|private)(?:/|$))[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$"
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["controlledWorkspaceId", "runId", "workspaceMode", "host", "privatePathExposed"],
+      "properties": {
+        "controlledWorkspaceId": { "$ref": "#/$defs/safeId" },
+        "runId": { "$ref": "#/$defs/safeId" },
+        "workspaceMode": {
+          "type": "string",
+          "enum": ["disposable", "worktree", "existing"]
+        },
+        "host": {
+          "type": "string",
+          "enum": ["vscode", "jetbrains"]
+        },
+        "privatePathExposed": {
+          "type": "boolean",
+          "const": false
+        },
+        "workspaceLabel": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "readRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "source", "requestIdMintedBy", "assistantMinted", "workspaceRelativePath", "textOnly", "maxBytes", "budget"],
+      "properties": {
+        "requestId": { "$ref": "#/$defs/safeId" },
+        "source": {
+          "type": "string",
+          "enum": ["gui", "host"]
+        },
+        "requestIdMintedBy": {
+          "type": "string",
+          "enum": ["gui", "host"]
+        },
+        "assistantMinted": {
+          "type": "boolean",
+          "const": false
+        },
+        "workspaceRelativePath": { "$ref": "#/$defs/workspaceRelativePath" },
+        "textOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "maxBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8192
+        },
+        "budget": {
+          "$ref": "#/$defs/budget"
+        },
+        "requestedAt": { "$ref": "#/$defs/utcTimestamp" },
+        "reason": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "maxBytes", "maxLines", "allowBody", "singleFileOnly", "recursive", "globAllowed", "regexAllowed", "indexingAllowed"],
+      "properties": {
+        "scope": {
+          "type": "string",
+          "const": "single_explicit_file"
+        },
+        "maxBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8192
+        },
+        "maxLines": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 240
+        },
+        "allowBody": {
+          "type": "boolean"
+        },
+        "singleFileOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "recursive": {
+          "type": "boolean",
+          "const": false
+        },
+        "globAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "regexAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "indexingAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "budgetLabel": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "policyFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fileReadAllowed",
+        "fileWriteAllowed",
+        "shellAllowed",
+        "gitAllowed",
+        "providerAllowed",
+        "toolAllowed",
+        "hiddenSearchAllowed",
+        "indexingAllowed",
+        "binaryReadAllowed",
+        "symlinkAllowed",
+        "autoStartAllowed",
+        "autoApplyAllowed",
+        "autoRunAllowed"
+      ],
+      "properties": {
+        "fileReadAllowed": { "type": "boolean" },
+        "fileWriteAllowed": { "type": "boolean", "const": false },
+        "shellAllowed": { "type": "boolean", "const": false },
+        "gitAllowed": { "type": "boolean", "const": false },
+        "providerAllowed": { "type": "boolean", "const": false },
+        "toolAllowed": { "type": "boolean", "const": false },
+        "hiddenSearchAllowed": { "type": "boolean", "const": false },
+        "indexingAllowed": { "type": "boolean", "const": false },
+        "binaryReadAllowed": { "type": "boolean", "const": false },
+        "symlinkAllowed": { "type": "boolean", "const": false },
+        "autoStartAllowed": { "type": "boolean", "const": false },
+        "autoApplyAllowed": { "type": "boolean", "const": false },
+        "autoRunAllowed": { "type": "boolean", "const": false }
+      }
+    },
+    "readResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "cloudRequired", "executionAllowed", "bodyIncluded", "truncated", "message"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["disabled", "blocked", "success", "truncated"]
+        },
+        "cloudRequired": { "type": "boolean", "const": false },
+        "executionAllowed": { "type": "boolean", "const": false },
+        "bodyIncluded": { "type": "boolean" },
+        "truncated": { "type": "boolean" },
+        "sanitizedPathLabel": { "$ref": "#/$defs/workspaceRelativePath" },
+        "byteCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8192
+        },
+        "lineCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 240
+        },
+        "contentHash": { "$ref": "#/$defs/safeHash" },
+        "text": {
+          "allOf": [
+            { "$ref": "#/$defs/safeText" },
+            { "type": "string", "maxLength": 8192 }
+          ]
+        },
+        "blockedReason": {
+          "type": "string",
+          "enum": [
+            "read_disabled",
+            "policy_denied",
+            "unsafe_path",
+            "outside_workspace",
+            "hidden_path",
+            "dependency_path",
+            "generated_path",
+            "binary_file",
+            "symlink_denied",
+            "too_large",
+            "budget_exceeded"
+          ]
+        },
+        "message": { "$ref": "#/$defs/safeSummary" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "request": {
+            "type": "object",
+            "properties": {
+              "budget": {
+                "type": "object",
+                "properties": {
+                  "allowBody": { "const": false }
+                },
+                "required": ["allowBody"]
+              }
+            },
+            "required": ["budget"]
+          }
+        },
+        "required": ["request"]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "bodyIncluded": { "const": false },
+              "text": false
+            },
+            "required": ["bodyIncluded"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "status": { "enum": ["disabled", "blocked"] }
+            },
+            "required": ["status"]
+          }
+        },
+        "required": ["result"]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "bodyIncluded": { "const": false },
+              "truncated": { "const": false },
+              "text": false,
+              "blockedReason": {}
+            },
+            "required": ["blockedReason"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "status": { "const": "success" }
+            },
+            "required": ["status"]
+          }
+        },
+        "required": ["result"]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "bodyIncluded": { "const": true },
+              "truncated": { "const": false },
+              "sanitizedPathLabel": {},
+              "byteCount": {},
+              "lineCount": {},
+              "contentHash": {},
+              "text": {}
+            },
+            "required": ["sanitizedPathLabel", "byteCount", "lineCount", "contentHash", "text"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "status": { "const": "truncated" }
+            },
+            "required": ["status"]
+          }
+        },
+        "required": ["result"]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "bodyIncluded": { "const": true },
+              "truncated": { "const": true },
+              "sanitizedPathLabel": {},
+              "byteCount": {},
+              "lineCount": {},
+              "contentHash": {},
+              "text": {}
+            },
+            "required": ["sanitizedPathLabel", "byteCount", "lineCount", "contentHash", "text"]
+          }
+        }
+      }
+    }
+  ]
+}
