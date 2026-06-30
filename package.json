@@ -27,6 +27,7 @@
     "smoke:controlled-agent-workspace-readiness": "node scripts/smoke-controlled-agent-workspace-readiness.mjs",
     "smoke:controlled-agent-file-read": "node scripts/smoke-controlled-agent-file-read.mjs",
     "smoke:controlled-agent-command-runner": "node scripts/smoke-controlled-agent-command-runner.mjs",
+    "smoke:controlled-agent-run-state": "node scripts/smoke-controlled-agent-run-state.mjs",
     "smoke:agent-run-safer-apply-ux": "node scripts/smoke-agent-run-safer-apply-ux.mjs",
     "smoke:agent-run-manual-rc-hosts": "node scripts/smoke-agent-run-manual-rc-hosts.mjs",
     "smoke:agent-run-rc-bundle": "node scripts/smoke-agent-run-rc-bundle.mjs",

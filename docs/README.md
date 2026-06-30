@@ -175,6 +175,20 @@ npm run smoke:controlled-agent-command-runner
 
 The smoke uses an internal command-id allowlist mapped to deterministic local Node actions for `repository-check`, `gui-app-tests`, and `engine-chat-tests`. It proves allowed success/failure/timeout metadata, unknown command blocking, raw command/cwd/env rejection, bounded timeout and output limits, sanitized output-tail evidence, and no raw command material, private paths, provider/tool payloads, or secrets in the final report. S75 is an allowlisted command-id metadata foundation only: it is not free-form shell, arbitrary command execution, model-provided commands, git/package/network authority, provider tool calling, a production runner, broad agent runtime, automatic verification, repair/retry/rollback, or controlled autonomy.
 
+For the S76 controlled run state skeleton boundary, run:
+
+```sh
+npm run smoke:controlled-agent-run-state
+```
+
+The smoke transpiles the pure GUI run-state reducer and builds the GUI against loopback-only runtime mocks. It verifies the skeleton remains disabled until explicit user opt-in in reducer state, creates only GUI-local/mock run metadata from `/v1/caps`, renders metadata-driven planning/read/verification phases, supports visible Stop as local React state only, blocks unsafe metadata, and emits no hidden read/search/write/apply/verify/command/rollback/provider bridge or runtime authority. It also checks loopback-only network, clean browser storage, no real agent start, no worktree mutation, and no raw prompt/file body/command/private-path/secret leakage. S76 is a preview-only state skeleton: it is not a runtime loop, not autonomous execution, not production readiness, not a provider/tool surface, and not real-provider CI evidence.
+
+The full S76-C4 final gate is:
+
+```sh
+npm run smoke:controlled-agent-run-state && npm run check && git diff --check
+```
+
 The full S75 final gate is:
 
 ```sh
