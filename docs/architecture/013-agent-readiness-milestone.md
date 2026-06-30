@@ -168,14 +168,18 @@ npm run validate:contracts && cd apps/gui && npm test -- controlledAgentCommandR
 
 ## Sprint 76 controlled run state contract status
 
-Sprint 76 starts with the `controlled_agent_run_state` contract as a state-machine skeleton only. The contract records deterministic metadata for `idle`, `opt_in_required`, `workspace_ready`, `reading_context`, `planning`, `waiting_for_user`, `running_verification`, `stopping`, `stopped`, `blocked`, `failed`, and `completed`, with controlled workspace/run/readiness correlation, bounded run limits, bounded counters, sanitized details, and explicit stop reasons for interrupted or failed states.
+Sprint 76 closes as a controlled run state skeleton milestone only. The `controlled_agent_run_state` contract records deterministic metadata for `idle`, `opt_in_required`, `workspace_ready`, `reading_context`, `planning`, `waiting_for_user`, `running_verification`, `stopping`, `stopped`, `blocked`, `failed`, and `completed`, with controlled workspace/run/readiness correlation, bounded run limits, bounded counters, sanitized details, and explicit stop reasons for interrupted or failed states.
 
-S76 does not implement the real controlled-agent loop yet. The contract grants no agent start, auto-start, file read/write, apply/edit, verification execution, repair, retry, rollback, shell, git, network, package-manager, provider/tool call, runtime endpoint, bridge message, storage authority, or autonomous behavior. It is metadata for future evaluation and UI wiring only. Invalid fixtures reject assistant-minted authority, auto-action claims, shell/git/provider/tool flags, raw prompt/file/diff/command/log fields, unsafe details, unbounded limits, and stopped/blocked/failed states without explicit sanitized stop metadata.
+The implementation remains split across strict contracts, a pure GUI reducer, a preview-only panel with a visible local Stop control, App wiring over existing `/v1/caps` metadata, focused GUI tests, and a built-GUI local/mock smoke. The reducer composes existing readiness, bounded file-read, and allowlisted command-runner metadata evaluators; it does not perform file I/O, spawn processes, call a runtime endpoint, post bridge requests, call providers, write browser storage, or mutate a workspace. The panel renders sanitized phase, current step, limits, counters, diagnostics, stop reason, and all-false authority flags only.
 
-The exact S76-C1 contract gate is:
+S76 does not implement the real controlled-agent loop. It grants no edit executor, real command runner endpoint, provider loop, agent start, auto-start, hidden file read/search/indexing, file write, apply/edit execution, verification execution, repair, retry, rollback, shell, git, network, package-manager, provider/tool call, runtime endpoint, bridge message, storage authority, production readiness, or autonomous behavior. Invalid fixtures and reducer guards reject assistant-minted authority, auto-action claims, shell/git/provider/tool flags, raw prompt/file/diff/command/log fields, unsafe details, unbounded limits, and stopped/blocked/failed states without explicit sanitized stop metadata.
+
+The S76 final audit found no high or critical issue in the controlled run state skeleton scope: contracts reject unsafe examples, the reducer is pure and fail-closed, GUI state is local/metadata-only, Stop is local React state only, App wiring uses existing capability metadata, the smoke blocks unsafe metadata and checks for no hidden bridge/runtime authority, and local-first BYOK remains unchanged. Core workflows still require no hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, cloud workspace, production login, marketplace publication, signing, notarization, or real-provider CI. S77+ edit execution, verifier/repair loops, rollback behavior, provider-tool behavior, and controlled-autonomy capabilities remain deferred until explicit future cards define and verify them.
+
+The exact S76 final audit gate is:
 
 ```sh
-npm run validate:contracts && npm run check && git diff --check
+npm run validate:contracts && cd apps/gui && npm test -- controlledAgentRunState ControlledAgentRunPanel controlledAgentFileRead controlledAgentCommandRunner App && npm run build && cd ../.. && npm run smoke:controlled-agent-run-state && npm run check && git diff --check && git status --short
 ```
 
 ## Blocked and deferred capabilities

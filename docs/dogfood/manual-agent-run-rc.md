@@ -143,6 +143,24 @@ npm run validate:contracts && cd apps/gui && npm test -- controlledAgentCommandR
 
 Do not report S75 as shell access, arbitrary command execution, model-provided commands, git/package/network authority, provider/tool calling, broad agent runtime, production autonomy, marketplace readiness, release readiness, or real-provider CI. Manual RC notes may record only sanitized command-id state/label/status/limit/count/hash evidence and must confirm no raw command string, args, cwd, env, stdout/stderr dump, private path, provider/tool payload, or secret appeared. S76+ loop, edit, repair, retry, rollback, provider-tool, and controlled-autonomy capabilities remain unimplemented until their explicit future sprints land.
 
+## S76 controlled run state skeleton note
+
+S76 adds deterministic controlled-run state skeleton evidence for a future controlled workspace only. It can surface sanitized metadata for GUI-local phases, current step labels, stop reason, limits, counters, diagnostics, and all-false authority flags derived from `/v1/caps.controlledAgentWorkspaceReadiness`, `/v1/caps.controlledAgentFileRead`, and `/v1/caps.controlledAgentCommandRunner`. The visible Stop control is local React state only and does not call a runtime, bridge, rollback, command, provider, or workspace mutation path.
+
+The exact focused S76 smoke is:
+
+```sh
+npm run smoke:controlled-agent-run-state
+```
+
+For the final S76 audit gate, use:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm test -- controlledAgentRunState ControlledAgentRunPanel controlledAgentFileRead controlledAgentCommandRunner App && npm run build && cd ../.. && npm run smoke:controlled-agent-run-state && npm run check && git diff --check && git status --short
+```
+
+Do not report S76 as an edit executor, real command runner endpoint, provider loop, autonomous runner, production readiness, marketplace readiness, release readiness, or real-provider CI. Manual RC notes may record only sanitized state phase/step/stop/limit/counter/diagnostic metadata and must confirm no raw prompt, file body, command, output, private path, provider/tool payload, secret, bridge payload, or browser-storage persistence appeared. S77+ edit execution, verifier/repair loops, rollback behavior, provider-tool behavior, and controlled-autonomy capabilities remain unimplemented until their explicit future sprints land.
+
 ## Manual RC run checklist
 
 1. Start from a clean local checkout or sanitized dev-preview artifact label.

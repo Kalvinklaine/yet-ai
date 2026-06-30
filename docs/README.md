@@ -183,10 +183,10 @@ npm run smoke:controlled-agent-run-state
 
 The smoke transpiles the pure GUI run-state reducer and builds the GUI against loopback-only runtime mocks. It verifies the skeleton remains disabled until explicit user opt-in in reducer state, creates only GUI-local/mock run metadata from `/v1/caps`, renders metadata-driven planning/read/verification phases, supports visible Stop as local React state only, blocks unsafe metadata, and emits no hidden read/search/write/apply/verify/command/rollback/provider bridge or runtime authority. It also checks loopback-only network, clean browser storage, no real agent start, no worktree mutation, and no raw prompt/file body/command/private-path/secret leakage. S76 is a preview-only state skeleton: it is not a runtime loop, not autonomous execution, not production readiness, not a provider/tool surface, and not real-provider CI evidence.
 
-The full S76-C4 final gate is:
+The full S76 final audit gate is:
 
 ```sh
-npm run smoke:controlled-agent-run-state && npm run check && git diff --check
+npm run validate:contracts && cd apps/gui && npm test -- controlledAgentRunState ControlledAgentRunPanel controlledAgentFileRead controlledAgentCommandRunner App && npm run build && cd ../.. && npm run smoke:controlled-agent-run-state && npm run check && git diff --check && git status --short
 ```
 
 The full S75 final gate is:
