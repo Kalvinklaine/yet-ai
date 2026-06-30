@@ -1,0 +1,78 @@
+import { useMemo } from "react";
+import type { ControlledAgentRunState } from "../services/controlledAgentRunState";
+import { sanitizeDisplayText } from "../services/redaction";
+
+export type ControlledAgentRunPanelProps = {
+  state: ControlledAgentRunState;
+  onStop: () => void;
+};
+
+export function ControlledAgentRunPanel({ state, onStop }: ControlledAgentRunPanelProps) {
+  const phaseLabel = sanitizeDisplayText(state.phase.replace(/_/g, " "));
+  const stopReason = state.stop?.reason ? sanitizeDisplayText(state.stop.reason.replace(/_/g, " ")) : "none";
+  const currentStep = currentStepLabel(state);
+  const limits = useMemo(() => Object.entries(state.limits), [state.limits]);
+  const counters = useMemo(() => Object.entries(state.counters), [state.counters]);
+  const diagnostics = state.diagnostics.slice(0, 6);
+  const stopDisabled = state.stopped || state.phase === "idle" || state.phase === "opt_in_required" || state.phase === "blocked" || state.phase === "failed" || state.phase === "completed";
+
+  return (
+    <section className={`readiness-card ${state.stopped ? "warn" : "ready"} controlled-agent-run-panel stack`} aria-label="Controlled agent run skeleton" data-testid="controlled-agent-run-panel">
+      <div className="row">
+        <strong>Controlled agent run skeleton</strong>
+        <span className="badge warn">S76 preview only</span>
+        <span className="badge">GUI-local state</span>
+        <span className="badge">metadata only</span>
+        <span className={state.stopped ? "badge warn" : "badge ok"}>{phaseLabel}</span>
+      </div>
+      <span>{sanitizeDisplayText(state.summary)}</span>
+      <span className="subtle">Preview-only skeleton: this panel cannot start agents, read files, write files, run commands, call providers, apply edits, use git, post bridge messages, or write browser storage.</span>
+      <div className="agent-progress-grid" aria-label="Controlled run status">
+        <span>Phase: {phaseLabel}</span>
+        <span>Current step: {currentStep}</span>
+        <span>Next user action: {sanitizeDisplayText(state.nextUserAction.replace(/_/g, " "))}</span>
+        <span>Stop reason: {stopReason}</span>
+        <span>Stopped: {String(state.stopped)}</span>
+        <span>Enabled: {String(state.enabled)}</span>
+      </div>
+      <div className="agent-progress-grid" aria-label="Controlled run authority flags">
+        <span>Authority: {sanitizeDisplayText(state.authority)}</span>
+        <span>Execution allowed: {String(state.executionAllowed)}</span>
+        <span>Agent start allowed: {String(state.agentStartAllowed)}</span>
+        <span>Auto start allowed: {String(state.autoStartAllowed)}</span>
+        <span>Can read files: {String(state.canReadFiles)}</span>
+        <span>Can write files: {String(state.canWriteFiles)}</span>
+        <span>Can run commands: {String(state.canRunCommands)}</span>
+        <span>Can apply edits: {String(state.canApplyEdits)}</span>
+        <span>Can call provider: {String(state.canCallProvider)}</span>
+        <span>Can use tools: {String(state.canUseTools)}</span>
+      </div>
+      <div className="agent-progress-grid" aria-label="Controlled run limits">
+        {limits.map(([key, value]) => <span key={key}>Limit {sanitizeDisplayText(key)}: {value}</span>)}
+      </div>
+      <div className="agent-progress-grid" aria-label="Controlled run counters">
+        {counters.map(([key, value]) => <span key={key}>Counter {sanitizeDisplayText(key)}: {value}</span>)}
+      </div>
+      {state.stop && <div className="readiness-card warn" role="status" aria-label="Controlled run stop reason"><strong>Stop reason</strong><span>{stopReason}: {sanitizeDisplayText(state.stop.message)}</span><span>Recoverable: {String(state.stop.recoverable)}</span></div>}
+      {diagnostics.length > 0 && <div className="readiness-card warn" role="status" aria-label="Controlled run diagnostics"><strong>Diagnostics</strong>{diagnostics.map((diagnostic, index) => <span key={`${index}:${diagnostic.code}:${diagnostic.message}`}>{sanitizeDisplayText(diagnostic.code)}: {sanitizeDisplayText(diagnostic.message)}</span>)}</div>}
+      <div className="row">
+        <button type="button" className="danger-button" onClick={onStop} disabled={stopDisabled}>Stop controlled run</button>
+        <span className="subtle">Stop updates GUI-local React state only. No runtime, bridge, storage, provider, command, file, process, or git request is sent.</span>
+      </div>
+    </section>
+  );
+}
+
+function currentStepLabel(state: ControlledAgentRunState): string {
+  if (state.phase === "workspace_ready") return "Review plan";
+  if (state.phase === "reading_context") return "Review bounded read metadata";
+  if (state.phase === "planning") return "Review sanitized plan metadata";
+  if (state.phase === "waiting_for_user") return "Wait for explicit user review";
+  if (state.phase === "running_verification") return "Review allowlisted verification metadata";
+  if (state.phase === "stopped") return "Stopped by user";
+  if (state.phase === "blocked") return "Review blocking diagnostic";
+  if (state.phase === "failed") return "Review failure diagnostic";
+  if (state.phase === "completed") return "Review completion metadata";
+  if (state.phase === "opt_in_required") return "Review opt-in requirement";
+  return "Idle";
+}

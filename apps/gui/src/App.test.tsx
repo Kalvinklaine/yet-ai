@@ -472,6 +472,44 @@ describe("runtime refresh feedback", () => {
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.controlledCommandRequest")).toHaveLength(0);
   });
 
+  it("renders controlled run skeleton and stops with GUI-local state only", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentFileRead: fileReadSuccess, controlledAgentCommandRunner: commandRunSucceeded }) });
+    renderApp();
+    await flushAsync();
+
+    const panel = container?.querySelector("[data-testid='controlled-agent-run-panel']");
+    expect(panel?.textContent).toContain("Controlled agent run skeleton");
+    expect(panel?.textContent).toContain("S76 preview only");
+    expect(panel?.textContent).toContain("GUI-local state");
+    expect(panel?.textContent).toContain("Phase: planning");
+    expect(panel?.textContent).toContain("Current step: Review sanitized plan metadata");
+    expect(panel?.textContent).toContain("Stop reason: none");
+    expect(panel?.textContent).toContain("Limit maxSteps: 6");
+    expect(panel?.textContent).toContain("Counter fileReadsUsed: 1");
+    expect(panel?.textContent).toContain("Counter verificationRuns: 1");
+    expect(panel?.textContent).toContain("Execution allowed: false");
+    expect(panel?.textContent).toContain("Agent start allowed: false");
+    expect(buttonsNamed("Start Agent")).toHaveLength(0);
+    expect(buttonsNamed("Run Agent")).toHaveLength(0);
+
+    await act(async () => {
+      findButton("Stop controlled run").click();
+    });
+
+    const stoppedText = panel?.textContent ?? "";
+    expect(stoppedText).toContain("Phase: stopped");
+    expect(stoppedText).toContain("Stop reason: user stop");
+    expect(stoppedText).toContain("Controlled run stopped from the S76 skeleton UI.");
+    expect(findButton("Stop controlled run").disabled).toBe(true);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.controlledRunRequest" || message.type === "gui.controlledRunStopRequest")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("controlled_agent_run");
+    expect(browserStorageDump()).not.toContain("Repository validation completed with sanitized metadata");
+  });
+
   it("renders auth mismatch lifecycle guidance without token leakage", async () => {
     const token = "host-runtime-status-secret-value";
     mockRuntimeResponses({ runtimeFailure: true });

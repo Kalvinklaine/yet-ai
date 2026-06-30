@@ -10,6 +10,7 @@ import { MultiStepTaskTimelinePanel } from "./components/MultiStepTaskTimelinePa
 import { ControlledAgentWorkspaceReadinessPanel } from "./components/ControlledAgentWorkspaceReadinessPanel";
 import { ControlledAgentFileReadPanel } from "./components/ControlledAgentFileReadPanel";
 import { ControlledAgentCommandRunnerPanel } from "./components/ControlledAgentCommandRunnerPanel";
+import { ControlledAgentRunPanel } from "./components/ControlledAgentRunPanel";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
 import { IdeActionProposalPanel, IdeActionsPanel, VerificationCommandPanel, verificationOutputKey, type IdeActionAttemptState, type VerificationCommand } from "./components/IdeActionsPanel";
 import { analyzeAssistantIdeActionProposalContent, describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, latestIdeActionProposalReviewFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
@@ -42,6 +43,7 @@ import { createMemorySuggestionAttachTraceDetails, suggestTaskMemory, type TaskM
 import { evaluateHostCapabilityMetadata } from "./services/toolAuthorityPolicy";
 import { evaluateControlledAgentFileRead } from "./services/controlledAgentFileRead";
 import { evaluateControlledAgentCommandRun } from "./services/controlledAgentCommandRunner";
+import { initializeControlledAgentRunState, reduceControlledAgentRunState, type ControlledAgentRunState } from "./services/controlledAgentRunState";
 import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPatchVerificationLoop";
 import type { AgentRunInput } from "./services/agentRunState";
 
@@ -679,6 +681,16 @@ export function App() {
   }), [activeRejectedEditProposal, activeRejectedIdeActionProposal, agentRunInput, agentRunVerificationFixDraft, attachedProjectMemoryItems, codingSessionTraceWithCheckpointDecision, agentRunCheckpointDecision, codingTaskGoal, explicitContextBundleItems, proposalHistory, taskMemorySuggestions]);
   const controlledWorkspaceReadinessMetadata = activeCaps?.controlledAgentWorkspaceReadiness;
   const showWhatWillBeSentPanel = chatInput.trim().length > 0 || contextBudgetSummary.sources.some((source) => source.itemCount > 0 || source.charCount > 0) || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
+  const [controlledAgentRunState, setControlledAgentRunState] = useState<ControlledAgentRunState>(() => initializeControlledAgentRunState(undefined));
+  const showControlledAgentRunPanel = controlledWorkspaceReadinessMetadata !== undefined || controlledAgentFileReadMetadata !== undefined || controlledAgentCommandRunnerMetadata !== undefined;
+
+  useEffect(() => {
+    setControlledAgentRunState(buildControlledAgentRunPreviewState(controlledWorkspaceReadinessMetadata, controlledAgentFileReadMetadata, controlledAgentCommandRunnerMetadata));
+  }, [controlledAgentCommandRunnerMetadata, controlledAgentFileReadMetadata, controlledWorkspaceReadinessMetadata]);
+
+  const stopControlledAgentRun = useCallback(() => {
+    setControlledAgentRunState((current) => reduceControlledAgentRunState(current, { type: "stop", summary: "Controlled run stopped from the S76 skeleton UI." }));
+  }, []);
   const workspaceSnippetQueryValidation = useMemo(() => validateWorkspaceSnippetQuery(workspaceSnippetQuery), [workspaceSnippetQuery]);
 
   useEffect(() => {
@@ -2732,6 +2744,7 @@ export function App() {
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
                 <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} />
+                {showControlledAgentRunPanel && <ControlledAgentRunPanel state={controlledAgentRunState} onStop={stopControlledAgentRun} />}
                 {controlledWorkspaceReadinessMetadata !== undefined && <ControlledAgentWorkspaceReadinessPanel metadata={controlledWorkspaceReadinessMetadata} />}
                 {controlledAgentFileReadMetadata !== undefined && <ControlledAgentFileReadPanel metadata={controlledAgentFileReadMetadata} />}
                 {controlledAgentCommandRunnerMetadata !== undefined && <ControlledAgentCommandRunnerPanel metadata={controlledAgentCommandRunnerMetadata} />}
@@ -2984,6 +2997,24 @@ export function App() {
       </section>
     </main>
   );
+}
+
+function buildControlledAgentRunPreviewState(readinessMetadata: unknown, fileReadMetadata: unknown, commandRunnerMetadata: unknown): ControlledAgentRunState {
+  const initialized = initializeControlledAgentRunState({
+    readiness: readinessMetadata,
+    userOptIn: { source: "user", confirmed: true, requestId: "s76-controlled-run-preview" },
+  });
+  if (!initialized.enabled || initialized.stopped) {
+    return initialized;
+  }
+  let next = reduceControlledAgentRunState(initialized, { type: "workspace_ready" });
+  if (fileReadMetadata !== undefined) {
+    next = reduceControlledAgentRunState(next, { type: "read", metadata: fileReadMetadata });
+  }
+  if (commandRunnerMetadata !== undefined) {
+    next = reduceControlledAgentRunState(next, { type: "command", metadata: commandRunnerMetadata });
+  }
+  return next;
 }
 
 function createCheckpointDecisionTraceEntry(decision: AgentRunCheckpointDecisionSummary | undefined): CodingSessionTraceEntry | null {
