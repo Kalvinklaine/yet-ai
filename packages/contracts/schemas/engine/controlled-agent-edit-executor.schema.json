@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/controlled-agent-edit-executor.schema.json",
+  "title": "Controlled Agent Edit Executor Metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "schemaVersion",
+    "state",
+    "runId",
+    "workspaceReadinessId",
+    "requestId",
+    "requestIdMintedBy",
+    "userConfirmed",
+    "limits",
+    "edits"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "controlled_agent_edit_executor"
+    },
+    "schemaVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32
+    },
+    "state": {
+      "type": "string",
+      "enum": ["disabled", "planned", "applied", "blocked", "failed"]
+    },
+    "runId": {
+      "$ref": "#/$defs/safeId"
+    },
+    "workspaceReadinessId": {
+      "$ref": "#/$defs/safeId"
+    },
+    "requestId": {
+      "$ref": "#/$defs/safeId"
+    },
+    "requestIdMintedBy": {
+      "type": "string",
+      "enum": ["gui", "host", "runtime"]
+    },
+    "userConfirmed": {
+      "type": "boolean"
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxFiles", "maxEdits", "maxPatchBytes"],
+      "properties": {
+        "maxFiles": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "maxEdits": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "maxPatchBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576
+        }
+      }
+    },
+    "edits": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation",
+          "workspaceRelativePath",
+          "fileLabel",
+          "expectedContentHash",
+          "startLine",
+          "endLine",
+          "replacementByteCount",
+          "sanitizedSummary"
+        ],
+        "properties": {
+          "operation": {
+            "type": "string",
+            "const": "replace"
+          },
+          "workspaceRelativePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*(?:^|/)\\.git(?:/|$))[A-Za-z0-9._@+\\-/]+$"
+          },
+          "fileLabel": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "expectedContentHash": {
+            "$ref": "#/$defs/sha256Hash"
+          },
+          "startLine": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "endLine": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "replacementByteCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1048576
+          },
+          "sanitizedSummary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "sha256Hash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "enum": ["planned", "applied", "blocked", "failed"]
+          }
+        },
+        "required": ["state"]
+      },
+      "then": {
+        "properties": {
+          "userConfirmed": {
+            "const": true
+          }
+        },
+        "required": ["userConfirmed"]
+      }
+    }
+  ]
+}
