@@ -41,6 +41,7 @@ Avoid softer wording that implies implementation, autonomy, production publicati
 | S74 bounded controlled file-read | Experimental manual-only | Controlled file-read evidence renders only sanitized metadata from `/v1/caps.controlledAgentFileRead` for one bounded explicit workspace-relative text read in a controlled workspace. It does not add hidden reads, search/indexing, raw body display, write/apply, command, provider/tool, bridge, runtime, storage, or autonomy authority. |
 | S75 allowlisted command-runner evidence | Experimental manual-only | Controlled command evidence renders only sanitized allowlisted command-id metadata from `/v1/caps.controlledAgentCommandRunner` for trusted user/host-confirmed requests. It is not free-form shell or arbitrary command execution and adds no raw command/args/cwd/env, git/network/package/provider/tool, bridge run button, runtime endpoint, automatic verification, repair, retry, rollback, or autonomy authority. |
 | S76 controlled run state skeleton | Experimental manual-only | Controlled run state records deterministic metadata-only phases, bounded counters, readiness correlation, stop reasons, and sanitized details for a future state machine. It does not start an agent, execute a loop, read files, apply edits, run verification, repair, retry, roll back, call providers/tools, add runtime/bridge authority, or provide real agent autonomy yet. |
+| S77 controlled edit executor contract | Experimental manual-only | Controlled edit executor records replacement-edit metadata only for existing workspace-relative files: expected hashes, bounded ranges, replacement byte counts, and sanitized summaries. It does not create/delete/rename files, expose raw replacement bodies/diffs/patches, add shell/git/provider/tool authority, add runtime/bridge endpoints, or claim broad write/apply/autonomy. |
 | Multi-step execution | Blocked/deferred | There is no implemented runner that executes a plan across multiple steps. S61 is only inert metadata. |
 | Controlled autonomy | Blocked/deferred | No autonomous loop is implemented. Any future controlled-autonomy work must pass the future eligibility gates below before design or implementation. |
 | Auto-repair / auto-retry / auto-rollback | Blocked/deferred | Failed verification can stop and may produce a draft-only prompt. The product must not claim automatic repair, retry, verification, or rollback. |
@@ -181,6 +182,14 @@ The exact S76 final audit gate is:
 ```sh
 npm run validate:contracts && cd apps/gui && npm test -- controlledAgentRunState ControlledAgentRunPanel controlledAgentFileRead controlledAgentCommandRunner App && npm run build && cd ../.. && npm run smoke:controlled-agent-run-state && npm run check && git diff --check && git status --short
 ```
+
+## Sprint 77 controlled edit executor contract boundary
+
+Sprint 77 adds the `controlled_agent_edit_executor` contract boundary as replacement-edit metadata only for future controlled local-agent work. It can describe existing workspace-relative files, expected pre-edit content hashes, bounded line ranges, replacement byte counts, sanitized summaries, trusted request correlation, explicit user confirmation, and bounded file/edit/byte limits.
+
+S77 does not implement an edit executor, write-capable runtime endpoint, bridge message, broad apply path, file browser, search/index feature, verifier, repair loop, rollback executor, provider/tool call, shell, git, package manager, network action, multi-step execution, production agent behavior, or controlled autonomy. It does not allow create, delete, rename, move, arbitrary write, raw replacement body, raw diff, raw patch, raw file body, raw prompt, raw command/log, private path, secret, command/cwd/env, shell/git/tool/provider, auto-apply, auto-run, auto-repair, auto-rollback, or assistant-minted authority claims.
+
+The S77 contract is a safety vocabulary for later review. A `planned` or `applied` metadata state is evidence that bounded replacement-edit metadata was described or recorded after explicit confirmation; it is not proof that a product runtime can apply edits autonomously and must not be presented as broad workspace mutation authority.
 
 ## Blocked and deferred capabilities
 
