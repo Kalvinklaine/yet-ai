@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yet-ai.local/schemas/engine/controlled-agent-repair-loop.schema.json",
+  "title": "Controlled Agent Repair Loop",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "schemaVersion",
+    "state",
+    "runId",
+    "attemptCount",
+    "maxAttempts",
+    "priorVerificationStatus",
+    "sanitizedReason",
+    "canAttemptRepair",
+    "mustStop"
+  ],
+  "properties": {
+    "type": {
+      "const": "controlled_agent_repair_loop"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "disabled",
+        "eligible",
+        "attempting",
+        "exhausted",
+        "blocked"
+      ]
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "attemptCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10
+    },
+    "maxAttempts": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10
+    },
+    "priorVerificationStatus": {
+      "type": "string",
+      "enum": [
+        "not_run",
+        "passed",
+        "failed",
+        "blocked"
+      ]
+    },
+    "sanitizedReason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "canAttemptRepair": {
+      "type": "boolean"
+    },
+    "mustStop": {
+      "type": "boolean"
+    }
+  }
+}
