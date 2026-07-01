@@ -1,4 +1,5 @@
 import { evaluateControlledAgentCommandRun } from "./controlledAgentCommandRunner";
+import { evaluateControlledAgentEditExecutor } from "./controlledAgentEditExecutor";
 import { evaluateControlledAgentFileRead } from "./controlledAgentFileRead";
 import { evaluateControlledAgentWorkspaceReadiness } from "./controlledAgentWorkspaceReadiness";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./redaction";
@@ -82,6 +83,7 @@ export type ControlledAgentRunEvent =
   | { type: "workspace_ready"; summary?: string }
   | { type: "read"; metadata: unknown }
   | { type: "command"; metadata: unknown }
+  | { type: "edit"; metadata: unknown }
   | { type: "wait"; summary?: string }
   | { type: "complete"; summary?: string }
   | { type: "blocked"; reason?: string; summary?: string }
@@ -179,6 +181,16 @@ export function reduceControlledAgentRunState(current: ControlledAgentRunState, 
     const next = { ...current, phase, counters, summary: command.summary, nextUserAction: phase === "failed" ? "review_failure" as const : "review_plan" as const, stopped: phase === "failed", stop: phase === "failed" ? stop("verification_failed", true, "Verification command failed.") : undefined };
     return enforceLimits(next, 1);
   }
+  if (typed.type === "edit") {
+    const edit = evaluateControlledAgentEditExecutor(typed.metadata);
+    if (edit.state === "blocked" || edit.state === "failed" || edit.diagnostics.length > 0) {
+      return stoppedState(edit.state === "failed" ? "failed" : "blocked", current.limits, current.counters, edit.state === "failed" ? "internal_error" : "policy_blocked", false, "Controlled edit metadata stopped the run before any apply bridge request.", current.diagnostics);
+    }
+    const counters = incrementCounters(current.counters, { filesTouched: edit.touchedFileLabels.length, patchBytesUsed: edit.replacementByteCount });
+    const phase: ControlledAgentRunPhase = edit.state === "applied" ? "completed" : "waiting_for_user";
+    const next = { ...current, phase, counters, summary: edit.summary, nextUserAction: phase === "completed" ? "review_completion" as const : "review_plan" as const, stopped: phase === "completed" };
+    return enforceLimits(next, 1);
+  }
   if (typed.type === "wait") {
     return advance(current, "waiting_for_user", typed.summary ?? "Controlled run is waiting for explicit user review.", "review_plan", 1);
   }
@@ -264,7 +276,7 @@ function validateEvent(event: unknown): ControlledAgentRunStopReason | undefined
   const eventShell = event.type === "read" || event.type === "command" ? { ...event, type: undefined, metadata: undefined } : { ...event, type: undefined };
   scanUnsafeMetadata(eventShell, diagnostics);
   if (diagnostics.length > 0) return "unsafe_metadata";
-  const allowed = new Set(["workspace_ready", "read", "command", "wait", "complete", "blocked", "failed", "stop", "kill", "tick", "touch", "repair"]);
+  const allowed = new Set(["workspace_ready", "read", "command", "edit", "wait", "complete", "blocked", "failed", "stop", "kill", "tick", "touch", "repair"]);
   if (!allowed.has(event.type)) return "internal_error";
   if (event.type === "tick" && !boundedNumber(event.runtimeSeconds, 0, 1800)) return "internal_error";
   if (event.type === "touch" && (event.filesTouched !== undefined && !boundedNumber(event.filesTouched, 0, 8) || event.patchBytes !== undefined && !boundedNumber(event.patchBytes, 0, 24000))) return "internal_error";

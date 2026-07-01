@@ -47,6 +47,7 @@ export type CapsResponse = {
   controlledAgentWorkspaceReadiness?: unknown;
   controlledAgentFileRead?: unknown;
   controlledAgentCommandRunner?: unknown;
+  controlledAgentEditExecutor?: unknown;
 };
 
 export type ModelCapabilities = {
