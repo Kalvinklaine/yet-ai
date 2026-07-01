@@ -43,6 +43,7 @@ import { createMemorySuggestionAttachTraceDetails, suggestTaskMemory, type TaskM
 import { evaluateHostCapabilityMetadata } from "./services/toolAuthorityPolicy";
 import { evaluateControlledAgentFileRead } from "./services/controlledAgentFileRead";
 import { evaluateControlledAgentCommandRun } from "./services/controlledAgentCommandRunner";
+import { buildControlledAgentProgressReport } from "./services/controlledAgentProgressReport";
 import { initializeControlledAgentRunState, reduceControlledAgentRunState, type ControlledAgentRunState } from "./services/controlledAgentRunState";
 import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPatchVerificationLoop";
 import type { AgentRunInput } from "./services/agentRunState";
@@ -682,7 +683,14 @@ export function App() {
   const controlledWorkspaceReadinessMetadata = activeCaps?.controlledAgentWorkspaceReadiness;
   const showWhatWillBeSentPanel = chatInput.trim().length > 0 || contextBudgetSummary.sources.some((source) => source.itemCount > 0 || source.charCount > 0) || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
   const [controlledAgentRunState, setControlledAgentRunState] = useState<ControlledAgentRunState>(() => initializeControlledAgentRunState(undefined));
-  const showControlledAgentRunPanel = controlledWorkspaceReadinessMetadata !== undefined || controlledAgentFileReadMetadata !== undefined || controlledAgentCommandRunnerMetadata !== undefined;
+  const controlledAgentEditExecutorMetadata = activeCaps?.controlledAgentEditExecutor;
+  const showControlledAgentRunPanel = controlledWorkspaceReadinessMetadata !== undefined || controlledAgentFileReadMetadata !== undefined || controlledAgentCommandRunnerMetadata !== undefined || controlledAgentEditExecutorMetadata !== undefined;
+  const controlledAgentProgressReport = useMemo(() => buildControlledAgentProgressReport({
+    runState: controlledAgentRunState,
+    controlledAgentFileRead: controlledAgentFileReadMetadata,
+    controlledAgentCommandRunner: controlledAgentCommandRunnerMetadata,
+    controlledAgentEditExecutor: controlledAgentEditExecutorMetadata,
+  }), [controlledAgentCommandRunnerMetadata, controlledAgentEditExecutorMetadata, controlledAgentFileReadMetadata, controlledAgentRunState]);
 
   useEffect(() => {
     setControlledAgentRunState(buildControlledAgentRunPreviewState(controlledWorkspaceReadinessMetadata, controlledAgentFileReadMetadata, controlledAgentCommandRunnerMetadata));
@@ -2744,7 +2752,7 @@ export function App() {
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
                 <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} />
-                {showControlledAgentRunPanel && <ControlledAgentRunPanel state={controlledAgentRunState} onStop={stopControlledAgentRun} />}
+                {showControlledAgentRunPanel && <ControlledAgentRunPanel state={controlledAgentRunState} progressReport={controlledAgentProgressReport} onStop={stopControlledAgentRun} />}
                 {controlledWorkspaceReadinessMetadata !== undefined && <ControlledAgentWorkspaceReadinessPanel metadata={controlledWorkspaceReadinessMetadata} />}
                 {controlledAgentFileReadMetadata !== undefined && <ControlledAgentFileReadPanel metadata={controlledAgentFileReadMetadata} />}
                 {controlledAgentCommandRunnerMetadata !== undefined && <ControlledAgentCommandRunnerPanel metadata={controlledAgentCommandRunnerMetadata} />}

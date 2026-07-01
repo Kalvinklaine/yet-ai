@@ -1,19 +1,25 @@
 import { useMemo } from "react";
+import type { ControlledAgentProgressReport } from "../services/controlledAgentProgressReport";
 import type { ControlledAgentRunState } from "../services/controlledAgentRunState";
 import { sanitizeDisplayText } from "../services/redaction";
 
 export type ControlledAgentRunPanelProps = {
   state: ControlledAgentRunState;
+  progressReport?: ControlledAgentProgressReport;
   onStop: () => void;
 };
 
-export function ControlledAgentRunPanel({ state, onStop }: ControlledAgentRunPanelProps) {
+export function ControlledAgentRunPanel({ state, progressReport, onStop }: ControlledAgentRunPanelProps) {
   const phaseLabel = sanitizeDisplayText(state.phase.replace(/_/g, " "));
   const stopReason = state.stop?.reason ? sanitizeDisplayText(state.stop.reason.replace(/_/g, " ")) : "none";
   const currentStep = currentStepLabel(state);
   const limits = useMemo(() => Object.entries(state.limits), [state.limits]);
   const counters = useMemo(() => Object.entries(state.counters), [state.counters]);
+  const progressCounters = useMemo(() => Object.entries(progressReport?.counters ?? {}), [progressReport?.counters]);
+  const progressLimits = useMemo(() => Object.entries(progressReport?.limits ?? {}), [progressReport?.limits]);
+  const progressSafetyFlags = useMemo(() => Object.entries(progressReport?.safetyFlags ?? {}), [progressReport?.safetyFlags]);
   const diagnostics = state.diagnostics.slice(0, 6);
+  const progressDiagnostics = progressReport?.diagnostics.slice(0, 6) ?? [];
   const stopDisabled = state.stopped || state.phase === "idle" || state.phase === "opt_in_required" || state.phase === "blocked" || state.phase === "failed" || state.phase === "completed";
 
   return (
@@ -27,6 +33,30 @@ export function ControlledAgentRunPanel({ state, onStop }: ControlledAgentRunPan
       </div>
       <span>{sanitizeDisplayText(state.summary)}</span>
       <span className="subtle">Preview-only skeleton: this panel cannot start agents, read files, write files, run commands, call providers, apply edits, use git, post bridge messages, or write browser storage.</span>
+      {progressReport && <section className={`readiness-card ${progressReport.status === "blocked" || progressReport.status === "failed" || progressReport.status === "stopped" ? "warn" : "ready"} stack`} aria-label="Controlled progress report metadata">
+        <div className="row">
+          <strong>Progress report</strong>
+          <span className="badge">S79 metadata</span>
+          <span className="badge">sanitized labels only</span>
+          <span className={progressReport.status === "blocked" || progressReport.status === "failed" ? "badge warn" : "badge ok"}>{sanitizeDisplayText(progressReport.status)}</span>
+        </div>
+        <div className="agent-progress-grid" aria-label="Controlled progress report status">
+          <span>Report phase: {sanitizeDisplayText(progressReport.phaseLabel)}</span>
+          <span>Report step: {sanitizeDisplayText(progressReport.currentStepLabel)}</span>
+          <span>Final report: {progressReport.finalReport ? sanitizeDisplayText(progressReport.finalReport.title) : "none"}</span>
+          {progressReport.finalReport && <span>Final summary: {sanitizeDisplayText(progressReport.finalReport.summary)}</span>}
+        </div>
+        <div className="agent-progress-grid" aria-label="Controlled progress report counters">
+          {progressCounters.map(([key, value]) => <span key={key}>Report counter {sanitizeDisplayText(key)}: {value}</span>)}
+        </div>
+        <div className="agent-progress-grid" aria-label="Controlled progress report limits">
+          {progressLimits.map(([key, value]) => <span key={key}>Report limit {sanitizeDisplayText(key)}: {value}</span>)}
+        </div>
+        <div className="agent-progress-grid" aria-label="Controlled progress report authority flags">
+          {progressSafetyFlags.map(([key, value]) => <span key={key}>Report flag {sanitizeDisplayText(key)}: {typeof value === "string" ? sanitizeDisplayText(value) : String(value)}</span>)}
+        </div>
+        {progressDiagnostics.length > 0 && <div className="readiness-card warn" role="status" aria-label="Controlled progress report diagnostics"><strong>Progress diagnostics</strong>{progressDiagnostics.map((diagnostic, index) => <span key={`${index}:${diagnostic}`}>{sanitizeDisplayText(diagnostic)}</span>)}</div>}
+      </section>}
       <div className="agent-progress-grid" aria-label="Controlled run status">
         <span>Phase: {phaseLabel}</span>
         <span>Current step: {currentStep}</span>
