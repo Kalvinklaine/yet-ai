@@ -42,6 +42,7 @@ Avoid softer wording that implies implementation, autonomy, production publicati
 | S75 allowlisted command-runner evidence | Experimental manual-only | Controlled command evidence renders only sanitized allowlisted command-id metadata from `/v1/caps.controlledAgentCommandRunner` for trusted user/host-confirmed requests. It is not free-form shell or arbitrary command execution and adds no raw command/args/cwd/env, git/network/package/provider/tool, bridge run button, runtime endpoint, automatic verification, repair, retry, rollback, or autonomy authority. |
 | S76 controlled run state skeleton | Experimental manual-only | Controlled run state records deterministic metadata-only phases, bounded counters, readiness correlation, stop reasons, and sanitized details for a future state machine. It does not start an agent, execute a loop, read files, apply edits, run verification, repair, retry, roll back, call providers/tools, add runtime/bridge authority, or provide real agent autonomy yet. |
 | S77 controlled edit executor contract | Experimental manual-only | Controlled edit executor records replacement-edit metadata only for existing workspace-relative files: expected hashes, bounded ranges, replacement byte counts, and sanitized summaries. It does not create/delete/rename files, expose raw replacement bodies/diffs/patches, add shell/git/provider/tool authority, add runtime/bridge endpoints, or claim broad write/apply/autonomy. |
+| S79 controlled progress/final report | Experimental manual-only | Controlled progress/final report evidence renders sanitized metadata only from existing GUI controlled-run state, edit metadata, command metadata, and repair metadata. It records phase labels, counters, limits, diagnostics, terminal final-report summaries, and all-false authority flags; it does not start an agent, execute a loop, persist raw prompts/files/diffs/commands, add bridge/runtime authority, or claim autonomy. |
 | Multi-step execution | Blocked/deferred | There is no implemented runner that executes a plan across multiple steps. S61 is only inert metadata. |
 | Controlled autonomy | Blocked/deferred | No autonomous loop is implemented. Any future controlled-autonomy work must pass the future eligibility gates below before design or implementation. |
 | Auto-repair / auto-retry / auto-rollback | Blocked/deferred | Failed verification can stop and may produce a draft-only prompt. The product must not claim automatic repair, retry, verification, or rollback. |
@@ -190,6 +191,20 @@ Sprint 77 adds the `controlled_agent_edit_executor` contract boundary as replace
 S77 does not implement an edit executor, write-capable runtime endpoint, bridge message, broad apply path, file browser, search/index feature, verifier, repair loop, rollback executor, provider/tool call, shell, git, package manager, network action, multi-step execution, production agent behavior, or controlled autonomy. It does not allow create, delete, rename, move, arbitrary write, raw replacement body, raw diff, raw patch, raw file body, raw prompt, raw command/log, private path, secret, command/cwd/env, shell/git/tool/provider, auto-apply, auto-run, auto-repair, auto-rollback, or assistant-minted authority claims.
 
 The S77 contract is a safety vocabulary for later review. A `planned` or `applied` metadata state is evidence that bounded replacement-edit metadata was described or recorded after explicit confirmation; it is not proof that a product runtime can apply edits autonomously and must not be presented as broad workspace mutation authority.
+
+## Sprint 79 controlled progress/final report boundary
+
+Sprint 79 adds controlled progress/final report metadata for the future controlled local-agent path. The GUI service and panel consume already-known controlled-run state plus bounded edit, command, and repair metadata, then render only sanitized phase labels, current-step labels, counters, limits, diagnostics, terminal final-report summaries, and all-false authority flags.
+
+S79 does not implement real autonomous execution, a provider loop, an agent starter, a runtime endpoint, a bridge message, browser-storage persistence, raw report persistence, file read/write authority, apply authority, verification execution, repair/retry behavior, rollback behavior, shell/git/tool/provider authority, task-board mutation, production agent behavior, or controlled autonomy. Raw prompts, file bodies, diffs, replacement bodies, command strings, cwd/env, raw output/logs, provider/tool payloads, private paths, and secrets must stay out of progress and final report metadata.
+
+The exact S79 final audit gate is:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm run typecheck && npm run build && cd ../.. && npm run smoke:controlled-agent-progress-report && npm run check && git diff --check && git status --short
+```
+
+This gate is deterministic local/mock evidence only. The focused smoke transpiles the pure GUI service and verifies disabled, running, stopped, failed, repair-exhausted blocked, completed, unsafe-redacted, terminal final-report, sanitized diagnostic, bounded counter/limit, and fail-closed authority-flag behavior. It is not real-provider CI, production readiness, marketplace readiness, multi-step execution, or autonomy approval.
 
 ## Blocked and deferred capabilities
 

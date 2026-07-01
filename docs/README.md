@@ -189,6 +189,20 @@ The full S76 final audit gate is:
 npm run validate:contracts && cd apps/gui && npm test -- controlledAgentRunState ControlledAgentRunPanel controlledAgentFileRead controlledAgentCommandRunner App && npm run build && cd ../.. && npm run smoke:controlled-agent-run-state && npm run check && git diff --check && git status --short
 ```
 
+For the S79 controlled progress/final report boundary, run:
+
+```sh
+npm run smoke:controlled-agent-progress-report
+```
+
+The smoke transpiles the pure GUI progress-report service locally and asserts deterministic disabled, running, stopped, failed, repair-exhausted blocked, completed, and unsafe-redacted reports. It verifies progress and terminal final reports contain sanitized phase/current-step labels, counters, limits, diagnostics, and fail-closed all-false authority flags only. S79 is sanitized metadata UI only: it does not start a controlled agent, execute a loop, read/search/write files, apply edits, run verification, repair, retry, roll back, call providers/tools, add runtime/bridge authority, persist raw browser data, or claim autonomy.
+
+The full S79 final audit gate is:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm run typecheck && npm run build && cd ../.. && npm run smoke:controlled-agent-progress-report && npm run check && git diff --check && git status --short
+```
+
 The full S75 final gate is:
 
 ```sh
