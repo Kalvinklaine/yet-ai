@@ -1,0 +1,68 @@
+{
+  "version": "2026-05-15",
+  "type": "host.controlledAgentEditResult",
+  "requestId": "edit-s84-c1-applied",
+  "payload": {
+    "type": "controlled_agent_edit_executor",
+    "schemaVersion": "2026-07-02",
+    "state": "applied",
+    "authority": "bounded_replacement_edit",
+    "cloudRequired": false,
+    "controlledWorkspaceId": "workspace-s84-c1",
+    "runId": "run-s84-c1",
+    "runtimeSessionId": "runtime-s84-c1",
+    "workspaceReadinessId": "ready-s84-c1",
+    "requestId": "edit-s84-c1-applied",
+    "requestIdMintedBy": "gui",
+    "userConfirmed": true,
+    "limits": {
+      "maxFiles": 1,
+      "maxEdits": 1,
+      "maxPatchBytes": 4096
+    },
+    "edits": [
+      {
+        "operation": "replace",
+        "workspaceRelativePath": "apps/gui/src/App.tsx",
+        "fileLabel": "apps/gui/src/App.tsx",
+        "expectedContentHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "actualContentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "startLine": 12,
+        "endLine": 14,
+        "replacementByteCount": 43,
+        "sanitizedSummary": "Update selected UI metadata lines."
+      }
+    ],
+    "policyFlags": {
+      "boundedReplacementEditAllowed": true,
+      "fileCreateAllowed": false,
+      "fileDeleteAllowed": false,
+      "fileRenameAllowed": false,
+      "fileMoveAllowed": false,
+      "chmodAllowed": false,
+      "symlinkAllowed": false,
+      "binaryEditAllowed": false,
+      "directoryEditAllowed": false,
+      "shellAllowed": false,
+      "gitAllowed": false,
+      "providerAllowed": false,
+      "toolAllowed": false,
+      "networkAllowed": false,
+      "autoApplyAllowed": false,
+      "autoRunAllowed": false
+    },
+    "result": {
+      "status": "applied",
+      "cloudRequired": false,
+      "privatePathExposed": false,
+      "rawBodyIncluded": false,
+      "rawDiffIncluded": false,
+      "authority": "bounded_replacement_edit",
+      "message": "Bounded replacement edit applied.",
+      "appliedEditCount": 1,
+      "affectedFiles": [
+        "apps/gui/src/App.tsx"
+      ]
+    }
+  }
+}

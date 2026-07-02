@@ -1,0 +1,35 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.controlledAgentEditRequest",
+  "requestId": "edit-s84-c1",
+  "payload": {
+    "requestId": "edit-s84-c1",
+    "requestIdMintedBy": "gui",
+    "source": "gui",
+    "assistantMinted": false,
+    "controlledWorkspaceId": "workspace-s84-c1",
+    "runId": "run-s84-c1",
+    "runtimeSessionId": "runtime-s84-c1",
+    "workspaceReadinessId": "ready-s84-c1",
+    "userConfirmed": true,
+    "limits": {
+      "maxFiles": 1,
+      "maxEdits": 1,
+      "maxPatchBytes": 4096
+    },
+    "edits": [
+      {
+        "operation": "replace",
+        "workspaceRelativePath": "apps/gui/src/App.tsx",
+        "fileLabel": "apps/gui/src/App.tsx",
+        "expectedContentHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "startLine": 12,
+        "endLine": 14,
+        "replacementText": "const title = \"Yet AI\";\nconst mode = \"local\";\n",
+        "replacementByteCount": 43,
+        "sanitizedSummary": "Update selected UI metadata lines.",
+        "rawDiff": "@@ -1 +1"
+      }
+    ]
+  }
+}

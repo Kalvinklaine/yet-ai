@@ -254,11 +254,20 @@ const mappings = [
   ["packages/contracts/examples/bridge/gui-ide-action-request-run-verification-command.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-ide-action-request-search-workspace-snippets.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-controlled-agent-file-read-request.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
+  ["packages/contracts/examples/bridge/gui-controlled-agent-edit-request.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/host-ide-action-progress-search-workspace-snippets.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-ide-action-result-search-workspace-snippets.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-ide-action-result-search-workspace-snippets-rejected.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-controlled-agent-file-read-result-success.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
-  ["packages/contracts/examples/bridge/host-controlled-agent-file-read-result-blocked.json", "packages/contracts/schemas/bridge/host-message.schema.json"]
+  ["packages/contracts/examples/bridge/host-controlled-agent-file-read-result-blocked.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
+  ...[
+    "host-controlled-agent-edit-result-applied.json",
+    "host-controlled-agent-edit-result-blocked.json",
+    "host-controlled-agent-edit-result-failed.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/bridge/${fileName}`,
+    "packages/contracts/schemas/bridge/host-message.schema.json"
+  ])
 ].map(([examplePath, schemaPath]) => [normalizeContractPath(examplePath), normalizeContractPath(schemaPath)]);
 
 const invalidMappings = [
@@ -612,7 +621,15 @@ const invalidMappings = [
     "gui-controlled-agent-file-read-request-assistant-minted.json",
     "gui-controlled-agent-file-read-request-command-fields.json",
     "gui-controlled-agent-file-read-request-unbounded-bytes.json",
-    "gui-controlled-agent-file-read-request-unbounded-lines.json"
+    "gui-controlled-agent-file-read-request-unbounded-lines.json",
+    "gui-controlled-agent-edit-request-absolute-path.json",
+    "gui-controlled-agent-edit-request-dependency-path.json",
+    "gui-controlled-agent-edit-request-assistant-minted.json",
+    "gui-controlled-agent-edit-request-unconfirmed.json",
+    "gui-controlled-agent-edit-request-unbounded-files.json",
+    "gui-controlled-agent-edit-request-create-operation.json",
+    "gui-controlled-agent-edit-request-raw-diff-field.json",
+    "gui-controlled-agent-edit-request-command-fields.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/gui-message.schema.json"
@@ -723,7 +740,11 @@ const invalidMappings = [
     "host-controlled-agent-file-read-result-private-path.json",
     "host-controlled-agent-file-read-result-blocked-body.json",
     "host-controlled-agent-file-read-result-unsafe-body.json",
-    "host-controlled-agent-file-read-result-command-field.json"
+    "host-controlled-agent-file-read-result-command-field.json",
+    "host-controlled-agent-edit-result-private-path.json",
+    "host-controlled-agent-edit-result-raw-diff-field.json",
+    "host-controlled-agent-edit-result-widened-authority.json",
+    "host-controlled-agent-edit-result-raw-body-included.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/host-message.schema.json"

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.yet-ai.example/contracts/bridge/host-message.schema.json",
   "title": "IDE Host to GUI Message",
-  "description": "Strict host bootstrap, active editor context, current sanitized controlled IDE action progress/results, and confirmed edit proposal results only. Controlled IDE action messages are local-only read/context/navigation status messages and must not expose secrets, private absolute paths, raw contents, shell output, git output, task output, provider responses, or arbitrary payloads.",
+  "description": "Strict host bootstrap, active editor context, current sanitized controlled IDE action progress/results, bounded controlled replacement edit results, and confirmed edit proposal results only. Controlled IDE action messages are local-only read/context/navigation status messages and must not expose secrets, private absolute paths, raw contents, shell output, git output, task output, provider responses, arbitrary payloads, raw diffs, or raw replacement bodies.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -24,7 +24,8 @@
         "host.ideActionResult",
         "host.applyWorkspaceEditResult",
         "host.runtimeStatus",
-        "host.controlledAgentFileReadResult"
+        "host.controlledAgentFileReadResult",
+        "host.controlledAgentEditResult"
       ]
     },
     "requestId": {
@@ -2168,6 +2169,479 @@
           "$ref": "#/$defs/safeSummary"
         }
       }
+    },
+    "controlledAgentEditSafeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Rr][Aa][Ww][-_ ]?(?:[Ff][Ii][Ll][Ee]|[Bb][Oo][Dd][Yy]|[Pp][Aa][Tt][Cc][Hh]|[Dd][Ii][Ff][Ff]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Oo][Uu][Tt][Pp][Uu][Tt]|[Ll][Oo][Gg])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]|[Ss][Hh][Ee][Ll][Ll]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Gg][Ii][Tt]|[Tt][Oo][Oo][Ll]|[Nn][Ee][Tt][Ww][Oo][Rr][Kk]|[Cc][Hh][Mm][Oo][Dd]|[Ss][Yy][Mm][Ll][Ii][Nn][Kk]|[Bb][Ii][Nn][Aa][Rr][Yy]|[Cc][Rr][Ee][Aa][Tt][Ee]|[Dd][Ee][Ll][Ee][Tt][Ee]|[Rr][Ee][Nn][Aa][Mm][Ee]|[Mm][Oo][Vv][Ee]|[Aa][Uu][Tt][Oo][-_ ]?(?:[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Rr][Ee][Pp][Aa][Ii][Rr])|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "controlledAgentEditSafeLabel": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/controlledAgentEditSafeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      ]
+    },
+    "controlledAgentEditSafeSummary": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/controlledAgentEditSafeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        }
+      ]
+    },
+    "controlledAgentEditPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 180,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!~)(?!.*(?:^|/)\\.)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*[\\\\:*?\"<>|{}\\[\\]$^+])(?!(?:^|.*/)(?:node_modules|vendor|dist|build|out|target|coverage|__pycache__|generated|tmp|temp|secrets?|credentials?|private)(?:/|$))[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$"
+    },
+    "controlledAgentEditLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxFiles",
+        "maxEdits",
+        "maxPatchBytes"
+      ],
+      "properties": {
+        "maxFiles": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "maxEdits": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "maxPatchBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12000
+        }
+      }
+    },
+    "controlledAgentResultEdit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "workspaceRelativePath",
+        "fileLabel",
+        "expectedContentHash",
+        "startLine",
+        "endLine",
+        "replacementByteCount",
+        "sanitizedSummary"
+      ],
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "replace"
+        },
+        "workspaceRelativePath": {
+          "$ref": "#/$defs/controlledAgentEditPath"
+        },
+        "fileLabel": {
+          "$ref": "#/$defs/controlledAgentEditSafeLabel"
+        },
+        "expectedContentHash": {
+          "$ref": "#/$defs/safeHash"
+        },
+        "actualContentHash": {
+          "$ref": "#/$defs/safeHash"
+        },
+        "startLine": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "endLine": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "replacementByteCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 12000
+        },
+        "sanitizedSummary": {
+          "$ref": "#/$defs/controlledAgentEditSafeSummary"
+        }
+      },
+      "allOf": [
+        {
+          "properties": {
+            "endLine": {
+              "type": "integer",
+              "minimum": {
+                "$data": "1/startLine"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "controlledAgentEditPolicyFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "boundedReplacementEditAllowed",
+        "fileCreateAllowed",
+        "fileDeleteAllowed",
+        "fileRenameAllowed",
+        "fileMoveAllowed",
+        "chmodAllowed",
+        "symlinkAllowed",
+        "binaryEditAllowed",
+        "directoryEditAllowed",
+        "shellAllowed",
+        "gitAllowed",
+        "providerAllowed",
+        "toolAllowed",
+        "networkAllowed",
+        "autoApplyAllowed",
+        "autoRunAllowed"
+      ],
+      "properties": {
+        "boundedReplacementEditAllowed": {
+          "type": "boolean"
+        },
+        "fileCreateAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "fileDeleteAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "fileRenameAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "fileMoveAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "chmodAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "symlinkAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "binaryEditAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "directoryEditAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "shellAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "gitAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "providerAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "toolAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "networkAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoApplyAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoRunAllowed": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "controlledAgentEditResultDetails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "cloudRequired",
+        "privatePathExposed",
+        "rawBodyIncluded",
+        "rawDiffIncluded",
+        "authority",
+        "message"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "applied",
+            "blocked",
+            "failed"
+          ]
+        },
+        "cloudRequired": {
+          "type": "boolean",
+          "const": false
+        },
+        "privatePathExposed": {
+          "type": "boolean",
+          "const": false
+        },
+        "rawBodyIncluded": {
+          "type": "boolean",
+          "const": false
+        },
+        "rawDiffIncluded": {
+          "type": "boolean",
+          "const": false
+        },
+        "authority": {
+          "type": "string",
+          "const": "bounded_replacement_edit"
+        },
+        "message": {
+          "$ref": "#/$defs/controlledAgentEditSafeSummary"
+        },
+        "appliedEditCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "affectedFiles": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/controlledAgentEditPath"
+          }
+        },
+        "blockedReason": {
+          "type": "string",
+          "enum": [
+            "edit_disabled",
+            "policy_denied",
+            "unsafe_path",
+            "outside_workspace",
+            "hidden_path",
+            "dependency_path",
+            "generated_path",
+            "unsupported_operation",
+            "missing_expected_hash",
+            "hash_mismatch",
+            "unconfirmed_request",
+            "assistant_minted",
+            "budget_exceeded",
+            "line_range_invalid"
+          ]
+        }
+      }
+    },
+    "controlledAgentEditResultPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "schemaVersion",
+        "state",
+        "authority",
+        "cloudRequired",
+        "controlledWorkspaceId",
+        "runId",
+        "workspaceReadinessId",
+        "requestId",
+        "requestIdMintedBy",
+        "userConfirmed",
+        "limits",
+        "edits",
+        "policyFlags",
+        "result"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "controlled_agent_edit_executor"
+        },
+        "schemaVersion": {
+          "type": "string",
+          "const": "2026-07-02"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "applied",
+            "blocked",
+            "failed"
+          ]
+        },
+        "authority": {
+          "type": "string",
+          "const": "bounded_replacement_edit"
+        },
+        "cloudRequired": {
+          "type": "boolean",
+          "const": false
+        },
+        "controlledWorkspaceId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "runId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "runtimeSessionId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "workspaceReadinessId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "requestId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "requestIdMintedBy": {
+          "type": "string",
+          "enum": [
+            "gui",
+            "host"
+          ]
+        },
+        "userConfirmed": {
+          "type": "boolean",
+          "const": true
+        },
+        "limits": {
+          "$ref": "#/$defs/controlledAgentEditLimits"
+        },
+        "edits": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/controlledAgentResultEdit"
+          }
+        },
+        "policyFlags": {
+          "$ref": "#/$defs/controlledAgentEditPolicyFlags"
+        },
+        "result": {
+          "$ref": "#/$defs/controlledAgentEditResultDetails"
+        }
+      },
+      "allOf": [
+        {
+          "properties": {
+            "result": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "const": {
+                    "$data": "2/state"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "applied"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "type": "object",
+                "properties": {
+                  "appliedEditCount": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "affectedFiles": {}
+                },
+                "required": [
+                  "appliedEditCount",
+                  "affectedFiles"
+                ]
+              },
+              "policyFlags": {
+                "type": "object",
+                "properties": {
+                  "boundedReplacementEditAllowed": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "blocked",
+                  "failed"
+                ]
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "type": "object",
+                "properties": {
+                  "appliedEditCount": {
+                    "type": "integer",
+                    "const": 0
+                  },
+                  "blockedReason": {}
+                },
+                "required": [
+                  "blockedReason"
+                ]
+              },
+              "policyFlags": {
+                "type": "object",
+                "properties": {
+                  "boundedReplacementEditAllowed": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   },
   "allOf": [
@@ -2407,6 +2881,48 @@
             "$ref": "#/$defs/controlledAgentFileReadMetadata"
           }
         }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "host.controlledAgentEditResult"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "requestId",
+          "payload"
+        ],
+        "properties": {
+          "requestId": {
+            "$ref": "#/$defs/requestId"
+          },
+          "payload": {
+            "$ref": "#/$defs/controlledAgentEditResultPayload"
+          }
+        },
+        "allOf": [
+          {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "requestId": {
+                    "const": {
+                      "$data": "2/requestId"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
       }
     }
   ]
