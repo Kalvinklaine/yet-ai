@@ -45,6 +45,7 @@ Avoid softer wording that implies implementation, autonomy, production publicati
 | S79 controlled progress/final report | Experimental manual-only | Controlled progress/final report evidence renders sanitized metadata only from existing GUI controlled-run state, edit metadata, command metadata, and repair metadata. It records phase labels, counters, limits, diagnostics, terminal final-report summaries, and all-false authority flags; it does not start an agent, execute a loop, persist raw prompts/files/diffs/commands, add bridge/runtime authority, or claim autonomy. |
 | S80 controlled local agent MVP dev-preview evidence | Experimental manual-only | Controlled local agent MVP evidence composes explicit user opt-in, controlled workspace readiness, bounded read metadata, edit metadata, allowlisted verification metadata, repair metadata, and progress/final-report metadata into sanitized checklist/status labels. It is local/mock dogfood evidence only and does not start an agent, call providers/tools, read/search/index hidden workspace data, mutate workspaces, run shell/free-form commands, persist raw prompts/files/diffs/commands, add runtime/bridge authority, prove real-provider CI, or claim production autonomy. |
 | S82 controlled runtime session metadata | Experimental manual-only | Controlled runtime session evidence adds a sanitized metadata envelope for future lifecycle/precondition status only. Browser remains unsupported; VS Code and JetBrains are future-capable only when metadata preconditions are present. It does not start an agent, implement a real one-step model loop, execute reads/edits/verification/provider calls, or replace the S83 requirement for real bounded read execution. |
+| S83 real bounded controlled file-read execution | Experimental manual-only | S83 adds one explicit user-clicked and correlated controlled workspace text-read request path, with real execution in the VS Code host only. Browser remains unsupported and JetBrains fails closed/unsupported. It adds no hidden/background reads, search, indexing, provider/model call, edit/write/apply, verification execution, shell/git/package/network/tool authority, raw-body persistence, or autonomy. S84 remains required for real bounded edit execution; S86 remains the earliest honest one-step controlled-autonomy milestone. |
 | Multi-step execution | Blocked/deferred | There is no implemented runner that executes a plan across multiple steps. S61 is only inert metadata. |
 | Controlled autonomy | Blocked/deferred | No autonomous loop is implemented. Any future controlled-autonomy work must pass the future eligibility gates below before design or implementation. |
 | Auto-repair / auto-retry / auto-rollback | Blocked/deferred | Failed verification can stop and may produce a draft-only prompt. The product must not claim automatic repair, retry, verification, or rollback. |
@@ -284,7 +285,27 @@ The exact S82 final audit gate is:
 npm run validate:contracts && cd apps/gui && npm test -- controlledAgentRuntimeSession controlledAgentRunState controlledAgentProgressReport && npm run typecheck && npm run build && cd ../.. && npm run smoke:controlled-agent-runtime-session && npm run smoke:controlled-local-agent-mvp && npm run smoke:controlled-agent-failure-modes && npm run smoke:controlled-agent-edit-executor && npm run check && git diff --check && git status --short
 ```
 
-S82 is still local-first and requires no hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, cloud workspace, production login, marketplace publication, signing, notarization, real-provider CI, or production autonomy. S83 is still required before any real bounded read execution can be designed, implemented, dogfooded, or claimed.
+S82 is still local-first and requires no hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, cloud workspace, production login, marketplace publication, signing, notarization, real-provider CI, or production autonomy. S83 is the later bounded-read execution slice described below.
+
+## Sprint 83 real bounded controlled file-read execution status
+
+Sprint 83 adds real bounded controlled workspace text read execution, but only as a narrow explicit user-controlled path. The GUI may build one `gui.controlledAgentFileReadRequest` after controlled runtime/workspace metadata is ready; it posts that request only after an explicit user click; host results are accepted only when request id, run id, runtime session id, and controlled workspace id correlation match. The VS Code host executes the bounded read against one safe workspace-relative text file using the compiled controlled file-read executor. Browser remains unsupported because it has no trusted workspace host, and JetBrains intentionally fails closed with sanitized unsupported metadata instead of reading files.
+
+S83 is not a hidden context-gathering feature. It adds no background reads, recursive search, glob or regex search, broad file browsing, workspace indexing, provider/model call, provider tool call, edit/write/apply authority, verification execution, shell, git, package-manager, network, local-tool authority, rollback execution, task-board mutation, automatic repair, automatic retry, automatic verification, production autonomy, marketplace readiness, release readiness, or real-provider CI. Raw file bodies may exist only in the transient correlated host result for the explicit read request; they must not be persisted in browser storage, trace, progress metadata, final reports, docs, dogfood reports, or smoke output.
+
+The exact S83 focused real-read smoke is:
+
+```sh
+npm run smoke:controlled-agent-real-file-read
+```
+
+The exact S83 final audit gate is:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm test -- controlledAgentFileRead controlledAgentFileReadRequest controlledAgentRunState controlledAgentProgressReport App && npm run typecheck && npm run build && cd ../.. && cd apps/plugins/vscode && npm run compile && cd ../../.. && npm run smoke:controlled-agent-real-file-read && npm run smoke:controlled-agent-file-read && npm run smoke:controlled-agent-runtime-session && npm run smoke:controlled-local-agent-mvp && npm run check && git diff --check && git status --short
+```
+
+S83 remains local-first and requires no hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, cloud workspace, production login, marketplace publication, signing, notarization, real-provider CI, or production autonomy. S84 is still required before any real bounded edit execution can be claimed. S86 remains the earliest honest one-step controlled-autonomy milestone, and only after separate bounded read, edit, verification, loop, reporting, and safety gates are implemented and verified.
 
 ## Blocked and deferred capabilities
 

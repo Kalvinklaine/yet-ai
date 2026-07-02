@@ -232,12 +232,28 @@ For the S82 controlled runtime session metadata boundary, run:
 npm run smoke:controlled-agent-runtime-session
 ```
 
-S82 adds a controlled runtime session envelope as metadata only. The contract, fixtures, pure GUI evaluator, UI/trace/report integration, and smoke evidence describe disabled, unsupported-host, precondition-blocked, ready, start-requested, open, stop-requested, and stopped lifecycle metadata with sanitized labels and all authority flags false. S82 does not start a real agent, does not implement a real one-step model loop, and does not execute reads, edits, verification commands, provider calls, tools, shell, git, network, rollback, or workspace mutation. Browser remains unsupported for controlled runtime session and must fail visibly as metadata-only. VS Code and JetBrains are future-capable only when explicit opt-in, controlled workspace readiness, checkpoint, rollback, correlation, bounded limits, and host-owned metadata preconditions are present; even then the status is review/evidence only, not execution authority. S83 is still required before any real bounded read execution can be designed or claimed.
+S82 adds a controlled runtime session envelope as metadata only. The contract, fixtures, pure GUI evaluator, UI/trace/report integration, and smoke evidence describe disabled, unsupported-host, precondition-blocked, ready, start-requested, open, stop-requested, and stopped lifecycle metadata with sanitized labels and all authority flags false. S82 does not start a real agent, does not implement a real one-step model loop, and does not execute reads, edits, verification commands, provider calls, tools, shell, git, network, rollback, or workspace mutation. Browser remains unsupported for controlled runtime session and must fail visibly as metadata-only. VS Code and JetBrains are future-capable only when explicit opt-in, controlled workspace readiness, checkpoint, rollback, correlation, bounded limits, and host-owned metadata preconditions are present; even then the status is review/evidence only, not execution authority. S83 is the later bounded-read execution slice described below.
 
 The full S82 final audit gate is:
 
 ```sh
 npm run validate:contracts && cd apps/gui && npm test -- controlledAgentRuntimeSession controlledAgentRunState controlledAgentProgressReport && npm run typecheck && npm run build && cd ../.. && npm run smoke:controlled-agent-runtime-session && npm run smoke:controlled-local-agent-mvp && npm run smoke:controlled-agent-failure-modes && npm run smoke:controlled-agent-edit-executor && npm run check && git diff --check && git status --short
+```
+
+For the S83 real bounded controlled workspace text-read execution boundary, run:
+
+```sh
+npm run smoke:controlled-agent-real-file-read
+```
+
+S83 adds the first real bounded controlled workspace text read execution path. The only active execution path is an explicit GUI `gui.controlledAgentFileReadRequest`, posted after a user click, correlated by request/run/workspace metadata, and handled by the VS Code host executor against one safe workspace-relative text file with byte and line budgets. JetBrains remains fail-closed/unsupported for actual reads in S83, and browser remains unsupported for controlled workspace reads because it has no trusted workspace host.
+
+S83 does not add hidden or background reads, recursive search, glob or regex search, workspace indexing, provider/model calls, edit/write/apply authority, verification execution, shell/git/package/network/tool authority, rollback, task-board mutation, or controlled autonomy. Raw file bodies may be returned only inside the correlated host result needed for the explicit request; they must not be persisted in browser storage, trace, progress, final reports, docs, or smoke reports. S84 is still required for real bounded edit execution, and S86 remains the earliest honest point to claim any one-step controlled autonomy after separate bounded read, edit, verification, and loop gates land.
+
+The full S83 final audit gate is:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm test -- controlledAgentFileRead controlledAgentFileReadRequest controlledAgentRunState controlledAgentProgressReport App && npm run typecheck && npm run build && cd ../.. && cd apps/plugins/vscode && npm run compile && cd ../../.. && npm run smoke:controlled-agent-real-file-read && npm run smoke:controlled-agent-file-read && npm run smoke:controlled-agent-runtime-session && npm run smoke:controlled-local-agent-mvp && npm run check && git diff --check && git status --short
 ```
 
 For S80 documentation-only updates, use:
