@@ -1,0 +1,97 @@
+{
+  "kind": "controlled_agent_runtime_session",
+  "version": "2026-07-02",
+  "authority": "runtime_session_metadata_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "agentStartAllowed": false,
+  "autoStartAllowed": false,
+  "host": {
+    "kind": "browser",
+    "supported": false,
+    "surface": "browser_preview",
+    "label": "Browser preview"
+  },
+  "workspace": {
+    "workspaceMode": "none",
+    "workspaceReady": false,
+    "privatePathExposed": false,
+    "hostOwned": false,
+    "label": "No controlled workspace selected"
+  },
+  "preconditions": {
+    "optIn": {
+      "status": "not_required",
+      "origin": "none",
+      "confirmedBy": "none",
+      "requestIdMintedBy": "none",
+      "assistantMinted": false,
+      "grantsStartAuthority": false,
+      "label": "No opt in recorded"
+    },
+    "workspaceReadiness": {
+      "status": "not_applicable",
+      "readinessId": "readiness-s82-demo",
+      "metadataOnly": true,
+      "label": "Readiness metadata only"
+    },
+    "checkpoint": {
+      "status": "not_applicable",
+      "verified": false,
+      "metadataOnly": true,
+      "autoCreateAllowed": false,
+      "label": "Checkpoint metadata only"
+    },
+    "rollback": {
+      "status": "not_applicable",
+      "metadataOnly": true,
+      "autoRollbackAllowed": false,
+      "requiresUserConfirmation": true,
+      "label": "Rollback metadata only"
+    }
+  },
+  "session": {
+    "state": "disabled",
+    "sessionId": "session-s82-demo",
+    "metadataOnly": true,
+    "sequence": 1,
+    "enteredAt": "2026-07-02T04:01:00Z",
+    "label": "Runtime session metadata"
+  },
+  "limits": {
+    "maxSteps": 8,
+    "maxFileReads": 12,
+    "maxTouchedFiles": 4,
+    "maxPatchBytes": 12000,
+    "maxVerificationRuns": 2,
+    "maxRuntimeSeconds": 900,
+    "limitLabel": "Bounded metadata limits"
+  },
+  "policyFlags": {
+    "runtimeSessionMetadataOnly": true,
+    "autoStartAllowed": false,
+    "autoApplyAllowed": false,
+    "autoRunAllowed": false,
+    "autoVerifyAllowed": false,
+    "autoFixAllowed": false,
+    "autoRollbackAllowed": false,
+    "fileReadAllowed": false,
+    "fileWriteAllowed": false,
+    "shellAllowed": false,
+    "gitAllowed": false,
+    "networkAllowed": false,
+    "providerAllowed": false,
+    "toolAllowed": false,
+    "rawPromptAllowed": false,
+    "rawFileAllowed": false,
+    "rawDiffAllowed": false,
+    "rawCommandAllowed": false,
+    "rawLogAllowed": false
+  },
+  "details": {
+    "summary": "Session record stores sanitized metadata only",
+    "sanitized": true,
+    "nextUserAction": "none",
+    "evidenceLabel": "Session proof"
+  }
+}

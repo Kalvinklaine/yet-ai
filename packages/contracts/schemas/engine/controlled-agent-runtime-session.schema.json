@@ -1,0 +1,626 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/controlled-agent-runtime-session.schema.json",
+  "title": "Controlled Agent Runtime Session Metadata",
+  "description": "Strict metadata-only Sprint 82 controlled runtime session envelope. It records host, workspace, precondition, session request, limit, policy, and sanitized detail metadata, but grants no cloud, provider, tool, file, command, shell, git, network, agent start, auto-start, or execution authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "authority",
+    "cloudRequired",
+    "executionAllowed",
+    "agentStartAllowed",
+    "autoStartAllowed",
+    "host",
+    "workspace",
+    "preconditions",
+    "session",
+    "limits",
+    "policyFlags",
+    "details"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "const": "controlled_agent_runtime_session"
+    },
+    "version": {
+      "type": "string",
+      "const": "2026-07-02"
+    },
+    "authority": {
+      "type": "string",
+      "const": "runtime_session_metadata_only"
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "executionAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "agentStartAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "autoStartAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "host": {
+      "$ref": "#/$defs/host"
+    },
+    "workspace": {
+      "$ref": "#/$defs/workspace"
+    },
+    "preconditions": {
+      "$ref": "#/$defs/preconditions"
+    },
+    "session": {
+      "$ref": "#/$defs/session"
+    },
+    "limits": {
+      "$ref": "#/$defs/limits"
+    },
+    "policyFlags": {
+      "$ref": "#/$defs/policyFlags"
+    },
+    "details": {
+      "$ref": "#/$defs/details"
+    }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Rr][Aa][Ww][-_ ]?(?:[Ff][Ii][Ll][Ee]|[Pp][Rr][Oo][Mm][Pp][Tt]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Oo][Uu][Tt][Pp][Uu][Tt]|[Ll][Oo][Gg]|[Dd][Ii][Ff][Ff])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]|[Ss][Hh][Ee][Ll][Ll]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Gg][Ii][Tt]|[Tt][Oo][Oo][Ll]|[Nn][Ee][Tt][Ww][Oo][Rr][Kk]|[Rr][Ee][Aa][Dd][-_ ]?[Pp][Ll][Aa][Nn]|[Ee][Dd][Ii][Tt][-_ ]?[Pp][Ll][Aa][Nn]|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][-_ ]?[Cc][Aa][Ll][Ll]|[Aa][Cc][Tt][Ii][Oo][Nn][-_ ]?[Ee][Xx][Ee][Cc][Uu][Tt][Ii][Oo][Nn]|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Ss][Cc][Aa][Nn]|[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh])|[Ii][Nn][Dd][Ee][Xx](?:[Ii][Nn][Gg])?|[Aa][Uu][Tt][Oo][-_ ]?(?:[Ss][Tt][Aa][Rr][Tt]|[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Vv][Ee][Rr][Ii][Ff][Yy]|[Ff][Ii][Xx]|[Rr][Ee][Pp][Aa][Ii][Rr]|[Rr][Oo][Ll][Ll][Bb][Aa][Cc][Kk])|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "safeLabel": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 100 }
+      ]
+    },
+    "safeSummary": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 240 }
+      ]
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(?!assistant(?:[._-]|$))(?!.*(?:[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?))[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 32
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "supported", "surface", "label"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["browser", "vscode", "jetbrains"]
+        },
+        "supported": {
+          "type": "boolean"
+        },
+        "surface": {
+          "type": "string",
+          "enum": ["browser_preview", "ide_extension"]
+        },
+        "label": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspaceMode", "workspaceReady", "privatePathExposed", "hostOwned", "label"],
+      "properties": {
+        "workspaceMode": {
+          "type": "string",
+          "enum": ["none", "disposable", "worktree", "existing"]
+        },
+        "workspaceReady": {
+          "type": "boolean"
+        },
+        "privatePathExposed": {
+          "type": "boolean",
+          "const": false
+        },
+        "hostOwned": {
+          "type": "boolean"
+        },
+        "controlledWorkspaceId": { "$ref": "#/$defs/safeId" },
+        "readinessId": { "$ref": "#/$defs/safeId" },
+        "label": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "preconditions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["optIn", "workspaceReadiness", "checkpoint", "rollback"],
+      "properties": {
+        "optIn": { "$ref": "#/$defs/optIn" },
+        "workspaceReadiness": { "$ref": "#/$defs/readiness" },
+        "checkpoint": { "$ref": "#/$defs/checkpoint" },
+        "rollback": { "$ref": "#/$defs/rollback" },
+        "correlation": { "$ref": "#/$defs/preconditionCorrelation" }
+      }
+    },
+    "optIn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "origin", "confirmedBy", "requestIdMintedBy", "assistantMinted", "grantsStartAuthority"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["not_required", "missing", "confirmed"]
+        },
+        "origin": {
+          "type": "string",
+          "enum": ["none", "user", "host", "gui"]
+        },
+        "confirmedBy": {
+          "type": "string",
+          "enum": ["none", "user", "host", "gui"]
+        },
+        "requestIdMintedBy": {
+          "type": "string",
+          "enum": ["none", "user", "host", "gui"]
+        },
+        "assistantMinted": {
+          "type": "boolean",
+          "const": false
+        },
+        "grantsStartAuthority": {
+          "type": "boolean",
+          "const": false
+        },
+        "confirmedAt": { "$ref": "#/$defs/utcTimestamp" },
+        "label": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "readinessId", "metadataOnly"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["not_applicable", "missing", "blocked", "ready"]
+        },
+        "readinessId": { "$ref": "#/$defs/safeId" },
+        "metadataOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "label": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "verified", "metadataOnly", "autoCreateAllowed"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["not_applicable", "missing", "pending", "verified", "blocked"]
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "metadataOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "autoCreateAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "checkpointId": { "$ref": "#/$defs/safeId" },
+        "checkedAt": { "$ref": "#/$defs/utcTimestamp" },
+        "label": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "metadataOnly", "autoRollbackAllowed", "requiresUserConfirmation"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["not_applicable", "missing", "planned", "ready", "blocked"]
+        },
+        "metadataOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "autoRollbackAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "requiresUserConfirmation": {
+          "type": "boolean",
+          "const": true
+        },
+        "planId": { "$ref": "#/$defs/safeId" },
+        "label": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "preconditionCorrelation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["correlationId", "readinessId", "checkpointId", "rollbackPlanId"],
+      "properties": {
+        "correlationId": { "$ref": "#/$defs/safeId" },
+        "readinessId": { "$ref": "#/$defs/safeId" },
+        "checkpointId": { "$ref": "#/$defs/safeId" },
+        "rollbackPlanId": { "$ref": "#/$defs/safeId" },
+        "label": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "sessionId", "metadataOnly", "sequence", "enteredAt"],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "disabled",
+            "opt_in_required",
+            "unsupported_host",
+            "preconditions_blocked",
+            "ready_to_start",
+            "start_requested_metadata",
+            "session_open_metadata",
+            "stop_requested_metadata",
+            "stopped",
+            "blocked"
+          ]
+        },
+        "sessionId": { "$ref": "#/$defs/safeId" },
+        "metadataOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "enteredAt": { "$ref": "#/$defs/utcTimestamp" },
+        "startRequest": { "$ref": "#/$defs/sessionRequest" },
+        "stopRequest": { "$ref": "#/$defs/sessionRequest" },
+        "label": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "sessionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "requestedBy", "requestIdMintedBy", "assistantMinted", "correlationId", "requestedAt"],
+      "properties": {
+        "requestId": { "$ref": "#/$defs/safeId" },
+        "requestedBy": {
+          "type": "string",
+          "enum": ["user", "host", "gui"]
+        },
+        "requestIdMintedBy": {
+          "type": "string",
+          "enum": ["user", "host", "gui"]
+        },
+        "assistantMinted": {
+          "type": "boolean",
+          "const": false
+        },
+        "correlationId": { "$ref": "#/$defs/safeId" },
+        "requestedAt": { "$ref": "#/$defs/utcTimestamp" },
+        "reason": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxSteps", "maxFileReads", "maxTouchedFiles", "maxPatchBytes", "maxVerificationRuns", "maxRuntimeSeconds"],
+      "properties": {
+        "maxSteps": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "maxFileReads": { "type": "integer", "minimum": 0, "maximum": 48 },
+        "maxTouchedFiles": { "type": "integer", "minimum": 0, "maximum": 12 },
+        "maxPatchBytes": { "type": "integer", "minimum": 0, "maximum": 50000 },
+        "maxVerificationRuns": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "maxRuntimeSeconds": { "type": "integer", "minimum": 1, "maximum": 1800 },
+        "limitLabel": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "policyFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtimeSessionMetadataOnly",
+        "autoStartAllowed",
+        "autoApplyAllowed",
+        "autoRunAllowed",
+        "autoVerifyAllowed",
+        "autoFixAllowed",
+        "autoRollbackAllowed",
+        "fileReadAllowed",
+        "fileWriteAllowed",
+        "shellAllowed",
+        "gitAllowed",
+        "networkAllowed",
+        "providerAllowed",
+        "toolAllowed",
+        "rawPromptAllowed",
+        "rawFileAllowed",
+        "rawDiffAllowed",
+        "rawCommandAllowed",
+        "rawLogAllowed"
+      ],
+      "properties": {
+        "runtimeSessionMetadataOnly": { "type": "boolean", "const": true },
+        "autoStartAllowed": { "type": "boolean", "const": false },
+        "autoApplyAllowed": { "type": "boolean", "const": false },
+        "autoRunAllowed": { "type": "boolean", "const": false },
+        "autoVerifyAllowed": { "type": "boolean", "const": false },
+        "autoFixAllowed": { "type": "boolean", "const": false },
+        "autoRollbackAllowed": { "type": "boolean", "const": false },
+        "fileReadAllowed": { "type": "boolean", "const": false },
+        "fileWriteAllowed": { "type": "boolean", "const": false },
+        "shellAllowed": { "type": "boolean", "const": false },
+        "gitAllowed": { "type": "boolean", "const": false },
+        "networkAllowed": { "type": "boolean", "const": false },
+        "providerAllowed": { "type": "boolean", "const": false },
+        "toolAllowed": { "type": "boolean", "const": false },
+        "rawPromptAllowed": { "type": "boolean", "const": false },
+        "rawFileAllowed": { "type": "boolean", "const": false },
+        "rawDiffAllowed": { "type": "boolean", "const": false },
+        "rawCommandAllowed": { "type": "boolean", "const": false },
+        "rawLogAllowed": { "type": "boolean", "const": false }
+      }
+    },
+    "details": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "sanitized"],
+      "properties": {
+        "summary": { "$ref": "#/$defs/safeSummary" },
+        "sanitized": { "type": "boolean", "const": true },
+        "nextUserAction": {
+          "type": "string",
+          "enum": ["none", "review_opt_in", "review_preconditions", "request_start", "review_session", "review_stop", "review_blocker"]
+        },
+        "evidenceLabel": { "$ref": "#/$defs/safeLabel" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "host": {
+            "type": "object",
+            "properties": {
+              "kind": { "const": "browser" }
+            },
+            "required": ["kind"]
+          }
+        },
+        "required": ["host"]
+      },
+      "then": {
+        "properties": {
+          "host": {
+            "type": "object",
+            "properties": {
+              "supported": { "const": false },
+              "surface": { "const": "browser_preview" }
+            },
+            "required": ["supported", "surface"]
+          },
+          "session": {
+            "type": "object",
+            "properties": {
+              "state": { "enum": ["disabled", "unsupported_host", "blocked"] }
+            },
+            "required": ["state"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "host": {
+            "type": "object",
+            "properties": {
+              "kind": { "enum": ["vscode", "jetbrains"] }
+            },
+            "required": ["kind"]
+          }
+        },
+        "required": ["host"]
+      },
+      "then": {
+        "properties": {
+          "host": {
+            "type": "object",
+            "properties": {
+              "surface": { "const": "ide_extension" }
+            },
+            "required": ["surface"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "session": {
+            "type": "object",
+            "properties": {
+              "state": { "enum": ["ready_to_start", "start_requested_metadata", "session_open_metadata", "stop_requested_metadata", "stopped"] }
+            },
+            "required": ["state"]
+          }
+        },
+        "required": ["session"]
+      },
+      "then": {
+        "required": ["preconditions"],
+        "properties": {
+          "host": {
+            "type": "object",
+            "properties": {
+              "supported": { "const": true },
+              "kind": { "enum": ["vscode", "jetbrains"] }
+            },
+            "required": ["supported", "kind"]
+          },
+          "workspace": {
+            "type": "object",
+            "properties": {
+              "workspaceMode": { "enum": ["disposable", "worktree", "existing"] },
+              "workspaceReady": { "const": true },
+              "controlledWorkspaceId": {},
+              "readinessId": {}
+            },
+            "required": ["workspaceMode", "workspaceReady", "controlledWorkspaceId", "readinessId"]
+          },
+          "preconditions": {
+            "type": "object",
+            "required": ["correlation"],
+
+            "properties": {
+              "correlation": {},
+              "optIn": {
+                "type": "object",
+                "properties": {
+                  "status": { "const": "confirmed" },
+                  "assistantMinted": { "const": false }
+                },
+                "required": ["status", "assistantMinted"]
+              },
+              "workspaceReadiness": {
+                "type": "object",
+                "properties": {
+                  "status": { "const": "ready" }
+                },
+                "required": ["status"]
+              },
+              "checkpoint": {
+                "type": "object",
+
+                  "properties": {
+                    "status": { "const": "verified" },
+                    "verified": { "const": true },
+                    "checkpointId": {}
+                  },
+                "required": ["status", "verified", "checkpointId"]
+              },
+              "rollback": {
+                "type": "object",
+
+                  "properties": {
+                    "status": { "enum": ["planned", "ready"] },
+                    "planId": {}
+                  },
+                "required": ["status", "planId"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "session": {
+            "type": "object",
+            "properties": {
+              "state": { "enum": ["start_requested_metadata", "session_open_metadata", "stop_requested_metadata", "stopped"] }
+            },
+            "required": ["state"]
+          }
+        },
+        "required": ["session"]
+      },
+      "then": {
+        "properties": {
+          "session": {
+            "type": "object",
+            "properties": {
+              "startRequest": {}
+            },
+            "required": ["startRequest"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "session": {
+            "type": "object",
+            "properties": {
+              "state": { "enum": ["stop_requested_metadata", "stopped"] }
+            },
+            "required": ["state"]
+          }
+        },
+        "required": ["session"]
+      },
+      "then": {
+        "properties": {
+          "session": {
+            "type": "object",
+            "properties": {
+              "stopRequest": {}
+            },
+            "required": ["stopRequest"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "workspace": {
+            "type": "object",
+            "properties": {
+              "workspaceMode": { "const": "none" }
+            },
+            "required": ["workspaceMode"]
+          }
+        },
+        "required": ["workspace"]
+      },
+      "then": {
+        "properties": {
+          "workspace": {
+            "type": "object",
+            "properties": {
+              "workspaceReady": { "const": false }
+            },
+            "required": ["workspaceReady"]
+          },
+          "session": {
+            "type": "object",
+            "properties": {
+              "state": { "enum": ["disabled", "opt_in_required", "unsupported_host", "blocked"] }
+            },
+            "required": ["state"]
+          }
+        }
+      }
+    }
+  ]
+}

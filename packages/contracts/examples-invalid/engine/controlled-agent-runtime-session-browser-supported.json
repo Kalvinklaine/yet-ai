@@ -1,0 +1,109 @@
+{
+  "kind": "controlled_agent_runtime_session",
+  "version": "2026-07-02",
+  "authority": "runtime_session_metadata_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "agentStartAllowed": false,
+  "autoStartAllowed": false,
+  "host": {
+    "kind": "browser",
+    "supported": true,
+    "surface": "ide_extension",
+    "label": "Browser preview"
+  },
+  "workspace": {
+    "workspaceMode": "worktree",
+    "workspaceReady": true,
+    "privatePathExposed": false,
+    "hostOwned": true,
+    "label": "Sanitized controlled workspace",
+    "controlledWorkspaceId": "workspace-s82-demo",
+    "readinessId": "readiness-s82-demo"
+  },
+  "preconditions": {
+    "optIn": {
+      "status": "confirmed",
+      "origin": "user",
+      "confirmedBy": "user",
+      "requestIdMintedBy": "gui",
+      "assistantMinted": false,
+      "grantsStartAuthority": false,
+      "label": "User reviewed session metadata"
+    },
+    "workspaceReadiness": {
+      "status": "ready",
+      "readinessId": "readiness-s82-demo",
+      "metadataOnly": true,
+      "label": "Readiness metadata only"
+    },
+    "checkpoint": {
+      "status": "verified",
+      "verified": true,
+      "metadataOnly": true,
+      "autoCreateAllowed": false,
+      "checkpointId": "checkpoint-s82-demo",
+      "checkedAt": "2026-07-02T04:00:00Z",
+      "label": "Checkpoint metadata only"
+    },
+    "rollback": {
+      "status": "ready",
+      "metadataOnly": true,
+      "autoRollbackAllowed": false,
+      "requiresUserConfirmation": true,
+      "planId": "rollback-s82-demo",
+      "label": "Rollback metadata only"
+    },
+    "correlation": {
+      "correlationId": "corr-s82-demo",
+      "readinessId": "readiness-s82-demo",
+      "checkpointId": "checkpoint-s82-demo",
+      "rollbackPlanId": "rollback-s82-demo",
+      "label": "Precondition correlation"
+    }
+  },
+  "session": {
+    "state": "ready_to_start",
+    "sessionId": "session-s82-demo",
+    "metadataOnly": true,
+    "sequence": 1,
+    "enteredAt": "2026-07-02T04:01:00Z",
+    "label": "Runtime session metadata"
+  },
+  "limits": {
+    "maxSteps": 8,
+    "maxFileReads": 12,
+    "maxTouchedFiles": 4,
+    "maxPatchBytes": 12000,
+    "maxVerificationRuns": 2,
+    "maxRuntimeSeconds": 900,
+    "limitLabel": "Bounded metadata limits"
+  },
+  "policyFlags": {
+    "runtimeSessionMetadataOnly": true,
+    "autoStartAllowed": false,
+    "autoApplyAllowed": false,
+    "autoRunAllowed": false,
+    "autoVerifyAllowed": false,
+    "autoFixAllowed": false,
+    "autoRollbackAllowed": false,
+    "fileReadAllowed": false,
+    "fileWriteAllowed": false,
+    "shellAllowed": false,
+    "gitAllowed": false,
+    "networkAllowed": false,
+    "providerAllowed": false,
+    "toolAllowed": false,
+    "rawPromptAllowed": false,
+    "rawFileAllowed": false,
+    "rawDiffAllowed": false,
+    "rawCommandAllowed": false,
+    "rawLogAllowed": false
+  },
+  "details": {
+    "summary": "Session record stores sanitized metadata only",
+    "sanitized": true,
+    "nextUserAction": "request_start",
+    "evidenceLabel": "Session proof"
+  }
+}

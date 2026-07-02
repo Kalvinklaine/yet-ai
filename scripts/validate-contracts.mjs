@@ -87,6 +87,17 @@ const mappings = [
     "packages/contracts/schemas/engine/controlled-agent-workspace-readiness.schema.json"
   ]),
   ...[
+    "controlled-agent-runtime-session-disabled.json",
+    "controlled-agent-runtime-session-ready-vscode-worktree.json",
+    "controlled-agent-runtime-session-ready-jetbrains-disposable.json",
+    "controlled-agent-runtime-session-start-requested.json",
+    "controlled-agent-runtime-session-stop-requested.json",
+    "controlled-agent-runtime-session-stopped.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-runtime-session.schema.json"
+  ]),
+  ...[
     "controlled-agent-file-read-disabled.json",
     "controlled-agent-file-read-blocked.json",
     "controlled-agent-file-read-success.json",
@@ -1025,6 +1036,21 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-workspace-readiness.schema.json"
+  ]),
+  ...[
+    "controlled-agent-runtime-session-assistant-minted-start-request.json",
+    "controlled-agent-runtime-session-browser-supported.json",
+    "controlled-agent-runtime-session-execution-allowed.json",
+    "controlled-agent-runtime-session-agent-start-allowed.json",
+    "controlled-agent-runtime-session-raw-fields.json",
+    "controlled-agent-runtime-session-command-authority-fields.json",
+    "controlled-agent-runtime-session-missing-checkpoint-rollback-correlation.json",
+    "controlled-agent-runtime-session-unbounded-limits.json",
+    "controlled-agent-runtime-session-private-path-leakage.json",
+    "controlled-agent-runtime-session-action-execution-fields.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-runtime-session.schema.json"
   ]),
   ...[
     "controlled-agent-file-read-absolute-path.json",
