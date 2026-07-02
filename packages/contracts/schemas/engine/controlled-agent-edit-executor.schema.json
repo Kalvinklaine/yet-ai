@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.yet-ai.example/contracts/engine/controlled-agent-edit-executor.schema.json",
   "title": "Controlled Agent Edit Executor Metadata",
+  "description": "Strict replacement-edit metadata contract for existing workspace files. It grants no create, delete, rename, move, chmod, symlink, binary, raw body, raw diff, raw patch, command, cwd, env, shell, git, provider, tool, bridge, runtime endpoint, or autonomous edit authority.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -23,8 +24,7 @@
     },
     "schemaVersion": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 32
+      "const": "2026-07-02"
     },
     "state": {
       "type": "string",
@@ -90,15 +90,10 @@
             "const": "replace"
           },
           "workspaceRelativePath": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 512,
-            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*(?:^|/)\\.git(?:/|$))[A-Za-z0-9._@+\\-/]+$"
+            "$ref": "#/$defs/workspaceRelativePath"
           },
           "fileLabel": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 160
+            "$ref": "#/$defs/fileLabel"
           },
           "expectedContentHash": {
             "$ref": "#/$defs/sha256Hash"
@@ -119,20 +114,51 @@
             "maximum": 1048576
           },
           "sanitizedSummary": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 240
+            "$ref": "#/$defs/sanitizedSummary"
           }
-        }
+        },
+        "allOf": [
+          {
+            "properties": {
+              "endLine": {
+                "type": "integer",
+                "minimum": { "$data": "1/startLine" }
+              }
+            }
+          }
+        ]
+
       }
     }
   },
   "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Rr][Aa][Ww][-_ ]?(?:[Ff][Ii][Ll][Ee]|[Bb][Oo][Dd][Yy]|[Pp][Aa][Tt][Cc][Hh]|[Dd][Ii][Ff][Ff]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]|[Ss][Hh][Ee][Ll][Ll]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Gg][Ii][Tt]|[Tt][Oo][Oo][Ll]|[Cc][Hh][Mm][Oo][Dd]|[Ss][Yy][Mm][Ll][Ii][Nn][Kk]|[Bb][Ii][Nn][Aa][Rr][Yy]|[Cc][Rr][Ee][Aa][Tt][Ee]|[Dd][Ee][Ll][Ee][Tt][Ee]|[Rr][Ee][Nn][Aa][Mm][Ee]|[Mm][Oo][Vv][Ee]|[Aa][Uu][Tt][Oo][-_ ]?(?:[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Rr][Ee][Pp][Aa][Ii][Rr])|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
     "safeId": {
       "type": "string",
       "minLength": 1,
       "maxLength": 120,
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+      "pattern": "^(?!assistant(?:[._:-]|$))(?!.*(?:[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?))[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "workspaceRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 180,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!~)(?!.*(?:^|/)\\.)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*[\\\\:*?\"<>|{}\\[\\]$^+])(?!(?:^|.*/)(?:node_modules|vendor|dist|build|out|target|coverage|__pycache__|generated|tmp|temp|secrets?|credentials?|private)(?:/|$))[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$"
+    },
+    "fileLabel": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 160 }
+      ]
+    },
+    "sanitizedSummary": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 240 }
+      ]
     },
     "sha256Hash": {
       "type": "string",

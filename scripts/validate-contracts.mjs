@@ -108,6 +108,12 @@ const mappings = [
     "packages/contracts/schemas/engine/controlled-agent-command-runner.schema.json"
   ]),
   ...[
+    "controlled-agent-edit-executor-planned.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-edit-executor.schema.json"
+  ]),
+  ...[
     "controlled-agent-run-state-idle.json",
     "controlled-agent-run-state-planning.json",
     "controlled-agent-run-state-stopped.json",
@@ -1052,6 +1058,17 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-command-runner.schema.json"
+  ]),
+  ...[
+    "controlled-agent-edit-executor-unsafe-path.json",
+    "controlled-agent-edit-executor-missing-hash.json",
+    "controlled-agent-edit-executor-command-raw-diff.json",
+    "controlled-agent-edit-executor-unsupported-operation.json",
+    "controlled-agent-edit-executor-unbounded-limits.json",
+    "controlled-agent-edit-executor-assistant-authority.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-edit-executor.schema.json"
   ]),
   ...[
     "controlled-agent-run-state-auto-start.json",

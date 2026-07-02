@@ -1,0 +1,26 @@
+{
+  "type": "controlled_agent_edit_executor",
+  "schemaVersion": "2026-07-02",
+  "state": "planned",
+  "runId": "run-s81-c1",
+  "workspaceReadinessId": "ready-s81-c1",
+  "requestId": "edit-s81-c1",
+  "requestIdMintedBy": "gui",
+  "userConfirmed": true,
+  "limits": {
+    "maxFiles": 1,
+    "maxEdits": 1,
+    "maxPatchBytes": 4096
+  },
+  "edits": [
+    {
+      "operation": "replace",
+      "workspaceRelativePath": "apps/gui/src/App.tsx",
+      "fileLabel": "apps/gui/src/App.tsx",
+      "startLine": 12,
+      "endLine": 14,
+      "replacementByteCount": 128,
+      "sanitizedSummary": "Replace selected UI metadata lines."
+    }
+  ]
+}
