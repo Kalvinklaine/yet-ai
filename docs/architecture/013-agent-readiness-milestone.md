@@ -227,6 +227,14 @@ npm run check && git diff --check
 
 This evidence remains deterministic and local/mock-only. The focused smoke transpiles the pure GUI aggregation service and verifies disabled, blocked no-workspace, ready preview, running metadata flow, completed/stopped final reports, repair exhaustion, unsafe raw-marker fail-closed behavior, and all-false authority flags. It is not real-provider CI, production readiness, marketplace readiness, multi-step execution, or autonomy approval.
 
+## Sprint 80 final S74-S80 audit status
+
+Sprint 80 closes the S74-S80 controlled local-agent evidence trail as a dev-preview, local/mock-only metadata milestone. The final audit found no high or critical issue in the S74 bounded file-read, S75 allowlisted command-runner, S76 controlled run-state skeleton, S77 edit-executor metadata boundary, S79 progress/final-report metadata, or S80 MVP composition scope: each layer remains sanitized evidence over explicit opt-in and already-known capability metadata, with all authority flags fail-closed and no raw prompt, file body, diff, replacement body, command string, cwd/env, provider/tool payload, private path, or secret persistence.
+
+Known deferred gaps remain explicit. S77 has contract and metadata boundary evidence, but its dedicated standalone smoke remains deferred. S78 actual auto-repair execution is not implemented; repair evidence is metadata-only and may stop or report exhaustion without running an automatic fix loop. S80 does not approve production autonomy: there is still no real controlled-agent loop, provider loop, agent starter, runtime endpoint, bridge authority expansion, hidden read/search/indexing, broad mutation path, free-form shell, git/package/network action, provider/tool calling, task-board mutation, real-provider CI, marketplace readiness, or production readiness.
+
+This audit is the stop point before S81. Future S81+ work must use new explicit cards and keep these S74-S80 boundaries intact unless a later architecture record and verification gate intentionally changes them.
+
 ## Blocked and deferred capabilities
 
 These capabilities are explicitly not implemented as active Agent Run features:
