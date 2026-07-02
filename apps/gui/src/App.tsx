@@ -44,6 +44,7 @@ import { evaluateHostCapabilityMetadata } from "./services/toolAuthorityPolicy";
 import { evaluateControlledAgentFileRead } from "./services/controlledAgentFileRead";
 import { evaluateControlledAgentCommandRun } from "./services/controlledAgentCommandRunner";
 import { buildControlledAgentProgressReport } from "./services/controlledAgentProgressReport";
+import { buildControlledLocalAgentMvp } from "./services/controlledLocalAgentMvp";
 import { initializeControlledAgentRunState, reduceControlledAgentRunState, type ControlledAgentRunState } from "./services/controlledAgentRunState";
 import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPatchVerificationLoop";
 import type { AgentRunInput } from "./services/agentRunState";
@@ -691,6 +692,14 @@ export function App() {
     controlledAgentCommandRunner: controlledAgentCommandRunnerMetadata,
     controlledAgentEditExecutor: controlledAgentEditExecutorMetadata,
   }), [controlledAgentCommandRunnerMetadata, controlledAgentEditExecutorMetadata, controlledAgentFileReadMetadata, controlledAgentRunState]);
+  const controlledLocalAgentMvpReport = useMemo(() => buildControlledLocalAgentMvp({
+    userOptIn: { source: "user", confirmed: true, requestId: "s80-controlled-local-agent-mvp-preview" },
+    workspaceReadiness: controlledWorkspaceReadinessMetadata,
+    boundedRead: controlledAgentFileReadMetadata,
+    editMetadata: controlledAgentEditExecutorMetadata,
+    verification: controlledAgentCommandRunnerMetadata,
+    progress: controlledAgentProgressReport,
+  }), [controlledAgentCommandRunnerMetadata, controlledAgentEditExecutorMetadata, controlledAgentFileReadMetadata, controlledAgentProgressReport, controlledWorkspaceReadinessMetadata]);
 
   useEffect(() => {
     setControlledAgentRunState(buildControlledAgentRunPreviewState(controlledWorkspaceReadinessMetadata, controlledAgentFileReadMetadata, controlledAgentCommandRunnerMetadata));
@@ -2752,7 +2761,7 @@ export function App() {
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
                 <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} />
-                {showControlledAgentRunPanel && <ControlledAgentRunPanel state={controlledAgentRunState} progressReport={controlledAgentProgressReport} onStop={stopControlledAgentRun} />}
+                {showControlledAgentRunPanel && <ControlledAgentRunPanel state={controlledAgentRunState} progressReport={controlledAgentProgressReport} mvpReport={controlledLocalAgentMvpReport} onStop={stopControlledAgentRun} />}
                 {controlledWorkspaceReadinessMetadata !== undefined && <ControlledAgentWorkspaceReadinessPanel metadata={controlledWorkspaceReadinessMetadata} />}
                 {controlledAgentFileReadMetadata !== undefined && <ControlledAgentFileReadPanel metadata={controlledAgentFileReadMetadata} />}
                 {controlledAgentCommandRunnerMetadata !== undefined && <ControlledAgentCommandRunnerPanel metadata={controlledAgentCommandRunnerMetadata} />}

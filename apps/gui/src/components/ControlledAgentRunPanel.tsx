@@ -1,15 +1,17 @@
 import { useMemo } from "react";
 import type { ControlledAgentProgressReport } from "../services/controlledAgentProgressReport";
+import type { ControlledLocalAgentMvpReport } from "../services/controlledLocalAgentMvp";
 import type { ControlledAgentRunState } from "../services/controlledAgentRunState";
 import { sanitizeDisplayText } from "../services/redaction";
 
 export type ControlledAgentRunPanelProps = {
   state: ControlledAgentRunState;
   progressReport?: ControlledAgentProgressReport;
+  mvpReport?: ControlledLocalAgentMvpReport;
   onStop: () => void;
 };
 
-export function ControlledAgentRunPanel({ state, progressReport, onStop }: ControlledAgentRunPanelProps) {
+export function ControlledAgentRunPanel({ state, progressReport, mvpReport, onStop }: ControlledAgentRunPanelProps) {
   const phaseLabel = sanitizeDisplayText(state.phase.replace(/_/g, " "));
   const stopReason = state.stop?.reason ? sanitizeDisplayText(state.stop.reason.replace(/_/g, " ")) : "none";
   const currentStep = currentStepLabel(state);
@@ -18,8 +20,10 @@ export function ControlledAgentRunPanel({ state, progressReport, onStop }: Contr
   const progressCounters = useMemo(() => Object.entries(progressReport?.counters ?? {}), [progressReport?.counters]);
   const progressLimits = useMemo(() => Object.entries(progressReport?.limits ?? {}), [progressReport?.limits]);
   const progressSafetyFlags = useMemo(() => Object.entries(progressReport?.safetyFlags ?? {}), [progressReport?.safetyFlags]);
+  const mvpSafetyFlags = useMemo(() => Object.entries(mvpReport?.safetyFlags ?? {}), [mvpReport?.safetyFlags]);
   const diagnostics = state.diagnostics.slice(0, 6);
   const progressDiagnostics = progressReport?.diagnostics.slice(0, 6) ?? [];
+  const mvpDiagnostics = mvpReport?.diagnostics.slice(0, 6) ?? [];
   const stopDisabled = state.stopped || state.phase === "idle" || state.phase === "opt_in_required" || state.phase === "blocked" || state.phase === "failed" || state.phase === "completed";
 
   return (
@@ -56,6 +60,34 @@ export function ControlledAgentRunPanel({ state, progressReport, onStop }: Contr
           {progressSafetyFlags.map(([key, value]) => <span key={key}>Report flag {sanitizeDisplayText(key)}: {typeof value === "string" ? sanitizeDisplayText(value) : String(value)}</span>)}
         </div>
         {progressDiagnostics.length > 0 && <div className="readiness-card warn" role="status" aria-label="Controlled progress report diagnostics"><strong>Progress diagnostics</strong>{progressDiagnostics.map((diagnostic, index) => <span key={`${index}:${diagnostic}`}>{sanitizeDisplayText(diagnostic)}</span>)}</div>}
+      </section>}
+      {mvpReport && <section className={`readiness-card ${mvpReport.status === "blocked" || mvpReport.status === "failed" || mvpReport.status === "stopped" ? "warn" : "ready"} stack`} aria-label="Controlled local agent MVP metadata">
+        <div className="row">
+          <strong>Controlled local agent MVP</strong>
+          <span className="badge warn">dev preview</span>
+          <span className="badge">S80 metadata</span>
+          <span className="badge">display only</span>
+          <span className={mvpReport.status === "blocked" || mvpReport.status === "failed" ? "badge warn" : "badge ok"}>{sanitizeDisplayText(mvpReport.status.replace(/_/g, " "))}</span>
+        </div>
+        <span>{sanitizeDisplayText(mvpReport.label)}</span>
+        <span className="subtle">MVP metadata is aggregated from existing sanitized readiness, bounded read, edit, verification, progress, and final-report labels only. This panel still cannot start agents, post bridge/runtime commands, read hidden files, apply edits, run verification, call providers, use shell, or use git.</span>
+        <ol className="manual-runner-steps" aria-label="Controlled local agent MVP checklist">
+          {mvpReport.checklist.map((item) => (
+            <li className={`manual-runner-step ${item.state === "completed" || item.state === "ready" ? "done" : item.state === "running" ? "current" : "waiting"}`} key={item.id}>
+              <strong>{sanitizeDisplayText(item.id.replace(/_/g, " "))}: {sanitizeDisplayText(item.state.replace(/_/g, " "))}</strong>
+              <span>{sanitizeDisplayText(item.label)}</span>
+              {item.diagnostics.length > 0 && <span className="subtle">Diagnostics: {item.diagnostics.map((diagnostic) => sanitizeDisplayText(diagnostic)).join(", ")}</span>}
+            </li>
+          ))}
+        </ol>
+        {mvpReport.finalReport && <div className={`readiness-card ${mvpReport.finalReport.status === "completed" ? "ready" : "warn"}`} role="status" aria-label="Controlled local agent MVP final report">
+          <strong>Final report: {sanitizeDisplayText(mvpReport.finalReport.label)}</strong>
+          <span>{sanitizeDisplayText(mvpReport.finalReport.summary)}</span>
+        </div>}
+        <div className="agent-progress-grid" aria-label="Controlled local agent MVP safety flags">
+          {mvpSafetyFlags.map(([key, value]) => <span key={key}>MVP flag {sanitizeDisplayText(key)}: {typeof value === "string" ? sanitizeDisplayText(value) : String(value)}</span>)}
+        </div>
+        {mvpDiagnostics.length > 0 && <div className="readiness-card warn" role="status" aria-label="Controlled local agent MVP diagnostics"><strong>MVP diagnostics</strong>{mvpDiagnostics.map((diagnostic, index) => <span key={`${index}:${diagnostic}`}>{sanitizeDisplayText(diagnostic)}</span>)}</div>}
       </section>}
       <div className="agent-progress-grid" aria-label="Controlled run status">
         <span>Phase: {phaseLabel}</span>
