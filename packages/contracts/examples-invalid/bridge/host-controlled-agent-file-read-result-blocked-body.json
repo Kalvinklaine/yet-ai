@@ -1,0 +1,69 @@
+{
+  "version": "2026-05-15",
+  "type": "host.controlledAgentFileReadResult",
+  "requestId": "host-s83-read-blocked",
+  "payload": {
+    "kind": "controlled_agent_file_read",
+    "version": "2026-06-29",
+    "authority": "bounded_text_file_read",
+    "cloudRequired": false,
+    "executionAllowed": false,
+    "agentStartAllowed": false,
+    "workspace": {
+      "controlledWorkspaceId": "workspace-s74-blocked",
+      "runId": "run-s74-blocked",
+      "workspaceMode": "worktree",
+      "host": "vscode",
+      "privatePathExposed": false,
+      "workspaceLabel": "Controlled worktree"
+    },
+    "request": {
+      "requestId": "host-s83-read-blocked",
+      "source": "host",
+      "requestIdMintedBy": "host",
+      "assistantMinted": false,
+      "workspaceRelativePath": "docs/architecture/013-agent-readiness-milestone.md",
+      "textOnly": true,
+      "maxBytes": 2048,
+      "budget": {
+        "scope": "single_explicit_file",
+        "maxBytes": 2048,
+        "maxLines": 80,
+        "allowBody": false,
+        "singleFileOnly": true,
+        "recursive": false,
+        "globAllowed": false,
+        "regexAllowed": false,
+        "indexingAllowed": false,
+        "budgetLabel": "Metadata only read budget"
+      },
+      "requestedAt": "2026-06-29T08:01:00Z",
+      "reason": "Host blocked this explicit read before returning text"
+    },
+    "policyFlags": {
+      "fileReadAllowed": true,
+      "fileWriteAllowed": false,
+      "shellAllowed": false,
+      "gitAllowed": false,
+      "providerAllowed": false,
+      "toolAllowed": false,
+      "hiddenSearchAllowed": false,
+      "indexingAllowed": false,
+      "binaryReadAllowed": false,
+      "symlinkAllowed": false,
+      "autoStartAllowed": false,
+      "autoApplyAllowed": false,
+      "autoRunAllowed": false
+    },
+    "result": {
+      "status": "blocked",
+      "cloudRequired": false,
+      "executionAllowed": false,
+      "bodyIncluded": true,
+      "truncated": false,
+      "blockedReason": "policy_denied",
+      "message": "Host policy denied the explicit bounded read",
+      "text": "blocked text"
+    }
+  }
+}

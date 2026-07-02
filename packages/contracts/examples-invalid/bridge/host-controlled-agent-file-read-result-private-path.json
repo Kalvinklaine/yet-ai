@@ -1,0 +1,72 @@
+{
+  "version": "2026-05-15",
+  "type": "host.controlledAgentFileReadResult",
+  "requestId": "host-s83-read-success",
+  "payload": {
+    "kind": "controlled_agent_file_read",
+    "version": "2026-06-29",
+    "authority": "bounded_text_file_read",
+    "cloudRequired": false,
+    "executionAllowed": false,
+    "agentStartAllowed": false,
+    "workspace": {
+      "controlledWorkspaceId": "workspace-s74-success",
+      "runId": "run-s74-success",
+      "workspaceMode": "worktree",
+      "host": "vscode",
+      "privatePathExposed": false,
+      "workspaceLabel": "Controlled worktree"
+    },
+    "request": {
+      "requestId": "host-s83-read-success",
+      "source": "gui",
+      "requestIdMintedBy": "gui",
+      "assistantMinted": false,
+      "workspaceRelativePath": "docs/architecture/013-agent-readiness-milestone.md",
+      "textOnly": true,
+      "maxBytes": 2048,
+      "budget": {
+        "scope": "single_explicit_file",
+        "maxBytes": 2048,
+        "maxLines": 80,
+        "allowBody": true,
+        "singleFileOnly": true,
+        "recursive": false,
+        "globAllowed": false,
+        "regexAllowed": false,
+        "indexingAllowed": false,
+        "budgetLabel": "Small explicit text read budget"
+      },
+      "requestedAt": "2026-06-29T08:02:00Z",
+      "reason": "User approved one bounded text read for review"
+    },
+    "policyFlags": {
+      "fileReadAllowed": true,
+      "fileWriteAllowed": false,
+      "shellAllowed": false,
+      "gitAllowed": false,
+      "providerAllowed": false,
+      "toolAllowed": false,
+      "hiddenSearchAllowed": false,
+      "indexingAllowed": false,
+      "binaryReadAllowed": false,
+      "symlinkAllowed": false,
+      "autoStartAllowed": false,
+      "autoApplyAllowed": false,
+      "autoRunAllowed": false
+    },
+    "result": {
+      "status": "success",
+      "cloudRequired": false,
+      "executionAllowed": false,
+      "bodyIncluded": true,
+      "truncated": false,
+      "sanitizedPathLabel": "/Users/demo/project/docs/file.md",
+      "byteCount": 72,
+      "lineCount": 2,
+      "contentHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "text": "# 013 Agent Run Readiness Milestone\n\nThis bounded excerpt is explicit.",
+      "message": "Bounded text read completed within budget"
+    }
+  }
+}

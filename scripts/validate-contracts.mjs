@@ -253,9 +253,12 @@ const mappings = [
   ["packages/contracts/examples/bridge/gui-ide-action-request-reveal-workspace-range.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-ide-action-request-run-verification-command.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-ide-action-request-search-workspace-snippets.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
+  ["packages/contracts/examples/bridge/gui-controlled-agent-file-read-request.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/host-ide-action-progress-search-workspace-snippets.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-ide-action-result-search-workspace-snippets.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
-  ["packages/contracts/examples/bridge/host-ide-action-result-search-workspace-snippets-rejected.json", "packages/contracts/schemas/bridge/host-message.schema.json"]
+  ["packages/contracts/examples/bridge/host-ide-action-result-search-workspace-snippets-rejected.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
+  ["packages/contracts/examples/bridge/host-controlled-agent-file-read-result-success.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
+  ["packages/contracts/examples/bridge/host-controlled-agent-file-read-result-blocked.json", "packages/contracts/schemas/bridge/host-message.schema.json"]
 ].map(([examplePath, schemaPath]) => [normalizeContractPath(examplePath), normalizeContractPath(schemaPath)]);
 
 const invalidMappings = [
@@ -595,7 +598,21 @@ const invalidMappings = [
     "gui-ide-action-request-search-workspace-snippets-api-key-field.json",
     "gui-ide-action-request-search-workspace-snippets-index-workspace-field.json",
     "gui-ide-action-request-search-workspace-snippets-payload-request-id.json",
-    "gui-ide-action-request-search-workspace-snippets-assistant-query.json"
+    "gui-ide-action-request-search-workspace-snippets-assistant-query.json",
+    "gui-controlled-agent-file-read-request-absolute-path.json",
+    "gui-controlled-agent-file-read-request-traversal-path.json",
+    "gui-controlled-agent-file-read-request-backslash-path.json",
+    "gui-controlled-agent-file-read-request-hidden-path.json",
+    "gui-controlled-agent-file-read-request-dependency-path.json",
+    "gui-controlled-agent-file-read-request-glob-path.json",
+    "gui-controlled-agent-file-read-request-recursive.json",
+    "gui-controlled-agent-file-read-request-glob-allowed.json",
+    "gui-controlled-agent-file-read-request-regex-allowed.json",
+    "gui-controlled-agent-file-read-request-indexing-allowed.json",
+    "gui-controlled-agent-file-read-request-assistant-minted.json",
+    "gui-controlled-agent-file-read-request-command-fields.json",
+    "gui-controlled-agent-file-read-request-unbounded-bytes.json",
+    "gui-controlled-agent-file-read-request-unbounded-lines.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/gui-message.schema.json"
@@ -702,7 +719,11 @@ const invalidMappings = [
     "host-runtime-status-tools-field.json",
     "host-runtime-status-run-command-field.json",
     "host-runtime-status-request-id.json",
-    "host-runtime-status-stack-trace.json"
+    "host-runtime-status-stack-trace.json",
+    "host-controlled-agent-file-read-result-private-path.json",
+    "host-controlled-agent-file-read-result-blocked-body.json",
+    "host-controlled-agent-file-read-result-unsafe-body.json",
+    "host-controlled-agent-file-read-result-command-field.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/host-message.schema.json"

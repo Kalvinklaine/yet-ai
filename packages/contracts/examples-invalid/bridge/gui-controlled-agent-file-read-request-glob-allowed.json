@@ -1,0 +1,23 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.controlledAgentFileReadRequest",
+  "requestId": "gui-s83-read-request",
+  "payload": {
+    "requestIdMintedBy": "gui",
+    "source": "gui",
+    "assistantMinted": false,
+    "controlledWorkspaceId": "workspace-s83-request",
+    "runId": "run-s83-request",
+    "runtimeSessionId": "runtime-s83-request",
+    "sessionId": "session-s83-request",
+    "workspaceRelativePath": "docs/architecture/013-agent-readiness-milestone.md",
+    "maxBytes": 2048,
+    "maxLines": 80,
+    "allowBody": true,
+    "singleFileOnly": true,
+    "recursive": false,
+    "globAllowed": true,
+    "regexAllowed": false,
+    "indexingAllowed": false
+  }
+}

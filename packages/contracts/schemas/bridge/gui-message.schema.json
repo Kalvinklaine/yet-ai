@@ -20,7 +20,8 @@
         "gui.ready",
         "gui.unloaded",
         "gui.ideActionRequest",
-        "gui.applyWorkspaceEditRequest"
+        "gui.applyWorkspaceEditRequest",
+        "gui.controlledAgentFileReadRequest"
       ]
     },
     "requestId": {
@@ -47,7 +48,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 1000,
-      "pattern": "^(?!.*(?:[\u0000-\u001f\u007f-\u009f]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Pp][Aa][Tt][Hh]|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][_-]?[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Rr][Aa][Ww][_-]?[Pp][Rr][Oo][Mm][Pp][Tt]|[Ff][Ii][Ll][Ee][_-]?[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,})).*$"
+      "pattern": "^(?!.*(?:[\u0000-\u001f-]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Pp][Aa][Tt][Hh]|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][_-]?[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Rr][Aa][Ww][_-]?[Pp][Rr][Oo][Mm][Pp][Tt]|[Ff][Ii][Ll][Ee][_-]?[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,})).*$"
     },
     "position": {
       "type": "object",
@@ -437,7 +438,9 @@
                 "const": "repository-check"
               }
             },
-            "required": ["commandId"]
+            "required": [
+              "commandId"
+            ]
           },
           "then": {
             "properties": {
@@ -463,7 +466,9 @@
                 "const": "gui-app-tests"
               }
             },
-            "required": ["commandId"]
+            "required": [
+              "commandId"
+            ]
           },
           "then": {
             "properties": {
@@ -489,7 +494,9 @@
                 "const": "engine-chat-tests"
               }
             },
-            "required": ["commandId"]
+            "required": [
+              "commandId"
+            ]
           },
           "then": {
             "properties": {
@@ -515,6 +522,112 @@
       "minLength": 1,
       "maxLength": 120,
       "pattern": "^(?!.*(?:[\\u0000-\\u001f\\u007f-\\u009f]|[*/\\\\~]|\\.\\.|[{}[\\]()^$+?|]|[;&`$<>]|\\b(?:cwd|env|shell|git|tool|provider|model|apiKey|requestId|assistant|regex|glob|path)\\b|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Pp][Aa][Tt][Hh]|[A-Za-z]:|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}))[\\s\\S]*\\S[\\s\\S]*$"
+    },
+    "controlledAgentFileReadPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 180,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!~)(?!.*(?:^|/)\\.)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*[\\\\:*?\"<>|{}\\[\\]$^+])(?!(?:^|.*/)(?:node_modules|vendor|dist|build|out|target|coverage|__pycache__|generated|tmp|temp|secrets?|credentials?|private)(?:/|$))[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$"
+    },
+    "controlledAgentFileReadRequestPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestIdMintedBy",
+        "source",
+        "assistantMinted",
+        "controlledWorkspaceId",
+        "runId",
+        "workspaceRelativePath",
+        "maxBytes",
+        "maxLines",
+        "allowBody",
+        "singleFileOnly",
+        "recursive",
+        "globAllowed",
+        "regexAllowed",
+        "indexingAllowed"
+      ],
+      "properties": {
+        "requestIdMintedBy": {
+          "type": "string",
+          "enum": [
+            "gui",
+            "host"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "gui",
+            "host"
+          ]
+        },
+        "assistantMinted": {
+          "type": "boolean",
+          "const": false
+        },
+        "controlledWorkspaceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^(?!assistant(?:[._-]|$))(?!.*(?:[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?))[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^(?!assistant(?:[._-]|$))(?!.*(?:[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?))[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "runtimeSessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^(?!assistant(?:[._-]|$))(?!.*(?:[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?))[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^(?!assistant(?:[._-]|$))(?!.*(?:[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?))[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "workspaceRelativePath": {
+          "$ref": "#/$defs/controlledAgentFileReadPath"
+        },
+        "maxBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8192
+        },
+        "maxLines": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 240
+        },
+        "allowBody": {
+          "type": "boolean"
+        },
+        "singleFileOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "recursive": {
+          "type": "boolean",
+          "const": false
+        },
+        "globAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "regexAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "indexingAllowed": {
+          "type": "boolean",
+          "const": false
+        }
+      }
     }
   },
   "allOf": [
@@ -624,6 +737,32 @@
           },
           "payload": {
             "$ref": "#/$defs/applyWorkspaceEditPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "gui.controlledAgentFileReadRequest"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "requestId",
+          "payload"
+        ],
+        "properties": {
+          "requestId": {
+            "$ref": "#/$defs/requestId"
+          },
+          "payload": {
+            "$ref": "#/$defs/controlledAgentFileReadRequestPayload"
           }
         }
       }
