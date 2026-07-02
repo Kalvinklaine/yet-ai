@@ -2,6 +2,7 @@ package ai.yet.plugin.ui
 
 import ai.yet.plugin.bridge.BridgeMessages
 import ai.yet.plugin.bridge.ActiveEditorContext
+import ai.yet.plugin.bridge.ControlledFileRead
 import ai.yet.plugin.bridge.ControlledIdeActions
 import ai.yet.plugin.identity.ProductIdentity
 import ai.yet.plugin.runtime.RuntimeConnectionManager
@@ -201,6 +202,8 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
             if (ideActionHandled) return@addHandler null
             val applyEditHandled = handleApplyWorkspaceEditRequest(raw)
             if (applyEditHandled) return@addHandler null
+            val fileReadHandled = JetBrainsControlledFileReadBridge.handleControlledFileReadRequest(raw, ::sendToGui) { logger.info(it) }
+            if (fileReadHandled) return@addHandler null
             val guiReady = BridgeMessages.parseGuiReady(raw)
             if (guiReady == null) {
                 logger.info("Yet AI rejected invalid GUI bridge message")
@@ -353,6 +356,22 @@ class DialogApplyWorkspaceEditConfirmer(private val project: Project) : ApplyWor
         val fileList = affectedFiles.take(4).joinToString("\n")
         val detail = if (fileList.isEmpty()) summary else "$summary\n\nFiles:\n$fileList"
         return Messages.showYesNoDialog(project, detail, "Apply Yet AI Workspace Edit?", Messages.getQuestionIcon()) == Messages.YES
+    }
+}
+
+object JetBrainsControlledFileReadBridge {
+    fun handleControlledFileReadRequest(raw: String, send: (String) -> Unit, logStatus: (String) -> Unit = {}): Boolean {
+        if (!ControlledFileRead.isRequestType(raw)) return false
+        val request = ControlledFileRead.parse(raw)
+        if (request == null) {
+            val safeRequestId = ControlledFileRead.safeRequestIdFromRaw(raw) ?: return false
+            logStatus("Yet AI rejected invalid controlled file read request")
+            send(ControlledFileRead.rejectedResult(safeRequestId))
+            return true
+        }
+        logStatus("Yet AI disabled JetBrains controlled file read request")
+        send(ControlledFileRead.unsupportedResult(request))
+        return true
     }
 }
 
@@ -670,6 +689,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isFrameNonce = (value) => typeof value === "string" && /^[0-9a-f]{32}$/.test(value);
         const maxIdeActionRequestBytes = 8192;
         const maxApplyWorkspaceEditRequestBytes = 65536;
+        const maxControlledFileReadRequestBytes = 8192;
         const allowedIdeActionNames = ["getContextSnapshot", "openWorkspaceFile", "revealWorkspaceRange", "getActiveFileExcerpt"];
         const optionalString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length <= maxLength);
         const optionalNonEmptyString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength);
@@ -689,6 +709,8 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isSecretLikePathSegment = (value) => /^(?:auth|authorization|bearer|cookie|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:\.|-|_|$)/i.test(value) || /(?:^|[._-])(?:auth|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:[._-]|$)/i.test(value) || /^sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value);
         const safePath = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength && !value.startsWith("/") && !value.startsWith("~") && !value.includes("%") && !value.includes("\\") && !value.includes(":") && !value.includes("?") && !value.includes("#") && /^[^\u0000-\u001f\u007f-\u009f]+$/.test(value) && value.split("/").every((part) => part.length > 0 && part !== "." && part !== ".." && !isSecretLikePathSegment(part)));
         const safeRequiredWorkspacePath = (value) => safePath(value, 512) && !value.includes("%") && !value.includes("?") && !value.includes("#") && !value.includes("//") && !value.endsWith("/") && value.split("/").every((part) => part.length > 0 && !/(?:^|[._-])(?:auth|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:[._-]|$)|^sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(part));
+        const controlledFileReadPath = (value) => typeof value === "string" && value.length > 0 && value.length <= 180 && !value.startsWith("/") && !/^[A-Za-z]:/.test(value) && !value.startsWith("~") && !value.includes("\\") && !/[\\:*?\"<>|{}\[\]$^+]/.test(value) && !value.includes("//") && !value.endsWith("/") && value.split("/").every((part) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(part) && part !== "." && part !== ".." && !part.startsWith(".") && !/^(node_modules|vendor|dist|build|out|target|coverage|__pycache__|generated|tmp|temp|secrets?|credentials?|private)$/i.test(part));
+        const safeControlledFileReadId = (value) => typeof value === "string" && value.length > 0 && value.length <= 80 && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) && !/(assistant|sk-(?:proj-)?)/i.test(value);
         const isIdeActionPosition = (position) => isPlainObject(position) && hasOnlyKeys(position, ["line", "character"]) && Number.isInteger(position.line) && position.line >= 0 && position.line <= 1000000 && Number.isInteger(position.character) && position.character >= 0 && position.character <= 1000000;
         const isIdeActionRange = (range) => isPlainObject(range) && hasOnlyKeys(range, ["start", "end"]) && isIdeActionPosition(range.start) && isIdeActionPosition(range.end) && (range.end.line > range.start.line || (range.end.line === range.start.line && range.end.character >= range.start.character));
         const isContextFile = (file) => file === undefined || (isPlainObject(file) && hasOnlyKeys(file, ["displayPath", "workspaceRelativePath", "languageId"]) && Object.keys(file).length > 0 && safePath(file.displayPath, 256) && safePath(file.workspaceRelativePath, 512) && (file.languageId === undefined || (typeof file.languageId === "string" && file.languageId.length > 0 && file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(file.languageId))));
@@ -701,6 +723,8 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isActiveFileExcerptAttachment = (attachment) => isPlainObject(attachment) && hasOnlyKeys(attachment, ["kind", "source", "file", "range", "text", "truncated"]) && attachment.kind === "active_file_excerpt" && attachment.source === "jetbrains" && isPlainObject(attachment.file) && hasOnlyKeys(attachment.file, ["displayPath", "workspaceRelativePath", "languageId"]) && safePath(attachment.file.displayPath, 256) && safePath(attachment.file.workspaceRelativePath, 512) && (attachment.file.languageId === undefined || (typeof attachment.file.languageId === "string" && attachment.file.languageId.length > 0 && attachment.file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(attachment.file.languageId))) && isIdeActionRange(attachment.range) && isActiveFileExcerptText(attachment.text) && typeof attachment.truncated === "boolean";
         const isHostIdeActionResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "action", "workspaceRelativePath", "range", "context", "contextAttachment"]) && ["succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512) && (payload.range === undefined || isIdeActionRange(payload.range)) && (payload.context === undefined || isHostIdeActionResultContext(payload.context)) && (payload.contextAttachment === undefined || isActiveFileExcerptAttachment(payload.contextAttachment));
         const isHostApplyWorkspaceEditResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "appliedEditCount", "affectedFiles"]) && ["applied", "denied", "rejected", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.appliedEditCount === undefined || (Number.isInteger(payload.appliedEditCount) && payload.appliedEditCount >= 0 && payload.appliedEditCount <= 64)) && (payload.affectedFiles === undefined || (Array.isArray(payload.affectedFiles) && payload.affectedFiles.length <= 4 && payload.affectedFiles.every((path) => safeRequiredWorkspacePath(path))));
+        const isReadBudget = (budget) => isPlainObject(budget) && hasOnlyKeys(budget, ["scope", "maxBytes", "maxLines", "allowBody", "singleFileOnly", "recursive", "globAllowed", "regexAllowed", "indexingAllowed", "budgetLabel"]) && budget.scope === "single_explicit_file" && Number.isInteger(budget.maxBytes) && budget.maxBytes >= 1 && budget.maxBytes <= 8192 && Number.isInteger(budget.maxLines) && budget.maxLines >= 1 && budget.maxLines <= 240 && typeof budget.allowBody === "boolean" && budget.singleFileOnly === true && budget.recursive === false && budget.globAllowed === false && budget.regexAllowed === false && budget.indexingAllowed === false && optionalNonEmptyString(budget.budgetLabel, 100);
+        const isControlledAgentFileReadPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["kind", "version", "authority", "cloudRequired", "executionAllowed", "agentStartAllowed", "workspace", "request", "policyFlags", "result"]) && payload.kind === "controlled_agent_file_read" && payload.version === "2026-06-29" && payload.authority === "bounded_text_file_read" && payload.cloudRequired === false && payload.executionAllowed === false && payload.agentStartAllowed === false && isPlainObject(payload.workspace) && hasOnlyKeys(payload.workspace, ["controlledWorkspaceId", "runId", "workspaceMode", "host", "privatePathExposed", "workspaceLabel"]) && safeControlledFileReadId(payload.workspace.controlledWorkspaceId) && safeControlledFileReadId(payload.workspace.runId) && ["disposable", "worktree", "existing"].includes(payload.workspace.workspaceMode) && payload.workspace.host === "jetbrains" && payload.workspace.privatePathExposed === false && optionalNonEmptyString(payload.workspace.workspaceLabel, 100) && isPlainObject(payload.request) && hasOnlyKeys(payload.request, ["requestId", "source", "requestIdMintedBy", "assistantMinted", "workspaceRelativePath", "textOnly", "maxBytes", "budget", "requestedAt", "reason"]) && safeControlledFileReadId(payload.request.requestId) && ["gui", "host"].includes(payload.request.source) && ["gui", "host"].includes(payload.request.requestIdMintedBy) && payload.request.assistantMinted === false && controlledFileReadPath(payload.request.workspaceRelativePath) && payload.request.textOnly === true && Number.isInteger(payload.request.maxBytes) && payload.request.maxBytes >= 1 && payload.request.maxBytes <= 8192 && isReadBudget(payload.request.budget) && optionalNonEmptyString(payload.request.reason, 240) && isPlainObject(payload.policyFlags) && hasOnlyKeys(payload.policyFlags, ["fileReadAllowed", "fileWriteAllowed", "shellAllowed", "gitAllowed", "providerAllowed", "toolAllowed", "hiddenSearchAllowed", "indexingAllowed", "binaryReadAllowed", "symlinkAllowed", "autoStartAllowed", "autoApplyAllowed", "autoRunAllowed"]) && payload.policyFlags.fileReadAllowed === false && payload.policyFlags.fileWriteAllowed === false && payload.policyFlags.shellAllowed === false && payload.policyFlags.gitAllowed === false && payload.policyFlags.providerAllowed === false && payload.policyFlags.toolAllowed === false && payload.policyFlags.hiddenSearchAllowed === false && payload.policyFlags.indexingAllowed === false && payload.policyFlags.binaryReadAllowed === false && payload.policyFlags.symlinkAllowed === false && payload.policyFlags.autoStartAllowed === false && payload.policyFlags.autoApplyAllowed === false && payload.policyFlags.autoRunAllowed === false && isPlainObject(payload.result) && hasOnlyKeys(payload.result, ["status", "cloudRequired", "executionAllowed", "bodyIncluded", "truncated", "blockedReason", "message"]) && payload.result.status === "disabled" && payload.result.cloudRequired === false && payload.result.executionAllowed === false && payload.result.bodyIncluded === false && payload.result.truncated === false && payload.result.blockedReason === "read_disabled" && optionalNonEmptyString(payload.result.message, 240);
         const isHostRuntimeStatusPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["protocolVersion", "surface", "lifecycle", "runtimeOwner", "launchMode", "tokenState", "processState", "diagnosis", "nextAction", "cloudRequired", "authority"]) && payload.protocolVersion === "2026-06-21" && payload.surface === "jetbrains" && ["connected", "auth_mismatch", "invalid_settings", "failed", "restarting", "stopped"].includes(payload.lifecycle) && ["ide_host", "external"].includes(payload.runtimeOwner) && ["auto", "connect", "launch"].includes(payload.launchMode) && ["unknown", "not_required", "absent", "present", "mismatch", "invalid"].includes(payload.tokenState) && ["unknown", "not_owned", "running", "exited", "stopped", "failed"].includes(payload.processState) && isSafeStatusMessage(payload.diagnosis) && isSafeStatusMessage(payload.nextAction) && payload.cloudRequired === false && payload.authority === "metadata_only";
         const isHostMessage = (message) => {
           if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion) return false;
@@ -711,6 +735,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           if (message.type === "host.ideActionProgress") return isHostIdeActionProgressPayload(message.payload);
           if (message.type === "host.ideActionResult") return isHostIdeActionResultPayload(message.payload);
           if (message.type === "host.applyWorkspaceEditResult") return isHostApplyWorkspaceEditResultPayload(message.payload);
+          if (message.type === "host.controlledAgentFileReadResult") return isControlledAgentFileReadPayload(message.payload);
           if (message.type === "host.runtimeStatus") return message.requestId === undefined && isHostRuntimeStatusPayload(message.payload);
           return false;
         };
@@ -747,6 +772,14 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
             for (const replacement of edit.textReplacements) replacementTextLength += replacement.replacementText.length;
           }
           return replacementTextLength <= 32768;
+        };
+        const isGuiControlledFileReadRequest = (message) => {
+          if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.controlledAgentFileReadRequest" || !requiredRequestId(message.requestId)) return false;
+          let serialized;
+          try { serialized = JSON.stringify(message); } catch (_) { return false; }
+          if (typeof serialized !== "string" || new Blob([serialized]).size > maxControlledFileReadRequestBytes) return false;
+          const payload = message.payload;
+          return isPlainObject(payload) && hasOnlyKeys(payload, ["requestIdMintedBy", "source", "assistantMinted", "controlledWorkspaceId", "runId", "runtimeSessionId", "sessionId", "workspaceRelativePath", "maxBytes", "maxLines", "allowBody", "singleFileOnly", "recursive", "globAllowed", "regexAllowed", "indexingAllowed"]) && ["gui", "host"].includes(payload.requestIdMintedBy) && ["gui", "host"].includes(payload.source) && payload.assistantMinted === false && safeControlledFileReadId(payload.controlledWorkspaceId) && safeControlledFileReadId(payload.runId) && (payload.runtimeSessionId === undefined || safeControlledFileReadId(payload.runtimeSessionId)) && (payload.sessionId === undefined || safeControlledFileReadId(payload.sessionId)) && controlledFileReadPath(payload.workspaceRelativePath) && Number.isInteger(payload.maxBytes) && payload.maxBytes >= 1 && payload.maxBytes <= 8192 && Number.isInteger(payload.maxLines) && payload.maxLines >= 1 && payload.maxLines <= 240 && typeof payload.allowBody === "boolean" && payload.singleFileOnly === true && payload.recursive === false && payload.globAllowed === false && payload.regexAllowed === false && payload.indexingAllowed === false;
         };
         const isGuiRuntimeRefresh = (message) => {
           if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.runtimeRefresh" || !requiredRequestId(message.requestId)) return false;
@@ -801,7 +834,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isGuiUnloadedMessage = (message) => isPlainObject(message) && hasOnlyKeys(message, ["version", "type", "payload"]) && message.version === bridgeVersion && message.type === "gui.unloaded" && isPlainObject(message.payload) && Object.keys(message.payload).length === 0;
         const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
         const canDeliverHostMessage = (message) => {
-          if (message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
+          if (message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult" || message.type === "host.controlledAgentFileReadResult") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
           if (message.type === "host.openedFromCommand") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId() && message.requestId === undefined;
           if (message.type === "host.runtimeStatus") return frameReady && message.requestId === undefined;
           if (!messageMatchesCurrentReady(message)) return false;
@@ -851,6 +884,12 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
             } else if (isGuiApplyWorkspaceEditRequest(event.data)) {
               if (!frameReady || !hostReadyAcceptedForCurrentFrame || acceptedHostReadyRequestId !== currentReadyRequestId()) {
                 console.log("Yet AI rejected apply workspace edit request before GUI bridge readiness");
+                return;
+              }
+              window.postIntellijMessage(event.data);
+            } else if (isGuiControlledFileReadRequest(event.data)) {
+              if (!frameReady || !hostReadyAcceptedForCurrentFrame || acceptedHostReadyRequestId !== currentReadyRequestId()) {
+                console.log("Yet AI rejected controlled file read request before GUI bridge readiness");
                 return;
               }
               window.postIntellijMessage(event.data);
