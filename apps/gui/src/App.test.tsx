@@ -10,6 +10,7 @@ import fileReadSuccess from "../../../packages/contracts/examples/engine/control
 import fileReadBlocked from "../../../packages/contracts/examples/engine/controlled-agent-file-read-blocked.json";
 import commandRunSucceeded from "../../../packages/contracts/examples/engine/controlled-agent-command-runner-succeeded.json";
 import commandRunBlocked from "../../../packages/contracts/examples/engine/controlled-agent-command-runner-blocked.json";
+import runtimeSessionReady from "../../../packages/contracts/examples/engine/controlled-agent-runtime-session-ready-vscode-worktree.json";
 
 const bridgeVersion = "2026-05-15";
 const fetchMock = vi.fn();
@@ -470,6 +471,58 @@ describe("runtime refresh feedback", () => {
     expect(text).not.toContain("npm test");
     expect(buttonsNamed("Run command")).toHaveLength(0);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.controlledCommandRequest")).toHaveLength(0);
+  });
+
+  it("renders controlled runtime session metadata as read-only evidence without start authority", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady }) });
+    renderApp();
+    await flushAsync();
+
+    const traceDetails = findDetails("coding-session-trace-details");
+    await act(async () => {
+      traceDetails.open = true;
+      traceDetails.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Controlled runtime session metadata");
+    expect(text).toContain("S82 evidence");
+    expect(text).toContain("read only");
+    expect(text).toContain("Session record stores sanitized metadata only");
+    expect(text).toContain("Runtime session execution allowed: false");
+    expect(text).toContain("Runtime session agent start allowed: false");
+    expect(text).toContain("controlledAgent.runtimeSessionReady");
+    expect(text).toContain("Controlled runtime session metadata");
+    expect(buttonsNamed("Start Agent")).toHaveLength(0);
+    expect(buttonsNamed("Run Agent")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.controlledRuntimeSessionRequest" || message.type === "gui.controlledRunRequest")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("controlled_agent_runtime_session");
+  });
+
+  it("blocks unsafe controlled runtime session metadata without leaking raw values", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const rawSecret = "access_token=" + "r".repeat(64);
+    const unsafeRuntimeSession = structuredClone(runtimeSessionReady) as Record<string, any>;
+    unsafeRuntimeSession.rawCommand = `npm test /Users/alice/private ${rawSecret}`;
+    unsafeRuntimeSession.details.summary = `raw command ${rawSecret}`;
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: unsafeRuntimeSession }) });
+    renderApp();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Controlled runtime session metadata");
+    expect(text).toContain("blocked");
+    expect(text).toContain("unsafe_metadata");
+    expect(text).not.toContain("npm test");
+    expect(text).not.toContain("/Users/alice");
+    expect(text).not.toContain("access_token");
+    expect(text).not.toContain("r".repeat(64));
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.controlledRuntimeSessionRequest")).toHaveLength(0);
   });
 
   it("renders controlled run skeleton and stops with GUI-local state only", async () => {

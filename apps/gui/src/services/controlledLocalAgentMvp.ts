@@ -3,6 +3,7 @@ import { evaluateControlledAgentEditExecutor } from "./controlledAgentEditExecut
 import { evaluateControlledAgentFileRead } from "./controlledAgentFileRead";
 import { buildControlledAgentProgressReport, type ControlledAgentProgressStatus } from "./controlledAgentProgressReport";
 import { evaluateControlledAgentRepairLoop } from "./controlledAgentRepairLoop";
+import { evaluateControlledAgentRuntimeSession, type ControlledAgentRuntimeSessionEvaluation } from "./controlledAgentRuntimeSession";
 import { evaluateControlledAgentWorkspaceReadiness } from "./controlledAgentWorkspaceReadiness";
 import { sanitizeDisplayText, sanitizeTimelineText } from "./redaction";
 
@@ -31,9 +32,21 @@ export type ControlledLocalAgentMvpSafetyFlags = {
 };
 
 export type ControlledLocalAgentMvpChecklistStep = {
-  id: "explicit_opt_in" | "workspace_readiness" | "bounded_read" | "edit_metadata" | "verification" | "repair" | "final_report";
+  id: "explicit_opt_in" | "workspace_readiness" | "runtime_session" | "bounded_read" | "edit_metadata" | "verification" | "repair" | "final_report";
   state: ControlledLocalAgentMvpChecklistState;
   label: string;
+  diagnostics: string[];
+};
+
+export type ControlledLocalAgentMvpRuntimeSessionSummary = {
+  present: boolean;
+  status: ControlledAgentRuntimeSessionEvaluation["status"];
+  label: string;
+  nextUserAction: ControlledAgentRuntimeSessionEvaluation["nextUserAction"];
+  metadataOnly: boolean;
+  displayOnly: true;
+  executionAllowed: false;
+  agentStartAllowed: false;
   diagnostics: string[];
 };
 
@@ -43,6 +56,7 @@ export type ControlledLocalAgentMvpReport = {
   checklist: ControlledLocalAgentMvpChecklistStep[];
   safetyFlags: ControlledLocalAgentMvpSafetyFlags;
   diagnostics: string[];
+  runtimeSession: ControlledLocalAgentMvpRuntimeSessionSummary;
   finalReport?: {
     status: "completed" | "stopped" | "failed";
     label: string;
@@ -72,16 +86,19 @@ const safetyFlags: ControlledLocalAgentMvpSafetyFlags = {
 };
 
 export function buildControlledLocalAgentMvp(input: unknown): ControlledLocalAgentMvpReport {
+  const runtimeSessionInput = isRecord(input) ? input.runtimeSession ?? input.controlledAgentRuntimeSession : undefined;
+  const runtimeSession = summarizeRuntimeSession(runtimeSessionInput);
   if (!isRecord(input)) {
     return buildMvpReport("disabled", "Controlled local agent MVP metadata is disabled.", [
       step("explicit_opt_in", "disabled", "Explicit user opt-in is required.", ["missing_input"]),
       step("workspace_readiness", "disabled", "Workspace readiness metadata is unavailable.", []),
+      runtimeSessionStep(runtimeSession),
       step("bounded_read", "disabled", "Bounded read metadata is unavailable.", []),
       step("edit_metadata", "disabled", "Edit metadata is unavailable.", []),
       step("verification", "disabled", "Verification metadata is unavailable.", []),
       step("repair", "disabled", "Repair metadata is unavailable.", []),
       step("final_report", "disabled", "Final report metadata is unavailable.", []),
-    ], ["missing_input"]);
+    ], ["missing_input"], runtimeSession);
   }
 
   const optIn = explicitUserOptIn(input.userOptIn ?? input.optIn);
@@ -89,12 +106,13 @@ export function buildControlledLocalAgentMvp(input: unknown): ControlledLocalAge
     return buildMvpReport("disabled", "Controlled local agent MVP requires explicit user opt-in.", [
       step("explicit_opt_in", "disabled", "Explicit user opt-in is required.", ["missing_user_opt_in"]),
       step("workspace_readiness", "pending", "Workspace readiness waits for opt-in.", []),
+      runtimeSessionStep(runtimeSession),
       step("bounded_read", "pending", "Bounded read waits for opt-in.", []),
       step("edit_metadata", "pending", "Edit metadata waits for opt-in.", []),
       step("verification", "pending", "Verification waits for opt-in.", []),
       step("repair", "pending", "Repair waits for opt-in.", []),
       step("final_report", "pending", "Final report waits for opt-in.", []),
-    ], ["missing_user_opt_in"]);
+    ], ["missing_user_opt_in"], runtimeSession);
   }
 
   const readiness = evaluateControlledAgentWorkspaceReadiness(input.readiness ?? input.workspaceReadiness);
@@ -103,12 +121,13 @@ export function buildControlledLocalAgentMvp(input: unknown): ControlledLocalAge
     return buildMvpReport("blocked", "Controlled local agent MVP is blocked by workspace readiness metadata.", [
       step("explicit_opt_in", "ready", "Explicit user opt-in metadata is present.", []),
       step("workspace_readiness", "blocked", readiness.summary, readinessDiagnostics),
+      runtimeSessionStep(runtimeSession),
       step("bounded_read", "pending", "Bounded read waits for ready workspace metadata.", []),
       step("edit_metadata", "pending", "Edit metadata waits for ready workspace metadata.", []),
       step("verification", "pending", "Verification waits for ready workspace metadata.", []),
       step("repair", "pending", "Repair waits for ready workspace metadata.", []),
       step("final_report", "pending", "Final report waits for ready workspace metadata.", []),
-    ], ["workspace_not_ready", ...readinessDiagnostics]);
+    ], ["workspace_not_ready", ...readinessDiagnostics], runtimeSession);
   }
 
   const boundedRead = evaluateControlledAgentFileRead(input.boundedRead ?? input.fileRead);
@@ -121,14 +140,15 @@ export function buildControlledLocalAgentMvp(input: unknown): ControlledLocalAge
   const checklist = [
     step("explicit_opt_in", "ready", "Explicit user opt-in metadata is present.", []),
     step("workspace_readiness", "ready", readiness.summary, readinessDiagnostics),
+    runtimeSessionStep(runtimeSession),
     step("bounded_read", fileReadStepState(boundedRead.state), boundedRead.summary, boundedRead.diagnostics.map((item) => item.code)),
     step("edit_metadata", editStepState(edit.state), edit.summary, edit.diagnostics),
     step("verification", verificationStepState(verification.state), verification.summary, verification.diagnostics.map((item) => item.code)),
     step("repair", repair ? repairStepState(repair.state, repair.mustStop) : "pending", repair ? `Repair metadata ${repair.state}.` : "Repair metadata is unavailable.", repair?.diagnostics ?? []),
     step("final_report", finalReportStepState(status), progress.finalReport?.summary ?? progress.currentStepLabel, progress.diagnostics),
   ];
-  const diagnostics = uniqueDiagnostics([...readinessDiagnostics, ...progress.diagnostics]);
-  const report = buildMvpReport(status, labelForStatus(status, progress.phaseLabel), checklist, diagnostics);
+  const diagnostics = uniqueDiagnostics([...readinessDiagnostics, ...runtimeSession.diagnostics, ...progress.diagnostics]);
+  const report = buildMvpReport(status, labelForStatus(status, progress.phaseLabel), checklist, diagnostics, runtimeSession);
 
   if (status === "completed" || status === "stopped" || status === "failed") {
     report.finalReport = {
@@ -184,14 +204,38 @@ function finalReportStepState(status: ControlledLocalAgentMvpStatus): Controlled
   return "pending";
 }
 
-function buildMvpReport(status: ControlledLocalAgentMvpStatus, label: string, checklist: ControlledLocalAgentMvpChecklistStep[], diagnostics: string[]): ControlledLocalAgentMvpReport {
+function buildMvpReport(status: ControlledLocalAgentMvpStatus, label: string, checklist: ControlledLocalAgentMvpChecklistStep[], diagnostics: string[], runtimeSession: ControlledLocalAgentMvpRuntimeSessionSummary): ControlledLocalAgentMvpReport {
   return {
     status,
     label: safeText(label, "Controlled local agent MVP metadata is visible."),
     checklist,
     safetyFlags,
     diagnostics: uniqueDiagnostics(diagnostics),
+    runtimeSession,
   };
+}
+
+function summarizeRuntimeSession(input: unknown): ControlledLocalAgentMvpRuntimeSessionSummary {
+  const evaluation = evaluateControlledAgentRuntimeSession(input);
+  return {
+    present: input !== undefined,
+    status: evaluation.status,
+    label: safeText(evaluation.label, "Controlled runtime session metadata is visible."),
+    nextUserAction: evaluation.nextUserAction,
+    metadataOnly: evaluation.session.metadataOnly,
+    displayOnly: true,
+    executionAllowed: false,
+    agentStartAllowed: false,
+    diagnostics: uniqueDiagnostics(evaluation.diagnostics.map((item) => item.code)),
+  };
+}
+
+function runtimeSessionStep(runtimeSession: ControlledLocalAgentMvpRuntimeSessionSummary): ControlledLocalAgentMvpChecklistStep {
+  if (!runtimeSession.present) {
+    return step("runtime_session", "pending", "Runtime session metadata is unavailable.", runtimeSession.diagnostics);
+  }
+  const state: ControlledLocalAgentMvpChecklistState = runtimeSession.status === "blocked" ? "blocked" : runtimeSession.status === "disabled" ? "disabled" : runtimeSession.status === "stopped" ? "stopped" : runtimeSession.status === "session_open_metadata" || runtimeSession.status === "start_requested_metadata" || runtimeSession.status === "stop_requested_metadata" ? "running" : runtimeSession.status === "ready_to_start" ? "ready" : "pending";
+  return step("runtime_session", state, runtimeSession.label, runtimeSession.diagnostics);
 }
 
 function step(id: ControlledLocalAgentMvpChecklistStep["id"], state: ControlledLocalAgentMvpChecklistState, label: string, diagnostics: string[]): ControlledLocalAgentMvpChecklistStep {

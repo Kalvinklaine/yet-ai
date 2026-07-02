@@ -45,6 +45,7 @@ import { evaluateControlledAgentFileRead } from "./services/controlledAgentFileR
 import { evaluateControlledAgentCommandRun } from "./services/controlledAgentCommandRunner";
 import { buildControlledAgentProgressReport } from "./services/controlledAgentProgressReport";
 import { buildControlledLocalAgentMvp } from "./services/controlledLocalAgentMvp";
+import { evaluateControlledAgentRuntimeSession } from "./services/controlledAgentRuntimeSession";
 import { initializeControlledAgentRunState, reduceControlledAgentRunState, type ControlledAgentRunState } from "./services/controlledAgentRunState";
 import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPatchVerificationLoop";
 import type { AgentRunInput } from "./services/agentRunState";
@@ -602,14 +603,17 @@ export function App() {
   const controlledAgentFileReadTraceEntry = useMemo<CodingSessionTraceEntry | null>(() => createControlledAgentFileReadTraceEntry(controlledAgentFileReadMetadata), [controlledAgentFileReadMetadata]);
   const controlledAgentCommandRunnerMetadata = activeCaps?.controlledAgentCommandRunner;
   const controlledAgentCommandRunTraceEntry = useMemo<CodingSessionTraceEntry | null>(() => createControlledAgentCommandRunTraceEntry(controlledAgentCommandRunnerMetadata), [controlledAgentCommandRunnerMetadata]);
+  const controlledAgentRuntimeSessionMetadata = activeCaps?.controlledAgentRuntimeSession;
+  const controlledAgentRuntimeSessionTraceEntry = useMemo<CodingSessionTraceEntry | null>(() => createControlledAgentRuntimeSessionTraceEntry(controlledAgentRuntimeSessionMetadata), [controlledAgentRuntimeSessionMetadata]);
   const codingSessionTraceWithCheckpointDecision = useMemo(() => {
     const entries = [
       ...codingSessionTrace,
       ...(controlledAgentFileReadTraceEntry ? [controlledAgentFileReadTraceEntry] : []),
       ...(controlledAgentCommandRunTraceEntry ? [controlledAgentCommandRunTraceEntry] : []),
+      ...(controlledAgentRuntimeSessionTraceEntry ? [controlledAgentRuntimeSessionTraceEntry] : []),
     ];
     return agentRunCheckpointDecisionTraceEntry ? [...entries, agentRunCheckpointDecisionTraceEntry] : entries;
-  }, [agentRunCheckpointDecisionTraceEntry, codingSessionTrace, controlledAgentCommandRunTraceEntry, controlledAgentFileReadTraceEntry]);
+  }, [agentRunCheckpointDecisionTraceEntry, codingSessionTrace, controlledAgentCommandRunTraceEntry, controlledAgentFileReadTraceEntry, controlledAgentRuntimeSessionTraceEntry]);
   const codingTaskPromptDraft = useMemo(() => buildCodingTaskPrompt({ mode: "ask", goal: codingTaskGoal, contextItems: explicitContextBundleItems, providerReadiness: chatReadinessLabel }), [chatReadinessLabel, codingTaskGoal, explicitContextBundleItems]);
   const proposalHistory = useMemo(() => createProposalHistory(buildProposalHistoryEntries({
     modelProposalResult: agentRunModelProposal,
@@ -685,7 +689,7 @@ export function App() {
   const showWhatWillBeSentPanel = chatInput.trim().length > 0 || contextBudgetSummary.sources.some((source) => source.itemCount > 0 || source.charCount > 0) || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
   const [controlledAgentRunState, setControlledAgentRunState] = useState<ControlledAgentRunState>(() => initializeControlledAgentRunState(undefined));
   const controlledAgentEditExecutorMetadata = activeCaps?.controlledAgentEditExecutor;
-  const showControlledAgentRunPanel = controlledWorkspaceReadinessMetadata !== undefined || controlledAgentFileReadMetadata !== undefined || controlledAgentCommandRunnerMetadata !== undefined || controlledAgentEditExecutorMetadata !== undefined;
+  const showControlledAgentRunPanel = controlledWorkspaceReadinessMetadata !== undefined || controlledAgentFileReadMetadata !== undefined || controlledAgentCommandRunnerMetadata !== undefined || controlledAgentEditExecutorMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined;
   const controlledAgentProgressReport = useMemo(() => buildControlledAgentProgressReport({
     runState: controlledAgentRunState,
     controlledAgentFileRead: controlledAgentFileReadMetadata,
@@ -698,15 +702,16 @@ export function App() {
     boundedRead: controlledAgentFileReadMetadata,
     editMetadata: controlledAgentEditExecutorMetadata,
     verification: controlledAgentCommandRunnerMetadata,
+    runtimeSession: controlledAgentRuntimeSessionMetadata,
     progress: controlledAgentProgressReport,
-  }), [controlledAgentCommandRunnerMetadata, controlledAgentEditExecutorMetadata, controlledAgentFileReadMetadata, controlledAgentProgressReport, controlledWorkspaceReadinessMetadata]);
+  }), [controlledAgentCommandRunnerMetadata, controlledAgentEditExecutorMetadata, controlledAgentFileReadMetadata, controlledAgentProgressReport, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata]);
 
   useEffect(() => {
     setControlledAgentRunState(buildControlledAgentRunPreviewState(controlledWorkspaceReadinessMetadata, controlledAgentFileReadMetadata, controlledAgentCommandRunnerMetadata));
   }, [controlledAgentCommandRunnerMetadata, controlledAgentFileReadMetadata, controlledWorkspaceReadinessMetadata]);
 
   const stopControlledAgentRun = useCallback(() => {
-    setControlledAgentRunState((current) => reduceControlledAgentRunState(current, { type: "stop", summary: "Controlled run stopped from the S76 skeleton UI." }));
+    setControlledAgentRunState((current) => reduceControlledAgentRunState(current, { type: "stop", reason: "user_stop", summary: "Controlled run stopped from the S76 skeleton UI." }));
   }, []);
   const workspaceSnippetQueryValidation = useMemo(() => validateWorkspaceSnippetQuery(workspaceSnippetQuery), [workspaceSnippetQuery]);
 
@@ -3138,6 +3143,44 @@ function createControlledAgentCommandRunTraceEntry(metadata: unknown): CodingSes
   };
 }
 
+function createControlledAgentRuntimeSessionTraceEntry(metadata: unknown): CodingSessionTraceEntry | null {
+  if (metadata === undefined) {
+    return null;
+  }
+  const session = evaluateControlledAgentRuntimeSession(metadata);
+  const family: CodingSessionTraceEntry["family"] = session.status === "ready_to_start" || session.status === "session_open_metadata" || session.status === "stopped" ? "controlledAgent.runtimeSessionReady" : session.status === "start_requested_metadata" ? "controlledAgent.runtimeSessionStartRequested" : session.status === "stop_requested_metadata" ? "controlledAgent.runtimeSessionStopRequested" : "controlledAgent.runtimeSessionBlocked";
+  const status: CodingSessionTraceEntry["status"] = session.status === "blocked" || session.status === "unsupported_host" || session.status === "preconditions_blocked" || session.status === "opt_in_required" ? "failed" : session.status === "start_requested_metadata" || session.status === "stop_requested_metadata" ? "pending" : "info";
+  return {
+    id: `controlled-runtime-session-${session.status}`,
+    timestamp: "1970-01-01T00:00:00.000Z",
+    family,
+    title: session.status === "blocked" ? "Controlled runtime session metadata blocked" : session.status === "start_requested_metadata" ? "Controlled runtime session start metadata visible" : session.status === "stop_requested_metadata" ? "Controlled runtime session stop metadata visible" : "Controlled runtime session evidence visible",
+    status,
+    summary: `Controlled runtime session metadata evidence: ${session.label}`,
+    details: {
+      displayOnly: true,
+      metadataOnly: session.session.metadataOnly,
+      status: session.status,
+      nextUserAction: session.nextUserAction,
+      host: session.hostSupport.host,
+      hostSupported: session.hostSupport.supported,
+      workspaceReady: session.preconditions.workspaceReady,
+      sessionState: session.session.state,
+      sequence: session.session.sequence,
+      terminal: session.session.terminal,
+      executionAllowed: session.safetyFlags.executionAllowed,
+      agentStartAllowed: session.safetyFlags.agentStartAllowed,
+      autoStartAllowed: session.safetyFlags.autoStartAllowed,
+      canReadFiles: session.safetyFlags.canReadFiles,
+      canWriteFiles: session.safetyFlags.canWriteFiles,
+      canRunCommands: session.safetyFlags.canRunCommands,
+      canApplyEdits: session.safetyFlags.canApplyEdits,
+      canCallProvider: session.safetyFlags.canCallProvider,
+      diagnosticCodes: session.diagnostics.map((item) => item.code),
+    },
+  };
+}
+
 function buildProposalHistoryEntries({ modelProposalResult, editProposal, rejectedEditProposal, applyResult, verificationAttempt, planProposal }: { modelProposalResult: AgentRunModelProposalResult; editProposal: EditProposalState | null; rejectedEditProposal: { sourceMessageId: string; diagnostic: EditProposalRejectedDiagnostic } | null; applyResult: ApplyResultState | null; verificationAttempt: IdeActionAttemptState | null; planProposal: ManualRunnerPlanProposal | null }): ProposalHistoryEntryInput[] {
   const entries: ProposalHistoryEntryInput[] = [];
   const modelProposal = modelProposalResult.agentRunInput.proposal;
@@ -3796,6 +3839,15 @@ function CodingTaskSessionPanel({ session, goal, contextItems, modelStatus, canS
         </div>
         <span className="subtle">Sanitized trace/session labels only. No raw command string, cwd, env, shell, bridge request, runtime execution, provider call, file access, or browser storage is created here.</span>
         <ul className="first-message-steps">{session.controlledCommandRun.labels.map((label) => <li key={label}>{sanitizeDisplayText(label)}</li>)}</ul>
+      </section>}
+      {session.controlledRuntimeSession.present && <section className="readiness-card ready stack" aria-label="Controlled runtime session metadata">
+        <div className="row">
+          <strong>Controlled runtime session metadata</strong>
+          <span className="badge">runtime evidence</span>
+          <span className="badge">latest {sanitizeDisplayText(session.controlledRuntimeSession.latestStatus)}</span>
+        </div>
+        <span className="subtle">Sanitized trace/session labels only. No Start Agent button, bridge request, runtime call, provider call, file access, shell command, git action, tool execution, or browser storage is created here.</span>
+        <ul className="first-message-steps">{session.controlledRuntimeSession.labels.map((label) => <li key={label}>{sanitizeDisplayText(label)}</li>)}</ul>
       </section>}
       <div className="stack">
         <strong>Task templates</strong>

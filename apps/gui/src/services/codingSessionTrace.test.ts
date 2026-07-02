@@ -482,6 +482,35 @@ describe("codingSessionTrace", () => {
     expect(rendered).not.toContain("sk-secret");
   });
 
+  it("accepts controlled runtime session trace families and redacts executable details", () => {
+    const entry = createCodingSessionTraceEntry({
+      family: "controlledAgent.runtimeSessionReady",
+      title: "Controlled runtime session evidence visible",
+      status: "info",
+      summary: "Runtime session metadata is visible only as read-only evidence.",
+      requestId: "controlled-runtime-session-1",
+      details: {
+        displayOnly: true,
+        metadataOnly: true,
+        executionAllowed: false,
+        agentStartAllowed: false,
+        command: "npm test -- --watch",
+        privatePath: "/Users/alice/private",
+      },
+    }, fixedOptions());
+    const rendered = JSON.stringify(entry);
+
+    expect(entry.family).toBe("controlledAgent.runtimeSessionReady");
+    expect(normalizeTraceFamily("controlledAgent.runtimeSessionStartRequested")).toBe("controlledAgent.runtimeSessionStartRequested");
+    expect(normalizeTraceFamily("controlledAgent.runtimeSessionStopRequested")).toBe("controlledAgent.runtimeSessionStopRequested");
+    expect(normalizeTraceFamily("controlledAgent.runtimeSessionBlocked")).toBe("controlledAgent.runtimeSessionBlocked");
+    expect(entry.details?.displayOnly).toBe(true);
+    expect(entry.details?.executionAllowed).toBe(false);
+    expect(rendered).toContain("[redacted]");
+    expect(rendered).not.toContain("npm test");
+    expect(rendered).not.toContain("/Users/alice");
+  });
+
   it("uses bounded generated identifiers without persisting state", () => {
     vi.spyOn(Math, "random").mockReturnValue(0.5);
     const entry = createCodingSessionTraceEntry({

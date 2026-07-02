@@ -77,6 +77,11 @@ export type CodingTaskSessionSnapshot = {
     latestStatus: string;
     labels: string[];
   };
+  controlledRuntimeSession: {
+    present: boolean;
+    latestStatus: string;
+    labels: string[];
+  };
   proposalHistory: ProposalHistoryComparisonSummary;
   nextSafeManualStep: string;
   diagnostics: string[];
@@ -121,6 +126,7 @@ export function createCodingTaskSessionSnapshot(input: CodingTaskSessionInput = 
     trace: summarizeTrace(traceEntries),
     controlledFileRead: summarizeControlledFileRead(traceEntries),
     controlledCommandRun: summarizeControlledCommandRun(traceEntries),
+    controlledRuntimeSession: summarizeControlledRuntimeSession(traceEntries),
     proposalHistory: createProposalHistoryComparisonSummary(input.proposalHistory),
     nextSafeManualStep: nextSafeManualStep(run),
     diagnostics: uniqueStrings(diagnostics).slice(0, maxDiagnostics),
@@ -246,6 +252,16 @@ function summarizeControlledCommandRun(entries: readonly CodingSessionTraceEntry
     present: commandEntries.length > 0,
     latestStatus: safeLabel(latest?.status ?? "not_recorded", labelLimit),
     labels: commandEntries.slice(-maxLabels).map((entry) => safeLabel(`${entry.family} · ${entry.status} · ${entry.title}`, labelLimit)).filter(Boolean),
+  };
+}
+
+function summarizeControlledRuntimeSession(entries: readonly CodingSessionTraceEntry[]): CodingTaskSessionSnapshot["controlledRuntimeSession"] {
+  const sessionEntries = entries.filter((entry) => entry.family === "controlledAgent.runtimeSessionReady" || entry.family === "controlledAgent.runtimeSessionStartRequested" || entry.family === "controlledAgent.runtimeSessionStopRequested" || entry.family === "controlledAgent.runtimeSessionBlocked");
+  const latest = sessionEntries[sessionEntries.length - 1];
+  return {
+    present: sessionEntries.length > 0,
+    latestStatus: safeLabel(latest?.status ?? "not_recorded", labelLimit),
+    labels: sessionEntries.slice(-maxLabels).map((entry) => safeLabel(`${entry.family} · ${entry.status} · ${entry.title}`, labelLimit)).filter(Boolean),
   };
 }
 

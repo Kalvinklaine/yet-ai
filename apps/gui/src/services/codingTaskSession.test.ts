@@ -510,6 +510,36 @@ describe("createCodingTaskSessionSnapshot", () => {
     expect(rendered).not.toContain("SECRET_SENTINEL");
   });
 
+  it("summarizes controlled runtime session trace metadata without raw execution fields", () => {
+    const snapshot = createCodingTaskSessionSnapshot({
+      traceEntries: [
+        {
+          id: "trace-runtime-session-ready",
+          timestamp: "2026-07-02T00:00:00.000Z",
+          family: "controlledAgent.runtimeSessionReady",
+          title: "Controlled runtime session evidence visible",
+          status: "info",
+          summary: "Controlled runtime session metadata evidence only",
+          details: {
+            displayOnly: true,
+            executionAllowed: false,
+            agentStartAllowed: false,
+            command: "npm test -- --watch",
+            privatePath: "/Users/alice/private",
+          },
+        },
+      ],
+    });
+    const rendered = JSON.stringify(snapshot);
+
+    expect(snapshot.controlledRuntimeSession.present).toBe(true);
+    expect(snapshot.controlledRuntimeSession.latestStatus).toBe("info");
+    expect(snapshot.controlledRuntimeSession.labels).toEqual(["controlledAgent.runtimeSessionReady · info · Controlled runtime session evidence visible"]);
+    expect(snapshot.policy.canAutoSend).toBe(false);
+    expect(rendered).not.toContain("npm test");
+    expect(rendered).not.toContain("/Users/alice");
+  });
+
   it("does not mutate input objects", () => {
     const input = {
       goal: { title: "Do not mutate" },

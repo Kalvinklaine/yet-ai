@@ -24,6 +24,7 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, onSt
   const diagnostics = state.diagnostics.slice(0, 6);
   const progressDiagnostics = progressReport?.diagnostics.slice(0, 6) ?? [];
   const mvpDiagnostics = mvpReport?.diagnostics.slice(0, 6) ?? [];
+  const runtimeSessionDiagnostics = mvpReport?.runtimeSession.diagnostics.slice(0, 6) ?? [];
   const stopDisabled = state.stopped || state.phase === "idle" || state.phase === "opt_in_required" || state.phase === "blocked" || state.phase === "failed" || state.phase === "completed";
 
   return (
@@ -71,6 +72,24 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, onSt
         </div>
         <span>{sanitizeDisplayText(mvpReport.label)}</span>
         <span className="subtle">MVP metadata is aggregated from existing sanitized readiness, bounded read, edit, verification, progress, and final-report labels only. This panel still cannot start agents, post bridge/runtime commands, read hidden files, apply edits, run verification, call providers, use shell, or use git.</span>
+        <section className={`readiness-card ${mvpReport.runtimeSession.present && mvpReport.runtimeSession.status !== "blocked" ? "ready" : "warn"} stack`} aria-label="Controlled runtime session metadata">
+          <div className="row">
+            <strong>Controlled runtime session metadata</strong>
+            <span className="badge">S82 evidence</span>
+            <span className="badge">read only</span>
+            <span className={mvpReport.runtimeSession.present ? "badge ok" : "badge warn"}>{mvpReport.runtimeSession.present ? sanitizeDisplayText(mvpReport.runtimeSession.status.replace(/_/g, " ")) : "pending"}</span>
+          </div>
+          <span>{sanitizeDisplayText(mvpReport.runtimeSession.label)}</span>
+          <span className="subtle">Runtime session evidence is sanitized metadata only. No Start Agent button, runtime call, bridge message, browser storage, provider call, filesystem access, shell command, git action, or tool execution is created here.</span>
+          <div className="agent-progress-grid" aria-label="Controlled runtime session authority flags">
+            <span>Runtime session display only: {String(mvpReport.runtimeSession.displayOnly)}</span>
+            <span>Runtime session metadata only: {String(mvpReport.runtimeSession.metadataOnly)}</span>
+            <span>Runtime session execution allowed: {String(mvpReport.runtimeSession.executionAllowed)}</span>
+            <span>Runtime session agent start allowed: {String(mvpReport.runtimeSession.agentStartAllowed)}</span>
+            <span>Runtime session next user action: {sanitizeDisplayText(mvpReport.runtimeSession.nextUserAction.replace(/_/g, " "))}</span>
+          </div>
+          {runtimeSessionDiagnostics.length > 0 && <span className="subtle">Runtime session diagnostics: {runtimeSessionDiagnostics.map((diagnostic) => sanitizeDisplayText(diagnostic)).join(", ")}</span>}
+        </section>
         <ol className="manual-runner-steps" aria-label="Controlled local agent MVP checklist">
           {mvpReport.checklist.map((item) => (
             <li className={`manual-runner-step ${item.state === "completed" || item.state === "ready" ? "done" : item.state === "running" ? "current" : "waiting"}`} key={item.id}>
