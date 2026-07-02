@@ -43,6 +43,7 @@ export type ControlledAgentProgressFinalReport = {
   status: ControlledAgentProgressStatus;
   title: string;
   summary: string;
+  reason?: string;
   counters: ControlledAgentProgressCounters;
   limits: ControlledAgentProgressLimits;
   diagnostics: string[];
@@ -65,6 +66,7 @@ type ReportParts = {
   currentStepLabel?: string;
   counters?: Partial<ControlledAgentProgressCounters>;
   limits?: Partial<ControlledAgentProgressLimits>;
+  reason?: string;
   diagnostics: string[];
 };
 
@@ -108,6 +110,29 @@ const safetyFlags: ControlledAgentProgressSafetyFlags = {
 };
 
 const terminalStatuses = new Set<ControlledAgentProgressStatus>(["completed", "stopped", "failed", "blocked"]);
+const allowedStopReasons = new Set([
+  "user_stop",
+  "user_kill",
+  "stop_requested",
+  "kill_requested",
+  "partial_execution_stopped",
+  "timeout",
+  "stuck_no_heartbeat",
+  "read_budget_exhausted",
+  "step_limit",
+  "file_limit",
+  "patch_limit",
+  "runtime_limit",
+  "repair_limit",
+  "edit_hash_mismatch",
+  "verification_failed",
+  "verification_timeout",
+  "verification_killed",
+  "malformed_provider_response",
+  "policy_blocked",
+  "unsafe_metadata",
+  "internal_error",
+]);
 const unsafeKeyPattern = /^(?:prompt|rawPrompt|raw_prompt|file|rawFile|raw_file|fileBody|file_body|fileContents|file_contents|diff|rawDiff|raw_diff|patch|body|rawBody|raw_body|replacement|command|cmd|args|arguments|cwd|env|environment|shell|provider|providerPayload|provider_payload|providerResponse|provider_response|tool|toolCall|tool_call|output|rawOutput|raw_output|log|rawLog|raw_log|secret|password|token|apiKey|api_key)$/i;
 const unsafeTextPattern = /authorization|bearer|api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|cookie|raw[_ -]?(?:file|prompt|command|output|log|diff)|file[_ -]?(?:body|content)|provider(?:[-_ ]?(?:payload|response))?|shell|\bcommand\b|\bcwd\b|\benv\b|\bgit\b|\btool\b|network|sk-(?:proj-)?[A-Za-z0-9_-]{8,}|BEGIN [A-Z ]*PRIVATE KEY|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private)(?=\/|$)|[A-Za-z]:(?:\\|\/)|~(?:\\|\/)/i;
 
@@ -144,6 +169,7 @@ function collectReportParts(input: Record<string, unknown>, diagnostics: string[
   const runPhase = safeText(readString(runState, "phase") ?? readString(input, "phase"), "blocked", 80);
   const runSummary = safeText(readString(runState, "summary") ?? readString(input, "summary"), "Controlled agent progress metadata is visible.", 180);
   const status = statusFromMetadata(runPhase, runState, editExecutor, commandRunner, repairLoop);
+  const reason = stopReasonFromMetadata(runState, input, commandRunner, editExecutor);
 
   mergeEditMetadata(counters, editExecutor);
   mergeCommandMetadata(counters, commandRunner);
@@ -157,9 +183,10 @@ function collectReportParts(input: Record<string, unknown>, diagnostics: string[
   return {
     status,
     phaseLabel: labelForPhase(runPhase, status),
-    currentStepLabel: currentStepLabel(status, runSummary, editExecutor, commandRunner, repairLoop),
+    currentStepLabel: currentStepLabel(status, runSummary, reason, editExecutor, commandRunner, repairLoop),
     counters,
     limits,
+    reason,
     diagnostics,
   };
 }
@@ -183,7 +210,8 @@ function buildReport(parts: ReportParts): ControlledAgentProgressReport {
     report.finalReport = {
       status,
       title: `Controlled agent ${status}`,
-      summary: finalSummary(status),
+      summary: finalSummary(status, parts.reason),
+      reason: parts.reason,
       counters,
       limits,
       diagnostics,
@@ -201,9 +229,9 @@ function statusFromMetadata(phase: string, runState: Record<string, unknown> | u
   const repairMustStop = readBoolean(repairLoop, "mustStop");
 
   if (phase === "completed" || editState === "applied") return "completed";
-  if (phase === "stopped" || commandState === "killed" || stopped) return "stopped";
   if (phase === "failed" || commandState === "failed" || commandState === "timed_out" || editState === "failed") return "failed";
   if (phase === "blocked" || commandState === "blocked" || editState === "blocked" || repairMustStop === true) return "blocked";
+  if (phase === "stopped" || commandState === "killed" || stopped) return "stopped";
   if (phase === "waiting_for_user" || editState === "planned" || editState === "pending") return "waiting";
   if (phase === "idle" || runEnabled === false || commandState === "disabled" || editState === "disabled") return "disabled";
   return "running";
@@ -267,10 +295,11 @@ function labelForStatus(status: ControlledAgentProgressStatus): string {
   return "Disabled";
 }
 
-function currentStepLabel(status: ControlledAgentProgressStatus, summary: string, editExecutor: Record<string, unknown> | undefined, commandRunner: Record<string, unknown> | undefined, repairLoop: Record<string, unknown> | undefined): string {
+function currentStepLabel(status: ControlledAgentProgressStatus, summary: string, reason: string | undefined, editExecutor: Record<string, unknown> | undefined, commandRunner: Record<string, unknown> | undefined, repairLoop: Record<string, unknown> | undefined): string {
   const commandSummary = safeOptionalText(readString(commandRunner, "summary") ?? readString(firstRecord(commandRunner?.result), "message"));
   const editSummary = safeOptionalText(readString(editExecutor, "summary"));
   const repairState = safeOptionalText(readString(repairLoop, "state"));
+  if (reason && terminalStatuses.has(status)) return `Controlled agent ${status}: ${reason}.`;
   if (commandSummary) return commandSummary;
   if (editSummary) return editSummary;
   if (repairState) return `Repair loop ${repairState}.`;
@@ -278,11 +307,29 @@ function currentStepLabel(status: ControlledAgentProgressStatus, summary: string
   return summary;
 }
 
-function finalSummary(status: ControlledAgentProgressStatus): string {
+function finalSummary(status: ControlledAgentProgressStatus, reason: string | undefined): string {
+  if (reason) return `Controlled agent run ${status} with sanitized reason: ${reason}.`;
   if (status === "completed") return "Controlled agent run completed with sanitized metadata only.";
   if (status === "stopped") return "Controlled agent run stopped with sanitized metadata only.";
   if (status === "failed") return "Controlled agent run failed with sanitized metadata only.";
   return "Controlled agent run is blocked with sanitized metadata only.";
+}
+
+function stopReasonFromMetadata(runState: Record<string, unknown> | undefined, input: Record<string, unknown>, commandRunner: Record<string, unknown> | undefined, editExecutor: Record<string, unknown> | undefined): string | undefined {
+  const stopRecord = firstRecord(runState?.stop, input.stop);
+  const reason = readString(stopRecord, "reason") ?? readString(runState, "stopReason") ?? readString(input, "stopReason");
+  if (allowedStopReasons.has(reason ?? "")) return reasonLabel(reason as string);
+  const commandState = readString(commandRunner, "state") ?? readString(commandRunner, "status") ?? readString(firstRecord(commandRunner?.result), "status");
+  if (commandState === "timed_out") return reasonLabel("verification_timeout");
+  if (commandState === "killed") return reasonLabel("verification_killed");
+  if (commandState === "failed") return reasonLabel("verification_failed");
+  const editDiagnostics = Array.isArray(editExecutor?.diagnostics) ? editExecutor.diagnostics : [];
+  if (editDiagnostics.some((item) => item === "edit_hash_mismatch" || item === "expected_content_hash_mismatch")) return reasonLabel("edit_hash_mismatch");
+  return undefined;
+}
+
+function reasonLabel(reason: string): string {
+  return reason.replace(/_/g, " ");
 }
 
 function normalizeCounters(input: unknown): ControlledAgentProgressCounters {
@@ -316,6 +363,7 @@ function normalizeLimits(input: unknown): ControlledAgentProgressLimits {
 function scanUnsafeMetadata(value: unknown, diagnostics: string[], key = "", depth = 0, seen = new WeakSet<object>()): void {
   if (depth > 8 || diagnostics.includes("unsafe_metadata")) return;
   if (typeof value === "string") {
+    if ((key.endsWith(".reason") || key === "reason" || key.endsWith(".stopReason") || key === "stopReason") && allowedStopReasons.has(value)) return;
     if (unsafeTextPattern.test(value)) diagnostics.push("unsafe_metadata");
     return;
   }

@@ -5,7 +5,7 @@ import { evaluateControlledAgentWorkspaceReadiness } from "./controlledAgentWork
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./redaction";
 
 export type ControlledAgentRunPhase = "idle" | "opt_in_required" | "workspace_ready" | "reading_context" | "planning" | "waiting_for_user" | "running_verification" | "stopping" | "stopped" | "blocked" | "failed" | "completed";
-export type ControlledAgentRunStopReason = "user_stop" | "user_kill" | "read_budget_exhausted" | "step_limit" | "file_limit" | "patch_limit" | "runtime_limit" | "repair_limit" | "verification_failed" | "policy_blocked" | "unsafe_metadata" | "internal_error";
+export type ControlledAgentRunStopReason = "user_stop" | "user_kill" | "stop_requested" | "kill_requested" | "partial_execution_stopped" | "timeout" | "stuck_no_heartbeat" | "read_budget_exhausted" | "step_limit" | "file_limit" | "patch_limit" | "runtime_limit" | "repair_limit" | "edit_hash_mismatch" | "verification_failed" | "verification_timeout" | "verification_killed" | "malformed_provider_response" | "policy_blocked" | "unsafe_metadata" | "internal_error";
 export type ControlledAgentRunNextUserAction = "none" | "review_opt_in" | "review_plan" | "review_stop" | "review_failure" | "review_completion";
 export type ControlledAgentRunDiagnosticCode = "missing_input" | "malformed_input" | "unsafe_metadata" | "invalid_authority" | "workspace_not_ready" | "limit_exceeded" | "terminal_state";
 
@@ -94,6 +94,30 @@ export type ControlledAgentRunEvent =
   | { type: "touch"; filesTouched?: number; patchBytes?: number }
   | { type: "repair" };
 
+const allowedStopReasons = new Set<ControlledAgentRunStopReason>([
+  "user_stop",
+  "user_kill",
+  "stop_requested",
+  "kill_requested",
+  "partial_execution_stopped",
+  "timeout",
+  "stuck_no_heartbeat",
+  "read_budget_exhausted",
+  "step_limit",
+  "file_limit",
+  "patch_limit",
+  "runtime_limit",
+  "repair_limit",
+  "edit_hash_mismatch",
+  "verification_failed",
+  "verification_timeout",
+  "verification_killed",
+  "malformed_provider_response",
+  "policy_blocked",
+  "unsafe_metadata",
+  "internal_error",
+]);
+
 const defaultLimits: ControlledAgentRunLimits = {
   maxSteps: 6,
   maxFileReads: 6,
@@ -156,7 +180,7 @@ export function reduceControlledAgentRunState(current: ControlledAgentRunState, 
     return stoppedState("blocked", current.limits, current.counters, malformed, false, "Controlled run event is blocked because it is unsafe or malformed.", current.diagnostics);
   }
   if (isTerminal(current.phase)) {
-    return { ...current, diagnostics: [...current.diagnostics, diagnostic("terminal_state", "Controlled run is already terminal.")].slice(0, 24) };
+    return current;
   }
 
   const typed = event as ControlledAgentRunEvent;
@@ -174,7 +198,8 @@ export function reduceControlledAgentRunState(current: ControlledAgentRunState, 
   if (typed.type === "command") {
     const command = evaluateControlledAgentCommandRun(typed.metadata);
     if (command.state === "blocked" || command.state === "disabled" || command.state === "killed" || command.state === "timed_out") {
-      return stoppedState(command.state === "killed" ? "stopped" : "failed", current.limits, current.counters, command.state === "killed" ? "user_kill" : "verification_failed", command.state === "killed", "Controlled command run reached a terminal sanitized state.", current.diagnostics);
+      const reason = command.state === "killed" ? "verification_killed" : command.state === "timed_out" ? "verification_timeout" : "verification_failed";
+      return stoppedState(command.state === "killed" ? "stopped" : "failed", current.limits, current.counters, reason, command.state === "killed", stopMessage(reason), current.diagnostics);
     }
     const counters = incrementCounters(current.counters, { verificationRuns: 1 });
     const phase: ControlledAgentRunPhase = command.state === "running" ? "running_verification" : command.state === "failed" ? "failed" : "planning";
@@ -184,7 +209,8 @@ export function reduceControlledAgentRunState(current: ControlledAgentRunState, 
   if (typed.type === "edit") {
     const edit = evaluateControlledAgentEditExecutor(typed.metadata);
     if (edit.state === "blocked" || edit.state === "failed" || edit.diagnostics.length > 0) {
-      return stoppedState(edit.state === "failed" ? "failed" : "blocked", current.limits, current.counters, edit.state === "failed" ? "internal_error" : "policy_blocked", false, "Controlled edit metadata stopped the run before any apply bridge request.", current.diagnostics);
+      const reason = edit.diagnostics.includes("edit_hash_mismatch") || edit.diagnostics.includes("expected_content_hash_mismatch") ? "edit_hash_mismatch" : edit.state === "failed" ? "internal_error" : "policy_blocked";
+      return stoppedState(edit.state === "failed" ? "failed" : "blocked", current.limits, current.counters, reason, false, stopMessage(reason), current.diagnostics);
     }
     const counters = incrementCounters(current.counters, { filesTouched: edit.touchedFileLabels.length, patchBytesUsed: edit.replacementByteCount });
     const phase: ControlledAgentRunPhase = edit.state === "applied" ? "completed" : "waiting_for_user";
@@ -198,16 +224,20 @@ export function reduceControlledAgentRunState(current: ControlledAgentRunState, 
     return { ...advance(current, "completed", typed.summary ?? "Controlled run completed with sanitized state metadata.", "review_completion", 1), stopped: true };
   }
   if (typed.type === "blocked") {
-    return stoppedState("blocked", current.limits, current.counters, "policy_blocked", false, typed.summary ?? "Controlled run was blocked by policy.", current.diagnostics);
+    const reason = normalizeStopReason(typed.reason, "policy_blocked");
+    return stoppedState("blocked", current.limits, current.counters, reason, false, typed.summary ?? stopMessage(reason), current.diagnostics);
   }
   if (typed.type === "failed") {
-    return stoppedState("failed", current.limits, current.counters, "internal_error", true, typed.summary ?? "Controlled run failed safely.", current.diagnostics);
+    const reason = normalizeStopReason(typed.reason, "internal_error");
+    return stoppedState("failed", current.limits, current.counters, reason, isRecoverable(reason), typed.summary ?? stopMessage(reason), current.diagnostics);
   }
   if (typed.type === "stop") {
-    return stoppedState("stopped", current.limits, current.counters, "user_stop", true, typed.summary ?? "Controlled run stopped by explicit user request.", current.diagnostics);
+    const reason = normalizeStopReason(typed.reason, "stop_requested");
+    return stoppedState("stopped", current.limits, current.counters, reason, true, typed.summary ?? stopMessage(reason), current.diagnostics);
   }
   if (typed.type === "kill") {
-    return stoppedState("stopped", current.limits, current.counters, "user_kill", true, typed.summary ?? "Controlled run was killed by explicit user request.", current.diagnostics);
+    const reason = normalizeStopReason(typed.reason, "kill_requested");
+    return stoppedState("stopped", current.limits, current.counters, reason, true, typed.summary ?? stopMessage(reason), current.diagnostics);
   }
   if (typed.type === "tick") {
     return enforceLimits({ ...current, counters: { ...current.counters, runtimeSeconds: typed.runtimeSeconds }, summary: "Controlled run runtime counter was updated." }, 0);
@@ -273,14 +303,46 @@ function hasInvalidLimitInput(input: Partial<ControlledAgentRunLimits> | undefin
 function validateEvent(event: unknown): ControlledAgentRunStopReason | undefined {
   const diagnostics: ControlledAgentRunDiagnostic[] = [];
   if (!isPlainObject(event) || typeof event.type !== "string") return "internal_error";
-  const eventShell = event.type === "read" || event.type === "command" ? { ...event, type: undefined, metadata: undefined } : { ...event, type: undefined };
+  const eventShell = event.type === "read" || event.type === "command" || event.type === "edit" ? { ...event, type: undefined, metadata: undefined, reason: undefined } : { ...event, type: undefined, reason: undefined };
   scanUnsafeMetadata(eventShell, diagnostics);
   if (diagnostics.length > 0) return "unsafe_metadata";
   const allowed = new Set(["workspace_ready", "read", "command", "edit", "wait", "complete", "blocked", "failed", "stop", "kill", "tick", "touch", "repair"]);
   if (!allowed.has(event.type)) return "internal_error";
+  if ((event.type === "blocked" || event.type === "failed" || event.type === "stop" || event.type === "kill") && event.reason !== undefined && !isStopReason(event.reason)) return "internal_error";
   if (event.type === "tick" && !boundedNumber(event.runtimeSeconds, 0, 1800)) return "internal_error";
   if (event.type === "touch" && (event.filesTouched !== undefined && !boundedNumber(event.filesTouched, 0, 8) || event.patchBytes !== undefined && !boundedNumber(event.patchBytes, 0, 24000))) return "internal_error";
   return undefined;
+}
+
+function normalizeStopReason(value: unknown, fallback: ControlledAgentRunStopReason): ControlledAgentRunStopReason {
+  return isStopReason(value) ? value : fallback;
+}
+
+function isStopReason(value: unknown): value is ControlledAgentRunStopReason {
+  return typeof value === "string" && allowedStopReasons.has(value as ControlledAgentRunStopReason);
+}
+
+function isRecoverable(reason: ControlledAgentRunStopReason): boolean {
+  return reason === "verification_failed" || reason === "verification_timeout" || reason === "verification_killed" || reason === "timeout" || reason === "stuck_no_heartbeat" || reason === "partial_execution_stopped";
+}
+
+function stopMessage(reason: ControlledAgentRunStopReason): string {
+  if (reason === "stop_requested") return "Controlled run stopped after an explicit stop request.";
+  if (reason === "kill_requested") return "Controlled run stopped after an explicit kill request.";
+  if (reason === "partial_execution_stopped") return "Controlled run stopped after partial execution metadata.";
+  if (reason === "timeout") return "Controlled run stopped because the run timeout was reached.";
+  if (reason === "stuck_no_heartbeat") return "Controlled run stopped because heartbeat metadata went stale.";
+  if (reason === "edit_hash_mismatch") return "Controlled run failed closed because edit hash metadata did not match.";
+  if (reason === "verification_timeout") return "Controlled run failed because allowlisted verification timed out.";
+  if (reason === "verification_killed") return "Controlled run stopped because allowlisted verification was killed.";
+  if (reason === "malformed_provider_response") return "Controlled run failed closed because provider response metadata was malformed.";
+  if (reason === "verification_failed") return "Controlled run failed because allowlisted verification reported failure.";
+  if (reason === "policy_blocked") return "Controlled run was blocked by policy metadata.";
+  if (reason === "unsafe_metadata") return "Controlled run event is blocked because unsafe metadata was omitted.";
+  if (reason === "internal_error") return "Controlled run failed closed because event metadata was malformed.";
+  if (reason === "user_stop") return "Controlled run stopped by explicit user request.";
+  if (reason === "user_kill") return "Controlled run was killed by explicit user request.";
+  return "Controlled run stopped because a bounded limit was reached.";
 }
 
 function stoppedState(phase: "stopped" | "blocked" | "failed", limits: ControlledAgentRunLimits, counters: ControlledAgentRunCounters, reason: ControlledAgentRunStopReason, recoverable: boolean, message: string, diagnostics: ControlledAgentRunDiagnostic[]): ControlledAgentRunState {

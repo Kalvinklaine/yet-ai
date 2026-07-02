@@ -5,6 +5,7 @@ import commandRunning from "../../../../packages/contracts/examples/engine/contr
 import commandSucceeded from "../../../../packages/contracts/examples/engine/controlled-agent-command-runner-succeeded.json";
 import fileReadSuccess from "../../../../packages/contracts/examples/engine/controlled-agent-file-read-success.json";
 import worktreeReadiness from "../../../../packages/contracts/examples/engine/controlled-agent-workspace-readiness-worktree.json";
+import { buildControlledAgentProgressReport } from "./controlledAgentProgressReport";
 import { initializeControlledAgentRunState, reduceControlledAgentRunState, type ControlledAgentRunState } from "./controlledAgentRunState";
 
 function readyRun(): ControlledAgentRunState {
@@ -84,15 +85,53 @@ describe("controlledAgentRunState", () => {
   it("supports explicit stop and kill transitions", () => {
     const stopped = reduceControlledAgentRunState(readyRun(), { type: "stop", summary: "User stopped" });
     expect(stopped.phase).toBe("stopped");
-    expect(stopped.stop?.reason).toBe("user_stop");
+    expect(stopped.stop?.reason).toBe("stop_requested");
 
     const killed = reduceControlledAgentRunState(readyRun(), { type: "kill", summary: "User killed" });
     expect(killed.phase).toBe("stopped");
-    expect(killed.stop?.reason).toBe("user_kill");
+    expect(killed.stop?.reason).toBe("kill_requested");
 
     const commandKill = reduceControlledAgentRunState(readyRun(), { type: "command", metadata: structuredClone(commandKilled) });
     expect(commandKill.phase).toBe("stopped");
-    expect(commandKill.stop?.reason).toBe("user_kill");
+    expect(commandKill.stop?.reason).toBe("verification_killed");
+  });
+
+  it("normalizes controlled stop and failure reasons without exposing raw metadata", () => {
+    const stale = reduceControlledAgentRunState(readyRun(), { type: "failed", reason: "stuck_no_heartbeat" });
+    expect(stale.phase).toBe("failed");
+    expect(stale.stop?.reason).toBe("stuck_no_heartbeat");
+    expect(stale.stop?.message).toContain("heartbeat metadata");
+
+    const provider = reduceControlledAgentRunState(readyRun(), { type: "failed", reason: "malformed_provider_response" });
+    expect(provider.phase).toBe("failed");
+    expect(provider.stop?.reason).toBe("malformed_provider_response");
+    expect(JSON.stringify(provider)).not.toContain("raw provider response");
+
+    const partial = reduceControlledAgentRunState(readyRun(), { type: "stop", reason: "partial_execution_stopped" });
+    expect(partial.phase).toBe("stopped");
+    expect(partial.stop?.reason).toBe("partial_execution_stopped");
+
+    const timeout = reduceControlledAgentRunState(readyRun(), { type: "failed", reason: "timeout" });
+    expect(timeout.stop?.reason).toBe("timeout");
+  });
+
+  it("keeps terminal runs terminal when duplicate events arrive", () => {
+    const completed = reduceControlledAgentRunState(readyRun(), { type: "complete", summary: "Finished safely" });
+    const duplicateFailed = reduceControlledAgentRunState(completed, { type: "failed", reason: "stuck_no_heartbeat" });
+
+    expect(duplicateFailed).toBe(completed);
+    expect(duplicateFailed.phase).toBe("completed");
+    expect(duplicateFailed.stop).toBeUndefined();
+  });
+
+  it("surfaces sanitized progress stop and failure reasons", () => {
+    const failed = reduceControlledAgentRunState(readyRun(), { type: "failed", reason: "verification_timeout" });
+    const report = buildControlledAgentProgressReport({ runState: failed });
+
+    expect(report.status).toBe("failed");
+    expect(report.currentStepLabel).toContain("verification timeout");
+    expect(report.finalReport?.reason).toBe("verification timeout");
+    expect(report.finalReport?.summary).toContain("verification timeout");
   });
 
   it("fails closed on blocked, failed, malformed, and unsafe events", () => {
