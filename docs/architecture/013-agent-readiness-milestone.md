@@ -231,9 +231,37 @@ This evidence remains deterministic and local/mock-only. The focused smoke trans
 
 Sprint 80 closes the S74-S80 controlled local-agent evidence trail as a dev-preview, local/mock-only metadata milestone. The final audit found no high or critical issue in the S74 bounded file-read, S75 allowlisted command-runner, S76 controlled run-state skeleton, S77 edit-executor metadata boundary, S79 progress/final-report metadata, or S80 MVP composition scope: each layer remains sanitized evidence over explicit opt-in and already-known capability metadata, with all authority flags fail-closed and no raw prompt, file body, diff, replacement body, command string, cwd/env, provider/tool payload, private path, or secret persistence.
 
-Known deferred gaps remain explicit. S77 has contract and metadata boundary evidence, but its dedicated standalone smoke remains deferred. S78 actual auto-repair execution is not implemented; repair evidence is metadata-only and may stop or report exhaustion without running an automatic fix loop. S80 does not approve production autonomy: there is still no real controlled-agent loop, provider loop, agent starter, runtime endpoint, bridge authority expansion, hidden read/search/indexing, broad mutation path, free-form shell, git/package/network action, provider/tool calling, task-board mutation, real-provider CI, marketplace readiness, or production readiness.
+Known deferred gaps remain explicit. Before S81, S77 had contract and metadata boundary evidence while its dedicated standalone smoke remained deferred. S78 actual auto-repair execution is still not implemented; repair evidence is metadata-only and may stop or report exhaustion without running an automatic fix loop. S80 does not approve production autonomy: there is still no real controlled-agent loop, provider loop, agent starter, runtime endpoint, bridge authority expansion, hidden read/search/indexing, broad mutation path, free-form shell, git/package/network action, provider/tool calling, task-board mutation, real-provider CI, marketplace readiness, or production readiness.
 
-This audit is the stop point before S81. Future S81+ work must use new explicit cards and keep these S74-S80 boundaries intact unless a later architecture record and verification gate intentionally changes them.
+This audit was the stop point before S81. S81 closes only the explicit edit-executor smoke and failure-mode determinism gaps below; future S82+ work must use new explicit cards and keep these S74-S81 boundaries intact unless a later architecture record and verification gate intentionally changes them.
+
+## Sprint 81 final execution-gap audit status
+
+Sprint 81 closes the remaining S77/S78 execution-gap trail before any real controlled-autonomy work. It reconciles the controlled edit executor metadata contract/evaluator shape, adds deterministic standalone edit-executor smoke coverage, hardens controlled run failure and stuck-state reasons, and adds deterministic failure-mode smoke coverage for terminal-state behavior. This is an audit and local/mock verification milestone, not an autonomy approval.
+
+The focused S81 edit executor smoke is:
+
+```sh
+npm run smoke:controlled-agent-edit-executor
+```
+
+That smoke creates its own disposable sentinel-marked workspace, applies one bounded replacement edit after expected-hash preflight, and reports sanitized metadata only. It also blocks unsafe edit-executor cases for absolute paths, traversal, hidden files, symlinks, binary files, oversized patches, unsupported create/delete/rename or other operations, hash mismatch, raw body/diff fields, and private-path leakage. This closes the dedicated S77 edit-executor smoke gap without granting product write authority or runtime/bridge apply authority.
+
+The focused S81 failure-mode smoke is:
+
+```sh
+npm run smoke:controlled-agent-failure-modes
+```
+
+That smoke transpiles pure GUI services and verifies deterministic blocked, failed, stopped, and sanitized progress/final-report metadata for unsafe event metadata, duplicate terminal events, timeout, runtime-limit, stuck/no-heartbeat, malformed edit metadata, edit hash mismatch, failed/killed/timed-out verification, and malformed provider metadata. This closes failure-mode determinism coverage for the S78 repair/failure gap without implementing automatic repair, retry, rollback, or a real provider loop.
+
+The exact S81 final audit gate is:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm run typecheck && npm run build && cd ../.. && npm run smoke:controlled-agent-edit-executor && npm run smoke:controlled-agent-failure-modes && npm run check && git diff --check && git status --short
+```
+
+S81 remains deterministic local/mock evidence only. It does not implement a real one-step model loop, production autonomy, a controlled runtime session, hidden workspace read/search/indexing, broad workspace mutation, free-form shell/git/package/network authority, provider/tool calling, task-board mutation, raw prompt/file/diff/command persistence, real-provider CI, marketplace readiness, release readiness, or production readiness. S82+ work must keep these boundaries unless a later explicit architecture record and verification gate intentionally changes them.
 
 ## Blocked and deferred capabilities
 

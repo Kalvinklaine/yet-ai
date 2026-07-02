@@ -211,6 +211,21 @@ npm run smoke:controlled-local-agent-mvp
 
 The smoke transpiles the pure GUI MVP aggregation service locally and verifies disabled, blocked no-workspace, ready preview, running metadata flow, completed/stopped final reports, repair exhaustion, unsafe raw-marker fail-closed behavior, and all-false metadata-only authority flags. S80 is deterministic local/mock dogfood evidence only: it composes explicit user opt-in, controlled workspace readiness, bounded read metadata, edit metadata, allowlisted verification metadata, repair metadata, and progress/final-report metadata into sanitized labels and checklist state. It is not production autonomy, a real provider CI gate, broad workspace mutation, a shell/free-form command path, hidden read/search/indexing, raw prompt/file/diff/command persistence, a runtime endpoint, bridge authority, provider/tool calling, or an agent starter.
 
+For the S81 final execution-gap audit, run the two focused S81 smokes:
+
+```sh
+npm run smoke:controlled-agent-edit-executor
+npm run smoke:controlled-agent-failure-modes
+```
+
+The edit executor smoke applies one bounded replacement inside its own disposable local/mock workspace and blocks unsafe edit-executor cases such as absolute or traversal paths, hidden files, symlinks, binary files, oversized patches, unsupported create/delete/rename operations, hash mismatch, raw diff/body fields, and private-path leakage. The failure-mode smoke transpiles pure GUI services and verifies deterministic stopped/failed/blocked states for unsafe metadata, duplicate terminal events, timeout/runtime-limit/stuck reasons, malformed edit metadata, edit hash mismatch, failed/killed/timed-out verification metadata, malformed provider metadata, and sanitized progress/final reports. S81 closes the S77/S78 execution-gap and failure-determinism audit trail before real autonomy: it is still deterministic local/mock evidence only, not a production autonomous loop, not a real one-step model loop, not provider/tool calling, not shell/git authority, not hidden workspace reads, not broad mutation authority, and not real-provider CI.
+
+The full S81 final audit gate is:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm run typecheck && npm run build && cd ../.. && npm run smoke:controlled-agent-edit-executor && npm run smoke:controlled-agent-failure-modes && npm run check && git diff --check && git status --short
+```
+
 For S80 documentation-only updates, use:
 
 ```sh

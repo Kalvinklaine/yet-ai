@@ -179,6 +179,25 @@ npm run check && git diff --check
 
 Do not report S80 as production autonomy, a real provider CI gate, broad workspace mutation, hidden read/search/indexing, shell/free-form command execution, git/package/network authority, provider/tool calling, raw prompt/file/diff/command persistence, marketplace readiness, release readiness, or production readiness. Manual RC notes may record only sanitized MVP status/checklist/progress/final-report metadata and must confirm no raw prompt, file body, diff, command, output, private path, provider/tool payload, secret, bridge payload, or browser-storage persistence appeared.
 
+## S81 final execution-gap audit note
+
+S81 closes the S77/S78 execution-gap and failure-determinism trail before any real autonomy work. It adds explicit local/mock smoke evidence for the controlled edit executor boundary and controlled failure modes, but it does not turn the manual Agent Run RC into a production autonomous agent or a real one-step model loop.
+
+The exact focused S81 smokes are:
+
+```sh
+npm run smoke:controlled-agent-edit-executor
+npm run smoke:controlled-agent-failure-modes
+```
+
+For the final S81 audit gate, use:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm run typecheck && npm run build && cd ../.. && npm run smoke:controlled-agent-edit-executor && npm run smoke:controlled-agent-failure-modes && npm run check && git diff --check && git status --short
+```
+
+Manual RC notes may record only that the edit executor smoke verified one bounded disposable-workspace replacement and blocked unsafe edit metadata, and that the failure-mode smoke verified deterministic blocked/failed/stopped/progress metadata. Do not report S81 as production autonomy, controlled runtime execution, a real provider/model loop, hidden workspace read/search/indexing, broad write/apply authority, shell/git/package/network authority, provider/tool calling, automatic repair/retry/rollback, real-provider CI, marketplace readiness, release readiness, or production readiness.
+
 ## Manual RC run checklist
 
 1. Start from a clean local checkout or sanitized dev-preview artifact label.
