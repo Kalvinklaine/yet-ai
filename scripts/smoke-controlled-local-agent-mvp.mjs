@@ -32,7 +32,6 @@ const reports = {
   ready: buildControlledLocalAgentMvp({
     userOptIn: userOptIn(),
     readiness: readiness(),
-    progress: { runState: { enabled: true, phase: "waiting_for_user", summary: "Preview bounded metadata before the user starts anything." } },
   }),
   running: buildControlledLocalAgentMvp({
     userOptIn: userOptIn(),
@@ -91,19 +90,19 @@ assertStep(reports.ready, "final_report", "pending");
 
 assert.equal(reports.running.status, "running_metadata_flow", "running metadata flow is not execution authority");
 assert.equal(reports.running.label, "Running metadata flow", "running label is deterministic");
-assertStep(reports.running, "bounded_read", "completed");
+assertStep(reports.running, "bounded_read", "blocked");
 assertStep(reports.running, "edit_metadata", "ready");
-assertStep(reports.running, "verification", "running");
+assertStep(reports.running, "verification", "blocked");
 assertStep(reports.running, "repair", "ready");
 assertStep(reports.running, "final_report", "running");
 
 assertTerminal(reports.completed, "completed", "Completed");
 assertStep(reports.completed, "edit_metadata", "completed");
-assertStep(reports.completed, "verification", "completed");
+assertStep(reports.completed, "verification", "blocked");
 assertStep(reports.completed, "final_report", "completed");
 
 assertTerminal(reports.stopped, "stopped", "Stopped");
-assertStep(reports.stopped, "verification", "stopped");
+assertStep(reports.stopped, "verification", "blocked");
 assertStep(reports.stopped, "final_report", "stopped");
 
 assert.equal(reports.repairExhausted.status, "blocked", "repair exhaustion blocks and fails closed");
