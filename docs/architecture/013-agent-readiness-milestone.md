@@ -44,6 +44,7 @@ Avoid softer wording that implies implementation, autonomy, production publicati
 | S77 controlled edit executor contract | Experimental manual-only | Controlled edit executor records replacement-edit metadata only for existing workspace-relative files: expected hashes, bounded ranges, replacement byte counts, and sanitized summaries. It does not create/delete/rename files, expose raw replacement bodies/diffs/patches, add shell/git/provider/tool authority, add runtime/bridge endpoints, or claim broad write/apply/autonomy. |
 | S79 controlled progress/final report | Experimental manual-only | Controlled progress/final report evidence renders sanitized metadata only from existing GUI controlled-run state, edit metadata, command metadata, and repair metadata. It records phase labels, counters, limits, diagnostics, terminal final-report summaries, and all-false authority flags; it does not start an agent, execute a loop, persist raw prompts/files/diffs/commands, add bridge/runtime authority, or claim autonomy. |
 | S80 controlled local agent MVP dev-preview evidence | Experimental manual-only | Controlled local agent MVP evidence composes explicit user opt-in, controlled workspace readiness, bounded read metadata, edit metadata, allowlisted verification metadata, repair metadata, and progress/final-report metadata into sanitized checklist/status labels. It is local/mock dogfood evidence only and does not start an agent, call providers/tools, read/search/index hidden workspace data, mutate workspaces, run shell/free-form commands, persist raw prompts/files/diffs/commands, add runtime/bridge authority, prove real-provider CI, or claim production autonomy. |
+| S82 controlled runtime session metadata | Experimental manual-only | Controlled runtime session evidence adds a sanitized metadata envelope for future lifecycle/precondition status only. Browser remains unsupported; VS Code and JetBrains are future-capable only when metadata preconditions are present. It does not start an agent, implement a real one-step model loop, execute reads/edits/verification/provider calls, or replace the S83 requirement for real bounded read execution. |
 | Multi-step execution | Blocked/deferred | There is no implemented runner that executes a plan across multiple steps. S61 is only inert metadata. |
 | Controlled autonomy | Blocked/deferred | No autonomous loop is implemented. Any future controlled-autonomy work must pass the future eligibility gates below before design or implementation. |
 | Auto-repair / auto-retry / auto-rollback | Blocked/deferred | Failed verification can stop and may produce a draft-only prompt. The product must not claim automatic repair, retry, verification, or rollback. |
@@ -262,6 +263,28 @@ npm run validate:contracts && cd apps/gui && npm run typecheck && npm run build 
 ```
 
 S81 remains deterministic local/mock evidence only. It does not implement a real one-step model loop, production autonomy, a controlled runtime session, hidden workspace read/search/indexing, broad workspace mutation, free-form shell/git/package/network authority, provider/tool calling, task-board mutation, raw prompt/file/diff/command persistence, real-provider CI, marketplace readiness, release readiness, or production readiness. S82+ work must keep these boundaries unless a later explicit architecture record and verification gate intentionally changes them.
+
+## Sprint 82 controlled runtime session metadata status
+
+Sprint 82 adds the controlled runtime session envelope as metadata only. It defines strict contract fixtures, a pure fail-closed GUI evaluator, sanitized App/report/trace integration, and deterministic smoke evidence for lifecycle metadata such as disabled, unsupported host, missing opt-in, precondition blocked, ready to start, start requested, session open, stop requested, and stopped. These states are evidence labels and correlation metadata only; they are not a runtime loop.
+
+S82 does not start a real agent, does not implement a real one-step model loop, and does not execute reads, edits, verification commands, provider calls, tools, shell, git, network actions, rollback, task-board mutations, or workspace mutations. The runtime-session evaluator and UI expose sanitized metadata and all-false authority flags only. Raw prompts, file bodies, diffs, replacement bodies, command strings, cwd/env, output dumps, provider/tool payloads, private paths, secrets, browser-storage dumps, and bridge payloads remain out of runtime-session evidence.
+
+Browser / standalone GUI remains unsupported for controlled runtime session. Browser may show unavailable metadata, but it must not be described as capable of starting or hosting a controlled runtime session. VS Code and JetBrains are future-capable only when explicit opt-in, controlled workspace readiness, verified checkpoint, rollback plan, correlation ids, bounded limits, and host-owned metadata preconditions are present. Even with those preconditions, S82 means review/evidence only, not agent start authority.
+
+The exact S82 focused smoke is:
+
+```sh
+npm run smoke:controlled-agent-runtime-session
+```
+
+The exact S82 final audit gate is:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm test -- controlledAgentRuntimeSession controlledAgentRunState controlledAgentProgressReport && npm run typecheck && npm run build && cd ../.. && npm run smoke:controlled-agent-runtime-session && npm run smoke:controlled-local-agent-mvp && npm run smoke:controlled-agent-failure-modes && npm run smoke:controlled-agent-edit-executor && npm run check && git diff --check && git status --short
+```
+
+S82 is still local-first and requires no hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, cloud workspace, production login, marketplace publication, signing, notarization, real-provider CI, or production autonomy. S83 is still required before any real bounded read execution can be designed, implemented, dogfooded, or claimed.
 
 ## Blocked and deferred capabilities
 

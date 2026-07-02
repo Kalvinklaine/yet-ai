@@ -198,6 +198,24 @@ npm run validate:contracts && cd apps/gui && npm run typecheck && npm run build 
 
 Manual RC notes may record only that the edit executor smoke verified one bounded disposable-workspace replacement and blocked unsafe edit metadata, and that the failure-mode smoke verified deterministic blocked/failed/stopped/progress metadata. Do not report S81 as production autonomy, controlled runtime execution, a real provider/model loop, hidden workspace read/search/indexing, broad write/apply authority, shell/git/package/network authority, provider/tool calling, automatic repair/retry/rollback, real-provider CI, marketplace readiness, release readiness, or production readiness.
 
+## S82 controlled runtime session note
+
+S82 adds controlled runtime session envelope metadata for future controlled workspace work. It can surface sanitized lifecycle state and correlation metadata for disabled, unsupported host, opt-in/precondition blocked, ready, start-requested, open, stop-requested, and stopped states. This evidence comes from contract fixtures, a pure GUI evaluator, metadata-only UI/trace/report integration, and the focused smoke; it is not a real runtime loop.
+
+The exact focused S82 smoke is:
+
+```sh
+npm run smoke:controlled-agent-runtime-session
+```
+
+For the final S82 audit gate, use:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm test -- controlledAgentRuntimeSession controlledAgentRunState controlledAgentProgressReport && npm run typecheck && npm run build && cd ../.. && npm run smoke:controlled-agent-runtime-session && npm run smoke:controlled-local-agent-mvp && npm run smoke:controlled-agent-failure-modes && npm run smoke:controlled-agent-edit-executor && npm run check && git diff --check && git status --short
+```
+
+Manual RC notes may record only sanitized runtime-session metadata status, precondition labels, lifecycle labels, diagnostics, and all-false authority flags. Browser remains unsupported for controlled runtime session. VS Code and JetBrains are future-capable only when explicit opt-in, controlled workspace readiness, checkpoint, rollback, correlation, bounded limits, and host-owned metadata preconditions are present; those preconditions still do not grant start authority in S82. Do not report S82 as production autonomy, a real one-step model loop, agent start, bounded read execution, edit execution, verification execution, provider/tool calling, shell/git/package/network authority, rollback execution, hidden workspace read/search/indexing, broad mutation, real-provider CI, marketplace readiness, release readiness, or production readiness. S83 is still required for real bounded read execution.
+
 ## Manual RC run checklist
 
 1. Start from a clean local checkout or sanitized dev-preview artifact label.
@@ -221,8 +239,9 @@ Manual RC notes may record only that the edit executor smoke verified one bounde
 19. If the S74 controlled file-read evidence panel is visible, record only sanitized bounded-read metadata; confirm no raw body/private path leaks and no hidden read/search/indexing/write/apply/verify/command/provider/tool authority appeared.
 20. If the S75 controlled command evidence panel is visible, record only sanitized command-id metadata; confirm no raw command/args/cwd/env/output dumps/private paths/secrets appeared and no shell/git/network/provider/tool/runtime execution authority or action control was available.
 21. If the S80 controlled local agent MVP evidence is visible, record only sanitized MVP status/checklist/progress/final-report metadata; confirm it remains explicit-opt-in, local/mock, metadata-only evidence with no agent start, broad mutation, shell/free-form command, hidden read/search/indexing, provider/tool authority, raw persistence, or production/autonomy claim.
-22. Validate the completed local report with `npm run report:agent-run-rc -- --check path/to/local-report.md` before sharing any excerpt.
-23. Keep raw local evidence, screenshots, logs, provider transcripts, bridge captures, and browser-storage dumps out of tracked files.
+22. If S82 controlled runtime session metadata is visible, record only sanitized lifecycle/precondition/correlation status; confirm browser is unsupported, IDE hosts are future-capable only with metadata preconditions, and no agent start, read, edit, verification, provider/tool call, shell/git/network action, rollback, workspace mutation, raw persistence, or production/autonomy claim appeared.
+23. Validate the completed local report with `npm run report:agent-run-rc -- --check path/to/local-report.md` before sharing any excerpt.
+24. Keep raw local evidence, screenshots, logs, provider transcripts, bridge captures, and browser-storage dumps out of tracked files.
 
 ## Sanitized report workflow
 
