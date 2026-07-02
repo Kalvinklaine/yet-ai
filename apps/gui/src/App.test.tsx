@@ -8,6 +8,7 @@ import type { ProviderAuthResponse, ProviderAuthStatus } from "./services/provid
 import worktreeReadiness from "../../../packages/contracts/examples/engine/controlled-agent-workspace-readiness-worktree.json";
 import fileReadSuccess from "../../../packages/contracts/examples/engine/controlled-agent-file-read-success.json";
 import fileReadBlocked from "../../../packages/contracts/examples/engine/controlled-agent-file-read-blocked.json";
+import hostFileReadSuccess from "../../../packages/contracts/examples/bridge/host-controlled-agent-file-read-result-success.json";
 import commandRunSucceeded from "../../../packages/contracts/examples/engine/controlled-agent-command-runner-succeeded.json";
 import commandRunBlocked from "../../../packages/contracts/examples/engine/controlled-agent-command-runner-blocked.json";
 import runtimeSessionReady from "../../../packages/contracts/examples/engine/controlled-agent-runtime-session-ready-vscode-worktree.json";
@@ -394,6 +395,132 @@ describe("runtime refresh feedback", () => {
     expect(text).not.toContain("This bounded excerpt is explicit");
     expect(buttonsNamed("Read Files")).toHaveLength(0);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+  });
+
+  it("posts exactly one controlled read request only after explicit click", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady }) });
+    renderApp();
+    await flushAsync();
+
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentFileReadRequest")).toHaveLength(0);
+    expect(buttonsNamed("Request controlled read")).toHaveLength(0);
+
+    const details = findDetails("controlled-agent-file-read-details");
+    await act(async () => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+
+    await act(async () => {
+      findButton("Request controlled read").click();
+    });
+
+    const readRequests = postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentFileReadRequest");
+    expect(readRequests).toHaveLength(1);
+    expect(readRequests[0][0]).toMatchObject({
+      version: bridgeVersion,
+      type: "gui.controlledAgentFileReadRequest",
+      payload: {
+        requestIdMintedBy: "gui",
+        source: "gui",
+        assistantMinted: false,
+        workspaceRelativePath: "docs/architecture/013-agent-readiness-milestone.md",
+        allowBody: true,
+        singleFileOnly: true,
+        recursive: false,
+        globAllowed: false,
+        regexAllowed: false,
+        indexingAllowed: false,
+      },
+    });
+    expect(buttonsNamed("Request controlled read")).toHaveLength(0);
+    expect(findButton("Clear pending read")).toBeDefined();
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("controlled_agent_file_read");
+  });
+
+  it("keeps browser controlled read unsupported and unable to post", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady }) });
+    renderApp();
+    await flushAsync();
+
+    const details = findDetails("controlled-agent-file-read-details");
+    await act(async () => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+
+    expect(container?.textContent).toContain("Explicit controlled read requestunsupported");
+    expect(container?.textContent).toContain("Request diagnostics: browser_host, unsupported_host");
+    expect(buttonsNamed("Request controlled read")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+  });
+
+  it("ignores stale and duplicate controlled read results", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady }) });
+    renderApp();
+    await flushAsync();
+
+    const details = findDetails("controlled-agent-file-read-details");
+    await act(async () => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+    await act(async () => {
+      findButton("Request controlled read").click();
+    });
+
+    const request = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentFileReadRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
+    const stale = controlledReadHostMessage(request.requestId, request.payload, { requestId: "other-request" });
+    await dispatchHostControlledFileReadResult(stale.requestId, stale.payload);
+    expect(container?.textContent).toContain("Ignored stale controlled read result.");
+    expect(findButton("Clear pending read")).toBeDefined();
+
+    const accepted = controlledReadHostMessage(request.requestId, request.payload);
+    await dispatchHostControlledFileReadResult(accepted.requestId, accepted.payload);
+    expect(container?.textContent).toContain("Controlled read result accepted: success.");
+    expect(container?.textContent).toContain("Bounded text read completed within budget");
+    expect(container?.textContent).not.toContain("# 013 Agent Run Readiness Milestone");
+    expect(container?.textContent).not.toContain("This bounded excerpt is explicit");
+
+    await dispatchHostControlledFileReadResult(accepted.requestId, accepted.payload);
+    expect(container?.textContent).toContain("Ignored duplicate controlled read result.");
+  });
+
+  it("blocks unsafe controlled read results without rendering raw body or private paths", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady }) });
+    renderApp();
+    await flushAsync();
+
+    const details = findDetails("controlled-agent-file-read-details");
+    await act(async () => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+    await act(async () => {
+      findButton("Request controlled read").click();
+    });
+
+    const request = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentFileReadRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
+    const unsafe = controlledReadHostMessage(request.requestId, request.payload, { text: "Authorization: Bearer abc sk-secret123456789 from /Users/alice/private", sanitizedPathLabel: "/Users/alice/private/secret.txt" });
+    await dispatchHostControlledFileReadResult(unsafe.requestId, unsafe.payload);
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Unsafe controlled file read request metadata omitted near hostMessage.payload.result.sanitizedPathLabel.");
+    expect(text).not.toContain("Authorization: Bearer");
+    expect(text).not.toContain("sk-secret123456789");
+    expect(text).not.toContain("/Users/alice");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("sk-secret123456789");
   });
 
   it("renders controlled command result metadata as sanitized evidence without bridge or storage authority", async () => {
@@ -2475,7 +2602,7 @@ describe("agent progress panel", () => {
     expect(text).not.toContain("SECRET_WORKSPACE_BODY");
     expect(text).not.toContain("SECRET_THOUGHT_BODY");
     expect((text.match(/SAFE_NOISY_AGENT_OUTPUT_/g) ?? []).length).toBeLessThan(220);
-    expect(text.length).toBeLessThan(17500);
+    expect(text.length).toBeLessThan(17600);
   });
 
   it("detects fallback overflow before raw-content redaction", async () => {
@@ -2531,7 +2658,7 @@ describe("agent progress panel", () => {
     expect(text).toContain("7 more summaries hidden.");
     expect(text).not.toContain("T-BOUND-18 / run-18");
     expect(text).not.toContain("safe recent summary 16");
-    expect(text.length).toBeLessThan(37600);
+    expect(text.length).toBeLessThan(37750);
   });
 
   it("endpoint unavailable or corrupt runtime error is sanitized and non-fatal", async () => {
@@ -10339,6 +10466,30 @@ async function dispatchHostIdeActionResult(requestId: string | undefined, payloa
       },
     }));
   });
+}
+
+async function dispatchHostControlledFileReadResult(requestId: string | undefined, payload: Record<string, unknown>) {
+  await act(async () => {
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version: bridgeVersion,
+        type: "host.controlledAgentFileReadResult",
+        requestId,
+        payload,
+      },
+    }));
+  });
+}
+
+function controlledReadHostMessage(requestId: string, requestPayload: Record<string, unknown>, overrides: Record<string, unknown> = {}) {
+  const payload = JSON.parse(JSON.stringify(hostFileReadSuccess.payload)) as Record<string, any>;
+  payload.request.requestId = overrides.requestId ?? requestId;
+  payload.request.workspaceRelativePath = requestPayload.workspaceRelativePath;
+  payload.workspace.runId = requestPayload.runId;
+  payload.workspace.controlledWorkspaceId = requestPayload.controlledWorkspaceId;
+  payload.result.text = overrides.text ?? payload.result.text;
+  payload.result.sanitizedPathLabel = overrides.sanitizedPathLabel ?? requestPayload.workspaceRelativePath;
+  return { requestId, payload };
 }
 
 function workspaceSnippetSearchResultPayload(overrides: Record<string, unknown> = {}) {

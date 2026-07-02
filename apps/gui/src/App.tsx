@@ -42,6 +42,7 @@ import { createCodingTaskSessionSnapshot, createLinkedMemoryAttachTraceLabel, cr
 import { createMemorySuggestionAttachTraceDetails, suggestTaskMemory, type TaskMemorySuggestion } from "./services/taskMemorySuggestions";
 import { evaluateHostCapabilityMetadata } from "./services/toolAuthorityPolicy";
 import { evaluateControlledAgentFileRead } from "./services/controlledAgentFileRead";
+import { buildControlledAgentFileReadRequest, correlateControlledAgentFileReadResult, type ControlledAgentFileReadRequestCorrelation } from "./services/controlledAgentFileReadRequest";
 import { evaluateControlledAgentCommandRun } from "./services/controlledAgentCommandRunner";
 import { buildControlledAgentProgressReport } from "./services/controlledAgentProgressReport";
 import { buildControlledLocalAgentMvp } from "./services/controlledLocalAgentMvp";
@@ -441,6 +442,8 @@ export function App() {
   const pendingApplyProposalRequestIdRef = useRef<string | null>(null);
   const pendingIdeActionRequestIdRef = useRef<string | null>(null);
   const pendingIdeActionChatIdRef = useRef<string | null>(null);
+  const controlledFileReadCorrelationRef = useRef<ControlledAgentFileReadRequestCorrelation | null>(null);
+  const controlledFileReadCompletedRequestIdRef = useRef<string | null>(null);
   const completedIdeActionRequestChatsRef = useRef<Map<string, string>>(new Map());
   const completedApplyRequestChatsRef = useRef<Map<string, string>>(new Map());
   const ideActionCounterRef = useRef(0);
@@ -450,6 +453,9 @@ export function App() {
   const chatScrollRegionRef = useRef<HTMLDivElement | null>(null);
   const optimisticUserMessageCounterRef = useRef(0);
   const modelProposalDraftCounterRef = useRef(0);
+  const [controlledFileReadResultMetadata, setControlledFileReadResultMetadata] = useState<unknown>(null);
+  const [pendingControlledFileReadRequestId, setPendingControlledFileReadRequestId] = useState<string | null>(null);
+  const [controlledFileReadNote, setControlledFileReadNote] = useState<string | null>(null);
 
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
   settingsRef.current = settings;
@@ -600,7 +606,9 @@ export function App() {
   const agentRunCheckpointDecision = useMemo<AgentRunCheckpointDecisionSummary | undefined>(() => agentRunInput ? buildAgentRunCheckpointDecision({ host: bridgeHost, agentRun: agentRunInput }) : undefined, [agentRunInput, bridgeHost]);
   const agentRunCheckpointDecisionTraceEntry = useMemo<CodingSessionTraceEntry | null>(() => createCheckpointDecisionTraceEntry(agentRunCheckpointDecision), [agentRunCheckpointDecision]);
   const controlledAgentFileReadMetadata = activeCaps?.controlledAgentFileRead;
-  const controlledAgentFileReadTraceEntry = useMemo<CodingSessionTraceEntry | null>(() => createControlledAgentFileReadTraceEntry(controlledAgentFileReadMetadata), [controlledAgentFileReadMetadata]);
+  const effectiveControlledAgentFileReadMetadata = controlledFileReadResultMetadata ?? controlledAgentFileReadMetadata;
+  const controlledAgentFileReadSummary = useMemo(() => evaluateControlledAgentFileRead(effectiveControlledAgentFileReadMetadata), [effectiveControlledAgentFileReadMetadata]);
+  const controlledAgentFileReadTraceEntry = useMemo<CodingSessionTraceEntry | null>(() => createControlledAgentFileReadTraceEntry(effectiveControlledAgentFileReadMetadata), [effectiveControlledAgentFileReadMetadata]);
   const controlledAgentCommandRunnerMetadata = activeCaps?.controlledAgentCommandRunner;
   const controlledAgentCommandRunTraceEntry = useMemo<CodingSessionTraceEntry | null>(() => createControlledAgentCommandRunTraceEntry(controlledAgentCommandRunnerMetadata), [controlledAgentCommandRunnerMetadata]);
   const controlledAgentRuntimeSessionMetadata = activeCaps?.controlledAgentRuntimeSession;
@@ -686,29 +694,37 @@ export function App() {
     ],
   }), [activeRejectedEditProposal, activeRejectedIdeActionProposal, agentRunInput, agentRunVerificationFixDraft, attachedProjectMemoryItems, codingSessionTraceWithCheckpointDecision, agentRunCheckpointDecision, codingTaskGoal, explicitContextBundleItems, proposalHistory, taskMemorySuggestions]);
   const controlledWorkspaceReadinessMetadata = activeCaps?.controlledAgentWorkspaceReadiness;
+  const controlledAgentFileReadRequest = useMemo(() => buildControlledAgentFileReadRequest({
+    host: bridgeHost,
+    runtimeSessionMetadata: controlledAgentRuntimeSessionMetadata,
+    workspaceReadinessMetadata: controlledWorkspaceReadinessMetadata,
+    workspaceRelativePath: "docs/architecture/013-agent-readiness-milestone.md",
+    requestSeed: "panel",
+    jetbrainsFileReadSupported: false,
+  }), [bridgeHost, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata]);
   const showWhatWillBeSentPanel = chatInput.trim().length > 0 || contextBudgetSummary.sources.some((source) => source.itemCount > 0 || source.charCount > 0) || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
   const [controlledAgentRunState, setControlledAgentRunState] = useState<ControlledAgentRunState>(() => initializeControlledAgentRunState(undefined));
   const controlledAgentEditExecutorMetadata = activeCaps?.controlledAgentEditExecutor;
-  const showControlledAgentRunPanel = controlledWorkspaceReadinessMetadata !== undefined || controlledAgentFileReadMetadata !== undefined || controlledAgentCommandRunnerMetadata !== undefined || controlledAgentEditExecutorMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined;
+  const showControlledAgentRunPanel = controlledWorkspaceReadinessMetadata !== undefined || effectiveControlledAgentFileReadMetadata !== undefined || controlledAgentCommandRunnerMetadata !== undefined || controlledAgentEditExecutorMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined;
   const controlledAgentProgressReport = useMemo(() => buildControlledAgentProgressReport({
     runState: controlledAgentRunState,
-    controlledAgentFileRead: controlledAgentFileReadMetadata,
+    controlledAgentFileRead: effectiveControlledAgentFileReadMetadata,
     controlledAgentCommandRunner: controlledAgentCommandRunnerMetadata,
     controlledAgentEditExecutor: controlledAgentEditExecutorMetadata,
-  }), [controlledAgentCommandRunnerMetadata, controlledAgentEditExecutorMetadata, controlledAgentFileReadMetadata, controlledAgentRunState]);
+  }), [controlledAgentCommandRunnerMetadata, controlledAgentEditExecutorMetadata, effectiveControlledAgentFileReadMetadata, controlledAgentRunState]);
   const controlledLocalAgentMvpReport = useMemo(() => buildControlledLocalAgentMvp({
     userOptIn: { source: "user", confirmed: true, requestId: "s80-controlled-local-agent-mvp-preview" },
     workspaceReadiness: controlledWorkspaceReadinessMetadata,
-    boundedRead: controlledAgentFileReadMetadata,
+    boundedRead: effectiveControlledAgentFileReadMetadata,
     editMetadata: controlledAgentEditExecutorMetadata,
     verification: controlledAgentCommandRunnerMetadata,
     runtimeSession: controlledAgentRuntimeSessionMetadata,
     progress: controlledAgentProgressReport,
-  }), [controlledAgentCommandRunnerMetadata, controlledAgentEditExecutorMetadata, controlledAgentFileReadMetadata, controlledAgentProgressReport, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata]);
+  }), [controlledAgentCommandRunnerMetadata, controlledAgentEditExecutorMetadata, effectiveControlledAgentFileReadMetadata, controlledAgentProgressReport, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata]);
 
   useEffect(() => {
-    setControlledAgentRunState(buildControlledAgentRunPreviewState(controlledWorkspaceReadinessMetadata, controlledAgentFileReadMetadata, controlledAgentCommandRunnerMetadata));
-  }, [controlledAgentCommandRunnerMetadata, controlledAgentFileReadMetadata, controlledWorkspaceReadinessMetadata]);
+    setControlledAgentRunState(buildControlledAgentRunPreviewState(controlledWorkspaceReadinessMetadata, effectiveControlledAgentFileReadMetadata, controlledAgentCommandRunnerMetadata));
+  }, [controlledAgentCommandRunnerMetadata, effectiveControlledAgentFileReadMetadata, controlledWorkspaceReadinessMetadata]);
 
   const stopControlledAgentRun = useCallback(() => {
     setControlledAgentRunState((current) => reduceControlledAgentRunState(current, { type: "stop", reason: "user_stop", summary: "Controlled run stopped from the S76 skeleton UI." }));
@@ -781,6 +797,14 @@ export function App() {
     setIdeActionNote(null);
   }, []);
 
+  const clearControlledFileReadState = useCallback((note: string | null = null) => {
+    controlledFileReadCorrelationRef.current = null;
+    controlledFileReadCompletedRequestIdRef.current = null;
+    setPendingControlledFileReadRequestId(null);
+    setControlledFileReadResultMetadata(null);
+    setControlledFileReadNote(note);
+  }, []);
+
   const clearPendingIdeActionState = useCallback(() => {
     if (!pendingIdeActionRequestIdRef.current) {
       return;
@@ -789,6 +813,15 @@ export function App() {
     pendingIdeActionChatIdRef.current = null;
     setIdeActionAttempt(null);
     setIdeActionNote("Cleared pending IDE action state in the GUI only. No host-side cancellation was requested.");
+  }, []);
+
+  const clearPendingControlledFileReadState = useCallback(() => {
+    if (!controlledFileReadCorrelationRef.current) {
+      return;
+    }
+    controlledFileReadCorrelationRef.current = null;
+    setPendingControlledFileReadRequestId(null);
+    setControlledFileReadNote("Cleared pending controlled read state in the GUI only. No host-side cancellation was requested.");
   }, []);
 
   const abortActiveStream = useCallback((timelineMessage: string, options: AbortActiveStreamOptions = {}) => {
@@ -854,7 +887,8 @@ export function App() {
     clearEditProposalState();
     clearModelProposalState();
     clearIdeActionState();
-  }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState]);
+    clearControlledFileReadState(null);
+  }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState, clearControlledFileReadState]);
 
   const updateRuntimeSettings = useCallback((nextSettings: RuntimeSettings) => {
     const changed = settingsRef.current.baseUrl !== nextSettings.baseUrl || settingsRef.current.token !== nextSettings.token;
@@ -913,6 +947,40 @@ export function App() {
         setRuntimeLifecycle({ diagnostics: runtimeLifecycleDiagnostics(payload, adapter.host), settingsRevision: revision });
         setTimeline((current) => [`Runtime lifecycle status received: ${payload.lifecycle}`, ...current].slice(0, 80));
         appendTrace({ family: "host.runtimeStatus", title: "Runtime lifecycle status received", status: payload.lifecycle === "connected" ? "succeeded" : payload.lifecycle === "failed" || payload.lifecycle === "auth_mismatch" ? "failed" : "info", summary: `Host reported runtime ${payload.lifecycle}.`, details: { lifecycle: payload.lifecycle, tokenState: payload.tokenState, authority: payload.authority } });
+      } else if (message.type === "host.controlledAgentFileReadResult") {
+        const requestId = message.requestId ?? "unknown";
+        const current = controlledFileReadCorrelationRef.current;
+        if (controlledFileReadCompletedRequestIdRef.current === requestId) {
+          setControlledFileReadNote("Ignored duplicate controlled read result.");
+          return;
+        }
+        if (!current) {
+          setControlledFileReadNote("Ignored stale controlled read result.");
+          return;
+        }
+        const correlation = correlateControlledAgentFileReadResult({ current, hostMessage: message });
+        if (correlation.state === "accepted" && correlation.fileRead) {
+          controlledFileReadCompletedRequestIdRef.current = requestId;
+          controlledFileReadCorrelationRef.current = null;
+          setPendingControlledFileReadRequestId(null);
+          setControlledFileReadResultMetadata(message.payload);
+          setControlledFileReadNote(`Controlled read result accepted: ${correlation.fileRead.state}.`);
+          appendTrace({ family: correlation.fileRead.state === "blocked" ? "controlledAgent.fileReadBlocked" : "controlledAgent.fileReadResult", title: "Controlled file read result received", status: correlation.fileRead.state === "blocked" ? "failed" : "succeeded", summary: correlation.fileRead.summary, requestId, details: correlation.details });
+          return;
+        }
+        if (correlation.state === "duplicate") {
+          controlledFileReadCorrelationRef.current = null;
+          setPendingControlledFileReadRequestId(null);
+          setControlledFileReadNote("Ignored duplicate controlled read result.");
+          return;
+        }
+        if (correlation.state === "ignored") {
+          setControlledFileReadNote("Ignored stale controlled read result.");
+          return;
+        }
+        controlledFileReadCorrelationRef.current = null;
+        setPendingControlledFileReadRequestId(null);
+        setControlledFileReadNote(correlation.diagnostics[0]?.message ?? "Controlled read result was blocked.");
       } else if (message.type === "host.contextSnapshot") {
         const nextContext = message.payload as HostContextSnapshotPayload;
         setAttachedContext({ payload: nextContext, settingsRevision: settingsRevisionRef.current, chatId: chatIdRef.current });
@@ -1331,12 +1399,13 @@ export function App() {
       clearEditProposalState();
       clearModelProposalState();
       clearIdeActionState();
+      clearControlledFileReadState(null);
     } else {
       setChatHistoryError(result.error);
       setChatHistoryRevision(targetRevision);
     }
     setChatHistoryLoading(false);
-  }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState, isCurrentRefresh]);
+  }, [abortActiveStream, clearControlledFileReadState, clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState, isCurrentRefresh]);
 
   const selectChat = useCallback((nextChatId: string) => {
     setCompactConversationsOpen(false);
@@ -1348,6 +1417,7 @@ export function App() {
     clearEditProposalState();
     clearModelProposalState();
     clearIdeActionState();
+    clearControlledFileReadState(null);
     clearExplicitContextBundle(null);
     setAttachedContextAcknowledged(false);
     setChatId(nextChatId);
@@ -1355,7 +1425,7 @@ export function App() {
     setConversationNotice(`Switched to ${sanitizeDisplayText(selectedSummary?.title || nextChatId)}.`);
     setChatView(resetChatViewState(nextChatId));
     void loadChatThread(nextChatId);
-  }, [abortActiveStream, chatSummaries, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState, clearModelProposalState, loadChatThread]);
+  }, [abortActiveStream, chatSummaries, clearControlledFileReadState, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState, clearModelProposalState, loadChatThread]);
 
   const updateDirectChatId = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const nextChatId = event.target.value;
@@ -1980,6 +2050,21 @@ export function App() {
     addTimeline(`Agent Run verification requested ${requestId}`);
     appendTrace({ family: "agentRun.verificationRequested", title: "Agent Run verification requested", status: "pending", summary: "User requested Agent Run verification through the existing IDE action bridge.", requestId, details: normalized.details });
   }, [activeEditProposal, addTimeline, agentRunInput, appendTrace, applyResult, bridgeHost, clearEditProposalState]);
+
+  const submitControlledFileRead = useCallback(() => {
+    if (controlledAgentFileReadRequest.state !== "ready" || !controlledAgentFileReadRequest.bridgeRequest || !controlledAgentFileReadRequest.correlation || pendingControlledFileReadRequestId) {
+      setControlledFileReadNote(controlledAgentFileReadRequest.diagnostics[0]?.message ?? "Controlled read request is not ready.");
+      return;
+    }
+    controlledFileReadCorrelationRef.current = controlledAgentFileReadRequest.correlation;
+    controlledFileReadCompletedRequestIdRef.current = null;
+    setPendingControlledFileReadRequestId(controlledAgentFileReadRequest.bridgeRequest.requestId);
+    setControlledFileReadResultMetadata(null);
+    setControlledFileReadNote("Controlled read request posted after explicit user click.");
+    bridgeAdapterRef.current?.post(controlledAgentFileReadRequest.bridgeRequest);
+    addTimeline(`Controlled read requested ${controlledAgentFileReadRequest.bridgeRequest.requestId}`);
+    appendTrace({ family: "controlledAgent.fileReadPlanned", title: "Controlled file read requested", status: "pending", summary: "User clicked explicit controlled read request.", requestId: controlledAgentFileReadRequest.bridgeRequest.requestId, details: controlledAgentFileReadRequest.details });
+  }, [addTimeline, appendTrace, controlledAgentFileReadRequest, pendingControlledFileReadRequestId]);
 
   const requestIdeAction = useCallback((payload: IdeActionRequestPayload, requestIdPrefix = "gui-ide-action") => {
     if ((bridgeHost !== "vscode" && bridgeHost !== "jetbrains") || pendingIdeActionRequestIdRef.current) {
@@ -2768,7 +2853,7 @@ export function App() {
                 <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} />
                 {showControlledAgentRunPanel && <ControlledAgentRunPanel state={controlledAgentRunState} progressReport={controlledAgentProgressReport} mvpReport={controlledLocalAgentMvpReport} onStop={stopControlledAgentRun} />}
                 {controlledWorkspaceReadinessMetadata !== undefined && <ControlledAgentWorkspaceReadinessPanel metadata={controlledWorkspaceReadinessMetadata} />}
-                {controlledAgentFileReadMetadata !== undefined && <ControlledAgentFileReadPanel metadata={controlledAgentFileReadMetadata} />}
+                {(controlledAgentFileReadMetadata !== undefined || controlledAgentFileReadRequest.state !== "blocked") && <ControlledAgentFileReadPanel metadata={effectiveControlledAgentFileReadMetadata} evaluatedRead={controlledAgentFileReadSummary} request={controlledAgentFileReadRequest} pendingRequestId={pendingControlledFileReadRequestId} note={controlledFileReadNote} onRequest={submitControlledFileRead} onClearPending={clearPendingControlledFileReadState} />}
                 {controlledAgentCommandRunnerMetadata !== undefined && <ControlledAgentCommandRunnerPanel metadata={controlledAgentCommandRunnerMetadata} />}
                 <MultiStepTaskTimelinePanel input={multiStepTaskTimelineInput} />
                 {showWhatWillBeSentPanel && <WhatWillBeSentPanel summary={contextBudgetSummary} draftPromptCharacters={chatInput.trim().length} />}

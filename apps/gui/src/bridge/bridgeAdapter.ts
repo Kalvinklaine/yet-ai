@@ -105,7 +105,7 @@ export type IdeActionResultPayload = {
 
 export type GuiMessage = {
   version: string;
-  type: "gui.ready" | "gui.unloaded" | "gui.runtimeRefresh" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest";
+  type: "gui.ready" | "gui.unloaded" | "gui.runtimeRefresh" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest" | "gui.controlledAgentFileReadRequest";
   requestId?: string;
   payload?: Record<string, unknown> | IdeActionRequestPayload | ApplyWorkspaceEditPayload;
 };
@@ -128,7 +128,7 @@ export type HostRuntimeStatusPayload = {
 
 export type HostMessage = {
   version: string;
-  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.runtimeStatus";
+  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.runtimeStatus" | "host.controlledAgentFileReadResult";
   requestId?: string;
   payload?: Record<string, unknown> | IdeActionProgressPayload | IdeActionResultPayload | ApplyWorkspaceEditResultPayload | HostRuntimeStatusPayload;
 };
@@ -196,6 +196,7 @@ const hostMessageTypes = new Set<HostMessage["type"]>([
   "host.ideActionResult",
   "host.applyWorkspaceEditResult",
   "host.runtimeStatus",
+  "host.controlledAgentFileReadResult",
 ]);
 const guiMessageTypes = new Set<GuiMessage["type"]>([
   "gui.ready",
@@ -203,6 +204,7 @@ const guiMessageTypes = new Set<GuiMessage["type"]>([
   "gui.runtimeRefresh",
   "gui.ideActionRequest",
   "gui.applyWorkspaceEditRequest",
+  "gui.controlledAgentFileReadRequest",
 ]);
 
 function expectedParentOrigin(): string | undefined {
@@ -365,6 +367,9 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
   if (value.type === "gui.ideActionRequest") {
     return typeof value.requestId === "string" && isIdeActionRequestPayload(value.payload);
   }
+  if (value.type === "gui.controlledAgentFileReadRequest") {
+    return typeof value.requestId === "string" && isPlainObject(value.payload);
+  }
   return value.type === "gui.applyWorkspaceEditRequest" && typeof value.requestId === "string" && isApplyWorkspaceEditPayload(value.payload);
 }
 
@@ -408,6 +413,9 @@ export function isHostMessage(value: unknown): value is HostMessage {
   }
   if (value.type === "host.runtimeStatus") {
     return value.requestId === undefined && isHostRuntimeStatusPayload(value.payload);
+  }
+  if (value.type === "host.controlledAgentFileReadResult") {
+    return typeof value.requestId === "string" && isPlainObject(value.payload);
   }
   return value.type === "host.openedFromCommand" && value.requestId === undefined && isEmptyPayload(value.payload);
 }
