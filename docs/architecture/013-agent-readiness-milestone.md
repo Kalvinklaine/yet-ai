@@ -43,6 +43,7 @@ Avoid softer wording that implies implementation, autonomy, production publicati
 | S76 controlled run state skeleton | Experimental manual-only | Controlled run state records deterministic metadata-only phases, bounded counters, readiness correlation, stop reasons, and sanitized details for a future state machine. It does not start an agent, execute a loop, read files, apply edits, run verification, repair, retry, roll back, call providers/tools, add runtime/bridge authority, or provide real agent autonomy yet. |
 | S77 controlled edit executor contract | Experimental manual-only | Controlled edit executor records replacement-edit metadata only for existing workspace-relative files: expected hashes, bounded ranges, replacement byte counts, and sanitized summaries. It does not create/delete/rename files, expose raw replacement bodies/diffs/patches, add shell/git/provider/tool authority, add runtime/bridge endpoints, or claim broad write/apply/autonomy. |
 | S79 controlled progress/final report | Experimental manual-only | Controlled progress/final report evidence renders sanitized metadata only from existing GUI controlled-run state, edit metadata, command metadata, and repair metadata. It records phase labels, counters, limits, diagnostics, terminal final-report summaries, and all-false authority flags; it does not start an agent, execute a loop, persist raw prompts/files/diffs/commands, add bridge/runtime authority, or claim autonomy. |
+| S80 controlled local agent MVP dev-preview evidence | Experimental manual-only | Controlled local agent MVP evidence composes explicit user opt-in, controlled workspace readiness, bounded read metadata, edit metadata, allowlisted verification metadata, repair metadata, and progress/final-report metadata into sanitized checklist/status labels. It is local/mock dogfood evidence only and does not start an agent, call providers/tools, read/search/index hidden workspace data, mutate workspaces, run shell/free-form commands, persist raw prompts/files/diffs/commands, add runtime/bridge authority, prove real-provider CI, or claim production autonomy. |
 | Multi-step execution | Blocked/deferred | There is no implemented runner that executes a plan across multiple steps. S61 is only inert metadata. |
 | Controlled autonomy | Blocked/deferred | No autonomous loop is implemented. Any future controlled-autonomy work must pass the future eligibility gates below before design or implementation. |
 | Auto-repair / auto-retry / auto-rollback | Blocked/deferred | Failed verification can stop and may produce a draft-only prompt. The product must not claim automatic repair, retry, verification, or rollback. |
@@ -205,6 +206,26 @@ npm run validate:contracts && cd apps/gui && npm run typecheck && npm run build 
 ```
 
 This gate is deterministic local/mock evidence only. The focused smoke transpiles the pure GUI service and verifies disabled, running, stopped, failed, repair-exhausted blocked, completed, unsafe-redacted, terminal final-report, sanitized diagnostic, bounded counter/limit, and fail-closed authority-flag behavior. It is not real-provider CI, production readiness, marketplace readiness, multi-step execution, or autonomy approval.
+
+## Sprint 80 controlled local agent MVP dev-preview evidence
+
+Sprint 80 adds controlled local agent MVP dev-preview evidence as metadata composition only. The GUI service consumes already-known explicit user opt-in, controlled workspace readiness, bounded file-read metadata, controlled edit metadata, allowlisted command-id verification metadata, repair metadata, and controlled progress/final-report metadata, then renders sanitized status labels, checklist state, diagnostics, safety flags, and terminal final-report summaries.
+
+S80 is local/mock dogfood evidence, not production autonomy. It does not implement a real controlled-agent loop, provider loop, agent starter, runtime endpoint, bridge message, hidden workspace read/search/indexing, broad workspace mutation, shell/free-form command execution, git/package/network authority, provider/tool calling, task-board mutation, browser-storage persistence, raw report persistence, real-provider CI, marketplace readiness, or production readiness. Raw prompts, file bodies, diffs, replacement bodies, command strings, cwd/env, raw output/logs, provider/tool payloads, private paths, and secrets must stay out of MVP labels, checklists, diagnostics, and final reports.
+
+The exact focused S80 smoke is:
+
+```sh
+npm run smoke:controlled-local-agent-mvp
+```
+
+The S80 documentation-only gate is:
+
+```sh
+npm run check && git diff --check
+```
+
+This evidence remains deterministic and local/mock-only. The focused smoke transpiles the pure GUI aggregation service and verifies disabled, blocked no-workspace, ready preview, running metadata flow, completed/stopped final reports, repair exhaustion, unsafe raw-marker fail-closed behavior, and all-false authority flags. It is not real-provider CI, production readiness, marketplace readiness, multi-step execution, or autonomy approval.
 
 ## Blocked and deferred capabilities
 

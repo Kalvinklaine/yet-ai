@@ -161,6 +161,24 @@ npm run validate:contracts && cd apps/gui && npm test -- controlledAgentRunState
 
 Do not report S76 as an edit executor, real command runner endpoint, provider loop, autonomous runner, production readiness, marketplace readiness, release readiness, or real-provider CI. Manual RC notes may record only sanitized state phase/step/stop/limit/counter/diagnostic metadata and must confirm no raw prompt, file body, command, output, private path, provider/tool payload, secret, bridge payload, or browser-storage persistence appeared. S77+ edit execution, verifier/repair loops, rollback behavior, provider-tool behavior, and controlled-autonomy capabilities remain unimplemented until their explicit future sprints land.
 
+## S80 controlled local agent MVP note
+
+S80 adds metadata-driven controlled local agent MVP dev-preview evidence for a future controlled workspace only. It can surface sanitized checklist/status labels from explicit user opt-in, controlled workspace readiness, bounded read metadata, edit metadata, allowlisted verification metadata, repair metadata, and progress/final-report metadata. The evidence is deterministic local/mock dogfood only and does not start an agent or add runtime, bridge, provider, tool, storage, or workspace mutation authority.
+
+The exact focused S80 smoke is:
+
+```sh
+npm run smoke:controlled-local-agent-mvp
+```
+
+For S80 documentation-only updates, use:
+
+```sh
+npm run check && git diff --check
+```
+
+Do not report S80 as production autonomy, a real provider CI gate, broad workspace mutation, hidden read/search/indexing, shell/free-form command execution, git/package/network authority, provider/tool calling, raw prompt/file/diff/command persistence, marketplace readiness, release readiness, or production readiness. Manual RC notes may record only sanitized MVP status/checklist/progress/final-report metadata and must confirm no raw prompt, file body, diff, command, output, private path, provider/tool payload, secret, bridge payload, or browser-storage persistence appeared.
+
 ## Manual RC run checklist
 
 1. Start from a clean local checkout or sanitized dev-preview artifact label.
@@ -183,8 +201,9 @@ Do not report S76 as an edit executor, real command runner endpoint, provider lo
 18. If the S73 controlled workspace readiness panel is visible, record only sanitized readiness state; confirm it remains metadata-only with no Start Agent, Create Worktree, read/search, apply, verify, rollback, shell/git/tool/provider, browser-storage, or workspace-mutation authority.
 19. If the S74 controlled file-read evidence panel is visible, record only sanitized bounded-read metadata; confirm no raw body/private path leaks and no hidden read/search/indexing/write/apply/verify/command/provider/tool authority appeared.
 20. If the S75 controlled command evidence panel is visible, record only sanitized command-id metadata; confirm no raw command/args/cwd/env/output dumps/private paths/secrets appeared and no shell/git/network/provider/tool/runtime execution authority or action control was available.
-21. Validate the completed local report with `npm run report:agent-run-rc -- --check path/to/local-report.md` before sharing any excerpt.
-22. Keep raw local evidence, screenshots, logs, provider transcripts, bridge captures, and browser-storage dumps out of tracked files.
+21. If the S80 controlled local agent MVP evidence is visible, record only sanitized MVP status/checklist/progress/final-report metadata; confirm it remains explicit-opt-in, local/mock, metadata-only evidence with no agent start, broad mutation, shell/free-form command, hidden read/search/indexing, provider/tool authority, raw persistence, or production/autonomy claim.
+22. Validate the completed local report with `npm run report:agent-run-rc -- --check path/to/local-report.md` before sharing any excerpt.
+23. Keep raw local evidence, screenshots, logs, provider transcripts, bridge captures, and browser-storage dumps out of tracked files.
 
 ## Sanitized report workflow
 

@@ -203,6 +203,20 @@ The full S79 final audit gate is:
 npm run validate:contracts && cd apps/gui && npm run typecheck && npm run build && cd ../.. && npm run smoke:controlled-agent-progress-report && npm run check && git diff --check && git status --short
 ```
 
+For the S80 controlled local agent MVP dev-preview evidence boundary, run:
+
+```sh
+npm run smoke:controlled-local-agent-mvp
+```
+
+The smoke transpiles the pure GUI MVP aggregation service locally and verifies disabled, blocked no-workspace, ready preview, running metadata flow, completed/stopped final reports, repair exhaustion, unsafe raw-marker fail-closed behavior, and all-false metadata-only authority flags. S80 is deterministic local/mock dogfood evidence only: it composes explicit user opt-in, controlled workspace readiness, bounded read metadata, edit metadata, allowlisted verification metadata, repair metadata, and progress/final-report metadata into sanitized labels and checklist state. It is not production autonomy, a real provider CI gate, broad workspace mutation, a shell/free-form command path, hidden read/search/indexing, raw prompt/file/diff/command persistence, a runtime endpoint, bridge authority, provider/tool calling, or an agent starter.
+
+For S80 documentation-only updates, use:
+
+```sh
+npm run check && git diff --check
+```
+
 The full S75 final gate is:
 
 ```sh
