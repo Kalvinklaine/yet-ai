@@ -168,6 +168,9 @@ internal fun canHandleApplyWorkspaceEdit(disposed: Boolean, runtimePrepared: Boo
     return !disposed && runtimePrepared && acceptedHostReadyRequestId == requestId
 }
 
+internal fun canHandleControlledAgentEdit(disposed: Boolean, runtimePrepared: Boolean, guiReadyRequestId: String?, acceptedHostReadyRequestId: String?): Boolean =
+    canHandleApplyWorkspaceEdit(disposed, runtimePrepared, guiReadyRequestId, acceptedHostReadyRequestId)
+
 class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
     private val logger = Logger.getInstance(YetBrowserPanel::class.java)
     private val browser = JBCefBrowser()
@@ -202,6 +205,8 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
             if (ideActionHandled) return@addHandler null
             val applyEditHandled = handleApplyWorkspaceEditRequest(raw)
             if (applyEditHandled) return@addHandler null
+            val controlledEditHandled = handleControlledAgentEditRequest(raw)
+            if (controlledEditHandled) return@addHandler null
             val fileReadHandled = JetBrainsControlledFileReadBridge.handleControlledFileReadRequest(raw, ::sendToGui) { logger.info(it) }
             if (fileReadHandled) return@addHandler null
             val guiReady = BridgeMessages.parseGuiReady(raw)
@@ -263,7 +268,26 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         return JetBrainsApplyWorkspaceEditBridge.handleApplyWorkspaceEditRequest(raw, ::sendToGui, JetBrainsIdeActionHost(project), DialogApplyWorkspaceEditConfirmer(project)) { logger.info(it) }
     }
 
+    private fun handleControlledAgentEditRequest(raw: String): Boolean {
+        if (!ControlledIdeActions.isControlledAgentEditRequestType(raw)) return false
+        if (!canHandleControlledAgentEdit()) {
+            val safeRequestId = ControlledIdeActions.safeControlledAgentEditRequestIdFromRaw(raw)
+            if (safeRequestId != null) {
+                logger.info("Yet AI rejected controlled edit request before GUI bridge readiness")
+            }
+            return safeRequestId != null
+        }
+        return JetBrainsControlledAgentEditBridge.handleControlledAgentEditRequest(raw, ::sendToGui) { logger.info(it) }
+    }
+
     private fun canHandleApplyWorkspaceEdit(): Boolean = canHandleApplyWorkspaceEdit(
+        disposed = disposed,
+        runtimePrepared = runtimePrepared,
+        guiReadyRequestId = guiReadyRequestId,
+        acceptedHostReadyRequestId = acceptedHostReadyRequestId,
+    )
+
+    private fun canHandleControlledAgentEdit(): Boolean = canHandleControlledAgentEdit(
         disposed = disposed,
         runtimePrepared = runtimePrepared,
         guiReadyRequestId = guiReadyRequestId,
@@ -371,6 +395,22 @@ object JetBrainsControlledFileReadBridge {
         }
         logStatus("Yet AI disabled JetBrains controlled file read request")
         send(ControlledFileRead.unsupportedResult(request))
+        return true
+    }
+}
+
+object JetBrainsControlledAgentEditBridge {
+    fun handleControlledAgentEditRequest(raw: String, send: (String) -> Unit, logStatus: (String) -> Unit = {}): Boolean {
+        if (!ControlledIdeActions.isControlledAgentEditRequestType(raw)) return false
+        val request = ControlledIdeActions.parseControlledAgentEdit(raw)
+        if (request == null) {
+            val safeRequestId = ControlledIdeActions.safeControlledAgentEditRequestIdFromRaw(raw) ?: return false
+            logStatus("Yet AI rejected invalid controlled edit request")
+            send(ControlledIdeActions.controlledAgentEditRejectedResult(safeRequestId))
+            return true
+        }
+        logStatus("Yet AI disabled JetBrains controlled edit request")
+        send(ControlledIdeActions.controlledAgentEditUnsupportedResult(request))
         return true
     }
 }
@@ -689,6 +729,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isFrameNonce = (value) => typeof value === "string" && /^[0-9a-f]{32}$/.test(value);
         const maxIdeActionRequestBytes = 8192;
         const maxApplyWorkspaceEditRequestBytes = 65536;
+        const maxControlledAgentEditRequestBytes = 65536;
         const maxControlledFileReadRequestBytes = 8192;
         const allowedIdeActionNames = ["getContextSnapshot", "openWorkspaceFile", "revealWorkspaceRange", "getActiveFileExcerpt"];
         const optionalString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length <= maxLength);
@@ -710,6 +751,10 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const safePath = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength && !value.startsWith("/") && !value.startsWith("~") && !value.includes("%") && !value.includes("\\") && !value.includes(":") && !value.includes("?") && !value.includes("#") && /^[^\u0000-\u001f\u007f-\u009f]+$/.test(value) && value.split("/").every((part) => part.length > 0 && part !== "." && part !== ".." && !isSecretLikePathSegment(part)));
         const safeRequiredWorkspacePath = (value) => safePath(value, 512) && !value.includes("%") && !value.includes("?") && !value.includes("#") && !value.includes("//") && !value.endsWith("/") && value.split("/").every((part) => part.length > 0 && !/(?:^|[._-])(?:auth|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:[._-]|$)|^sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(part));
         const controlledFileReadPath = (value) => typeof value === "string" && value.length > 0 && value.length <= 180 && !value.startsWith("/") && !/^[A-Za-z]:/.test(value) && !value.startsWith("~") && !value.includes("\\") && !/[\\:*?\"<>|{}\[\]$^+]/.test(value) && !value.includes("//") && !value.endsWith("/") && value.split("/").every((part) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(part) && part !== "." && part !== ".." && !part.startsWith(".") && !/^(node_modules|vendor|dist|build|out|target|coverage|__pycache__|generated|tmp|temp|secrets?|credentials?|private)$/i.test(part));
+        const controlledAgentEditPath = controlledFileReadPath;
+        const safeControlledAgentEditId = (value) => typeof value === "string" && value.length > 0 && value.length <= 120 && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value) && !/(assistant|authorization|bearer|api[_-]?key|token|secret|sk-(?:proj-)?)/i.test(value);
+        const safeControlledAgentEditSummary = (value, maxLength) => typeof value === "string" && value.length > 0 && value.length <= maxLength && /^[^\u0000-\u001f\u007f-\u009f]+$/.test(value) && !/(api[_-]?key|authorization|bearer|cookie|token|secret|password|raw[_- ]?(file|body|patch|diff|command)|file[_- ]?(body|content)|provider|shell|command|cwd|env|git|tool|chmod|symlink|binary|create|delete|rename|move|auto[_- ]?(apply|run|repair)|sk-(?:proj-)?|\/(?:Users|Home|Tmp|Var|Etc|Opt|Mnt|Volumes|Private)(?=\/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:\/|\\)|~(?:\/|\\))/i.test(value);
+        const sha256Hash = (value) => typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value);
         const safeControlledFileReadId = (value) => typeof value === "string" && value.length > 0 && value.length <= 80 && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) && !/(assistant|sk-(?:proj-)?)/i.test(value);
         const isIdeActionPosition = (position) => isPlainObject(position) && hasOnlyKeys(position, ["line", "character"]) && Number.isInteger(position.line) && position.line >= 0 && position.line <= 1000000 && Number.isInteger(position.character) && position.character >= 0 && position.character <= 1000000;
         const isIdeActionRange = (range) => isPlainObject(range) && hasOnlyKeys(range, ["start", "end"]) && isIdeActionPosition(range.start) && isIdeActionPosition(range.end) && (range.end.line > range.start.line || (range.end.line === range.start.line && range.end.character >= range.start.character));
@@ -723,6 +768,11 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isActiveFileExcerptAttachment = (attachment) => isPlainObject(attachment) && hasOnlyKeys(attachment, ["kind", "source", "file", "range", "text", "truncated"]) && attachment.kind === "active_file_excerpt" && attachment.source === "jetbrains" && isPlainObject(attachment.file) && hasOnlyKeys(attachment.file, ["displayPath", "workspaceRelativePath", "languageId"]) && safePath(attachment.file.displayPath, 256) && safePath(attachment.file.workspaceRelativePath, 512) && (attachment.file.languageId === undefined || (typeof attachment.file.languageId === "string" && attachment.file.languageId.length > 0 && attachment.file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(attachment.file.languageId))) && isIdeActionRange(attachment.range) && isActiveFileExcerptText(attachment.text) && typeof attachment.truncated === "boolean";
         const isHostIdeActionResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "action", "workspaceRelativePath", "range", "context", "contextAttachment"]) && ["succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512) && (payload.range === undefined || isIdeActionRange(payload.range)) && (payload.context === undefined || isHostIdeActionResultContext(payload.context)) && (payload.contextAttachment === undefined || isActiveFileExcerptAttachment(payload.contextAttachment));
         const isHostApplyWorkspaceEditResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "appliedEditCount", "affectedFiles"]) && ["applied", "denied", "rejected", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.appliedEditCount === undefined || (Number.isInteger(payload.appliedEditCount) && payload.appliedEditCount >= 0 && payload.appliedEditCount <= 64)) && (payload.affectedFiles === undefined || (Array.isArray(payload.affectedFiles) && payload.affectedFiles.length <= 4 && payload.affectedFiles.every((path) => safeRequiredWorkspacePath(path))));
+        const isControlledAgentEditLimits = (limits) => isPlainObject(limits) && hasOnlyKeys(limits, ["maxFiles", "maxEdits", "maxPatchBytes"]) && Number.isInteger(limits.maxFiles) && limits.maxFiles >= 1 && limits.maxFiles <= 4 && Number.isInteger(limits.maxEdits) && limits.maxEdits >= 1 && limits.maxEdits <= 16 && Number.isInteger(limits.maxPatchBytes) && limits.maxPatchBytes >= 1 && limits.maxPatchBytes <= 12000;
+        const isControlledAgentResultEdit = (edit) => isPlainObject(edit) && hasOnlyKeys(edit, ["operation", "workspaceRelativePath", "fileLabel", "expectedContentHash", "actualContentHash", "startLine", "endLine", "replacementByteCount", "sanitizedSummary"]) && edit.operation === "replace" && controlledAgentEditPath(edit.workspaceRelativePath) && safeControlledAgentEditSummary(edit.fileLabel, 160) && sha256Hash(edit.expectedContentHash) && (edit.actualContentHash === undefined || sha256Hash(edit.actualContentHash)) && Number.isInteger(edit.startLine) && edit.startLine >= 1 && edit.startLine <= 1000000 && Number.isInteger(edit.endLine) && edit.endLine >= edit.startLine && edit.endLine <= 1000000 && Number.isInteger(edit.replacementByteCount) && edit.replacementByteCount >= 0 && edit.replacementByteCount <= 12000 && safeControlledAgentEditSummary(edit.sanitizedSummary, 240);
+        const isControlledAgentEditPolicyFlags = (flags) => isPlainObject(flags) && hasOnlyKeys(flags, ["boundedReplacementEditAllowed", "fileCreateAllowed", "fileDeleteAllowed", "fileRenameAllowed", "fileMoveAllowed", "chmodAllowed", "symlinkAllowed", "binaryEditAllowed", "directoryEditAllowed", "shellAllowed", "gitAllowed", "providerAllowed", "toolAllowed", "networkAllowed", "autoApplyAllowed", "autoRunAllowed"]) && typeof flags.boundedReplacementEditAllowed === "boolean" && flags.fileCreateAllowed === false && flags.fileDeleteAllowed === false && flags.fileRenameAllowed === false && flags.fileMoveAllowed === false && flags.chmodAllowed === false && flags.symlinkAllowed === false && flags.binaryEditAllowed === false && flags.directoryEditAllowed === false && flags.shellAllowed === false && flags.gitAllowed === false && flags.providerAllowed === false && flags.toolAllowed === false && flags.networkAllowed === false && flags.autoApplyAllowed === false && flags.autoRunAllowed === false;
+        const isControlledAgentEditResultDetails = (result) => isPlainObject(result) && hasOnlyKeys(result, ["status", "cloudRequired", "privatePathExposed", "rawBodyIncluded", "rawDiffIncluded", "authority", "message", "appliedEditCount", "affectedFiles", "blockedReason"]) && ["applied", "blocked", "failed"].includes(result.status) && result.cloudRequired === false && result.privatePathExposed === false && result.rawBodyIncluded === false && result.rawDiffIncluded === false && result.authority === "bounded_replacement_edit" && safeControlledAgentEditSummary(result.message, 240) && (result.appliedEditCount === undefined || (Number.isInteger(result.appliedEditCount) && result.appliedEditCount >= 0 && result.appliedEditCount <= 16)) && (result.affectedFiles === undefined || (Array.isArray(result.affectedFiles) && result.affectedFiles.length <= 4 && result.affectedFiles.every(controlledAgentEditPath))) && (result.blockedReason === undefined || ["edit_disabled", "policy_denied", "unsafe_path", "outside_workspace", "hidden_path", "dependency_path", "generated_path", "unsupported_operation", "missing_expected_hash", "hash_mismatch", "unconfirmed_request", "assistant_minted", "budget_exceeded", "line_range_invalid"].includes(result.blockedReason));
+        const isControlledAgentEditResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["type", "schemaVersion", "state", "authority", "cloudRequired", "controlledWorkspaceId", "runId", "runtimeSessionId", "sessionId", "workspaceReadinessId", "requestId", "requestIdMintedBy", "userConfirmed", "limits", "edits", "policyFlags", "result"]) && payload.type === "controlled_agent_edit_executor" && payload.schemaVersion === "2026-07-02" && ["applied", "blocked", "failed"].includes(payload.state) && payload.authority === "bounded_replacement_edit" && payload.cloudRequired === false && safeControlledAgentEditId(payload.controlledWorkspaceId) && safeControlledAgentEditId(payload.runId) && (payload.runtimeSessionId === undefined || safeControlledAgentEditId(payload.runtimeSessionId)) && (payload.sessionId === undefined || safeControlledAgentEditId(payload.sessionId)) && safeControlledAgentEditId(payload.workspaceReadinessId) && safeControlledAgentEditId(payload.requestId) && ["gui", "host"].includes(payload.requestIdMintedBy) && payload.userConfirmed === true && isControlledAgentEditLimits(payload.limits) && Array.isArray(payload.edits) && payload.edits.length > 0 && payload.edits.length <= 16 && payload.edits.every(isControlledAgentResultEdit) && isControlledAgentEditPolicyFlags(payload.policyFlags) && isControlledAgentEditResultDetails(payload.result) && payload.result.status === payload.state;
         const isReadBudget = (budget) => isPlainObject(budget) && hasOnlyKeys(budget, ["scope", "maxBytes", "maxLines", "allowBody", "singleFileOnly", "recursive", "globAllowed", "regexAllowed", "indexingAllowed", "budgetLabel"]) && budget.scope === "single_explicit_file" && Number.isInteger(budget.maxBytes) && budget.maxBytes >= 1 && budget.maxBytes <= 8192 && Number.isInteger(budget.maxLines) && budget.maxLines >= 1 && budget.maxLines <= 240 && typeof budget.allowBody === "boolean" && budget.singleFileOnly === true && budget.recursive === false && budget.globAllowed === false && budget.regexAllowed === false && budget.indexingAllowed === false && optionalNonEmptyString(budget.budgetLabel, 100);
         const isControlledAgentFileReadPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["kind", "version", "authority", "cloudRequired", "executionAllowed", "agentStartAllowed", "workspace", "request", "policyFlags", "result"]) && payload.kind === "controlled_agent_file_read" && payload.version === "2026-06-29" && payload.authority === "bounded_text_file_read" && payload.cloudRequired === false && payload.executionAllowed === false && payload.agentStartAllowed === false && isPlainObject(payload.workspace) && hasOnlyKeys(payload.workspace, ["controlledWorkspaceId", "runId", "workspaceMode", "host", "privatePathExposed", "workspaceLabel"]) && safeControlledFileReadId(payload.workspace.controlledWorkspaceId) && safeControlledFileReadId(payload.workspace.runId) && ["disposable", "worktree", "existing"].includes(payload.workspace.workspaceMode) && payload.workspace.host === "jetbrains" && payload.workspace.privatePathExposed === false && optionalNonEmptyString(payload.workspace.workspaceLabel, 100) && isPlainObject(payload.request) && hasOnlyKeys(payload.request, ["requestId", "source", "requestIdMintedBy", "assistantMinted", "workspaceRelativePath", "textOnly", "maxBytes", "budget", "requestedAt", "reason"]) && safeControlledFileReadId(payload.request.requestId) && ["gui", "host"].includes(payload.request.source) && ["gui", "host"].includes(payload.request.requestIdMintedBy) && payload.request.assistantMinted === false && controlledFileReadPath(payload.request.workspaceRelativePath) && payload.request.textOnly === true && Number.isInteger(payload.request.maxBytes) && payload.request.maxBytes >= 1 && payload.request.maxBytes <= 8192 && isReadBudget(payload.request.budget) && optionalNonEmptyString(payload.request.reason, 240) && isPlainObject(payload.policyFlags) && hasOnlyKeys(payload.policyFlags, ["fileReadAllowed", "fileWriteAllowed", "shellAllowed", "gitAllowed", "providerAllowed", "toolAllowed", "hiddenSearchAllowed", "indexingAllowed", "binaryReadAllowed", "symlinkAllowed", "autoStartAllowed", "autoApplyAllowed", "autoRunAllowed"]) && payload.policyFlags.fileReadAllowed === false && payload.policyFlags.fileWriteAllowed === false && payload.policyFlags.shellAllowed === false && payload.policyFlags.gitAllowed === false && payload.policyFlags.providerAllowed === false && payload.policyFlags.toolAllowed === false && payload.policyFlags.hiddenSearchAllowed === false && payload.policyFlags.indexingAllowed === false && payload.policyFlags.binaryReadAllowed === false && payload.policyFlags.symlinkAllowed === false && payload.policyFlags.autoStartAllowed === false && payload.policyFlags.autoApplyAllowed === false && payload.policyFlags.autoRunAllowed === false && isPlainObject(payload.result) && hasOnlyKeys(payload.result, ["status", "cloudRequired", "executionAllowed", "bodyIncluded", "truncated", "blockedReason", "message"]) && payload.result.status === "disabled" && payload.result.cloudRequired === false && payload.result.executionAllowed === false && payload.result.bodyIncluded === false && payload.result.truncated === false && payload.result.blockedReason === "read_disabled" && optionalNonEmptyString(payload.result.message, 240);
         const isHostRuntimeStatusPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["protocolVersion", "surface", "lifecycle", "runtimeOwner", "launchMode", "tokenState", "processState", "diagnosis", "nextAction", "cloudRequired", "authority"]) && payload.protocolVersion === "2026-06-21" && payload.surface === "jetbrains" && ["connected", "auth_mismatch", "invalid_settings", "failed", "restarting", "stopped"].includes(payload.lifecycle) && ["ide_host", "external"].includes(payload.runtimeOwner) && ["auto", "connect", "launch"].includes(payload.launchMode) && ["unknown", "not_required", "absent", "present", "mismatch", "invalid"].includes(payload.tokenState) && ["unknown", "not_owned", "running", "exited", "stopped", "failed"].includes(payload.processState) && isSafeStatusMessage(payload.diagnosis) && isSafeStatusMessage(payload.nextAction) && payload.cloudRequired === false && payload.authority === "metadata_only";
@@ -735,6 +785,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           if (message.type === "host.ideActionProgress") return isHostIdeActionProgressPayload(message.payload);
           if (message.type === "host.ideActionResult") return isHostIdeActionResultPayload(message.payload);
           if (message.type === "host.applyWorkspaceEditResult") return isHostApplyWorkspaceEditResultPayload(message.payload);
+          if (message.type === "host.controlledAgentEditResult") return isControlledAgentEditResultPayload(message.payload);
           if (message.type === "host.controlledAgentFileReadResult") return isControlledAgentFileReadPayload(message.payload);
           if (message.type === "host.runtimeStatus") return message.requestId === undefined && isHostRuntimeStatusPayload(message.payload);
           return false;
@@ -772,6 +823,26 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
             for (const replacement of edit.textReplacements) replacementTextLength += replacement.replacementText.length;
           }
           return replacementTextLength <= 32768;
+        };
+        const isControlledAgentReplacementEdit = (edit) => {
+          if (!isPlainObject(edit) || !hasOnlyKeys(edit, ["operation", "workspaceRelativePath", "fileLabel", "expectedContentHash", "startLine", "endLine", "replacementText", "replacementByteCount", "sanitizedSummary"]) || edit.operation !== "replace" || !controlledAgentEditPath(edit.workspaceRelativePath) || !safeControlledAgentEditSummary(edit.fileLabel, 160) || !sha256Hash(edit.expectedContentHash) || !Number.isInteger(edit.startLine) || edit.startLine < 1 || edit.startLine > 1000000 || !Number.isInteger(edit.endLine) || edit.endLine < edit.startLine || edit.endLine > 1000000 || typeof edit.replacementText !== "string" || edit.replacementText.length > 12000 || !/^[^\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]*$/.test(edit.replacementText) || !Number.isInteger(edit.replacementByteCount) || edit.replacementByteCount < 0 || edit.replacementByteCount > 12000 || !safeControlledAgentEditSummary(edit.sanitizedSummary, 240)) return false;
+          return new Blob([edit.replacementText]).size === edit.replacementByteCount;
+        };
+        const isGuiControlledAgentEditRequest = (message) => {
+          if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.controlledAgentEditRequest" || !requiredRequestId(message.requestId)) return false;
+          let serialized;
+          try { serialized = JSON.stringify(message); } catch (_) { return false; }
+          if (typeof serialized !== "string" || new Blob([serialized]).size > maxControlledAgentEditRequestBytes) return false;
+          const payload = message.payload;
+          if (!isPlainObject(payload) || !hasOnlyKeys(payload, ["requestId", "requestIdMintedBy", "source", "assistantMinted", "controlledWorkspaceId", "runId", "runtimeSessionId", "sessionId", "workspaceReadinessId", "userConfirmed", "limits", "edits"]) || payload.requestId !== message.requestId || !safeControlledAgentEditId(payload.requestId) || !["gui", "host"].includes(payload.requestIdMintedBy) || !["gui", "host"].includes(payload.source) || payload.assistantMinted !== false || !safeControlledAgentEditId(payload.controlledWorkspaceId) || !safeControlledAgentEditId(payload.runId) || (payload.runtimeSessionId !== undefined && !safeControlledAgentEditId(payload.runtimeSessionId)) || (payload.sessionId !== undefined && !safeControlledAgentEditId(payload.sessionId)) || !safeControlledAgentEditId(payload.workspaceReadinessId) || payload.userConfirmed !== true || !isControlledAgentEditLimits(payload.limits) || !Array.isArray(payload.edits) || payload.edits.length === 0 || payload.edits.length > payload.limits.maxEdits || payload.edits.length > 16 || !payload.edits.every(isControlledAgentReplacementEdit)) return false;
+          const seen = new Set();
+          let replacementByteCount = 0;
+          for (const edit of payload.edits) {
+            if (seen.has(edit.workspaceRelativePath)) return false;
+            seen.add(edit.workspaceRelativePath);
+            replacementByteCount += edit.replacementByteCount;
+          }
+          return seen.size <= payload.limits.maxFiles && replacementByteCount <= payload.limits.maxPatchBytes && replacementByteCount <= 12000;
         };
         const isGuiControlledFileReadRequest = (message) => {
           if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.controlledAgentFileReadRequest" || !requiredRequestId(message.requestId)) return false;
@@ -834,7 +905,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isGuiUnloadedMessage = (message) => isPlainObject(message) && hasOnlyKeys(message, ["version", "type", "payload"]) && message.version === bridgeVersion && message.type === "gui.unloaded" && isPlainObject(message.payload) && Object.keys(message.payload).length === 0;
         const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
         const canDeliverHostMessage = (message) => {
-          if (message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult" || message.type === "host.controlledAgentFileReadResult") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
+          if (message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult" || message.type === "host.controlledAgentEditResult" || message.type === "host.controlledAgentFileReadResult") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
           if (message.type === "host.openedFromCommand") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId() && message.requestId === undefined;
           if (message.type === "host.runtimeStatus") return frameReady && message.requestId === undefined;
           if (!messageMatchesCurrentReady(message)) return false;
@@ -884,6 +955,12 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
             } else if (isGuiApplyWorkspaceEditRequest(event.data)) {
               if (!frameReady || !hostReadyAcceptedForCurrentFrame || acceptedHostReadyRequestId !== currentReadyRequestId()) {
                 console.log("Yet AI rejected apply workspace edit request before GUI bridge readiness");
+                return;
+              }
+              window.postIntellijMessage(event.data);
+            } else if (isGuiControlledAgentEditRequest(event.data)) {
+              if (!frameReady || !hostReadyAcceptedForCurrentFrame || acceptedHostReadyRequestId !== currentReadyRequestId()) {
+                console.log("Yet AI rejected controlled edit request before GUI bridge readiness");
                 return;
               }
               window.postIntellijMessage(event.data);
