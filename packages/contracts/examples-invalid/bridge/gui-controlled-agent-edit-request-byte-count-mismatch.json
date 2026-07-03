@@ -11,7 +11,7 @@
     "runId": "run-s84-c1",
     "runtimeSessionId": "runtime-s84-c1",
     "workspaceReadinessId": "ready-s84-c1",
-    "userConfirmed": false,
+    "userConfirmed": true,
     "limits": {
       "maxFiles": 1,
       "maxEdits": 1,
@@ -26,7 +26,7 @@
         "startLine": 12,
         "endLine": 14,
         "replacementText": "const title = \"Yet AI\";\nconst mode = \"local\";\n",
-        "replacementByteCount": 46,
+        "replacementByteCount": 45,
         "sanitizedSummary": "Update selected UI metadata lines."
       }
     ]

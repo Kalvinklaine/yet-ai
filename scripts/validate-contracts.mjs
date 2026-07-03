@@ -628,6 +628,7 @@ const invalidMappings = [
     "gui-controlled-agent-edit-request-unconfirmed.json",
     "gui-controlled-agent-edit-request-unbounded-files.json",
     "gui-controlled-agent-edit-request-create-operation.json",
+    "gui-controlled-agent-edit-request-byte-count-mismatch.json",
     "gui-controlled-agent-edit-request-raw-diff-field.json",
     "gui-controlled-agent-edit-request-command-fields.json"
   ].map((fileName) => [
@@ -1569,6 +1570,35 @@ function getIdentityValue(identity, identityPath) {
   return identityPath.split(".").reduce((value, key) => value?.[key], identity);
 }
 
+function collectControlledAgentEditReplacementByteCountFailures(examplePath, example) {
+  if (example?.type !== "gui.controlledAgentEditRequest") {
+    return [];
+  }
+  const failures = [];
+  const edits = example?.payload?.edits;
+  if (!Array.isArray(edits)) {
+    return failures;
+  }
+  for (const [index, edit] of edits.entries()) {
+    if (typeof edit?.replacementText !== "string") {
+      continue;
+    }
+    const actualByteCount = Buffer.byteLength(edit.replacementText, "utf8");
+    if (edit.replacementByteCount !== actualByteCount) {
+      failures.push(
+        `${examplePath}: payload.edits[${index}].replacementByteCount must equal UTF-8 byte length of replacementText; expected ${actualByteCount}, got ${JSON.stringify(
+          edit.replacementByteCount
+        )}`
+      );
+    }
+  }
+  return failures;
+}
+
+function isControlledAgentEditByteCountMismatchInvalidExample(examplePath) {
+  return examplePath.includes("/gui-controlled-agent-edit-request-byte-count-mismatch.json");
+}
+
 function collectMappingCoverageFailures(exampleFiles, schemaFiles) {
   const discoveredExamples = new Set(exampleFiles.map(normalizeContractPath));
   const discoveredSchemas = new Set(schemaFiles.map(normalizeContractPath));
@@ -1809,6 +1839,8 @@ for (const [examplePath, schemaPath] of mappings) {
       continue;
     }
 
+    failures.push(...collectControlledAgentEditReplacementByteCountFailures(examplePath, example));
+
     if (!validate(example)) {
       const details = ajv.errorsText(validate.errors, { separator: "\n  " });
       failures.push(`${examplePath}: positive example failed schema validation against ${schemaPath}:\n  ${details}`);
@@ -1826,6 +1858,15 @@ for (const [examplePath, schemaPath] of invalidMappings) {
     if (validate === undefined || example === undefined) {
       continue;
     }
+
+    const byteCountFailures = collectControlledAgentEditReplacementByteCountFailures(examplePath, example);
+    if (isControlledAgentEditByteCountMismatchInvalidExample(examplePath)) {
+      if (byteCountFailures.length === 0) {
+        failures.push(`${examplePath}: byte-count mismatch invalid example did not fail replacementByteCount validation`);
+      }
+      continue;
+    }
+    failures.push(...byteCountFailures);
 
     if (validate(example)) {
       failures.push(`${examplePath}: invalid example unexpectedly passed schema validation against ${schemaPath}`);
