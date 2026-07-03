@@ -31,7 +31,7 @@ import { buildContextBudgetSummary, type ContextBudgetSummary } from "./services
 import { buildOneStepModelProposalPrompt } from "./services/modelProposalPrompt";
 import { evaluateAgentRunModelProposal, type AgentRunModelProposalResult } from "./services/agentRunModelProposal";
 import { normalizeAgentRunApplyRequest, correlateAgentRunApplyResult, type AgentRunApplyCorrelationMetadata } from "./services/agentRunApply";
-import { normalizeAgentRunVerificationRequest, correlateAgentRunVerificationProgress, correlateAgentRunVerificationResult, type AgentRunVerificationCorrelationMetadata } from "./services/agentRunVerification";
+import { correlateAgentRunVerificationProgress, correlateAgentRunVerificationResult, type AgentRunVerificationCorrelationMetadata } from "./services/agentRunVerification";
 import { createAgentRunReport, createAgentRunTraceDetails } from "./services/agentRunReport";
 import { buildAgentRunCheckpointDecision, type AgentRunCheckpointDecisionSummary } from "./services/agentRunCheckpointDecision";
 import { composeAgentRunReadiness, type AgentRunReadinessResult } from "./services/agentRunReadiness";
@@ -431,7 +431,6 @@ export function App() {
   const agentRunApplyCounterRef = useRef(0);
   const agentRunApplyCorrelationRef = useRef<AgentRunApplyCorrelationMetadata | null>(null);
   const agentRunApplyChatIdRef = useRef<string | null>(null);
-  const agentRunVerificationCounterRef = useRef(0);
   const agentRunVerificationCorrelationRef = useRef<AgentRunVerificationCorrelationMetadata | null>(null);
   const agentRunVerificationChatIdRef = useRef<string | null>(null);
   const agentRunVerificationResultRef = useRef<AgentRunInput["verificationResult"] | null>(null);
@@ -2072,54 +2071,9 @@ export function App() {
     appendTrace({ family: "agentRun.applyRequested", title: "Agent Run apply requested", status: "pending", summary: "User requested Agent Run apply through the existing workspace-edit bridge.", requestId: applyRequestId, details: normalized.details });
   }, [activeEditProposal, addTimeline, agentRunInput, appendTrace, bridgeHost, clearEditProposalState]);
 
-  const submitAgentRunVerification = useCallback((commandId: VerificationCommandId) => {
-    if (!agentRunInput || !activeEditProposal || applyResult?.proposalRequestId !== activeEditProposal.requestId || (bridgeHost !== "vscode" && bridgeHost !== "jetbrains") || pendingIdeActionRequestIdRef.current) {
-      return;
-    }
-    if (!editProposalCandidateIdentityMatches(activeEditProposal, latestEditProposalCandidateFromMessages(chatViewMessagesRef.current))) {
-      clearEditProposalState();
-      return;
-    }
-    agentRunVerificationCounterRef.current += 1;
-    const requestId = `gui-agent-run-verification-${agentRunVerificationCounterRef.current}`;
-    const normalized = normalizeAgentRunVerificationRequest({
-      source: "user",
-      requestId,
-      requestIdMintedBy: "gui",
-      runId: agentRunRunId(agentRunInput),
-      commandId,
-    });
-    if (normalized.state !== "ready" || !normalized.correlation || !normalized.verificationRequest || !normalized.ideActionRequest) {
-      setIdeActionNote(normalized.diagnostics[0]?.message ?? "Agent Run verification request was blocked.");
-      return;
-    }
-    const label = ideActionLabel(normalized.ideActionRequest.action);
-    pendingIdeActionRequestIdRef.current = requestId;
-    pendingIdeActionChatIdRef.current = chatIdRef.current;
-    agentRunVerificationCorrelationRef.current = normalized.correlation;
-    agentRunVerificationChatIdRef.current = chatIdRef.current;
-    agentRunVerificationResultRef.current = null;
-    setAgentRunVerificationRequest(normalized.verificationRequest);
-    setAgentRunVerificationProgress(null);
-    setAgentRunVerificationResult(null);
-    setAgentRunVerificationFixDraft(null);
-    setIdeActionNote(null);
-    setIdeActionAttempt({
-      requestId,
-      action: normalized.ideActionRequest.action,
-      label,
-      status: "pending",
-      message: `${label} requested.`,
-    });
-    bridgeAdapterRef.current?.post({
-      version: "2026-05-15",
-      type: "gui.ideActionRequest",
-      requestId,
-      payload: normalized.ideActionRequest,
-    });
-    addTimeline(`Agent Run verification requested ${requestId}`);
-    appendTrace({ family: "agentRun.verificationRequested", title: "Agent Run verification requested", status: "pending", summary: "User requested Agent Run verification through the existing IDE action bridge.", requestId, details: normalized.details });
-  }, [activeEditProposal, addTimeline, agentRunInput, appendTrace, applyResult, bridgeHost, clearEditProposalState]);
+  const submitAgentRunVerification = useCallback((_commandId: VerificationCommandId) => {
+    setIdeActionNote("Agent Run controlled verification requires S85 allowlisted execution support. No bridge verification request was posted in S84.");
+  }, []);
 
   const submitControlledFileRead = useCallback(() => {
     if (controlledAgentFileReadRequest.state !== "ready" || !controlledAgentFileReadRequest.bridgeRequest || !controlledAgentFileReadRequest.correlation || pendingControlledFileReadRequestId) {

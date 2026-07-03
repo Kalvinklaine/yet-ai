@@ -258,6 +258,8 @@ npm run smoke:controlled-agent-real-edit
 
 S84 adds real bounded controlled replacement edit execution only for existing safe workspace-relative text files. A `gui.controlledAgentEditRequest` is posted only after explicit user click and is accepted only through request/run/runtime-session/workspace/readiness correlation with an expected `sha256:` content hash for the current UTF-8 file bytes. VS Code is the real S84 executor; browser remains unsupported, and JetBrains remains fail-closed with sanitized `edit_disabled` metadata. S84 does not allow create/delete/rename/move/chmod/directory/binary/symlink/generated/dependency edits, hidden/background edits, provider/model calls, verification execution, shell/git/package/network/tool authority, rollback, task-board mutation, raw file body/diff/replacement persistence, or controlled autonomy. Raw file bodies, diffs, and replacement text must not be persisted in browser storage, trace, progress, reports, docs, dogfood reports, or smoke output. S85 is still required for real allowlisted verification execution, and S86 remains the earliest honest one-step controlled-autonomy milestone.
 
+In S84, the GUI controlled Agent Run path must not post `gui.ideActionRequest` for `{ action: "runVerificationCommand" }`. Older manual IDE verification evidence can still be rendered as sanitized historical/manual evidence, but real allowlisted controlled-agent verification execution is S85-required and must be shown as disabled/unsupported in S84 UI.
+
 The full S84 final audit gate is:
 
 ```sh

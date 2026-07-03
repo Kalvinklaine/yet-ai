@@ -314,6 +314,8 @@ Sprint 84 adds real bounded controlled replacement edit execution, but only as a
 
 S84 is not broad workspace mutation. It adds no create, delete, rename, move, chmod, directory, binary, symlink, generated/dependency, absolute-path, traversal, hidden-file, or secret-path edit authority. It adds no hidden or background edits, auto-apply, provider/model call, verification execution, shell, git, package-manager, network, local-tool authority, rollback execution, task-board mutation, automatic repair, automatic retry, automatic verification, production autonomy, marketplace readiness, release readiness, or real-provider CI. Raw file bodies, diffs, and replacement text may exist only transiently in the explicit bounded edit request/result execution path and must not be persisted in browser storage, trace, progress metadata, final reports, docs, dogfood reports, or smoke output.
 
+The S84 GUI controlled Agent Run verification control is intentionally disabled/S85-required. It must not post `gui.ideActionRequest` with `{ action: "runVerificationCommand" }`; S84 may only show sanitized historical/manual verification evidence already supplied by older manual IDE flows. Real allowlisted controlled-agent verification execution belongs to S85.
+
 The exact S84 focused real-edit smoke is:
 
 ```sh

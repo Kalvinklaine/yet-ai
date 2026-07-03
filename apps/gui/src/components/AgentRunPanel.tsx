@@ -48,7 +48,8 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const showApplyRiskSummary = Boolean(metadata && !metadata.applyResult && (!pendingApply || metadata.applyRequest?.requested === true) && (hasProposal(details) || view.nextUserAction === "confirm_apply" || view.nextUserAction === "wait_for_apply" || view.state === "prerequisites_blocked" || view.state === "blocked"));
   const verificationCommandId = verificationCommandIdFromDetails(details.verificationCommandId);
   const canApply = supported && !pendingApply && view.nextUserAction === "confirm_apply";
-  const canVerify = supported && !pendingVerification && view.nextUserAction === "confirm_verification" && verificationCommandId !== null;
+  const canVerify = false;
+  const showS85VerificationRequired = supported && view.nextUserAction === "confirm_verification" && verificationCommandId !== null;
   const canReviewRollback = view.rollbackAvailable || view.nextUserAction === "review_rollback";
   const canDraftFollowup = view.state === "verified";
   const canDraftFix = view.state === "verification_failed" && guidedFix.status === "fix_draft_available";
@@ -216,6 +217,12 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
         </div>
       )}
       <span className="subtle">no hidden model/provider calls; manual</span>
+      {showS85VerificationRequired && (
+        <div className="readiness-card warn" role="status" aria-label="Agent Run S85 verification required">
+          <strong>S85 required for controlled-agent verification</strong>
+          <span>Real allowlisted controlled-agent verification execution is unsupported in S84. This Agent Run control is disabled and posts no verification bridge request.</span>
+        </div>
+      )}
       <div className="row" role="group" aria-label="Agent Run explicit actions">
         <button type="button" onClick={onApplyReviewedPatch} disabled={!canApply}>Manually apply reviewed patch</button>
         <button type="button" onClick={() => verificationCommandId && onRunAllowlistedVerification(verificationCommandId)} disabled={!canVerify}>Manually run allowlisted verification</button>
@@ -373,7 +380,7 @@ function readinessExplanation(state: string, details: Record<string, string | nu
     return "Apply pending. Wait for the host apply result; duplicate manual apply requests stay disabled.";
   }
   if (state === "ready_for_verification") {
-    return "Ready for manual verification. Click Manually run allowlisted verification when you choose to run the selected command id.";
+    return "S85 is required for real allowlisted controlled-agent verification execution. In S84, review applied-edit metadata and use older manual IDE verification evidence outside the controlled Agent Run path if needed.";
   }
   if (state === "verification_requested" || state === "verification_running") {
     return "Verification running. Wait for the allowlisted command result; no repair, retry, or rollback starts automatically.";
@@ -416,7 +423,7 @@ function nextManualStep(state: string, details: Record<string, string | number |
     return "Wait for the host apply result. Duplicate apply requests are disabled while this explicit request is pending.";
   }
   if (state === "ready_for_verification") {
-    return "Run the selected allowlisted verification command only when ready; the GUI sends commandId metadata, not raw shell text.";
+    return "S85 is required before this controlled Agent Run path can execute allowlisted verification. The S84 GUI will not post a verification bridge request here.";
   }
   if (state === "verification_requested" || state === "verification_running") {
     return "Wait for verification to finish, then review the sanitized result before any follow-up.";
