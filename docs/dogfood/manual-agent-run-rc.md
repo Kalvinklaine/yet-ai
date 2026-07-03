@@ -234,6 +234,24 @@ npm run validate:contracts && cd apps/gui && npm test -- controlledAgentFileRead
 
 Manual RC notes may record only sanitized request/read status, workspace-relative path labels, counts, truncation, hash, and unsupported-host metadata. Do not paste raw file bodies and do not persist them in reports, trace, progress, browser storage, docs, or smoke output. Do not report S83 as hidden/background reading, search, indexing, provider/model calling, edit/write/apply execution, verification execution, shell/git/package/network/tool authority, rollback, production autonomy, marketplace readiness, release readiness, or real-provider CI. S84 is still required for real bounded edit execution, and S86 remains the earliest honest one-step controlled-autonomy milestone.
 
+## S84 real bounded controlled replacement edit note
+
+S84 adds real bounded controlled replacement edit execution for existing safe workspace-relative text files only. The GUI posts `gui.controlledAgentEditRequest` only after the user clicks the controlled edit action and only when controlled runtime/workspace metadata is ready. Results are accepted only when request id, run id, runtime session id, controlled workspace id, and readiness metadata match. Each applied edit requires an expected `sha256:` content hash for the current UTF-8 file bytes before writing. VS Code is the only S84 host with actual bounded edit execution. Browser remains unsupported, and JetBrains fails closed with sanitized `edit_disabled` metadata.
+
+The exact focused S84 real-edit smoke is:
+
+```sh
+npm run smoke:controlled-agent-real-edit
+```
+
+For the final S84 audit gate, use:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm test -- controlledAgentEditExecutor controlledAgentEditRequest controlledAgentRunState controlledAgentProgressReport App && npm run typecheck && npm run build && cd ../.. && cd apps/plugins/vscode && npm run compile && npm test -- controlledEdit && cd ../../.. && cd apps/plugins/jetbrains && gradle test --console=plain --tests "*ControlledEdit*" && cd ../../.. && npm run smoke:controlled-agent-real-edit && npm run smoke:controlled-agent-edit-executor && npm run smoke:controlled-agent-real-file-read && npm run smoke:controlled-agent-runtime-session && npm run smoke:controlled-local-agent-mvp && npm run check && git diff --check && git status --short
+```
+
+Manual RC notes may record only sanitized explicit-click edit request/result status, workspace-relative path labels, range/count/hash metadata, and unsupported-host metadata. Do not paste raw file bodies, diffs, or replacement text, and do not persist them in reports, trace, progress, browser storage, docs, or smoke output. Do not report S84 as create/delete/rename/move/chmod/binary/symlink edit support, hidden/background edits, provider/model calling, verification execution, shell/git/package/network/tool authority, rollback, production autonomy, marketplace readiness, release readiness, or real-provider CI. S85 is still required for real allowlisted verification execution, and S86 remains the earliest honest one-step controlled-autonomy milestone.
+
 ## Manual RC run checklist
 
 1. Start from a clean local checkout or sanitized dev-preview artifact label.
@@ -259,8 +277,9 @@ Manual RC notes may record only sanitized request/read status, workspace-relativ
 21. If the S80 controlled local agent MVP evidence is visible, record only sanitized MVP status/checklist/progress/final-report metadata; confirm it remains explicit-opt-in, local/mock, metadata-only evidence with no agent start, broad mutation, shell/free-form command, hidden read/search/indexing, provider/tool authority, raw persistence, or production/autonomy claim.
 22. If S82 controlled runtime session metadata is visible, record only sanitized lifecycle/precondition/correlation status; confirm browser is unsupported, IDE hosts are future-capable only with metadata preconditions, and no agent start, read, edit, verification, provider/tool call, shell/git/network action, rollback, workspace mutation, raw persistence, or production/autonomy claim appeared.
 23. If S83 controlled file-read execution is visible, record only sanitized explicit-click request/result status; confirm browser is unsupported, JetBrains is unsupported/fail-closed, VS Code accepts only correlated bounded reads, raw file bodies are not persisted in browser storage/trace/progress/report/docs/smokes, and no hidden/background read/search/indexing/write/apply/verify/provider/model/shell/git/package/network/tool authority appeared.
-24. Validate the completed local report with `npm run report:agent-run-rc -- --check path/to/local-report.md` before sharing any excerpt.
-25. Keep raw local evidence, screenshots, logs, provider transcripts, bridge captures, and browser-storage dumps out of tracked files.
+24. If S84 controlled replacement edit execution is visible, record only sanitized explicit-click request/result status; confirm browser is unsupported, JetBrains is fail-closed with `edit_disabled`, VS Code accepts only correlated expected-hash bounded replacements, raw file bodies/diffs/replacements are not persisted in browser storage/trace/progress/report/docs/smokes, no create/delete/rename/move/chmod/binary/symlink edit support appeared, and no hidden/background edit, provider/model, verification, shell/git/package/network/tool authority appeared.
+25. Validate the completed local report with `npm run report:agent-run-rc -- --check path/to/local-report.md` before sharing any excerpt.
+26. Keep raw local evidence, screenshots, logs, provider transcripts, bridge captures, and browser-storage dumps out of tracked files.
 
 ## Sanitized report workflow
 

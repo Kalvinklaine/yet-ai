@@ -250,6 +250,20 @@ S83 adds the first real bounded controlled workspace text read execution path. T
 
 S83 does not add hidden or background reads, recursive search, glob or regex search, workspace indexing, provider/model calls, edit/write/apply authority, verification execution, shell/git/package/network/tool authority, rollback, task-board mutation, or controlled autonomy. Raw file bodies may be returned only inside the correlated host result needed for the explicit request; they must not be persisted in browser storage, trace, progress, final reports, docs, or smoke reports. S84 is still required for real bounded edit execution, and S86 remains the earliest honest point to claim any one-step controlled autonomy after separate bounded read, edit, verification, and loop gates land.
 
+For the S84 real bounded controlled replacement edit execution boundary, run:
+
+```sh
+npm run smoke:controlled-agent-real-edit
+```
+
+S84 adds real bounded controlled replacement edit execution only for existing safe workspace-relative text files. A `gui.controlledAgentEditRequest` is posted only after explicit user click and is accepted only through request/run/runtime-session/workspace/readiness correlation with an expected `sha256:` content hash for the current UTF-8 file bytes. VS Code is the real S84 executor; browser remains unsupported, and JetBrains remains fail-closed with sanitized `edit_disabled` metadata. S84 does not allow create/delete/rename/move/chmod/directory/binary/symlink/generated/dependency edits, hidden/background edits, provider/model calls, verification execution, shell/git/package/network/tool authority, rollback, task-board mutation, raw file body/diff/replacement persistence, or controlled autonomy. Raw file bodies, diffs, and replacement text must not be persisted in browser storage, trace, progress, reports, docs, dogfood reports, or smoke output. S85 is still required for real allowlisted verification execution, and S86 remains the earliest honest one-step controlled-autonomy milestone.
+
+The full S84 final audit gate is:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm test -- controlledAgentEditExecutor controlledAgentEditRequest controlledAgentRunState controlledAgentProgressReport App && npm run typecheck && npm run build && cd ../.. && cd apps/plugins/vscode && npm run compile && npm test -- controlledEdit && cd ../../.. && cd apps/plugins/jetbrains && gradle test --console=plain --tests "*ControlledEdit*" && cd ../../.. && npm run smoke:controlled-agent-real-edit && npm run smoke:controlled-agent-edit-executor && npm run smoke:controlled-agent-real-file-read && npm run smoke:controlled-agent-runtime-session && npm run smoke:controlled-local-agent-mvp && npm run check && git diff --check && git status --short
+```
+
 The full S83 final audit gate is:
 
 ```sh
