@@ -335,7 +335,7 @@ function agentRunStateLabel(state: string, details: Record<string, string | numb
     return "Apply pending";
   }
   if (state === "ready_for_verification") {
-    return "Ready for manual verification";
+    return "Verification disabled until S85";
   }
   if (state === "verification_requested" || state === "verification_running") {
     return "Verification running";

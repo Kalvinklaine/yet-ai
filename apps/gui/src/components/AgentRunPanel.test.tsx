@@ -474,7 +474,7 @@ describe("AgentRunPanel", () => {
     expect(onApply).toHaveBeenCalledTimes(1);
   });
 
-  it("runs verification only after explicit click with commandId-only payload", () => {
+  it("keeps controlled verification disabled until S85 and posts no request", () => {
     const onVerify = vi.fn();
     renderPanel({
       ...readyInput,
@@ -483,13 +483,16 @@ describe("AgentRunPanel", () => {
       boundedLoop: verificationLoop,
     }, { host: "vscode", onRunAllowlistedVerification: onVerify });
 
+    expect(panelText()).toContain("Manual state: Verification disabled until S85");
+    expect(panelText()).toContain("S85 required for controlled-agent verification");
+    expect(panelText()).toContain("posts no verification bridge request");
+    expect(findButton("Manually run allowlisted verification").disabled).toBe(true);
     expect(onVerify).not.toHaveBeenCalled();
     act(() => {
       findButton("Manually run allowlisted verification").click();
     });
 
-    expect(onVerify).toHaveBeenCalledWith("repository-check");
-    expect(JSON.stringify({ action: "runVerificationCommand", commandId: onVerify.mock.calls[0]?.[0] })).toBe("{\"action\":\"runVerificationCommand\",\"commandId\":\"repository-check\"}");
+    expect(onVerify).not.toHaveBeenCalled();
   });
 
   it("renders pending, verification, and terminal dogfood state labels", () => {
@@ -508,8 +511,10 @@ describe("AgentRunPanel", () => {
       boundedLoop: verificationLoop,
     }, { host: "vscode" });
 
-    expect(panelText()).toContain("Manual state: Ready for manual verification");
-    expect(panelText()).toContain("Ready for manual verification. Click Manually run allowlisted verification when you choose to run the selected command id.");
+    expect(panelText()).toContain("Manual state: Verification disabled until S85");
+    expect(panelText()).toContain("S85 is required for real allowlisted controlled-agent verification execution. In S84, review applied-edit metadata and use older manual IDE verification evidence outside the controlled Agent Run path if needed.");
+    expect(panelText()).toContain("S85 is required before this controlled Agent Run path can execute allowlisted verification. The S84 GUI will not post a verification bridge request here.");
+    expect(findButton("Manually run allowlisted verification").disabled).toBe(true);
 
     renderPanel({
       ...readyInput,

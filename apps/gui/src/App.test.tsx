@@ -8180,7 +8180,7 @@ describe("edit proposal preview", () => {
 
     await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "Agent Run apply result.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
     const panel = agentRunPanel();
-    expect(panel.textContent).toContain("Manual state: Ready for manual verification");
+    expect(panel.textContent).toContain("Manual state: Verification disabled until S85");
     expect(panel.textContent).toContain("S85 required for controlled-agent verification");
     expect(panel.textContent).toContain("Real allowlisted controlled-agent verification execution is unsupported in S84.");
     expect(panel.textContent).toContain("S85 is required before this controlled Agent Run path can execute allowlisted verification.");
@@ -8249,7 +8249,7 @@ describe("edit proposal preview", () => {
     await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "Agent Run apply result.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
 
     const panel = agentRunPanel();
-    expect(panel.textContent).toContain("Manual state: Ready for manual verification");
+    expect(panel.textContent).toContain("Manual state: Verification disabled until S85");
     expect(panel.textContent).toContain("S85 required for controlled-agent verification");
     expect(buttonWithin(panel, "Manually run allowlisted verification").disabled).toBe(true);
     expect(buttonsNamed("Draft Agent Run fix prompt")).toHaveLength(0);
