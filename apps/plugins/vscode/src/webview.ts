@@ -230,6 +230,10 @@ export function openYetAiWebview(
       return;
     }
     console.log(`Yet AI received ${message.type}`);
+    if (isPrivilegedGuiMessageType(message.type) && !isPrivilegedGuiMessageAllowed({ guiReady })) {
+      void rejectPrivilegedGuiMessageBeforeReady(panel.webview, message);
+      return;
+    }
     if (message.type === "gui.ideActionRequest") {
       void handleIdeActionRequest(panel.webview, message);
       return;
@@ -257,6 +261,54 @@ export function openYetAiWebview(
     } satisfies HostMessage);
     sendContextSnapshot();
   });
+}
+
+type PrivilegedGuiMessageType = Exclude<GuiMessage["type"], "gui.ready">;
+
+type PrivilegedGuiReadinessState = {
+  guiReady: boolean;
+};
+
+type FramePrivilegedReadinessState = {
+  frameReady: boolean;
+  frameReadyRequestId?: string;
+  latestHostReadyRequestId?: string;
+};
+
+export function isPrivilegedGuiMessageType(type: GuiMessage["type"]): type is PrivilegedGuiMessageType {
+  return type === "gui.ideActionRequest" ||
+    type === "gui.applyWorkspaceEditRequest" ||
+    type === "gui.controlledAgentFileReadRequest" ||
+    type === "gui.controlledAgentEditRequest";
+}
+
+export function isPrivilegedGuiMessageAllowed(state: PrivilegedGuiReadinessState): boolean {
+  return state.guiReady;
+}
+
+export function isFramePrivilegedGuiMessageAllowed(state: FramePrivilegedReadinessState): boolean {
+  return state.frameReady && state.frameReadyRequestId !== undefined && state.latestHostReadyRequestId !== undefined && state.latestHostReadyRequestId === state.frameReadyRequestId;
+}
+
+export async function rejectPrivilegedGuiMessageBeforeReady(webview: vscode.Webview, message: GuiMessage): Promise<void> {
+  const requestId = typeof message.requestId === "string" ? message.requestId : "invalid-request";
+  if (message.type === "gui.ideActionRequest") {
+    await webview.postMessage(createIdeActionResult(requestId, "rejected", "IDE action rejected by host policy."));
+    return;
+  }
+  if (message.type === "gui.applyWorkspaceEditRequest") {
+    await webview.postMessage(createApplyWorkspaceEditResult(requestId, "rejected", "Edit request rejected by host policy."));
+    return;
+  }
+  if (message.type === "gui.controlledAgentFileReadRequest") {
+    const result = await runControlledFileReadRequest({ version: bridgeVersion, type: "gui.controlledAgentFileReadRequest", requestId, payload: {} }, []);
+    await webview.postMessage(result);
+    return;
+  }
+  if (message.type === "gui.controlledAgentEditRequest") {
+    const result = await runControlledAgentEditRequest({ version: bridgeVersion, type: "gui.controlledAgentEditRequest", requestId, payload: {} }, []);
+    await webview.postMessage(result);
+  }
 }
 
 export async function handleControlledFileReadRequest(webview: vscode.Webview, message: GuiMessage): Promise<void> {
@@ -1566,6 +1618,7 @@ const maxForwardedControlledFileReadMessageBytes = ${maxForwardedControlledFileR
 const maxForwardedControlledAgentEditMessageBytes = ${maxForwardedControlledAgentEditMessageBytes};
 let latestHostReady;
 let frameReady = false;
+let frameReadyRequestId;
 const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const hasSecretRequestIdMarker = (value) => /authorization|bearer|api[_-]?key|token|secret|access[_-]?token|provider[_-]?key|openai[_-]?api[_-]?key|sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value);
 const isBoundedRequestId = (value) => value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value) && !hasSecretRequestIdMarker(value));
@@ -1631,8 +1684,10 @@ const sendToFrame = (message) => {
     frame.contentWindow.postMessage(message, frameTargetOrigin);
   }
 };
+const isPrivilegedGuiMessageType = (type) => type === "gui.ideActionRequest" || type === "gui.applyWorkspaceEditRequest" || type === "gui.controlledAgentFileReadRequest" || type === "gui.controlledAgentEditRequest";
+const canForwardPrivilegedGuiMessage = () => frameReady && frameReadyRequestId !== undefined && latestHostReady && latestHostReady.requestId === frameReadyRequestId;
 const replayHostReady = () => {
-  if (frameReady && latestHostReady) {
+  if (canForwardPrivilegedGuiMessage()) {
     sendToFrame(latestHostReady);
   }
 };
@@ -1646,9 +1701,16 @@ window.addEventListener("message", (event) => {
     if (isFrameGuiMessage(event.data)) {
       if (event.data.type === "gui.ready") {
         frameReady = true;
+        frameReadyRequestId = event.data.requestId;
+        vscode.postMessage(event.data);
+        replayHostReady();
+      } else if (isPrivilegedGuiMessageType(event.data.type) && canForwardPrivilegedGuiMessage()) {
+        vscode.postMessage(event.data);
+      } else if (!isPrivilegedGuiMessageType(event.data.type)) {
+        vscode.postMessage(event.data);
+      } else {
+        console.log("Yet AI rejected privileged iframe GUI bridge message before readiness");
       }
-      vscode.postMessage(event.data);
-      replayHostReady();
     } else {
       console.log("Yet AI rejected invalid iframe GUI bridge message");
     }
