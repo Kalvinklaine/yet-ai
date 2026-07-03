@@ -22,7 +22,8 @@
         "gui.ideActionRequest",
         "gui.applyWorkspaceEditRequest",
         "gui.controlledAgentFileReadRequest",
-        "gui.controlledAgentEditRequest"
+        "gui.controlledAgentEditRequest",
+        "gui.controlledAgentCommandRunRequest"
       ]
     },
     "requestId": {
@@ -832,6 +833,142 @@
           }
         }
       }
+    },
+    "controlledAgentCommandRunLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timeoutMs",
+        "maxOutputBytes",
+        "maxOutputLines",
+        "tailOnly",
+        "commandStringAllowed",
+        "argsAllowed",
+        "cwdAllowed",
+        "envAllowed",
+        "shellAllowed"
+      ],
+      "properties": {
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 1800000
+        },
+        "maxOutputBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20000
+        },
+        "maxOutputLines": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 400
+        },
+        "tailOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "commandStringAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "argsAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "cwdAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "envAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "shellAllowed": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "controlledAgentCommandRunPolicyFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowlistedCommandIdOnly",
+        "freeformCommandAllowed",
+        "argsAllowed",
+        "cwdAllowed",
+        "envAllowed",
+        "shellAllowed",
+        "gitAllowed",
+        "networkAllowed",
+        "providerAllowed",
+        "toolAllowed",
+        "packageInstallAllowed",
+        "fileReadAllowed",
+        "fileWriteAllowed",
+        "hiddenSearchAllowed",
+        "indexingAllowed",
+        "autoStartAllowed",
+        "autoApplyAllowed",
+        "autoRunAllowed",
+        "autoVerifyAllowed",
+        "autoFixAllowed"
+      ],
+      "properties": {
+        "allowlistedCommandIdOnly": { "type": "boolean", "const": true },
+        "freeformCommandAllowed": { "type": "boolean", "const": false },
+        "argsAllowed": { "type": "boolean", "const": false },
+        "cwdAllowed": { "type": "boolean", "const": false },
+        "envAllowed": { "type": "boolean", "const": false },
+        "shellAllowed": { "type": "boolean", "const": false },
+        "gitAllowed": { "type": "boolean", "const": false },
+        "networkAllowed": { "type": "boolean", "const": false },
+        "providerAllowed": { "type": "boolean", "const": false },
+        "toolAllowed": { "type": "boolean", "const": false },
+        "packageInstallAllowed": { "type": "boolean", "const": false },
+        "fileReadAllowed": { "type": "boolean", "const": false },
+        "fileWriteAllowed": { "type": "boolean", "const": false },
+        "hiddenSearchAllowed": { "type": "boolean", "const": false },
+        "indexingAllowed": { "type": "boolean", "const": false },
+        "autoStartAllowed": { "type": "boolean", "const": false },
+        "autoApplyAllowed": { "type": "boolean", "const": false },
+        "autoRunAllowed": { "type": "boolean", "const": false },
+        "autoVerifyAllowed": { "type": "boolean", "const": false },
+        "autoFixAllowed": { "type": "boolean", "const": false }
+      }
+    },
+    "controlledAgentCommandRunRequestPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "requestIdMintedBy",
+        "source",
+        "assistantMinted",
+        "controlledWorkspaceId",
+        "runId",
+        "workspaceReadinessId",
+        "userConfirmed",
+        "commandId",
+        "limits",
+        "policyFlags"
+      ],
+      "properties": {
+        "requestId": { "$ref": "#/$defs/safeId" },
+        "requestIdMintedBy": { "type": "string", "const": "gui" },
+        "source": { "type": "string", "const": "gui" },
+        "assistantMinted": { "type": "boolean", "const": false },
+        "controlledWorkspaceId": { "$ref": "#/$defs/safeId" },
+        "runId": { "$ref": "#/$defs/safeId" },
+        "runtimeSessionId": { "$ref": "#/$defs/safeId" },
+        "sessionId": { "$ref": "#/$defs/safeId" },
+        "workspaceReadinessId": { "$ref": "#/$defs/safeId" },
+        "userConfirmed": { "type": "boolean", "const": true },
+        "commandId": { "$ref": "#/$defs/verificationCommandId" },
+        "limits": { "$ref": "#/$defs/controlledAgentCommandRunLimits" },
+        "policyFlags": { "$ref": "#/$defs/controlledAgentCommandRunPolicyFlags" }
+      }
     }
   },
   "allOf": [
@@ -993,6 +1130,48 @@
           },
           "payload": {
             "$ref": "#/$defs/controlledAgentEditRequestPayload"
+          }
+        },
+        "allOf": [
+          {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "requestId": {
+                    "const": {
+                      "$data": "2/requestId"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "gui.controlledAgentCommandRunRequest"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "requestId",
+          "payload"
+        ],
+        "properties": {
+          "requestId": {
+            "$ref": "#/$defs/requestId"
+          },
+          "payload": {
+            "$ref": "#/$defs/controlledAgentCommandRunRequestPayload"
           }
         },
         "allOf": [

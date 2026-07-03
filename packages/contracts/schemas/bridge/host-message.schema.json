@@ -25,7 +25,8 @@
         "host.applyWorkspaceEditResult",
         "host.runtimeStatus",
         "host.controlledAgentFileReadResult",
-        "host.controlledAgentEditResult"
+        "host.controlledAgentEditResult",
+        "host.controlledAgentCommandRunResult"
       ]
     },
     "requestId": {
