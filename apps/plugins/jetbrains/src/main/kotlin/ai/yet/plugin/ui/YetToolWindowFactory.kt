@@ -791,6 +791,20 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           if (message.type === "host.runtimeStatus") return message.requestId === undefined && isHostRuntimeStatusPayload(message.payload);
           return false;
         };
+        const isPreReadyTerminalBlockedControlledAgentEditResult = (message) => {
+          if (message.type !== "host.controlledAgentEditResult" || !isControlledAgentEditResultPayload(message.payload)) return false;
+          const payload = message.payload;
+          const result = payload.result;
+          const flags = payload.policyFlags;
+          return payload.state === "blocked" &&
+            result.status === "blocked" &&
+            result.appliedEditCount === 0 &&
+            ["edit_disabled", "policy_denied"].includes(result.blockedReason) &&
+            flags.boundedReplacementEditAllowed === false &&
+            result.privatePathExposed === false &&
+            result.rawBodyIncluded === false &&
+            result.rawDiffIncluded === false;
+        };
         const isGuiIdeActionPayload = (payload) => {
           if (!isPlainObject(payload) || typeof payload.action !== "string" || !allowedIdeActionNames.includes(payload.action)) return false;
           if (payload.action === "getContextSnapshot") return hasOnlyKeys(payload, ["action"]);
@@ -912,6 +926,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isGuiUnloadedMessage = (message) => isPlainObject(message) && hasOnlyKeys(message, ["version", "type", "payload"]) && message.version === bridgeVersion && message.type === "gui.unloaded" && isPlainObject(message.payload) && Object.keys(message.payload).length === 0;
         const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
         const canDeliverHostMessage = (message) => {
+          if (message.type === "host.controlledAgentEditResult" && !frameReady) return isPreReadyTerminalBlockedControlledAgentEditResult(message);
           if (message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult" || message.type === "host.controlledAgentEditResult" || message.type === "host.controlledAgentFileReadResult") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
           if (message.type === "host.openedFromCommand") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId() && message.requestId === undefined;
           if (message.type === "host.runtimeStatus") return frameReady && message.requestId === undefined;
@@ -934,7 +949,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         };
         const sendToFrame = (message) => {
           if (!isHostMessage(message)) return;
-          if (!frameReady) return;
+          if (!frameReady && !isPreReadyTerminalBlockedControlledAgentEditResult(message)) return;
           postToFrame(message);
         };
         window.__yetAiSendHostMessageToFrame = sendToFrame;
@@ -967,7 +982,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
               window.postIntellijMessage(event.data);
             } else if (isGuiControlledAgentEditRequest(event.data)) {
               if (!frameReady || !hostReadyAcceptedForCurrentFrame || acceptedHostReadyRequestId !== currentReadyRequestId()) {
-                console.log("Yet AI rejected controlled edit request before GUI bridge readiness");
+                window.postIntellijMessage(event.data);
                 return;
               }
               window.postIntellijMessage(event.data);

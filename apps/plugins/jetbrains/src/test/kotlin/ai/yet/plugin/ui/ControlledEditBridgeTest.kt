@@ -162,10 +162,17 @@ class ControlledEditBridgeTest {
         assertTrue(html.contains("isControlledAgentEditResultPayload(message.payload)"))
         assertTrue(html.contains("payload.result.status === payload.state"))
         assertTrue(html.contains("payload.requestIdMintedBy !== \"gui\" || payload.source !== \"gui\""))
+        assertTrue(html.contains("const isPreReadyTerminalBlockedControlledAgentEditResult = (message) => {"))
+        assertTrue(html.contains("result.appliedEditCount === 0"))
+        assertTrue(html.contains("[\"edit_disabled\", \"policy_denied\"].includes(result.blockedReason)"))
+        assertTrue(html.contains("flags.boundedReplacementEditAllowed === false"))
+        assertTrue(html.contains("if (message.type === \"host.controlledAgentEditResult\" && !frameReady) return isPreReadyTerminalBlockedControlledAgentEditResult(message);"))
+        assertTrue(html.contains("if (!frameReady && !isPreReadyTerminalBlockedControlledAgentEditResult(message)) return;"))
         assertTrue(html.contains("const isRecoverableGuiControlledAgentEditEnvelope = (message) => {"))
         assertTrue(html.contains("} else if (isRecoverableGuiControlledAgentEditEnvelope(event.data)) {"))
         assertTrue(html.contains("window.postIntellijMessage(event.data);"))
         assertTrue(html.contains("Yet AI rejected invalid controlled edit request after GUI bridge readiness"))
+        assertFalse(html.contains("Yet AI rejected controlled edit request before GUI bridge readiness"))
     }
 }
 
