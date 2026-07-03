@@ -263,8 +263,8 @@ object ControlledIdeActions {
         if (!payload.keySet().all { it in setOf("requestId", "requestIdMintedBy", "source", "assistantMinted", "controlledWorkspaceId", "runId", "runtimeSessionId", "sessionId", "workspaceReadinessId", "userConfirmed", "limits", "edits") }) return null
         val payloadRequestId = payload.stringValue("requestId")?.takeIf(::isSafeControlledAgentEditId) ?: return null
         if (payloadRequestId != envelopeRequestId) return null
-        val mintedBy = payload.stringValue("requestIdMintedBy")?.takeIf { it == "gui" || it == "host" } ?: return null
-        if (payload.stringValue("source") !in setOf("gui", "host")) return null
+        val mintedBy = payload.stringValue("requestIdMintedBy")?.takeIf { it == "gui" } ?: return null
+        if (payload.stringValue("source") != "gui") return null
         if (payload.booleanValue("assistantMinted") != false) return null
         if (payload.booleanValue("userConfirmed") != true) return null
         val controlledWorkspaceId = payload.stringValue("controlledWorkspaceId")?.takeIf(::isSafeControlledAgentEditId) ?: return null

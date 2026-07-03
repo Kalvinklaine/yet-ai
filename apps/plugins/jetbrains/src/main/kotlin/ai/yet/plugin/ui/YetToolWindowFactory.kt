@@ -171,6 +171,15 @@ internal fun canHandleApplyWorkspaceEdit(disposed: Boolean, runtimePrepared: Boo
 internal fun canHandleControlledAgentEdit(disposed: Boolean, runtimePrepared: Boolean, guiReadyRequestId: String?, acceptedHostReadyRequestId: String?): Boolean =
     canHandleApplyWorkspaceEdit(disposed, runtimePrepared, guiReadyRequestId, acceptedHostReadyRequestId)
 
+internal fun handleControlledAgentEditWithReadiness(raw: String, ready: Boolean, send: (String) -> Unit, logStatus: (String) -> Unit = {}): Boolean {
+    if (!ControlledIdeActions.isControlledAgentEditRequestType(raw)) return false
+    val handled = JetBrainsControlledAgentEditBridge.handleControlledAgentEditRequest(raw, send, logStatus)
+    if (handled && !ready) {
+        logStatus("Yet AI returned terminal controlled edit result before GUI bridge readiness")
+    }
+    return handled
+}
+
 class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
     private val logger = Logger.getInstance(YetBrowserPanel::class.java)
     private val browser = JBCefBrowser()
@@ -269,15 +278,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
     }
 
     private fun handleControlledAgentEditRequest(raw: String): Boolean {
-        if (!ControlledIdeActions.isControlledAgentEditRequestType(raw)) return false
-        if (!canHandleControlledAgentEdit()) {
-            val safeRequestId = ControlledIdeActions.safeControlledAgentEditRequestIdFromRaw(raw)
-            if (safeRequestId != null) {
-                logger.info("Yet AI rejected controlled edit request before GUI bridge readiness")
-            }
-            return safeRequestId != null
-        }
-        return JetBrainsControlledAgentEditBridge.handleControlledAgentEditRequest(raw, ::sendToGui) { logger.info(it) }
+        return handleControlledAgentEditWithReadiness(raw, canHandleControlledAgentEdit(), ::sendToGui) { logger.info(it) }
     }
 
     private fun canHandleApplyWorkspaceEdit(): Boolean = canHandleApplyWorkspaceEdit(
@@ -828,13 +829,19 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           if (!isPlainObject(edit) || !hasOnlyKeys(edit, ["operation", "workspaceRelativePath", "fileLabel", "expectedContentHash", "startLine", "endLine", "replacementText", "replacementByteCount", "sanitizedSummary"]) || edit.operation !== "replace" || !controlledAgentEditPath(edit.workspaceRelativePath) || !safeControlledAgentEditSummary(edit.fileLabel, 160) || !sha256Hash(edit.expectedContentHash) || !Number.isInteger(edit.startLine) || edit.startLine < 1 || edit.startLine > 1000000 || !Number.isInteger(edit.endLine) || edit.endLine < edit.startLine || edit.endLine > 1000000 || typeof edit.replacementText !== "string" || edit.replacementText.length > 12000 || !/^[^\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]*$/.test(edit.replacementText) || !Number.isInteger(edit.replacementByteCount) || edit.replacementByteCount < 0 || edit.replacementByteCount > 12000 || !safeControlledAgentEditSummary(edit.sanitizedSummary, 240)) return false;
           return new Blob([edit.replacementText]).size === edit.replacementByteCount;
         };
+        const isRecoverableGuiControlledAgentEditEnvelope = (message) => {
+          if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.controlledAgentEditRequest" || !requiredRequestId(message.requestId)) return false;
+          let serialized;
+          try { serialized = JSON.stringify(message); } catch (_) { return false; }
+          return typeof serialized === "string" && new Blob([serialized]).size <= maxControlledAgentEditRequestBytes;
+        };
         const isGuiControlledAgentEditRequest = (message) => {
           if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.controlledAgentEditRequest" || !requiredRequestId(message.requestId)) return false;
           let serialized;
           try { serialized = JSON.stringify(message); } catch (_) { return false; }
           if (typeof serialized !== "string" || new Blob([serialized]).size > maxControlledAgentEditRequestBytes) return false;
           const payload = message.payload;
-          if (!isPlainObject(payload) || !hasOnlyKeys(payload, ["requestId", "requestIdMintedBy", "source", "assistantMinted", "controlledWorkspaceId", "runId", "runtimeSessionId", "sessionId", "workspaceReadinessId", "userConfirmed", "limits", "edits"]) || payload.requestId !== message.requestId || !safeControlledAgentEditId(payload.requestId) || !["gui", "host"].includes(payload.requestIdMintedBy) || !["gui", "host"].includes(payload.source) || payload.assistantMinted !== false || !safeControlledAgentEditId(payload.controlledWorkspaceId) || !safeControlledAgentEditId(payload.runId) || (payload.runtimeSessionId !== undefined && !safeControlledAgentEditId(payload.runtimeSessionId)) || (payload.sessionId !== undefined && !safeControlledAgentEditId(payload.sessionId)) || !safeControlledAgentEditId(payload.workspaceReadinessId) || payload.userConfirmed !== true || !isControlledAgentEditLimits(payload.limits) || !Array.isArray(payload.edits) || payload.edits.length === 0 || payload.edits.length > payload.limits.maxEdits || payload.edits.length > 16 || !payload.edits.every(isControlledAgentReplacementEdit)) return false;
+          if (!isPlainObject(payload) || !hasOnlyKeys(payload, ["requestId", "requestIdMintedBy", "source", "assistantMinted", "controlledWorkspaceId", "runId", "runtimeSessionId", "sessionId", "workspaceReadinessId", "userConfirmed", "limits", "edits"]) || payload.requestId !== message.requestId || !safeControlledAgentEditId(payload.requestId) || payload.requestIdMintedBy !== "gui" || payload.source !== "gui" || payload.assistantMinted !== false || !safeControlledAgentEditId(payload.controlledWorkspaceId) || !safeControlledAgentEditId(payload.runId) || (payload.runtimeSessionId !== undefined && !safeControlledAgentEditId(payload.runtimeSessionId)) || (payload.sessionId !== undefined && !safeControlledAgentEditId(payload.sessionId)) || !safeControlledAgentEditId(payload.workspaceReadinessId) || payload.userConfirmed !== true || !isControlledAgentEditLimits(payload.limits) || !Array.isArray(payload.edits) || payload.edits.length === 0 || payload.edits.length > payload.limits.maxEdits || payload.edits.length > 16 || !payload.edits.every(isControlledAgentReplacementEdit)) return false;
           const seen = new Set();
           let replacementByteCount = 0;
           for (const edit of payload.edits) {
@@ -970,6 +977,12 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
                 return;
               }
               window.postIntellijMessage(event.data);
+            } else if (isRecoverableGuiControlledAgentEditEnvelope(event.data)) {
+              if (!frameReady || !hostReadyAcceptedForCurrentFrame || acceptedHostReadyRequestId !== currentReadyRequestId()) {
+                window.postIntellijMessage(event.data);
+                return;
+              }
+              console.log("Yet AI rejected invalid controlled edit request after GUI bridge readiness");
             } else if (isGuiMessage(event.data)) {
               if (frameReady && event.data.payload.frameNonce === currentFrameNonce) return;
               const nextGuiReadySequence = guiReadySequence + 1;

@@ -40,6 +40,8 @@ class ControlledEditTest {
         assertNull(ControlledIdeActions.parseControlledAgentEdit(controlledEditMessage(startLine = 9, endLine = 8)))
         assertNull(ControlledIdeActions.parseControlledAgentEdit(controlledEditMessage(replacementText = "val title = \"Yet\"\n", replacementByteCount = 1)))
         assertNull(ControlledIdeActions.parseControlledAgentEdit(controlledEditMessage(summary = "run shell command")))
+        assertNull(ControlledIdeActions.parseControlledAgentEdit(controlledEditMessage(requestIdMintedBy = "host")))
+        assertNull(ControlledIdeActions.parseControlledAgentEdit(controlledEditMessage(source = "host")))
     }
 
     @Test
@@ -86,6 +88,8 @@ private fun controlledEditMessage(
     payloadRequestId: String = requestId,
     operation: String = "replace",
     assistantMinted: Boolean = false,
+    requestIdMintedBy: String = "gui",
+    source: String = "gui",
     userConfirmed: Boolean = true,
     path: String = "src/Main.kt",
     expectedHash: String = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -102,8 +106,8 @@ private fun controlledEditMessage(
       "requestId":"$requestId",
       "payload":{
         "requestId":"$payloadRequestId",
-        "requestIdMintedBy":"gui",
-        "source":"gui",
+        "requestIdMintedBy":"$requestIdMintedBy",
+        "source":"$source",
         "assistantMinted":$assistantMinted,
         "controlledWorkspaceId":"workspace-s84-c4",
         "runId":"run-s84-c4",

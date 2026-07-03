@@ -62,6 +62,83 @@ class ControlledEditBridgeTest {
     }
 
     @Test
+    fun controlledEditBridgeRejectsHostMintedRequestIdMetadata() {
+        val sent = mutableListOf<String>()
+        val handled = JetBrainsControlledAgentEditBridge.handleControlledAgentEditRequest(
+            controlledEditBridgeMessage(requestIdMintedBy = "host"),
+            send = { sent.add(it) },
+        )
+
+        assertTrue(handled)
+        val payload = JsonParser.parseString(sent.single()).asJsonObject.getAsJsonObject("payload")
+        val result = payload.getAsJsonObject("result")
+        assertEquals("blocked", result.get("status").asString)
+        assertEquals("policy_denied", result.get("blockedReason").asString)
+        assertFalse(sent.single().contains("val title"))
+    }
+
+    @Test
+    fun controlledEditBridgeRejectsHostSourceMetadata() {
+        val sent = mutableListOf<String>()
+        val handled = JetBrainsControlledAgentEditBridge.handleControlledAgentEditRequest(
+            controlledEditBridgeMessage(source = "host"),
+            send = { sent.add(it) },
+        )
+
+        assertTrue(handled)
+        val payload = JsonParser.parseString(sent.single()).asJsonObject.getAsJsonObject("payload")
+        val result = payload.getAsJsonObject("result")
+        assertEquals("blocked", result.get("status").asString)
+        assertEquals("policy_denied", result.get("blockedReason").asString)
+        assertFalse(sent.single().contains("val title"))
+    }
+
+    @Test
+    fun preReadyControlledEditReturnsTerminalBlockedResult() {
+        val sent = mutableListOf<String>()
+        val logs = mutableListOf<String>()
+        val handled = handleControlledAgentEditWithReadiness(
+            controlledEditBridgeMessage(),
+            ready = false,
+            send = { sent.add(it) },
+            logStatus = { logs.add(it) },
+        )
+
+        assertTrue(handled)
+        assertTrue(logs.contains("Yet AI disabled JetBrains controlled edit request"))
+        assertTrue(logs.contains("Yet AI returned terminal controlled edit result before GUI bridge readiness"))
+        val payload = JsonParser.parseString(sent.single()).asJsonObject.getAsJsonObject("payload")
+        val result = payload.getAsJsonObject("result")
+        assertEquals("blocked", result.get("status").asString)
+        assertEquals("edit_disabled", result.get("blockedReason").asString)
+        assertEquals(false, result.get("rawBodyIncluded").asBoolean)
+        assertEquals(false, result.get("rawDiffIncluded").asBoolean)
+        assertEquals(false, result.get("privatePathExposed").asBoolean)
+        assertFalse(sent.single().contains("val title"))
+    }
+
+    @Test
+    fun preReadyInvalidControlledEditReturnsTerminalRejectedResultForSafeRequestId() {
+        val sent = mutableListOf<String>()
+        val handled = handleControlledAgentEditWithReadiness(
+            """{"version":"2026-05-15","type":"gui.controlledAgentEditRequest","requestId":"edit-invalid","payload":{"shell":true}}""",
+            ready = false,
+            send = { sent.add(it) },
+        )
+
+        assertTrue(handled)
+        val message = JsonParser.parseString(sent.single()).asJsonObject
+        assertEquals("edit-invalid", message.get("requestId").asString)
+        val payload = message.getAsJsonObject("payload")
+        val result = payload.getAsJsonObject("result")
+        assertEquals("blocked", result.get("status").asString)
+        assertEquals("policy_denied", result.get("blockedReason").asString)
+        assertEquals(false, result.get("rawBodyIncluded").asBoolean)
+        assertEquals(false, result.get("rawDiffIncluded").asBoolean)
+        assertFalse(sent.single().contains("\"shell\":true"))
+    }
+
+    @Test
     fun controlledEditReadinessGateRequiresAcceptedHostReadyForCurrentFrame() {
         assertFalse(canHandleControlledAgentEdit(disposed = false, runtimePrepared = false, guiReadyRequestId = null, acceptedHostReadyRequestId = null))
         assertFalse(canHandleControlledAgentEdit(disposed = false, runtimePrepared = true, guiReadyRequestId = "ready-1", acceptedHostReadyRequestId = null))
@@ -84,18 +161,26 @@ class ControlledEditBridgeTest {
         assertTrue(html.contains("message.type === \"host.controlledAgentEditResult\""))
         assertTrue(html.contains("isControlledAgentEditResultPayload(message.payload)"))
         assertTrue(html.contains("payload.result.status === payload.state"))
+        assertTrue(html.contains("payload.requestIdMintedBy !== \"gui\" || payload.source !== \"gui\""))
+        assertTrue(html.contains("const isRecoverableGuiControlledAgentEditEnvelope = (message) => {"))
+        assertTrue(html.contains("} else if (isRecoverableGuiControlledAgentEditEnvelope(event.data)) {"))
+        assertTrue(html.contains("window.postIntellijMessage(event.data);"))
+        assertTrue(html.contains("Yet AI rejected invalid controlled edit request after GUI bridge readiness"))
     }
 }
 
-private fun controlledEditBridgeMessage(): String = """
+private fun controlledEditBridgeMessage(
+    requestIdMintedBy: String = "gui",
+    source: String = "gui",
+): String = """
     {
       "version":"2026-05-15",
       "type":"gui.controlledAgentEditRequest",
       "requestId":"edit-s84-c4",
       "payload":{
         "requestId":"edit-s84-c4",
-        "requestIdMintedBy":"gui",
-        "source":"gui",
+        "requestIdMintedBy":"$requestIdMintedBy",
+        "source":"$source",
         "assistantMinted":false,
         "controlledWorkspaceId":"workspace-s84-c4",
         "runId":"run-s84-c4",
