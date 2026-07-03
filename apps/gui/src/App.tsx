@@ -9,6 +9,7 @@ import { ProposalHistoryPanel } from "./components/ProposalHistoryPanel";
 import { MultiStepTaskTimelinePanel } from "./components/MultiStepTaskTimelinePanel";
 import { ControlledAgentWorkspaceReadinessPanel } from "./components/ControlledAgentWorkspaceReadinessPanel";
 import { ControlledAgentFileReadPanel } from "./components/ControlledAgentFileReadPanel";
+import { ControlledAgentEditPanel } from "./components/ControlledAgentEditPanel";
 import { ControlledAgentCommandRunnerPanel } from "./components/ControlledAgentCommandRunnerPanel";
 import { ControlledAgentRunPanel } from "./components/ControlledAgentRunPanel";
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
@@ -43,6 +44,7 @@ import { createMemorySuggestionAttachTraceDetails, suggestTaskMemory, type TaskM
 import { evaluateHostCapabilityMetadata } from "./services/toolAuthorityPolicy";
 import { evaluateControlledAgentFileRead } from "./services/controlledAgentFileRead";
 import { buildControlledAgentFileReadRequest, correlateControlledAgentFileReadResult, type ControlledAgentFileReadRequestCorrelation } from "./services/controlledAgentFileReadRequest";
+import { buildControlledAgentEditRequest, correlateControlledAgentEditResult, type ControlledAgentEditRequestCorrelation } from "./services/controlledAgentEditRequest";
 import { evaluateControlledAgentCommandRun } from "./services/controlledAgentCommandRunner";
 import { buildControlledAgentProgressReport } from "./services/controlledAgentProgressReport";
 import { buildControlledLocalAgentMvp } from "./services/controlledLocalAgentMvp";
@@ -444,6 +446,8 @@ export function App() {
   const pendingIdeActionChatIdRef = useRef<string | null>(null);
   const controlledFileReadCorrelationRef = useRef<ControlledAgentFileReadRequestCorrelation | null>(null);
   const controlledFileReadCompletedRequestIdRef = useRef<string | null>(null);
+  const controlledEditCorrelationRef = useRef<ControlledAgentEditRequestCorrelation | null>(null);
+  const controlledEditCompletedRequestIdRef = useRef<string | null>(null);
   const completedIdeActionRequestChatsRef = useRef<Map<string, string>>(new Map());
   const completedApplyRequestChatsRef = useRef<Map<string, string>>(new Map());
   const ideActionCounterRef = useRef(0);
@@ -456,6 +460,9 @@ export function App() {
   const [controlledFileReadResultMetadata, setControlledFileReadResultMetadata] = useState<unknown>(null);
   const [pendingControlledFileReadRequestId, setPendingControlledFileReadRequestId] = useState<string | null>(null);
   const [controlledFileReadNote, setControlledFileReadNote] = useState<string | null>(null);
+  const [controlledEditResultMetadata, setControlledEditResultMetadata] = useState<unknown>(null);
+  const [pendingControlledEditRequestId, setPendingControlledEditRequestId] = useState<string | null>(null);
+  const [controlledEditNote, setControlledEditNote] = useState<string | null>(null);
 
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
   settingsRef.current = settings;
@@ -694,6 +701,7 @@ export function App() {
     ],
   }), [activeRejectedEditProposal, activeRejectedIdeActionProposal, agentRunInput, agentRunVerificationFixDraft, attachedProjectMemoryItems, codingSessionTraceWithCheckpointDecision, agentRunCheckpointDecision, codingTaskGoal, explicitContextBundleItems, proposalHistory, taskMemorySuggestions]);
   const controlledWorkspaceReadinessMetadata = activeCaps?.controlledAgentWorkspaceReadiness;
+  const controlledAgentEditExecutorMetadata = activeCaps?.controlledAgentEditExecutor;
   const controlledAgentFileReadRequest = useMemo(() => buildControlledAgentFileReadRequest({
     host: bridgeHost,
     runtimeSessionMetadata: controlledAgentRuntimeSessionMetadata,
@@ -702,9 +710,17 @@ export function App() {
     requestSeed: "panel",
     jetbrainsFileReadSupported: false,
   }), [bridgeHost, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata]);
+  const effectiveControlledEditMetadata = controlledEditResultMetadata ?? controlledAgentEditExecutorMetadata;
+  const controlledAgentEditRequest = useMemo(() => buildControlledAgentEditRequest({
+    host: bridgeHost,
+    runtimeSessionMetadata: controlledAgentRuntimeSessionMetadata,
+    workspaceReadinessMetadata: controlledWorkspaceReadinessMetadata,
+    plannedEditMetadata: controlledAgentEditExecutorMetadata,
+    requestSeed: "panel",
+    jetbrainsEditSupported: false,
+  }), [bridgeHost, controlledAgentEditExecutorMetadata, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata]);
   const showWhatWillBeSentPanel = chatInput.trim().length > 0 || contextBudgetSummary.sources.some((source) => source.itemCount > 0 || source.charCount > 0) || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
   const [controlledAgentRunState, setControlledAgentRunState] = useState<ControlledAgentRunState>(() => initializeControlledAgentRunState(undefined));
-  const controlledAgentEditExecutorMetadata = activeCaps?.controlledAgentEditExecutor;
   const showControlledAgentRunPanel = controlledWorkspaceReadinessMetadata !== undefined || effectiveControlledAgentFileReadMetadata !== undefined || controlledAgentCommandRunnerMetadata !== undefined || controlledAgentEditExecutorMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined;
   const controlledAgentProgressReport = useMemo(() => buildControlledAgentProgressReport({
     runState: controlledAgentRunState,
@@ -805,6 +821,14 @@ export function App() {
     setControlledFileReadNote(note);
   }, []);
 
+  const clearControlledEditState = useCallback((note: string | null = null) => {
+    controlledEditCorrelationRef.current = null;
+    controlledEditCompletedRequestIdRef.current = null;
+    setPendingControlledEditRequestId(null);
+    setControlledEditResultMetadata(null);
+    setControlledEditNote(note);
+  }, []);
+
   const clearPendingIdeActionState = useCallback(() => {
     if (!pendingIdeActionRequestIdRef.current) {
       return;
@@ -822,6 +846,15 @@ export function App() {
     controlledFileReadCorrelationRef.current = null;
     setPendingControlledFileReadRequestId(null);
     setControlledFileReadNote("Cleared pending controlled read state in the GUI only. No host-side cancellation was requested.");
+  }, []);
+
+  const clearPendingControlledEditState = useCallback(() => {
+    if (!controlledEditCorrelationRef.current) {
+      return;
+    }
+    controlledEditCorrelationRef.current = null;
+    setPendingControlledEditRequestId(null);
+    setControlledEditNote("Cleared pending controlled edit state in the GUI only. No host-side cancellation was requested.");
   }, []);
 
   const abortActiveStream = useCallback((timelineMessage: string, options: AbortActiveStreamOptions = {}) => {
@@ -888,6 +921,7 @@ export function App() {
     clearModelProposalState();
     clearIdeActionState();
     clearControlledFileReadState(null);
+    clearControlledEditState(null);
   }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState, clearControlledFileReadState]);
 
   const updateRuntimeSettings = useCallback((nextSettings: RuntimeSettings) => {
@@ -981,6 +1015,40 @@ export function App() {
         controlledFileReadCorrelationRef.current = null;
         setPendingControlledFileReadRequestId(null);
         setControlledFileReadNote(correlation.diagnostics[0]?.message ?? "Controlled read result was blocked.");
+      } else if (message.type === "host.controlledAgentEditResult") {
+        const requestId = message.requestId ?? "unknown";
+        const current = controlledEditCorrelationRef.current;
+        if (controlledEditCompletedRequestIdRef.current === requestId) {
+          setControlledEditNote("Ignored duplicate controlled edit result.");
+          return;
+        }
+        if (!current) {
+          setControlledEditNote("Ignored stale controlled edit result.");
+          return;
+        }
+        const correlation = correlateControlledAgentEditResult({ current, hostMessage: message });
+        if (correlation.state === "accepted" && correlation.edit) {
+          controlledEditCompletedRequestIdRef.current = requestId;
+          controlledEditCorrelationRef.current = null;
+          setPendingControlledEditRequestId(null);
+          setControlledEditResultMetadata(message.payload);
+          setControlledEditNote(`Controlled edit result accepted: ${correlation.edit.state}.`);
+          appendTrace({ family: correlation.edit.state === "applied" ? "controlledAgent.editResult" : "controlledAgent.editBlocked", title: "Controlled edit result received", status: correlation.edit.state === "applied" ? "succeeded" : "failed", summary: correlation.edit.summary, requestId, details: correlation.details });
+          return;
+        }
+        if (correlation.state === "duplicate") {
+          controlledEditCorrelationRef.current = null;
+          setPendingControlledEditRequestId(null);
+          setControlledEditNote("Ignored duplicate controlled edit result.");
+          return;
+        }
+        if (correlation.state === "ignored") {
+          setControlledEditNote("Ignored stale controlled edit result.");
+          return;
+        }
+        controlledEditCorrelationRef.current = null;
+        setPendingControlledEditRequestId(null);
+        setControlledEditNote(correlation.diagnostics[0]?.message ?? "Controlled edit result was blocked.");
       } else if (message.type === "host.contextSnapshot") {
         const nextContext = message.payload as HostContextSnapshotPayload;
         setAttachedContext({ payload: nextContext, settingsRevision: settingsRevisionRef.current, chatId: chatIdRef.current });
@@ -1400,6 +1468,7 @@ export function App() {
       clearModelProposalState();
       clearIdeActionState();
       clearControlledFileReadState(null);
+      clearControlledEditState(null);
     } else {
       setChatHistoryError(result.error);
       setChatHistoryRevision(targetRevision);
@@ -1418,6 +1487,7 @@ export function App() {
     clearModelProposalState();
     clearIdeActionState();
     clearControlledFileReadState(null);
+    clearControlledEditState(null);
     clearExplicitContextBundle(null);
     setAttachedContextAcknowledged(false);
     setChatId(nextChatId);
@@ -2065,6 +2135,21 @@ export function App() {
     addTimeline(`Controlled read requested ${controlledAgentFileReadRequest.bridgeRequest.requestId}`);
     appendTrace({ family: "controlledAgent.fileReadPlanned", title: "Controlled file read requested", status: "pending", summary: "User clicked explicit controlled read request.", requestId: controlledAgentFileReadRequest.bridgeRequest.requestId, details: controlledAgentFileReadRequest.details });
   }, [addTimeline, appendTrace, controlledAgentFileReadRequest, pendingControlledFileReadRequestId]);
+
+  const submitControlledEdit = useCallback(() => {
+    if (controlledAgentEditRequest.state !== "ready" || !controlledAgentEditRequest.bridgeRequest || !controlledAgentEditRequest.correlation || pendingControlledEditRequestId) {
+      setControlledEditNote(controlledAgentEditRequest.diagnostics[0]?.message ?? "Controlled edit request is not ready.");
+      return;
+    }
+    controlledEditCorrelationRef.current = controlledAgentEditRequest.correlation;
+    controlledEditCompletedRequestIdRef.current = null;
+    setPendingControlledEditRequestId(controlledAgentEditRequest.bridgeRequest.requestId);
+    setControlledEditResultMetadata(null);
+    setControlledEditNote("Controlled edit request posted after explicit user click.");
+    bridgeAdapterRef.current?.post(controlledAgentEditRequest.bridgeRequest);
+    addTimeline(`Controlled edit requested ${controlledAgentEditRequest.bridgeRequest.requestId}`);
+    appendTrace({ family: "controlledAgent.editPending", title: "Controlled edit requested", status: "pending", summary: "User clicked explicit controlled edit request.", requestId: controlledAgentEditRequest.bridgeRequest.requestId, details: controlledAgentEditRequest.details });
+  }, [addTimeline, appendTrace, controlledAgentEditRequest, pendingControlledEditRequestId]);
 
   const requestIdeAction = useCallback((payload: IdeActionRequestPayload, requestIdPrefix = "gui-ide-action") => {
     if ((bridgeHost !== "vscode" && bridgeHost !== "jetbrains") || pendingIdeActionRequestIdRef.current) {
@@ -2854,6 +2939,7 @@ export function App() {
                 {showControlledAgentRunPanel && <ControlledAgentRunPanel state={controlledAgentRunState} progressReport={controlledAgentProgressReport} mvpReport={controlledLocalAgentMvpReport} onStop={stopControlledAgentRun} />}
                 {controlledWorkspaceReadinessMetadata !== undefined && <ControlledAgentWorkspaceReadinessPanel metadata={controlledWorkspaceReadinessMetadata} />}
                 {(controlledAgentFileReadMetadata !== undefined || controlledAgentFileReadRequest.state !== "blocked") && <ControlledAgentFileReadPanel metadata={effectiveControlledAgentFileReadMetadata} evaluatedRead={controlledAgentFileReadSummary} request={controlledAgentFileReadRequest} pendingRequestId={pendingControlledFileReadRequestId} note={controlledFileReadNote} onRequest={submitControlledFileRead} onClearPending={clearPendingControlledFileReadState} />}
+                {(controlledAgentEditExecutorMetadata !== undefined || controlledAgentEditRequest.state !== "blocked") && <ControlledAgentEditPanel metadata={effectiveControlledEditMetadata} request={controlledAgentEditRequest} pendingRequestId={pendingControlledEditRequestId} note={controlledEditNote} onRequest={submitControlledEdit} onClearPending={clearPendingControlledEditState} />}
                 {controlledAgentCommandRunnerMetadata !== undefined && <ControlledAgentCommandRunnerPanel metadata={controlledAgentCommandRunnerMetadata} />}
                 <MultiStepTaskTimelinePanel input={multiStepTaskTimelineInput} />
                 {showWhatWillBeSentPanel && <WhatWillBeSentPanel summary={contextBudgetSummary} draftPromptCharacters={chatInput.trim().length} />}

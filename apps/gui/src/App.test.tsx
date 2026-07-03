@@ -12,6 +12,8 @@ import hostFileReadSuccess from "../../../packages/contracts/examples/bridge/hos
 import commandRunSucceeded from "../../../packages/contracts/examples/engine/controlled-agent-command-runner-succeeded.json";
 import commandRunBlocked from "../../../packages/contracts/examples/engine/controlled-agent-command-runner-blocked.json";
 import runtimeSessionReady from "../../../packages/contracts/examples/engine/controlled-agent-runtime-session-ready-vscode-worktree.json";
+import editExecutorPlanned from "../../../packages/contracts/examples/engine/controlled-agent-edit-executor-planned.json";
+import hostEditApplied from "../../../packages/contracts/examples/bridge/host-controlled-agent-edit-result-applied.json";
 
 const bridgeVersion = "2026-05-15";
 const fetchMock = vi.fn();
@@ -516,6 +518,133 @@ describe("runtime refresh feedback", () => {
 
     const text = container?.textContent ?? "";
     expect(text).toContain("Unsafe controlled file read request metadata omitted near hostMessage.payload.result.sanitizedPathLabel.");
+    expect(text).not.toContain("Authorization: Bearer");
+    expect(text).not.toContain("sk-secret123456789");
+    expect(text).not.toContain("/Users/alice");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("sk-secret123456789");
+  });
+
+  it("posts exactly one controlled edit request only after explicit click", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady, controlledAgentEditExecutor: controlledEditMetadata() }) });
+    renderApp();
+    await flushAsync();
+
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentEditRequest")).toHaveLength(0);
+    expect(buttonsNamed("Request controlled edit")).toHaveLength(0);
+
+    const details = findDetails("controlled-agent-edit-details");
+    await act(async () => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+
+    await act(async () => {
+      findButton("Request controlled edit").click();
+    });
+
+    const editRequests = postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentEditRequest");
+    expect(editRequests).toHaveLength(1);
+    expect(editRequests[0][0]).toMatchObject({
+      version: bridgeVersion,
+      type: "gui.controlledAgentEditRequest",
+      payload: {
+        requestIdMintedBy: "gui",
+        source: "gui",
+        assistantMinted: false,
+        userConfirmed: true,
+        edits: [
+          {
+            operation: "replace",
+            workspaceRelativePath: "apps/gui/src/App.tsx",
+            replacementText: "const title = \"Yet AI\";\n",
+          },
+        ],
+      },
+    });
+    expect(container?.textContent ?? "").not.toContain("const title = \"Yet AI\";");
+    expect(buttonsNamed("Request controlled edit")).toHaveLength(0);
+    expect(findButton("Clear pending edit")).toBeDefined();
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("controlled_agent_edit_executor");
+  });
+
+  it("keeps browser controlled edit unsupported and unable to post", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady, controlledAgentEditExecutor: controlledEditMetadata() }) });
+    renderApp();
+    await flushAsync();
+
+    const details = findDetails("controlled-agent-edit-details");
+    await act(async () => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+
+    expect(container?.textContent).toContain("Explicit controlled edit requestunsupported");
+    expect(container?.textContent).toContain("Request diagnostics: browser_host, unsupported_host");
+    expect(buttonsNamed("Request controlled edit")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+  });
+
+  it("ignores stale and duplicate controlled edit results", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady, controlledAgentEditExecutor: controlledEditMetadata() }) });
+    renderApp();
+    await flushAsync();
+
+    const details = findDetails("controlled-agent-edit-details");
+    await act(async () => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+    await act(async () => {
+      findButton("Request controlled edit").click();
+    });
+
+    const request = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentEditRequest")?.[0] as { requestId: string; payload: Record<string, any> };
+    const stale = controlledEditHostMessage(request.requestId, request.payload, { requestId: "other-request" });
+    await dispatchHostControlledEditResult(stale.requestId, stale.payload);
+    expect(container?.textContent).toContain("Ignored stale controlled edit result.");
+    expect(findButton("Clear pending edit")).toBeDefined();
+
+    const accepted = controlledEditHostMessage(request.requestId, request.payload);
+    await dispatchHostControlledEditResult(accepted.requestId, accepted.payload);
+    expect(container?.textContent).toContain("Controlled edit result accepted: applied.");
+    expect(container?.textContent).toContain("Update selected UI metadata lines.");
+    expect(container?.textContent).not.toContain("const title = \"Yet AI\";");
+
+    await dispatchHostControlledEditResult(accepted.requestId, accepted.payload);
+    expect(container?.textContent).toContain("Ignored duplicate controlled edit result.");
+  });
+
+  it("blocks unsafe controlled edit results without rendering raw body, diff, secrets, or private paths", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady, controlledAgentEditExecutor: controlledEditMetadata() }) });
+    renderApp();
+    await flushAsync();
+
+    const details = findDetails("controlled-agent-edit-details");
+    await act(async () => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+    await act(async () => {
+      findButton("Request controlled edit").click();
+    });
+
+    const request = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentEditRequest")?.[0] as { requestId: string; payload: Record<string, any> };
+    const unsafe = controlledEditHostMessage(request.requestId, request.payload, { rawDiff: "Authorization: Bearer abc sk-secret123456789 from /Users/alice/private", message: "Edit failed safely." });
+    await dispatchHostControlledEditResult(unsafe.requestId, unsafe.payload);
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Unsupported controlled edit request field rawDiff.");
     expect(text).not.toContain("Authorization: Bearer");
     expect(text).not.toContain("sk-secret123456789");
     expect(text).not.toContain("/Users/alice");
@@ -10481,6 +10610,19 @@ async function dispatchHostControlledFileReadResult(requestId: string | undefine
   });
 }
 
+async function dispatchHostControlledEditResult(requestId: string | undefined, payload: Record<string, unknown>) {
+  await act(async () => {
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version: bridgeVersion,
+        type: "host.controlledAgentEditResult",
+        requestId,
+        payload,
+      },
+    }));
+  });
+}
+
 function controlledReadHostMessage(requestId: string, requestPayload: Record<string, unknown>, overrides: Record<string, unknown> = {}) {
   const payload = JSON.parse(JSON.stringify(hostFileReadSuccess.payload)) as Record<string, any>;
   payload.request.requestId = overrides.requestId ?? requestId;
@@ -10489,6 +10631,33 @@ function controlledReadHostMessage(requestId: string, requestPayload: Record<str
   payload.workspace.controlledWorkspaceId = requestPayload.controlledWorkspaceId;
   payload.result.text = overrides.text ?? payload.result.text;
   payload.result.sanitizedPathLabel = overrides.sanitizedPathLabel ?? requestPayload.workspaceRelativePath;
+  return { requestId, payload };
+}
+
+function controlledEditMetadata(overrides: Record<string, unknown> = {}) {
+  const replacementText = "const title = \"Yet AI\";\n";
+  const metadata = JSON.parse(JSON.stringify(editExecutorPlanned)) as Record<string, any>;
+  metadata.runId = "run-s84-request";
+  metadata.workspaceReadinessId = "ready-s84-request";
+  metadata.edits[0].replacementText = replacementText;
+  metadata.edits[0].replacementByteCount = new TextEncoder().encode(replacementText).length;
+  metadata.edits[0].sanitizedSummary = "Update selected UI metadata lines.";
+  return { ...metadata, ...overrides };
+}
+
+function controlledEditHostMessage(requestId: string, requestPayload: Record<string, any>, overrides: Record<string, unknown> = {}) {
+  const payload = JSON.parse(JSON.stringify(hostEditApplied.payload)) as Record<string, any>;
+  payload.requestId = overrides.requestId ?? requestId;
+  payload.runId = requestPayload.runId;
+  payload.controlledWorkspaceId = requestPayload.controlledWorkspaceId;
+  payload.runtimeSessionId = requestPayload.runtimeSessionId;
+  payload.workspaceReadinessId = requestPayload.workspaceReadinessId;
+  payload.edits = JSON.parse(JSON.stringify(requestPayload.edits));
+  for (const edit of payload.edits) {
+    delete edit.replacementText;
+  }
+  payload.result.message = overrides.message ?? payload.result.message;
+  Object.assign(payload, overrides);
   return { requestId, payload };
 }
 
