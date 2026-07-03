@@ -268,7 +268,7 @@ Manual RC notes may record only sanitized explicit-click edit request/result sta
 10. Click Send manually and record only sanitized status.
 11. Review any proposal manually. Record proposal status only; do not paste raw diffs, patch bodies, or file bodies.
 12. In VS Code or supported IDE-host dogfood only, click Apply manually after the explicit review and confirmation boundary. Browser remains preview-only.
-13. In supported IDE-host dogfood only, click allowlisted Verification manually by command id. Browser does not run verification commands.
+13. In supported IDE-host dogfood only, click allowlisted Verification manually by command id for older/manual verification flows. Browser does not run verification commands. In S84 controlled Agent Run, verification controls are disabled/S85-required and must not post `runVerificationCommand`.
 14. Confirm no auto-send, auto-apply, auto-verification, automatic repair, automatic retry, automatic rollback, hidden read, provider tool call, shell/git/tool execution, or background indexing occurred.
 15. Inspect report/trace evidence for sanitized bounded metadata only.
 16. If the S71 timeline is visible, inspect it only as read-only sanitized metadata and confirm it adds no action controls or browser-storage/raw-data persistence.
@@ -329,7 +329,7 @@ Manual local evidence only. This report is not CI evidence, not automation evide
 
 - Send evidence: <user clicked Send manually | skipped | failed with sanitized summary | not run>
 - Apply evidence: <user clicked Apply manually | blocked | browser preview-only | skipped | failed/rejected with sanitized summary | not run>
-- Verify evidence: <user clicked Verification manually | browser unsupported | skipped | failed with sanitized summary | not run>
+- Verify evidence: <user clicked Verification manually for older/manual flow | S84 controlled Agent Run disabled/S85-required with no runVerificationCommand posted | browser unsupported | skipped | failed with sanitized summary | not run>
 - No automatic execution observed: <checked | issue found with sanitized summary | not run>
 - S71 timeline, if visible: <collapsed/read-only metadata only | no action buttons | no raw-data/browser-storage persistence | not visible | issue found with sanitized summary | not run>
 
