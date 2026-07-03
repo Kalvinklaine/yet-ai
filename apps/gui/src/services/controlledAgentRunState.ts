@@ -151,7 +151,6 @@ export function initializeControlledAgentRunState(input: ControlledAgentRunInitI
   }
 
   scanUnsafeMetadata(input, diagnostics);
-  scanUnsafeMetadata(input, diagnostics);
   const limits = normalizeLimits(input.limits);
   if (diagnostics.length > 0) {
     return stoppedState("blocked", limits, zeroCounters, "unsafe_metadata", false, "Controlled run initialization is blocked because unsafe metadata was omitted.", diagnostics);

@@ -510,6 +510,58 @@ describe("createCodingTaskSessionSnapshot", () => {
     expect(rendered).not.toContain("SECRET_SENTINEL");
   });
 
+  it("summarizes controlled edit trace metadata without raw replacement fields", () => {
+    const secret = "access_token=" + "e".repeat(64);
+    const snapshot = createCodingTaskSessionSnapshot({
+      traceEntries: [
+        {
+          id: "trace-edit-pending",
+          timestamp: "2026-07-02T00:00:00.000Z",
+          family: "controlledAgent.editPending",
+          title: "Controlled edit request evidence visible",
+          status: "pending",
+          summary: "Bounded edit request metadata evidence only",
+          details: {
+            fileLabel: "apps/gui/src/services/codingTaskSession.ts",
+            replacementText: `raw replacement ${secret}`,
+            rawDiff: "diff --git a/private b/private",
+            privatePath: "/Users/alice/private/repo/apps/gui/src/services/codingTaskSession.ts",
+          },
+        },
+        {
+          id: "trace-edit-result",
+          timestamp: "2026-07-02T00:01:00.000Z",
+          family: "controlledAgent.editResult",
+          title: "Controlled edit result evidence visible",
+          status: "succeeded",
+          summary: "Bounded edit result metadata evidence only",
+          details: {
+            replacementByteCount: 42,
+            fileBody: "raw file body sentinel",
+            command: "npm test -- controlled edit",
+          },
+        },
+      ],
+    });
+    const rendered = JSON.stringify(snapshot);
+
+    expect(snapshot.controlledEdit.present).toBe(true);
+    expect(snapshot.controlledEdit.latestStatus).toBe("succeeded");
+    expect(snapshot.controlledEdit.labels).toEqual([
+      "controlledAgent.editPending · pending · Controlled edit request evidence visible",
+      "controlledAgent.editResult · succeeded · Controlled edit result evidence visible",
+    ]);
+    expect(snapshot.policy.canAutoApply).toBe(false);
+    expect(rendered).not.toContain("raw replacement");
+    expect(rendered).not.toContain(secret);
+    expect(rendered).not.toContain("access_token");
+    expect(rendered).not.toContain("rawDiff");
+    expect(rendered).not.toContain("diff --git");
+    expect(rendered).not.toContain("/Users/alice");
+    expect(rendered).not.toContain("raw file body sentinel");
+    expect(rendered).not.toContain("npm test");
+  });
+
   it("summarizes controlled runtime session trace metadata without raw execution fields", () => {
     const snapshot = createCodingTaskSessionSnapshot({
       traceEntries: [

@@ -77,6 +77,11 @@ export type CodingTaskSessionSnapshot = {
     latestStatus: string;
     labels: string[];
   };
+  controlledEdit: {
+    present: boolean;
+    latestStatus: string;
+    labels: string[];
+  };
   controlledRuntimeSession: {
     present: boolean;
     latestStatus: string;
@@ -126,6 +131,7 @@ export function createCodingTaskSessionSnapshot(input: CodingTaskSessionInput = 
     trace: summarizeTrace(traceEntries),
     controlledFileRead: summarizeControlledFileRead(traceEntries),
     controlledCommandRun: summarizeControlledCommandRun(traceEntries),
+    controlledEdit: summarizeControlledEdit(traceEntries),
     controlledRuntimeSession: summarizeControlledRuntimeSession(traceEntries),
     proposalHistory: createProposalHistoryComparisonSummary(input.proposalHistory),
     nextSafeManualStep: nextSafeManualStep(run),
@@ -252,6 +258,16 @@ function summarizeControlledCommandRun(entries: readonly CodingSessionTraceEntry
     present: commandEntries.length > 0,
     latestStatus: safeLabel(latest?.status ?? "not_recorded", labelLimit),
     labels: commandEntries.slice(-maxLabels).map((entry) => safeLabel(`${entry.family} · ${entry.status} · ${entry.title}`, labelLimit)).filter(Boolean),
+  };
+}
+
+function summarizeControlledEdit(entries: readonly CodingSessionTraceEntry[]): CodingTaskSessionSnapshot["controlledEdit"] {
+  const editEntries = entries.filter((entry) => entry.family === "controlledAgent.editPending" || entry.family === "controlledAgent.editResult" || entry.family === "controlledAgent.editBlocked");
+  const latest = editEntries[editEntries.length - 1];
+  return {
+    present: editEntries.length > 0,
+    latestStatus: safeLabel(latest?.status ?? "not_recorded", labelLimit),
+    labels: editEntries.slice(-maxLabels).map((entry) => safeLabel(`${entry.family} · ${entry.status} · ${entry.title}`, labelLimit)).filter(Boolean),
   };
 }
 
@@ -424,8 +440,9 @@ function scanUnsafeValues(value: unknown, diagnostics: string[], keyPath = "inpu
     }
     seen.add(value);
     for (const [key, item] of Object.entries(value).slice(0, 50)) {
-      const nextPath = `${keyPath}.${safeLabel(key, 80) || "field"}`;
-      if (unsafeKeyPattern.test(key)) {
+      const unsafeKey = unsafeKeyPattern.test(key);
+      const nextPath = `${keyPath}.${unsafeKey ? "field" : safeLabel(key, 80) || "field"}`;
+      if (unsafeKey) {
         diagnostics.push(`Unsafe execution field omitted near ${safeLabel(nextPath, 80)}.`);
       }
       scanUnsafeValues(item, diagnostics, nextPath, depth + 1, seen);

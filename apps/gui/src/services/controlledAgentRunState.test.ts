@@ -52,6 +52,20 @@ describe("controlledAgentRunState", () => {
     expect(noAuthority(result).every((value) => value === false)).toBe(true);
   });
 
+  it("reports unsafe initialization metadata once per identical diagnostic", () => {
+    const result = initializeControlledAgentRunState({
+      readiness: structuredClone(worktreeReadiness),
+      userOptIn: { source: "user", confirmed: true },
+      limits: { maxSteps: 4 },
+      rawCommand: "npm test from /Users/alice/private",
+    } as Parameters<typeof initializeControlledAgentRunState>[0] & { rawCommand: string });
+
+    expect(result.phase).toBe("blocked");
+    expect(result.stop?.reason).toBe("unsafe_metadata");
+    expect(result.diagnostics.filter((item) => item.message === "Unsupported controlled run authority field was omitted.")).toHaveLength(1);
+    expect(result.diagnostics.filter((item) => item.message === "Unsafe controlled run metadata was omitted.")).toHaveLength(1);
+  });
+
   it("transitions through read, command, waiting, and completed phases", () => {
     const afterRead = reduceControlledAgentRunState(readyRun(), { type: "read", metadata: structuredClone(fileReadSuccess) });
     expect(afterRead.phase).toBe("reading_context");
