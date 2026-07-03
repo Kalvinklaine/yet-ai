@@ -19,12 +19,11 @@ const requiredSnippets = [
   "const maxControlledIdeActionFileBytes = 2 * 1024 * 1024;",
   "const maxActiveFileExcerptTextLength = 8000;",
   "payload.action === \"getActiveFileExcerpt\"",
-  "payload.action === \"runVerificationCommand\"",
   "payload.action === \"searchWorkspaceSnippets\"",
+  "const maxVerificationOutputTailLength = 4000;",
   "payload.action === \"getContextSnapshot\"",
   "payload.action === \"openWorkspaceFile\"",
   "payload.action === \"revealWorkspaceRange\"",
-  "const verificationCommandTimeoutMs = 120000;",
   "const maxVerificationOutputTailLength = 4000;",
   "const maxWorkspaceSnippetSearchFiles = 500;",
   "const maxWorkspaceSnippetSearchResults = 20;",
@@ -40,49 +39,8 @@ const requiredSnippets = [
   "languageIdForWorkspaceSnippetPath(workspaceRelativePath)",
   "function compareWorkspaceSnippets(left: WorkspaceSnippet, right: WorkspaceSnippet): number",
   "{**/.git/**,**/node_modules/**,**/dist/**,**/target/**,**/build/**,**/cache/**}",
-  "const verificationCommandConfirmationLabel = \"Run verification\";",
-  "const pendingVerificationCommandIds = new Set<VerificationCommandId>();",
-  "\"repository-check\": { command: \"npm\", args: [\"run\", \"check\"]",
-  "\"gui-app-tests\": { command: \"npm\", args: [\"--prefix\", \"apps/gui\", \"test\", \"--\", \"App\"]",
-  "\"engine-chat-tests\": { command: \"cargo\", args: [\"test\", \"-p\", \"yet-lsp\", \"chat\"]",
-  "spawn(command, args, {",
-  "shell: false",
-  "env: { PATH: process.env.PATH ?? \"\" }",
-  "child.stdout.on(\"data\", (chunk: Buffer) => {",
-  "child.stderr.on(\"data\", (chunk: Buffer) => {",
-  "appendVerificationOutput(output, chunk.toString(\"utf8\"))",
-  "workspaceFolders.length !== 1",
-  "vscode.window.showWarningMessage(",
-  "sanitizeVerificationOutputTail",
-  "vscode.window.activeTextEditor",
-  "document.uri.scheme !== \"file\"",
-  "activeDocumentWorkspaceRelativePath(document)",
-  "editor.visibleRanges[0]",
-  "document.offsetAt(toVscodePosition(range.start))",
-  "document.positionAt(boundedEndOffset)",
-  "sanitizeActiveFileExcerptText(value.text) === value.text",
-  "isBoundedForwardedApplyWorkspaceEditMessage(record)",
-  "isBoundedForwardedIdeActionMessage(record)",
-  "Buffer.byteLength(JSON.stringify(value), \"utf8\") <= maxForwardedApplyWorkspaceEditMessageBytes",
-  "Buffer.byteLength(JSON.stringify(value), \"utf8\") <= maxForwardedIdeActionMessageBytes",
-  "hasOnlyKeys(record, [\"version\", \"type\", \"requestId\", \"payload\"])",
-  "hasOnlyKeys(record, [\"supportedBridgeVersion\"])",
-  "record.supportedBridgeVersion === undefined || record.supportedBridgeVersion === bridgeVersion",
-  "isBoundedRequestId(record.requestId)",
-  "frame.contentWindow.postMessage(message, frameTargetOrigin)",
-  "event.origin !== frameTargetOrigin",
-  "isFrameGuiMessage(event.data)",
-  "const hasSecretRequestIdMarker = (value) => /authorization|bearer|api[_-]?key|token|secret|access[_-]?token|provider[_-]?key|openai[_-]?api[_-]?key|sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value);",
-  "new TextEncoder().encode(JSON.stringify(value)).length <= maxForwardedApplyWorkspaceEditMessageBytes",
   "message.type === \"gui.ideActionRequest\" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)",
-  "payload.action === \"runVerificationCommand\" && isVerificationCommandId(payload.commandId)",
   "payload.action === \"searchWorkspaceSnippets\" && isWorkspaceSnippetSearchQuery(payload.query)",
-  "message.type === \"gui.applyWorkspaceEditRequest\" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)",
-  "latestHostReady = event.data",
-  "const isEmptyHostPayload = (payload) => payload === undefined || (isPlainObject(payload) && Object.keys(payload).length === 0)",
-  "message.type === \"host.openedFromCommand\" ? message.requestId === undefined && isEmptyHostPayload(message.payload)",
-  "host.contextSnapshot",
-  "host.ideActionProgress",
   "host.ideActionResult",
   "createHostContextSnapshot(guiReadyRequestId)",
   "vscode.window.onDidChangeActiveTextEditor(() => scheduleContextRefresh())",
@@ -249,48 +207,25 @@ for (const snippet of [
   }
 }
 
-const verificationCommandSource = extractSection("async function runVerificationCommandRequest", "function createActiveFileExcerptResult");
-const verificationCommandSpawnSource = extractSection("function spawnVerificationCommand", "function appendVerificationOutput");
 const verificationResultPayloadSource = extractSection("export function createIdeActionResult", "function hardenIdeActionResultPayload");
 for (const snippet of [
+  "import { spawn } from \"node:child_process\";",
+  "async function runVerificationCommandRequest",
+  "function spawnVerificationCommand",
+  "verificationCommandConfirmationLabel",
+  "pendingVerificationCommandIds",
   "spawn(command, args, {",
-  "shell: false",
-  "windowsHide: true",
-  "env: { PATH: process.env.PATH ?? \"\" }",
-  "workspaceFolders.length !== 1",
-  "workspaceFolders[0].uri.scheme !== \"file\"",
-  "vscode.window.showWarningMessage(",
-  "pendingVerificationCommandIds.has(request.commandId)",
-  "pendingVerificationCommandIds.add(request.commandId);",
-  "pendingVerificationCommandIds.delete(request.commandId);",
-  "setTimeout(() => {",
-  "child.kill();",
-  "sanitizeVerificationOutputTail",
-  "child.stdout.on(\"data\", (chunk: Buffer) => {",
-  "child.stderr.on(\"data\", (chunk: Buffer) => {",
-  "appendVerificationOutput(output, chunk.toString(\"utf8\"))",
 ]) {
-  if (!verificationCommandSource.includes(snippet) && !verificationCommandSpawnSource.includes(snippet)) {
-    throw new Error(`Verification command handler missing safety policy: ${snippet}`);
+  if (source.includes(snippet)) {
+    throw new Error(`S84 VS Code webview must not include verification execution path: ${snippet}`);
   }
 }
-if (verificationCommandSource.indexOf("pendingVerificationCommandIds.add(request.commandId);") > verificationCommandSource.indexOf("vscode.window.showWarningMessage(")) {
-  throw new Error("Verification command duplicate guard must be set before user confirmation.");
+if (source.includes("payload.action === \"runVerificationCommand\" && isVerificationCommandId(payload.commandId)")) {
+  throw new Error("S84 VS Code webview wrapper must reject iframe verification command requests.");
 }
-for (const snippet of [
-  "createTerminal",
-  "executeTask",
-  "executeCommand",
-  "git ",
-  "npm install",
-  "curl",
-  "fetch(",
-  "exec(",
-  "execFile(",
-]) {
-  if (verificationCommandSource.includes(snippet) || verificationCommandSpawnSource.includes(snippet)) {
-    throw new Error(`Verification command handler must not include shell/network/mutation backdoor: ${snippet}`);
-  }
+const parseIdeActionRequestSource = extractSection("export function parseIdeActionRequest", "async function resolveExistingWorkspaceFile");
+if (parseIdeActionRequestSource.includes("return { requestId: message.requestId, action: \"runVerificationCommand\"")) {
+  throw new Error("S84 VS Code parser must not accept verification command requests.");
 }
 for (const forbidden of ["payload.command =", "payload.args", "payload.cwd", "payload.env", "payload.shell"]) {
   if (verificationResultPayloadSource.includes(forbidden)) {
@@ -582,9 +517,6 @@ const validApplyWorkspaceEditRequest = createApplyWorkspaceEditRequest();
 const validIdeActionRequests = [
   createIdeActionRequest({ action: "getContextSnapshot" }),
   createIdeActionRequest({ action: "getActiveFileExcerpt" }),
-  createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check" }),
-  createIdeActionRequest({ action: "runVerificationCommand", commandId: "gui-app-tests" }),
-  createIdeActionRequest({ action: "runVerificationCommand", commandId: "engine-chat-tests" }),
   createIdeActionRequest({ action: "searchWorkspaceSnippets", query: "hello" }),
   createIdeActionRequest({ action: "openWorkspaceFile", workspaceRelativePath: "src/main.ts" }),
   createIdeActionRequest({ action: "revealWorkspaceRange", workspaceRelativePath: "src/main.ts", range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } } }),
@@ -706,7 +638,7 @@ for (const message of invalidIdeActionRequests) {
   assert.equal(parseIdeActionRequest(message), undefined, `VS Code host must not parse malformed/forbidden IDE action request: ${message.payload.action}`);
 }
 assert.equal(isGuiMessage(validApplyWorkspaceEditRequest), true, "VS Code host should accept strict confirmed apply requests.");
-assert.deepEqual(validIdeActionRequests.map((message) => message.payload.action), ["getContextSnapshot", "getActiveFileExcerpt", "runVerificationCommand", "runVerificationCommand", "runVerificationCommand", "searchWorkspaceSnippets", "openWorkspaceFile", "revealWorkspaceRange"], "VS Code static parity assertions must cover context, active excerpt, verification, snippet search, and controlled navigation surfaces.");
+assert.deepEqual(validIdeActionRequests.map((message) => message.payload.action), ["getContextSnapshot", "getActiveFileExcerpt", "searchWorkspaceSnippets", "openWorkspaceFile", "revealWorkspaceRange"], "VS Code static parity assertions must cover context, active excerpt, snippet search, and controlled navigation surfaces.");
 for (const message of rejectedPrivilegedGuiMessages) {
   if (message.type === "gui.applyWorkspaceEditRequest") {
     continue;
@@ -1203,96 +1135,14 @@ async function assertIdeActionBehavior() {
   assert.equal(webviewMessages.at(-1).payload.status, "succeeded");
   assert.equal(webviewMessages.at(-1).payload.context.source, "vscode");
 
-  fakeVscode.window.showWarningMessage = (message, options, action) => {
-    assert.equal(options.modal, true);
-    assert.equal(action, "Run verification");
-    assert.equal(message.includes("allowlisted repository check verification command"), true);
-    return Promise.resolve(undefined);
-  };
-  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check" }));
+  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check", payload: { command: "npm run check", cwd: "/Users/private/workspace", env: { TOKEN: "secret" } } }));
+  assert.equal(webviewMessages.at(-1).type, "host.ideActionResult");
   assert.equal(webviewMessages.at(-1).payload.status, "rejected");
-  assert.equal(webviewMessages.at(-1).payload.commandId, "repository-check");
-  assert.equal(fakeChildProcess.calls.length, 0, "Denied verification command must not spawn.");
-
-  fakeVscode.workspace.workspaceFolders = [
-    { uri: { fsPath: workspaceRoot, scheme: "file", path: workspaceRoot } },
-    { uri: { fsPath: path.join(workspaceRoot, "second"), scheme: "file", path: path.join(workspaceRoot, "second") } },
-  ];
-  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check" }));
-  assert.equal(webviewMessages.at(-1).payload.status, "unavailable");
-  assert.equal(fakeChildProcess.calls.length, 0, "Verification command must require exactly one workspace folder before spawn.");
-
-  fakeVscode.workspace.workspaceFolders = [{ uri: { fsPath: workspaceRoot, scheme: "file", path: workspaceRoot } }];
-  fakeVscode.window.showWarningMessage = (_message, options, action) => {
-    assert.equal(options.modal, true);
-    assert.equal(action, "Run verification");
-    return Promise.resolve("Run verification");
-  };
-  fakeChildProcess.stdout = "verification passed";
-  fakeChildProcess.stderr = "";
-  fakeChildProcess.exitCode = 0;
-  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check" }));
-  assert.equal(webviewMessages.at(-1).payload.status, "succeeded");
-  assert.equal(webviewMessages.at(-1).payload.commandId, "repository-check");
-  assert.equal(webviewMessages.at(-1).payload.exitCode, 0);
-  assert.equal(webviewMessages.at(-1).payload.outputTail, "verification passed");
-  assert.equal(fakeChildProcess.calls.at(-1).command, "npm");
-  assert.deepEqual(fakeChildProcess.calls.at(-1).args, ["run", "check"]);
-  assert.equal(fakeChildProcess.calls.at(-1).options.cwd, workspaceRoot);
-  assert.equal(fakeChildProcess.calls.at(-1).options.shell, false);
-  assert.equal(fakeChildProcess.calls.at(-1).options.windowsHide, true);
-  assert.deepEqual(Object.keys(fakeChildProcess.calls.at(-1).options.env), ["PATH"]);
-  assert.equal(fakeChildProcess.calls.at(-1).options.env.PATH, process.env.PATH ?? "");
-  for (const forbiddenField of ["command", "args", "cwd", "env", "shell"]) {
-    assert.equal(Object.hasOwn(webviewMessages.at(-1).payload, forbiddenField), false, `Verification result leaked ${forbiddenField}.`);
-  }
-
-  fakeChildProcess.stdout = "stdout ok\n";
-  fakeChildProcess.stderr = "stderr Authorization: Bearer verification-secret-sentinel";
-  fakeChildProcess.exitCode = 1;
-  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "runVerificationCommand", commandId: "gui-app-tests" }));
-  assert.equal(webviewMessages.at(-1).payload.status, "failed");
-  assert.equal(webviewMessages.at(-1).payload.commandId, "gui-app-tests");
-  assert.equal(webviewMessages.at(-1).payload.outputTail, "Verification output hidden by host policy.");
-  assert.equal(JSON.stringify(webviewMessages.at(-1)).includes("verification-secret-sentinel"), false, "Verification stderr secret leaked through outputTail.");
-  assert.equal(fakeChildProcess.calls.at(-1).command, "npm");
-  assert.deepEqual(fakeChildProcess.calls.at(-1).args, ["--prefix", "apps/gui", "test", "--", "App"]);
-
-  fakeChildProcess.stdout = `${"safe verification output\n".repeat(300)}`;
-  fakeChildProcess.stderr = "";
-  fakeChildProcess.exitCode = 0;
-  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check" }));
-  assert.equal(webviewMessages.at(-1).payload.status, "succeeded");
-  assert.equal(webviewMessages.at(-1).payload.outputTail.length <= 4000, true, "Verification output tail must be bounded.");
-  assert.equal(webviewMessages.at(-1).payload.truncated, true, "Oversized verification output must be marked truncated.");
-
-  fakeChildProcess.stdout = "verification pending";
-  fakeChildProcess.stderr = "";
-  fakeChildProcess.exitCode = 0;
-  fakeChildProcess.holdClose = true;
-  fakeChildProcess.pendingChildren = [];
-  const firstVerification = handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check", requestId: "req-verify-duplicate-first" }));
-  await new Promise((resolve) => setImmediate(resolve));
-  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "runVerificationCommand", commandId: "repository-check", requestId: "req-verify-duplicate-second" }));
-  assert.equal(webviewMessages.at(-1).requestId, "req-verify-duplicate-second");
-  assert.equal(webviewMessages.at(-1).payload.status, "rejected");
-  assert.equal(webviewMessages.at(-1).payload.outputTail, "Verification command is already running.");
-  assert.equal(fakeChildProcess.calls.filter((call) => call.args.join(" ") === "run check").length, 3, "Duplicate verification request must not spawn while first is pending.");
-  fakeChildProcess.holdClose = false;
-  fakeChildProcess.pendingChildren.shift().complete();
-  await firstVerification;
-  assert.equal(webviewMessages.at(-1).requestId, "req-verify-duplicate-first");
-  assert.equal(webviewMessages.at(-1).payload.status, "succeeded");
-
-  fakeChildProcess.stdout = "Failed at /Users/example/private/secret.ts";
-  fakeChildProcess.stderr = "";
-  fakeChildProcess.exitCode = 1;
-  await handleIdeActionRequest(testWebview, createIdeActionRequest({ action: "runVerificationCommand", commandId: "engine-chat-tests" }));
-  assert.equal(webviewMessages.at(-1).payload.status, "failed");
-  assert.equal(webviewMessages.at(-1).payload.commandId, "engine-chat-tests");
-  assert.equal(webviewMessages.at(-1).payload.outputTail, "Verification output hidden by host policy.");
-  assert.equal(fakeChildProcess.calls.at(-1).command, "cargo");
-  assert.deepEqual(fakeChildProcess.calls.at(-1).args, ["test", "-p", "yet-lsp", "chat"]);
+  assert.equal(webviewMessages.at(-1).payload.message, "IDE action rejected by host policy.");
+  assert.equal(JSON.stringify(webviewMessages.at(-1)).includes("npm"), false, "S84 verification rejection must not echo command text.");
+  assert.equal(JSON.stringify(webviewMessages.at(-1)).includes("/Users"), false, "S84 verification rejection must not echo cwd.");
+  assert.equal(JSON.stringify(webviewMessages.at(-1)).includes("TOKEN"), false, "S84 verification rejection must not echo env.");
+  assert.equal(fakeChildProcess.calls.length, 0, "S84 verification command request must not spawn.");
 
   const searchablePath = path.join(workspaceRoot, "src", "searchable.txt");
   const earlierSearchablePath = path.join(workspaceRoot, "docs", "earlier.ts");

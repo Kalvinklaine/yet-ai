@@ -9,6 +9,12 @@ async function main(): Promise<void> {
   const moduleWithLoad = Module as ModuleWithLoad;
   const originalLoad = moduleWithLoad._load;
   const fakeVscode = {
+    Uri: {
+      joinPath(base: { fsPath: string; path?: string }, ...segments: string[]) {
+        const joined = [base.fsPath, ...segments].join("/");
+        return { fsPath: joined, path: joined, toString: () => joined };
+      },
+    },
     workspace: {
       workspaceFolders: [{ uri: { scheme: "file", fsPath: "/tmp/yet-ai-should-not-write" } }],
     },
@@ -30,10 +36,79 @@ async function main(): Promise<void> {
     assert.equal(webview.isFramePrivilegedGuiMessageAllowed({ frameReady: true, frameReadyRequestId: "ready-1", latestHostReadyRequestId: "ready-2" }), false);
     assert.equal(webview.isFramePrivilegedGuiMessageAllowed({ frameReady: true, frameReadyRequestId: undefined, latestHostReadyRequestId: undefined }), false);
     assert.equal(webview.isFramePrivilegedGuiMessageAllowed({ frameReady: true, frameReadyRequestId: "ready-1", latestHostReadyRequestId: "ready-1" }), true);
+    assertVerificationRequestsRejectWithoutExecution(webview);
+    await assertVerificationHandlerRejectsWithoutExecution(webview);
+    assertIframeValidatorRejectsVerificationRequests(webview);
     await assertPreReadyControlledEditRejectsWithoutWrite(webview);
   } finally {
     moduleWithLoad._load = originalLoad;
   }
+}
+
+function assertVerificationRequestsRejectWithoutExecution(webview: typeof import("./webview")): void {
+  const message = {
+    version: "2026-05-15",
+    type: "gui.ideActionRequest",
+    requestId: "verify-rejected",
+    payload: {
+      action: "runVerificationCommand",
+      commandId: "repository-check",
+    },
+  };
+  assert.equal(webview.parseIdeActionRequest(message as never), undefined);
+  assert.equal(webview.isGuiMessage(message), false);
+  assert.equal(webview.isInvalidIdeActionRequestMessage(message), true);
+}
+
+async function assertVerificationHandlerRejectsWithoutExecution(webview: typeof import("./webview")): Promise<void> {
+  const messages: unknown[] = [];
+  const testWebview = {
+    postMessage(message: unknown) {
+      messages.push(message);
+      return Promise.resolve(true);
+    },
+  };
+  await webview.handleIdeActionRequest(testWebview as never, {
+    version: "2026-05-15",
+    type: "gui.ideActionRequest",
+    requestId: "verify-handler-rejected",
+    payload: {
+      action: "runVerificationCommand",
+      commandId: "repository-check",
+      command: "npm run secret-check",
+      cwd: "/Users/private/workspace",
+      env: { TOKEN: "secret" },
+    },
+  } as never);
+  assert.equal(messages.length, 1);
+  const result = messages[0] as { type?: string; requestId?: string; payload?: Record<string, unknown> };
+  assert.equal(result.type, "host.ideActionResult");
+  assert.equal(result.requestId, "verify-handler-rejected");
+  assert.equal(result.payload?.status, "rejected");
+  assert.equal(result.payload?.message, "IDE action rejected by host policy.");
+  assert.equal(result.payload?.cloudRequired, false);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes("npm"), false);
+  assert.equal(serialized.includes("/Users"), false);
+  assert.equal(serialized.includes("TOKEN"), false);
+  assert.equal(serialized.includes("secret"), false);
+  assert.equal(serialized.includes("cwd"), false);
+  assert.equal(serialized.includes("env"), false);
+}
+
+function assertIframeValidatorRejectsVerificationRequests(webview: typeof import("./webview")): void {
+  const html = webview.renderWebviewHtml(
+    { cspSource: "vscode-resource:", asWebviewUri: (uri: { toString(): string }) => uri.toString() } as never,
+    { fsPath: "/tmp/yet-ai-extension", path: "/tmp/yet-ai-extension" } as never,
+    {
+      product: { id: "yet-ai", displayName: "Yet AI" },
+      engine: { binaryName: "yet-lsp" },
+      gui: { npmPackage: "@yet-ai/gui" },
+      vscode: { publisher: "yet-ai-placeholder", name: "yet-ai", displayName: "Yet AI", configurationPrefix: "yetai", commandPrefix: "yetaicmd", activityBarId: "yet-ai-toolbox-pane" },
+    } as never,
+    { runtimeUrl: "http://127.0.0.1:8001" } as never,
+  );
+  assert.equal(html.includes('payload.action === "runVerificationCommand"'), false);
 }
 
 async function assertPreReadyControlledEditRejectsWithoutWrite(webview: typeof import("./webview")): Promise<void> {
