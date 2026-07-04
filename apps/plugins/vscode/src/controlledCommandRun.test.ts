@@ -36,13 +36,13 @@ async function testSuccessUsesFixedMappingAndSanitizedTail(): Promise<void> {
 
   assert.deepEqual(calls, [{ command: "npm", args: ["run", "check"], cwd: "/workspace", shell: false }]);
   assert.equal(result.type, "host.controlledAgentCommandRunResult");
-  assert.equal(result.payload.state, "succeeded");
-  assert.equal(result.payload.result.status, "succeeded");
-  assert.equal(result.payload.result.exitCode, 0);
-  assert.equal(result.payload.result.durationMs, 42);
-  assert.equal(result.payload.result.outputTail, "safe output\n");
-  assert.equal(result.payload.result.rawOutputIncluded, false);
-  assert.equal(result.payload.result.fullLogIncluded, false);
+  assert.equal(result.payload.status, "succeeded");
+  assert.equal(result.payload.exitCode, 0);
+  assert.equal(result.payload.durationMs, 42);
+  assert.equal(result.payload.outputTail, "safe output\n");
+  assert.equal(result.payload.freeformCommandAllowed, false);
+  assert.equal(result.payload.policyFlags.allowlistedCommandIdOnly, true);
+  assert.equal(result.payload.policyFlags.shellAllowed, false);
   const serialized = JSON.stringify(result);
   assert.equal(serialized.includes("run check"), false);
   assert.equal(serialized.includes("/workspace"), false);
@@ -63,10 +63,10 @@ async function testFailureKeepsTailOnlyResult(): Promise<void> {
   child.emit("close", 2, null);
   const result = await resultPromise;
 
-  assert.equal(result.payload.state, "failed");
-  assert.equal(result.payload.result.exitCode, 2);
-  assert.equal(result.payload.result.outputTail, "test failed\n");
-  assert.equal(result.payload.result.resultHash?.startsWith("sha256:"), true);
+  assert.equal(result.payload.status, "failed");
+  assert.equal(result.payload.exitCode, 2);
+  assert.equal(result.payload.outputTail, "test failed\n");
+  assert.equal(result.payload.resultHash?.startsWith("sha256:"), true);
 }
 
 async function testMalformedUnknownAndUnconfirmedRequestsBlock(): Promise<void> {
@@ -76,15 +76,14 @@ async function testMalformedUnknownAndUnconfirmedRequestsBlock(): Promise<void> 
     { command: "npm test" },
     { args: ["test"] },
     { cwd: "/Users/alice/repo" },
+    { policyFlags: { ...basePolicyFlags(), shellAllowed: true } },
     { limits: { ...baseLimits(), shellAllowed: true } },
   ]) {
     const message = createRequest("repository-check", payloadPatch);
     assert.equal(parseControlledCommandRunRequest(message), undefined);
     assert.equal(isInvalidControlledCommandRunRequestMessage(message), true);
     const result = await runControlledCommandRunRequest(message, ["/repo"], { spawn: failSpawn });
-    assert.equal(result.payload.state, "blocked");
-    assert.equal(result.payload.result.blockedReason, "policy_denied");
-    assert.equal(result.payload.result.rawOutputIncluded, false);
+    assert.equal(result.payload.status, "blocked");
     assert.equal(JSON.stringify(result).includes("npm test"), false);
     assert.equal(JSON.stringify(result).includes("/Users"), false);
   }
@@ -113,9 +112,8 @@ async function testTimeoutKillsAndReportsTimedOut(): Promise<void> {
   child.emit("close", null, "SIGTERM");
   const result = await resultPromise;
 
-  assert.equal(result.payload.state, "timed_out");
-  assert.equal(result.payload.result.exitCode, null);
-  assert.equal(result.payload.result.killed, true);
+  assert.equal(result.payload.status, "timed_out");
+  assert.equal(result.payload.exitCode, null);
   assert.equal(timer?.cleared, true);
 }
 
@@ -129,9 +127,9 @@ async function testOutputTruncationAndPrivateOutputSanitization(): Promise<void>
   longChild.stdout.emit("data", "line1\nline2\nline3\nline4\n" + "x".repeat(200));
   longChild.emit("close", 0, null);
   const longResult = await longResultPromise;
-  assert.equal(longResult.payload.result.truncated, true);
-  assert.ok((longResult.payload.result.outputByteCount ?? 0) <= 80);
-  assert.ok((longResult.payload.result.outputLineCount ?? 0) <= 3);
+  assert.equal(longResult.payload.truncated, true);
+  assert.ok((longResult.payload.outputByteCount ?? 0) <= 80);
+  assert.ok((longResult.payload.outputLineCount ?? 0) <= 3);
 
   const privateChild = createChild();
   const privateResultPromise = runControlledCommandRunRequest(createRequest("repository-check"), ["/repo"], {
@@ -142,8 +140,8 @@ async function testOutputTruncationAndPrivateOutputSanitization(): Promise<void>
   privateChild.stdout.emit("data", "failure at /Users/alice/private/repo with token\n");
   privateChild.emit("close", 1, null);
   const privateResult = await privateResultPromise;
-  assert.equal(privateResult.payload.result.outputTail, "Command output hidden by host policy.");
-  assert.equal(privateResult.payload.result.truncated, true);
+  assert.equal(privateResult.payload.outputTail, "Command output hidden by host policy.");
+  assert.equal(privateResult.payload.truncated, true);
   assert.equal(JSON.stringify(privateResult).includes("/Users/alice"), false);
   assert.equal(JSON.stringify(privateResult).includes("token"), false);
 }
@@ -159,14 +157,9 @@ function createRequest(commandId: string, overrides: Record<string, unknown> = {
     runtimeSessionId: "runtime-command-safe",
     workspaceReadinessId: "ready-command-safe",
     userConfirmed: true,
-    correlation: {
-      origin: "user",
-      confirmedBy: "user",
-      confirmationId: "confirm-command-safe",
-      hostCorrelationId: "host-command-safe",
-    },
     commandId,
     limits: baseLimits(),
+    policyFlags: basePolicyFlags(),
     ...overrides,
   };
   return {
@@ -188,6 +181,31 @@ function baseLimits(): Record<string, unknown> {
     cwdAllowed: false,
     envAllowed: false,
     shellAllowed: false,
+  };
+}
+
+function basePolicyFlags(): Record<string, unknown> {
+  return {
+    allowlistedCommandIdOnly: true,
+    freeformCommandAllowed: false,
+    argsAllowed: false,
+    cwdAllowed: false,
+    envAllowed: false,
+    shellAllowed: false,
+    gitAllowed: false,
+    networkAllowed: false,
+    providerAllowed: false,
+    toolAllowed: false,
+    packageInstallAllowed: false,
+    fileReadAllowed: false,
+    fileWriteAllowed: false,
+    hiddenSearchAllowed: false,
+    indexingAllowed: false,
+    autoStartAllowed: false,
+    autoApplyAllowed: false,
+    autoRunAllowed: false,
+    autoVerifyAllowed: false,
+    autoFixAllowed: false,
   };
 }
 

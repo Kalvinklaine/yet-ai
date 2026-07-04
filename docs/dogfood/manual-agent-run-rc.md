@@ -254,6 +254,26 @@ npm run validate:contracts && cd apps/gui && npm test -- controlledAgentEditExec
 
 Manual RC notes may record only sanitized explicit-click edit request/result status, workspace-relative path labels, range/count/hash metadata, and unsupported-host metadata. Do not paste raw file bodies, diffs, or replacement text, and do not persist them in reports, trace, progress, browser storage, docs, or smoke output. Do not report S84 as create/delete/rename/move/chmod/binary/symlink edit support, hidden/background edits, provider/model calling, verification execution, shell/git/package/network/tool authority, rollback, production autonomy, marketplace readiness, release readiness, or real-provider CI. S85 is still required for real allowlisted verification execution, and S86 remains the earliest honest one-step controlled-autonomy milestone.
 
+## S85 real allowlisted controlled verification note
+
+S85 adds real allowlisted controlled Agent Run verification execution for VS Code only. The controlled Agent Run path posts `gui.controlledAgentCommandRunRequest` only after explicit user click and only with ready controlled runtime/workspace/readiness metadata. The request is GUI-minted, user-confirmed, correlated, and carries exactly one fixed allowlisted `commandId` (`repository-check`, `gui-app-tests`, or `engine-chat-tests`) with bounded timeout and output-tail limits. It must not include command strings, args, cwd, env, shell snippets, package-install instructions, git/network/provider/tool fields, file read/write authority, hidden search/indexing flags, or auto-run/auto-verify/auto-fix claims.
+
+VS Code is the only S85 real executor. Browser remains unsupported for controlled verification execution, and JetBrains remains fail-closed/unsupported for this path. Host results are sanitized tail-only metadata: status, exit code where applicable, duration, bounded output tail, byte/line counts, result hash, truncation, safe message, and all-false authority flags. Older/manual VerificationCommandPanel evidence remains separate from controlled Agent Run verification and should be reported as older/manual only.
+
+The exact focused S85 smoke is:
+
+```sh
+npm run smoke:controlled-agent-real-verification
+```
+
+For the final S85 audit gate, use:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm test -- controlledAgentCommandRunRequest App AgentRunPanel && npm run typecheck && npm run build && cd ../.. && cd apps/plugins/vscode && npm run compile && npm test -- controlledCommandRun webview && cd ../../.. && cd apps/plugins/jetbrains && gradle test --console=plain --tests ai.yet.plugin.bridge.ControlledEditTest --tests ai.yet.plugin.ui.ControlledEditBridgeTest && cd ../../.. && npm run smoke:controlled-agent-real-verification && npm run check && git diff --check && git status --short
+```
+
+Manual RC notes may record only sanitized explicit-click verification request/result status, command id labels, exit status, duration/count/hash/truncation metadata, and unsupported-host state. Do not paste raw commands, args, cwd/env, stdout/stderr logs, private paths, secrets, provider/tool payloads, bridge payloads, or browser-storage dumps. Do not report S85 as arbitrary shell access, model-selected commands, package/git/network/provider/tool execution, automatic verification, automatic repair/retry/rollback, production autonomy, marketplace readiness, release readiness, or real-provider CI. S86 remains the earliest honest one-step controlled-autonomy milestone.
+
 ## Manual RC run checklist
 
 1. Start from a clean local checkout or sanitized dev-preview artifact label.
@@ -280,8 +300,9 @@ Manual RC notes may record only sanitized explicit-click edit request/result sta
 22. If S82 controlled runtime session metadata is visible, record only sanitized lifecycle/precondition/correlation status; confirm browser is unsupported, IDE hosts are future-capable only with metadata preconditions, and no agent start, read, edit, verification, provider/tool call, shell/git/network action, rollback, workspace mutation, raw persistence, or production/autonomy claim appeared.
 23. If S83 controlled file-read execution is visible, record only sanitized explicit-click request/result status; confirm browser is unsupported, JetBrains is unsupported/fail-closed, VS Code accepts only correlated bounded reads, raw file bodies are not persisted in browser storage/trace/progress/report/docs/smokes, and no hidden/background read/search/indexing/write/apply/verify/provider/model/shell/git/package/network/tool authority appeared.
 24. If S84 controlled replacement edit execution is visible, record only sanitized explicit-click request/result status; confirm browser is unsupported, JetBrains is fail-closed with `edit_disabled`, VS Code accepts only correlated expected-hash bounded replacements, raw file bodies/diffs/replacements are not persisted in browser storage/trace/progress/report/docs/smokes, no create/delete/rename/move/chmod/binary/symlink edit support appeared, and no hidden/background edit, provider/model, verification, shell/git/package/network/tool authority appeared. If Agent Run verification controls are visible, record that they are disabled/S85-required and did not post a `runVerificationCommand` bridge request.
-25. Validate the completed local report with `npm run report:agent-run-rc -- --check path/to/local-report.md` before sharing any excerpt.
-26. Keep raw local evidence, screenshots, logs, provider transcripts, bridge captures, and browser-storage dumps out of tracked files.
+25. If S85 controlled verification execution is visible, record only sanitized explicit-click command-id request/result status; confirm browser is unsupported, JetBrains is fail-closed/unsupported, VS Code accepts only correlated GUI-minted allowlisted command ids with bounded timeout/output-tail limits, raw commands/cwd/env/full logs are absent from browser storage/trace/progress/report/docs/smokes, and no model-selected command, shell/free-form command, git/package/network/provider/tool, automatic repair/retry/rollback, or autonomy authority appeared.
+26. Validate the completed local report with `npm run report:agent-run-rc -- --check path/to/local-report.md` before sharing any excerpt.
+27. Keep raw local evidence, screenshots, logs, provider transcripts, bridge captures, and browser-storage dumps out of tracked files.
 
 ## Sanitized report workflow
 

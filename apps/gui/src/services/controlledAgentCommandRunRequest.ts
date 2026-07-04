@@ -460,7 +460,7 @@ function scanUnsafeMetadata(value: unknown, diagnostics: ControlledAgentCommandR
   if (typeof value === "string") {
     const protocolTextAllowed = (currentKey === "type" && (value === "host.controlledAgentCommandRunResult" || value === "gui.controlledAgentCommandRunRequest")) || (currentKey === "authority" && value === "allowlisted_command_id") || (currentKey === "commandId" && safeCommandId(value) !== undefined);
     if (options.allowOutputTail && currentKey === "outputTail") {
-      if (unsafeTextPattern.test(value) || stackTracePattern.test(value)) diagnostics.push(diagnostic("unsafe_metadata", "Unsafe controlled command-run output tail omitted."));
+      if (value !== "Command output hidden by host policy." && (unsafeTextPattern.test(value) || stackTracePattern.test(value))) diagnostics.push(diagnostic("unsafe_metadata", "Unsafe controlled command-run output tail omitted."));
       return;
     }
     if (!protocolTextAllowed && (unsafeTextPattern.test(value) || stackTracePattern.test(value))) {
@@ -526,8 +526,8 @@ function safeDisplayText(value: unknown, limit: number): string | undefined {
 
 function safeOutputTail(value: string): string | undefined {
   const sanitized = sanitizeTimelineText(value).trim();
-  if (unsafeTextPattern.test(sanitized) || stackTracePattern.test(sanitized)) return undefined;
-  return sanitized.length > 1200 ? `${sanitized.slice(0, 1200)}…` : sanitized;
+  if (sanitized !== "Command output hidden by host policy." && (unsafeTextPattern.test(sanitized) || stackTracePattern.test(sanitized))) return undefined;
+  return sanitized.length > 1200 ? `…` : sanitized;
 }
 
 function safeText(value: string, limit: number): string {

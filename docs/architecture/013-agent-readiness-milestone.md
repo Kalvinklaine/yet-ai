@@ -47,6 +47,7 @@ Avoid softer wording that implies implementation, autonomy, production publicati
 | S82 controlled runtime session metadata | Experimental manual-only | Controlled runtime session evidence adds a sanitized metadata envelope for future lifecycle/precondition status only. Browser remains unsupported; VS Code and JetBrains are future-capable only when metadata preconditions are present. It does not start an agent, implement a real one-step model loop, execute reads/edits/verification/provider calls, or replace the S83 requirement for real bounded read execution. |
 | S83 real bounded controlled file-read execution | Experimental manual-only | S83 adds one explicit user-clicked and correlated controlled workspace text-read request path, with real execution in the VS Code host only. Browser remains unsupported and JetBrains fails closed/unsupported. It adds no hidden/background reads, search, indexing, provider/model call, edit/write/apply, verification execution, shell/git/package/network/tool authority, raw-body persistence, or autonomy. S84 remains required for real bounded edit execution; S86 remains the earliest honest one-step controlled-autonomy milestone. |
 | S84 real bounded controlled replacement edit execution | Experimental manual-only | S84 adds real bounded controlled replacement edit execution for existing workspace-relative text files through explicit GUI request/click/correlation and expected `sha256:` content hash checks. VS Code is the real executor; browser remains unsupported and JetBrains fails closed with `edit_disabled`. It adds no create/delete/rename/move/chmod/binary/symlink edits, hidden/background edits, provider/model call, verification execution, shell/git/package/network/tool authority, raw file body/diff/replacement persistence, or autonomy. S85 remains required for real allowlisted verification execution, and S86 remains the earliest honest one-step controlled-autonomy milestone. |
+| S85 real allowlisted controlled verification execution | Experimental manual-only | S85 adds real allowlisted controlled Agent Run verification execution in VS Code only through explicit user click and `gui.controlledAgentCommandRunRequest` / `host.controlledAgentCommandRunResult`. The GUI request is GUI-minted, correlated to controlled runtime/workspace/readiness/run metadata, and carries one fixed allowlisted `commandId` with bounded timeout/output-tail limits and no command string, args, cwd, env, shell, git, network, provider/tool, file read/write, hidden search/indexing, package install, auto-run, auto-verify, or auto-fix authority. Browser is unsupported and JetBrains remains fail-closed/unsupported for controlled verification execution. Results are sanitized tail-only metadata. S85 adds no repair, retry, rollback, provider/model loop, arbitrary command execution, production autonomy, or real-provider CI; S86 remains the earliest honest one-step controlled-autonomy milestone. |
 | Multi-step execution | Blocked/deferred | There is no implemented runner that executes a plan across multiple steps. S61 is only inert metadata. |
 | Controlled autonomy | Blocked/deferred | No autonomous loop is implemented. Any future controlled-autonomy work must pass the future eligibility gates below before design or implementation. |
 | Auto-repair / auto-retry / auto-rollback | Blocked/deferred | Failed verification can stop and may produce a draft-only prompt. The product must not claim automatic repair, retry, verification, or rollback. |
@@ -329,6 +330,28 @@ npm run validate:contracts && cd apps/gui && npm test -- controlledAgentEditExec
 ```
 
 S84 remains local-first and requires no hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, cloud workspace, production login, marketplace publication, signing, notarization, real-provider CI, or production autonomy. S85 is still required for real allowlisted verification execution. S86 remains the earliest honest one-step controlled-autonomy milestone, and only after separate bounded read, edit, verification, loop, reporting, and safety gates are implemented and verified.
+
+## Sprint 85 real allowlisted controlled verification execution status
+
+Sprint 85 adds the real controlled Agent Run verification execution slice, limited to VS Code and limited to command-id allowlist semantics. The GUI may post `gui.controlledAgentCommandRunRequest` only after the user explicitly clicks the controlled Agent Run verification control and only when controlled runtime/workspace/readiness metadata is ready. The request is GUI-minted, user-confirmed, correlated to controlled workspace/run/runtime/readiness metadata, and contains one fixed allowlisted `commandId` (`repository-check`, `gui-app-tests`, or `engine-chat-tests`) plus bounded timeout and output-tail limits.
+
+The VS Code host is the only S85 host that executes the controlled verification request. It maps the command id to an internal allowlist, runs with host-owned cwd selection, and returns `host.controlledAgentCommandRunResult` as sanitized tail-only metadata: status, exit code where applicable, duration, bounded output tail, byte and line counts, result hash, truncation, safe message, and all-false authority flags. Browser remains unsupported for controlled verification execution, and JetBrains remains fail-closed/unsupported instead of gaining command authority. Older/manual `VerificationCommandPanel` flows stay separate and must not be described as the S85 controlled Agent Run request path.
+
+S85 does not allow free-form command text, model-selected commands, args, cwd, env, shell snippets, package installation, git, network, provider/tool calls, file read/write, hidden search/indexing, automatic verification, automatic repair, retry, rollback, task-board mutation, production autonomy, marketplace readiness, release readiness, or real-provider CI. Raw command material and full stdout/stderr logs must not be persisted in browser storage, trace, progress metadata, final reports, docs, dogfood reports, or smoke output.
+
+The exact focused S85 real-verification smoke is:
+
+```sh
+npm run smoke:controlled-agent-real-verification
+```
+
+The exact S85 final audit gate is:
+
+```sh
+npm run validate:contracts && cd apps/gui && npm test -- controlledAgentCommandRunRequest App AgentRunPanel && npm run typecheck && npm run build && cd ../.. && cd apps/plugins/vscode && npm run compile && npm test -- controlledCommandRun webview && cd ../../.. && cd apps/plugins/jetbrains && gradle test --console=plain --tests ai.yet.plugin.bridge.ControlledEditTest --tests ai.yet.plugin.ui.ControlledEditBridgeTest && cd ../../.. && npm run smoke:controlled-agent-real-verification && npm run check && git diff --check && git status --short
+```
+
+S86 remains the earliest honest one-step controlled-autonomy milestone, and only after bounded read, edit, verification, loop, reporting, and safety gates are intentionally wired and verified.
 
 ## Blocked and deferred capabilities
 

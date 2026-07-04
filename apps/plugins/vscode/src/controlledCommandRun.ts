@@ -32,12 +32,6 @@ type ControlledCommandRunRequest = {
   sessionId?: string;
   workspaceReadinessId: string;
   userConfirmed: true;
-  correlation: {
-    origin: "user";
-    confirmedBy: "user";
-    confirmationId: string;
-    hostCorrelationId: string;
-  };
   commandId: VerificationCommandId;
   limits: {
     timeoutMs: number;
@@ -53,21 +47,20 @@ type ControlledCommandRunRequest = {
 };
 
 type ControlledCommandRunResultPayload = {
-  type: "controlled_agent_command_runner";
-  schemaVersion: "2026-07-04";
-  state: ControlledCommandRunState;
-  authority: "allowlisted_command_id";
-  cloudRequired: false;
+  requestId: string;
+  requestIdMintedBy: "gui";
+  userConfirmed: true;
   controlledWorkspaceId: string;
   runId: string;
   runtimeSessionId?: string;
   sessionId?: string;
   workspaceReadinessId: string;
-  requestId: string;
-  requestIdMintedBy: "gui";
-  userConfirmed: true;
   commandId: VerificationCommandId;
-  limits: ControlledCommandRunRequest["limits"];
+  status: ControlledCommandRunState;
+  authority: "allowlisted_command_id";
+  cloudRequired: false;
+  executionAllowed: false;
+  freeformCommandAllowed: false;
   policyFlags: {
     allowlistedCommandIdOnly: true;
     freeformCommandAllowed: false;
@@ -79,29 +72,25 @@ type ControlledCommandRunResultPayload = {
     networkAllowed: false;
     providerAllowed: false;
     toolAllowed: false;
+    packageInstallAllowed: false;
     fileReadAllowed: false;
     fileWriteAllowed: false;
+    hiddenSearchAllowed: false;
+    indexingAllowed: false;
+    autoStartAllowed: false;
+    autoApplyAllowed: false;
     autoRunAllowed: false;
+    autoVerifyAllowed: false;
+    autoFixAllowed: false;
   };
-  result: {
-    status: ControlledCommandRunState;
-    cloudRequired: false;
-    freeformCommandAllowed: false;
-    privatePathExposed: false;
-    rawOutputIncluded: false;
-    fullLogIncluded: false;
-    authority: "allowlisted_command_id";
-    message: string;
-    exitCode?: number | null;
-    durationMs?: number;
-    outputTail?: string;
-    outputByteCount?: number;
-    outputLineCount?: number;
-    resultHash?: string;
-    truncated: boolean;
-    killed: boolean;
-    blockedReason?: BlockedReason;
-  };
+  message: string;
+  exitCode?: number | null;
+  durationMs?: number;
+  outputTail?: string;
+  outputByteCount?: number;
+  outputLineCount?: number;
+  resultHash?: string;
+  truncated: boolean;
 };
 
 type CommandMapping = {
@@ -133,8 +122,9 @@ const commandMappings: Record<VerificationCommandId, CommandMapping> = {
   "engine-chat-tests": { executable: "cargo", args: ["test", "-p", "yet-lsp", "chat"], cwdSegments: [] },
 };
 const maxTimeoutMs = 30 * 60 * 1000;
-const maxOutputBytes = 20000;
-const maxOutputLines = 400;
+const maxRequestedTimeoutMs = 600000;
+const maxRequestedOutputBytes = 12000;
+const maxRequestedOutputLines = 240;
 const maxOutputTailChars = 2000;
 const safeIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const safeRequestIdPattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
@@ -160,10 +150,10 @@ export async function runControlledCommandRunRequest(message: ControlledCommandR
   const parsed = parseControlledCommandRunRequest(message);
   if (!parsed) {
     const requestId = isRequiredRequestId(message.requestId) ? message.requestId : "invalid-request";
-    return createHostMessage(createFallbackRequest(requestId), "blocked", "policy_denied", "Controlled command run blocked by host policy.", { truncated: false, killed: false });
+    return createHostMessage(createFallbackRequest(requestId), "blocked", "policy_denied", "Allowlisted verification blocked by host policy.", { truncated: false, killed: false });
   }
   if (workspaceRoots.length !== 1 || privatePathPattern.test(parsed.workspaceReadinessId)) {
-    return createHostMessage(parsed, "blocked", "workspace_not_ready", "Controlled command run blocked by host policy.", { truncated: false, killed: false });
+    return createHostMessage(parsed, "blocked", "workspace_not_ready", "Allowlisted verification blocked by host policy.", { truncated: false, killed: false });
   }
   const mapping = commandMappings[parsed.commandId];
   const cwd = path.join(workspaceRoots[0], ...mapping.cwdSegments);
@@ -207,23 +197,23 @@ export async function runControlledCommandRunRequest(message: ControlledCommandR
     try {
       child = spawnProcess(mapping.executable, mapping.args, { cwd, shell: false, windowsHide: true });
     } catch {
-      finish("failed", 1, "Controlled command run failed.", false);
+      finish("failed", 1, "Allowlisted verification failed.", false);
       return;
     }
     child.stdout?.on("data", append);
     child.stderr?.on("data", append);
-    child.on("error", () => finish("failed", 1, "Controlled command run failed.", false));
+    child.on("error", () => finish("failed", 1, "Allowlisted verification failed.", false));
     child.on("close", (code, signal) => {
       if (timedOut) {
-        finish("timed_out", null, "Controlled command run timed out.", true);
+        finish("timed_out", null, "Allowlisted verification timed out.", true);
         return;
       }
       if (killed || signal !== null) {
-        finish("killed", null, "Controlled command run was killed.", true);
+        finish("killed", null, "Allowlisted verification was killed.", true);
         return;
       }
       const safeCode = clampExitCode(code ?? 1);
-      finish(safeCode === 0 ? "succeeded" : "failed", safeCode, safeCode === 0 ? "Controlled command run succeeded." : "Controlled command run failed.", false);
+      finish(safeCode === 0 ? "succeeded" : "failed", safeCode, safeCode === 0 ? "Allowlisted verification succeeded." : "Allowlisted verification failed.", false);
     });
   });
 }
@@ -233,7 +223,7 @@ export function parseControlledCommandRunRequest(value: unknown): ControlledComm
     return undefined;
   }
   const payload = value.payload;
-  if (!hasOnlyKeys(payload, ["requestId", "requestIdMintedBy", "source", "assistantMinted", "controlledWorkspaceId", "runId", "runtimeSessionId", "sessionId", "workspaceReadinessId", "userConfirmed", "correlation", "commandId", "limits"]) || payload.requestId !== value.requestId || !isSafeId(payload.requestId) || payload.requestIdMintedBy !== "gui" || payload.source !== "gui" || payload.assistantMinted !== false || !isSafeId(payload.controlledWorkspaceId) || !isSafeId(payload.runId) || (payload.runtimeSessionId !== undefined && !isSafeId(payload.runtimeSessionId)) || (payload.sessionId !== undefined && !isSafeId(payload.sessionId)) || !isSafeId(payload.workspaceReadinessId) || payload.userConfirmed !== true || !isVerificationCommandId(payload.commandId) || !isCorrelation(payload.correlation) || !isLimits(payload.limits)) {
+  if (!hasOnlyKeys(payload, ["requestId", "requestIdMintedBy", "source", "assistantMinted", "controlledWorkspaceId", "runId", "runtimeSessionId", "sessionId", "workspaceReadinessId", "userConfirmed", "commandId", "limits", "policyFlags"]) || payload.requestId !== value.requestId || !isSafeId(payload.requestId) || payload.requestIdMintedBy !== "gui" || payload.source !== "gui" || payload.assistantMinted !== false || !isSafeId(payload.controlledWorkspaceId) || !isSafeId(payload.runId) || (payload.runtimeSessionId !== undefined && !isSafeId(payload.runtimeSessionId)) || (payload.sessionId !== undefined && !isSafeId(payload.sessionId)) || !isSafeId(payload.workspaceReadinessId) || payload.userConfirmed !== true || !isVerificationCommandId(payload.commandId) || !isLimits(payload.limits) || !isRequestPolicyFlags(payload.policyFlags)) {
     return undefined;
   }
   return {
@@ -247,53 +237,40 @@ export function parseControlledCommandRunRequest(value: unknown): ControlledComm
     ...(payload.sessionId === undefined ? {} : { sessionId: payload.sessionId }),
     workspaceReadinessId: payload.workspaceReadinessId,
     userConfirmed: true,
-    correlation: payload.correlation,
     commandId: payload.commandId,
     limits: payload.limits,
   };
 }
 
-function createHostMessage(request: ControlledCommandRunRequest, state: ControlledCommandRunState, blockedReason: BlockedReason | undefined, message: string, result: { exitCode?: number | null; durationMs?: number; outputTail?: string; outputByteCount?: number; outputLineCount?: number; resultHash?: string; truncated: boolean; killed: boolean }): ControlledCommandRunHostMessage {
+function createHostMessage(request: ControlledCommandRunRequest, state: ControlledCommandRunState, _blockedReason: BlockedReason | undefined, message: string, result: { exitCode?: number | null; durationMs?: number; outputTail?: string; outputByteCount?: number; outputLineCount?: number; resultHash?: string; truncated: boolean; killed: boolean }): ControlledCommandRunHostMessage {
   return {
     version: bridgeVersion,
     type: "host.controlledAgentCommandRunResult",
     requestId: request.requestId,
     payload: {
-      type: "controlled_agent_command_runner",
-      schemaVersion: "2026-07-04",
-      state,
-      authority: "allowlisted_command_id",
-      cloudRequired: false,
+      requestId: request.requestId,
+      requestIdMintedBy: "gui",
+      userConfirmed: true,
       controlledWorkspaceId: request.controlledWorkspaceId,
       runId: request.runId,
       ...(request.runtimeSessionId === undefined ? {} : { runtimeSessionId: request.runtimeSessionId }),
       ...(request.sessionId === undefined ? {} : { sessionId: request.sessionId }),
       workspaceReadinessId: request.workspaceReadinessId,
-      requestId: request.requestId,
-      requestIdMintedBy: "gui",
-      userConfirmed: true,
       commandId: request.commandId,
-      limits: request.limits,
+      status: state,
+      authority: "allowlisted_command_id",
+      cloudRequired: false,
+      executionAllowed: false,
+      freeformCommandAllowed: false,
       policyFlags: createPolicyFlags(),
-      result: {
-        status: state,
-        cloudRequired: false,
-        freeformCommandAllowed: false,
-        privatePathExposed: false,
-        rawOutputIncluded: false,
-        fullLogIncluded: false,
-        authority: "allowlisted_command_id",
-        message,
-        ...(result.exitCode === undefined ? {} : { exitCode: result.exitCode }),
-        ...(result.durationMs === undefined ? {} : { durationMs: result.durationMs }),
-        ...(result.outputTail === undefined ? {} : { outputTail: result.outputTail }),
-        ...(result.outputByteCount === undefined ? {} : { outputByteCount: result.outputByteCount }),
-        ...(result.outputLineCount === undefined ? {} : { outputLineCount: result.outputLineCount }),
-        ...(result.resultHash === undefined ? {} : { resultHash: result.resultHash }),
-        truncated: result.truncated,
-        killed: result.killed,
-        ...(blockedReason === undefined ? {} : { blockedReason }),
-      },
+      message,
+      ...(result.exitCode === undefined ? {} : { exitCode: result.exitCode }),
+      ...(result.durationMs === undefined ? {} : { durationMs: result.durationMs }),
+      ...(result.outputTail === undefined ? {} : { outputTail: result.outputTail }),
+      ...(result.outputByteCount === undefined ? {} : { outputByteCount: result.outputByteCount }),
+      ...(result.outputLineCount === undefined ? {} : { outputLineCount: result.outputLineCount }),
+      ...(result.resultHash === undefined ? {} : { resultHash: result.resultHash }),
+      truncated: result.truncated,
     },
   };
 }
@@ -325,12 +302,15 @@ function sanitizeOutputTail(value: string, byteLimit: number, lineLimit: number)
   };
 }
 
-function isCorrelation(value: unknown): value is ControlledCommandRunRequest["correlation"] {
-  return isPlainRecord(value) && hasOnlyKeys(value, ["origin", "confirmedBy", "confirmationId", "hostCorrelationId"]) && value.origin === "user" && value.confirmedBy === "user" && isSafeId(value.confirmationId) && isSafeId(value.hostCorrelationId) && value.confirmationId !== value.hostCorrelationId;
+function isLimits(value: unknown): value is ControlledCommandRunRequest["limits"] {
+  return isPlainRecord(value) && hasOnlyKeys(value, ["timeoutMs", "maxOutputBytes", "maxOutputLines", "tailOnly", "commandStringAllowed", "argsAllowed", "cwdAllowed", "envAllowed", "shellAllowed"]) && boundedInteger(value.timeoutMs, 1000, maxRequestedTimeoutMs) && boundedInteger(value.maxOutputBytes, 1, maxRequestedOutputBytes) && boundedInteger(value.maxOutputLines, 1, maxRequestedOutputLines) && value.tailOnly === true && value.commandStringAllowed === false && value.argsAllowed === false && value.cwdAllowed === false && value.envAllowed === false && value.shellAllowed === false;
 }
 
-function isLimits(value: unknown): value is ControlledCommandRunRequest["limits"] {
-  return isPlainRecord(value) && hasOnlyKeys(value, ["timeoutMs", "maxOutputBytes", "maxOutputLines", "tailOnly", "commandStringAllowed", "argsAllowed", "cwdAllowed", "envAllowed", "shellAllowed"]) && boundedInteger(value.timeoutMs, 1000, maxTimeoutMs) && boundedInteger(value.maxOutputBytes, 1, maxOutputBytes) && boundedInteger(value.maxOutputLines, 1, maxOutputLines) && value.tailOnly === true && value.commandStringAllowed === false && value.argsAllowed === false && value.cwdAllowed === false && value.envAllowed === false && value.shellAllowed === false;
+function isRequestPolicyFlags(value: unknown): boolean {
+  const expected = createPolicyFlags();
+  return isPlainRecord(value) &&
+    hasOnlyKeys(value, Object.keys(expected)) &&
+    Object.entries(expected).every(([key, expectedValue]) => value[key] === expectedValue);
 }
 
 function createFallbackRequest(requestId: string): ControlledCommandRunRequest {
@@ -343,7 +323,6 @@ function createFallbackRequest(requestId: string): ControlledCommandRunRequest {
     runId: "run-command-blocked",
     workspaceReadinessId: "ready-command-blocked",
     userConfirmed: true,
-    correlation: { origin: "user", confirmedBy: "user", confirmationId: "confirmation-command-blocked", hostCorrelationId: "host-command-blocked" },
     commandId: "repository-check",
     limits: { timeoutMs: 1000, maxOutputBytes: 1, maxOutputLines: 1, tailOnly: true, commandStringAllowed: false, argsAllowed: false, cwdAllowed: false, envAllowed: false, shellAllowed: false },
   };
@@ -361,9 +340,16 @@ function createPolicyFlags(): ControlledCommandRunResultPayload["policyFlags"] {
     networkAllowed: false,
     providerAllowed: false,
     toolAllowed: false,
+    packageInstallAllowed: false,
     fileReadAllowed: false,
     fileWriteAllowed: false,
+    hiddenSearchAllowed: false,
+    indexingAllowed: false,
+    autoStartAllowed: false,
+    autoApplyAllowed: false,
     autoRunAllowed: false,
+    autoVerifyAllowed: false,
+    autoFixAllowed: false,
   };
 }
 

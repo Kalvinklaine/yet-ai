@@ -208,14 +208,13 @@ async function assertPreReadyControlledCommandRunRejectsWithoutExecution(webview
     },
   });
   assert.equal(messages.length, 1);
-  const result = messages[0] as { type?: string; requestId?: string; payload?: { state?: string; result?: { status?: string; blockedReason?: string; rawOutputIncluded?: boolean; fullLogIncluded?: boolean } } };
+  const result = messages[0] as { type?: string; requestId?: string; payload?: { status?: string; freeformCommandAllowed?: boolean; policyFlags?: { allowlistedCommandIdOnly?: boolean; shellAllowed?: boolean } } };
   assert.equal(result.type, "host.controlledAgentCommandRunResult");
   assert.equal(result.requestId, "command-before-ready");
-  assert.equal(result.payload?.state, "blocked");
-  assert.equal(result.payload?.result?.status, "blocked");
-  assert.equal(result.payload?.result?.blockedReason, "policy_denied");
-  assert.equal(result.payload?.result?.rawOutputIncluded, false);
-  assert.equal(result.payload?.result?.fullLogIncluded, false);
+  assert.equal(result.payload?.status, "blocked");
+  assert.equal(result.payload?.freeformCommandAllowed, false);
+  assert.equal(result.payload?.policyFlags?.allowlistedCommandIdOnly, true);
+  assert.equal(result.payload?.policyFlags?.shellAllowed, false);
 }
 
 void main();
