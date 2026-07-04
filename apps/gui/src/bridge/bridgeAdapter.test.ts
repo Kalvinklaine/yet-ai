@@ -74,6 +74,7 @@ import hostIdeActionResultUnavailableContextWithPathRangeMessage from "../../../
 import hostIdeActionResultRawPromptFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-raw-prompt-field.json";
 import hostIdeActionResultProviderResponseFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-provider-response-field.json";
 import hostIdeActionProgressRawFileContentsFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-progress-raw-file-contents-field.json";
+import { isControlledAgentCommandRunRequestPayload, isControlledAgentCommandRunResultPayload } from "./bridgeAdapter";
 
 const bridgeVersion = "2026-05-15";
 const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
@@ -1133,6 +1134,26 @@ describe("bridgeAdapter", () => {
     adapter.dispose();
   });
 
+  it("validates controlled command-run bridge requests and sanitized host results", () => {
+    const request = controlledCommandRunRequest();
+    const result = controlledCommandRunResult();
+
+    expect(isControlledAgentCommandRunRequestPayload(request.payload)).toBe(true);
+    expect(isGuiMessage(request)).toBe(true);
+    expect(isControlledAgentCommandRunResultPayload(result.payload)).toBe(true);
+    expect(isHostMessage(result)).toBe(true);
+  });
+
+  it("rejects unsafe controlled command-run bridge metadata", () => {
+    expect(isGuiMessage(controlledCommandRunRequest({ command: "npm test" }))).toBe(false);
+    expect(isGuiMessage(controlledCommandRunRequest({ commandId: "npm-test" }))).toBe(false);
+    expect(isGuiMessage(controlledCommandRunRequest({ userConfirmed: false }))).toBe(false);
+    expect(isGuiMessage(controlledCommandRunRequest({ requestIdMintedBy: "assistant" }))).toBe(false);
+    expect(isHostMessage(controlledCommandRunResult({ outputTail: "Authorization: Bearer unsafe" }))).toBe(false);
+    expect(isHostMessage(controlledCommandRunResult({ cwd: "/Users/alice/project" }))).toBe(false);
+    expect(isHostMessage(controlledCommandRunResult({ policyFlags: { ...controlledCommandRunPolicyFlags(), shellAllowed: true } }))).toBe(false);
+  });
+
   it("accepts current non-privileged host messages", () => {
     expect(isHostMessage(hostReady())).toBe(true);
     expect(isHostMessage({ version: bridgeVersion, type: "host.openedFromCommand" })).toBe(true);
@@ -1282,6 +1303,97 @@ describe("bridgeAdapter", () => {
     adapter.dispose();
   });
 });
+
+function controlledCommandRunRequest(overrides: Record<string, unknown> = {}) {
+  return {
+    version: bridgeVersion,
+    type: "gui.controlledAgentCommandRunRequest",
+    requestId: "gui-s85-request-1",
+    payload: {
+      requestId: "gui-s85-request-1",
+      requestIdMintedBy: "gui",
+      source: "gui",
+      assistantMinted: false,
+      controlledWorkspaceId: "workspace-s85",
+      runId: "run-s85",
+      runtimeSessionId: "runtime-s85",
+      workspaceReadinessId: "ready-s85",
+      userConfirmed: true,
+      commandId: "gui-app-tests",
+      limits: {
+        timeoutMs: 600000,
+        maxOutputBytes: 12000,
+        maxOutputLines: 240,
+        tailOnly: true,
+        commandStringAllowed: false,
+        argsAllowed: false,
+        cwdAllowed: false,
+        envAllowed: false,
+        shellAllowed: false,
+      },
+      policyFlags: controlledCommandRunPolicyFlags(),
+      ...overrides,
+    },
+  };
+}
+
+function controlledCommandRunResult(overrides: Record<string, unknown> = {}) {
+  return {
+    version: bridgeVersion,
+    type: "host.controlledAgentCommandRunResult",
+    requestId: "gui-s85-request-1",
+    payload: {
+      requestId: "gui-s85-request-1",
+      requestIdMintedBy: "gui",
+      userConfirmed: true,
+      controlledWorkspaceId: "workspace-s85",
+      runId: "run-s85",
+      runtimeSessionId: "runtime-s85",
+      workspaceReadinessId: "ready-s85",
+      commandId: "gui-app-tests",
+      status: "succeeded",
+      authority: "allowlisted_command_id",
+      cloudRequired: false,
+      executionAllowed: false,
+      freeformCommandAllowed: false,
+      policyFlags: controlledCommandRunPolicyFlags(),
+      durationMs: 1200,
+      exitCode: 0,
+      outputTail: "All checks passed.",
+      outputByteCount: 18,
+      outputLineCount: 1,
+      resultHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      truncated: false,
+      message: "Verification completed safely.",
+      ...overrides,
+    },
+  };
+}
+
+function controlledCommandRunPolicyFlags() {
+  return {
+    allowlistedCommandIdOnly: true,
+    freeformCommandAllowed: false,
+    argsAllowed: false,
+    cwdAllowed: false,
+    envAllowed: false,
+    shellAllowed: false,
+    gitAllowed: false,
+    networkAllowed: false,
+    providerAllowed: false,
+    toolAllowed: false,
+    packageInstallAllowed: false,
+    fileReadAllowed: false,
+    fileWriteAllowed: false,
+    hiddenSearchAllowed: false,
+    indexingAllowed: false,
+    autoStartAllowed: false,
+    autoApplyAllowed: false,
+    autoRunAllowed: false,
+    autoVerifyAllowed: false,
+    autoFixAllowed: false,
+  };
+}
 
 function applyEditMessage(options: { requestId?: string; summary?: string; fileEdit?: Record<string, unknown> } = {}) {
   return {

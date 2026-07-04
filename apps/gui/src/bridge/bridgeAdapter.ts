@@ -105,7 +105,7 @@ export type IdeActionResultPayload = {
 
 export type GuiMessage = {
   version: string;
-  type: "gui.ready" | "gui.unloaded" | "gui.runtimeRefresh" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest" | "gui.controlledAgentFileReadRequest" | "gui.controlledAgentEditRequest";
+  type: "gui.ready" | "gui.unloaded" | "gui.runtimeRefresh" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest" | "gui.controlledAgentFileReadRequest" | "gui.controlledAgentEditRequest" | "gui.controlledAgentCommandRunRequest";
   requestId?: string;
   payload?: Record<string, unknown> | IdeActionRequestPayload | ApplyWorkspaceEditPayload;
 };
@@ -128,7 +128,7 @@ export type HostRuntimeStatusPayload = {
 
 export type HostMessage = {
   version: string;
-  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.runtimeStatus" | "host.controlledAgentFileReadResult" | "host.controlledAgentEditResult";
+  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.runtimeStatus" | "host.controlledAgentFileReadResult" | "host.controlledAgentEditResult" | "host.controlledAgentCommandRunResult";
   requestId?: string;
   payload?: Record<string, unknown> | IdeActionProgressPayload | IdeActionResultPayload | ApplyWorkspaceEditResultPayload | HostRuntimeStatusPayload;
 };
@@ -198,6 +198,7 @@ const hostMessageTypes = new Set<HostMessage["type"]>([
   "host.runtimeStatus",
   "host.controlledAgentFileReadResult",
   "host.controlledAgentEditResult",
+  "host.controlledAgentCommandRunResult",
 ]);
 const guiMessageTypes = new Set<GuiMessage["type"]>([
   "gui.ready",
@@ -207,6 +208,7 @@ const guiMessageTypes = new Set<GuiMessage["type"]>([
   "gui.applyWorkspaceEditRequest",
   "gui.controlledAgentFileReadRequest",
   "gui.controlledAgentEditRequest",
+  "gui.controlledAgentCommandRunRequest",
 ]);
 
 function expectedParentOrigin(): string | undefined {
@@ -375,9 +377,76 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
   if (value.type === "gui.controlledAgentEditRequest") {
     return typeof value.requestId === "string" && isPlainObject(value.payload);
   }
+  if (value.type === "gui.controlledAgentCommandRunRequest") {
+    return typeof value.requestId === "string" && isControlledAgentCommandRunRequestPayload(value.payload) && value.payload.requestId === value.requestId;
+  }
   return value.type === "gui.applyWorkspaceEditRequest" && typeof value.requestId === "string" && isApplyWorkspaceEditPayload(value.payload);
 }
 
+
+export function isControlledAgentCommandRunRequestPayload(value: unknown): value is Record<string, unknown> & { requestId: string } {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["requestId", "requestIdMintedBy", "source", "assistantMinted", "controlledWorkspaceId", "runId", "runtimeSessionId", "sessionId", "workspaceReadinessId", "userConfirmed", "commandId", "limits", "policyFlags"])) {
+    return false;
+  }
+  return safeControlledAgentId(value.requestId) &&
+    value.requestIdMintedBy === "gui" &&
+    value.source === "gui" &&
+    value.assistantMinted === false &&
+    safeControlledAgentId(value.controlledWorkspaceId) &&
+    safeControlledAgentId(value.runId) &&
+    safeControlledAgentId(value.runtimeSessionId) &&
+    (value.sessionId === undefined || safeControlledAgentId(value.sessionId)) &&
+    safeControlledAgentId(value.workspaceReadinessId) &&
+    value.userConfirmed === true &&
+    isVerificationCommandId(value.commandId) &&
+    isControlledAgentCommandRunLimits(value.limits) &&
+    isControlledAgentCommandRunPolicyFlags(value.policyFlags);
+}
+
+export function isControlledAgentCommandRunResultPayload(value: unknown): value is Record<string, unknown> & { requestId: string } {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["requestId", "requestIdMintedBy", "userConfirmed", "controlledWorkspaceId", "runId", "runtimeSessionId", "sessionId", "workspaceReadinessId", "commandId", "status", "authority", "cloudRequired", "executionAllowed", "freeformCommandAllowed", "policyFlags", "durationMs", "exitCode", "outputTail", "outputByteCount", "outputLineCount", "resultHash", "truncated", "message"])) {
+    return false;
+  }
+  if (!safeControlledAgentId(value.requestId) || value.requestIdMintedBy !== "gui" || value.userConfirmed !== true || !safeControlledAgentId(value.controlledWorkspaceId) || !safeControlledAgentId(value.runId) || !safeControlledAgentId(value.runtimeSessionId) || (value.sessionId !== undefined && !safeControlledAgentId(value.sessionId)) || !safeControlledAgentId(value.workspaceReadinessId) || !isVerificationCommandId(value.commandId) || value.authority !== "allowlisted_command_id" || value.cloudRequired !== false || value.executionAllowed !== false || value.freeformCommandAllowed !== false || !isControlledAgentCommandRunPolicyFlags(value.policyFlags) || !safeMessage(value.message)) {
+    return false;
+  }
+  if (value.status === "running") {
+    return optionalBoundedInteger(value.durationMs, 0, 1800000) && value.durationMs !== undefined && value.exitCode === undefined && value.outputTail === undefined && value.outputByteCount === undefined && value.outputLineCount === undefined && value.resultHash === undefined && value.truncated === false;
+  }
+  if (value.status === "blocked") {
+    return value.durationMs === undefined && value.exitCode === undefined && value.outputTail === undefined && value.outputByteCount === undefined && value.outputLineCount === undefined && value.resultHash === undefined && value.truncated === false;
+  }
+  if (value.status === "succeeded" || value.status === "failed" || value.status === "timed_out" || value.status === "killed") {
+    const validExitCode = value.status === "succeeded" ? value.exitCode === 0 : value.status === "failed" ? typeof value.exitCode === "number" && value.exitCode > 0 && value.exitCode <= 255 && Number.isInteger(value.exitCode) : value.exitCode === null;
+    return validExitCode && optionalBoundedInteger(value.durationMs, 0, 1800000) && value.durationMs !== undefined && safeVerificationOutputTail(value.outputTail) && optionalBoundedInteger(value.outputByteCount, 0, 20000) && value.outputByteCount !== undefined && optionalBoundedInteger(value.outputLineCount, 0, 400) && value.outputLineCount !== undefined && typeof value.resultHash === "string" && /^sha256:[a-f0-9]{64}$/.test(value.resultHash) && typeof value.truncated === "boolean";
+  }
+  return false;
+}
+
+function isControlledAgentCommandRunLimits(value: unknown): boolean {
+  return isPlainObject(value) && hasOnlyKeys(value, ["timeoutMs", "maxOutputBytes", "maxOutputLines", "tailOnly", "commandStringAllowed", "argsAllowed", "cwdAllowed", "envAllowed", "shellAllowed"]) &&
+    optionalBoundedInteger(value.timeoutMs, 1000, 1800000) && value.timeoutMs !== undefined &&
+    optionalBoundedInteger(value.maxOutputBytes, 1, 20000) && value.maxOutputBytes !== undefined &&
+    optionalBoundedInteger(value.maxOutputLines, 1, 400) && value.maxOutputLines !== undefined &&
+    value.tailOnly === true &&
+    value.commandStringAllowed === false &&
+    value.argsAllowed === false &&
+    value.cwdAllowed === false &&
+    value.envAllowed === false &&
+    value.shellAllowed === false;
+}
+
+function isControlledAgentCommandRunPolicyFlags(value: unknown): boolean {
+  const keys = ["allowlistedCommandIdOnly", "freeformCommandAllowed", "argsAllowed", "cwdAllowed", "envAllowed", "shellAllowed", "gitAllowed", "networkAllowed", "providerAllowed", "toolAllowed", "packageInstallAllowed", "fileReadAllowed", "fileWriteAllowed", "hiddenSearchAllowed", "indexingAllowed", "autoStartAllowed", "autoApplyAllowed", "autoRunAllowed", "autoVerifyAllowed", "autoFixAllowed"];
+  if (!isPlainObject(value) || !hasOnlyKeys(value, keys)) {
+    return false;
+  }
+  return keys.every((key) => key === "allowlistedCommandIdOnly" ? value[key] === true : value[key] === false);
+}
+
+function safeControlledAgentId(value: unknown): boolean {
+  return typeof value === "string" && /^(?!assistant(?:[._:-]|$))(?!.*(?:assistant|sk-(?:proj-)?))[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/i.test(value) && !hasSecretRequestIdMarker(value);
+}
 
 function isFrameNonceMessage(value: unknown): value is FrameNonceMessage {
   if (!isPlainObject(value) || !hasOnlyKeys(value, ["version", "type", "payload"])) {
@@ -424,6 +493,9 @@ export function isHostMessage(value: unknown): value is HostMessage {
   }
   if (value.type === "host.controlledAgentEditResult") {
     return typeof value.requestId === "string" && isPlainObject(value.payload);
+  }
+  if (value.type === "host.controlledAgentCommandRunResult") {
+    return typeof value.requestId === "string" && isControlledAgentCommandRunResultPayload(value.payload) && value.payload.requestId === value.requestId;
   }
   return value.type === "host.openedFromCommand" && value.requestId === undefined && isEmptyPayload(value.payload);
 }
