@@ -458,7 +458,7 @@ function scanUnsafeMetadata(value: unknown, diagnostics: ControlledAgentCommandR
   const keyParts = keyPath.split(".");
   const currentKey = (keyParts[keyParts.length - 1] ?? "").replace(/\[\d+\]$/u, "");
   if (typeof value === "string") {
-    const protocolTextAllowed = (currentKey === "type" && (value === "host.controlledAgentCommandRunResult" || value === "gui.controlledAgentCommandRunRequest")) || (currentKey === "authority" && value === "allowlisted_command_id");
+    const protocolTextAllowed = (currentKey === "type" && (value === "host.controlledAgentCommandRunResult" || value === "gui.controlledAgentCommandRunRequest")) || (currentKey === "authority" && value === "allowlisted_command_id") || (currentKey === "commandId" && safeCommandId(value) !== undefined);
     if (options.allowOutputTail && currentKey === "outputTail") {
       if (unsafeTextPattern.test(value) || stackTracePattern.test(value)) diagnostics.push(diagnostic("unsafe_metadata", "Unsafe controlled command-run output tail omitted."));
       return;

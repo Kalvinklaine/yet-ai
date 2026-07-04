@@ -95,7 +95,7 @@ function renderInteractivePanel() {
   root = createRoot(container);
   const onStop = () => {
     stopSpy();
-    runState = reduceControlledAgentRunState(runState, { type: "stop", summary: "Controlled run stopped from the S76 skeleton UI." });
+    runState = reduceControlledAgentRunState(runState, { type: "stop", reason: "user_stop", summary: "Controlled run stopped from the S76 skeleton UI." });
     root?.render(<ControlledAgentRunPanel state={runState} onStop={onStop} />);
   };
   act(() => {

@@ -474,7 +474,7 @@ describe("AgentRunPanel", () => {
     expect(onApply).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps controlled verification disabled until S85 and posts no request", () => {
+  it("runs controlled verification only after explicit S85 click", () => {
     const onVerify = vi.fn();
     renderPanel({
       ...readyInput,
@@ -483,15 +483,33 @@ describe("AgentRunPanel", () => {
       boundedLoop: verificationLoop,
     }, { host: "vscode", onRunAllowlistedVerification: onVerify });
 
-    expect(panelText()).toContain("Manual state: Verification disabled until S85");
-    expect(panelText()).toContain("S85 required for controlled-agent verification");
-    expect(panelText()).toContain("posts no verification bridge request");
-    expect(findButton("Manually run allowlisted verification").disabled).toBe(true);
+    expect(panelText()).toContain("Manual state: Ready for controlled verification");
+    expect(panelText()).toContain("no legacy IDE verification request is posted from Agent Run");
+    expect(findButton("Manually run allowlisted verification").disabled).toBe(false);
     expect(onVerify).not.toHaveBeenCalled();
     act(() => {
       findButton("Manually run allowlisted verification").click();
     });
 
+    expect(onVerify).toHaveBeenCalledTimes(1);
+    expect(onVerify).toHaveBeenCalledWith("repository-check");
+  });
+
+  it("keeps JetBrains controlled verification unsupported and posts no request", () => {
+    const onVerify = vi.fn();
+    renderPanel({
+      ...readyInput,
+      applyRequest: { requested: true, source: "user", requestId: "apply-1" },
+      applyResult: { status: "applied", summary: "Applied.", appliedFileCount: 1 },
+      boundedLoop: verificationLoop,
+    }, { host: "jetbrains", onRunAllowlistedVerification: onVerify });
+
+    expect(panelText()).toContain("S85 controlled verification unsupported here");
+    expect(panelText()).toContain("VS Code-only in S85");
+    expect(findButton("Manually run allowlisted verification").disabled).toBe(true);
+    act(() => {
+      findButton("Manually run allowlisted verification").click();
+    });
     expect(onVerify).not.toHaveBeenCalled();
   });
 
@@ -511,10 +529,10 @@ describe("AgentRunPanel", () => {
       boundedLoop: verificationLoop,
     }, { host: "vscode" });
 
-    expect(panelText()).toContain("Manual state: Verification disabled until S85");
-    expect(panelText()).toContain("S85 is required for real allowlisted controlled-agent verification execution. In S84, review applied-edit metadata and use older manual IDE verification evidence outside the controlled Agent Run path if needed.");
-    expect(panelText()).toContain("S85 is required before this controlled Agent Run path can execute allowlisted verification. The S84 GUI will not post a verification bridge request here.");
-    expect(findButton("Manually run allowlisted verification").disabled).toBe(true);
+    expect(panelText()).toContain("Manual state: Ready for controlled verification");
+    expect(panelText()).toContain("Ready for explicit S85 allowlisted controlled verification in VS Code.");
+    expect(panelText()).toContain("no legacy IDE verification request is posted from Agent Run");
+    expect(findButton("Manually run allowlisted verification").disabled).toBe(false);
 
     renderPanel({
       ...readyInput,

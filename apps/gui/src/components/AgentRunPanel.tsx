@@ -36,6 +36,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   });
   const details = view.details;
   const supported = host === "vscode" || host === "jetbrains";
+  const verificationSupported = host === "vscode";
   const applyRiskSummary = buildAgentRunApplyRiskSummary({
     proposal: metadata?.proposal ? agentRunProposalToApplyRiskPayload(metadata.proposal, details) : undefined,
     agentRun: input,
@@ -48,8 +49,8 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const showApplyRiskSummary = Boolean(metadata && !metadata.applyResult && (!pendingApply || metadata.applyRequest?.requested === true) && (hasProposal(details) || view.nextUserAction === "confirm_apply" || view.nextUserAction === "wait_for_apply" || view.state === "prerequisites_blocked" || view.state === "blocked"));
   const verificationCommandId = verificationCommandIdFromDetails(details.verificationCommandId);
   const canApply = supported && !pendingApply && view.nextUserAction === "confirm_apply";
-  const canVerify = false;
-  const showS85VerificationRequired = supported && view.nextUserAction === "confirm_verification" && verificationCommandId !== null;
+  const canVerify = verificationSupported && !pendingVerification && view.nextUserAction === "confirm_verification" && verificationCommandId !== null;
+  const showS85VerificationRequired = supported && !verificationSupported && view.nextUserAction === "confirm_verification" && verificationCommandId !== null;
   const canReviewRollback = view.rollbackAvailable || view.nextUserAction === "review_rollback";
   const canDraftFollowup = view.state === "verified";
   const canDraftFix = view.state === "verification_failed" && guidedFix.status === "fix_draft_available";
@@ -219,8 +220,8 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
       <span className="subtle">no hidden model/provider calls; manual</span>
       {showS85VerificationRequired && (
         <div className="readiness-card warn" role="status" aria-label="Agent Run S85 verification required">
-          <strong>S85 required for controlled-agent verification</strong>
-          <span>Real allowlisted controlled-agent verification execution is unsupported in S84. This Agent Run control is disabled and posts no verification bridge request.</span>
+          <strong>S85 controlled verification unsupported here</strong>
+          <span>Controlled Agent Run verification is VS Code-only in S85. This host stays fail-closed and posts no verification bridge request.</span>
         </div>
       )}
       <div className="row" role="group" aria-label="Agent Run explicit actions">
@@ -335,7 +336,7 @@ function agentRunStateLabel(state: string, details: Record<string, string | numb
     return "Apply pending";
   }
   if (state === "ready_for_verification") {
-    return "Verification disabled until S85";
+    return "Ready for controlled verification";
   }
   if (state === "verification_requested" || state === "verification_running") {
     return "Verification running";
@@ -380,7 +381,7 @@ function readinessExplanation(state: string, details: Record<string, string | nu
     return "Apply pending. Wait for the host apply result; duplicate manual apply requests stay disabled.";
   }
   if (state === "ready_for_verification") {
-    return "S85 is required for real allowlisted controlled-agent verification execution. In S84, review applied-edit metadata and use older manual IDE verification evidence outside the controlled Agent Run path if needed.";
+    return "Ready for explicit S85 allowlisted controlled verification in VS Code. Browser and JetBrains stay fail-closed for this Agent Run verification path.";
   }
   if (state === "verification_requested" || state === "verification_running") {
     return "Verification running. Wait for the allowlisted command result; no repair, retry, or rollback starts automatically.";
@@ -423,7 +424,7 @@ function nextManualStep(state: string, details: Record<string, string | number |
     return "Wait for the host apply result. Duplicate apply requests are disabled while this explicit request is pending.";
   }
   if (state === "ready_for_verification") {
-    return "S85 is required before this controlled Agent Run path can execute allowlisted verification. The S84 GUI will not post a verification bridge request here.";
+    return "Click Manually run allowlisted verification in VS Code to send the S85 controlled command-run request; no legacy IDE verification request is posted from Agent Run.";
   }
   if (state === "verification_requested" || state === "verification_running") {
     return "Wait for verification to finish, then review the sanitized result before any follow-up.";

@@ -45,6 +45,7 @@ import { evaluateHostCapabilityMetadata } from "./services/toolAuthorityPolicy";
 import { evaluateControlledAgentFileRead } from "./services/controlledAgentFileRead";
 import { buildControlledAgentFileReadRequest, correlateControlledAgentFileReadResult, type ControlledAgentFileReadRequestCorrelation } from "./services/controlledAgentFileReadRequest";
 import { buildControlledAgentEditRequest, correlateControlledAgentEditResult, type ControlledAgentEditRequestCorrelation } from "./services/controlledAgentEditRequest";
+import { buildControlledAgentCommandRunRequest, correlateControlledAgentCommandRunResult, type ControlledAgentCommandRunRequestCorrelation, type ControlledAgentCommandRunResultSummary } from "./services/controlledAgentCommandRunRequest";
 import { evaluateControlledAgentCommandRun } from "./services/controlledAgentCommandRunner";
 import { buildControlledAgentProgressReport } from "./services/controlledAgentProgressReport";
 import { buildControlledLocalAgentMvp } from "./services/controlledLocalAgentMvp";
@@ -447,6 +448,8 @@ export function App() {
   const controlledFileReadCompletedRequestIdRef = useRef<string | null>(null);
   const controlledEditCorrelationRef = useRef<ControlledAgentEditRequestCorrelation | null>(null);
   const controlledEditCompletedRequestIdRef = useRef<string | null>(null);
+  const controlledCommandRunCorrelationRef = useRef<ControlledAgentCommandRunRequestCorrelation | null>(null);
+  const controlledCommandRunCompletedRequestIdRef = useRef<string | null>(null);
   const completedIdeActionRequestChatsRef = useRef<Map<string, string>>(new Map());
   const completedApplyRequestChatsRef = useRef<Map<string, string>>(new Map());
   const ideActionCounterRef = useRef(0);
@@ -462,6 +465,9 @@ export function App() {
   const [controlledEditResultMetadata, setControlledEditResultMetadata] = useState<unknown>(null);
   const [pendingControlledEditRequestId, setPendingControlledEditRequestId] = useState<string | null>(null);
   const [controlledEditNote, setControlledEditNote] = useState<string | null>(null);
+  const [controlledCommandRunResultMetadata, setControlledCommandRunResultMetadata] = useState<unknown>(null);
+  const [pendingControlledCommandRunRequestId, setPendingControlledCommandRunRequestId] = useState<string | null>(null);
+  const [controlledCommandRunNote, setControlledCommandRunNote] = useState<string | null>(null);
 
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
   settingsRef.current = settings;
@@ -594,19 +600,26 @@ export function App() {
   }, [activeCaps, activeEditProposal, agentRunModelProposal, submittedModelProposalPrompt]);
   const agentRunInput = useMemo<AgentRunInput | undefined>(() => {
     const baseInput = submittedModelProposalPrompt || modelProposalDraft ? agentRunModelProposal.proposalPathState === "proposal_detected" && activeEditProposal ? agentRunReadiness ? { ...(legacyAgentRunInput ?? {}), ...agentRunReadiness.agentRunInput, boundedLoop: agentRunReadiness.boundedLoop, applyRequest: agentRunApplyRequest ?? legacyAgentRunInput?.applyRequest, applyResult: legacyAgentRunInput?.applyResult, verificationRequest: agentRunVerificationRequest ?? legacyAgentRunInput?.verificationRequest, verificationProgress: agentRunVerificationProgress ?? legacyAgentRunInput?.verificationProgress, verificationResult: agentRunVerificationResult ?? legacyAgentRunInput?.verificationResult, rollback: agentRunVerificationResult ? undefined : legacyAgentRunInput?.rollback } : agentRunModelProposal.agentRunInput : agentRunModelProposal.agentRunInput : legacyAgentRunInput;
+    const withControlledVerification = baseInput ? {
+      ...baseInput,
+      verificationRequest: agentRunVerificationRequest ?? baseInput.verificationRequest,
+      verificationProgress: agentRunVerificationProgress ?? baseInput.verificationProgress,
+      verificationResult: agentRunVerificationResult ?? baseInput.verificationResult,
+      rollback: agentRunVerificationResult ? undefined : baseInput.rollback,
+    } : baseInput;
     if (agentRunModelProposal.planPreview) {
       return {
-        ...(baseInput ?? agentRunModelProposal.agentRunInput),
+        ...(withControlledVerification ?? agentRunModelProposal.agentRunInput),
         planPreview: agentRunPlanPreviewInput(agentRunModelProposal.planPreview.plan),
       };
     }
     if (agentRunModelProposal.proposalPathState === "plan_rejected" || agentRunModelProposal.proposalPathState === "blocked") {
       return {
-        ...(baseInput ?? agentRunModelProposal.agentRunInput),
+        ...(withControlledVerification ?? agentRunModelProposal.agentRunInput),
         planDiagnostics: agentRunModelProposal.diagnostics.map((item) => `${item.code}: Plan preview metadata was rejected safely.`),
       };
     }
-    return baseInput;
+    return withControlledVerification;
   }, [activeEditProposal, agentRunApplyRequest, agentRunModelProposal, agentRunReadiness, agentRunVerificationProgress, agentRunVerificationRequest, agentRunVerificationResult, legacyAgentRunInput, modelProposalDraft, submittedModelProposalPrompt]);
   agentRunInputRef.current = agentRunInput ?? null;
   const agentRunCheckpointDecision = useMemo<AgentRunCheckpointDecisionSummary | undefined>(() => agentRunInput ? buildAgentRunCheckpointDecision({ host: bridgeHost, agentRun: agentRunInput }) : undefined, [agentRunInput, bridgeHost]);
@@ -616,7 +629,8 @@ export function App() {
   const controlledAgentFileReadSummary = useMemo(() => evaluateControlledAgentFileRead(effectiveControlledAgentFileReadMetadata), [effectiveControlledAgentFileReadMetadata]);
   const controlledAgentFileReadTraceEntry = useMemo<CodingSessionTraceEntry | null>(() => createControlledAgentFileReadTraceEntry(effectiveControlledAgentFileReadMetadata), [effectiveControlledAgentFileReadMetadata]);
   const controlledAgentCommandRunnerMetadata = activeCaps?.controlledAgentCommandRunner;
-  const controlledAgentCommandRunTraceEntry = useMemo<CodingSessionTraceEntry | null>(() => createControlledAgentCommandRunTraceEntry(controlledAgentCommandRunnerMetadata), [controlledAgentCommandRunnerMetadata]);
+  const effectiveControlledAgentCommandRunnerMetadata = controlledCommandRunResultMetadata ?? controlledAgentCommandRunnerMetadata;
+  const controlledAgentCommandRunTraceEntry = useMemo<CodingSessionTraceEntry | null>(() => createControlledAgentCommandRunTraceEntry(effectiveControlledAgentCommandRunnerMetadata), [effectiveControlledAgentCommandRunnerMetadata]);
   const controlledAgentRuntimeSessionMetadata = activeCaps?.controlledAgentRuntimeSession;
   const controlledAgentRuntimeSessionTraceEntry = useMemo<CodingSessionTraceEntry | null>(() => createControlledAgentRuntimeSessionTraceEntry(controlledAgentRuntimeSessionMetadata), [controlledAgentRuntimeSessionMetadata]);
   const codingSessionTraceWithCheckpointDecision = useMemo(() => {
@@ -718,24 +732,39 @@ export function App() {
     requestSeed: "panel",
     jetbrainsEditSupported: false,
   }), [bridgeHost, controlledAgentEditExecutorMetadata, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata]);
+  const controlledAgentVerificationCommandId = agentRunInput?.boundedLoop && isRecord(agentRunInput.boundedLoop) ? verificationCommandIdOrUndefined(isRecord(agentRunInput.boundedLoop.verification) ? agentRunInput.boundedLoop.verification.commandId : undefined) : undefined;
+  const controlledAgentCommandRunRequest = useMemo(() => buildControlledAgentCommandRunRequest({
+    host: bridgeHost,
+    runtimeSessionMetadata: controlledAgentRuntimeSessionMetadata,
+    workspaceReadinessMetadata: controlledWorkspaceReadinessMetadata,
+    plannedCommandRunMetadata: {
+      runId: agentRunInput ? agentRunRunId(agentRunInput) : undefined,
+      workspaceReadinessId: isRecord(controlledWorkspaceReadinessMetadata) && isRecord(controlledWorkspaceReadinessMetadata.isolation) ? controlledWorkspaceReadinessMetadata.isolation.readinessId : undefined,
+      commandId: controlledAgentVerificationCommandId,
+      userConfirmed: true,
+    },
+    commandId: controlledAgentVerificationCommandId,
+    userConfirmed: true,
+    requestSeed: agentRunInput?.applyRequest?.requestId ?? agentRunInput?.proposal?.id ?? "agent-run-verification",
+  }), [agentRunInput, bridgeHost, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata, controlledAgentVerificationCommandId]);
   const showWhatWillBeSentPanel = chatInput.trim().length > 0 || contextBudgetSummary.sources.some((source) => source.itemCount > 0 || source.charCount > 0) || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
   const [controlledAgentRunState, setControlledAgentRunState] = useState<ControlledAgentRunState>(() => initializeControlledAgentRunState(undefined));
-  const showControlledAgentRunPanel = controlledWorkspaceReadinessMetadata !== undefined || effectiveControlledAgentFileReadMetadata !== undefined || controlledAgentCommandRunnerMetadata !== undefined || controlledAgentEditExecutorMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined;
+  const showControlledAgentRunPanel = controlledWorkspaceReadinessMetadata !== undefined || effectiveControlledAgentFileReadMetadata !== undefined || effectiveControlledAgentCommandRunnerMetadata !== undefined || controlledAgentEditExecutorMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined;
   const controlledAgentProgressReport = useMemo(() => buildControlledAgentProgressReport({
     runState: controlledAgentRunState,
     controlledAgentFileRead: effectiveControlledAgentFileReadMetadata,
-    controlledAgentCommandRunner: controlledAgentCommandRunnerMetadata,
+    controlledAgentCommandRunner: effectiveControlledAgentCommandRunnerMetadata,
     controlledAgentEditExecutor: controlledAgentEditExecutorMetadata,
-  }), [controlledAgentCommandRunnerMetadata, controlledAgentEditExecutorMetadata, effectiveControlledAgentFileReadMetadata, controlledAgentRunState]);
+  }), [effectiveControlledAgentCommandRunnerMetadata, controlledAgentEditExecutorMetadata, effectiveControlledAgentFileReadMetadata, controlledAgentRunState]);
   const controlledLocalAgentMvpReport = useMemo(() => buildControlledLocalAgentMvp({
     userOptIn: { source: "user", confirmed: true, requestId: "s80-controlled-local-agent-mvp-preview" },
     workspaceReadiness: controlledWorkspaceReadinessMetadata,
     boundedRead: effectiveControlledAgentFileReadMetadata,
     editMetadata: controlledAgentEditExecutorMetadata,
-    verification: controlledAgentCommandRunnerMetadata,
+    verification: effectiveControlledAgentCommandRunnerMetadata,
     runtimeSession: controlledAgentRuntimeSessionMetadata,
     progress: controlledAgentProgressReport,
-  }), [controlledAgentCommandRunnerMetadata, controlledAgentEditExecutorMetadata, effectiveControlledAgentFileReadMetadata, controlledAgentProgressReport, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata]);
+  }), [effectiveControlledAgentCommandRunnerMetadata, controlledAgentEditExecutorMetadata, effectiveControlledAgentFileReadMetadata, controlledAgentProgressReport, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata]);
 
   useEffect(() => {
     setControlledAgentRunState(buildControlledAgentRunPreviewState(controlledWorkspaceReadinessMetadata, effectiveControlledAgentFileReadMetadata, controlledAgentCommandRunnerMetadata));
@@ -828,6 +857,16 @@ export function App() {
     setControlledEditNote(note);
   }, []);
 
+  const clearControlledCommandRunState = useCallback((note: string | null = null) => {
+    controlledCommandRunCorrelationRef.current = null;
+    controlledCommandRunCompletedRequestIdRef.current = null;
+    agentRunVerificationCorrelationRef.current = null;
+    agentRunVerificationChatIdRef.current = null;
+    setPendingControlledCommandRunRequestId(null);
+    setControlledCommandRunResultMetadata(null);
+    setControlledCommandRunNote(note);
+  }, []);
+
   const clearPendingIdeActionState = useCallback(() => {
     if (!pendingIdeActionRequestIdRef.current) {
       return;
@@ -854,6 +893,17 @@ export function App() {
     controlledEditCorrelationRef.current = null;
     setPendingControlledEditRequestId(null);
     setControlledEditNote("Cleared pending controlled edit state in the GUI only. No host-side cancellation was requested.");
+  }, []);
+
+  const clearPendingControlledCommandRunState = useCallback(() => {
+    if (!controlledCommandRunCorrelationRef.current) {
+      return;
+    }
+    controlledCommandRunCorrelationRef.current = null;
+    agentRunVerificationCorrelationRef.current = null;
+    agentRunVerificationChatIdRef.current = null;
+    setPendingControlledCommandRunRequestId(null);
+    setControlledCommandRunNote("Cleared pending controlled verification state in the GUI only. No host-side cancellation was requested.");
   }, []);
 
   const abortActiveStream = useCallback((timelineMessage: string, options: AbortActiveStreamOptions = {}) => {
@@ -921,7 +971,8 @@ export function App() {
     clearIdeActionState();
     clearControlledFileReadState(null);
     clearControlledEditState(null);
-  }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState, clearControlledFileReadState]);
+    clearControlledCommandRunState(null);
+  }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState, clearControlledFileReadState, clearControlledEditState, clearControlledCommandRunState]);
 
   const updateRuntimeSettings = useCallback((nextSettings: RuntimeSettings) => {
     const changed = settingsRef.current.baseUrl !== nextSettings.baseUrl || settingsRef.current.token !== nextSettings.token;
@@ -1048,6 +1099,62 @@ export function App() {
         controlledEditCorrelationRef.current = null;
         setPendingControlledEditRequestId(null);
         setControlledEditNote(correlation.diagnostics[0]?.message ?? "Controlled edit result was blocked.");
+      } else if (message.type === "host.controlledAgentCommandRunResult") {
+        const requestId = message.requestId ?? "unknown";
+        const current = controlledCommandRunCorrelationRef.current;
+        if (controlledCommandRunCompletedRequestIdRef.current === requestId) {
+          setControlledCommandRunNote("Ignored duplicate controlled verification result.");
+          return;
+        }
+        if (!current) {
+          setControlledCommandRunNote("Ignored stale controlled verification result.");
+          return;
+        }
+        const correlation = correlateControlledAgentCommandRunResult({ current, hostMessage: message });
+        if (correlation.state === "accepted" && correlation.commandRun) {
+          setControlledCommandRunResultMetadata(controlledCommandRunResultToRunnerMetadata(current, correlation.commandRun));
+          setControlledCommandRunNote(`Controlled verification result accepted: ${correlation.commandRun.status}.`);
+          if (correlation.commandRun.status === "running") {
+            setAgentRunVerificationProgress({ status: "running", summary: correlation.commandRun.message });
+            appendTrace({ family: "controlledAgent.commandRunning", title: "Controlled Agent Run verification running", status: "in_progress", summary: correlation.commandRun.message, requestId, details: correlation.details });
+            return;
+          }
+          controlledCommandRunCompletedRequestIdRef.current = requestId;
+          controlledCommandRunCorrelationRef.current = null;
+          agentRunVerificationCorrelationRef.current = null;
+          agentRunVerificationChatIdRef.current = null;
+          setPendingControlledCommandRunRequestId(null);
+          setAgentRunVerificationProgress(null);
+          const verificationResult = {
+            status: correlation.commandRun.status === "succeeded" ? "succeeded" as const : "failed" as const,
+            exitCode: typeof correlation.commandRun.exitCode === "number" ? correlation.commandRun.exitCode : undefined,
+            durationMs: correlation.commandRun.durationMs,
+            outputTail: correlation.commandRun.outputTail,
+          };
+          agentRunVerificationResultRef.current = verificationResult;
+          setAgentRunVerificationResult(verificationResult);
+          const reportInput = { ...(agentRunInputRef.current ?? {}), verificationResult, verificationProgress: undefined, rollback: undefined };
+          const report = createAgentRunReport(reportInput);
+          appendTrace({ family: verificationResult.status === "succeeded" ? "agentRun.completed" : "agentRun.verificationResult", title: report.title, status: report.status === "succeeded" ? "succeeded" : "failed", summary: report.summary, requestId, details: createAgentRunTraceDetails(reportInput) });
+          return;
+        }
+        if (correlation.state === "duplicate") {
+          controlledCommandRunCorrelationRef.current = null;
+          agentRunVerificationCorrelationRef.current = null;
+          agentRunVerificationChatIdRef.current = null;
+          setPendingControlledCommandRunRequestId(null);
+          setControlledCommandRunNote("Ignored duplicate controlled verification result.");
+          return;
+        }
+        if (correlation.state === "ignored") {
+          setControlledCommandRunNote("Ignored stale controlled verification result.");
+          return;
+        }
+        controlledCommandRunCorrelationRef.current = null;
+        agentRunVerificationCorrelationRef.current = null;
+        agentRunVerificationChatIdRef.current = null;
+        setPendingControlledCommandRunRequestId(null);
+        setControlledCommandRunNote(correlation.diagnostics[0]?.message ?? "Controlled verification result was blocked.");
       } else if (message.type === "host.contextSnapshot") {
         const nextContext = message.payload as HostContextSnapshotPayload;
         setAttachedContext({ payload: nextContext, settingsRevision: settingsRevisionRef.current, chatId: chatIdRef.current });
@@ -1468,12 +1575,13 @@ export function App() {
       clearIdeActionState();
       clearControlledFileReadState(null);
       clearControlledEditState(null);
+      clearControlledCommandRunState(null);
     } else {
       setChatHistoryError(result.error);
       setChatHistoryRevision(targetRevision);
     }
     setChatHistoryLoading(false);
-  }, [abortActiveStream, clearControlledFileReadState, clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState, isCurrentRefresh]);
+  }, [abortActiveStream, clearControlledFileReadState, clearControlledEditState, clearControlledCommandRunState, clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState, isCurrentRefresh]);
 
   const selectChat = useCallback((nextChatId: string) => {
     setCompactConversationsOpen(false);
@@ -1487,6 +1595,7 @@ export function App() {
     clearIdeActionState();
     clearControlledFileReadState(null);
     clearControlledEditState(null);
+    clearControlledCommandRunState(null);
     clearExplicitContextBundle(null);
     setAttachedContextAcknowledged(false);
     setChatId(nextChatId);
@@ -1494,7 +1603,7 @@ export function App() {
     setConversationNotice(`Switched to ${sanitizeDisplayText(selectedSummary?.title || nextChatId)}.`);
     setChatView(resetChatViewState(nextChatId));
     void loadChatThread(nextChatId);
-  }, [abortActiveStream, chatSummaries, clearControlledFileReadState, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState, clearModelProposalState, loadChatThread]);
+  }, [abortActiveStream, chatSummaries, clearControlledFileReadState, clearControlledEditState, clearControlledCommandRunState, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState, clearModelProposalState, loadChatThread]);
 
   const updateDirectChatId = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const nextChatId = event.target.value;
@@ -2071,9 +2180,39 @@ export function App() {
     appendTrace({ family: "agentRun.applyRequested", title: "Agent Run apply requested", status: "pending", summary: "User requested Agent Run apply through the existing workspace-edit bridge.", requestId: applyRequestId, details: normalized.details });
   }, [activeEditProposal, addTimeline, agentRunInput, appendTrace, bridgeHost, clearEditProposalState]);
 
-  const submitAgentRunVerification = useCallback((_commandId: VerificationCommandId) => {
-    setIdeActionNote("Agent Run controlled verification requires S85 allowlisted execution support. No bridge verification request was posted in S84.");
-  }, []);
+  const submitAgentRunVerification = useCallback((commandId: VerificationCommandId) => {
+    if (bridgeHost !== "vscode") {
+      setControlledCommandRunNote(bridgeHost === "jetbrains" ? "Controlled Agent Run verification is unsupported in JetBrains for S85." : "Controlled Agent Run verification is unsupported in browser preview.");
+      return;
+    }
+    if (!agentRunInput || !agentRunInput.applyResult || pendingControlledCommandRunRequestId || controlledCommandRunCorrelationRef.current) {
+      setControlledCommandRunNote("Controlled Agent Run verification is not ready or already pending.");
+      return;
+    }
+    if (controlledAgentCommandRunRequest.state !== "ready" || !controlledAgentCommandRunRequest.bridgeRequest || !controlledAgentCommandRunRequest.correlation) {
+      setControlledCommandRunNote(controlledAgentCommandRunRequest.diagnostics[0]?.message ?? "Controlled Agent Run verification request is not ready.");
+      return;
+    }
+    if (controlledAgentCommandRunRequest.correlation.commandId !== commandId) {
+      setControlledCommandRunNote("Controlled Agent Run verification command id does not match the current run metadata.");
+      return;
+    }
+    controlledCommandRunCorrelationRef.current = controlledAgentCommandRunRequest.correlation;
+    controlledCommandRunCompletedRequestIdRef.current = null;
+    agentRunVerificationCorrelationRef.current = { requestId: controlledAgentCommandRunRequest.correlation.requestId, runId: controlledAgentCommandRunRequest.correlation.runId, commandId };
+    agentRunVerificationChatIdRef.current = chatIdRef.current;
+    setPendingControlledCommandRunRequestId(controlledAgentCommandRunRequest.bridgeRequest.requestId);
+    setControlledCommandRunResultMetadata(null);
+    setControlledCommandRunNote("Controlled Agent Run verification request posted after explicit user click.");
+    setAgentRunVerificationRequest({ requested: true, source: "user", requestId: controlledAgentCommandRunRequest.bridgeRequest.requestId });
+    setAgentRunVerificationProgress({ status: "queued", summary: "Controlled Agent Run verification request posted." });
+    agentRunVerificationResultRef.current = null;
+    setAgentRunVerificationResult(null);
+    setAgentRunVerificationFixDraft(null);
+    bridgeAdapterRef.current?.post(controlledAgentCommandRunRequest.bridgeRequest);
+    addTimeline(`Controlled Agent Run verification requested ${controlledAgentCommandRunRequest.bridgeRequest.requestId}`);
+    appendTrace({ family: "controlledAgent.commandPlanned", title: "Controlled Agent Run verification requested", status: "pending", summary: "User clicked explicit controlled Agent Run verification.", requestId: controlledAgentCommandRunRequest.bridgeRequest.requestId, details: controlledAgentCommandRunRequest.details });
+  }, [addTimeline, agentRunInput, appendTrace, bridgeHost, controlledAgentCommandRunRequest, pendingControlledCommandRunRequestId]);
 
   const submitControlledFileRead = useCallback(() => {
     if (controlledAgentFileReadRequest.state !== "ready" || !controlledAgentFileReadRequest.bridgeRequest || !controlledAgentFileReadRequest.correlation || pendingControlledFileReadRequestId) {
@@ -2889,12 +3028,12 @@ export function App() {
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
-                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} />
+                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={pendingControlledCommandRunRequestId !== null || verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} />
                 {showControlledAgentRunPanel && <ControlledAgentRunPanel state={controlledAgentRunState} progressReport={controlledAgentProgressReport} mvpReport={controlledLocalAgentMvpReport} onStop={stopControlledAgentRun} />}
                 {controlledWorkspaceReadinessMetadata !== undefined && <ControlledAgentWorkspaceReadinessPanel metadata={controlledWorkspaceReadinessMetadata} />}
                 {(controlledAgentFileReadMetadata !== undefined || controlledAgentFileReadRequest.state !== "blocked") && <ControlledAgentFileReadPanel metadata={effectiveControlledAgentFileReadMetadata} evaluatedRead={controlledAgentFileReadSummary} request={controlledAgentFileReadRequest} pendingRequestId={pendingControlledFileReadRequestId} note={controlledFileReadNote} onRequest={submitControlledFileRead} onClearPending={clearPendingControlledFileReadState} />}
                 {(controlledAgentEditExecutorMetadata !== undefined || controlledAgentEditRequest.state !== "blocked") && <ControlledAgentEditPanel metadata={effectiveControlledEditMetadata} request={controlledAgentEditRequest} pendingRequestId={pendingControlledEditRequestId} note={controlledEditNote} onRequest={submitControlledEdit} onClearPending={clearPendingControlledEditState} />}
-                {controlledAgentCommandRunnerMetadata !== undefined && <ControlledAgentCommandRunnerPanel metadata={controlledAgentCommandRunnerMetadata} />}
+                {effectiveControlledAgentCommandRunnerMetadata !== undefined && <ControlledAgentCommandRunnerPanel metadata={effectiveControlledAgentCommandRunnerMetadata} />}
                 <MultiStepTaskTimelinePanel input={multiStepTaskTimelineInput} />
                 {showWhatWillBeSentPanel && <WhatWillBeSentPanel summary={contextBudgetSummary} draftPromptCharacters={chatInput.trim().length} />}
                 <CodingTaskSessionPanel session={codingTaskSession} goal={codingTaskGoal} contextItems={explicitContextBundleItems} memoryAttachedCount={attachedProjectMemoryCount} modelStatus={chatReadinessLabel} canSendChat={canSendChat} latestResponseStatus={chatLifecycleLabel} editProposal={activeEditProposal} applyResult={applyResult} verificationAttempt={verificationAttempt} verificationAttached={Boolean(attachedVerificationKey)} draftPrompt={codingTaskPromptDraft} contextBudgetSummary={contextBudgetSummary} modelProposalDraft={modelProposalDraft} modelProposalResult={agentRunModelProposal} onGoalChange={setCodingTaskGoal} onUseDraftPrompt={useCodingTaskDraftPrompt} onUseDraftPlan={useCodingTaskDraftPlan} onDraftOneStepModelProposal={draftOneStepModelProposalPrompt} onFocusPrompt={focusCodingTaskPrompt} />
@@ -3144,6 +3283,89 @@ export function App() {
       </section>
     </main>
   );
+}
+
+function controlledCommandRunResultToRunnerMetadata(correlation: ControlledAgentCommandRunRequestCorrelation, result: ControlledAgentCommandRunResultSummary): Record<string, unknown> {
+  return {
+    kind: "controlled_agent_command_runner",
+    version: "2026-06-29",
+    authority: "allowlisted_command_id_metadata",
+    cloudRequired: false,
+    executionAllowed: false,
+    freeformCommandAllowed: false,
+    agentStartAllowed: false,
+    workspace: {
+      controlledWorkspaceId: correlation.controlledWorkspaceId,
+      runId: correlation.runId,
+      workspaceMode: "worktree",
+      host: "vscode",
+      privatePathExposed: false,
+      workspaceLabel: "Controlled Agent Run verification",
+    },
+    request: {
+      requestId: correlation.requestId,
+      source: "gui",
+      requestIdMintedBy: "gui",
+      assistantMinted: false,
+      correlation: {
+        origin: "user",
+        confirmedBy: "user",
+        confirmationId: correlation.requestId,
+        hostCorrelationId: correlation.runtimeSessionId,
+        label: "User confirmed controlled Agent Run verification",
+      },
+      commandId: correlation.commandId,
+      limits: {
+        timeoutMs: 600000,
+        maxOutputBytes: 12000,
+        maxOutputLines: 240,
+        tailOnly: true,
+        commandStringAllowed: false,
+        argsAllowed: false,
+        cwdAllowed: false,
+        envAllowed: false,
+        shellAllowed: false,
+        limitLabel: "Bounded sanitized tail only",
+      },
+      reason: "Verify controlled Agent Run after applied edit",
+    },
+    policyFlags: {
+      allowlistedCommandIdOnly: true,
+      freeformCommandAllowed: false,
+      argsAllowed: false,
+      cwdAllowed: false,
+      envAllowed: false,
+      shellAllowed: false,
+      gitAllowed: false,
+      networkAllowed: false,
+      providerAllowed: false,
+      toolAllowed: false,
+      packageInstallAllowed: false,
+      fileReadAllowed: false,
+      fileWriteAllowed: false,
+      hiddenSearchAllowed: false,
+      indexingAllowed: false,
+      autoStartAllowed: false,
+      autoApplyAllowed: false,
+      autoRunAllowed: false,
+      autoVerifyAllowed: false,
+      autoFixAllowed: false,
+    },
+    result: {
+      status: result.status,
+      cloudRequired: false,
+      freeformCommandAllowed: false,
+      truncated: result.truncated ?? false,
+      message: result.message,
+      exitCode: result.exitCode,
+      durationMs: result.durationMs,
+      outputTail: result.outputTail,
+      outputByteCount: result.outputByteCount,
+      outputLineCount: result.outputLineCount,
+      resultHash: result.resultHash,
+      blockedReason: result.status === "blocked" ? "policy_denied" : undefined,
+    },
+  };
 }
 
 function buildControlledAgentRunPreviewState(readinessMetadata: unknown, fileReadMetadata: unknown, commandRunnerMetadata: unknown): ControlledAgentRunState {

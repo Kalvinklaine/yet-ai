@@ -8156,12 +8156,13 @@ describe("edit proposal preview", () => {
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
   });
 
-  it("Agent Run apply can post but controlled verification stays disabled until S85", async () => {
+  it("Agent Run apply can post then controlled verification uses S85 command-run path", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
     const proposal = safeEditProposalPayload();
     mockRuntimeResponses({
       ...readyRuntimeOptions(),
+      capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady }),
       chats: [chatSummary("chat-001", "Agent Run bridge", 1)],
       chatThreads: { "chat-001": chatThread("chat-001", "Agent Run bridge", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
     });
@@ -8180,17 +8181,31 @@ describe("edit proposal preview", () => {
 
     await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "Agent Run apply result.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
     const panel = agentRunPanel();
-    expect(panel.textContent).toContain("Manual state: Verification disabled until S85");
-    expect(panel.textContent).toContain("S85 required for controlled-agent verification");
-    expect(panel.textContent).toContain("Real allowlisted controlled-agent verification execution is unsupported in S84.");
-    expect(panel.textContent).toContain("S85 is required before this controlled Agent Run path can execute allowlisted verification.");
-    expect(buttonWithin(panel, "Manually run allowlisted verification").disabled).toBe(true);
+    expect(panel.textContent).toContain("Manual state: Ready for controlled verification");
+    expect(panel.textContent).toContain("no legacy IDE verification request is posted from Agent Run");
+    expect(buttonWithin(panel, "Manually run allowlisted verification").disabled).toBe(false);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")).toHaveLength(0);
 
     await act(async () => {
       buttonWithin(agentRunPanel(), "Manually run allowlisted verification").click();
     });
 
+    const commandRequests = postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentCommandRunRequest");
+    expect(commandRequests).toHaveLength(1);
+    expect(commandRequests[0][0]).toMatchObject({
+      version: bridgeVersion,
+      type: "gui.controlledAgentCommandRunRequest",
+      payload: {
+        requestIdMintedBy: "gui",
+        source: "gui",
+        assistantMinted: false,
+        userConfirmed: true,
+        commandId: "repository-check",
+        controlledWorkspaceId: "workspace-s82-demo",
+        runtimeSessionId: "session-s82-demo",
+        workspaceReadinessId: "controlled-workspace-s73-c1",
+      },
+    });
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")).toHaveLength(0);
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
   });
@@ -8214,25 +8229,25 @@ describe("edit proposal preview", () => {
       buttonWithin(agentRunPanel(), "Manually apply reviewed patch").click();
     });
     const applyCall = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
-    await dispatchHostApplyResult(applyCall.requestId, { status: "failed", message: "Patch could not apply cleanly.", cloudRequired: false, appliedEditCount: 0, affectedFiles: ["src/example.ts"] });
+    await dispatchHostApplyResult(applyCall.requestId, { status: "failed", message: "Repository validation failed", cloudRequired: false, appliedEditCount: 0, affectedFiles: ["src/example.ts"] });
 
     const panel = agentRunPanel();
     expect(panel.textContent).toContain("Manual state: Apply failed");
-    expect(panel.textContent).toContain("Apply failed after an explicit request. Recovery: review the sanitized apply result and rollback option; no retry, repair, or rollback is started automatically.");
-    expect(panel.textContent).toContain("Review the sanitized apply failure, then manually review rollback or revise the proposal in chat; no automatic retry is available.");
-    expect(buttonWithin(panel, "Manually apply reviewed patch").disabled).toBe(true);
+    expect(panel.textContent).toContain("Apply failed after an explicit request.");
     expect(buttonWithin(panel, "Manually run allowlisted verification").disabled).toBe(true);
-    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(1);
-    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
+    expect(buttonsNamed("Draft Agent Run fix prompt")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")).toHaveLength(0);
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
+    expect(browserStorageDump()).not.toContain("Repository validation failed");
   });
 
-  it("Agent Run controlled verification click posts no request and leaves fix drafting unavailable until S85", async () => {
+  it("Agent Run controlled verification result failure stops without auto repair", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
     const proposal = safeEditProposalPayload();
     mockRuntimeResponses({
       ...readyRuntimeOptions(),
+      capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady }),
       chats: [chatSummary("chat-001", "Agent Run failed verify", 1)],
       chatThreads: { "chat-001": chatThread("chat-001", "Agent Run failed verify", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
     });
@@ -8248,19 +8263,27 @@ describe("edit proposal preview", () => {
     const applyCall = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
     await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "Agent Run apply result.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
 
-    const panel = agentRunPanel();
-    expect(panel.textContent).toContain("Manual state: Verification disabled until S85");
-    expect(panel.textContent).toContain("S85 required for controlled-agent verification");
-    expect(buttonWithin(panel, "Manually run allowlisted verification").disabled).toBe(true);
+    expect(agentRunPanel().textContent).toContain("Manual state: Ready for controlled verification");
+    expect(buttonWithin(agentRunPanel(), "Manually run allowlisted verification").disabled).toBe(false);
     expect(buttonsNamed("Draft Agent Run fix prompt")).toHaveLength(0);
 
     await act(async () => {
-      buttonWithin(panel, "Manually run allowlisted verification").click();
+      buttonWithin(agentRunPanel(), "Manually run allowlisted verification").click();
     });
+    const commandRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentCommandRunRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
+    const failed = controlledCommandRunHostMessage(commandRequest.requestId, commandRequest.payload, { status: "failed", exitCode: 1, message: "Checks failed safely.", outputTail: "sanitized failure summary" });
+    await dispatchHostControlledCommandRunResult(failed.requestId, failed.payload);
+    await flushAsync();
+    await flushAsync();
+    await flushAsync();
+    expect(agentRunPanel().textContent).toContain("Manual state: Verification failed");
 
+    expect(agentRunPanel().textContent).toContain("Verification failed. Recovery: review the sanitized result, then manually draft a follow-up or review rollback; no automatic repair is started.");
+    expect(agentRunPanel().textContent).toContain("sanitized result available");
+    expect(buttonsNamed("Draft Agent Run fix prompt")).toHaveLength(1);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")).toHaveLength(0);
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
-    expect(browserStorageDump()).not.toContain("Repository validation failed");
+    expect(browserStorageDump()).not.toContain("sanitized failure summary");
   });
 
   it("wires checkpoint decisions into session timeline and trace without automatic bridge messages", async () => {
@@ -8307,7 +8330,7 @@ describe("edit proposal preview", () => {
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
   });
 
-  it("keeps post-apply checkpoint state review-only while S85 verification is unavailable", async () => {
+  it("keeps post-apply checkpoint state controlled and does not auto-run verification", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
     const proposal = safeEditProposalPayload();
@@ -8330,18 +8353,19 @@ describe("edit proposal preview", () => {
 
     expect(codingTaskSessionPanel().textContent).toContain("Session: ready_for_verification");
     expect(codingTaskSessionPanel().textContent).toContain("Verification lifecycle: not requested · draft or attach manually");
-    expect(agentRunPanel().textContent).toContain("S85 required for controlled-agent verification");
+    expect(agentRunPanel().textContent).toContain("Ready for controlled verification");
     expect(container?.textContent).not.toContain("New run created");
-    expect(buttonWithin(agentRunPanel(), "Manually run allowlisted verification").disabled).toBe(true);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentCommandRunRequest")).toHaveLength(0);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")).toHaveLength(0);
   });
 
-  it("Agent Run stale chat change prevents verification request", async () => {
+  it("Agent Run stale chat change prevents controlled verification result from updating current run", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
     const proposal = safeEditProposalPayload();
     mockRuntimeResponses({
       ...readyRuntimeOptions(),
+      capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady }),
       chats: [chatSummary("chat-001", "Agent Run stale chat", 1), chatSummary("chat-002", "Other chat", 0)],
       chatThreads: {
         "chat-001": chatThread("chat-001", "Agent Run stale chat", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]),
@@ -8359,21 +8383,23 @@ describe("edit proposal preview", () => {
     });
     const applyCall = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
     await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "Agent Run apply result.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
-    expect(buttonWithin(agentRunPanel(), "Manually run allowlisted verification").disabled).toBe(true);
-    expect(agentRunPanel().textContent).toContain("S85 required for controlled-agent verification");
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Manually run allowlisted verification").click();
+    });
+    const commandRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentCommandRunRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
 
     await act(async () => {
       setInputValue(chatIdInput(), "chat-002");
       await Promise.resolve();
     });
-    await dispatchHostIdeActionProgress("gui-agent-run-verification-1", { phase: "running", status: "inProgress", summary: "Stale verification should not start.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check" });
-    await dispatchHostIdeActionResult("gui-agent-run-verification-1", { status: "succeeded", message: "Stale verification should not render.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 0, durationMs: 1, outputTail: "stale", truncated: false });
+    const accepted = controlledCommandRunHostMessage(commandRequest.requestId, commandRequest.payload);
+    await dispatchHostControlledCommandRunResult(accepted.requestId, accepted.payload);
 
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentCommandRunRequest")).toHaveLength(1);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")).toHaveLength(0);
     expect(agentRunPanel().textContent).toContain("Manual state: idle");
     expect(agentRunPanel().textContent).not.toContain("Verification running");
     expect(agentRunPanel().textContent).not.toContain("Verified");
-    expect(container?.textContent).not.toContain("Stale verification should not render.");
   });
 
   it("Agent Run panel avoids browser storage and raw unsafe DOM exposure", async () => {
@@ -10523,6 +10549,19 @@ async function dispatchHostControlledEditResult(requestId: string | undefined, p
   });
 }
 
+async function dispatchHostControlledCommandRunResult(requestId: string | undefined, payload: Record<string, unknown>) {
+  await act(async () => {
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version: bridgeVersion,
+        type: "host.controlledAgentCommandRunResult",
+        requestId,
+        payload,
+      },
+    }));
+  });
+}
+
 function controlledReadHostMessage(requestId: string, requestPayload: Record<string, unknown>, overrides: Record<string, unknown> = {}) {
   const payload = JSON.parse(JSON.stringify(hostFileReadSuccess.payload)) as Record<string, any>;
   payload.request.requestId = overrides.requestId ?? requestId;
@@ -10557,6 +10596,37 @@ function controlledEditHostMessage(requestId: string, requestPayload: Record<str
     delete edit.replacementText;
   }
   payload.result.message = overrides.message ?? payload.result.message;
+  Object.assign(payload, overrides);
+  return { requestId, payload };
+}
+
+function controlledCommandRunHostMessage(requestId: string, requestPayload: Record<string, unknown>, overrides: Record<string, unknown> = {}) {
+  const status = overrides.status ?? "succeeded";
+  const outputTail = overrides.outputTail ?? "Repository validation completed with sanitized metadata";
+  const payload = {
+    requestId: overrides.requestId ?? requestId,
+    requestIdMintedBy: "gui",
+    controlledWorkspaceId: requestPayload.controlledWorkspaceId,
+    runId: requestPayload.runId,
+    runtimeSessionId: requestPayload.runtimeSessionId,
+    workspaceReadinessId: requestPayload.workspaceReadinessId,
+    userConfirmed: true,
+    commandId: requestPayload.commandId,
+    authority: "allowlisted_command_id",
+    cloudRequired: false,
+    executionAllowed: false,
+    freeformCommandAllowed: false,
+    policyFlags: requestPayload.policyFlags,
+    status,
+    message: overrides.message ?? (status === "succeeded" ? "Repository validation succeeded safely." : "Checks failed safely."),
+    exitCode: overrides.exitCode ?? (status === "succeeded" ? 0 : 1),
+    durationMs: overrides.durationMs ?? 1234,
+    outputTail,
+    outputByteCount: String(outputTail).length,
+    outputLineCount: 1,
+    resultHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    truncated: overrides.truncated ?? false,
+  } as Record<string, unknown>;
   Object.assign(payload, overrides);
   return { requestId, payload };
 }
