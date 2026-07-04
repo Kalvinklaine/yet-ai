@@ -2643,6 +2643,376 @@
           }
         }
       ]
+    },
+    "controlledAgentCommandRunOutputTail": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      ]
+    },
+    "controlledAgentCommandRunLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timeoutMs",
+        "maxOutputBytes",
+        "maxOutputLines",
+        "tailOnly",
+        "commandStringAllowed",
+        "argsAllowed",
+        "cwdAllowed",
+        "envAllowed",
+        "shellAllowed"
+      ],
+      "properties": {
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 1800000
+        },
+        "maxOutputBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20000
+        },
+        "maxOutputLines": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 400
+        },
+        "tailOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "commandStringAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "argsAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "cwdAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "envAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "shellAllowed": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "controlledAgentCommandRunPolicyFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowlistedCommandIdOnly",
+        "freeformCommandAllowed",
+        "argsAllowed",
+        "cwdAllowed",
+        "envAllowed",
+        "shellAllowed",
+        "gitAllowed",
+        "networkAllowed",
+        "providerAllowed",
+        "toolAllowed",
+        "packageInstallAllowed",
+        "fileReadAllowed",
+        "fileWriteAllowed",
+        "hiddenSearchAllowed",
+        "indexingAllowed",
+        "autoStartAllowed",
+        "autoApplyAllowed",
+        "autoRunAllowed",
+        "autoVerifyAllowed",
+        "autoFixAllowed"
+      ],
+      "properties": {
+        "allowlistedCommandIdOnly": { "type": "boolean", "const": true },
+        "freeformCommandAllowed": { "type": "boolean", "const": false },
+        "argsAllowed": { "type": "boolean", "const": false },
+        "cwdAllowed": { "type": "boolean", "const": false },
+        "envAllowed": { "type": "boolean", "const": false },
+        "shellAllowed": { "type": "boolean", "const": false },
+        "gitAllowed": { "type": "boolean", "const": false },
+        "networkAllowed": { "type": "boolean", "const": false },
+        "providerAllowed": { "type": "boolean", "const": false },
+        "toolAllowed": { "type": "boolean", "const": false },
+        "packageInstallAllowed": { "type": "boolean", "const": false },
+        "fileReadAllowed": { "type": "boolean", "const": false },
+        "fileWriteAllowed": { "type": "boolean", "const": false },
+        "hiddenSearchAllowed": { "type": "boolean", "const": false },
+        "indexingAllowed": { "type": "boolean", "const": false },
+        "autoStartAllowed": { "type": "boolean", "const": false },
+        "autoApplyAllowed": { "type": "boolean", "const": false },
+        "autoRunAllowed": { "type": "boolean", "const": false },
+        "autoVerifyAllowed": { "type": "boolean", "const": false },
+        "autoFixAllowed": { "type": "boolean", "const": false }
+      }
+    },
+    "controlledAgentCommandRunResultDetails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "cloudRequired",
+        "freeformCommandAllowed",
+        "privatePathExposed",
+        "rawOutputIncluded",
+        "truncated",
+        "message"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "disabled",
+            "blocked",
+            "running",
+            "succeeded",
+            "failed",
+            "timed_out",
+            "killed"
+          ]
+        },
+        "cloudRequired": { "type": "boolean", "const": false },
+        "freeformCommandAllowed": { "type": "boolean", "const": false },
+        "privatePathExposed": { "type": "boolean", "const": false },
+        "rawOutputIncluded": { "type": "boolean", "const": false },
+        "exitCode": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 255
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1800000
+        },
+        "truncated": { "type": "boolean" },
+        "outputTail": { "$ref": "#/$defs/controlledAgentCommandRunOutputTail" },
+        "outputByteCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20000
+        },
+        "outputLineCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 400
+        },
+        "resultHash": { "$ref": "#/$defs/safeHash" },
+        "blockedReason": {
+          "type": "string",
+          "enum": [
+            "runner_disabled",
+            "policy_denied",
+            "unknown_command_id",
+            "missing_user_confirmation",
+            "untrusted_request_id",
+            "workspace_not_ready",
+            "timeout_exceeds_limit",
+            "output_limit_exceeds_limit"
+          ]
+        },
+        "message": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "controlledAgentCommandRunResultPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "schemaVersion",
+        "state",
+        "authority",
+        "cloudRequired",
+        "executionAllowed",
+        "freeformCommandAllowed",
+        "controlledWorkspaceId",
+        "runId",
+        "workspaceReadinessId",
+        "requestId",
+        "requestIdMintedBy",
+        "userConfirmed",
+        "commandId",
+        "limits",
+        "policyFlags",
+        "result"
+      ],
+      "properties": {
+        "type": { "type": "string", "const": "controlled_agent_command_runner" },
+        "schemaVersion": { "type": "string", "const": "2026-07-03" },
+        "state": {
+          "type": "string",
+          "enum": ["disabled", "blocked", "running", "succeeded", "failed", "timed_out", "killed"]
+        },
+        "authority": { "type": "string", "const": "allowlisted_command_id_metadata" },
+        "cloudRequired": { "type": "boolean", "const": false },
+        "executionAllowed": { "type": "boolean", "const": false },
+        "freeformCommandAllowed": { "type": "boolean", "const": false },
+        "controlledWorkspaceId": { "$ref": "#/$defs/safeId" },
+        "runId": { "$ref": "#/$defs/safeId" },
+        "runtimeSessionId": { "$ref": "#/$defs/safeId" },
+        "sessionId": { "$ref": "#/$defs/safeId" },
+        "workspaceReadinessId": { "$ref": "#/$defs/safeId" },
+        "requestId": { "$ref": "#/$defs/safeId" },
+        "requestIdMintedBy": { "type": "string", "const": "gui" },
+        "userConfirmed": { "type": "boolean", "const": true },
+        "commandId": { "$ref": "#/$defs/verificationCommandId" },
+        "limits": { "$ref": "#/$defs/controlledAgentCommandRunLimits" },
+        "policyFlags": { "$ref": "#/$defs/controlledAgentCommandRunPolicyFlags" },
+        "result": { "$ref": "#/$defs/controlledAgentCommandRunResultDetails" }
+      },
+      "allOf": [
+        {
+          "properties": {
+            "result": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "const": {
+                    "$data": "2/state"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": ["disabled", "blocked"]
+              }
+            },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "type": "object",
+                "properties": {
+                  "exitCode": false,
+                  "durationMs": false,
+                  "outputTail": false,
+                  "outputByteCount": false,
+                  "outputLineCount": false,
+                  "resultHash": false,
+                  "truncated": { "const": false },
+                  "blockedReason": {}
+                },
+                "required": ["blockedReason"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": { "const": "running" }
+            },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "type": "object",
+                "properties": {
+                  "exitCode": false,
+                  "durationMs": {},
+                  "outputTail": false,
+                  "resultHash": false,
+                  "truncated": { "const": false }
+                },
+                "required": ["durationMs"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": { "const": "succeeded" }
+            },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "type": "object",
+                "properties": {
+                  "exitCode": { "const": 0 },
+                  "durationMs": {},
+                  "outputTail": {},
+                  "outputByteCount": {},
+                  "outputLineCount": {},
+                  "resultHash": {}
+                },
+                "required": ["exitCode", "durationMs", "outputTail", "outputByteCount", "outputLineCount", "resultHash"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": { "const": "failed" }
+            },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "type": "object",
+                "properties": {
+                  "exitCode": { "not": { "const": 0 } },
+                  "durationMs": {},
+                  "outputTail": {},
+                  "outputByteCount": {},
+                  "outputLineCount": {},
+                  "resultHash": {}
+                },
+                "required": ["exitCode", "durationMs", "outputTail", "outputByteCount", "outputLineCount", "resultHash"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": { "enum": ["timed_out", "killed"] }
+            },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "type": "object",
+                "properties": {
+                  "exitCode": { "type": "null" },
+                  "durationMs": {},
+                  "outputTail": {},
+                  "outputByteCount": {},
+                  "outputLineCount": {},
+                  "resultHash": {}
+                },
+                "required": ["exitCode", "durationMs", "outputTail", "outputByteCount", "outputLineCount", "resultHash"]
+              }
+            }
+          }
+        }
+      ]
     }
   },
   "allOf": [
@@ -2906,6 +3276,48 @@
           },
           "payload": {
             "$ref": "#/$defs/controlledAgentEditResultPayload"
+          }
+        },
+        "allOf": [
+          {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "requestId": {
+                    "const": {
+                      "$data": "2/requestId"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "host.controlledAgentCommandRunResult"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "requestId",
+          "payload"
+        ],
+        "properties": {
+          "requestId": {
+            "$ref": "#/$defs/requestId"
+          },
+          "payload": {
+            "$ref": "#/$defs/controlledAgentCommandRunResultPayload"
           }
         },
         "allOf": [

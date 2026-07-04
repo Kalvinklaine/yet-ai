@@ -254,11 +254,13 @@ const mappings = [
   ["packages/contracts/examples/bridge/gui-ide-action-request-search-workspace-snippets.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-controlled-agent-file-read-request.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-controlled-agent-edit-request.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
+  ["packages/contracts/examples/bridge/gui-controlled-agent-command-run-request.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/host-ide-action-progress-search-workspace-snippets.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-ide-action-result-search-workspace-snippets.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-ide-action-result-search-workspace-snippets-rejected.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-controlled-agent-file-read-result-success.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-controlled-agent-file-read-result-blocked.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
+  ["packages/contracts/examples/bridge/host-controlled-agent-command-run-result-succeeded.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ...[
     "host-controlled-agent-edit-result-applied.json",
     "host-controlled-agent-edit-result-blocked.json",
@@ -629,7 +631,12 @@ const invalidMappings = [
     "gui-controlled-agent-edit-request-create-operation.json",
     "gui-controlled-agent-edit-request-byte-count-mismatch.json",
     "gui-controlled-agent-edit-request-raw-diff-field.json",
-    "gui-controlled-agent-edit-request-command-fields.json"
+    "gui-controlled-agent-edit-request-command-fields.json",
+    "gui-controlled-agent-command-run-request-command-string.json",
+    "gui-controlled-agent-command-run-request-args-cwd-env.json",
+    "gui-controlled-agent-command-run-request-assistant-minted.json",
+    "gui-controlled-agent-command-run-request-unconfirmed.json",
+    "gui-controlled-agent-command-run-request-unknown-command.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/gui-message.schema.json"
@@ -744,7 +751,9 @@ const invalidMappings = [
     "host-controlled-agent-edit-result-private-path.json",
     "host-controlled-agent-edit-result-raw-diff-field.json",
     "host-controlled-agent-edit-result-widened-authority.json",
-    "host-controlled-agent-edit-result-raw-body-included.json"
+    "host-controlled-agent-edit-result-raw-body-included.json",
+    "host-controlled-agent-command-run-result-raw-output.json",
+    "host-controlled-agent-command-run-result-private-path.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/host-message.schema.json"

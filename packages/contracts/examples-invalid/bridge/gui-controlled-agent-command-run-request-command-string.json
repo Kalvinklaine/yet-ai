@@ -1,0 +1,50 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.controlledAgentCommandRunRequest",
+  "requestId": "verify-s85-command-string",
+  "payload": {
+    "requestId": "verify-s85-command-string",
+    "requestIdMintedBy": "gui",
+    "source": "gui",
+    "assistantMinted": false,
+    "controlledWorkspaceId": "workspace-s85-c1",
+    "runId": "run-s85-c1",
+    "workspaceReadinessId": "ready-s85-c1",
+    "userConfirmed": true,
+    "commandId": "repository-check",
+    "command": "npm run check",
+    "limits": {
+      "timeoutMs": 600000,
+      "maxOutputBytes": 12000,
+      "maxOutputLines": 240,
+      "tailOnly": true,
+      "commandStringAllowed": false,
+      "argsAllowed": false,
+      "cwdAllowed": false,
+      "envAllowed": false,
+      "shellAllowed": false
+    },
+    "policyFlags": {
+      "allowlistedCommandIdOnly": true,
+      "freeformCommandAllowed": false,
+      "argsAllowed": false,
+      "cwdAllowed": false,
+      "envAllowed": false,
+      "shellAllowed": false,
+      "gitAllowed": false,
+      "networkAllowed": false,
+      "providerAllowed": false,
+      "toolAllowed": false,
+      "packageInstallAllowed": false,
+      "fileReadAllowed": false,
+      "fileWriteAllowed": false,
+      "hiddenSearchAllowed": false,
+      "indexingAllowed": false,
+      "autoStartAllowed": false,
+      "autoApplyAllowed": false,
+      "autoRunAllowed": false,
+      "autoVerifyAllowed": false,
+      "autoFixAllowed": false
+    }
+  }
+}
