@@ -1,0 +1,216 @@
+import * as assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import { isInvalidControlledCommandRunRequestMessage, parseControlledCommandRunRequest, runControlledCommandRunRequest } from "./controlledCommandRun";
+
+type FakeTimer = { callback: () => void; ms: number; cleared: boolean };
+
+type FakeChild = EventEmitter & {
+  stdout: EventEmitter;
+  stderr: EventEmitter;
+  killed: boolean;
+  killSignal?: NodeJS.Signals;
+  kill(signal?: NodeJS.Signals): boolean;
+};
+
+async function main(): Promise<void> {
+  await testSuccessUsesFixedMappingAndSanitizedTail();
+  await testFailureKeepsTailOnlyResult();
+  await testMalformedUnknownAndUnconfirmedRequestsBlock();
+  await testTimeoutKillsAndReportsTimedOut();
+  await testOutputTruncationAndPrivateOutputSanitization();
+}
+
+async function testSuccessUsesFixedMappingAndSanitizedTail(): Promise<void> {
+  const calls: { command: string; args: readonly string[]; cwd: string; shell: false }[] = [];
+  const child = createChild();
+  const resultPromise = runControlledCommandRunRequest(createRequest("repository-check"), ["/workspace"], {
+    spawn(command, args, options) {
+      calls.push({ command, args, cwd: options.cwd, shell: options.shell });
+      return child;
+    },
+    now: monotonicNow(0, 42),
+  });
+  child.stdout.emit("data", "safe output\n");
+  child.emit("close", 0, null);
+  const result = await resultPromise;
+
+  assert.deepEqual(calls, [{ command: "npm", args: ["run", "check"], cwd: "/workspace", shell: false }]);
+  assert.equal(result.type, "host.controlledAgentCommandRunResult");
+  assert.equal(result.payload.state, "succeeded");
+  assert.equal(result.payload.result.status, "succeeded");
+  assert.equal(result.payload.result.exitCode, 0);
+  assert.equal(result.payload.result.durationMs, 42);
+  assert.equal(result.payload.result.outputTail, "safe output\n");
+  assert.equal(result.payload.result.rawOutputIncluded, false);
+  assert.equal(result.payload.result.fullLogIncluded, false);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes("run check"), false);
+  assert.equal(serialized.includes("/workspace"), false);
+}
+
+async function testFailureKeepsTailOnlyResult(): Promise<void> {
+  const child = createChild();
+  const resultPromise = runControlledCommandRunRequest(createRequest("gui-app-tests"), ["/repo"], {
+    spawn(command, args, options) {
+      assert.equal(command, "npm");
+      assert.deepEqual(args, ["test"]);
+      assert.equal(options.cwd, "/repo/apps/gui");
+      return child;
+    },
+    now: monotonicNow(10, 30),
+  });
+  child.stderr.emit("data", "test failed\n");
+  child.emit("close", 2, null);
+  const result = await resultPromise;
+
+  assert.equal(result.payload.state, "failed");
+  assert.equal(result.payload.result.exitCode, 2);
+  assert.equal(result.payload.result.outputTail, "test failed\n");
+  assert.equal(result.payload.result.resultHash?.startsWith("sha256:"), true);
+}
+
+async function testMalformedUnknownAndUnconfirmedRequestsBlock(): Promise<void> {
+  for (const payloadPatch of [
+    { commandId: "npm-test" },
+    { userConfirmed: false },
+    { command: "npm test" },
+    { args: ["test"] },
+    { cwd: "/Users/alice/repo" },
+    { limits: { ...baseLimits(), shellAllowed: true } },
+  ]) {
+    const message = createRequest("repository-check", payloadPatch);
+    assert.equal(parseControlledCommandRunRequest(message), undefined);
+    assert.equal(isInvalidControlledCommandRunRequestMessage(message), true);
+    const result = await runControlledCommandRunRequest(message, ["/repo"], { spawn: failSpawn });
+    assert.equal(result.payload.state, "blocked");
+    assert.equal(result.payload.result.blockedReason, "policy_denied");
+    assert.equal(result.payload.result.rawOutputIncluded, false);
+    assert.equal(JSON.stringify(result).includes("npm test"), false);
+    assert.equal(JSON.stringify(result).includes("/Users"), false);
+  }
+}
+
+async function testTimeoutKillsAndReportsTimedOut(): Promise<void> {
+  const child = createChild();
+  let timer: FakeTimer | undefined;
+  const resultPromise = runControlledCommandRunRequest(createRequest("engine-chat-tests", { limits: { ...baseLimits(), timeoutMs: 1000 } }), ["/repo"], {
+    spawn() {
+      return child;
+    },
+    setTimeout(callback, ms) {
+      timer = { callback, ms, cleared: false };
+      return timer;
+    },
+    clearTimeout(value) {
+      (value as FakeTimer).cleared = true;
+    },
+    now: monotonicNow(0, 1000),
+  });
+  assert.equal(timer?.ms, 1000);
+  timer?.callback();
+  assert.equal(child.killed, true);
+  assert.equal(child.killSignal, "SIGTERM");
+  child.emit("close", null, "SIGTERM");
+  const result = await resultPromise;
+
+  assert.equal(result.payload.state, "timed_out");
+  assert.equal(result.payload.result.exitCode, null);
+  assert.equal(result.payload.result.killed, true);
+  assert.equal(timer?.cleared, true);
+}
+
+async function testOutputTruncationAndPrivateOutputSanitization(): Promise<void> {
+  const longChild = createChild();
+  const longResultPromise = runControlledCommandRunRequest(createRequest("repository-check", { limits: { ...baseLimits(), maxOutputBytes: 80, maxOutputLines: 3 } }), ["/repo"], {
+    spawn() {
+      return longChild;
+    },
+  });
+  longChild.stdout.emit("data", "line1\nline2\nline3\nline4\n" + "x".repeat(200));
+  longChild.emit("close", 0, null);
+  const longResult = await longResultPromise;
+  assert.equal(longResult.payload.result.truncated, true);
+  assert.ok((longResult.payload.result.outputByteCount ?? 0) <= 80);
+  assert.ok((longResult.payload.result.outputLineCount ?? 0) <= 3);
+
+  const privateChild = createChild();
+  const privateResultPromise = runControlledCommandRunRequest(createRequest("repository-check"), ["/repo"], {
+    spawn() {
+      return privateChild;
+    },
+  });
+  privateChild.stdout.emit("data", "failure at /Users/alice/private/repo with token\n");
+  privateChild.emit("close", 1, null);
+  const privateResult = await privateResultPromise;
+  assert.equal(privateResult.payload.result.outputTail, "Command output hidden by host policy.");
+  assert.equal(privateResult.payload.result.truncated, true);
+  assert.equal(JSON.stringify(privateResult).includes("/Users/alice"), false);
+  assert.equal(JSON.stringify(privateResult).includes("token"), false);
+}
+
+function createRequest(commandId: string, overrides: Record<string, unknown> = {}): Parameters<typeof runControlledCommandRunRequest>[0] {
+  const payload = {
+    requestId: "command-safe",
+    requestIdMintedBy: "gui",
+    source: "gui",
+    assistantMinted: false,
+    controlledWorkspaceId: "workspace-command-safe",
+    runId: "run-command-safe",
+    runtimeSessionId: "runtime-command-safe",
+    workspaceReadinessId: "ready-command-safe",
+    userConfirmed: true,
+    correlation: {
+      origin: "user",
+      confirmedBy: "user",
+      confirmationId: "confirm-command-safe",
+      hostCorrelationId: "host-command-safe",
+    },
+    commandId,
+    limits: baseLimits(),
+    ...overrides,
+  };
+  return {
+    version: "2026-05-15",
+    type: "gui.controlledAgentCommandRunRequest",
+    requestId: "command-safe",
+    payload,
+  };
+}
+
+function baseLimits(): Record<string, unknown> {
+  return {
+    timeoutMs: 5000,
+    maxOutputBytes: 2000,
+    maxOutputLines: 40,
+    tailOnly: true,
+    commandStringAllowed: false,
+    argsAllowed: false,
+    cwdAllowed: false,
+    envAllowed: false,
+    shellAllowed: false,
+  };
+}
+
+function createChild(): FakeChild {
+  const child = new EventEmitter() as FakeChild;
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.killed = false;
+  child.kill = (signal?: NodeJS.Signals) => {
+    child.killed = true;
+    child.killSignal = signal;
+    return true;
+  };
+  return child;
+}
+
+function monotonicNow(...values: number[]): () => number {
+  let index = 0;
+  return () => values[Math.min(index++, values.length - 1)] ?? 0;
+}
+
+function failSpawn(): never {
+  throw new Error("spawn should not run");
+}
+
+void main();

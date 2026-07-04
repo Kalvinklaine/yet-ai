@@ -28,6 +28,7 @@ async function main(): Promise<void> {
     };
     const webview = await import("./webview");
     assert.equal(webview.isPrivilegedGuiMessageType("gui.controlledAgentEditRequest"), true);
+    assert.equal(webview.isPrivilegedGuiMessageType("gui.controlledAgentCommandRunRequest"), true);
     assert.equal(webview.isPrivilegedGuiMessageType("gui.ready"), false);
     assert.equal(webview.isPrivilegedGuiMessageAllowed({ guiReady: false }), false);
     assert.equal(webview.isPrivilegedGuiMessageAllowed({ guiReady: true }), true);
@@ -40,6 +41,7 @@ async function main(): Promise<void> {
     await assertVerificationHandlerRejectsWithoutExecution(webview);
     assertIframeValidatorRejectsVerificationRequests(webview);
     await assertPreReadyControlledEditRejectsWithoutWrite(webview);
+    await assertPreReadyControlledCommandRunRejectsWithoutExecution(webview);
   } finally {
     moduleWithLoad._load = originalLoad;
   }
@@ -162,6 +164,58 @@ async function assertPreReadyControlledEditRejectsWithoutWrite(webview: typeof i
   assert.equal(result.payload?.result?.blockedReason, "policy_denied");
   assert.equal(JSON.stringify(result).includes("safe"), false);
   assert.equal(result.payload?.edits?.some((edit) => "replacementText" in edit), false);
+}
+
+async function assertPreReadyControlledCommandRunRejectsWithoutExecution(webview: typeof import("./webview")): Promise<void> {
+  const messages: unknown[] = [];
+  const testWebview = {
+    postMessage(message: unknown) {
+      messages.push(message);
+      return Promise.resolve(true);
+    },
+  };
+  await webview.rejectPrivilegedGuiMessageBeforeReady(testWebview as never, {
+    version: "2026-05-15",
+    type: "gui.controlledAgentCommandRunRequest",
+    requestId: "command-before-ready",
+    payload: {
+      requestId: "command-before-ready",
+      requestIdMintedBy: "gui",
+      source: "gui",
+      assistantMinted: false,
+      controlledWorkspaceId: "workspace-command-before-ready",
+      runId: "run-command-before-ready",
+      workspaceReadinessId: "ready-command-before-ready",
+      userConfirmed: true,
+      correlation: {
+        origin: "user",
+        confirmedBy: "user",
+        confirmationId: "confirm-command-before-ready",
+        hostCorrelationId: "host-command-before-ready",
+      },
+      commandId: "repository-check",
+      limits: {
+        timeoutMs: 5000,
+        maxOutputBytes: 2000,
+        maxOutputLines: 40,
+        tailOnly: true,
+        commandStringAllowed: false,
+        argsAllowed: false,
+        cwdAllowed: false,
+        envAllowed: false,
+        shellAllowed: false,
+      },
+    },
+  });
+  assert.equal(messages.length, 1);
+  const result = messages[0] as { type?: string; requestId?: string; payload?: { state?: string; result?: { status?: string; blockedReason?: string; rawOutputIncluded?: boolean; fullLogIncluded?: boolean } } };
+  assert.equal(result.type, "host.controlledAgentCommandRunResult");
+  assert.equal(result.requestId, "command-before-ready");
+  assert.equal(result.payload?.state, "blocked");
+  assert.equal(result.payload?.result?.status, "blocked");
+  assert.equal(result.payload?.result?.blockedReason, "policy_denied");
+  assert.equal(result.payload?.result?.rawOutputIncluded, false);
+  assert.equal(result.payload?.result?.fullLogIncluded, false);
 }
 
 void main();
