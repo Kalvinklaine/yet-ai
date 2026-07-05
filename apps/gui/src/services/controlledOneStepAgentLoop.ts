@@ -4,7 +4,7 @@ import { evaluateControlledAgentFileRead } from "./controlledAgentFileRead";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./redaction";
 
 export type ControlledOneStepAgentLoopPhase = "idle" | "start_requested" | "read_context" | "model_step_pending" | "edit_ready" | "edit_applied" | "verification_requested" | "completed" | "failed" | "stopped";
-export type ControlledOneStepAgentLoopStopReason = "missing_user_start" | "invalid_transition" | "read_blocked" | "unsafe_proposal" | "edit_failed" | "verification_failed" | "timeout" | "user_stop" | "budget_exceeded" | "repair_disabled" | "unsafe_metadata" | "malformed_input";
+export type ControlledOneStepAgentLoopStopReason = "missing_user_start" | "invalid_transition" | "read_blocked" | "unsafe_proposal" | "edit_failed" | "verification_failed" | "timeout" | "user_stop" | "runtime_disconnected" | "budget_exceeded" | "repair_disabled" | "unsafe_metadata" | "malformed_input";
 export type ControlledOneStepAgentLoopDiagnosticCode = "missing_input" | "malformed_input" | "unsafe_metadata" | "invalid_transition" | "limit_exceeded" | "policy_blocked";
 
 export type ControlledOneStepAgentLoopDiagnostic = {
@@ -96,6 +96,7 @@ export type ControlledOneStepAgentLoopEvent =
   | { type: "verification"; metadata: unknown }
   | { type: "tick"; runtimeSeconds: number }
   | { type: "stop"; summary?: unknown }
+  | { type: "runtime_disconnect"; summary?: unknown }
   | { type: "repair"; metadata?: unknown };
 
 const defaultBudgets: ControlledOneStepAgentLoopBudgets = {
@@ -137,6 +138,7 @@ export function reduceControlledOneStepAgentLoopState(current: ControlledOneStep
   if (typed.type === "start") return startLoop(current, typed.metadata);
   if (current.phase === "idle") return stoppedState("failed", current.budgets, current.counters, "missing_user_start", false, stopMessage("missing_user_start"), current.diagnostics);
   if (typed.type === "stop") return stoppedState("stopped", current.budgets, current.counters, "user_stop", true, typeof typed.summary === "string" ? typed.summary : stopMessage("user_stop"), current.diagnostics);
+  if (typed.type === "runtime_disconnect") return stoppedState("stopped", current.budgets, current.counters, "runtime_disconnected", true, typeof typed.summary === "string" ? typed.summary : stopMessage("runtime_disconnected"), current.diagnostics);
   if (typed.type === "tick") return enforceBudgets({ ...current, counters: { ...current.counters, runtimeSeconds: typed.runtimeSeconds }, summary: "One-step loop runtime metadata was updated." });
   if (typed.type === "repair") return stoppedState("failed", current.budgets, { ...current.counters, repairAttempts: current.counters.repairAttempts + 1 }, "repair_disabled", false, stopMessage("repair_disabled"), current.diagnostics);
   if (typed.type === "read") return recordRead(current, typed.metadata);
@@ -222,7 +224,7 @@ function validateEventShell(event: unknown): ControlledOneStepAgentLoopStopReaso
   const shell = event.type === "read" || event.type === "edit" || event.type === "verification" || event.type === "model_step" || event.type === "start" ? { ...event, metadata: undefined } : event;
   scanUnsafeMetadata(shell, diagnostics);
   if (diagnostics.length > 0) return "unsafe_metadata";
-  if (!["start", "read", "model_step", "edit", "verification", "tick", "stop", "repair"].includes(event.type)) return "malformed_input";
+  if (!["start", "read", "model_step", "edit", "verification", "tick", "stop", "runtime_disconnect", "repair"].includes(event.type)) return "malformed_input";
   if (event.type === "tick" && !boundedNumber(event.runtimeSeconds, 0, 1800)) return "malformed_input";
   return undefined;
 }
@@ -309,6 +311,7 @@ function stopMessage(reason: ControlledOneStepAgentLoopStopReason): string {
   if (reason === "verification_failed") return "One-step loop stopped because allowlisted verification failed.";
   if (reason === "timeout") return "One-step loop stopped because the runtime budget timed out.";
   if (reason === "user_stop") return "One-step loop stopped by explicit user request.";
+  if (reason === "runtime_disconnected") return "One-step loop stopped because the runtime disconnected. No auto-retry was started.";
   if (reason === "budget_exceeded") return "One-step loop stopped because an S86 one-step budget was exceeded.";
   if (reason === "repair_disabled") return "One-step loop stopped because repair is disabled for S86.";
   if (reason === "unsafe_metadata") return "One-step loop failed closed because unsafe metadata was omitted.";

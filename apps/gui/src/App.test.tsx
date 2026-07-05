@@ -8457,6 +8457,118 @@ describe("edit proposal preview", () => {
     expect(agentRunPanel().textContent).not.toContain("Verified");
   });
 
+
+  it("Agent Run stop clears pending controlled verification and ignores stale result", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady }),
+      chats: [chatSummary("chat-001", "Agent Run stop stale", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Agent Run stop stale", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+    postMessage.mockClear();
+
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Manually apply reviewed patch").click();
+    });
+    const applyCall = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
+    await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "Agent Run apply result.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Manually run allowlisted verification").click();
+    });
+    const commandRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentCommandRunRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
+    expect(agentRunPanel().textContent).toContain("Verification running");
+
+    await act(async () => {
+      findButton("Stop controlled run").click();
+    });
+    const stale = controlledCommandRunHostMessage(commandRequest.requestId, commandRequest.payload);
+    await dispatchHostControlledCommandRunResult(stale.requestId, stale.payload);
+
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentCommandRunRequest")).toHaveLength(1);
+    expect(agentRunPanel().textContent).toContain("Manual state: Ready for controlled verification");
+    expect(container?.querySelector("[data-testid='controlled-agent-run-panel']")?.textContent).toContain("Phase: stopped");
+    expect(agentRunPanel().textContent).not.toContain("Verified");
+  });
+
+  it("Agent Run runtime disconnect stops pending controlled verification without retry", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady }),
+      chats: [chatSummary("chat-001", "Agent Run disconnect", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Agent Run disconnect", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+    postMessage.mockClear();
+
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Manually apply reviewed patch").click();
+    });
+    const applyCall = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
+    await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "Agent Run apply result.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Manually run allowlisted verification").click();
+    });
+    const commandRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentCommandRunRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
+
+    await dispatchRuntimeStatus(runtimeStatusPayload({ lifecycle: "disconnected", diagnosis: "runtime disconnected", nextAction: "Reconnect manually." }));
+    const stale = controlledCommandRunHostMessage(commandRequest.requestId, commandRequest.payload);
+    await dispatchHostControlledCommandRunResult(stale.requestId, stale.payload);
+
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentCommandRunRequest")).toHaveLength(1);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")).toHaveLength(0);
+    expect(container?.querySelector("[data-testid='controlled-agent-run-panel']")?.textContent).toContain("Stop reason: partial execution stopped");
+    expect(agentRunPanel().textContent).not.toContain("Verified");
+  });
+
+  it("Agent Run duplicate controlled verification result is ignored after first terminal result", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady }),
+      chats: [chatSummary("chat-001", "Agent Run duplicate verification", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Agent Run duplicate verification", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+    postMessage.mockClear();
+
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Manually apply reviewed patch").click();
+    });
+    const applyCall = postMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
+    await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "Agent Run apply result.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Manually run allowlisted verification").click();
+    });
+    const commandRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentCommandRunRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
+    const accepted = controlledCommandRunHostMessage(commandRequest.requestId, commandRequest.payload);
+    await dispatchHostControlledCommandRunResult(accepted.requestId, accepted.payload);
+    const duplicate = controlledCommandRunHostMessage(commandRequest.requestId, commandRequest.payload, { status: "failed", exitCode: 1, message: "Duplicate should not render.", outputTail: "duplicate output" });
+    await dispatchHostControlledCommandRunResult(duplicate.requestId, duplicate.payload);
+
+    expect(agentRunPanel().textContent).toContain("Manual state: Ready for follow-up");
+    expect(agentRunPanel().textContent).toContain("Verification status/result: Verified");
+    expect(container?.textContent).not.toContain("Duplicate should not render.");
+    expect(container?.textContent).not.toContain("duplicate output");
+  });
+
   it("Agent Run panel avoids browser storage and raw unsafe DOM exposure", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     const rawSecret = "sk-" + "q".repeat(40);

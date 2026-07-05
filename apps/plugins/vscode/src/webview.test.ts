@@ -42,6 +42,7 @@ async function main(): Promise<void> {
     assertIframeValidatorRejectsVerificationRequests(webview);
     await assertPreReadyControlledEditRejectsWithoutWrite(webview);
     await assertPreReadyControlledCommandRunRejectsWithoutExecution(webview);
+    assertFrameReadinessBlocksStaleHostReady(webview);
   } finally {
     moduleWithLoad._load = originalLoad;
   }
@@ -215,6 +216,11 @@ async function assertPreReadyControlledCommandRunRejectsWithoutExecution(webview
   assert.equal(result.payload?.freeformCommandAllowed, false);
   assert.equal(result.payload?.policyFlags?.allowlistedCommandIdOnly, true);
   assert.equal(result.payload?.policyFlags?.shellAllowed, false);
+}
+
+function assertFrameReadinessBlocksStaleHostReady(webview: typeof import("./webview")): void {
+  assert.equal(webview.isFramePrivilegedGuiMessageAllowed({ frameReady: true, frameReadyRequestId: "ready-old", latestHostReadyRequestId: "ready-new" }), false);
+  assert.equal(webview.isFramePrivilegedGuiMessageAllowed({ frameReady: true, frameReadyRequestId: "ready-new", latestHostReadyRequestId: "ready-new" }), true);
 }
 
 void main();

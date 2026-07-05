@@ -770,9 +770,6 @@ export function App() {
     setControlledAgentRunState(buildControlledAgentRunPreviewState(controlledWorkspaceReadinessMetadata, effectiveControlledAgentFileReadMetadata, controlledAgentCommandRunnerMetadata));
   }, [controlledAgentCommandRunnerMetadata, effectiveControlledAgentFileReadMetadata, controlledWorkspaceReadinessMetadata]);
 
-  const stopControlledAgentRun = useCallback(() => {
-    setControlledAgentRunState((current) => reduceControlledAgentRunState(current, { type: "stop", reason: "user_stop", summary: "Controlled run stopped from the S76 skeleton UI." }));
-  }, []);
   const workspaceSnippetQueryValidation = useMemo(() => validateWorkspaceSnippetQuery(workspaceSnippetQuery), [workspaceSnippetQuery]);
 
   useEffect(() => {
@@ -866,6 +863,25 @@ export function App() {
     setControlledCommandRunResultMetadata(null);
     setControlledCommandRunNote(note);
   }, []);
+
+  const stopPendingControlledCommandRunState = useCallback((note: string) => {
+    controlledCommandRunCorrelationRef.current = null;
+    controlledCommandRunCompletedRequestIdRef.current = null;
+    agentRunVerificationCorrelationRef.current = null;
+    agentRunVerificationChatIdRef.current = null;
+    setPendingControlledCommandRunRequestId(null);
+    setAgentRunVerificationRequest(null);
+    setAgentRunVerificationProgress(null);
+    agentRunVerificationResultRef.current = null;
+    setAgentRunVerificationResult(null);
+    setAgentRunVerificationFixDraft(null);
+    setControlledCommandRunNote(note);
+  }, []);
+
+  const stopControlledAgentRun = useCallback(() => {
+    stopPendingControlledCommandRunState("Controlled Agent Run verification stopped in the GUI. Stale host results will be ignored.");
+    setControlledAgentRunState((current) => reduceControlledAgentRunState(current, { type: "stop", reason: "user_stop", summary: "Controlled run stopped from the S76 skeleton UI." }));
+  }, [stopPendingControlledCommandRunState]);
 
   const clearPendingIdeActionState = useCallback(() => {
     if (!pendingIdeActionRequestIdRef.current) {
@@ -1031,6 +1047,10 @@ export function App() {
         setRuntimeLifecycle({ diagnostics: runtimeLifecycleDiagnostics(payload, adapter.host), settingsRevision: revision });
         setTimeline((current) => [`Runtime lifecycle status received: ${payload.lifecycle}`, ...current].slice(0, 80));
         appendTrace({ family: "host.runtimeStatus", title: "Runtime lifecycle status received", status: payload.lifecycle === "connected" ? "succeeded" : payload.lifecycle === "failed" || payload.lifecycle === "auth_mismatch" ? "failed" : "info", summary: `Host reported runtime ${payload.lifecycle}.`, details: { lifecycle: payload.lifecycle, tokenState: payload.tokenState, authority: payload.authority } });
+        if (payload.lifecycle === "disconnected" || payload.lifecycle === "stopped" || payload.lifecycle === "failed" || payload.lifecycle === "auth_mismatch") {
+          stopPendingControlledCommandRunState("Runtime disconnected or blocked controlled verification. Stale host results will be ignored; no auto-retry was started.");
+          setControlledAgentRunState((current) => reduceControlledAgentRunState(current, { type: "stop", reason: "partial_execution_stopped", summary: "Controlled run stopped because runtime lifecycle became unavailable." }));
+        }
       } else if (message.type === "host.controlledAgentFileReadResult") {
         const requestId = message.requestId ?? "unknown";
         const current = controlledFileReadCorrelationRef.current;
@@ -1295,7 +1315,7 @@ export function App() {
       bridgeAdapterRef.current = null;
       adapter.dispose();
     };
-  }, [appendTrace, applyHostReady]);
+  }, [appendTrace, applyHostReady, stopPendingControlledCommandRunState]);
 
   const appendChatError = useCallback((message: string, code?: string) => {
     setChatView((current) => applyChatViewEvent(current, {

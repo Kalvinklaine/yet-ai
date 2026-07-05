@@ -146,7 +146,7 @@ describe("controlledOneStepAgentLoop", () => {
     expect(failed.counters.verificationRuns).toBe(1);
   });
 
-  it("covers timeout and explicit stop without repair", () => {
+  it("covers timeout explicit stop runtime disconnect and no repair", () => {
     const timed = reduceControlledOneStepAgentLoopState(start(), { type: "tick", runtimeSeconds: 301 });
     expect(timed.phase).toBe("failed");
     expect(timed.stop?.reason).toBe("timeout");
@@ -154,6 +154,11 @@ describe("controlledOneStepAgentLoop", () => {
     const stopped = reduceControlledOneStepAgentLoopState(start(), { type: "stop", summary: "User stopped" });
     expect(stopped.phase).toBe("stopped");
     expect(stopped.stop?.reason).toBe("user_stop");
+
+    const disconnected = reduceControlledOneStepAgentLoopState(start(), { type: "runtime_disconnect", summary: "Runtime disconnected" });
+    expect(disconnected.phase).toBe("stopped");
+    expect(disconnected.stop?.reason).toBe("runtime_disconnected");
+    expect(disconnected.enabled).toBe(false);
 
     const repair = reduceControlledOneStepAgentLoopState(start(), { type: "repair" });
     expect(repair.phase).toBe("failed");

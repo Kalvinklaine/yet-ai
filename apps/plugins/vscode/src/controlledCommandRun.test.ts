@@ -17,6 +17,7 @@ async function main(): Promise<void> {
   await testFailureKeepsTailOnlyResult();
   await testMalformedUnknownAndUnconfirmedRequestsBlock();
   await testTimeoutKillsAndReportsTimedOut();
+  await testKillAfterStopReportsKilledOnce();
   await testOutputTruncationAndPrivateOutputSanitization();
 }
 
@@ -115,6 +116,29 @@ async function testTimeoutKillsAndReportsTimedOut(): Promise<void> {
   assert.equal(result.payload.status, "timed_out");
   assert.equal(result.payload.exitCode, null);
   assert.equal(timer?.cleared, true);
+}
+
+async function testKillAfterStopReportsKilledOnce(): Promise<void> {
+  const child = createChild();
+  let resolveCount = 0;
+  const resultPromise = runControlledCommandRunRequest(createRequest("repository-check"), ["/repo"], {
+    spawn() {
+      return child;
+    },
+    now: monotonicNow(0, 12, 30),
+  }).then((result) => {
+    resolveCount += 1;
+    return result;
+  });
+  child.kill("SIGTERM");
+  child.emit("close", null, "SIGTERM");
+  child.emit("close", 0, null);
+  const result = await resultPromise;
+
+  assert.equal(result.payload.status, "killed");
+  assert.equal(result.payload.exitCode, null);
+  assert.equal(resolveCount, 1);
+  assert.equal(JSON.stringify(result).includes("SIGTERM"), false);
 }
 
 async function testOutputTruncationAndPrivateOutputSanitization(): Promise<void> {
