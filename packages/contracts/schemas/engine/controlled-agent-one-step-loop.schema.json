@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.yet-ai.example/contracts/engine/controlled-agent-one-step-loop.schema.json",
   "title": "Controlled Agent One Step Loop Metadata",
-  "description": "Strict metadata-only Sprint 86 one-step controlled-agent loop contract. It records explicit user start, bounded single-file read metadata, one sanitized proposal step, bounded replacement-edit metadata, allowlisted verification metadata, and a terminal report while granting no arbitrary shell, hidden read, search, indexing, create, delete, rename, move, git, package, network, tool, raw payload persistence, or repair authority.",
+  "description": "Strict metadata-only Sprint 86/S87 one-step controlled-agent loop contract. It records explicit user start, bounded single-file read metadata, one sanitized proposal step, bounded replacement-edit metadata, allowlisted verification metadata, at most one user-confirmed bounded repair attempt after failed verification, and a terminal report while granting no arbitrary shell, hidden read, search, indexing, create, delete, rename, move, git, package, network, tool, raw payload persistence, or automatic repair authority.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -22,6 +22,7 @@
     "counters",
     "policyFlags",
     "steps",
+    "repair",
     "terminalReport"
   ],
   "properties": {
@@ -72,6 +73,10 @@
         "proposal_step",
         "bounded_edit",
         "allowlisted_verification",
+        "repair_eligible",
+        "repair_waiting_for_user",
+        "bounded_repair",
+        "repair_verification",
         "terminal_report",
         "blocked",
         "failed",
@@ -93,6 +98,9 @@
     },
     "steps": {
       "$ref": "#/$defs/steps"
+    },
+    "repair": {
+      "$ref": "#/$defs/repair"
     },
     "terminalReport": {
       "$ref": "#/$defs/terminalReport"
@@ -195,6 +203,10 @@
         "maxTouchedFiles",
         "maxEditBytes",
         "maxVerificationRuns",
+        "maxRepairAttempts",
+        "maxRepairProposalSteps",
+        "maxRepairEditBytes",
+        "maxRepairVerificationRuns",
         "maxRuntimeSeconds"
       ],
       "properties": {
@@ -204,19 +216,38 @@
         "maxTouchedFiles": { "type": "integer", "minimum": 0, "maximum": 3 },
         "maxEditBytes": { "type": "integer", "minimum": 0, "maximum": 24000 },
         "maxVerificationRuns": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "maxRepairAttempts": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "maxRepairProposalSteps": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "maxRepairEditBytes": { "type": "integer", "minimum": 0, "maximum": 12000 },
+        "maxRepairVerificationRuns": { "type": "integer", "minimum": 0, "maximum": 1 },
         "maxRuntimeSeconds": { "type": "integer", "minimum": 1, "maximum": 900 }
       }
     },
     "counters": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["loopSteps", "fileReads", "filesTouched", "editBytes", "verificationRuns", "userTurns"],
+      "required": [
+        "loopSteps",
+        "fileReads",
+        "filesTouched",
+        "editBytes",
+        "verificationRuns",
+        "repairAttempts",
+        "repairProposalSteps",
+        "repairEditBytes",
+        "repairVerificationRuns",
+        "userTurns"
+      ],
       "properties": {
         "loopSteps": { "type": "integer", "minimum": 0, "maximum": 1 },
         "fileReads": { "type": "integer", "minimum": 0, "maximum": 1 },
         "filesTouched": { "type": "integer", "minimum": 0, "maximum": 3 },
         "editBytes": { "type": "integer", "minimum": 0, "maximum": 24000 },
         "verificationRuns": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "repairAttempts": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "repairProposalSteps": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "repairEditBytes": { "type": "integer", "minimum": 0, "maximum": 12000 },
+        "repairVerificationRuns": { "type": "integer", "minimum": 0, "maximum": 1 },
         "userTurns": { "type": "integer", "minimum": 0, "maximum": 8 }
       }
     },
@@ -363,6 +394,66 @@
         "durationMs": { "type": "integer", "minimum": 0, "maximum": 1800000 },
         "resultHash": { "$ref": "#/$defs/safeHash" },
         "rawOutputStored": { "type": "boolean", "const": false },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "repairStopReason": {
+      "type": "string",
+      "enum": [
+        "not_needed",
+        "not_eligible",
+        "waiting_for_user_confirmation",
+        "repair_verified",
+        "verification_still_failed",
+        "attempt_budget_exhausted",
+        "policy_blocked",
+        "user_declined"
+      ]
+    },
+    "repair": {
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "attemptCount": { "const": 1 } },
+            "required": ["attemptCount"]
+          },
+          "then": {
+            "properties": { "confirmedByUser": { "const": true } },
+            "required": ["confirmedByUser"]
+          }
+        }
+      ],
+      "required": [
+        "state",
+        "eligible",
+        "requiresUserConfirmation",
+        "confirmedByUser",
+        "attemptCount",
+        "maxAttempts",
+        "previousVerification",
+        "proposal",
+        "boundedEdit",
+        "verification",
+        "stopReason",
+        "summary"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["not_needed", "eligible", "waiting_for_user", "completed", "blocked", "exhausted"]
+        },
+        "eligible": { "type": "boolean" },
+        "requiresUserConfirmation": { "type": "boolean", "const": true },
+        "confirmedByUser": { "type": "boolean" },
+        "attemptCount": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "maxAttempts": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "previousVerification": { "$ref": "#/$defs/verificationStep" },
+        "proposal": { "$ref": "#/$defs/proposalStep" },
+        "boundedEdit": { "$ref": "#/$defs/boundedEditStep" },
+        "verification": { "$ref": "#/$defs/verificationStep" },
+        "stopReason": { "$ref": "#/$defs/repairStopReason" },
         "summary": { "$ref": "#/$defs/safeSummary" }
       }
     },

@@ -6,23 +6,23 @@
   "executionAllowed": false,
   "agentStartAllowed": false,
   "freeformCommandAllowed": false,
-  "autoRepairAllowed": true,
+  "autoRepairAllowed": false,
   "workspace": {
-    "controlledWorkspaceId": "cw-s86-demo",
-    "runId": "run-s86-one-step",
+    "controlledWorkspaceId": "cw-s87-demo",
+    "runId": "run-s87-bounded",
     "workspaceMode": "worktree",
     "host": "vscode",
     "privatePathExposed": false,
-    "workspaceLabel": "S86 demo worktree"
+    "workspaceLabel": "S87 demo worktree"
   },
   "start": {
-    "requestId": "s86-start-001",
+    "requestId": "s87-start-001",
     "source": "gui",
     "confirmedBy": "user",
     "assistantMinted": false,
     "explicitUserStart": true,
     "startedAt": "2026-07-05T00:00:00Z",
-    "summary": "User chose one step review"
+    "summary": "User chose bounded review"
   },
   "phase": "completed",
   "status": "completed",
@@ -34,10 +34,10 @@
     "maxEditBytes": 12000,
     "maxVerificationRuns": 1,
     "maxRuntimeSeconds": 300,
-    "maxRepairAttempts": 0,
-    "maxRepairProposalSteps": 0,
-    "maxRepairEditBytes": 0,
-    "maxRepairVerificationRuns": 0
+    "maxRepairAttempts": 1,
+    "maxRepairProposalSteps": 1,
+    "maxRepairEditBytes": 8000,
+    "maxRepairVerificationRuns": 1
   },
   "counters": {
     "loopSteps": 1,
@@ -45,11 +45,11 @@
     "filesTouched": 1,
     "editBytes": 96,
     "verificationRuns": 1,
-    "userTurns": 2,
-    "repairAttempts": 0,
-    "repairProposalSteps": 0,
-    "repairEditBytes": 0,
-    "repairVerificationRuns": 0
+    "userTurns": 3,
+    "repairAttempts": 1,
+    "repairProposalSteps": 1,
+    "repairEditBytes": 64,
+    "repairVerificationRuns": 1
   },
   "policyFlags": {
     "metadataOnly": true,
@@ -76,7 +76,7 @@
     "rawDiffPersistenceAllowed": false,
     "rawCommandPersistenceAllowed": false,
     "rawOutputPersistenceAllowed": false,
-    "autoRepairAllowed": true
+    "autoRepairAllowed": false
   },
   "steps": {
     "boundedRead": {
@@ -115,16 +115,16 @@
       "summary": "Existing note was updated by replacement metadata"
     },
     "verification": {
-      "state": "completed",
+      "state": "failed",
       "commandId": "repository-check",
       "allowlistedCommandIdOnly": true,
       "freeformCommandAllowed": false,
       "tailOnly": true,
-      "exitCode": 0,
+      "exitCode": 1,
       "durationMs": 4200,
-      "resultHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "resultHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
       "rawOutputStored": false,
-      "summary": "Repository check completed with safe tail evidence"
+      "summary": "Repository check failed with safe tail evidence"
     }
   },
   "terminalReport": {
@@ -136,58 +136,61 @@
     "rawCommandStored": false,
     "rawOutputStored": false,
     "finishedAt": "2026-07-05T00:05:00Z",
-    "summary": "One step cycle completed with safe metadata"
+    "summary": "One step cycle used one bounded repair and completed"
   },
   "repair": {
-    "state": "not_needed",
-    "eligible": false,
+    "state": "completed",
+    "eligible": true,
     "requiresUserConfirmation": true,
     "confirmedByUser": false,
-    "attemptCount": 0,
-    "maxAttempts": 0,
+    "attemptCount": 1,
+    "maxAttempts": 1,
     "previousVerification": {
-      "state": "skipped",
+      "state": "failed",
       "commandId": "repository-check",
       "allowlistedCommandIdOnly": true,
       "freeformCommandAllowed": false,
       "tailOnly": true,
-      "exitCode": null,
-      "durationMs": 0,
-      "resultHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "exitCode": 1,
+      "durationMs": 4200,
+      "resultHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
       "rawOutputStored": false,
-      "summary": "No failed verification required repair"
+      "summary": "Repository check failed with safe tail evidence"
     },
     "proposal": {
-      "state": "skipped",
-      "stepCount": 0,
+      "state": "completed",
+      "stepCount": 1,
       "sanitizedOnly": true,
       "providerPayloadStored": false,
       "providerResponseStored": false,
-      "summary": "No repair proposal was needed"
+      "summary": "One safe bounded fix summary recorded"
     },
     "boundedEdit": {
-      "state": "skipped",
+      "state": "completed",
       "operation": "replace",
+      "workspaceRelativePath": "docs/architecture/013-agent-readiness-milestone.md",
+      "expectedContentHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "replacementByteCount": 64,
       "createAllowed": false,
       "deleteAllowed": false,
       "renameAllowed": false,
       "moveAllowed": false,
       "rawDiffStored": false,
-      "summary": "No repair edit was needed"
+      "summary": "Existing note was adjusted by bounded metadata"
     },
     "verification": {
-      "state": "skipped",
+      "state": "completed",
       "commandId": "repository-check",
       "allowlistedCommandIdOnly": true,
       "freeformCommandAllowed": false,
       "tailOnly": true,
-      "exitCode": null,
-      "durationMs": 0,
-      "resultHash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "exitCode": 0,
+      "durationMs": 3900,
+      "resultHash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
       "rawOutputStored": false,
-      "summary": "No repair verification was needed"
+      "summary": "Repository check passed with safe tail evidence"
     },
-    "stopReason": "not_needed",
-    "summary": "Repair was not needed after first verification"
+    "stopReason": "repair_verified",
+    "summary": "One user confirmed bounded repair passed"
   }
 }

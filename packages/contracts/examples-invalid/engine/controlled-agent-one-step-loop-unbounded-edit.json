@@ -33,7 +33,11 @@
     "maxTouchedFiles": 1,
     "maxEditBytes": 24001,
     "maxVerificationRuns": 1,
-    "maxRuntimeSeconds": 300
+    "maxRuntimeSeconds": 300,
+    "maxRepairAttempts": 0,
+    "maxRepairProposalSteps": 0,
+    "maxRepairEditBytes": 0,
+    "maxRepairVerificationRuns": 0
   },
   "counters": {
     "loopSteps": 1,
@@ -41,7 +45,11 @@
     "filesTouched": 1,
     "editBytes": 96,
     "verificationRuns": 1,
-    "userTurns": 2
+    "userTurns": 2,
+    "repairAttempts": 0,
+    "repairProposalSteps": 0,
+    "repairEditBytes": 0,
+    "repairVerificationRuns": 0
   },
   "policyFlags": {
     "metadataOnly": true,
@@ -129,5 +137,57 @@
     "rawOutputStored": false,
     "finishedAt": "2026-07-05T00:05:00Z",
     "summary": "One step cycle completed with safe metadata"
+  },
+  "repair": {
+    "state": "not_needed",
+    "eligible": false,
+    "requiresUserConfirmation": true,
+    "confirmedByUser": false,
+    "attemptCount": 0,
+    "maxAttempts": 0,
+    "previousVerification": {
+      "state": "skipped",
+      "commandId": "repository-check",
+      "allowlistedCommandIdOnly": true,
+      "freeformCommandAllowed": false,
+      "tailOnly": true,
+      "exitCode": null,
+      "durationMs": 0,
+      "resultHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "rawOutputStored": false,
+      "summary": "No failed verification required repair"
+    },
+    "proposal": {
+      "state": "skipped",
+      "stepCount": 0,
+      "sanitizedOnly": true,
+      "providerPayloadStored": false,
+      "providerResponseStored": false,
+      "summary": "No repair proposal was needed"
+    },
+    "boundedEdit": {
+      "state": "skipped",
+      "operation": "replace",
+      "createAllowed": false,
+      "deleteAllowed": false,
+      "renameAllowed": false,
+      "moveAllowed": false,
+      "rawDiffStored": false,
+      "summary": "No repair edit was needed"
+    },
+    "verification": {
+      "state": "skipped",
+      "commandId": "repository-check",
+      "allowlistedCommandIdOnly": true,
+      "freeformCommandAllowed": false,
+      "tailOnly": true,
+      "exitCode": null,
+      "durationMs": 0,
+      "resultHash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "rawOutputStored": false,
+      "summary": "No repair verification was needed"
+    },
+    "stopReason": "not_needed",
+    "summary": "Repair was not needed after first verification"
   }
 }
