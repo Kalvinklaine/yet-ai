@@ -438,6 +438,18 @@ This smoke is an audit gate over already-scoped S86/S87/S89 behavior. It runs th
 
 Passing this smoke means unsupported or stale controlled-agent signals fail closed and do not advance the current run. It does not add new execution authority, a provider/model loop, browser or JetBrains controlled verification execution, hidden reads/search/indexing, free-form shell, git/package/network authority, automatic retry, automatic repair, rollback execution, task-board mutation, raw output persistence, production autonomy, marketplace readiness, release readiness, or real-provider CI. Resilience evidence stays local/mock-only and bounded to explicit user-controlled paths.
 
+## Sprint 90 controlled autonomy readiness matrix
+
+Sprint 90 uses [`../dogfood/s90-controlled-autonomy-readiness.md`](../dogfood/s90-controlled-autonomy-readiness.md) as the controlled-autonomy readiness decision matrix. The matrix records evidence and an honest `ready`, `partial`, or `blocked` decision for explicit Start/Stop, bounded read, bounded edit, allowlisted verification, one repair attempt, dogfood usefulness, cross-host availability, resilience, and public wording safety.
+
+The overall S90 decision is `partial`: the controlled local-agent path has enough bounded dev-preview evidence for narrow local dogfood planning and further hardening, but it is not production autonomy, not real-provider CI, and not cross-host complete. VS Code remains the only current real controlled execution host for implemented slices. Browser remains preview-only/unsupported for trusted workspace execution, and JetBrains remains fail-closed for controlled execution parity until future verified work changes that status.
+
+S90 adds no production autonomy, no broad workspace authority, no hidden reads/search/indexing, no free-form shell/git/package/network/provider-tool authority, no automatic repair/retry/rollback, no raw payload persistence, and no real-provider CI claim. The exact documentation gate remains:
+
+```sh
+npm run check
+```
+
 ## Blocked and deferred capabilities
 
 These capabilities are explicitly not implemented as active Agent Run features:
