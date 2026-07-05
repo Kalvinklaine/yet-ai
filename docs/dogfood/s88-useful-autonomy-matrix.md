@@ -1,6 +1,6 @@
 # S88 Useful Autonomy Dogfood Matrix
 
-Use this matrix to plan deterministic Sprint 88 dogfood runs for useful small-task controlled autonomy. It is a docs/fixture plan only until the S86/S87 implementation cards wire the matching local GUI orchestration. It is not production autonomy, not real-provider CI, not a marketplace or release gate, and not broad multi-step execution.
+Use this matrix to plan deterministic Sprint 88 dogfood runs for useful small-task controlled autonomy and to keep the tiny local fixture set mapped to clear expectations. The tracked fixtures and `npm run smoke:controlled-agent-dogfood` are local validation evidence only: they validate fixture size, sanitization, command-id mapping, and documentation references, but they do not execute a GUI agent run. This matrix is not production autonomy, not real-provider CI, not a marketplace or release gate, and not broad multi-step execution.
 
 Each row is intentionally tiny: one explicit Start click authorizes one GUI-local sequence with at most one bounded read, one sanitized proposal step, one bounded replacement edit to one existing safe workspace-relative text file, one allowlisted verification command id, and at most one bounded repair attempt when S87 repair metadata is available. The service remains orchestration only; it must not build bridge requests directly, run free-form commands, call provider tools, use git, install packages, search/index the workspace, or persist raw prompts, file bodies, diffs, command strings, full output, private paths, secrets, or bridge payloads.
 
