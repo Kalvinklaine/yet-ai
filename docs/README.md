@@ -270,6 +270,8 @@ S85 enables real allowlisted controlled Agent Run verification execution in VS C
 
 S85 does not implement repair, retry, rollback, a provider/model loop, arbitrary shell execution, model-selected command text, task-board mutation, production autonomy, marketplace readiness, release readiness, or real-provider CI. S86 remains the earliest honest one-step controlled-autonomy milestone, and only after bounded read, edit, verification, loop, reporting, and safety gates are intentionally wired and verified.
 
+For S88 useful-autonomy dogfood planning, use `docs/dogfood/s88-useful-autonomy-matrix.md`. The matrix defines deterministic small-task fixtures for copy change, simple TypeScript fix, failing test fix, one-file code cleanup, and recovery copy. Each row stays within S86/S87 authority: one explicit Start, one bounded read, one sanitized proposal step, one bounded replacement edit, one allowlisted verification command id, and at most one bounded repair attempt when S87 repair metadata is available. It is planning evidence only until future implementation cards add runnable fixtures or smokes.
+
 The exact S85 final audit gate is:
 
 ```sh

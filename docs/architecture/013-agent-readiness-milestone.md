@@ -383,6 +383,12 @@ npm run validate:contracts
 
 This gate validates metadata fixtures only. It does not run a provider loop, edit files, execute repairs, or prove production autonomy.
 
+## Sprint 88 useful autonomy dogfood matrix
+
+Sprint 88 planning uses [`../dogfood/s88-useful-autonomy-matrix.md`](../dogfood/s88-useful-autonomy-matrix.md) as the deterministic dogfood matrix for useful small-task controlled autonomy. The matrix covers copy change, simple TypeScript fix, failing test fix, one-file code cleanup, and recovery copy fixtures. Each planned task must fit the S86/S87 authority envelope: one explicit Start click, one bounded read, one sanitized proposal step, one bounded replacement edit to one existing safe workspace-relative text file, one allowlisted verification command id, and at most one bounded repair attempt when S87 repair metadata is available.
+
+The S88 matrix is docs/fixture planning only. It does not add a runtime loop, runnable smoke, provider call, bridge authority, file discovery, shell/git/package/network authority, raw prompt/file/diff/command/output persistence, production autonomy, marketplace readiness, release readiness, or real-provider CI. Future implementation cards must add separate fixtures and verification gates before any row can be reported as executed dogfood evidence.
+
 ## Sprint 89 cross-host controlled autonomy availability
 
 Sprint 89 clarifies cross-host availability for the controlled local-agent path. This is an availability and unsupported-state contract only; it does not add new execution authority.
