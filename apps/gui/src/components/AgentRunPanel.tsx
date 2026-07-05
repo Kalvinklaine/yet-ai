@@ -6,6 +6,7 @@ import type { ControlledAgentCommandRunRequestResult } from "../services/control
 import type { ControlledAgentEditRequestResult } from "../services/controlledAgentEditRequest";
 import type { ControlledAgentFileReadRequestResult } from "../services/controlledAgentFileReadRequest";
 import type { ControlledOneStepAgentLoopState } from "../services/controlledOneStepAgentLoop";
+import type { ControlledAgentRepairLoopEvaluation } from "../services/controlledAgentRepairLoop";
 import { deriveGuidedFixLoopStatus, type GuidedFixLoopDraftState } from "../services/guidedFixLoop";
 import type { ProposalHistory } from "../services/proposalHistory";
 import { sanitizeDisplayText } from "../services/redaction";
@@ -26,11 +27,16 @@ export type AgentRunPanelProps = {
   oneStepReadRequest?: ControlledAgentFileReadRequestResult;
   oneStepEditRequest?: ControlledAgentEditRequestResult;
   oneStepCommandRunRequest?: ControlledAgentCommandRunRequestResult;
+  repairLoop?: ControlledAgentRepairLoopEvaluation;
+  repairDraftReady?: boolean;
+  pendingRepairEdit?: boolean;
+  pendingRepairVerification?: boolean;
+  onConfirmRepairAttempt?: () => void;
   onStartOneStepRun?: () => void;
   onStopOneStepRun?: () => void;
 };
 
-export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, onStartOneStepRun, onStopOneStepRun }: AgentRunPanelProps) {
+export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun }: AgentRunPanelProps) {
   const view = evaluateAgentRunState(input);
   const metadata = isAgentRunInput(input) ? input : undefined;
   const guidedFix = deriveGuidedFixLoopStatus({
@@ -87,6 +93,10 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const oneStepActive = Boolean(oneStepLoopState && oneStepLoopState.phase !== "idle" && oneStepLoopState.phase !== "completed" && oneStepLoopState.phase !== "failed" && oneStepLoopState.phase !== "stopped");
   const canStartOneStep = host === "vscode" && Boolean(onStartOneStepRun) && !oneStepActive && oneStepReadReady && oneStepEditReady && oneStepCommandReady;
   const canStopOneStep = Boolean(onStopOneStepRun) && oneStepActive;
+  const showRepairLoop = Boolean(repairLoop && repairLoop.state !== "disabled");
+  const repairEligibleState = repairLoop?.state === "eligible" || repairLoop?.state === "proposal_ready";
+  const repairActionPending = pendingRepairEdit || pendingRepairVerification;
+  const canConfirmRepair = Boolean(onConfirmRepairAttempt) && repairEligibleState && repairLoop?.canAttemptRepair === true && repairDraftReady && !repairActionPending;
 
   return (
     <section className={`readiness-card ${view.enabled ? "ready" : "warn"} agent-run-panel stack`} aria-label="Experimental Agent Run" data-testid="agent-run-panel">
@@ -173,6 +183,34 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           <div className="row" role="group" aria-label="S86 one-step Agent Run actions">
             <button type="button" onClick={onStartOneStepRun} disabled={!canStartOneStep}>Start one-step Agent Run</button>
             <button type="button" className="secondary-button" onClick={onStopOneStepRun} disabled={!canStopOneStep}>Stop one-step Agent Run</button>
+          </div>
+        </div>
+      )}
+      {showRepairLoop && repairLoop && (
+        <div className={`readiness-card ${canConfirmRepair ? "ready" : "warn"} stack`} role="status" aria-label="Agent Run controlled repair eligibility">
+          <div className="row">
+            <strong>Controlled repair eligibility</strong>
+            <span className="badge">one attempt max</span>
+            <span className="badge">explicit user click</span>
+            <span className="badge">no automatic repair</span>
+            <span className={repairLoop.canAttemptRepair ? "badge ok" : "badge warn"}>{sanitizeDisplayText(repairLoop.state.replace(/_/g, " "))}</span>
+          </div>
+          <span>{sanitizeDisplayText(repairLoop.summary)}</span>
+          <span>Repair is display-only until the user explicitly clicks the repair confirmation button. This card never reads files, applies edits, runs commands, posts bridge messages, calls providers, or starts repair automatically.</span>
+          <div className="agent-progress-grid" aria-label="Agent Run repair eligibility fields">
+            <span>State: {sanitizeDisplayText(repairLoop.state.replace(/_/g, " "))}</span>
+            <span>Attempts: {repairLoop.attemptCount}/{repairLoop.maxAttempts}</span>
+            <span>Verification runs: {repairLoop.verificationRuns}</span>
+            <span>User turns: {repairLoop.userTurns}</span>
+            <span>Can attempt repair: {repairLoop.canAttemptRepair ? "yes" : "no"}</span>
+            <span>Draft ready: {repairDraftReady ? "yes" : "no"}</span>
+            <span>Repair edit pending: {pendingRepairEdit ? "yes" : "no"}</span>
+            <span>Repair verification pending: {pendingRepairVerification ? "yes" : "no"}</span>
+          </div>
+          {repairLoop.stop && <span>Stop reason: {sanitizeDisplayText(repairLoop.stop.reason.replace(/_/g, " "))} · {sanitizeDisplayText(repairLoop.stop.message)}</span>}
+          {repairLoop.diagnostics.length > 0 && <span className="subtle">Repair diagnostics: {repairLoop.diagnostics.map((item) => `${sanitizeDisplayText(item.code)}: ${sanitizeDisplayText(item.message)}`).join(" · ")}</span>}
+          <div className="row" role="group" aria-label="Agent Run controlled repair actions">
+            <button type="button" className="secondary-button" onClick={onConfirmRepairAttempt} disabled={!canConfirmRepair}>Confirm one repair attempt</button>
           </div>
         </div>
       )}

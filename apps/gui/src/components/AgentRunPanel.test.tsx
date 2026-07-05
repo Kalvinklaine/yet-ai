@@ -5,6 +5,7 @@ import { AgentRunPanel } from "./AgentRunPanel";
 import type { AgentRunInput } from "../services/agentRunState";
 import type { VerificationCommandId } from "../bridge/bridgeAdapter";
 import { createProposalHistory, type ProposalHistory } from "../services/proposalHistory";
+import { evaluateControlledAgentRepairLoop } from "../services/controlledAgentRepairLoop";
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
@@ -157,6 +158,21 @@ const readyInputWithRejectedPlan: AgentRunInput = {
   planDiagnostics: ["unsafe_metadata: The multi-step plan preview contains assistant-minted authority or execution metadata."],
 };
 
+const eligibleRepairLoop = evaluateControlledAgentRepairLoop({
+  verification: { status: "failed", result: { status: "failed", exitCode: 1, message: "Failed allowlisted verification." } },
+  summary: "Failed allowlisted verification is eligible for one bounded repair attempt.",
+});
+
+const proposalReadyRepairLoop = evaluateControlledAgentRepairLoop({
+  verification: { status: "failed", result: { status: "failed", exitCode: 1, message: "Failed allowlisted verification." } },
+  userConfirmed: true,
+  proposal: { state: "planned", summary: "Sanitized repair draft ready." },
+});
+
+const blockedRepairLoop = evaluateControlledAgentRepairLoop({
+  verification: { status: "succeeded", result: { status: "succeeded", exitCode: 0, message: "Passed." } },
+});
+
 
 afterEach(() => {
   if (root) {
@@ -251,6 +267,118 @@ describe("AgentRunPanel", () => {
     expect(panelText()).toContain("Start needs ready controlled read, edit, and allowlisted verification request metadata.");
     expect(panelText()).toContain("Edit request: blocked");
     expect(findButton("Start one-step Agent Run").disabled).toBe(true);
+  });
+
+  it("renders controlled repair eligibility with sanitized counters and explicit callback", () => {
+    const onConfirmRepairAttempt = vi.fn();
+    renderPanel(readyInput, {
+      host: "vscode",
+      repairLoop: eligibleRepairLoop,
+      repairDraftReady: true,
+      onConfirmRepairAttempt,
+    });
+
+    expect(panelText()).toContain("Controlled repair eligibility");
+    expect(panelText()).toContain("one attempt max");
+    expect(panelText()).toContain("explicit user click");
+    expect(panelText()).toContain("no automatic repair");
+    expect(panelText()).toContain("Failed allowlisted verification is eligible for one bounded repair attempt.");
+    expect(panelText()).toContain("State: eligible");
+    expect(panelText()).toContain("Attempts: 0/1");
+    expect(panelText()).toContain("Verification runs: 1");
+    expect(panelText()).toContain("User turns: 0");
+    expect(panelText()).toContain("Can attempt repair: yes");
+    expect(panelText()).toContain("Draft ready: yes");
+    expect(panelText()).toContain("Repair edit pending: no");
+    expect(panelText()).toContain("Repair verification pending: no");
+    expect(panelText()).toContain("This card never reads files, applies edits, runs commands, posts bridge messages, calls providers, or starts repair automatically.");
+    expect(onConfirmRepairAttempt).not.toHaveBeenCalled();
+
+    act(() => {
+      findButton("Confirm one repair attempt").click();
+    });
+    expect(onConfirmRepairAttempt).toHaveBeenCalledTimes(1);
+  });
+
+  it("enables controlled repair confirmation for proposal-ready draft only and keeps unsafe output hidden", () => {
+    const onConfirmRepairAttempt = vi.fn();
+    const secret = "sk-" + "r".repeat(40);
+    renderPanel(readyInput, {
+      host: "vscode",
+      repairLoop: {
+        ...proposalReadyRepairLoop,
+        summary: `Repair draft ready ${secret} /Users/alice/private.ts`,
+        diagnostics: [{ code: "policy_blocked", message: `Unsafe path /Users/alice/private.ts and ${secret}` }],
+      },
+      repairDraftReady: true,
+      onConfirmRepairAttempt,
+    });
+
+    expect(panelText()).toContain("State: proposal ready");
+    expect(panelText()).toContain("Repair diagnostics: policy_blocked:");
+    expect(panelText()).not.toContain(secret);
+    expect(panelText()).not.toContain("/Users/alice");
+    expect(findButton("Confirm one repair attempt").disabled).toBe(false);
+
+    act(() => {
+      findButton("Confirm one repair attempt").click();
+    });
+    expect(onConfirmRepairAttempt).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables controlled repair confirmation without draft readiness or while pending", () => {
+    const onConfirmRepairAttempt = vi.fn();
+    renderPanel(readyInput, {
+      host: "vscode",
+      repairLoop: eligibleRepairLoop,
+      repairDraftReady: false,
+      onConfirmRepairAttempt,
+    });
+
+    expect(panelText()).toContain("Draft ready: no");
+    expect(findButton("Confirm one repair attempt").disabled).toBe(true);
+    act(() => {
+      findButton("Confirm one repair attempt").click();
+    });
+    expect(onConfirmRepairAttempt).not.toHaveBeenCalled();
+
+    renderPanel(readyInput, {
+      host: "vscode",
+      repairLoop: eligibleRepairLoop,
+      repairDraftReady: true,
+      pendingRepairEdit: true,
+      onConfirmRepairAttempt,
+    });
+
+    expect(panelText()).toContain("Repair edit pending: yes");
+    expect(findButton("Confirm one repair attempt").disabled).toBe(true);
+  });
+
+  it("renders blocked repair diagnostics without enabling callback and hides disabled repair metadata", () => {
+    const onConfirmRepairAttempt = vi.fn();
+    renderPanel(readyInput, {
+      host: "vscode",
+      repairLoop: blockedRepairLoop,
+      repairDraftReady: true,
+      onConfirmRepairAttempt,
+    });
+
+    expect(panelText()).toContain("Controlled repair eligibility");
+    expect(panelText()).toContain("State: blocked");
+    expect(panelText()).toContain("Stop reason: ineligible verification status");
+    expect(panelText()).toContain("Repair diagnostics: policy_blocked: Controlled repair loop is ineligible for this verification status.");
+    expect(findButton("Confirm one repair attempt").disabled).toBe(true);
+    expect(onConfirmRepairAttempt).not.toHaveBeenCalled();
+
+    renderPanel(readyInput, {
+      host: "vscode",
+      repairLoop: evaluateControlledAgentRepairLoop(undefined),
+      repairDraftReady: true,
+      onConfirmRepairAttempt,
+    });
+
+    expect(panelText()).not.toContain("Controlled repair eligibility");
+    expect(optionalButton("Confirm one repair attempt")).toBeUndefined();
   });
 
   it("renders goal ready state before a proposal", () => {
@@ -842,6 +970,11 @@ type PanelTestProps = {
   oneStepReadRequest?: any;
   oneStepEditRequest?: any;
   oneStepCommandRunRequest?: any;
+  repairLoop?: any;
+  repairDraftReady?: boolean;
+  pendingRepairEdit?: boolean;
+  pendingRepairVerification?: boolean;
+  onConfirmRepairAttempt?: () => void;
   onStartOneStepRun?: () => void;
   onStopOneStepRun?: () => void;
 };
@@ -872,6 +1005,11 @@ function renderPanel(input: unknown, props: PanelTestProps = {}) {
         oneStepReadRequest={props.oneStepReadRequest}
         oneStepEditRequest={props.oneStepEditRequest}
         oneStepCommandRunRequest={props.oneStepCommandRunRequest}
+        repairLoop={props.repairLoop}
+        repairDraftReady={props.repairDraftReady}
+        pendingRepairEdit={props.pendingRepairEdit}
+        pendingRepairVerification={props.pendingRepairVerification}
+        onConfirmRepairAttempt={props.onConfirmRepairAttempt}
         onStartOneStepRun={props.onStartOneStepRun}
         onStopOneStepRun={props.onStopOneStepRun}
       />,
